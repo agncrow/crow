@@ -1604,7 +1604,9 @@ impl IrInterp {
         // a builtin written in Crow (an effect's row reaches here): its function
         if row.is_crow() {
             let handed: Vec<CrowValue> = row.params.iter().zip(&vals).map(|(k, v)| crate::table::value_as(*k, v)).collect::<Result<_, _>>()?;
-            return self.call_user(&crate::table::crow_fn_name(row), handed);
+            // (a reader's value carries the moment it was read, whichever
+            // language the reader is written in)
+            return self.call_user(&crate::table::crow_fn_name(row), handed).map(|v| Self::stamp(row.name, v));
         }
         if vals.iter().any(|v| matches!(v.value, Value::Dual(..))) {
             return self.bare_call(row.name, vals);
@@ -1695,7 +1697,7 @@ impl IrInterp {
         let kinds: Vec<crate::table::Arg> = vals.iter().map(crate::table::Arg::of_value).collect();
         let row = crate::table::crow_row(module, name, &kinds)?;
         let handed: Result<Vec<CrowValue>, String> = row.params.iter().zip(vals).map(|(k, v)| crate::table::value_as(*k, v)).collect();
-        Some(handed.and_then(|handed| self.call_user(&crate::table::crow_fn_name(row), handed)))
+        Some(handed.and_then(|handed| self.call_user(&crate::table::crow_fn_name(row), handed)).map(|v| Self::stamp(row.name, v)))
     }
 
     fn bare_call(&mut self, name: &str, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
@@ -1740,6 +1742,11 @@ impl IrInterp {
         // session layer does around it (a dual number takes grad's own form)
         let dual = vals.iter().any(|v| matches!(v.value, Value::Dual(..)));
         if !dual {
+            // a core row written in Crow the lowering left to the values
+            // (`read[upload.path]` from a map's value): its function
+            if let Some(answer) = self.crow_row_call("", name, &vals) {
+                return answer;
+            }
             if let Some(r) = Self::core_rows(name, &vals, &self.trace_entry(), false) {
                 return r.map(|v| Self::stamp(name, v));
             }

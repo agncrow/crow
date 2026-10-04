@@ -71,8 +71,18 @@ impl TypeContext {
                     });
                 }
                 Stmt::FnDecl { name, params, body, is_view, .. } => {
+                    // a builtin written in Crow (a standard module's
+                    // function, inlined behind its prefix) takes the
+                    // parameters its row states — the row is its contract,
+                    // however it is called: bare, qualified, or from
+                    // another module's function
+                    let contract: Option<Vec<CrowType>> = crate::modules::is_crow_fn(name)
+                        .then(|| crate::table::ROWS.iter().find(|r| r.is_crow() && crate::table::crow_fn_name(r) == *name))
+                        .flatten()
+                        .map(|r| r.params.iter().map(|k| k.crow_type()).collect::<Vec<CrowType>>())
+                        .filter(|given| given.len() == params.len());
                     self.functions.insert(name.clone(), FnSig {
-                        params: params.iter().map(|p| (p.clone(), CrowType::Unknown)).collect(),
+                        params: params.iter().enumerate().map(|(i, p)| (p.clone(), contract.as_ref().map_or(CrowType::Unknown, |g| g[i].clone()))).collect(),
                         return_type: CrowType::Unknown,
                         body: body.clone(),
                     });
@@ -164,7 +174,7 @@ impl TypeContext {
         // a standard module written in Crow, inlined, resolves its names in
         // its own scope: what its `use` lines import, which the program's
         // scope does not see
-        crate::modules::load_crow_scopes(&mut self.registry);
+        crate::modules::load_crow_scopes(&mut self.registry, stmts.iter().filter_map(|s| if let Stmt::FnDecl { name, .. } = s { Some(name.as_str()) } else { None }));
     }
 
     /// Which functions are handlers, which top-level names are facts, and

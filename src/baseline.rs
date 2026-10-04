@@ -1437,6 +1437,13 @@ pub fn reach_entries(program: &crate::ir::Program, parts: &BTreeMap<String, Stri
     }
     for part in &program.parts {
         for f in &part.fns {
+            // a standard module's function written in Crow (inlined) is
+            // the module's: what the program reaches through it is its
+            // row's effect, which the call carries (`write` is a file's,
+            // whatever the module does for an s3:// path)
+            if crate::modules::is_crow_fn(&f.name) {
+                continue;
+            }
             by_file.entry(file_of(&f.name)).or_default().extend(f.effects.iter().cloned());
         }
         for d in &part.derives {

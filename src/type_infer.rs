@@ -442,6 +442,7 @@ pub(crate) struct BodyScope {
     saved_vars: BTreeMap<String, CrowType>,
     outer_assigned: Option<std::collections::HashSet<String>>,
     outer_in_view: bool,
+    outer_fn_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -547,6 +548,19 @@ impl TypeContext {
                     ("status".to_string(), CrowType::Int),
                     ("body".to_string(), CrowType::Str),
                     ("headers".to_string(), CrowType::Map(Box::new(CrowType::Str))),
+                ],
+            },
+        );
+        // a connection's answer (`sys.exchange`, `sys.fetch`: the layer the
+        // readers written in Crow stand on)
+        structs.insert(
+            "CrowAnswer".to_string(),
+            StructSig {
+                fields: vec![
+                    ("status".to_string(), CrowType::Int),
+                    ("phrase".to_string(), CrowType::Str),
+                    ("headers".to_string(), CrowType::Map(Box::new(CrowType::Str))),
+                    ("body".to_string(), CrowType::Bytes),
                 ],
             },
         );
@@ -974,13 +988,17 @@ impl TypeContext {
         }
         let outer_assigned = self.body_assigned.replace(assigned);
         let outer_in_view = std::mem::replace(&mut self.in_view, self.views.contains(name));
-        BodyScope { saved_vars, outer_assigned, outer_in_view }
+        // (the function being lowered: inside a standard module's, the
+        // program's functions are invisible to the calls typed here)
+        let outer_fn_name = self.current_fn_name.replace(name.to_string());
+        BodyScope { saved_vars, outer_assigned, outer_in_view, outer_fn_name }
     }
 
     pub(crate) fn leave_body(&mut self, scope: BodyScope) {
         self.vars = scope.saved_vars;
         self.body_assigned = scope.outer_assigned;
         self.in_view = scope.outer_in_view;
+        self.current_fn_name = scope.outer_fn_name;
     }
 
     /// Out of a function's body once a provisional lowering typed it: its
@@ -989,9 +1007,10 @@ impl TypeContext {
     /// lowering handed an error out of it (`fails`), and a fact a view or
     /// handler gives a float widened for the program.
     pub(crate) fn finish_body(&mut self, name: &str, scope: BodyScope, returns: &[CrowType], fails: bool) {
-        let BodyScope { saved_vars, outer_assigned, outer_in_view } = scope;
+        let BodyScope { saved_vars, outer_assigned, outer_in_view, outer_fn_name } = scope;
         self.body_assigned = outer_assigned;
         self.in_view = outer_in_view;
+        self.current_fn_name = outer_fn_name;
 
         // a value whose type is not known is still a value: returns that are
         // all unknown make an unknown, not the no-value of a bare return

@@ -60,8 +60,8 @@ jobs:
         run: ./target/release/crow test tests/layout/conformance.co
       - name: Layout engine's own example (the one place Crow builds its nodes, which types them)
         run: ./target/release/crow test src/modules/layout.co
-      - name: The standard modules written in Crow, tested on their own (math.nn, the HTTP client)
-        run: ./target/release/crow test src/modules/nn.co && ./target/release/crow test src/modules/core.co
+      - name: The standard modules written in Crow, tested on their own (math.nn, the HTTP client, the protocol and the readers)
+        run: ./target/release/crow test src/modules/nn.co && ./target/release/crow test src/modules/core.co && ./target/release/crow test src/modules/sys.co && ./target/release/crow test src/modules/io.co && ./target/release/crow test src/modules/frame.co && ./target/release/crow test src/modules/math.co
       - name: Layout example
         run: ./target/release/crow test examples/layout_dashboard.co
       - name: Parts (a page composed of modules with facts, derivations and views)

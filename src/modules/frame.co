@@ -1,0 +1,94 @@
+--- `use frame`: `load` and `save`, written in Crow on the sys layer
+--- (design rule 20) — a table as a frame from a file, a URL or an S3
+--- object, in the format its extension names (CSV, JSON records, Parquet)
+--- or, for a URL with no extension, what its server answered; and a
+--- frame written back as one. Each one's row in the builtin table
+--- (src/table.rs) is its contract; the parsing is the kernels'
+--- (`sys.frame_of_csv` and the rest). The tests are the module's own:
+--- `crow test src/modules/frame.co` (its tests build frames: `use frame`).
+use sys, frame
+
+--- bytes read as text, or the reason they are none
+fn as_text[path, data]
+    t = text[data]
+    if not t.ok
+        return error['cannot read \'`path`\': it is not text (UTF-8)', 'frame']
+    return t
+
+--- a table's bytes as a frame, in the format named
+fn framed[path, format, data]
+    if format eq 'parquet'
+        return frame_of_parquet[data]
+    t = as_text[path, data]
+    if not t.ok
+        return error[t.reason, 'frame']
+    if format eq 'json'
+        return frame_of_json[t]
+    return frame_of_csv[t]
+
+--- `load[path]`: a table as a frame — a file, a URL or an S3 object
+fn load[path]
+    return load_asked[path, map[], map[], 0.0]
+
+--- `load[url, headers = map[…], query = map[…], timeout = s]`: a URL's
+--- table, asked with the options
+fn load_asked[path, headers, query, timeout]
+    named = format_of[path]
+    if not remote[path]
+        asks = len[headers] gt 0 or len[query] gt 0 or timeout ne 0.0
+        if asks
+            return error['cannot read \'`path`\' with headers, a query or a timeout: they go with an http:// or https:// URL', 'frame']
+        data = file[path]
+        if not data.ok
+            return error[data.reason, 'frame']
+        return framed[path, named, data]
+    got = fetch[path, headers, query, timeout]
+    if not got.ok
+        return error[got.reason, 'frame']
+    format = named
+    if len[format] eq 0
+        media = ''
+        if has[got.headers, 'content-type']
+            media = got.headers['content-type']
+        format = format_sniffed[media, got.body]
+    return framed[path, format, got.body]
+
+--- `save[frame, path]`: a frame as a file or an S3 object, in the format
+--- its extension names (CSV otherwise)
+fn save[f, path]
+    format = format_of[path]
+    data = bytes['']
+    if format eq 'json'
+        data = bytes[frame_json[f]]
+    else
+        if format eq 'parquet'
+            made = frame_parquet[f]
+            if not made.ok
+                return error[made.reason, 'frame']
+            data = made
+        else
+            made = frame_csv[f]
+            if not made.ok
+                return error[made.reason, 'frame']
+            data = bytes[made]
+    if remote[path]
+        done = put[path, data]
+        if not done.ok
+            return error[done.reason, 'frame']
+        return ''
+    kept = store[path, data]
+    if not kept.ok
+        return error[kept.reason, 'frame']
+    return ''
+
+--- a table written and read back, in each format a file names
+test a_table_is_saved_and_loaded_in_its_formats[]
+    df = with[with[new[], 'sym', ['AAPL', 'MSFT']], 'qty', [100, 200]]
+    assert[save[df, 'frame-note.csv'].ok]
+    back = load['frame-note.csv']
+    assert[back.sym eq ['AAPL', 'MSFT'] and back.qty eq [100, 200]]
+    assert[save[df, 'frame-note.json'].ok]
+    again = load['frame-note.json']
+    assert[len[again] eq 2 and again.qty eq [100, 200]]
+    assert[not load['no-such.csv'].ok and load['no-such.csv'].kind eq 'frame']
+    assert[load_asked['frame-note.csv', map[], map[], 1.0].reason eq 'cannot read \'frame-note.csv\' with headers, a query or a timeout: they go with an http:// or https:// URL']

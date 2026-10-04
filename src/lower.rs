@@ -149,6 +149,11 @@ pub struct Lowerer {
     in_view: bool,
     /// The program imports web: `reader` is the page's signed-in reader
     web: bool,
+    /// The function being lowered: inside a standard module's function
+    /// written in Crow (inlined behind its prefix), the program's
+    /// functions are invisible — a local of the module's named like one
+    /// is indexed, not called
+    current_fn: String,
 }
 
 thread_local! {
@@ -193,7 +198,7 @@ pub fn lower_fragment(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
 
 impl Lowerer {
     fn new(web: bool) -> Self {
-        Lowerer { fns: BTreeMap::new(), structs: BTreeMap::new(), current_line: 0, in_view: false, web }
+        Lowerer { fns: BTreeMap::new(), structs: BTreeMap::new(), current_line: 0, in_view: false, web, current_fn: String::new() }
     }
 
     fn finish(mut self, stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
@@ -773,11 +778,14 @@ impl Lowerer {
                 // Element vocabulary is active only inside views
                 let saved = self.in_view;
                 self.in_view = *is_view;
+                let saved_fn = std::mem::replace(&mut self.current_fn, name.clone());
+                let body = self.lower_stmts(body);
+                self.current_fn = saved_fn;
                 let lowered = Stmt::FnDecl {
                     name: name.clone(),
                     params: params.clone(),
                     defaults: defaults.clone(),
-                    body: self.lower_stmts(body)?,
+                    body: body?,
                     is_view: *is_view,
                 };
                 self.in_view = saved;
@@ -1063,7 +1071,7 @@ impl Lowerer {
                         }
                         Expr::Call { callee: Box::new(callee), args: resolved }
                     }
-                    Some(name) if self.fns.contains_key(name) => {
+                    Some(name) if self.fns.contains_key(name) && (crate::modules::is_crow_fn(name) || !crate::modules::is_crow_fn(&self.current_fn)) => {
                         let sig = self.fns.get(name).unwrap().clone();
                         let resolved = self.resolve_args(name, &sig.params, &sig.defaults, args)?;
                         Expr::Call { callee: Box::new(callee), args: resolved }

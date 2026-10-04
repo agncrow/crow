@@ -31,6 +31,10 @@ cargo clippy --workspace --all-features
 ./target/release/crow test tests/layout/conformance.co
 ./target/release/crow test src/modules/nn.co
 ./target/release/crow test src/modules/core.co
+./target/release/crow test src/modules/sys.co
+./target/release/crow test src/modules/io.co
+./target/release/crow test src/modules/frame.co
+./target/release/crow test src/modules/math.co
 ```
 
 Use the release binary for the layout and site suites: the debug binary
@@ -55,6 +59,15 @@ steps on every push and must be green.
 - A debug build checks the IR of every program it lowers
   (`CROW_IR_VERIFY`, strict by default there; the harnesses set it for the
   release binary). A finding is a bug in the lowering, not in the program.
+- A standard module written in Crow (`src/modules/*.co`) is read in its own
+  scope: inside its inlined functions the program's names are invisible
+  (`calls_fn` in lower_ir.rs, lower.rs, checks.rs and type_infer/calls.rs).
+  A new resolution site that consults `ctx.functions` by a bare name needs
+  the same guard, or a module local named like a program function becomes
+  a call. The inliner keeps only the rows a program reaches (by name), and
+  the modules' scopes are read from the program's own functions
+  (`crow_modules_carried`), never from whatever was inlined last on the
+  thread: a harness lowers a part's tests and the app in turn.
 - `crow_runtime`, `crow_db` and `crow_web` deny panics under clippy: a
   runtime function answers its reason, and a failure no value can carry
   stops through `crow_runtime::stops` (docs/bug-classes.md).

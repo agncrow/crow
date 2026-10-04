@@ -21,6 +21,16 @@ pub(crate) struct DeriveScan {
 }
 
 impl TypeContext {
+    /// Whether a name is a function the function being read can call: one
+    /// of the program's — or, inside a standard module's function written
+    /// in Crow and inlined, one of the module's own (the inliner prefixes
+    /// them; a row's is called bare and is the row's). The program's are
+    /// invisible there, so a local of the module's named like one is its
+    /// local (`lines[0]` in `sys.read_answer`, in a program with a `lines`).
+    pub(crate) fn calls_fn(&self, name: &str) -> bool {
+        self.functions.contains_key(name) && (crate::modules::is_crow_fn(name) || !self.current_fn_name.as_deref().is_some_and(crate::modules::is_crow_fn))
+    }
+
     /// Whether a call's arguments' types say anything of its callee: a call
     /// by name, or a call of a function or record a module prefixes.
     pub(crate) fn call_says_of_callee(&self, callee: &Expr) -> bool {
@@ -188,8 +198,11 @@ impl TypeContext {
                 }
             }
 
-            // Is it a function call?
-            if self.functions.contains_key(name) {
+            // Is it a function call? (of a function the caller can call:
+            // inside a standard module's function, inlined, a program's
+            // function is invisible — a local of the module's named like
+            // one is indexed, not called)
+            if self.calls_fn(name) {
                 let sig = self.functions.get(name).unwrap().clone();
                 let mut new_params = sig.params.clone();
                 let mut normalized_sig: Vec<CrowType> = Vec::with_capacity(arg_types.len());

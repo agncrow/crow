@@ -217,21 +217,22 @@ fn runtime_features(source: &str) -> Vec<String> {
     emitted.runtime_features.into_iter().collect()
 }
 
-/// A build asks for network sources and Parquet only where the program's
-/// paths may name them: a local CSV asks for neither, a local Parquet file
-/// for Parquet, a URL naming JSON for the network alone, an extensionless
-/// URL for both (its server may answer Parquet), and a path the program
-/// computes for both
+/// A build asks for Parquet only where the program's paths may name it (a
+/// URL or an S3 object needs nothing built in: the protocol is written in
+/// Crow): a local CSV asks for nothing, a local Parquet file for Parquet, a
+/// URL naming JSON for nothing, an extensionless URL for Parquet (its
+/// server may answer one), and a path the program computes for Parquet
 #[test]
 fn a_build_asks_for_what_its_paths_may_name() {
     assert!(runtime_features("use frame\ndf = load['data.csv']\nlog[len[df]]\n").is_empty());
     assert!(runtime_features("t = read['notes/a.txt']\nlog[t]\n").is_empty());
     assert_eq!(runtime_features("use frame\ndf = load['bars.parquet']\nlog[len[df]]\n"), vec!["parquet"]);
-    assert_eq!(runtime_features("use frame\ns = 'AAPL'\ndf = load['https://api.test/`s`.json']\nlog[len[df]]\n"), vec!["net"]);
-    assert_eq!(runtime_features("use frame\ndf = load['https://api.test/v2/aggs']\nlog[len[df]]\n"), vec!["net", "parquet"]);
+    assert!(runtime_features("use frame\ns = 'AAPL'\ndf = load['https://api.test/`s`.json']\nlog[len[df]]\n").is_empty());
+    assert_eq!(runtime_features("use frame\ndf = load['https://api.test/v2/aggs']\nlog[len[df]]\n"), vec!["parquet"]);
     assert_eq!(runtime_features("use frame\nd = 'x'\ndf = load['data/`d`.csv']\nlog[len[df]]\n").len(), 0);
-    assert_eq!(runtime_features("use frame\np = args[][0]\ndf = load[p]\nlog[len[df]]\n"), vec!["net", "parquet"]);
-    assert_eq!(runtime_features("p = args[][0]\nt = read[p]\nlog[t]\n"), vec!["net"]);
+    assert_eq!(runtime_features("use frame\np = args[][0]\ndf = load[p]\nlog[len[df]]\n"), vec!["parquet"]);
+    assert!(runtime_features("p = args[][0]\nt = read[p]\nlog[t]\n").is_empty());
+    assert!(runtime_features("r = request['https://api.test/v2/aggs']\nlog[r.status]\n").is_empty(), "the protocol is written in Crow: nothing to build in");
 }
 
 #[test]

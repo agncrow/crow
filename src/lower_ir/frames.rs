@@ -133,7 +133,7 @@ impl<'a> Lowerer<'a> {
     /// its module, when the call is qualified, and its name.
     fn builtin_named(&self, callee: &A) -> Option<(Option<String>, String)> {
         match callee {
-            A::Ident(n) if !self.ctx.functions.contains_key(n) && !self.ctx.specializations.contains_key(n) => Some((None, n.clone())),
+            A::Ident(n) if !self.calls_fn(n) && !self.ctx.specializations.contains_key(n) => Some((None, n.clone())),
             A::FieldAccess { object, field } => match object.as_ref() {
                 A::Ident(m) if self.is_module(m) && !self.declared(m) => Some((Some(self.ctx.module_aliases.get(m).cloned().unwrap_or_else(|| m.clone())), field.clone())),
                 _ => None,

@@ -7,7 +7,7 @@ use crate::modules::CrowModule;
 
 pub struct SysModule;
 
-pub(crate) const SYS_FUNCTIONS: &[&str] = &["open", "send", "recv", "close", "bytes", "text", "slice", "find", "concat", "byte", "gather", "file", "store", "random", "hex", "hash", "hmac", "reply"];
+pub(crate) const SYS_FUNCTIONS: &[&str] = &["open", "send", "recv", "close", "bytes", "text", "slice", "find", "concat", "byte", "gather", "file", "store", "random", "hex", "hash", "hmac", "reply", "answer", "csv_rows", "frame_of_csv", "frame_of_json", "frame_of_parquet", "frame_csv", "frame_json", "frame_parquet", "tensor_of_frame", "exchange", "fetch", "put", "format_of", "format_sniffed", "remote", "with_query", "redirected"];
 
 impl CrowModule for SysModule {
     fn name(&self) -> &str { "sys" }

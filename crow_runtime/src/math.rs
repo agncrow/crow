@@ -127,27 +127,6 @@ pub fn exponential(lambda: f64, sizes: &[i64]) -> Result<CrowTensor, String> {
     CrowTensor::exponential(sample_shape("exponential", sizes)?, lambda)
 }
 
-/// `math.load[path]`: a table of numbers as a matrix, a row per line — a
-/// CSV file, or a URL, an S3 object, JSON records or Parquet, read as
-/// `frame.load` reads them.
-pub fn load(path: &str) -> Result<CrowTensor, String> {
-    use crate::sources::{self, Format};
-    let (data, nrows, ncols) = if sources::is_remote(path) || matches!(sources::format_of(path), Some(Format::Json | Format::Parquet)) {
-        crate::frame::frame_to_tensor_data(&crate::frames::load(path)?, None)?
-    } else {
-        crate::io::load_csv_numeric(path)?
-    };
-    Ok(CrowTensor::from_vec(data, vec![nrows, ncols]))
-}
-
-/// `math.load[url, headers = map[…], query = map[…], timeout = s]`: a
-/// URL's table of numbers, asked with the options.
-pub fn load_asked(path: &str, headers: &std::collections::BTreeMap<String, String>, query: &std::collections::BTreeMap<String, String>, timeout: f64) -> Result<CrowTensor, String> {
-    let frame = crate::frames::load_asked(path, headers, query, timeout)?;
-    let (data, nrows, ncols) = crate::frame::frame_to_tensor_data(&frame, None)?;
-    Ok(CrowTensor::from_vec(data, vec![nrows, ncols]))
-}
-
 // ── linear algebra ──────────────────────────────────────────────────
 // The kernels take a matrix of the right shape; these check it, so a
 // vector, a rank-3 tensor or a rectangle where a square is needed is the

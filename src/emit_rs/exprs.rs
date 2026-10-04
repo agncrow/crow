@@ -929,7 +929,7 @@ impl Emitter {
             if let CrowType::Struct(sname) = inner.as_ref() {
                 let is_copy = self.structs.get(sname).and_then(|s| s.fields.iter().find(|(f, _)| f == field).map(|(_, t)| matches!(t, Ty::Int | Ty::Float | Ty::Bool))).unwrap_or(false);
                 let suffix = if is_copy { "" } else { ".clone()" };
-                if matches!(sname.as_str(), "CrowShell" | "CrowFindResult" | "CrowReply") {
+                if matches!(sname.as_str(), "CrowShell" | "CrowFindResult" | "CrowReply" | "CrowAnswer") {
                     let suffix = if field == "status" { "" } else { ".clone()" };
                     return format!("{}.value.{}{}", obj, field, suffix);
                 }
@@ -972,7 +972,7 @@ impl Emitter {
             return format!("crow_runtime::core::map_key(&{}, \"{}\").unwrap_or_else(|e| crow_stop({}, e))", obj, field, self.line_now());
         }
         if let CrowType::Struct(sname) = &oty {
-            if matches!(sname.as_str(), "CrowShell" | "CrowFindResult" | "CrowElapsed" | "CrowReply") {
+            if matches!(sname.as_str(), "CrowShell" | "CrowFindResult" | "CrowElapsed" | "CrowReply" | "CrowAnswer") {
                 return format!("{}.{}", obj, field);
             }
         }
@@ -1443,14 +1443,22 @@ impl Emitter {
         }
     }
 
-    /// A compiled program reads a URL or an S3 object, or a Parquet table,
-    /// only where it is built to (crow_runtime's `net` and `parquet`
-    /// features, crow_runtime::sources): a builtin that reads or writes a
-    /// path asks for them, unless its path is text that shows it names
-    /// neither — a literal, or an interpolation whose first text is a
-    /// local path and whose last text an extension other than Parquet's.
+    /// A compiled program reads a Parquet table only where it is built to
+    /// (crow_runtime's `parquet` feature, crow_runtime::sources): a builtin
+    /// that reads or writes a table asks for it, unless its path is text
+    /// that shows it names no Parquet — a literal, or an interpolation
+    /// whose first text is a local path and whose last text an extension
+    /// other than Parquet's (a remote table's server may answer one). The
+    /// layer's own Parquet kernels, called as themselves (a module's test),
+    /// ask too; inside a module's function, inlined, the program's call
+    /// has decided. A URL or an S3 object needs nothing built in: the
+    /// protocol is written in Crow.
     fn note_sources(&mut self, name: &str, args: &[Expr]) {
         use crow_runtime::sources::{format_of, is_remote, Format};
+        if matches!(name, "frame_parquet" | "frame_of_parquet") && !self.in_crow_fn {
+            self.runtime_features.insert("parquet".to_string());
+            return;
+        }
         let at = match name {
             "read" | "write" | "lines" | "csv" | "load" => 0,
             "save" => 1,
@@ -1478,9 +1486,6 @@ impl Emitter {
             Some(None) => remote,
             None => true,
         };
-        if remote {
-            self.runtime_features.insert("net".to_string());
-        }
         if tables && parquet {
             self.runtime_features.insert("parquet".to_string());
         }
@@ -1499,6 +1504,20 @@ impl Emitter {
             }
             _ => unreachable!(),
         };
+        // a builtin written in Crow that the lowering left to the values
+        // (an argument's kind unknown to it: `frame.load[upload.path]`
+        // from a map's value) is its row, picked here as the interpreter
+        // picks it from the values
+        if let Target::Module(m, f) = &target {
+            if let Some(row) = self.crow_row_left(m, f, &args) {
+                target = Target::Row(row);
+            }
+        }
+        if let Target::Runtime(n) = &target {
+            if let Some(row) = self.crow_row_left("", n, &args) {
+                target = Target::Row(row);
+            }
+        }
         // a qualified call to a registry module is its bare call, pinned
         let mut pinned: Option<String> = None;
         if let Target::Module(m, f) = &target {
@@ -1529,13 +1548,24 @@ impl Emitter {
         let from_module = pinned.is_some();
         let saved_pin = std::mem::replace(&mut self.pinned_module, pinned.or(current_pin));
 
-        let user = matches!(target, Target::User(_));
-        let ref_flags: Vec<bool> = match &target {
-            Target::User(n) => match (self.by_ref_params.get(n), self.fns.get(n)) {
+        // (a builtin written in Crow is the program's function its body
+        // is inlined as: its arguments are handed as a function's are — a
+        // local read cloned, a parameter it borrows referenced)
+        let crow_fn: Option<String> = match &target {
+            Target::Row(row) if row.is_crow() => Some(crate::table::crow_fn_name(row)),
+            _ => None,
+        };
+        let callee_fn: Option<&str> = match &target {
+            Target::User(n) => Some(n.as_str()),
+            _ => crow_fn.as_deref(),
+        };
+        let user = callee_fn.is_some();
+        let ref_flags: Vec<bool> = match callee_fn {
+            Some(n) => match (self.by_ref_params.get(n), self.fns.get(n)) {
                 (Some(set), Some(f)) => f.params.iter().map(|(p, _)| set.contains(p)).collect(),
                 _ => vec![false; raw_args.len()],
             },
-            _ => vec![false; raw_args.len()],
+            None => vec![false; raw_args.len()],
         };
         let mut arg_strs: Vec<String> = Vec::with_capacity(raw_args.len());
         for (i, a) in raw_args.iter().enumerate() {
@@ -1702,6 +1732,17 @@ impl Emitter {
         crate::table::core_row(name, &kinds)
     }
 
+    /// A builtin written in Crow the lowering left to the values (an
+    /// argument's kind unknown to it): its row by the arguments' types
+    /// here, or, where they still say nothing, by their count — one row
+    /// of the name takes that many. The module is the whole path before
+    /// the name (`math.nn.relu`).
+    fn crow_row_left(&self, m: &str, f: &str, args: &[Expr]) -> Option<&'static crate::table::Row> {
+        let (m, f) = format!("{}.{}", m, f).rsplit_once('.').map(|(a, b)| (a.to_string(), b.to_string()))?;
+        let kinds: Vec<crate::table::Arg> = args.iter().map(|x| crate::table::Arg::of_type(&self.tt(x))).collect();
+        crate::table::crow_row(&m, &f, &kinds).or_else(|| crate::table::ROWS.iter().find(|r| r.is_crow() && r.module == m && r.name == f && r.params.len() == args.len()))
+    }
+
     /// A call, by what it names.
     fn dispatch(&mut self, target: &Target, name: &str, args: &[Expr], arg_strs: &[String], whole: &Expr) -> String {
         if self.emitting_traced {
@@ -1716,8 +1757,17 @@ impl Emitter {
                 self.builtin(name, args, arg_strs, whole).unwrap_or_else(|| format!("{}({})", name, arg_strs.join(", ")))
             }
             // a builtin written in Crow: the program's function its body is
-            // inlined as (an effect's row reaches here too)
-            Target::Row(row) if row.is_crow() => self.user_call(&crate::table::crow_fn_name(row), args, arg_strs.to_vec()),
+            // inlined as (an effect's row reaches here too); a reader's
+            // value carries the moment it was read, as a Rust reader's does
+            Target::Row(row) if row.is_crow() => {
+                let call = self.user_call(&crate::table::crow_fn_name(row), args, arg_strs.to_vec());
+                if crate::table::READERS.contains(&row.name) && matches!(row.fails, crate::table::Fails::Value(_)) {
+                    self.needs_crow_runtime = true;
+                    format!("{{ let mut _r = {}; if _r.ok {{ _r.captured = crow_runtime::moments::now(); }} _r }}", call)
+                } else {
+                    call
+                }
+            }
             Target::Row(row) if row.module.is_empty() => self.table_call(row, args, arg_strs, whole),
             Target::Row(row) => self.module_row_call(row, args, arg_strs),
             Target::User(n) => self.user_call(n, args, arg_strs.to_vec()),
@@ -1894,8 +1944,6 @@ impl Emitter {
         }
         if row.ret == Kind::Reply {
             self.needs_reply_struct = true;
-            // a request reaches the network: the runtime's client comes with
-            self.runtime_features.insert("net".to_string());
         }
         // a parsed JSON value is serde's, which the program then names
         if row.ret == Kind::Json || row.ret == Kind::JsonList || row.params.contains(&Kind::Json) {

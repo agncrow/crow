@@ -43,12 +43,14 @@ impl TypeContext {
         // interpreter's views return strings, and compiled ones render to
         // one wherever a string is expected (a list, a module argument) —
         // and markup, never text, where it is placed as a child.
-        if self.views.contains(name) {
+        if self.views.contains(name) && self.calls_fn(name) {
             return CrowType::Markup;
         }
         // User-defined function call (specialization-aware: a monomorphized
-        // callee's return type depends on this call's argument types)
-        if let Some(sig) = self.functions.get(name) {
+        // callee's return type depends on this call's argument types); a
+        // program's function is invisible inside a standard module's (sys's
+        // `answer[…]` is its row, whatever a program's `fn answer` answers)
+        if let Some(sig) = self.functions.get(name).filter(|_| self.calls_fn(name)) {
             if let Some(mangled) = self.specialization_for(name, full) {
                 if let Some(clone_sig) = self.functions.get(&mangled) {
                     return clone_sig.return_type.clone();
@@ -442,7 +444,7 @@ impl TypeContext {
             return self.functions.get(name).map(|s| s.return_type.clone()).unwrap_or(CrowType::Unknown);
         }
         // Check if it's a known function name — return as CrowType::Fn
-        if let Some(sig) = self.functions.get(name) {
+        if let Some(sig) = self.functions.get(name).filter(|_| self.calls_fn(name)) {
             let param_types: Vec<CrowType> = sig.params.iter().map(|(_, t)| t.clone()).collect();
             return CrowType::Fn(param_types, Box::new(sig.return_type.clone()));
         }
@@ -590,7 +592,7 @@ impl TypeContext {
         // (an element's name is the element inside a view, and a function
         // of the program's elsewhere: `h1[x]` outside a view hands a failed
         // `x` on as any call does — the fuzzer's helpers are named h1, h2)
-        let element = crate::lower::UI_ELEMENTS.contains(&name) && (self.in_view || !self.functions.contains_key(name));
+        let element = crate::lower::UI_ELEMENTS.contains(&name) && (self.in_view || !self.calls_fn(name));
         let skip = matches!(name, "log" | "assert" | "type" | "cpu" | "gpu" | "error" | "table" | "chart" | "__known")
             || self.structs.contains_key(name)
             || element

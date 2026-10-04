@@ -38,8 +38,8 @@ pub struct Emitted {
     pub needs_crow_db: bool,
     pub web_features: BTreeSet<String>,
     pub db_features: BTreeSet<String>,
-    /// crow_runtime's features the program's paths may need (`net`,
-    /// `parquet`: crow_runtime::sources)
+    /// crow_runtime's feature the program's paths may need (`parquet`:
+    /// crow_runtime::sources)
     pub runtime_features: BTreeSet<String>,
 }
 

@@ -1,0 +1,625 @@
+--- The protocol the HTTP client and the readers stand on, written in Crow
+--- over the sys primitives (design rule 20): one request sent and its
+--- answer read (`exchange`), a remote source read with a reader's options
+--- or an S3 object signed with the environment's credentials (`fetch`),
+--- bytes written to an S3 object (`put`), and a table's format by its
+--- path or by what a server answered. Each is a row of the sys module
+--- (src/table.rs) whose body is here; a program never sees them — it sees
+--- `request`, `read`, `load` and the rest, written on them. The tests are
+--- the module's own: `crow test src/modules/sys.co`.
+use sys
+
+--- the URL's parts: behind TLS or not, the host, the port, and the path
+--- with its query (a fragment is not sent)
+struct Url [tls, host, port, path]
+
+--- whether a path names a remote source: a URL, or an S3 object
+fn remote[path]
+    return starts[path, 'http://'] or starts[path, 'https://'] or starts[path, 's3://']
+
+--- the value of a decimal number's digits, or -1 where a character is none
+fn decimal[s]
+    digits = '0123456789'
+    t = trim[s]
+    if len[t] eq 0
+        return -1
+    value = 0
+    for i in range[len[t]]
+        c = slice[t, i, i + 1]
+        found = -1
+        for d in range[10]
+            if slice[digits, d, d + 1] eq c
+                found = d
+        if found lt 0
+            return -1
+        value = value * 10 + found
+    return value
+
+--- the value of a hex number's digits, or -1 where a character is none
+fn hex_value[s]
+    digits = '0123456789abcdef'
+    t = lower[trim[s]]
+    if len[t] eq 0
+        return -1
+    value = 0
+    for i in range[len[t]]
+        c = slice[t, i, i + 1]
+        found = -1
+        for d in range[16]
+            if slice[digits, d, d + 1] eq c
+                found = d
+        if found lt 0
+            return -1
+        value = value * 16 + found
+    return value
+
+--- a URL taken apart, or the reason it is not an http(s) one
+fn parse_url[url]
+    tls = starts[url, 'https://']
+    plain = starts[url, 'http://']
+    if not tls and not plain
+        return error['\'`url`\' is not an http:// or https:// URL', 'sys']
+    rest = ''
+    if tls
+        rest = slice[url, 8, len[url]]
+    else
+        rest = slice[url, 7, len[url]]
+    rest = split[rest, '#'][0]
+    hostport = split[rest, '/'][0]
+    path = slice[rest, len[hostport], len[rest]]
+    if len[path] eq 0
+        path = '/'
+    host = hostport
+    port = 80
+    if tls
+        port = 443
+    named = split[hostport, ':']
+    if len[named] eq 2
+        host = named[0]
+        port = decimal[named[1]]
+        if port lt 0
+            return error['\'`hostport`\' is no host and port', 'sys']
+    if len[host] eq 0
+        return error['\'`url`\' names no host', 'sys']
+    return Url[tls, host, port, path]
+
+--- the host as a request's `host` header names it: with its port, where
+--- the port is not the scheme's own
+fn host_line[parts]
+    if (parts.tls and parts.port ne 443) or (not parts.tls and parts.port ne 80)
+        return '`parts.host`:`parts.port`'
+    return parts.host
+
+--- how long the next read may wait: what is left of the deadline
+fn left[deadline]
+    return max[deadline - now[], 0.001]
+
+--- whether a connection's failure was the wait running out (the sys
+--- primitives' words for it)
+fn timed_out[reason]
+    waited = starts[reason, 'no data from']
+    connecting = starts[reason, 'cannot connect'] and (len[split[reason, 'timed out']] gt 1)
+    return waited or connecting
+
+--- the reason a request got no answer, in the client's words
+fn unanswered[reason, timeout]
+    if timed_out[reason]
+        if timeout gt 0.0
+            return 'no answer in `timeout` s'
+        return 'no answer in time'
+    return reason
+
+--- the bytes read from a connection until it closes, the deadline kept
+fn read_rest[s, deadline, first]
+    chunks = [first]
+    while true
+        got = recv[s, 65536, left[deadline]]
+        if not got.ok
+            return error[got.reason, 'sys']
+        if len[got] eq 0
+            break
+        chunks = push[chunks, got]
+    return gather[chunks]
+
+--- the bytes read until the buffer holds `n`, the deadline kept
+fn read_until[s, deadline, buffer, n]
+    chunks = [buffer]
+    have = len[buffer]
+    while have lt n
+        got = recv[s, 65536, left[deadline]]
+        if not got.ok
+            return error[got.reason, 'sys']
+        if len[got] eq 0
+            break
+        chunks = push[chunks, got]
+        have = have + len[got]
+    return gather[chunks]
+
+--- a chunked body decoded: each chunk's size in hex on its own line, the
+--- chunk, a line break, and a last chunk of size 0
+fn dechunked[s, deadline, buffer]
+    parts = []
+    rest = buffer
+    while true
+        line_end = find[rest, bytes['\r\n']]
+        while line_end lt 0
+            more = recv[s, 65536, left[deadline]]
+            if not more.ok
+                return error[more.reason, 'sys']
+            if len[more] eq 0
+                return error['the server closed the connection mid-chunk', 'sys']
+            rest = concat[rest, more]
+            line_end = find[rest, bytes['\r\n']]
+        size_line = text[slice[rest, 0, line_end], '�']
+        size = hex_value[split[size_line, ';'][0]]
+        if size lt 0
+            return error['the server sent a chunk size that is none: \'`size_line`\'', 'sys']
+        rest = slice[rest, line_end + 2, len[rest]]
+        if size eq 0
+            break
+        filled = read_until[s, deadline, rest, size + 2]
+        if not filled.ok
+            return error[filled.reason, 'sys']
+        rest = filled
+        if len[rest] lt size + 2
+            return error['the server closed the connection mid-chunk', 'sys']
+        parts = push[parts, slice[rest, 0, size]]
+        rest = slice[rest, size + 2, len[rest]]
+    return gather[parts]
+
+--- a connection's answer read whole: the head, then the body as the
+--- headers say it comes
+fn read_answer[s, deadline, method]
+    buffer = bytes['']
+    cut = find[buffer, bytes['\r\n\r\n']]
+    while cut lt 0
+        got = recv[s, 65536, left[deadline]]
+        if not got.ok
+            return error[got.reason, 'sys']
+        if len[got] eq 0
+            return error['the server closed the connection before answering', 'sys']
+        buffer = concat[buffer, got]
+        cut = find[buffer, bytes['\r\n\r\n']]
+    head = text[slice[buffer, 0, cut], '�']
+    rest = slice[buffer, cut + 4, len[buffer]]
+    lines = split[head, '\r\n']
+    status_line = lines[0]
+    words = split[status_line, ' ']
+    status = -1
+    phrase = ''
+    if len[words] gte 2
+        status = decimal[words[1]]
+        phrase = join[slice[words, 2, len[words]], ' ']
+    if status lt 0
+        return error['the server\'s status line is none: \'`status_line`\'', 'sys']
+    headers = map[]
+    for line in slice[lines, 1, len[lines]]
+        pair = split[line, ':']
+        if len[pair] gte 2
+            name = lower[trim[pair[0]]]
+            value = trim[slice[line, len[pair[0]] + 1, len[line]]]
+            if has[headers, name]
+                before = headers[name]
+                headers = set[headers, name, '`before`, `value`']
+            else
+                headers = set[headers, name, value]
+    body = bytes['']
+    bodiless = method eq 'HEAD' or status eq 204 or status eq 304 or (status gte 100 and status lt 200)
+    if not bodiless
+        chunked = false
+        if has[headers, 'transfer-encoding']
+            chunked = len[split[lower[headers['transfer-encoding']], 'chunked']] gt 1
+        if chunked
+            decoded = dechunked[s, deadline, rest]
+            if not decoded.ok
+                return error[decoded.reason, 'sys']
+            body = decoded
+        else
+            if has[headers, 'content-length']
+                length = decimal[headers['content-length']]
+                if length lt 0
+                    said = headers['content-length']
+                    return error['the server\'s content-length is none: \'`said`\'', 'sys']
+                filled = read_until[s, deadline, rest, length]
+                if not filled.ok
+                    return error[filled.reason, 'sys']
+                body = slice[filled, 0, length]
+            else
+                whole = read_rest[s, deadline, rest]
+                if not whole.ok
+                    return error[whole.reason, 'sys']
+                body = whole
+    return answer[status, phrase, headers, body]
+
+--- `exchange[url, method, lines, body, timeout]`: one request sent — the
+--- method, the URL's path, `host` and `connection: close`, the body's
+--- length, then the header lines given — and its answer read, redirects
+--- not followed. A timeout of 0 is thirty seconds to connect and ten
+--- minutes in all. The reason where no answer came: `no answer in 5 s`,
+--- `no answer in time`, or the connection's own.
+fn exchange[url, method, head_lines, body_bytes, timeout]
+    parts = parse_url[url]
+    if not parts.ok
+        return error[parts.reason, 'sys']
+    connect = timeout
+    total = timeout
+    if timeout eq 0.0
+        connect = 30.0
+        total = 600.0
+    deadline = now[] + total
+    s = open[parts.host, parts.port, parts.tls, connect]
+    if not s.ok
+        return error[unanswered[s.reason, timeout], 'sys']
+    hostline = host_line[parts]
+    size = len[body_bytes]
+    head = '`method` `parts.path` HTTP/1.1\r\nhost: `hostline`\r\nconnection: close\r\ncontent-length: `size`\r\n'
+    for line in head_lines
+        head = '`head``line`\r\n'
+    sent = send[s, concat[bytes['`head`\r\n'], body_bytes]]
+    if not sent.ok
+        close[s]
+        return error[unanswered[sent.reason, timeout], 'sys']
+    got = read_answer[s, deadline, method]
+    close[s]
+    if not got.ok
+        return error[unanswered[got.reason, timeout], 'sys']
+    return got
+
+--- where a redirect sends the request: the location, made absolute
+fn redirected[from, location]
+    if starts[location, 'http://'] or starts[location, 'https://']
+        return location
+    parts = parse_url[from]
+    if not parts.ok
+        return from
+    scheme = 'http://'
+    if parts.tls
+        scheme = 'https://'
+    hostport = host_line[parts]
+    if starts[location, '/']
+        return '`scheme``hostport``location`'
+    return '`scheme``hostport`/`location`'
+
+--- the URL with a query's pairs added, each name and value URL-encoded,
+--- after the `?` it has or one it is given
+fn with_query[url, pairs_asked]
+    if len[pairs_asked] eq 0
+        return url
+    base = split[url, '#'][0]
+    fragment = slice[url, len[base], len[url]]
+    pairs = []
+    for k in keys[pairs_asked]
+        ek = encode[k, 'url']
+        ev = encode[pairs_asked[k], 'url']
+        pairs = push[pairs, '`ek`=`ev`']
+    joiner = '?'
+    if len[split[base, '?']] gt 1
+        joiner = '&'
+        if ends[base, '?'] or ends[base, '&']
+            joiner = ''
+    joined = join[pairs, '&']
+    return '`base``joiner``joined``fragment`'
+
+--- what a server said in an XML body's <Message>, as S3 says why
+fn xml_message[body]
+    t = text[body, '�']
+    pieces = split[t, '<Message>']
+    if len[pieces] lt 2
+        return ''
+    return split[pieces[1], '</Message>'][0]
+
+--- the reason a server's answer was not a success: its status and
+--- phrase, and the message an XML body carries
+fn refused[verb, path, got]
+    why = xml_message[got.body]
+    said = '`got.status`'
+    if len[got.phrase] gt 0
+        said = '`got.status` `got.phrase`'
+    if len[why] gt 0
+        return 'cannot `verb` \'`path`\': the server answered `said` — `why`'
+    return 'cannot `verb` \'`path`\': the server answered `said`'
+
+--- a GET answered, redirects followed as a browser follows them, up to
+--- ten; the answer whatever its status
+fn get[url, lines, timeout]
+    full = url
+    got = exchange[full, 'GET', lines, bytes[''], timeout]
+    hops = 0
+    while hops lt 10
+        if not got.ok
+            break
+        code = got.status
+        moved = code eq 301 or code eq 302 or code eq 303 or code eq 307 or code eq 308
+        if not moved or not has[got.headers, 'location']
+            break
+        full = redirected[full, got.headers['location']]
+        hops = hops + 1
+        got = exchange[full, 'GET', lines, bytes[''], timeout]
+    return got
+
+--- ── S3: an object read or written, signed with the environment's credentials ──
+
+--- a variable of the environment, or empty where it is not set or empty
+fn setting[name]
+    v = env[name, '']
+    if not v.ok
+        return ''
+    return v
+
+--- a key as SigV4 reads it in a URI: letters, digits, `-_.~` and `/`
+--- kept, every other byte percent-encoded in upper case
+fn uri_encode[key]
+    b = bytes[key]
+    out = ''
+    for i in range[len[b]]
+        c = byte[b, i]
+        keep = (c gte 48 and c lte 57) or (c gte 65 and c lte 90) or (c gte 97 and c lte 122) or c eq 45 or c eq 95 or c eq 46 or c eq 126 or c eq 47
+        if keep
+            out = '`out``text[slice[b, i, i + 1]]`'
+        else
+            code = upper[hex[slice[b, i, i + 1]]]
+            out = '`out`%`code`'
+    return out
+
+--- a number as two digits, or four
+fn padded[n, width]
+    s = '`n`'
+    while len[s] lt width
+        s = '0`s`'
+    return s
+
+--- the civil date and time of a moment, as SigV4's `x-amz-date` spells
+--- it (`20130524T000000Z`)
+fn amz_date[secs]
+    days = secs / 86400
+    rem = secs % 86400
+    z = days + 719468
+    era = z / 146097
+    doe = z - era * 146097
+    yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+    y = yoe + era * 400
+    doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    mp = (5 * doy + 2) / 153
+    d = doy - (153 * mp + 2) / 5 + 1
+    m = mp + 3
+    if mp gte 10
+        m = mp - 9
+    if m lte 2
+        y = y + 1
+    year = padded[y, 4]
+    month = padded[m, 2]
+    day = padded[d, 2]
+    hour = padded[rem / 3600, 2]
+    minute = padded[rem % 3600 / 60, 2]
+    second = padded[rem % 60, 2]
+    return '`year``month``day`T`hour``minute``second`Z'
+
+--- a request's SigV4 headers for S3 (AWS's Signature Version 4): `host`,
+--- the payload's digest, the date and the extra header lines (a session
+--- token's among them) signed with a key derived from the secret, the
+--- day, the region and the service. The header lines to send,
+--- `authorization` last (`host` is the request's own).
+fn sign_s3[method, host, uri, extra, payload_hash, date, region, key_id, secret]
+    names = ['host', 'x-amz-content-sha256', 'x-amz-date']
+    given = map[host = host]
+    given = set[given, 'x-amz-content-sha256', payload_hash]
+    given = set[given, 'x-amz-date', date]
+    for line in extra
+        pair = split[line, ':']
+        n = lower[trim[pair[0]]]
+        names = push[names, n]
+        given = set[given, n, trim[slice[line, len[pair[0]] + 1, len[line]]]]
+    names = sort[names]
+    canonical_headers = ''
+    for n in names
+        canonical_headers = '`canonical_headers``n`:`given[n]`\n'
+    signed = join[names, ';']
+    canonical = '`method`\n`uri`\n\n`canonical_headers`\n`signed`\n`payload_hash`'
+    day = slice[date, 0, 8]
+    scope = '`day`/`region`/s3/aws4_request'
+    canonical_hash = hash[bytes[canonical], 'sha256']
+    to_sign = 'AWS4-HMAC-SHA256\n`date`\n`scope`\n`canonical_hash`'
+    k_date = hmac[bytes['AWS4`secret`'], bytes[day], 'sha256']
+    k_region = hmac[k_date, bytes[region], 'sha256']
+    k_service = hmac[k_region, bytes['s3'], 'sha256']
+    k_signing = hmac[k_service, bytes['aws4_request'], 'sha256']
+    signature = hex[hmac[k_signing, bytes[to_sign], 'sha256']]
+    lines = []
+    for n in names
+        if n ne 'host'
+            lines = push[lines, '`n`: `given[n]`']
+    lines = push[lines, 'authorization: AWS4-HMAC-SHA256 Credential=`key_id`/`scope`, SignedHeaders=`signed`, Signature=`signature`']
+    return lines
+
+--- an S3 object read (`GET`) or written (`PUT`): virtual-hosted on AWS
+--- (`bucket.s3.region.amazonaws.com`), path-style at an endpoint the
+--- environment names for an S3-compatible store (`AWS_ENDPOINT_URL`:
+--- MinIO, R2, …); signed with the environment's credentials, unsigned
+--- without them. The answer whatever its status.
+fn s3[path, method, payload]
+    verb = 'read'
+    if method eq 'PUT'
+        verb = 'write'
+    rest = slice[path, 5, len[path]]
+    bucket = split[rest, '/'][0]
+    key = slice[rest, len[bucket] + 1, len[rest]]
+    if len[bucket] eq 0 or len[key] eq 0 or len[split[rest, '/']] lt 2
+        return error['cannot `verb` \'`path`\': an S3 path is s3://bucket/key', 'sys']
+    region = setting['AWS_REGION']
+    if len[region] eq 0
+        region = setting['AWS_DEFAULT_REGION']
+    if len[region] eq 0
+        region = 'us-east-1'
+    endpoint = setting['AWS_ENDPOINT_URL_S3']
+    if len[endpoint] eq 0
+        endpoint = setting['AWS_ENDPOINT_URL']
+    host = ''
+    uri = ''
+    url = ''
+    if len[endpoint] gt 0
+        while ends[endpoint, '/']
+            endpoint = slice[endpoint, 0, len[endpoint] - 1]
+        after = split[endpoint, '://']
+        host = split[after[len[after] - 1], '/'][0]
+        eb = uri_encode[bucket]
+        ek = uri_encode[key]
+        uri = '/`eb`/`ek`'
+        url = '`endpoint``uri`'
+    else
+        host = '`bucket`.s3.`region`.amazonaws.com'
+        ek = uri_encode[key]
+        uri = '/`ek`'
+        url = 'https://`host``uri`'
+    payload_hash = hash[payload, 'sha256']
+    key_id = setting['AWS_ACCESS_KEY_ID']
+    secret = setting['AWS_SECRET_ACCESS_KEY']
+    lines = []
+    if len[key_id] gt 0 and len[secret] gt 0
+        extra = []
+        token = setting['AWS_SESSION_TOKEN']
+        if len[token] gt 0
+            extra = push[extra, 'x-amz-security-token: `token`']
+        lines = sign_s3[method, host, uri, extra, payload_hash, amz_date[int[now[]]], region, key_id, secret]
+    got = exchange[url, method, lines, payload, 0.0]
+    if not got.ok
+        return error['cannot `verb` \'`path`\': `got.reason`', 'sys']
+    return got
+
+--- `fetch[path, headers, query, timeout]`: a remote source's answer — a URL
+--- got with the reader's options, redirects followed, or an S3 object —
+--- a success, or the reason: the options on a path that is no URL, a
+--- timeout below 0, a server that did not answer (in time), or one that
+--- answered anything but a success (`the server answered 404 Not Found`,
+--- and S3's message beside it).
+fn fetch[path, headers, query, timeout]
+    asks = len[headers] gt 0 or len[query] gt 0 or timeout ne 0.0
+    if asks and not (starts[path, 'http://'] or starts[path, 'https://'])
+        return error['cannot read \'`path`\' with headers, a query or a timeout: they go with an http:// or https:// URL', 'sys']
+    if not (timeout gte 0.0)
+        return error['a timeout is a number of seconds, 0 or more — not `timeout`', 'sys']
+    if starts[path, 's3://']
+        stored = s3[path, 'GET', bytes['']]
+        if not stored.ok
+            return error[stored.reason, 'sys']
+        if stored.status lt 200 or stored.status gte 300
+            return error[refused['read', path, stored], 'sys']
+        return stored
+    if not (starts[path, 'http://'] or starts[path, 'https://'])
+        return error['cannot read \'`path`\': it is not a URL or an S3 object', 'sys']
+    lines = []
+    for k in keys[headers]
+        v = headers[k]
+        lines = push[lines, '`k`: `v`']
+    full = with_query[path, query]
+    got = get[full, lines, timeout]
+    if not got.ok
+        return error['cannot read \'`full`\': `got.reason`', 'sys']
+    if got.status lt 200 or got.status gte 300
+        return error[refused['read', path, got], 'sys']
+    return got
+
+--- `put[path, bytes]`: the bytes written to an S3 object; a URL is read,
+--- not written.
+fn put[path, data]
+    if not starts[path, 's3://']
+        return error['cannot write \'`path`\': a URL is read, not written — write a file, or an s3:// object', 'sys']
+    got = s3[path, 'PUT', data]
+    if not got.ok
+        return error[got.reason, 'sys']
+    if got.status lt 200 or got.status gte 300
+        return error[refused['write', path, got], 'sys']
+    return ''
+
+--- `format_of[path]`: a table's format by its path's extension (a URL's
+--- query left out): `'csv'`, `'json'`, `'parquet'`, or `''`
+fn format_of[path]
+    base = split[split[path, '?'][0], '#'][0]
+    segments = split[base, '/']
+    name = segments[len[segments] - 1]
+    pieces = split[name, '.']
+    if len[pieces] lt 2
+        return ''
+    ext = lower[pieces[len[pieces] - 1]]
+    if ext eq 'csv'
+        return 'csv'
+    if ext eq 'json'
+        return 'json'
+    if ext eq 'parquet' or ext eq 'pq'
+        return 'parquet'
+    return ''
+
+--- `format_sniffed[media, bytes]`: the format of what a URL with no
+--- extension answered — the media type its server named, then the bytes
+--- themselves (Parquet's `PAR1`, JSON's opening bracket), and CSV otherwise
+fn format_sniffed[media, data]
+    m = lower[media]
+    if len[split[m, 'json']] gt 1
+        return 'json'
+    if len[split[m, 'parquet']] gt 1
+        return 'parquet'
+    if len[split[m, 'csv']] gt 1
+        return 'csv'
+    if len[data] gte 4
+        if text[slice[data, 0, 4], '?'] eq 'PAR1'
+            return 'parquet'
+    for i in range[len[data]]
+        c = byte[data, i]
+        if c eq 32 or c eq 9 or c eq 10 or c eq 13
+            continue
+        if c eq 91 or c eq 123
+            return 'json'
+        return 'csv'
+    return 'csv'
+
+--- the protocol's pieces, at known values
+test a_url_is_taken_apart[]
+    u = parse_url['https://example.com/a/b?x=1#frag']
+    assert[u.tls and u.host eq 'example.com' and u.port eq 443 and u.path eq '/a/b?x=1']
+    v = parse_url['http://127.0.0.1:8080']
+    assert[not v.tls and v.host eq '127.0.0.1' and v.port eq 8080 and v.path eq '/']
+    assert[not parse_url['ftp://x'].ok]
+    assert[not parse_url['http://host:port/'].ok]
+    assert[host_line[u] eq 'example.com' and host_line[v] eq '127.0.0.1:8080']
+    assert[with_query['http://h/p', map[q = 'a b', page = '2']] eq 'http://h/p?page=2&q=a%20b']
+    assert[with_query['http://h/p?x=1', map[q = 'y']] eq 'http://h/p?x=1&q=y']
+    assert[with_query['http://h/p?', map[q = 'y']] eq 'http://h/p?q=y']
+    assert[with_query['http://h/p#top', map[q = 'y']] eq 'http://h/p?q=y#top']
+    assert[with_query['http://h/p', map[]] eq 'http://h/p']
+    assert[redirected['http://h:81/a/b', '/c'] eq 'http://h:81/c']
+    assert[redirected['https://h/a/b', 'c'] eq 'https://h/c']
+    assert[redirected['http://h/a', 'https://other/x'] eq 'https://other/x']
+    assert[hex_value['1A'] eq 26 and hex_value['0'] eq 0 and hex_value['zz'] eq -1 and hex_value[''] eq -1]
+    assert[decimal['204'] eq 204 and decimal[' 7 '] eq 7 and decimal['x'] eq -1 and decimal[''] eq -1]
+    assert[unanswered['no data from h:80 in 0.5 s', 0.5] eq 'no answer in 0.5 s']
+    assert[unanswered['no data from h:80 in 600 s', 0.0] eq 'no answer in time']
+    assert[unanswered['connection refused', 0.5] eq 'connection refused']
+    assert[remote['http://x'] and remote['s3://b/k'] and not remote['data/x.csv']]
+
+--- a format is its extension, or what the server says, or what the bytes say
+test a_format_is_its_extension_or_what_the_server_says[]
+    assert[format_of['data/bars.parquet'] eq 'parquet']
+    assert[format_of['https://x.test/a.JSON?key=1'] eq 'json']
+    assert[format_of['s3://b/trades.csv'] eq 'csv']
+    assert[format_of['https://x.test/table#top'] eq '']
+    assert[format_of['notes.txt'] eq '']
+    assert[format_sniffed['application/json; charset=utf-8', bytes['']] eq 'json']
+    assert[format_sniffed['text/csv', bytes['']] eq 'csv']
+    assert[format_sniffed['', bytes['PAR1...']] eq 'parquet']
+    assert[format_sniffed['', bytes['  [1, 2]']] eq 'json']
+    assert[format_sniffed['', bytes['a,b\n1,2']] eq 'csv']
+    assert[format_sniffed['', bytes['']] eq 'csv']
+
+--- AWS's own example of a signed S3 GET (Signature Version 4, "GET
+--- Object"): the same request signs to the same signature; a moment is
+--- spelled as SigV4 spells it; a key is encoded as SigV4 reads it
+test a_request_signs_as_aws_documents[]
+    empty = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+    assert[hash[bytes[''], 'sha256'] eq empty]
+    lines = sign_s3['GET', 'examplebucket.s3.amazonaws.com', '/test.txt', ['Range: bytes=0-9'], empty, '20130524T000000Z', 'us-east-1', 'AKIAIOSFODNN7EXAMPLE', 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY']
+    auth = lines[len[lines] - 1]
+    assert[auth eq 'authorization: AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;range;x-amz-content-sha256;x-amz-date, Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41']
+    assert[amz_date[1369353600] eq '20130524T000000Z']
+    assert[amz_date[951782400] eq '20000229T000000Z']
+    assert[amz_date[0] eq '19700101T000000Z']
+    assert[uri_encode['2026/07/trades one.csv'] eq '2026/07/trades%20one.csv']
+    assert[uri_encode['a+b&c'] eq 'a%2Bb%26c']

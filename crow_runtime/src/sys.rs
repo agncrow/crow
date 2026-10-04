@@ -97,9 +97,104 @@ pub fn gather(chunks: &[Bytes]) -> Bytes {
     Bytes(out)
 }
 
-/// `sys.file[path]`: a file's bytes, as they are.
+/// `sys.file[path]`: a file's bytes, as they are (the words `read`'s
+/// reason has, since `read` is written on it).
 pub fn file(path: &str) -> Result<Bytes, String> {
-    std::fs::read(path).map(Bytes).map_err(|e| format!("cannot read the file '{}': {}", path, e))
+    std::fs::read(path).map(Bytes).map_err(|e| format!("cannot read '{}': {}", path, e))
+}
+
+/// A connection's answer, as the HTTP client written in Crow reads one
+/// (`sys.exchange`, `sys.fetch`): the status and its phrase, the headers
+/// (names in lower case, repeated ones joined) and the body's bytes. The
+/// record both modes hold, as `request`'s reply is.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Answer {
+    pub status: i64,
+    pub phrase: String,
+    pub headers: std::collections::BTreeMap<String, String>,
+    pub body: Bytes,
+}
+
+impl Answer {
+    /// The record a failed call holds, as a compiled program's own structs
+    /// have theirs (`crow_default`).
+    pub fn crow_default() -> Self {
+        Answer::default()
+    }
+}
+
+/// As the interpreter's record shows: its fields in name order.
+impl crate::display::CrowDisplay for Answer {
+    fn crow_repr(&self) -> String {
+        format!("[body = {}, headers = {}, phrase = {}, status = {}]", self.body.crow_repr(), self.headers.crow_repr(), self.phrase.crow_repr(), self.status.crow_repr())
+    }
+}
+
+impl crate::json::ToJson for Answer {
+    fn to_json(&self) -> crate::json::Json {
+        crate::json::object(vec![
+            ("body", String::from_utf8_lossy(&self.body.0).to_string().to_json()),
+            ("headers", self.headers.to_json()),
+            ("phrase", self.phrase.to_json()),
+            ("status", self.status.to_json()),
+        ])
+    }
+}
+
+/// `sys.answer[status, phrase, headers, body]`: an answer from its parts.
+pub fn answer(status: i64, phrase: &str, headers: &std::collections::BTreeMap<String, String>, body: &Bytes) -> Answer {
+    Answer { status, phrase: phrase.to_string(), headers: headers.clone(), body: body.clone() }
+}
+
+/// `sys.csv_rows[text]`: CSV text as rows, each a map from its column's
+/// name to its text (`io.csv` is written on it).
+pub fn csv_rows(text: &str) -> Result<Vec<std::collections::BTreeMap<String, String>>, String> {
+    crate::io::parse_csv_string(text)
+}
+
+/// `sys.frame_of_csv[text]`: a frame from CSV text, each column's type
+/// read from its cells (`frame.load` is written on it).
+pub fn frame_of_csv(text: &str) -> Result<crate::frame::CrowFrame, String> {
+    crate::frame::csv_frame(text)
+}
+
+/// `sys.frame_of_json[text]`: a frame from JSON records.
+pub fn frame_of_json(text: &str) -> Result<crate::frame::CrowFrame, String> {
+    crate::frame::from_json(text)
+}
+
+/// `sys.frame_of_parquet[bytes]`: a frame from a Parquet file's bytes,
+/// where the program was built to read Parquet (the interpreter always
+/// is; a compiled program whose paths may name one).
+pub fn frame_of_parquet(bytes: &Bytes) -> Result<crate::frame::CrowFrame, String> {
+    crate::frames::parquet_frame(bytes.0.clone())
+}
+
+/// `sys.frame_csv[frame]`: a frame as CSV text.
+pub fn frame_csv(f: &crate::frame::CrowFrame) -> Result<String, String> {
+    f.to_csv()
+}
+
+/// `sys.frame_json[frame]`: a frame as JSON records.
+pub fn frame_json(f: &crate::frame::CrowFrame) -> String {
+    crate::frame::to_json(f)
+}
+
+/// `sys.frame_parquet[frame]`: a frame as a Parquet file's bytes.
+pub fn frame_parquet(f: &crate::frame::CrowFrame) -> Result<Bytes, String> {
+    crate::frames::parquet_bytes(f).map(Bytes)
+}
+
+/// `sys.tensor_of_frame[frame]`: a frame's cells as a matrix of numbers
+/// (`math.load` is written on it).
+pub fn tensor_of_frame(f: &crate::frame::CrowFrame) -> Result<crate::tensor::CrowTensor, String> {
+    // a table with no rows is a matrix with none, whatever its columns
+    // would have held (a header alone types them as text)
+    if f.nrows() == 0 && f.ncols() > 0 {
+        return Ok(crate::tensor::CrowTensor::from_vec(vec![], vec![0, f.ncols()]));
+    }
+    let (data, nrows, ncols) = crate::frame::frame_to_tensor_data(f, None)?;
+    Ok(crate::tensor::CrowTensor::from_vec(data, vec![nrows, ncols]))
 }
 
 /// `sys.store[path, bytes]`: the bytes written to a file, as they are.
@@ -287,6 +382,26 @@ pub fn close(s: &CrowStream) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A table's cells are a matrix, a row each; a cell that is no number
+    /// is the reason, naming its column; a header alone is a matrix with
+    /// no rows; CSV rows are maps from the column's name to its text.
+    #[test]
+    fn a_frame_of_numbers_is_a_matrix_and_csv_rows_are_maps() {
+        let f = frame_of_csv("a,b\n1,2\n3,4.5\n").unwrap();
+        let t = tensor_of_frame(&f).unwrap();
+        assert_eq!(t.shape(), &[2, 2]);
+        assert_eq!(t.to_vec(), vec![1.0, 2.0, 3.0, 4.5]);
+        let neg = tensor_of_frame(&frame_of_csv("x\n-1\n-2.5\n").unwrap()).unwrap();
+        assert_eq!((neg.shape(), neg.to_vec()), (&[2usize, 1][..], vec![-1.0, -2.5]));
+        let text = tensor_of_frame(&frame_of_csv("sym,qty\nAAPL,1\n").unwrap()).unwrap_err();
+        assert!(text.contains("sym"), "{}", text);
+        let header = tensor_of_frame(&frame_of_csv("a,b\n").unwrap()).unwrap();
+        assert_eq!(header.shape(), &[0, 2]);
+        let rows = csv_rows("name,age\nalice,30\nbob,25\n").unwrap();
+        assert_eq!((rows.len(), rows[1]["age"].as_str()), (2, "25"));
+        assert!(csv_rows("").is_err());
+    }
 
     /// A server that echoes what it is sent, once, then closes.
     fn echo_once() -> u16 {

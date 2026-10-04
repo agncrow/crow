@@ -162,7 +162,7 @@ impl Emitter {
             }
             self.modules.insert(module_name);
         }
-        crate::modules::load_crow_scopes(&mut self.registry);
+        crate::modules::load_crow_scopes(&mut self.registry, self.part.fns.iter().map(|f| f.name.as_str()));
     }
 
     /// The whole-program analyses the backend prints from, made over the
@@ -446,6 +446,20 @@ impl Emitter {
             // a builtin written in Crow reaches its function (an effect's
             // row, or a call's)
             Expr::Call { target: Target::Row(row), .. } | Expr::Effect { row: Some(row), .. } if row.is_crow() => todo.push(crate::table::crow_fn_name(row)),
+            // one the lowering left to the values: every row of the name,
+            // the emitter picking one where it is called
+            Expr::Effect { row: None, name, .. } => {
+                let (m, f) = name.rsplit_once('.').unwrap_or(("", name.as_str()));
+                crate::table::ROWS.iter().filter(|r| r.is_crow() && r.module == m && r.name == f).for_each(|r| todo.push(crate::table::crow_fn_name(r)));
+            }
+            Expr::Call { target: Target::Module(m, f), .. } => {
+                if let Some((m, f)) = format!("{}.{}", m, f).rsplit_once('.') {
+                    crate::table::ROWS.iter().filter(|r| r.is_crow() && r.module == m && r.name == f).for_each(|r| todo.push(crate::table::crow_fn_name(r)));
+                }
+            }
+            Expr::Call { target: Target::Runtime(n), .. } => {
+                crate::table::ROWS.iter().filter(|r| r.is_crow() && r.module.is_empty() && r.name == n.as_str()).for_each(|r| todo.push(crate::table::crow_fn_name(r)));
+            }
             _ => {}
         };
         visit_block(&self.part.main, &mut |e| note(e, &mut todo));
@@ -692,7 +706,7 @@ impl Emitter {
         // structs
         let structs: Vec<StructDef> = self.part.structs.clone();
         for s in &structs {
-            if !matches!(s.name.as_str(), "CrowFindResult" | "CrowShell" | "CrowElapsed" | "CrowReply") {
+            if !matches!(s.name.as_str(), "CrowFindResult" | "CrowShell" | "CrowElapsed" | "CrowReply" | "CrowAnswer") {
                 self.emit_struct(s);
             }
         }
@@ -985,7 +999,7 @@ impl Emitter {
         loop {
             let before = ok.len();
             for (name, def) in &self.structs {
-                if matches!(name.as_str(), "CrowFindResult" | "CrowShell" | "CrowElapsed" | "CrowReply") || ok.contains(name) {
+                if matches!(name.as_str(), "CrowFindResult" | "CrowShell" | "CrowElapsed" | "CrowReply" | "CrowAnswer") || ok.contains(name) {
                     continue;
                 }
                 if def.fields.iter().all(|(_, t)| jsonable(&crow_type(t), &ok)) {
@@ -1017,7 +1031,7 @@ impl Emitter {
     /// has it if the rest does.
     fn record_is(&self, name: &str, field: &dyn std::ops::Fn(&Emitter, &Ty, &mut BTreeSet<String>) -> bool, seen: &mut BTreeSet<String>) -> bool {
         match name {
-            "CrowShell" | "CrowFindResult" | "CrowReply" => return true,
+            "CrowShell" | "CrowFindResult" | "CrowReply" | "CrowAnswer" => return true,
             "CrowElapsed" => return false,
             _ => {}
         }
@@ -1600,6 +1614,13 @@ impl Emitter {
         }
         // (the record `request` answers — made by `sys.reply` in the client
         // written in Crow, and named as a type wherever the answer is held)
+        if self.out.contains("CrowAnswer") {
+            // a connection's answer, the record `sys.exchange` makes
+            self.needs_crow_runtime = true;
+            self.line("");
+            self.line("#[allow(dead_code)]");
+            self.line("type CrowAnswer = crow_runtime::sys::Answer;");
+        }
         if self.needs_reply_struct || self.out.contains("CrowReply") {
             // the runtime's own record, which `request`'s rows answer
             self.needs_crow_runtime = true;

@@ -34,7 +34,7 @@ A route's handler is handed the request, and nothing else: it is a function, so 
 |---|---|---|
 | `text[s]` | Plain text response | [The standard library's layer: `use sys`](../by-example/sys.md) · [Web: responses and submodules](../by-example/web-more.md) |
 | `html[s]` | HTML response | [Web: responses and submodules](../by-example/web-more.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) · [Derivations](../ch12-08-derive.md) |
-| `json[map]` | JSON response from a map | [JSON](../by-example/json.md) · [Web: responses and submodules](../by-example/web-more.md) · [Web: a JSON route](../by-example/web.md) |
+| `json[map]` | JSON response from a map | [JSON](../by-example/json.md) · [The standard library's layer: `use sys`](../by-example/sys.md) · [Web: responses and submodules](../by-example/web-more.md) · [Web: a JSON route](../by-example/web.md) |
 | `respond[status, body]` | Response with custom status code | [Web: responses and submodules](../by-example/web-more.md) |
 | `redirect[url]` | HTTP redirect response | [Web: responses and submodules](../by-example/web-more.md) |
 | `msgpack[value]` | MessagePack binary response: the value as JSON holds it, packed (`application/msgpack`) | [Web: responses and submodules](../by-example/web-more.md) |

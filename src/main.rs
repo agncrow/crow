@@ -5073,8 +5073,10 @@ fn expand_into(
             expanded.push(stmt.clone());
             continue;
         };
-        // Built-in modules: skip file lookup
-        if path == "math" || path.starts_with("math.") {
+        // Built-in modules: skip file lookup (the standard library's own
+        // sources, src/modules/*.co, are inlined by the lowering, never
+        // read as a module of the program's — a file beside them would be)
+        if path == "math" || path.starts_with("math.") || path == "web" || path.starts_with("web.") || matches!(path.as_str(), "io" | "frame" | "doc" | "chart" | "db" | "sys" | "ui") {
             expanded.push(stmt.clone());
             continue;
         }

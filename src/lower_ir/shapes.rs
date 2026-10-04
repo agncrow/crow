@@ -223,7 +223,7 @@ pub(super) fn row_dims(name: &str, args: &[Expr]) -> Option<Dims> {
         "hamming" | "hanning" | "permutation" if n == 1 => Some(vec![size(&args[0])]),
         "topk" | "choice" if n == 2 => Some(vec![size(&args[1])]),
         // matrices
-        "conv2d" | "spectrogram" | "load" => unknown(2),
+        "conv2d" | "spectrogram" | "load" | "tensor_of_frame" => unknown(2),
         "diag" => match dims(0) {
             Some(d) if d.len() == 1 => Some(vec![d[0], d[0]]),
             Some(d) if d.len() == 2 => unknown(1),

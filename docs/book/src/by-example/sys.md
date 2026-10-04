@@ -84,4 +84,61 @@ h?
 true
 ```
 
+The parsers the readers stand on, and the protocol's pure pieces — a table's format, a URL's query, a redirect's target, an answer from its parts:
+
+```crow
+use sys, frame
+
+df = frame_of_csv['sym,qty\nAAPL,100\nMSFT,200\n']
+log[df.qty]
+log[len[frame_csv[df]]]
+log[frame_of_json[frame_json[df]].sym]
+log[len[frame_of_parquet[frame_parquet[df]]]]
+rows = csv_rows['a,b\n1,2\n']
+log[rows[0]['b']]
+m = tensor_of_frame[frame_of_csv['x,y\n1,2\n3,4\n']]
+log[m.shape]
+log[tensor_of_frame[df].kind]
+log[remote['s3://bucket/key']]
+log[format_of['https://x.example.com/bars.csv?day=1']]
+log[format_sniffed['application/json', bytes['']]]
+log[format_sniffed['', bytes['PAR1...']]]
+log[with_query['https://x.example.com/q?a=1', map[q = 'crow lang']]]
+log[redirected['https://x.example.com/a/b', '/c']]
+a = answer[200, 'OK', map[], bytes['hi']]
+log[a.status]
+log[text[a.body, '?']]
+```
+
+```text
+[100, 200]
+26
+['AAPL', 'MSFT']
+2
+2
+[2, 2]
+load
+true
+csv
+json
+parquet
+https://x.example.com/q?a=1&q=crow%20lang
+https://x.example.com/c
+200
+hi
+```
+
+The protocol itself reaches a host — one exchange, a reader's fetch with its options and redirects, an S3 object put signed with the environment's credentials — so these lines are not run here:
+
+```crow,norun
+use sys
+
+got = exchange['https://example.com/', 'GET', ['accept: text/html'], bytes[''], 5.0]
+log[got.status]
+page = fetch['https://example.com/data.csv', map[authorization = 'Bearer k'], map[day = '2026-07-14'], 10.0]
+log[page.ok]
+kept = put['s3://reports/aapl.parquet', bytes['PAR1']]
+log[kept.ok]
+```
+
 Reference: spec section 13 (sys).

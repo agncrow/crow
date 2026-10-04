@@ -13,67 +13,10 @@ use crate::tensor::CrowTensor;
 
 pub use crate::cell::Cell;
 
-/// `frame.load[path]`: a table as a frame — a file, a URL or an S3 object
-/// (crate::sources) — in the format its extension names: CSV, each
-/// column's type read from its cells; JSON records; Parquet. A URL with no
-/// extension is read as what its server says it answered.
-pub fn load(path: &str) -> Result<CrowFrame, String> {
-    load_from(path, &crate::sources::Ask::default())
-}
-
-/// `frame.load[url, headers = map[…], query = map[…], timeout = s]`: a
-/// URL's table, asked with the options (crate::sources::Ask).
-pub fn load_asked(path: &str, headers: &std::collections::BTreeMap<String, String>, query: &std::collections::BTreeMap<String, String>, timeout: f64) -> Result<CrowFrame, String> {
-    load_from(path, &crate::sources::Ask::for_path(path, headers, query, timeout)?)
-}
-
-/// A table, from wherever its path says, a URL asked with the options.
-pub fn load_from(path: &str, ask: &crate::sources::Ask) -> Result<CrowFrame, String> {
-    use crate::sources::{self, Format};
-    let named = sources::format_of(path);
-    if !sources::is_remote(path) {
-        return match named {
-            Some(Format::Json) => crate::frame::from_json(&std::fs::read_to_string(path).map_err(|e| format!("load: {}", e))?),
-            Some(Format::Parquet) => parquet_frame(std::fs::read(path).map_err(|e| format!("load: {}", e))?),
-            _ => crate::frame::load_csv(path),
-        };
-    }
-    let fetched = sources::fetch_asked(path, ask)?;
-    let text = |bytes: Vec<u8>| String::from_utf8(bytes).map_err(|_| format!("cannot read '{}': it is not text (UTF-8)", path));
-    match named.unwrap_or_else(|| sources::format_sniffed(fetched.media.as_deref(), &fetched.bytes)) {
-        Format::Parquet => parquet_frame(fetched.bytes),
-        Format::Json => crate::frame::from_json(&text(fetched.bytes)?),
-        Format::Csv => crate::frame::csv_frame(&text(fetched.bytes)?),
-    }
-}
-
-/// `frame.save[frame, path]`: a frame as a file or an S3 object, in the
-/// format its extension names (CSV otherwise). A failure is an error value
-/// of kind 'frame', as `load`'s is (compiled, it stopped the program while
-/// the interpreter answered the error).
-pub fn save(f: &CrowFrame, path: &str) -> Result<String, String> {
-    use crate::sources::{self, Format};
-    let format = sources::format_of(path);
-    if !sources::is_remote(path) && !matches!(format, Some(Format::Json | Format::Parquet)) {
-        return f.save(path).map(|_| String::new());
-    }
-    let bytes = match format {
-        Some(Format::Json) => crate::frame::to_json(f).into_bytes(),
-        Some(Format::Parquet) => parquet_bytes(f)?,
-        _ => f.to_csv()?.into_bytes(),
-    };
-    if sources::is_remote(path) {
-        sources::put(path, &bytes)?;
-    } else {
-        std::fs::write(path, bytes).map_err(|e| format!("save: {}", e))?;
-    }
-    Ok(String::new())
-}
-
 /// A Parquet file's bytes as a frame, where the program was built to read
 /// Parquet (the interpreter always is; a compiled program whose paths may
 /// name one).
-fn parquet_frame(bytes: Vec<u8>) -> Result<CrowFrame, String> {
+pub fn parquet_frame(bytes: Vec<u8>) -> Result<CrowFrame, String> {
     #[cfg(feature = "parquet")]
     {
         crate::frame::from_parquet(bytes)
@@ -86,7 +29,7 @@ fn parquet_frame(bytes: Vec<u8>) -> Result<CrowFrame, String> {
 }
 
 /// A frame as a Parquet file's bytes, likewise.
-fn parquet_bytes(f: &CrowFrame) -> Result<Vec<u8>, String> {
+pub fn parquet_bytes(f: &CrowFrame) -> Result<Vec<u8>, String> {
     #[cfg(feature = "parquet")]
     {
         crate::frame::to_parquet(f)

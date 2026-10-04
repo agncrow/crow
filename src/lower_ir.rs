@@ -1587,6 +1587,17 @@ impl<'a> Lowerer<'a> {
         self.scopes.iter().enumerate().any(|(i, s)| !(own_only && i == 0) && s.contains(name))
     }
 
+    /// Whether a name is a function the function being lowered can call:
+    /// one of the program's — or, inside a standard module's function
+    /// written in Crow and inlined, one of the module's own (prefixed by
+    /// the inliner; its calls of a row stay bare and are the row's). The
+    /// program's functions are invisible there: a local of the module's
+    /// named like one (`lines`) is its local, indexed where it is written
+    /// `lines[0]`, and a program is free to name its functions as it likes.
+    fn calls_fn(&self, name: &str) -> bool {
+        self.ctx.functions.contains_key(name) && (crate::modules::is_crow_fn(name) || !crate::modules::is_crow_fn(&self.current_fn))
+    }
+
     fn is_fact(&self, name: &str) -> bool {
         // (a standard module's function, inlined, has locals of its own:
         // one named like a fact of the program is still its local)
@@ -2600,7 +2611,7 @@ impl<'a> Lowerer<'a> {
                 // the call scan reads the body with the variable bound as
                 // an item, what it assigns left behind
                 let fn_list = match iter.as_ref() {
-                    A::Array(elems) if !elems.is_empty() && elems.iter().all(|e| matches!(e, A::Ident(n) if self.ctx.functions.contains_key(n))) => {
+                    A::Array(elems) if !elems.is_empty() && elems.iter().all(|e| matches!(e, A::Ident(n) if self.calls_fn(n))) => {
                         Some(elems.iter().filter_map(|e| if let A::Ident(n) = e { Some(n.clone()) } else { None }).collect::<Vec<String>>())
                     }
                     _ => None,
@@ -2655,7 +2666,7 @@ impl<'a> Lowerer<'a> {
         if self.ctx.derives.contains(name) {
             return Expr::Derived(name.to_string(), ty);
         }
-        if self.ctx.functions.contains_key(name) {
+        if self.calls_fn(name) {
             return Expr::FnRef(name.to_string(), ty);
         }
         if self.ctx.registry.has_constant(name) && !self.declared(name) {
@@ -2671,7 +2682,7 @@ impl<'a> Lowerer<'a> {
         // the view's anchors into lookups
         let element_in_view = |n: &str| self.in_ui && self.at == Where::In(FnKind::View) && crate::lower::UI_ELEMENTS.contains(&n);
         let indexes_value = match callee {
-            A::Ident(n) => (self.declared(n) || self.is_fact(n) || self.ctx.derives.contains(n)) && !self.ctx.functions.contains_key(n) && !element_in_view(n),
+            A::Ident(n) => (self.declared(n) || self.is_fact(n) || self.ctx.derives.contains(n)) && !self.calls_fn(n) && !element_in_view(n),
             A::FieldAccess { object, .. } => match object.as_ref() {
                 A::Ident(m) => !self.is_module(m) || self.declared(m),
                 _ => true,
@@ -3001,7 +3012,11 @@ impl<'a> Lowerer<'a> {
             };
             return Ok(Expr::Call { target, args: lowered, ty, propagates });
         }
-        if self.ctx.functions.contains_key(&name) || self.ctx.specializations.contains_key(&name) {
+        // (a program's function, or a copy of one, is invisible inside a
+        // standard module's function: sys's `answer[…]` is its row, not a
+        // program's `fn answer`)
+        let visible = crate::modules::is_crow_fn(&name) || !crate::modules::is_crow_fn(&self.current_fn);
+        if (self.ctx.functions.contains_key(&name) || self.ctx.specializations.contains_key(&name)) && visible {
             self.check_handed_functions(&lowered);
             if let Some(seen) = &mut self.seen {
                 seen.calls.push((name.clone(), full_types.clone()));

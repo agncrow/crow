@@ -30,35 +30,10 @@ pub fn append_file(path: &str, content: &str) -> Result<(), String> {
 // cp. Both modes call these; the reason texts below are the ones a
 // program sees in `.reason`, so they live here and nowhere else.
 
-/// `read[path]`: the file's text.
 // ── the effects a program calls ─────────────────────────────────────
 // One function each, the row both modes call (docs/bug-classes.md §4). A
 // file operation that answers nothing answers empty text, as its type
 // says (the interpreter's `done` beside the compiled program's `""`).
-
-/// `read[path]`: the file's text, or a URL's, or an S3 object's
-/// (crate::sources).
-pub fn read(path: &str) -> Result<String, String> {
-    if crate::sources::is_remote(path) {
-        return crate::sources::fetch_text(path);
-    }
-    fs_read(path)
-}
-
-/// `read[url, headers = map[…], query = map[…], timeout = s]`: a URL's
-/// text, asked with the options (crate::sources::Ask).
-pub fn read_asked(path: &str, headers: &BTreeMap<String, String>, query: &BTreeMap<String, String>, timeout: f64) -> Result<String, String> {
-    let ask = crate::sources::Ask::for_path(path, headers, query, timeout)?;
-    crate::sources::fetch_text_asked(path, &ask)
-}
-
-/// `write[path, text]`: a file, or an S3 object.
-pub fn write(path: &str, content: &str) -> Result<String, String> {
-    if crate::sources::is_remote(path) {
-        return crate::sources::put(path, content.as_bytes()).map(|_| String::new());
-    }
-    fs_write(path, content).map(|_| String::new())
-}
 
 /// `exists[path]`.
 pub fn exists(path: &str) -> bool {
@@ -88,32 +63,6 @@ pub fn mv(src: &str, dst: &str) -> Result<String, String> {
 /// `cp[from, to]`.
 pub fn cp(src: &str, dst: &str) -> Result<String, String> {
     fs_cp(src, dst).map(|_| String::new())
-}
-
-/// `io.csv[path]`: each row a map from its column's name to its text.
-pub fn csv(path: &str) -> Result<Vec<BTreeMap<String, String>>, String> {
-    if crate::sources::is_remote(path) {
-        return parse_csv_string(&crate::sources::fetch_text(path)?);
-    }
-    parse_csv(path)
-}
-
-/// `io.csv[url, headers = map[…], query = map[…], timeout = s]`.
-pub fn csv_asked(path: &str, headers: &BTreeMap<String, String>, query: &BTreeMap<String, String>, timeout: f64) -> Result<Vec<BTreeMap<String, String>>, String> {
-    parse_csv_string(&read_asked(path, headers, query, timeout)?)
-}
-
-/// `io.lines[path]`.
-pub fn lines(path: &str) -> Result<Vec<String>, String> {
-    if crate::sources::is_remote(path) {
-        return Ok(crate::sources::fetch_text(path)?.lines().map(str::to_string).collect());
-    }
-    read_lines(path)
-}
-
-/// `io.lines[url, headers = map[…], query = map[…], timeout = s]`.
-pub fn lines_asked(path: &str, headers: &BTreeMap<String, String>, query: &BTreeMap<String, String>, timeout: f64) -> Result<Vec<String>, String> {
-    Ok(read_asked(path, headers, query, timeout)?.lines().map(str::to_string).collect())
 }
 
 pub fn fs_read(path: &str) -> Result<String, String> {
@@ -165,15 +114,8 @@ pub fn fs_cp(src: &str, dst: &str) -> Result<(), String> {
     std::fs::copy(src, dst).map(|_| ()).map_err(|e| format!("cannot cp '{}' to '{}': {}", src, dst, e))
 }
 
-/// Parse a CSV file into a Vec of BTreeMap<String, String>.
-/// First row is treated as headers. Each subsequent row becomes a map.
-pub fn parse_csv(path: &str) -> Result<Vec<BTreeMap<String, String>>, String> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("csv: {}", e))?;
-    parse_csv_string(&content)
-}
-
-/// Parse CSV from a string (used internally and for testing).
+/// Parse CSV text into a Vec of BTreeMap<String, String>: the first row
+/// is the headers, each row after it a map.
 pub fn parse_csv_string(content: &str) -> Result<Vec<BTreeMap<String, String>>, String> {
     let mut lines = content.lines();
     let header_line = lines.next().ok_or_else(|| "csv: empty file".to_string())?;
@@ -199,52 +141,6 @@ pub fn parse_csv_string(content: &str) -> Result<Vec<BTreeMap<String, String>>, 
 /// Fast numeric CSV loader — parses CSV directly into a flat Vec<f64>.
 /// Returns (data, nrows, ncols). Skips the header row.
 /// All values must be parseable as f64.
-pub fn load_csv_numeric(path: &str) -> Result<(Vec<f64>, usize, usize), String> {
-    use std::io::{BufRead, BufReader};
-    use std::fs::File;
-
-    let file = File::open(path).map_err(|e| format!("load: {}", e))?;
-    let reader = BufReader::with_capacity(8 * 1024 * 1024, file); // 8MB buffer
-    let mut lines = reader.lines();
-
-    // Read header to determine column count
-    let header = lines.next()
-        .ok_or_else(|| "load: empty file".to_string())?
-        .map_err(|e| format!("load: {}", e))?;
-    let ncols = header.split(',').count();
-    if ncols == 0 {
-        return Err("load: no columns found".to_string());
-    }
-
-    // Pre-allocate with estimate (assume ~100 bytes per row for 10 numeric cols)
-    let file_size = std::fs::metadata(path).map(|m| m.len() as usize).unwrap_or(0);
-    let est_rows = file_size / (ncols * 12); // rough estimate
-    let mut data = Vec::with_capacity(est_rows * ncols);
-    let mut nrows = 0;
-
-    for line_result in lines {
-        let line = line_result.map_err(|e| format!("load: {}", e))?;
-        let line = line.trim();
-        if line.is_empty() { continue; }
-
-        for (i, field) in line.split(',').enumerate() {
-            if i >= ncols { break; }
-            let val: f64 = field.trim().parse()
-                .map_err(|_| format!("load: cannot parse '{}' as number at row {}, col {}", field.trim(), nrows + 1, i))?;
-            data.push(val);
-        }
-        nrows += 1;
-    }
-
-    Ok((data, nrows, ncols))
-}
-
-/// Read lines from a file, returning them as a Vec<String>.
-pub fn read_lines(path: &str) -> Result<Vec<String>, String> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("lines: {}", e))?;
-    Ok(content.lines().map(|l| l.to_string()).collect())
-}
 
 #[cfg(test)]
 mod tests {
@@ -341,119 +237,6 @@ mod tests {
     fn test_parse_csv_header_only() {
         let rows = parse_csv_string("a,b,c\n").unwrap();
         assert_eq!(rows.len(), 0);
-    }
-
-    #[test]
-    fn test_parse_csv_file() {
-        let p = temp_file("data.csv", "x,y\n1,2\n3,4\n");
-        let rows = parse_csv(p.to_str().unwrap()).unwrap();
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0]["x"], "1");
-        assert_eq!(rows[1]["y"], "4");
-        std::fs::remove_file(p).ok();
-    }
-
-    #[test]
-    fn test_read_lines() {
-        let p = temp_file("lines.txt", "line1\nline2\nline3");
-        let lines = read_lines(p.to_str().unwrap()).unwrap();
-        assert_eq!(lines, vec!["line1", "line2", "line3"]);
-        std::fs::remove_file(p).ok();
-    }
-
-    // ===== load_csv_numeric tests =====
-
-    #[test]
-    fn test_load_csv_numeric_basic() {
-        let p = temp_file("numeric.csv", "a,b,c\n1.0,2.0,3.0\n4.0,5.0,6.0\n");
-        let (data, nrows, ncols) = load_csv_numeric(p.to_str().unwrap()).unwrap();
-        assert_eq!(nrows, 2);
-        assert_eq!(ncols, 3);
-        assert_eq!(data, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
-        std::fs::remove_file(p).ok();
-    }
-
-    #[test]
-    fn test_load_csv_numeric_integers() {
-        let p = temp_file("ints.csv", "x,y\n10,20\n30,40\n");
-        let (data, nrows, ncols) = load_csv_numeric(p.to_str().unwrap()).unwrap();
-        assert_eq!(nrows, 2);
-        assert_eq!(ncols, 2);
-        assert_eq!(data, vec![10.0, 20.0, 30.0, 40.0]);
-        std::fs::remove_file(p).ok();
-    }
-
-    #[test]
-    fn test_load_csv_numeric_single_row() {
-        let p = temp_file("single.csv", "a,b\n7.5,8.5\n");
-        let (data, nrows, ncols) = load_csv_numeric(p.to_str().unwrap()).unwrap();
-        assert_eq!(nrows, 1);
-        assert_eq!(ncols, 2);
-        assert_eq!(data, vec![7.5, 8.5]);
-        std::fs::remove_file(p).ok();
-    }
-
-    #[test]
-    fn test_load_csv_numeric_single_column() {
-        let p = temp_file("onecol.csv", "val\n1\n2\n3\n");
-        let (data, nrows, ncols) = load_csv_numeric(p.to_str().unwrap()).unwrap();
-        assert_eq!(nrows, 3);
-        assert_eq!(ncols, 1);
-        assert_eq!(data, vec![1.0, 2.0, 3.0]);
-        std::fs::remove_file(p).ok();
-    }
-
-    #[test]
-    fn test_load_csv_numeric_empty_file() {
-        let p = temp_file("empty.csv", "");
-        let result = load_csv_numeric(p.to_str().unwrap());
-        assert!(result.is_err());
-        std::fs::remove_file(p).ok();
-    }
-
-    #[test]
-    fn test_load_csv_numeric_header_only() {
-        let p = temp_file("headeronly.csv", "a,b,c\n");
-        let (data, nrows, ncols) = load_csv_numeric(p.to_str().unwrap()).unwrap();
-        assert_eq!(nrows, 0);
-        assert_eq!(ncols, 3);
-        assert!(data.is_empty());
-        std::fs::remove_file(p).ok();
-    }
-
-    #[test]
-    fn test_load_csv_numeric_bad_value() {
-        let p = temp_file("bad.csv", "a,b\n1.0,hello\n");
-        let result = load_csv_numeric(p.to_str().unwrap());
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("cannot parse"));
-        std::fs::remove_file(p).ok();
-    }
-
-    #[test]
-    fn test_load_csv_numeric_not_found() {
-        let result = load_csv_numeric("/tmp/crow_io_test_nonexistent_99999.csv");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_load_csv_numeric_negative_values() {
-        let p = temp_file("neg.csv", "x,y\n-1.5,2.5\n3.0,-4.0\n");
-        let (data, nrows, ncols) = load_csv_numeric(p.to_str().unwrap()).unwrap();
-        assert_eq!(nrows, 2);
-        assert_eq!(ncols, 2);
-        assert_eq!(data, vec![-1.5, 2.5, 3.0, -4.0]);
-        std::fs::remove_file(p).ok();
-    }
-
-    #[test]
-    fn test_load_csv_numeric_whitespace() {
-        let p = temp_file("ws.csv", "a , b\n 1.0 , 2.0 \n 3.0 , 4.0 \n");
-        let (data, nrows, ncols) = load_csv_numeric(p.to_str().unwrap()).unwrap();
-        assert_eq!(nrows, 2);
-        assert_eq!(ncols, 2);
-        assert_eq!(data, vec![1.0, 2.0, 3.0, 4.0]);
-        std::fs::remove_file(p).ok();
     }
 }
 

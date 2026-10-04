@@ -1,0 +1,16 @@
+--- A standard module written in Crow has locals of its own: one named
+--- like a function of the program's is still the module's local, indexed
+--- where the module writes `name[0]` (core's `read` has `data`, and the
+--- protocol's `read_answer` has `lines`). A program names its functions
+--- as it likes, in both modes.
+fn data[n]
+    return n * 2
+
+fn lines[n]
+    return n + 1
+
+log[data[21]]
+log[lines[1]]
+kept = write['/tmp/crow_parity_162_note.txt', 'hello\n']
+log[kept.ok]
+log[read['/tmp/crow_parity_162_note.txt']]

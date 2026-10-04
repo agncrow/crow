@@ -1,0 +1,28 @@
+--- `use math`: `load`, written in Crow on the sys layer (design rule 20) —
+--- a table of numbers as a matrix, from a file, a URL or an S3 object,
+--- read as `frame.load` reads a table and taken as its cells. Its rows in
+--- the builtin table (src/table.rs) are the contract; the kernel is
+--- `sys.tensor_of_frame`. The tests are the module's own:
+--- `crow test src/modules/math.co`.
+use sys, frame
+
+--- `load[path]`: a table of numbers as a matrix
+fn load[path]
+    return load_asked[path, map[], map[], 0.0]
+
+--- `load[url, headers = map[…], query = map[…], timeout = s]`
+fn load_asked[path, headers, query, timeout]
+    f = frame.load[path, headers, query, timeout]
+    if not f.ok
+        return error[f.reason, 'load']
+    t = tensor_of_frame[f]
+    if not t.ok
+        return error[t.reason, 'load']
+    return t
+
+--- a table of numbers written and read back as a matrix
+test a_table_of_numbers_is_a_matrix[]
+    assert[write['math-note.csv', 'a,b\n1,2\n3,4\n'].ok]
+    m = load['math-note.csv']
+    assert[m.shape eq [2, 2] and m[1][1] eq 4.0]
+    assert[not load['no-such.csv'].ok and load['no-such.csv'].kind eq 'load']

@@ -121,6 +121,9 @@ pub enum Kind {
     Stream,
     /// A list of bytes: a connection's chunks, gathered.
     Chunks,
+    /// `Answer` given (crow_runtime::sys): a connection's answer, the
+    /// record `sys.exchange` and `sys.fetch` make.
+    Answer,
     /// `String` given: markup a view places as markup (`doc.markdown`).
     Markup,
     /// `Vec<BTreeMap<String, String>>` given: rows of text by column
@@ -256,6 +259,7 @@ impl Kind {
             Kind::TextRows => CrowType::Array(Box::new(CrowType::Map(Box::new(CrowType::Str)))),
             Kind::Shell => CrowType::Struct("CrowShell".to_string()),
             Kind::Reply => CrowType::Struct("CrowReply".to_string()),
+            Kind::Answer => CrowType::Struct("CrowAnswer".to_string()),
             Kind::TextMap => CrowType::Map(Box::new(CrowType::Str)),
             Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn | Kind::Operands | Kind::Operand | Kind::Scalars | Kind::Scalar => CrowType::Unknown,
             Kind::JsonList => CrowType::Array(Box::new(CrowType::Json)),
@@ -354,6 +358,7 @@ impl Kind {
             Kind::TextRows => "Vec::<std::collections::BTreeMap<String, String>>::new()",
             Kind::Shell => "crow_runtime::core::Shell { status: -1, stdout: String::new(), stderr: String::new() }",
             Kind::Reply => "crow_runtime::sources::Reply::default()",
+            Kind::Answer => "crow_runtime::sys::Answer::default()",
             Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn | Kind::Operands | Kind::Operand | Kind::Scalars | Kind::Scalar => "unreachable!()",
             Kind::JsonList => "Vec::<serde_json::Value>::new()",
             // a generic answer never fails as a value (its rows answer or stop)
@@ -830,6 +835,18 @@ pub fn write_reply(r: crow_runtime::sources::Reply) -> CrowValue {
     CrowValue::ok(Value::Map(m))
 }
 
+/// A connection's answer as the interpreter's record: `status`, `phrase`,
+/// `headers`, `body` (bytes).
+pub fn write_answer(a: crow_runtime::sys::Answer) -> CrowValue {
+    let mut m = BTreeMap::new();
+    m.insert("status".to_string(), write_int(a.status));
+    m.insert("phrase".to_string(), write_str(a.phrase));
+    let headers: BTreeMap<String, CrowValue> = a.headers.into_iter().map(|(k, v)| (k, write_str(v))).collect();
+    m.insert("headers".to_string(), CrowValue::ok(Value::Map(headers)));
+    m.insert("body".to_string(), write_bytes(a.body));
+    CrowValue::ok(Value::Map(m))
+}
+
 /// A command's answer as the interpreter's record: `status`, `stdout`,
 /// `stderr`.
 pub fn write_shell(sh: crow_runtime::core::Shell) -> CrowValue {
@@ -990,6 +1007,7 @@ macro_rules! answer {
     (TextRows, $x:expr) => { write_text_rows($x) };
     (Shell, $x:expr) => { write_shell($x) };
     (Reply, $x:expr) => { write_reply($x) };
+    (Answer, $x:expr) => { write_answer($x) };
     (Json, $x:expr) => { write_json($x) };
     (JsonList, $x:expr) => { write_json_list($x) };
 }
@@ -1038,13 +1056,31 @@ pub const IN_CROW: &str = "crow";
 /// the module's path and the name, behind an underscore no program
 /// spells (`_math_nn_relu`); `crate::modules::inline` makes them.
 pub fn crow_fn_name(row: &Row) -> String {
-    let module = if row.module.is_empty() { "core" } else { row.module };
-    format!("_{}_{}", module.replace('.', "_"), row.name)
+    format!("_{}_{}", crow_prefix_of(row.module), crow_fn_base(row))
+}
+
+/// The prefix a module's functions carry when inlined: the module's path,
+/// the core's being `core`.
+pub fn crow_prefix_of(module: &str) -> String {
+    let module = if module.is_empty() { "core" } else { module };
+    module.replace('.', "_")
+}
+
+/// The name of the function a Crow row's body is, in the module's source:
+/// the row's id after its dot (`read` and `read_asked` share the name
+/// `read`, and are two functions).
+pub fn crow_fn_base(row: &Row) -> &str {
+    row.id.rsplit('.').next().unwrap_or(row.name)
 }
 
 /// The Crow row of a module's name that takes these kinds, when it is one.
 pub fn crow_row(module: &str, name: &str, args: &[Arg]) -> Option<&'static Row> {
-    self::module(module, name, args).filter(|r| r.is_crow() && takes(r, args))
+    self::module(module, name, args).filter(|r| r.is_crow() && takes(r, args)).or_else(|| {
+        // a core row a module's name reaches too (`io.read` is the core's
+        // `read`): the row whose id the module prefixes
+        let prefix = format!("{}.", module);
+        (!module.is_empty()).then(|| ROWS.iter().find(|r| r.module.is_empty() && r.name == name && r.id.starts_with(&prefix) && r.is_crow() && takes(r, args))).flatten()
+    })
 }
 
 fn written_in_crow(name: &str) -> String {
@@ -1064,6 +1100,8 @@ pub fn value_as(kind: Kind, v: &CrowValue) -> Result<CrowValue, String> {
         Kind::Bytes => CrowValue::ok(Value::Bytes(read_bytes(v)?)),
         Kind::Chunks => CrowValue::ok(Value::Array(read_chunks(v)?.into_iter().map(write_bytes).collect())),
         Kind::TextMap => CrowValue::ok(Value::Map(read_text_map(v)?.into_iter().map(|(k, t)| (k, CrowValue::ok(Value::Str(t)))).collect())),
+        Kind::Frame => CrowValue::ok(Value::Frame(Box::new(read_frame(v)?.clone()))),
+        Kind::Strs => CrowValue::ok(Value::Array(read_strs(v)?.into_iter().map(|t| CrowValue::ok(Value::Str(t))).collect())),
         other => return Err(format!("a bug in Crow: a builtin written in Crow takes {} here, which the runtime cannot hand it", other.words())),
     })
 }
@@ -1236,11 +1274,11 @@ pub static ROWS: &[Row] = &[
     // a handler's commit, recorded in a rehearsal) and whose call inside is
     // the row; a failure is an error value of kind 'io', a success of a
     // write empty text, as its type says (it had been `done` interpreted)
-    row!("io.read", "", "read", crow_runtime::io::read, (Str) -> Str, value "io"),
+    crow!("io.read", "", "read", (Str) -> Str, value "io"),
     // a URL read with options: `read[url, headers = map[…], query = map[…],
     // timeout = s]` (the lowering fills in what the call leaves out)
-    row!("io.read_asked", "", "read", crow_runtime::io::read_asked, (Str, TextMap, TextMap, Float) -> Str, value "io"),
-    row!("io.write", "", "write", crow_runtime::io::write, (Str, Str) -> Str, value "io"),
+    crow!("io.read_asked", "", "read", (Str, TextMap, TextMap, Float) -> Str, value "io"),
+    crow!("io.write", "", "write", (Str, Str) -> Str, value "io"),
     row!("io.exists", "", "exists", crow_runtime::io::exists, (Str) -> Bool, never),
     row!("io.mkdir", "", "mkdir", crow_runtime::io::mkdir, (Str) -> Str, value "io"),
     row!("io.ls", "", "ls", crow_runtime::io::ls, (Str) -> Strs, value "io"),
@@ -1498,6 +1536,27 @@ pub static ROWS: &[Row] = &[
     row!("sys.hash", "sys", "hash", crow_runtime::sys::hash, (Bytes, Str) -> Str, stops),
     row!("sys.hmac", "sys", "hmac", crow_runtime::sys::hmac, (Bytes, Bytes, Str) -> Bytes, stops),
     row!("sys.reply", "sys", "reply", crow_runtime::sources::reply, (Int, Str, TextMap) -> Reply, never),
+    row!("sys.answer", "sys", "answer", crow_runtime::sys::answer, (Int, Str, TextMap, Bytes) -> Answer, never),
+    // the parse kernels the readers written in Crow stand on
+    row!("sys.csv_rows", "sys", "csv_rows", crow_runtime::sys::csv_rows, (Str) -> TextRows, value "io"),
+    row!("sys.frame_of_csv", "sys", "frame_of_csv", crow_runtime::sys::frame_of_csv, (Str) -> Frame, value "frame"),
+    row!("sys.frame_of_json", "sys", "frame_of_json", crow_runtime::sys::frame_of_json, (Str) -> Frame, value "frame"),
+    row!("sys.frame_of_parquet", "sys", "frame_of_parquet", crow_runtime::sys::frame_of_parquet, (Bytes) -> Frame, value "frame"),
+    row!("sys.frame_csv", "sys", "frame_csv", crow_runtime::sys::frame_csv, (Frame) -> Str, value "frame"),
+    row!("sys.frame_json", "sys", "frame_json", crow_runtime::sys::frame_json, (Frame) -> Str, never),
+    row!("sys.frame_parquet", "sys", "frame_parquet", crow_runtime::sys::frame_parquet, (Frame) -> Bytes, value "frame"),
+    row!("sys.tensor_of_frame", "sys", "tensor_of_frame", crow_runtime::sys::tensor_of_frame, (Frame) -> Tensor, value "load"),
+    // the protocol, written in Crow (src/modules/sys.co): one request sent
+    // and answered; a remote source read with a reader's options, or an S3
+    // object; bytes written to an S3 object
+    crow!("sys.exchange", "sys", "exchange", (Str, Str, Strs, Bytes, Float) -> Answer, value "sys"),
+    crow!("sys.fetch", "sys", "fetch", (Str, TextMap, TextMap, Float) -> Answer, value "sys"),
+    crow!("sys.put", "sys", "put", (Str, Bytes) -> Str, value "sys"),
+    crow!("sys.format_of", "sys", "format_of", (Str) -> Str, never),
+    crow!("sys.remote", "sys", "remote", (Str) -> Bool, never),
+    crow!("sys.with_query", "sys", "with_query", (Str, TextMap) -> Str, never),
+    crow!("sys.redirected", "sys", "redirected", (Str, Str) -> Str, never),
+    crow!("sys.format_sniffed", "sys", "format_sniffed", (Str, Bytes) -> Str, never),
     // frame (a column the frame lacks, an aggregation or a join it does not
     // know, a mask or a count that does not fit: the reason the program
     // stops with, as df.col of a missing column is — the interpreter had
@@ -1530,15 +1589,17 @@ pub static ROWS: &[Row] = &[
     // the modules' files: effects, as the file system's are. `save`'s
     // failure is an error value of kind 'frame', as `load`'s is (compiled,
     // it stopped the program)
-    row!("frame.load", "frame", "load", crow_runtime::frames::load, (Str) -> Frame, value "frame"),
-    row!("frame.load_asked", "frame", "load", crow_runtime::frames::load_asked, (Str, TextMap, TextMap, Float) -> Frame, value "frame"),
-    row!("frame.save", "frame", "save", crow_runtime::frames::save, (Frame, Str) -> Str, value "frame"),
-    row!("io.csv", "io", "csv", crow_runtime::io::csv, (Str) -> TextRows, value "io"),
-    row!("io.csv_asked", "io", "csv", crow_runtime::io::csv_asked, (Str, TextMap, TextMap, Float) -> TextRows, value "io"),
-    row!("io.lines", "io", "lines", crow_runtime::io::lines, (Str) -> Strs, value "io"),
-    row!("io.lines_asked", "io", "lines", crow_runtime::io::lines_asked, (Str, TextMap, TextMap, Float) -> Strs, value "io"),
-    row!("math.load", "math", "load", crow_runtime::math::load, (Str) -> Tensor, value "load"),
-    row!("math.load_asked", "math", "load", crow_runtime::math::load_asked, (Str, TextMap, TextMap, Float) -> Tensor, value "load"),
+    // the readers, written in Crow on the sys layer (src/modules/frame.co,
+    // io.co, math.co): a file, a URL or an S3 object
+    crow!("frame.load", "frame", "load", (Str) -> Frame, value "frame"),
+    crow!("frame.load_asked", "frame", "load", (Str, TextMap, TextMap, Float) -> Frame, value "frame"),
+    crow!("frame.save", "frame", "save", (Frame, Str) -> Str, value "frame"),
+    crow!("io.csv", "io", "csv", (Str) -> TextRows, value "io"),
+    crow!("io.csv_asked", "io", "csv", (Str, TextMap, TextMap, Float) -> TextRows, value "io"),
+    crow!("io.lines", "io", "lines", (Str) -> Strs, value "io"),
+    crow!("io.lines_asked", "io", "lines", (Str, TextMap, TextMap, Float) -> Strs, value "io"),
+    crow!("math.load", "math", "load", (Str) -> Tensor, value "load"),
+    crow!("math.load_asked", "math", "load", (Str, TextMap, TextMap, Float) -> Tensor, value "load"),
     // doc: markdown rendered by the kernel
     row!("doc.markdown", "doc", "markdown", crow_runtime::markdown::to_html, (Str) -> Markup, never),
     row!("doc.chapters", "doc", "chapters", crow_runtime::markdown::chapters_frame, (Str) -> Frame, never),
@@ -1835,6 +1896,7 @@ impl Kind {
             Kind::TextRows => "rows of text",
             Kind::Shell => "a command's answer",
             Kind::Reply => "a request's answer",
+            Kind::Answer => "a connection's answer",
             Kind::Shown | Kind::Shows | Kind::ShownDyn => "a value",
             Kind::Encoded => "a value JSON can hold",
             Kind::JsonList => "a list of JSON values",

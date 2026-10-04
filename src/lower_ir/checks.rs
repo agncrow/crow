@@ -395,12 +395,19 @@ impl<'a> Lowerer<'a> {
     /// may not take a name the language or an imported module owns.
     /// (Spec Design Note "Names Are Never Ambiguous".)
     pub(super) fn check_reserved(&mut self, name: &str, what: &str) {
+        // a standard module's function written in Crow, inlined, was
+        // checked as a program of its own (`crow test src/modules/sys.co`)
+        // under its own imports: the program's imports, aliases and
+        // elements reserve nothing in it (its `m` beside a `use math as m`)
+        if crate::modules::is_crow_fn(&self.current_fn) {
+            return;
+        }
         // (the standard library's own source — the one kind of file that
         // imports `sys` — defines the functions its Crow rows name:
         // `fn request` in src/modules/core.co, tested on its own)
         let own_row = what == "function"
             && self.ctx.bare_modules.contains("sys")
-            && crate::table::ROWS.iter().any(|r| r.module.is_empty() && r.name == name && r.is_crow());
+            && crate::table::ROWS.iter().any(|r| r.module.is_empty() && r.is_crow() && crate::table::crow_fn_base(r) == name);
         if CORE_RESERVED.contains(&name) && !own_row {
             self.refuse(format!("'{}' is a core builtin — pick another name for this {}", name, what));
             return;
@@ -417,6 +424,15 @@ impl<'a> Lowerer<'a> {
         // in the part alone
         let entry_line = |module: &str| self.v.bare_import_lines.get(module).copied().filter(|l| *l > 0);
         if let Some(module) = self.ctx.registry.module_name_of(name) {
+            // (the standard library's own source — the one kind of file that
+            // imports `sys` — defines the functions its module's Crow rows
+            // name: `fn fetch` in src/modules/sys.co, tested on its own)
+            let own_row = what == "function"
+                && self.ctx.bare_modules.contains("sys")
+                && crate::table::ROWS.iter().any(|r| r.module == module && r.is_crow() && crate::table::crow_fn_base(r) == name);
+            if own_row {
+                return;
+            }
             if let Some(line) = self.ctx.bare_modules.contains(module).then(|| entry_line(module)).flatten() {
                 let module = module.to_string();
                 self.refuse(format!(
@@ -1072,8 +1088,10 @@ impl<'a> Lowerer<'a> {
             return;
         }
 
-        // User-defined function?
-        if let Some(sig) = self.ctx.functions.get(name) {
+        // User-defined function? (one the caller can call: inside a
+        // standard module's function, inlined, a program's function is
+        // invisible — a local of the module's named like one is indexed)
+        if let Some(sig) = self.ctx.functions.get(name).filter(|_| self.calls_fn(name)) {
             let expected = sig.params.len();
             if argc != expected {
                 self.refuse(format!("'{}' expects {} argument{}, got {}", name, expected, if expected == 1 { "" } else { "s" }, argc));

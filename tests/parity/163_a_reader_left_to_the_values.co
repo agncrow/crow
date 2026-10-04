@@ -1,0 +1,31 @@
+--- A reader written in Crow whose row the lowering leaves to the values
+--- (an argument's kind it does not know: a map's value) is still compiled
+--- — the emitter picks the row as the interpreter does from the values —
+--- and a reader's value carries the moment it was read in both modes,
+--- whichever language the reader is written in. A frame handed to a
+--- Crow-written row as the program runs is handed whole.
+use frame
+
+fn table_of[m]
+    if has[m, 'path']
+        return frame.load[m.path]
+    return frame.new[]
+
+fn text_of[m]
+    if has[m, 'path']
+        return read[m.path]
+    return ''
+
+log[len[table_of[map[]]]]
+log[text_of[map[]]]
+kept = write['parity-163-trades.csv', 'symbol,qty\nAAPL,100\nMSFT,50\n']
+log[kept.ok]
+t = frame.load['parity-163-trades.csv']
+log[t.columns]
+log[now[] - captured[t] lt 60.0]
+text = read['parity-163-trades.csv']
+log[now[] - captured[text] lt 60.0]
+log[captured[t.columns].kind]
+log[save[t, 'parity-163-copy.csv'].ok]
+log[len[frame.load['parity-163-copy.csv']]]
+log[rm['parity-163-trades.csv'].ok and rm['parity-163-copy.csv'].ok]

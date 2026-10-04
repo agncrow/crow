@@ -1,0 +1,63 @@
+--- `use io`: the readers written in Crow on the sys layer (design rule
+--- 20) — `lines[path]` and `csv[path]`, which take a file, a URL or an S3
+--- object, with a URL's `headers`, `query` and `timeout`. Each one's row
+--- in the builtin table (src/table.rs) is its contract; the text is
+--- `read`'s, the CSV rows the kernel's (`sys.csv_rows`). The tests are
+--- the module's own: `crow test src/modules/io.co`.
+use sys
+
+--- the lines of a text, as a file's are read: split at each line break,
+--- a `\r` before it dropped, and no empty line after the last break
+fn lines_of[whole]
+    pieces = split[whole, '\n']
+    out = []
+    for i in range[len[pieces]]
+        piece = pieces[i]
+        if i eq len[pieces] - 1 and len[piece] eq 0
+            break
+        if ends[piece, '\r']
+            piece = slice[piece, 0, len[piece] - 1]
+        out = push[out, piece]
+    return out
+
+--- `lines[path]`: a text's lines
+fn lines[path]
+    t = read[path]
+    if not t.ok
+        return error[t.reason, 'io']
+    return lines_of[t]
+
+--- `lines[url, headers = map[…], query = map[…], timeout = s]`
+fn lines_asked[path, headers, query, timeout]
+    t = read[path, headers, query, timeout]
+    if not t.ok
+        return error[t.reason, 'io']
+    return lines_of[t]
+
+--- `csv[path]`: each row a map from its column's name to its text
+fn csv[path]
+    t = read[path]
+    if not t.ok
+        return error[t.reason, 'io']
+    return csv_rows[t]
+
+--- `csv[url, headers = map[…], query = map[…], timeout = s]`
+fn csv_asked[path, headers, query, timeout]
+    t = read[path, headers, query, timeout]
+    if not t.ok
+        return error[t.reason, 'io']
+    return csv_rows[t]
+
+--- the lines of a text are a file's lines
+test the_lines_of_a_text[]
+    assert[lines_of['a\nb\n'] eq ['a', 'b']]
+    assert[lines_of['a\r\nb'] eq ['a', 'b']]
+    assert[lines_of[''] eq []]
+    assert[lines_of['one'] eq ['one']]
+    assert[lines_of['\n\n'] eq ['', '']]
+    kept = write['io-note.csv', 'a,b\n1,2\n3,4\n']
+    assert[kept.ok]
+    assert[lines['io-note.csv'] eq ['a,b', '1,2', '3,4']]
+    rows = csv['io-note.csv']
+    assert[len[rows] eq 2 and rows[1]['b'] eq '4']
+    assert[not lines['no-such-file'].ok and lines['no-such-file'].kind eq 'io']

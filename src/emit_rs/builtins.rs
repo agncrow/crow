@@ -492,7 +492,7 @@ impl Emitter {
                         CrowType::Frame(_) => "\"frame\"".to_string(),
                         CrowType::DbHandle => "\"db\"".to_string(),
                         // the runtime's records are the interpreter's maps
-                        CrowType::Struct(nm) if matches!(nm.as_str(), "CrowShell" | "CrowFindResult" | "CrowReply") => "\"map\"".to_string(),
+                        CrowType::Struct(nm) if matches!(nm.as_str(), "CrowShell" | "CrowFindResult" | "CrowReply" | "CrowAnswer") => "\"map\"".to_string(),
                         CrowType::Struct(nm) => format!("\"{}\"", shown.get(nm).unwrap_or(nm)),
                         CrowType::Json => format!("crow_runtime::json::type_word(&({}))", v),
                         CrowType::Result(inner) => format!("{{ let _v = &({}); if _v.ok {{ {} }} else {{ \"error\" }} }}", v, word(inner, "_v.value", shown)),
