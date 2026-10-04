@@ -1953,31 +1953,6 @@ impl IrInterp {
                 }
                 Ok(CrowValue::done())
             }
-            // sign[claims, secret] and verify[token, secret]: crow_web's, as
-            // the compiled program's are; a refusal is an error value of
-            // kind 'auth'
-            "sign" if vals.len() == 2 => {
-                let claims = crate::builtins::crow_to_encoded(&vals[0]);
-                let secret = match vals[1].unwrap_or_propagate()? {
-                    Value::Str(s) => s.clone(),
-                    _ => return Err("sign[] takes the claims and a secret, text".into()),
-                };
-                Ok(match crow_web::auth::sign_claims(&claims, &secret) {
-                    Ok(t) => CrowValue::ok(Value::Str(t)),
-                    Err(e) => CrowValue::error_with_kind(&e, "auth", ""),
-                })
-            }
-            "verify" if vals.len() == 2 => {
-                let text = |v: &CrowValue| match &v.value {
-                    Value::Str(s) => Ok(s.clone()),
-                    _ => Err("verify[] takes a token and a secret, both text".to_string()),
-                };
-                let (token, secret) = (text(&vals[0])?, text(&vals[1])?);
-                Ok(match crow_web::auth::verify_token(&token, &secret) {
-                    Ok(c) => CrowValue::ok(Value::Json(Box::new(c))),
-                    Err(e) => CrowValue::error_with_kind(&e, "auth", ""),
-                })
-            }
             // socket[url] and its send, recv and close: crow_web's, as the
             // compiled program's are; each failure an error value of kind
             // 'socket' (they had been stand-ins: a map, `true`, empty text)
@@ -2185,10 +2160,6 @@ impl IrInterp {
             },
             ("redirect", [url]) => CrowResponse::redirect(text(url)),
             ("bytes", [data]) => CrowResponse::binary(200, text(data).into_bytes(), "application/octet-stream"),
-            ("msgpack", [value]) => match crate::builtins::crow_to_json("msgpack", value) {
-                Ok(j) => CrowResponse::msgpack_of(&j),
-                Err(e) => return Some(Err(e)),
-            },
             ("arrow", [frame]) => match &frame.value {
                 Value::Frame(f) => CrowResponse::arrow_of(f),
                 other => return Some(Err(format!("arrow[] takes a frame, got {}", other.type_name()))),

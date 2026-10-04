@@ -124,6 +124,9 @@ pub enum Kind {
     /// `Answer` given (crow_runtime::sys): a connection's answer, the
     /// record `sys.exchange` and `sys.fetch` make.
     Answer,
+    /// `CrowResponse` given (crow_web::core): a response a route answers,
+    /// made by a row (`sys.binary`, `msgpack`).
+    Response,
     /// `String` given: markup a view places as markup (`doc.markdown`).
     Markup,
     /// `Vec<BTreeMap<String, String>>` given: rows of text by column
@@ -260,6 +263,7 @@ impl Kind {
             Kind::Shell => CrowType::Struct("CrowShell".to_string()),
             Kind::Reply => CrowType::Struct("CrowReply".to_string()),
             Kind::Answer => CrowType::Struct("CrowAnswer".to_string()),
+            Kind::Response => CrowType::WebResponse,
             Kind::TextMap => CrowType::Map(Box::new(CrowType::Str)),
             Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn | Kind::Operands | Kind::Operand | Kind::Scalars | Kind::Scalar => CrowType::Unknown,
             Kind::JsonList => CrowType::Array(Box::new(CrowType::Json)),
@@ -359,6 +363,7 @@ impl Kind {
             Kind::Shell => "crow_runtime::core::Shell { status: -1, stdout: String::new(), stderr: String::new() }",
             Kind::Reply => "crow_runtime::sources::Reply::default()",
             Kind::Answer => "crow_runtime::sys::Answer::default()",
+            Kind::Response => "crow_web::core::CrowResponse::default()",
             Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn | Kind::Operands | Kind::Operand | Kind::Scalars | Kind::Scalar => "unreachable!()",
             Kind::JsonList => "Vec::<serde_json::Value>::new()",
             // a generic answer never fails as a value (its rows answer or stop)
@@ -849,6 +854,10 @@ pub fn write_answer(a: crow_runtime::sys::Answer) -> CrowValue {
 
 /// A command's answer as the interpreter's record: `status`, `stdout`,
 /// `stderr`.
+pub fn write_response(r: crow_web::core::CrowResponse) -> CrowValue {
+    CrowValue::ok(Value::Response(Box::new(r)))
+}
+
 pub fn write_shell(sh: crow_runtime::core::Shell) -> CrowValue {
     let mut m = BTreeMap::new();
     m.insert("status".to_string(), write_int(sh.status));
@@ -1008,6 +1017,7 @@ macro_rules! answer {
     (Shell, $x:expr) => { write_shell($x) };
     (Reply, $x:expr) => { write_reply($x) };
     (Answer, $x:expr) => { write_answer($x) };
+    (Response, $x:expr) => { write_response($x) };
     (Json, $x:expr) => { write_json($x) };
     (JsonList, $x:expr) => { write_json_list($x) };
 }
@@ -1102,8 +1112,25 @@ pub fn value_as(kind: Kind, v: &CrowValue) -> Result<CrowValue, String> {
         Kind::TextMap => CrowValue::ok(Value::Map(read_text_map(v)?.into_iter().map(|(k, t)| (k, CrowValue::ok(Value::Str(t)))).collect())),
         Kind::Frame => CrowValue::ok(Value::Frame(Box::new(read_frame(v)?.clone()))),
         Kind::Strs => CrowValue::ok(Value::Array(read_strs(v)?.into_iter().map(|t| CrowValue::ok(Value::Str(t))).collect())),
+        // a value JSON can hold reaches the function as its JSON text
+        // (`crow_param_type`): the one form a map, a record or a list of
+        // either takes in Crow
+        Kind::Encoded => CrowValue::ok(Value::Str(crate::builtins::crow_to_encoded(v).to_string())),
         other => return Err(format!("a bug in Crow: a builtin written in Crow takes {} here, which the runtime cannot hand it", other.words())),
     })
+}
+
+/// The type a parameter of a row written in Crow has, from the row's kind:
+/// the kind's own, except that a value JSON can hold (`Encoded`: a map, a
+/// record, a list of either) reaches the function as its JSON text — the
+/// one form every such value takes in Crow, read back with `json[…]`. The
+/// lowering hands the call `encode[value]` (`crow_call_args`) and the
+/// interpreter the same (`value_as`).
+pub fn crow_param_type(k: Kind) -> CrowType {
+    match k {
+        Kind::Encoded => CrowType::Str,
+        other => other.crow_type(),
+    }
 }
 
 /// A row whose body is a function of the standard library written in Crow
@@ -1536,6 +1563,16 @@ pub static ROWS: &[Row] = &[
     row!("sys.hash", "sys", "hash", crow_runtime::sys::hash, (Bytes, Str) -> Str, stops),
     row!("sys.hmac", "sys", "hmac", crow_runtime::sys::hmac, (Bytes, Bytes, Str) -> Bytes, stops),
     row!("sys.reply", "sys", "reply", crow_runtime::sources::reply, (Int, Str, TextMap) -> Reply, never),
+    // bytes as text and back, a signature compared, a number's bytes, and a
+    // response of bytes: what a token, a frame's header and a packed value
+    // are written over
+    row!("sys.base64", "sys", "base64", crow_runtime::sys::base64, (Bytes) -> Str, never),
+    row!("sys.base64url", "sys", "base64url", crow_runtime::sys::base64url, (Bytes) -> Str, never),
+    row!("sys.unbase64", "sys", "unbase64", crow_runtime::sys::unbase64, (Str) -> Bytes, value "parse"),
+    row!("sys.same", "sys", "same", crow_runtime::sys::same, (Bytes, Bytes) -> Bool, never),
+    row!("sys.pack", "sys", "pack", crow_runtime::sys::pack, (Int, Int) -> Bytes, stops),
+    row!("sys.ieee", "sys", "ieee", crow_runtime::sys::ieee, (Float) -> Bytes, never),
+    row!("sys.binary", "sys", "binary", crow_web::core::response::binary_of, (Bytes, Str) -> Response, never),
     row!("sys.answer", "sys", "answer", crow_runtime::sys::answer, (Int, Str, TextMap, Bytes) -> Answer, never),
     // the parse kernels the readers written in Crow stand on
     row!("sys.csv_rows", "sys", "csv_rows", crow_runtime::sys::csv_rows, (Str) -> TextRows, value "io"),
@@ -1557,6 +1594,11 @@ pub static ROWS: &[Row] = &[
     crow!("sys.with_query", "sys", "with_query", (Str, TextMap) -> Str, never),
     crow!("sys.redirected", "sys", "redirected", (Str, Str) -> Str, never),
     crow!("sys.format_sniffed", "sys", "format_sniffed", (Str, Bytes) -> Str, never),
+    // web's rows written in Crow: a token signed and read (src/modules/auth.co),
+    // a value packed as MessagePack (src/modules/web.co)
+    crow!("web.auth.sign", "web.auth", "sign", (Encoded, Str) -> Str, value "auth"),
+    crow!("web.auth.verify", "web.auth", "verify", (Str, Str) -> Json, value "auth"),
+    crow!("web.msgpack", "web", "msgpack", (Encoded) -> Response, never),
     // frame (a column the frame lacks, an aggregation or a join it does not
     // know, a mask or a count that does not fit: the reason the program
     // stops with, as df.col of a missing column is — the interpreter had
@@ -1897,6 +1939,7 @@ impl Kind {
             Kind::Shell => "a command's answer",
             Kind::Reply => "a request's answer",
             Kind::Answer => "a connection's answer",
+            Kind::Response => "a response",
             Kind::Shown | Kind::Shows | Kind::ShownDyn => "a value",
             Kind::Encoded => "a value JSON can hold",
             Kind::JsonList => "a list of JSON values",

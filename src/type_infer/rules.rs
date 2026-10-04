@@ -333,7 +333,7 @@ impl TypeContext {
             "redirect" => CrowType::WebResponse,
             // the other responses: a value packed, a frame as Arrow, bytes,
             // and a body its feed puts as it goes
-            "msgpack" | "arrow" | "bytes" | "stream" => CrowType::WebResponse,
+            "arrow" | "bytes" | "stream" => CrowType::WebResponse,
             // a test's page as its html, from its app session; in a web app,
             // the response
             "html" => match arg_types.first() {
@@ -355,8 +355,6 @@ impl TypeContext {
             "query" => CrowType::Array(Box::new(CrowType::Json)),
             // Web.auth builtins: a token, or why not; a token's claims, or why
             // not (expired, a signature that does not match, not a token)
-            "sign" if args.len() == 2 => CrowType::Result(Box::new(CrowType::Str)),
-            "verify" => CrowType::Result(Box::new(CrowType::Json)),
             // Web.ws: a socket, or why not; send answers empty text or why
             // not, recv the next message or why not (closed, a wait passed)
             "socket" => CrowType::Result(Box::new(CrowType::Socket)),

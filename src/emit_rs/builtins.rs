@@ -491,6 +491,10 @@ impl Emitter {
                         CrowType::Void => "\"none\"".to_string(),
                         CrowType::Frame(_) => "\"frame\"".to_string(),
                         CrowType::DbHandle => "\"db\"".to_string(),
+                        // the web runtime's handles, as the interpreter names them
+                        CrowType::WebResponse => "\"response\"".to_string(),
+                        CrowType::Socket => "\"socket\"".to_string(),
+                        CrowType::Mailer => "\"mailer\"".to_string(),
                         // the runtime's records are the interpreter's maps
                         CrowType::Struct(nm) if matches!(nm.as_str(), "CrowShell" | "CrowFindResult" | "CrowReply" | "CrowAnswer") => "\"map\"".to_string(),
                         CrowType::Struct(nm) => format!("\"{}\"", shown.get(nm).unwrap_or(nm)),
@@ -631,12 +635,8 @@ impl Emitter {
             "redirect" if web && n == 1 => format!("CrowResponse::redirect({})", a[0]),
             "html" if web && n == 1 => format!("CrowResponse::html({})", a[0]),
             "text" if web && n == 1 => format!("CrowResponse::text({})", a[0]),
-            // packed and as Arrow by crow_web, as the interpreter's are
-            "msgpack" if web && n == 1 => {
-                self.needs_serde_json = true;
-                self.web_features.insert("msgpack".to_string());
-                format!("CrowResponse::msgpack_of(&serde_json::to_value(&{}).unwrap())", a[0])
-            }
+            // as Arrow by crow_web, as the interpreter's is (msgpack is a row
+            // written in Crow, src/modules/web.co)
             "arrow" if web && n == 1 => {
                 self.web_features.insert("arrow_ipc".to_string());
                 format!("CrowResponse::arrow_of(&{})", a[0])
@@ -677,23 +677,6 @@ impl Emitter {
             "insert" if db && n == 3 => format!("{}.insert(&{}, &{}).unwrap()", a[0], a[1], a[2]),
             "migrate" if db && n == 2 => format!("{}.migrate(&{}).unwrap()", a[0], a[1]),
             "transact" if db && n == 2 => format!("{}.transact(&|_tx| {{ {}(_tx); Ok(()) }}).unwrap()", a[0], a[1]),
-            // a token and its claims are crow_web's, as the interpreter's are
-            "sign" if web && n == 2 => {
-                self.needs_crow_runtime = true;
-                self.web_features.insert("auth".to_string());
-                format!(
-                    "match crow_web::auth::sign_claims(&{{ use crow_runtime::json::ToJson as _; ({}).to_json() }}, &{}) {{ Ok(_t) => CrowResult {{ ok: true, value: _t, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_e) => CrowResult {{ ok: false, value: String::new(), reason: _e, kind: \"auth\".to_string(), trace: vec![], captured: 0.0 }} }}",
-                    a[0], a[1]
-                )
-            }
-            "verify" if web && n == 2 => {
-                self.needs_serde_json = true;
-                self.web_features.insert("auth".to_string());
-                format!(
-                    "match crow_web::auth::verify_token(&{}, &{}) {{ Ok(_c) => CrowResult {{ ok: true, value: _c, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_e) => CrowResult {{ ok: false, value: serde_json::Value::Null, reason: _e, kind: \"auth\".to_string(), trace: vec![], captured: 0.0 }} }}",
-                    a[0], a[1]
-                )
-            }
             // a socket is crow_web's, as the interpreter's is; each failure
             // the call's error value of kind 'socket'
             "socket" if web && n == 1 => format!(

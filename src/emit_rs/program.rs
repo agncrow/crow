@@ -98,6 +98,8 @@ impl Emitter {
             "doc" => std::sync::Arc::new(crate::modules::doc::DocModule),
             "chart" => std::sync::Arc::new(crate::modules::chart::ChartModule),
             "io" => std::sync::Arc::new(crate::modules::io::IoModule),
+            "web" => std::sync::Arc::new(crate::modules::web::WebModule),
+            "web.auth" => std::sync::Arc::new(crate::modules::web::AuthModule),
             _ => return,
         };
         self.registry.load(m);
@@ -148,8 +150,19 @@ impl Emitter {
                 }
                 "web" => {
                     self.needs_crow_web = true;
+                    self.needs_crow_runtime = true;
                     self.web_features.insert("http".to_string());
                     self.modules.insert("web".to_string());
+                    self.load_module("web");
+                }
+                // a module of web's written in Crow: its rows, no feature
+                // of crow_web's to build in
+                "web.auth" => {
+                    self.needs_crow_web = true;
+                    self.needs_crow_runtime = true;
+                    self.modules.insert("web".to_string());
+                    self.load_module("web");
+                    self.load_module("web.auth");
                 }
                 p if p.starts_with("web.") => {
                     self.needs_crow_web = true;

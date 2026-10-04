@@ -123,6 +123,12 @@ pub fn put(chunk: String) -> bool {
     listening
 }
 
+/// `sys.binary[bytes, media]`: a response of the bytes, as the media type
+/// names them (`application/msgpack` from the packer written in Crow).
+pub fn binary_of(b: &crow_runtime::sys::Bytes, media: &str) -> CrowResponse {
+    CrowResponse::binary(200, b.0.clone(), media)
+}
+
 impl CrowResponse {
     /// Create a response with the given status and text body.
     pub fn new(status: u16, body: impl Into<String>) -> Self {
@@ -155,27 +161,10 @@ impl CrowResponse {
         resp
     }
 
-    /// MessagePack binary response (status 200, content-type: application/msgpack).
-    /// Serializes the value to MessagePack format using rmp-serde.
-    pub fn msgpack(bytes: Vec<u8>) -> Self {
-        Self::binary(200, bytes, "application/msgpack")
-    }
-
     /// Arrow IPC binary response (status 200, content-type: application/vnd.apache.arrow.stream).
     /// Takes pre-serialized Arrow IPC bytes.
     pub fn arrow_ipc(bytes: Vec<u8>) -> Self {
         Self::binary(200, bytes, "application/vnd.apache.arrow.stream")
-    }
-
-    /// `msgpack[value]`: the value as JSON holds it, packed — both modes
-    /// hand it here, so their bytes agree. A value MessagePack cannot hold
-    /// answers 500 with the reason.
-    #[cfg(feature = "msgpack")]
-    pub fn msgpack_of(value: &serde_json::Value) -> Self {
-        match rmp_serde::to_vec(value) {
-            Ok(bytes) => Self::msgpack(bytes),
-            Err(e) => Self::respond(500, format!("msgpack: {}", e)),
-        }
     }
 
     /// `arrow[frame]`: the frame as an Arrow IPC stream. A frame Arrow
@@ -333,14 +322,6 @@ mod tests {
     }
 
     #[test]
-    fn test_response_msgpack() {
-        let resp = CrowResponse::msgpack(vec![0x93, 0x01, 0x02, 0x03]);
-        assert_eq!(resp.status, 200);
-        assert_eq!(resp.headers.get("content-type").unwrap(), "application/msgpack");
-        assert!(resp.binary_body.is_some());
-    }
-
-    #[test]
     fn test_response_stream_puts_in_order() {
         let resp = CrowResponse::stream("chunks", |put| {
             for i in 0..3 {
@@ -404,14 +385,6 @@ mod tests {
         })), "b");
     }
 
-    #[cfg(feature = "msgpack")]
-    #[test]
-    fn test_msgpack_of_packs_the_value() {
-        let resp = CrowResponse::msgpack_of(&serde_json::json!({"name": "crow", "kind": "bird"}));
-        assert_eq!(resp.headers.get("content-type").unwrap(), "application/msgpack");
-        // a map of two, in JSON's order, each key and value a short string
-        assert_eq!(resp.binary_body.unwrap(), b"\x82\xa4kind\xa4bird\xa4name\xa4crow");
-    }
 
     #[cfg(feature = "arrow_ipc")]
     #[test]

@@ -79,7 +79,7 @@ impl TypeContext {
                     let contract: Option<Vec<CrowType>> = crate::modules::is_crow_fn(name)
                         .then(|| crate::table::ROWS.iter().find(|r| r.is_crow() && crate::table::crow_fn_name(r) == *name))
                         .flatten()
-                        .map(|r| r.params.iter().map(|k| k.crow_type()).collect::<Vec<CrowType>>())
+                        .map(|r| r.params.iter().map(|k| crate::table::crow_param_type(*k)).collect::<Vec<CrowType>>())
                         .filter(|given| given.len() == params.len());
                     self.functions.insert(name.clone(), FnSig {
                         params: params.iter().enumerate().map(|(i, p)| (p.clone(), contract.as_ref().map_or(CrowType::Unknown, |g| g[i].clone()))).collect(),
@@ -159,6 +159,13 @@ impl TypeContext {
                         if !self.registry.is_loaded("db") {
                             self.registry.load(std::sync::Arc::new(crate::modules::db::DbModule));
                         }
+                    }
+                    // web and its modules answer the names written in Crow
+                    if (path == "web" || path.starts_with("web.")) && !self.registry.is_loaded("web") {
+                        self.registry.load(std::sync::Arc::new(crate::modules::web::WebModule));
+                    }
+                    if path == "web.auth" && !self.registry.is_loaded("web.auth") {
+                        self.registry.load(std::sync::Arc::new(crate::modules::web::AuthModule));
                     }
                 }
                 Stmt::Resource { kind, count } => {

@@ -347,7 +347,7 @@ impl TypeContext {
         let Some(row) = crate::table::crow_row(module, name, &kinds) else { return };
         let f = crate::table::crow_fn_name(row);
         let Some(sig) = self.functions.get(&f).cloned() else { return };
-        let given: Vec<CrowType> = row.params.iter().map(|k| k.crow_type()).collect();
+        let given: Vec<CrowType> = row.params.iter().map(|k| crate::table::crow_param_type(*k)).collect();
         let mut params = sig.params.clone();
         for (i, t) in given.iter().enumerate() {
             if let Some(p) = params.get_mut(i) {

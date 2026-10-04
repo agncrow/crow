@@ -7,6 +7,7 @@ pub mod math;
 pub mod nn;
 pub mod stats;
 pub mod sys;
+pub mod web;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -24,9 +25,17 @@ pub fn crow_source(path: &str) -> Option<&'static str> {
         "io" => Some(IO_SOURCE),
         "frame" => Some(FRAME_SOURCE),
         "math" => Some(MATH_SOURCE),
+        "web.auth" => Some(AUTH_SOURCE),
+        "web" => Some(WEB_SOURCE),
         _ => None,
     }
 }
+
+/// A token signed and read, written in Crow (`use web.auth`).
+pub(crate) const AUTH_SOURCE: &str = include_str!("auth.co");
+
+/// A value packed as MessagePack, written in Crow (`use web`).
+pub(crate) const WEB_SOURCE: &str = include_str!("web.co");
 
 /// The protocol the HTTP client and the readers stand on, written in Crow
 /// over the sys primitives: `sys.exchange`, `sys.fetch`, `sys.put`, the
@@ -45,7 +54,7 @@ pub(crate) const CORE_SOURCE: &str = include_str!("core.co");
 
 /// The modules written in Crow, with the prefix their functions carry (the
 /// core's, imported by no `use`, carries `_core`).
-const CROW_MODULES: &[(&str, &str)] = &[("math.nn", "_math_nn"), ("", "_core"), ("sys", "_sys"), ("io", "_io"), ("frame", "_frame"), ("math", "_math")];
+const CROW_MODULES: &[(&str, &str)] = &[("math.nn", "_math_nn"), ("", "_core"), ("sys", "_sys"), ("io", "_io"), ("frame", "_frame"), ("math", "_math"), ("web.auth", "_web_auth"), ("web", "_web")];
 
 thread_local! {
     /// What each inlined module imports (its own `use` lines), by its
@@ -65,6 +74,8 @@ pub fn module_by_path(path: &str) -> Option<Arc<dyn CrowModule>> {
         "doc" => Arc::new(doc::DocModule),
         "chart" => Arc::new(chart::ChartModule),
         "db" => Arc::new(db::DbModule),
+        "web" => Arc::new(web::WebModule),
+        "web.auth" => Arc::new(web::AuthModule),
         _ => return None,
     })
 }
@@ -128,7 +139,12 @@ pub fn crow_imports() -> Vec<(String, Vec<String>)> {
 /// the program's own.
 pub fn crow_scope_of(name: &str) -> Option<String> {
     let name = name.strip_prefix("_traced_").unwrap_or(name);
-    CROW_MODULES.iter().find(|(_, prefix)| name.starts_with(prefix) && name.len() > prefix.len() && name.as_bytes()[prefix.len()] == b'_').map(|(_, p)| p.to_string())
+    // (the longest prefix that fits: `_web_auth_sign` is web.auth's, not web's)
+    CROW_MODULES
+        .iter()
+        .filter(|(_, prefix)| name.starts_with(prefix) && name.len() > prefix.len() && name.as_bytes()[prefix.len()] == b'_')
+        .max_by_key(|(_, prefix)| prefix.len())
+        .map(|(_, p)| p.to_string())
 }
 
 /// Whether a function of the program is a standard module's, inlined: its

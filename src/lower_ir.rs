@@ -3159,6 +3159,13 @@ impl<'a> Lowerer<'a> {
             .zip(row.params.iter().copied().map(Some).chain(std::iter::repeat(None)))
             .map(|(x, k)| match (k, x.ty()) {
                 (Some(crate::table::Kind::Float), Ty::Int) => Expr::Convert { how: Convert::IntToFloat, expr: Box::new(x), ty: Ty::Float },
+                // a value JSON can hold reaches the function as its JSON
+                // text (crate::table::crow_param_type)
+                (Some(crate::table::Kind::Encoded), ty) => {
+                    let fails = ty.is_result();
+                    let Some(encode) = crate::table::core_row("encode", &[crate::table::Arg::Unknown]) else { return x };
+                    Expr::Call { target: Target::Row(encode), args: vec![x], ty: if fails { Ty::Result(Box::new(Ty::Str)) } else { Ty::Str }, propagates: fails }
+                }
                 _ => x,
             })
             .collect()
@@ -3171,7 +3178,7 @@ impl<'a> Lowerer<'a> {
     fn crow_target(&mut self, row: &'static crate::table::Row) -> Target {
         // (the copy for the row's own signature, were the function
         // specialised by another call)
-        let given: Vec<CrowType> = row.params.iter().map(|k| k.crow_type()).collect();
+        let given: Vec<CrowType> = row.params.iter().map(|k| crate::table::crow_param_type(*k)).collect();
         let f = self.specialised(&crate::table::crow_fn_name(row), &given);
         if self.pass == Pass::Final {
             let current = self.current_fn.clone();

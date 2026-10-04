@@ -128,6 +128,35 @@ https://x.example.com/c
 hi
 ```
 
+Bytes as text and back, a signature compared, a number's bytes, and a response of bytes — what a token, a frame's header and a packed value are written over:
+
+```crow
+use sys
+
+b = bytes['hi']
+log[base64[b]]
+log[base64url[bytes['hi?']]]
+log[text[unbase64['aGk=']]]
+log[same[b, bytes['hi']]]
+log[same[b, bytes['ho']]]
+log[hex[pack[258, 2]]]
+log[hex[pack[-1, 1]]]
+log[hex[ieee[1.0]]]
+log[type[binary[b, 'text/plain']]]
+```
+
+```text
+aGk=
+aGk_
+hi
+true
+false
+0102
+ff
+3ff0000000000000
+response
+```
+
 The protocol itself reaches a host — one exchange, a reader's fetch with its options and redirects, an S3 object put signed with the environment's credentials — so these lines are not run here:
 
 ```crow,norun

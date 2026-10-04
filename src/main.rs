@@ -1910,11 +1910,12 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     if emitted.needs_crow_web {
         let web_path = concat!(env!("CARGO_MANIFEST_DIR"), "/crow_web");
         let features: Vec<&str> = emitted.web_features.iter().map(|s| s.as_str()).collect();
-        let features_str = features.join("\", \"");
-        dep_list.push(format!(
-            "crow_web = {{ path = \"{}\", features = [\"{}\"] }}",
-            web_path, features_str
-        ));
+        // (a program that only makes a response from bytes needs none)
+        if features.is_empty() {
+            dep_list.push(format!("crow_web = {{ path = \"{}\" }}", web_path));
+        } else {
+            dep_list.push(format!("crow_web = {{ path = \"{}\", features = [\"{}\"] }}", web_path, features.join("\", \"")));
+        }
         // crow_web needs tokio for async runtime
         dep_list.push("tokio = { version = \"1\", features = [\"full\"] }".to_string());
     }

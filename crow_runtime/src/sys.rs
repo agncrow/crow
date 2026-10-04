@@ -233,6 +233,50 @@ pub fn hash(b: &Bytes, algo: &str) -> Result<String, String> {
     }
 }
 
+/// `sys.base64[bytes]`: the bytes as base64, the standard alphabet padded
+/// with `=`, as HTTP's Basic authorization and SMTP's AUTH PLAIN want it.
+pub fn base64(b: &Bytes) -> String {
+    crate::text::base64_encode(&b.0)
+}
+
+/// `sys.base64url[bytes]`: the bytes as base64 in the URL-safe alphabet
+/// (`-` and `_`), unpadded, as a token's parts are written (RFC 7515).
+pub fn base64url(b: &Bytes) -> String {
+    crate::text::base64_encode(&b.0).replace('+', "-").replace('/', "_").trim_end_matches('=').to_string()
+}
+
+/// `sys.unbase64[text]`: base64's bytes, either alphabet, padded or not;
+/// an error value of kind `'parse'` where the text is no base64.
+pub fn unbase64(text: &str) -> Result<Bytes, String> {
+    crate::text::base64_decode(text).map(Bytes)
+}
+
+/// `sys.same[a, b]`: whether two byte strings are equal, decided in time
+/// that does not depend on where they differ (a signature checked against
+/// the one computed gives nothing away by how long the check took).
+pub fn same(a: &Bytes, b: &Bytes) -> bool {
+    if a.0.len() != b.0.len() {
+        return false;
+    }
+    a.0.iter().zip(&b.0).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// `sys.pack[n, width]`: an int as `width` bytes, big-endian — 1, 2, 4 or
+/// 8, the low bytes of its two's complement (a length in a frame's header,
+/// a MessagePack number). Another width stops.
+pub fn pack(n: i64, width: i64) -> Result<Bytes, String> {
+    match width {
+        1 | 2 | 4 | 8 => Ok(Bytes(n.to_be_bytes()[(8 - width as usize)..].to_vec())),
+        other => Err(format!("pack: a width is 1, 2, 4 or 8 bytes, not {}", other)),
+    }
+}
+
+/// `sys.ieee[x]`: a number as the 8 bytes of its IEEE 754 double,
+/// big-endian (a MessagePack float).
+pub fn ieee(x: f64) -> Bytes {
+    Bytes(x.to_be_bytes().to_vec())
+}
+
 /// `sys.hmac[key, message, algo]`: the keyed digest, as bytes — `'sha256'`
 /// (an S3 signature's chain) or `'sha512'`.
 pub fn hmac(key: &Bytes, message: &Bytes, algo: &str) -> Result<Bytes, String> {

@@ -87,6 +87,19 @@ pub fn verify_in(program: &Program, known: &HashMap<String, Ty>) -> Vec<String> 
             }
             v.runs = reached.contains(&f.name) || f.name.rsplit_once("__").is_some_and(|(b, _)| reached.contains(b));
             v.body = format!("fn {}", f.name);
+            v.line = 0;
+            // a builtin written in Crow answers what its row states: the
+            // kind, and whether it can fail (a body typed as fallible
+            // where the row never fails would not build compiled)
+            if let Some(row) = crow_row_of(&f.name) {
+                let fails = matches!(row.fails, crate::table::Fails::Value(_));
+                let want = crate::lower_ir::ty_of(&row.ret.crow_type());
+                if f.ret.is_result() != fails {
+                    v.found(format!("answers {}, but its row ({}) {}", f.ret, row.id, if fails { "can fail" } else { "never fails" }));
+                } else if want != Ty::Unknown && !fits(f.ret.payload(), &want) {
+                    v.found(format!("answers {}, but its row ({}) answers {}", f.ret, row.id, want));
+                }
+            }
             v.kind = Some(f.kind);
             v.testing = false;
             v.ret = Some(f.ret.clone());
@@ -110,6 +123,18 @@ pub fn verify_in(program: &Program, known: &HashMap<String, Ty>) -> Vec<String> 
         v.block(&part.main);
     }
     v.out
+}
+
+/// The row a function inlined from a standard module written in Crow is
+/// the body of (its name the row's, a specialization's or a traced copy's
+/// stripped), or none for a program's own function.
+fn crow_row_of(name: &str) -> Option<&'static crate::table::Row> {
+    if !crate::modules::is_crow_fn(name) {
+        return None;
+    }
+    let base = name.strip_prefix("_traced_").unwrap_or(name);
+    let base = base.rsplit_once("__").filter(|(_, n)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())).map_or(base, |(b, _)| b);
+    crate::table::ROWS.iter().find(|r| r.is_crow() && crate::table::crow_fn_name(r) == base)
 }
 
 struct Verifier<'p> {
@@ -859,5 +884,26 @@ mod tests {
         p.parts[0].main.push(Stmt::Do(Expr::Call { target: Target::User("half".into()), args: vec![], ty: Ty::Float, propagates: true }));
         let found = verify(&p);
         assert!(found.iter().any(|f| f.contains("calls 'half' with 0 arguments; it takes 1")), "{:?}", found);
+    }
+
+    /// A row written in Crow answers what its row states: a packer typed as
+    /// fallible where its row never fails, or answering another kind, is
+    /// the lowering's finding, not the program's
+    #[test]
+    fn a_row_written_in_crow_answers_its_rows_type() {
+        let src = "use web, web.auth\nsecret = 'a-secret-of-at-least-thirty-two-chars'\nt = sign[map[user = 'ada'], secret]\nlog[t.ok]\n";
+        let stmts = crate::lower::lower_program(&crate::build(src).expect("parses")).expect("lowers");
+        let mut ctx = crate::type_infer::TypeContext::new();
+        ctx.infer_program(&stmts);
+        let mut program = crate::lower_ir::lower(&stmts, &mut ctx, "main").expect("lowers to the IR");
+        assert!(verify(&program).is_empty(), "{:?}", verify(&program));
+        let f = program.parts[0].fns.iter_mut().find(|f| f.name == "_web_auth_sign").expect("the row's function is inlined");
+        f.ret = Ty::Str;
+        let found = verify(&program);
+        assert!(found.iter().any(|l| l.contains("_web_auth_sign") && l.contains("can fail")), "{:?}", found);
+        let f = program.parts[0].fns.iter_mut().find(|f| f.name == "_web_auth_sign").expect("inlined");
+        f.ret = Ty::Result(Box::new(Ty::Int));
+        let found = verify(&program);
+        assert!(found.iter().any(|l| l.contains("answers Result(Int)") && l.contains("web.auth.sign")), "{:?}", found);
     }
 }

@@ -55,7 +55,7 @@ pub(crate) const WEB_RESERVED: &[&str] = &[
 /// Web builtins the compiler implements but deliberately does NOT reserve
 /// (the response encoders are rarely-collided names). Listed so `crow test
 /// --docs` can hold the spec to them.
-pub(crate) const WEB_EXTRA_FUNCTIONS: &[&str] = &["msgpack", "arrow", "bytes", "stream"];
+pub(crate) const WEB_EXTRA_FUNCTIONS: &[&str] = &["arrow", "bytes", "stream"];
 
 /// The web module's modules, `use web.auth` and the rest: what web does
 /// beyond serving pages and routes (spec, web). A server's options are
@@ -110,8 +110,8 @@ pub(crate) const BUILTINS: &[&str] = &[
     "grad",
     // Web
     "route", "serve", "respond", "redirect", "html", "text",
-    "msgpack", "arrow", "bytes", "stream",
-    "exec", "query", "sign", "verify",
+    "arrow", "bytes", "stream",
+    "exec", "query",
     "connect", "socket", "send", "recv", "close",
     "page", "smtp", "mail",
     // UI reactive builtins
@@ -1221,10 +1221,9 @@ fn builtin_arity_ok(name: &str, argc: usize) -> bool {
         "serve" => argc == 1 || argc == 11,  // serve[port] (pre-lower) or serve[port, refresh, budget, theme, density, accent, wide, keep, uploads, cors, files]
         "respond" => argc == 2,
         "redirect" | "html" | "text" => argc == 1,
-        "msgpack" | "arrow" | "bytes" => argc == 1,
+        "arrow" | "bytes" => argc == 1,
         "stream" => argc >= 1, // stream[feed, a, …] calls feed[put, a, …]
         "exec" | "query" => argc >= 2,
-        "sign" | "verify" => argc == 2,
         "connect" => argc == 1,               // connect[url] (db)
         "socket" => argc == 1,                // socket[url]
         "send" => argc == 2,                  // send[socket, text]

@@ -1745,6 +1745,13 @@ impl Emitter {
 
     /// A call, by what it names.
     fn dispatch(&mut self, target: &Target, name: &str, args: &[Expr], arg_strs: &[String], whole: &Expr) -> String {
+        // (a row whose function is the web runtime's — a response made from
+        // bytes — brings the crate, whatever the program imports)
+        if let Target::Row(row) = target {
+            if row.path.starts_with("crow_web::") {
+                self.needs_crow_web = true;
+            }
+        }
         if self.emitting_traced {
             if let Some(s) = self.traced_dispatch(target, name, args, arg_strs, whole) {
                 return s;

@@ -25,14 +25,8 @@ pub mod core;
 #[cfg(feature = "http")]
 pub mod server;
 
-#[cfg(feature = "client")]
-pub mod client;
-
 #[cfg(feature = "ws")]
 pub mod ws;
-
-#[cfg(feature = "auth")]
-pub mod auth;
 
 #[cfg(feature = "mail")]
 pub mod mail;
