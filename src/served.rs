@@ -266,7 +266,13 @@ pub fn serve(template: IrInterp) -> Result<(), String> {
         }
         // and the messages it sent, which the runtime sends when it commits
         for (mail, mailer) in it.session_mails.remove(&0).unwrap_or_default() {
-            let send = crate::ir_interp::mail_sender(mailer, &mail);
+            // sent by the row written in Crow, on a thread of its own: a
+            // copy of the template runs it, as a session's handler runs
+            let (template, message) = (t.clone(), mail.clone());
+            let send: crow_web::live::MailSender = Arc::new(move || {
+                let mut copy = (*template).clone();
+                copy.send_mail(&mailer, &message)
+            });
             state.mail(mail, send);
         }
         // a sign-in or sign-out the handler made lands with its commit, and

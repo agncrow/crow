@@ -121,10 +121,12 @@ Both modes serve pages. `crow run file.co` compiles and serves; `crow run -i fil
 
 | Function | Description | Example |
 |---|---|---|
-| `smtp[host, port, user, pass]` | Create an SMTP mailer; its messages come from `user` | [Web: responses and submodules](../by-example/web-more.md) · [Reactive State and Events](../ch12-02-reactive-state.md) |
+| `smtp[host, port, user, pass]` | Create an SMTP mailer; its messages come from `user` | [The standard library's layer: `use sys`](../by-example/sys.md) · [Web: responses and submodules](../by-example/web-more.md) · [Reactive State and Events](../ch12-02-reactive-state.md) |
 | `mail[mailer, to, subject, body]` | Send a plain-text message: held to a handler's commit, so a handler that stops sends nothing; `r = mail[…]` sends at once and `r.ok` says whether the server took it | [Reactive State and Events](../ch12-02-reactive-state.md) |
 
 `mail` is an effect like `notice` and `download`: in a handler, or a function a handler calls, a message whose answer is not used waits for the commit, and a stop drops it; used (`sent = mail[…]`), it is sent when asked, and a failure is the answer's reason. Outside a handler it is sent at once. A view or a derivation sends none, itself or through a function it calls, and is refused if it tries: it runs whenever the page needs it. A mailer is made once for the whole program, as a connection is, and prints as its host, never its password. In a test nothing is sent: `mails[a]` is the list of what the session sent, each a map of `to`, `subject` and `body`, and `crow test --compiled` records the compiled program's the same way.
+
+The sending is written in Crow (`src/modules/mail.co`) on the `sys` layer, as RFC 5321 says: the greeting, `EHLO`, the connection secured with STARTTLS where the server offers it (port 465 is TLS from the start; a password travels only encrypted, so a remote server that offers neither is refused — a local relay on the loopback address is not), `AUTH PLAIN`, the envelope, the message's head (`From`, `To`, a `Subject` beyond ASCII as an encoded word, `Date`) and its body with its dots stuffed (a body beyond ASCII as base64), `QUIT`. A recipient the server refuses, an address that is none (`name@host`), a server that does not answer or answers anything but what the step wants are the reasons (`mail to bob@example.com failed: the server answered 550 no such user at RCPT TO`). The session layer holds a handler's message to its commit in both modes and hands it to the row's function to send; a script sends it at once. Its tests are the module's own (`crow test src/modules/mail.co`), and `tests/smtp_server.rs` runs it against a server in both modes.
 
 ### Client (`use web.client`)
 

@@ -25,9 +25,6 @@ pub mod core;
 #[cfg(feature = "http")]
 pub mod server;
 
-#[cfg(feature = "mail")]
-pub mod mail;
-
 #[cfg(feature = "live")]
 pub mod live;
 

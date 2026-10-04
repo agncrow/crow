@@ -1766,6 +1766,9 @@ impl Emitter {
             // a builtin written in Crow: the program's function its body is
             // inlined as (an effect's row reaches here too); a reader's
             // value carries the moment it was read, as a Rust reader's does
+            // a message is held to its handler's commit by the session layer,
+            // in both modes: the arm holds it, the row's function sends it
+            Target::Row(row) if row.is_crow() && row.id == "web.mail.mail" => self.builtin("mail", args, arg_strs, whole).unwrap_or_default(),
             Target::Row(row) if row.is_crow() => {
                 let call = self.user_call(&crate::table::crow_fn_name(row), args, arg_strs.to_vec());
                 if crate::table::READERS.contains(&row.name) && matches!(row.fails, crate::table::Fails::Value(_)) {

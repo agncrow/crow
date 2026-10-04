@@ -27,6 +27,7 @@ pub fn crow_source(path: &str) -> Option<&'static str> {
         "math" => Some(MATH_SOURCE),
         "web.auth" => Some(AUTH_SOURCE),
         "web.ws" => Some(WS_SOURCE),
+        "web.mail" => Some(MAIL_SOURCE),
         "web" => Some(WEB_SOURCE),
         _ => None,
     }
@@ -40,6 +41,9 @@ pub(crate) const WEB_SOURCE: &str = include_str!("web.co");
 
 /// The WebSocket client, written in Crow (`use web.ws`).
 pub(crate) const WS_SOURCE: &str = include_str!("ws.co");
+
+/// Mail over SMTP, written in Crow (`use web.mail`).
+pub(crate) const MAIL_SOURCE: &str = include_str!("mail.co");
 
 /// The protocol the HTTP client and the readers stand on, written in Crow
 /// over the sys primitives: `sys.exchange`, `sys.fetch`, `sys.put`, the
@@ -58,7 +62,7 @@ pub(crate) const CORE_SOURCE: &str = include_str!("core.co");
 
 /// The modules written in Crow, with the prefix their functions carry (the
 /// core's, imported by no `use`, carries `_core`).
-const CROW_MODULES: &[(&str, &str)] = &[("math.nn", "_math_nn"), ("", "_core"), ("sys", "_sys"), ("io", "_io"), ("frame", "_frame"), ("math", "_math"), ("web.auth", "_web_auth"), ("web.ws", "_web_ws"), ("web", "_web")];
+const CROW_MODULES: &[(&str, &str)] = &[("math.nn", "_math_nn"), ("", "_core"), ("sys", "_sys"), ("io", "_io"), ("frame", "_frame"), ("math", "_math"), ("web.auth", "_web_auth"), ("web.ws", "_web_ws"), ("web.mail", "_web_mail"), ("web", "_web")];
 
 thread_local! {
     /// What each inlined module imports (its own `use` lines), by its
@@ -81,6 +85,7 @@ pub fn module_by_path(path: &str) -> Option<Arc<dyn CrowModule>> {
         "web" => Arc::new(web::WebModule),
         "web.auth" => Arc::new(web::AuthModule),
         "web.ws" => Arc::new(web::WsModule),
+        "web.mail" => Arc::new(web::MailModule),
         _ => return None,
     })
 }

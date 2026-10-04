@@ -300,7 +300,9 @@ impl Emitter {
             && crate::checker::BUILTINS.contains(&name)
             && !args.first().map(|x| matches!(Self::inner(&self.tt(x)), CrowType::Frame(_) | CrowType::FrameCol)).unwrap_or(false);
         let element_in_view = self.in_view() && crate::lower::UI_ELEMENTS.contains(&name);
-        if !overlapping && !frame_select_widget && !frame_core && !element_in_view && self.registry.has_function(name) {
+        // (a message is the session's to hold: its arm below, not its row,
+        // which is written in Crow and sends it)
+        if !overlapping && !frame_select_widget && !frame_core && !element_in_view && name != "mail" && self.registry.has_function(name) {
             return Some(self.registry_call(name, args, a));
         }
 
@@ -369,30 +371,37 @@ impl Emitter {
             "mail" if n == 4 => {
                 let tr = self.trace_format_expr();
                 let mail = format!("crow_web::live::SentMail {{ to: format!(\"{{}}\", {}), subject: format!(\"{{}}\", {}), body: format!(\"{{}}\", {}) }}", a[1], a[2], a[3]);
-                let answer = |sent: &str| {
+                // the row written in Crow (src/modules/mail.co), handed the
+                // mailer and the message: whether the server took it, or why
+                // not — its reason names the message already
+                let sent = |mailer: &str, to: &str, subject: &str, body: &str| {
+                    format!("{{ let _r = _web_mail_mail({}, {}, {}, {}); if _r.ok {{ Ok(()) }} else {{ Err(_r.reason) }} }}", mailer, to, subject, body)
+                };
+                let answer = |call: &str| {
                     format!(
-                        "match {} {{ Ok(()) => CrowResult {{ ok: true, value: true, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_e) => CrowResult {{ ok: false, value: false, reason: format!(\"mail to {{}} failed: {{}}\", _to, _e), kind: \"mail\".to_string(), trace: vec![{}], captured: 0.0 }} }}",
-                        sent, tr
+                        "match {} {{ Ok(()) => CrowResult {{ ok: true, value: true, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_e) => CrowResult {{ ok: false, value: false, reason: _e, kind: \"mail\".to_string(), trace: vec![{}], captured: 0.0 }} }}",
+                        call, tr
                     )
                 };
                 if self.reactive_event_handlers.contains(&self.cur_fn) {
                     let send = format!(
-                        "{{ let _m = ({}).clone(); let _s = _mail.clone(); let _f: crow_web::live::MailSender = std::sync::Arc::new(move || _m.send_blocking(&_s.to, &_s.subject, &_s.body)); _f }}",
-                        a[0]
+                        "{{ let _m = {}; let _s = _mail.clone(); let _f: crow_web::live::MailSender = std::sync::Arc::new(move || {}); _f }}",
+                        a[0],
+                        sent("_m.clone()", "_s.to.clone()", "_s.subject.clone()", "_s.body.clone()")
                     );
                     if matches!(whole, Expr::Effect { answered: true, .. }) {
-                        format!("{{ let _mail = {}; let _to = _mail.to.clone(); let _send = {}; {} }}", mail, send, answer("state.mail_now(_mail, _send)"))
+                        format!("{{ let _mail = {}; let _send = {}; {} }}", mail, send, answer("state.mail_now(_mail, _send)"))
                     } else {
                         format!("{{ let _mail = {}; let _send = {}; state.mail(_mail, _send); CrowResult {{ ok: true, value: true, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }} }}", mail, send)
                     }
                 } else {
-                    format!(
-                        "{{ let _to = format!(\"{{}}\", {}); let _subject = format!(\"{{}}\", {}); let _body = format!(\"{{}}\", {}); {} }}",
-                        a[1],
-                        a[2],
-                        a[3],
-                        answer(&format!("({}).send_blocking(&_to, &_subject, &_body)", a[0]))
-                    )
+                    // (a script sends at once, through no session; under the
+                    // test harness's control nothing is sent)
+                    let call = format!(
+                        "(if std::env::var(\"CROW_TEST_CONTROL\").is_ok() {{ Ok(()) }} else {{ {} }})",
+                        sent(&a[0], &format!("format!(\"{{}}\", {})", a[1]), &format!("format!(\"{{}}\", {})", a[2]), &format!("format!(\"{{}}\", {})", a[3]))
+                    );
+                    answer(&call)
                 }
             }
             "__reader" => {
@@ -678,7 +687,6 @@ impl Emitter {
             "migrate" if db && n == 2 => format!("{}.migrate(&{}).unwrap()", a[0], a[1]),
             "transact" if db && n == 2 => format!("{}.transact(&|_tx| {{ {}(_tx); Ok(()) }}).unwrap()", a[0], a[1]),
             "page" if web && (n == 2 || n == 3) => self.page_route(args, a),
-            "smtp" if web && n == 4 => format!("CrowMailer::new(&{}, {} as u16, &{}, &{}).unwrap()", a[0], a[1], a[2], a[3]),
             "fetch" if n == 1 => format!("{{ __crow_state.register_fetch(\"_anon\", &{}); serde_json::Value::Null }}", a[0]),
             "poll" if n == 2 => format!("{{ __crow_state.register_poll(\"_anon\", &{}, {} as u64); serde_json::Value::Null }}", a[0], a[1]),
             _ => return None,

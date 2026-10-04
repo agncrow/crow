@@ -2495,9 +2495,9 @@ mod tests {
     fn test_smtp_builtin() {
         // a mailer is a handle: it shows its host, and its password is in
         // no value a program can print
-        let val = get_var("mailer = smtp['smtp.example.com', 587, 'user', 'pass']", "mailer");
+        let val = get_var("use web, web.mail\nmailer = smtp['smtp.example.com', 587, 'user', 'pass']", "mailer");
         match &val.value {
-            Value::Mailer(_, host) => assert_eq!(&**host, "smtp.example.com"),
+            Value::Mailer(m) => assert_eq!(format!("{}", m), "<mailer:smtp.example.com>"),
             other => panic!("expected a mailer, got {:?}", other),
         }
         assert_eq!(format!("{}", val.value), "<mailer:smtp.example.com>");

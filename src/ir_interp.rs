@@ -183,7 +183,7 @@ pub struct IrInterp {
     pub(crate) testing: bool,
     /// The messages each session sent, as a test reads them (`mails[a]`),
     /// each with its mailer's place in `MAILERS`.
-    pub(crate) session_mails: HashMap<u64, Vec<(crow_web::live::SentMail, usize)>>,
+    pub(crate) session_mails: HashMap<u64, Vec<(crow_web::live::SentMail, CrowValue)>>,
 }
 
 /// An effect a handler held to its commit (core-design.md §1.2).
@@ -197,12 +197,11 @@ enum HeldEffect {
     Download(String, Vec<u8>),
     /// mail[mailer, to, subject, body]: the message, and its mailer's place
     /// in `MAILERS`
-    Mail(crow_web::live::SentMail, usize),
+    Mail(crow_web::live::SentMail, CrowValue),
 }
 
 /// The mailers `smtp[…]` made. A mailer value names its place here, so its
 /// password is never part of a value a program can print.
-static MAILERS: std::sync::LazyLock<std::sync::Mutex<Vec<crow_web::mail::CrowMailer>>> = std::sync::LazyLock::new(|| std::sync::Mutex::new(Vec::new()));
 
 /// A frame column's cell as read: a missing one is its column's
 /// placeholder, as the runtime's getters give it and the IR types it.
@@ -241,13 +240,6 @@ fn placeholder(cell: CrowValue, ty: &Ty) -> CrowValue {
 }
 
 /// How a mailer sends one message, from wherever it is asked.
-pub(crate) fn mail_sender(mailer: usize, mail: &crow_web::live::SentMail) -> crow_web::live::MailSender {
-    let m = mail.clone();
-    std::sync::Arc::new(move || {
-        let mailer = MAILERS.lock().unwrap_or_else(|p| p.into_inner()).get(mailer).cloned().ok_or("no such mailer")?;
-        mailer.send_blocking(&m.to, &m.subject, &m.body)
-    })
-}
 
 /// How a stop travels out of a handler, through every helper, to the
 /// harness verb that ran it: an error the walker never shows.
@@ -1603,6 +1595,11 @@ impl IrInterp {
     fn row_call(&mut self, row: &'static crate::table::Row, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
         // a builtin written in Crow (an effect's row reaches here): its function
         if row.is_crow() {
+            // a message is held to its handler's commit by the session layer,
+            // in both modes: the row's function is what sends it
+            if row.id == "web.mail.mail" {
+                return self.mail_effect(vals);
+            }
             let handed: Vec<CrowValue> = row.params.iter().zip(&vals).map(|(k, v)| crate::table::value_as(*k, v)).collect::<Result<_, _>>()?;
             // (a reader's value carries the moment it was read, whichever
             // language the reader is written in)
@@ -1700,9 +1697,55 @@ impl IrInterp {
         Some(handed.and_then(|handed| self.call_user(&crate::table::crow_fn_name(row), handed)).map(|v| Self::stamp(row.name, v)))
     }
 
+    /// `mail[mailer, to, subject, body]`: held to a handler's commit, or
+    /// sent when its answer is used; in a test, recorded and never sent.
+    /// The sending is the row written in Crow (src/modules/mail.co): the
+    /// SMTP conversation, called with the mailer and the message.
+    fn mail_effect(&mut self, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
+        if vals.len() != 4 {
+            return Err("mail[] takes a mailer, to, subject and body: mail[mailer, 'ada@example.com', 'Hello', 'Welcome']".into());
+        }
+        if !matches!(vals[0].value, Value::Mailer(_)) {
+            return Err("mail[] sends through a mailer: mailer = smtp[host, port, user, pass]".into());
+        }
+        let mailer = vals[0].clone();
+        let text = |i: usize| format!("{}", vals[i].value);
+        let mail = crow_web::live::SentMail { to: text(1), subject: text(2), body: text(3) };
+        if self.testing || self.held.is_some() && !self.answering {
+            match self.held.as_mut() {
+                Some(held) if !self.answering => held.push(HeldEffect::Mail(mail, mailer)),
+                _ => {
+                    let id = self.active_session.unwrap_or(0);
+                    self.session_mails.entry(id).or_default().push((mail, mailer));
+                }
+            }
+            return Ok(CrowValue::ok(Value::Bool(true)));
+        }
+        match self.send_mail(&mailer, &mail) {
+            Ok(()) => Ok(CrowValue::ok(Value::Bool(true))),
+            Err(e) => Ok(CrowValue::error_with_kind(&e, "mail", &self.trace_entry())),
+        }
+    }
+
+    /// A message sent through its mailer by the row written in Crow: whether
+    /// the server took it, or why not (the reason already names the message).
+    pub(crate) fn send_mail(&mut self, mailer: &CrowValue, mail: &crow_web::live::SentMail) -> Result<(), String> {
+        let args = vec![mailer.clone(), CrowValue::ok(Value::Str(mail.to.clone())), CrowValue::ok(Value::Str(mail.subject.clone())), CrowValue::ok(Value::Str(mail.body.clone()))];
+        let sent = self.call_user("_web_mail_mail", args)?;
+        if sent.is_ok() {
+            Ok(())
+        } else {
+            Err(sent.reason().to_string())
+        }
+    }
+
     fn bare_call(&mut self, name: &str, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
         if let Some(stop) = self.effect_refused(name, &vals) {
             return stop;
+        }
+        // (a message is the session's to hold, whichever way the row is reached)
+        if name == "mail" && matches!(vals.first().map(|v| &v.value), Some(Value::Mailer(_))) {
+            return self.mail_effect(vals);
         }
         // a value a function grad differentiates computes with: the
         // autograd kernel's builtin, recorded on the tape
@@ -1952,56 +1995,6 @@ impl IrInterp {
                     let _ = rayon::ThreadPoolBuilder::new().num_threads(n).build_global();
                 }
                 Ok(CrowValue::done())
-            }
-            "smtp" => {
-                if vals.len() != 4 {
-                    return Err("smtp[] takes 4 arguments".into());
-                }
-                let text = |i: usize, what: &str| -> Result<String, String> {
-                    match vals[i].unwrap_or_propagate()? {
-                        Value::Str(s) => Ok(s.clone()),
-                        _ => Err(format!("smtp[] {} must be a string", what)),
-                    }
-                };
-                let (host, user, pass) = (text(0, "host")?, text(2, "user")?, text(3, "password")?);
-                let port = match vals[1].unwrap_or_propagate()? {
-                    Value::Int(n) => *n as u16,
-                    _ => return Err("smtp[] port must be an int".into()),
-                };
-                let mailer = crow_web::mail::CrowMailer::new(&host, port, &user, &pass)?;
-                let id = {
-                    let mut all = MAILERS.lock().unwrap_or_else(|p| p.into_inner());
-                    all.push(mailer);
-                    all.len() - 1
-                };
-                Ok(CrowValue::ok(Value::Mailer(id, host.into())))
-            }
-            // mail[mailer, to, subject, body]: held to a handler's commit, or
-            // sent when its answer is used; in a test, recorded and never sent
-            "mail" => {
-                if vals.len() != 4 {
-                    return Err("mail[] takes a mailer, to, subject and body: mail[mailer, 'ada@example.com', 'Hello', 'Welcome']".into());
-                }
-                let mailer = match &vals[0].value {
-                    Value::Mailer(id, _) => *id,
-                    _ => return Err("mail[] sends through a mailer: mailer = smtp[host, port, user, pass]".into()),
-                };
-                let text = |i: usize| format!("{}", vals[i].value);
-                let mail = crow_web::live::SentMail { to: text(1), subject: text(2), body: text(3) };
-                if self.testing || self.held.is_some() && !self.answering {
-                    match self.held.as_mut() {
-                        Some(held) if !self.answering => held.push(HeldEffect::Mail(mail, mailer)),
-                        _ => {
-                            let id = self.active_session.unwrap_or(0);
-                            self.session_mails.entry(id).or_default().push((mail, mailer));
-                        }
-                    }
-                    return Ok(CrowValue::ok(Value::Bool(true)));
-                }
-                match (mail_sender(mailer, &mail))() {
-                    Ok(()) => Ok(CrowValue::ok(Value::Bool(true))),
-                    Err(e) => Ok(CrowValue::error_with_kind(&format!("mail to {} failed: {}", mail.to, e), "mail", &self.trace_entry())),
-                }
             }
             // progress[value, max] (lowered)
             "progress" if vals.len() == 2 => {

@@ -33,6 +33,20 @@ impl CrowModule for WsModule {
     }
 }
 
+pub struct MailModule;
+
+pub(crate) const MAIL_FUNCTIONS: &[&str] = &["smtp", "mail"];
+
+impl CrowModule for MailModule {
+    fn name(&self) -> &str {
+        "web.mail"
+    }
+
+    fn functions(&self) -> &[&str] {
+        MAIL_FUNCTIONS
+    }
+}
+
 pub struct AuthModule;
 
 pub(crate) const AUTH_FUNCTIONS: &[&str] = &["sign", "verify"];

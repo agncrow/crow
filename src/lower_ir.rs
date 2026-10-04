@@ -3077,7 +3077,14 @@ impl<'a> Lowerer<'a> {
             // call is — the core's, or the module's that answers the name:
             // a request's or a reader's options left out are maps of text)
             let lowered = match self.module_for(&name, &lowered) {
-                Some(m) => self.row_arguments(&m, &name, lowered),
+                Some(m) => {
+                    // (a count none of the module's rows take is refused, as
+                    // a call's is: `mail` with three arguments)
+                    if let Some(e) = crate::table::miscounted(&m, &name, lowered.len()) {
+                        self.refuse(e);
+                    }
+                    self.row_arguments(&m, &name, lowered)
+                }
                 None => self.core_row_arguments(&name, lowered),
             };
             let row = self.builtin_row(None, &name, &lowered);
@@ -3220,8 +3227,10 @@ impl<'a> Lowerer<'a> {
 
     fn builtin_row(&self, module: Option<&str>, name: &str, lowered: &[Expr]) -> Option<&'static crate::table::Row> {
         use crate::table::Arg;
+        // (a qualified call to a standard module the registry knows — web's
+        // modules written in Crow among them — is pinned to it)
         let pinned = match module {
-            Some(m) if matches!(m, "math" | "io" | "frame" | "doc" | "chart" | "sys" | "math.stats" | "math.nn") && self.ctx.registry.has_function(name) => Some(m),
+            Some(m) if crate::modules::module_by_path(m).is_some() && self.ctx.registry.has_function(name) => Some(m),
             Some(_) => return None,
             None => None,
         };
@@ -4317,12 +4326,12 @@ mod tests {
     #[test]
     fn an_effect_whose_answer_nobody_reads_waits_for_the_commit() {
         let ir = ir_of("use web, ui\nuse web.mail\nmailer = smtp['smtp.example.com', 587, 'noreply@example.com', 'secret']\nn = 0\nfn notify[m, to]\n    mail[m, to, 'Hello', 'From a helper']\nfn welcome[]\n    n = n + 1\n    mail[mailer, 'ada@example.com', 'Hello', 'Welcome, number `n`']\nfn broken[]\n    mail[mailer, 'bob@example.com', 'Lost', 'never sent']\n    x = float['no']\n    if x gt 1.0\n        n = 1\nfn asked[]\n    r = mail[mailer, 'cy@example.com', 'Asked', 'sent at once']\n    if r.ok\n        n = 10\nfn helped[]\n    notify[mailer, 'di@example.com']\nview v[]\n    return stack[p['`n`'], button['Welcome', click = welcome], button['Broken', click = broken], button['Asked', click = asked], button['Helped', click = helped]]\n");
-        assert!(ir.contains("return mail!held(load mailer, \"ada@example.com\""), "{}", ir);
-        assert!(ir.contains("return mail!held(m, move to"), "{}", ir);
-        assert!(ir.contains("let r: Result(Bool) = mail!now(load mailer"), "{}", ir);
+        assert!(ir.contains("return web.mail.mail!held(load mailer, \"ada@example.com\""), "{}", ir);
+        assert!(ir.contains("return web.mail.mail!held(m, move to"), "{}", ir);
+        assert!(ir.contains("let r: Result(Bool) = web.mail.mail!now(load mailer"), "{}", ir);
         // read by its caller, the helper's effect answers
         let ir = ir_of("use web, ui\nuse web.mail\nmailer = smtp['h', 587, 'u', 'p']\nsent = false\nfn notify[m, to]\n    mail[m, to, 'Hello', 'x']\nfn go[]\n    r = notify[mailer, 'a@b.c']\n    sent = r.ok\nview v[]\n    return button['Go', click = go]\n");
-        assert!(ir.contains("return mail!now(m, move to"), "{}", ir);
+        assert!(ir.contains("return web.mail.mail!now(m, move to"), "{}", ir);
     }
 
     /// A function's body lowered provisionally (F5): what it met, the

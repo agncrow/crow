@@ -131,7 +131,7 @@ hi
 Bytes as text and back, a signature compared, a number's bytes, and a response of bytes — what a token, a frame's header and a packed value are written over:
 
 ```crow
-use sys
+use sys, web.mail
 
 b = bytes['hi']
 log[base64[b]]
@@ -145,6 +145,9 @@ log[hex[ieee[1.0]]]
 log[type[binary[b, 'text/plain']]]
 log[hex[digest[bytes['abc'], 'sha1']]]
 log[hex[mask[bytes['Hello'], pack[939139389, 4]]]]
+log[civil[1369353600]]
+m = smtp['smtp.example.com', 587, 'ada@example.com', 'secret']
+log[mailer_field[m, 'host']]
 ```
 
 ```text
@@ -159,6 +162,8 @@ ff
 response
 a9993e364706816aba3e25717850c26c9cd0d89d
 7f9f4d5158
+[2013, 5, 24, 0, 0, 0, 5]
+smtp.example.com
 ```
 
 The protocol itself reaches a host — one exchange, a reader's fetch with its options and redirects, an S3 object put signed with the environment's credentials — so these lines are not run here:
@@ -177,6 +182,8 @@ first = leftover[s]
 unread[s, first]
 head = read_head[stream_of[s], now[] + 30.0]
 same_socket = socket_of[stream_of[s], 'wss://feed.example.com/stocks', bytes['']]
+relay = open['smtp.example.com', 587, false, 30.0]
+secured = secure[relay, 'smtp.example.com']
 ```
 
 Reference: spec section 13 (sys).

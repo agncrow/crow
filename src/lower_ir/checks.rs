@@ -113,7 +113,7 @@ pub(crate) const BUILTINS: &[&str] = &[
     "arrow", "bytes", "stream",
     "exec", "query",
     "connect",
-    "page", "smtp", "mail",
+    "page",
     // UI reactive builtins
     "fetch", "poll", "field", "slider", "checkbox", "toggle", "radio", "tabs", "select", "progress", "icon", "today",
 ];
@@ -782,6 +782,12 @@ impl<'a> Lowerer<'a> {
 
     pub(super) fn check_call(&mut self, name: &str, args: &[A], types: &[CrowType]) {
         let arg_type = |_: &Self, i: usize| -> CrowType { types.get(i).cloned().unwrap_or(CrowType::Unknown) };
+        // a message is sent once, and a render or a derivation runs
+        // whenever the page needs it (mail's row is web.mail's, written in
+        // Crow; the rule is the session's, wherever the name resolves)
+        if name == "mail" && !self.declared(name) && matches!(self.at, Where::In(FnKind::View) | Where::Derive) {
+            self.refuse(MAIL_IN_A_RENDER.to_string());
+        }
         // a scheme encode and decode do not know, written in the call, is
         // refused before either mode runs (computed, encode stops on it)
         if matches!(name, "encode" | "decode") && args.len() == 2 {
@@ -1033,11 +1039,6 @@ impl<'a> Lowerer<'a> {
             if name == "download" && !for_session {
                 self.refuse("download[] hands the page's reader a file: call it in a handler, or in a function a handler calls".to_string());
             }
-            // a message is sent once, and a render or a derivation runs
-            // whenever the page needs it
-            if name == "mail" && matches!(self.at, Where::In(FnKind::View) | Where::Derive) {
-                self.refuse(MAIL_IN_A_RENDER.to_string());
-            }
             // signing in and out is a session's: a handler does it
             if matches!(name, "sign_in" | "sign_out") && !for_session {
                 self.refuse(format!(
@@ -1235,8 +1236,6 @@ fn builtin_arity_ok(name: &str, argc: usize) -> bool {
         "exec" | "query" => argc >= 2,
         "connect" => argc == 1,               // connect[url] (db)
         "page" => argc == 2 || argc == 3,     // page[path, render] or page[path, render, handle]
-        "smtp" => argc == 4,                  // smtp[host, port, user, pass]
-        "mail" => argc == 4,                  // mail[mailer, to, subject, body]
         // UI reactive builtins
         "fetch" => argc == 1,                 // fetch[url]
         "poll" => argc == 2,                  // poll[url, seconds]

@@ -38,6 +38,7 @@ cargo clippy --workspace --all-features
 ./target/release/crow test src/modules/auth.co
 ./target/release/crow test src/modules/web.co
 ./target/release/crow test src/modules/ws.co
+./target/release/crow test src/modules/mail.co
 ```
 
 Use the release binary for the layout and site suites: the debug binary

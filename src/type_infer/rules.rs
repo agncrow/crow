@@ -327,8 +327,6 @@ impl TypeContext {
             "downloads" => CrowType::Array(Box::new(CrowType::Map(Box::new(CrowType::Str)))),
             // a message: whether the server took it; and the messages a
             // test's session sent, as maps of to, subject and body
-            "mail" => CrowType::Result(Box::new(CrowType::Bool)),
-            "smtp" => CrowType::Mailer,
             "mails" => CrowType::Array(Box::new(CrowType::Map(Box::new(CrowType::Str)))),
             "__notice_text" => CrowType::Str,
             "__notice_at" => CrowType::Float,

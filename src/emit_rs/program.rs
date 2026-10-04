@@ -101,6 +101,7 @@ impl Emitter {
             "web" => std::sync::Arc::new(crate::modules::web::WebModule),
             "web.auth" => std::sync::Arc::new(crate::modules::web::AuthModule),
             "web.ws" => std::sync::Arc::new(crate::modules::web::WsModule),
+            "web.mail" => std::sync::Arc::new(crate::modules::web::MailModule),
             _ => return,
         };
         self.registry.load(m);
@@ -158,7 +159,7 @@ impl Emitter {
                 }
                 // a module of web's written in Crow: its rows, no feature
                 // of crow_web's to build in
-                "web.auth" | "web.ws" => {
+                "web.auth" | "web.ws" | "web.mail" => {
                     self.needs_crow_web = true;
                     self.needs_crow_runtime = true;
                     self.modules.insert("web".to_string());
@@ -634,21 +635,16 @@ impl Emitter {
             self.line("use crow_runtime::sparse::CrowSparse;");
         }
         if self.needs_crow_web {
-            self.line("#[allow(unused_imports)]");
-            self.line("use crow_web::server::CrowApp;");
+            // (the server comes with the `http` feature: a program that only
+            // makes a response from bytes, or sends mail, links the core)
+            if self.web_features.contains("http") || self.web_features.contains("live") {
+                self.line("#[allow(unused_imports)]");
+                self.line("use crow_web::server::CrowApp;");
+            }
             self.line("#[allow(unused_imports)]");
             self.line("use crow_web::core::{CrowRequest, CrowResponse};");
             self.line("#[allow(unused_imports)]");
             self.line("use std::sync::Arc;");
-            let web: Vec<(&str, &str)> = vec![
-                ("mail", "use crow_web::mail::CrowMailer;"),
-            ];
-            for (f, l) in web {
-                if self.web_features.contains(f) {
-                    self.line("#[allow(unused_imports)]");
-                    self.line(l);
-                }
-            }
             if self.needs_ui {
                 self.line("#[allow(unused_imports)]");
                 self.line("use crow_web::view::CrowVNode;");
@@ -1330,7 +1326,7 @@ impl Emitter {
         if !self.static_handle_vars.is_empty() {
             for n in self.static_handle_vars.clone() {
                 let mailer = self.part.facts.iter().any(|f| f.name == n && (matches!(f.ty, Ty::Handle(ref k) if k == "mailer") || matches!(self.tt(&f.default), CrowType::Mailer)));
-                let ty = if mailer { "crow_web::mail::CrowMailer" } else { "crow_db::DbHandle" };
+                let ty = if mailer { "crow_runtime::sys::Mailer" } else { "crow_db::DbHandle" };
                 self.line("#[allow(non_upper_case_globals)]");
                 self.line(&format!("static __crow_handle_{}: std::sync::OnceLock<{}> = std::sync::OnceLock::new();", n, ty));
             }

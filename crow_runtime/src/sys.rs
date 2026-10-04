@@ -361,6 +361,84 @@ pub fn ieee(x: f64) -> Bytes {
     Bytes(x.to_be_bytes().to_vec())
 }
 
+/// A mailer `smtp[host, port, user, pass]` made: the server to talk to and
+/// the credentials, which the module written in Crow (src/modules/mail.co)
+/// reads through `mailer_field`; it shows as its host, never its password.
+#[derive(Clone, Default)]
+pub struct Mailer(Arc<MailerInner>);
+
+#[derive(Default)]
+struct MailerInner {
+    host: String,
+    port: i64,
+    user: String,
+    pass: String,
+}
+
+impl std::fmt::Debug for Mailer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "mailer:{}", self.0.host)
+    }
+}
+
+impl crate::display::CrowDisplay for Mailer {
+    fn crow_repr(&self) -> String {
+        format!("<mailer:{}>", self.0.host)
+    }
+}
+
+impl std::fmt::Display for Mailer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<mailer:{}>", self.0.host)
+    }
+}
+
+/// `smtp[host, port, user, pass]`: a mailer; its messages come from `user`.
+pub fn mailer(host: &str, port: i64, user: &str, pass: &str) -> Mailer {
+    Mailer(Arc::new(MailerInner { host: host.to_string(), port, user: user.to_string(), pass: pass.to_string() }))
+}
+
+/// `sys.mailer_field[mailer, name]`: what a mailer holds — its `host`,
+/// `port` (as text), `user` or `pass`; another name stops.
+pub fn mailer_field(m: &Mailer, name: &str) -> Result<String, String> {
+    match name {
+        "host" => Ok(m.0.host.clone()),
+        "port" => Ok(m.0.port.to_string()),
+        "user" => Ok(m.0.user.clone()),
+        "pass" => Ok(m.0.pass.clone()),
+        other => Err(format!("mailer_field: a mailer has a host, a port, a user and a pass, not '{}'", other)),
+    }
+}
+
+/// `sys.secure[stream, host]`: a plain connection put behind TLS from here
+/// on (SMTP's STARTTLS), the certificate checked against the host's name;
+/// the same stream, for every value that holds it. An error value of kind
+/// `'sys'` where the stream is closed, already secured, or the name is
+/// none a certificate can carry.
+pub fn secure(s: &CrowStream, host: &str) -> Result<CrowStream, String> {
+    let mut guard = s.0.conn.lock().map_err(|_| "the stream is held by a thread that stopped".to_string())?;
+    let name = rustls::pki_types::ServerName::try_from(host.to_string()).map_err(|_| format!("{} is no name a certificate can carry", host))?;
+    let secured = match guard.take() {
+        None => return Err("the stream is closed".to_string()),
+        Some(Conn::Tls(t)) => {
+            *guard = Some(Conn::Tls(t));
+            return Err("the stream is already behind TLS".to_string());
+        }
+        Some(Conn::Plain(tcp)) => {
+            let client = match rustls::ClientConnection::new(tls_config(), name) {
+                Ok(c) => c,
+                Err(e) => {
+                    *guard = Some(Conn::Plain(tcp));
+                    return Err(format!("TLS to {}: {}", host, e));
+                }
+            };
+            Conn::Tls(Box::new(rustls::StreamOwned::new(client, tcp)))
+        }
+    };
+    *guard = Some(secured);
+    Ok(s.clone())
+}
+
 /// `sys.hmac[key, message, algo]`: the keyed digest, as bytes — `'sha256'`
 /// (an S3 signature's chain) or `'sha512'`.
 pub fn hmac(key: &Bytes, message: &Bytes, algo: &str) -> Result<Bytes, String> {

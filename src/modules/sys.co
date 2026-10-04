@@ -427,9 +427,9 @@ fn padded[n, width]
         s = '0`s`'
     return s
 
---- the civil date and time of a moment, as SigV4's `x-amz-date` spells
---- it (`20130524T000000Z`)
-fn amz_date[secs]
+--- `civil[t]`: a moment's civil date and time, UTC — the year, month and
+--- day, the hour, minute and second, and the day of the week (0 Sunday)
+fn civil[secs]
     days = secs / 86400
     rem = secs % 86400
     z = days + 719468
@@ -445,12 +445,26 @@ fn amz_date[secs]
         m = mp - 9
     if m lte 2
         y = y + 1
-    year = padded[y, 4]
-    month = padded[m, 2]
-    day = padded[d, 2]
-    hour = padded[rem / 3600, 2]
-    minute = padded[rem % 3600 / 60, 2]
-    second = padded[rem % 60, 2]
+    parts = []
+    parts = push[parts, y]
+    parts = push[parts, m]
+    parts = push[parts, d]
+    parts = push[parts, rem / 3600]
+    parts = push[parts, rem % 3600 / 60]
+    parts = push[parts, rem % 60]
+    parts = push[parts, (days + 4) % 7]
+    return parts
+
+--- the civil date and time of a moment, as SigV4's `x-amz-date` spells
+--- it (`20130524T000000Z`)
+fn amz_date[secs]
+    parts = civil[secs]
+    year = padded[parts[0], 4]
+    month = padded[parts[1], 2]
+    day = padded[parts[2], 2]
+    hour = padded[parts[3], 2]
+    minute = padded[parts[4], 2]
+    second = padded[parts[5], 2]
     return '`year``month``day`T`hour``minute``second`Z'
 
 --- a request's SigV4 headers for S3 (AWS's Signature Version 4): `host`,
@@ -680,5 +694,9 @@ test a_request_signs_as_aws_documents[]
     assert[amz_date[1369353600] eq '20130524T000000Z']
     assert[amz_date[951782400] eq '20000229T000000Z']
     assert[amz_date[0] eq '19700101T000000Z']
+    may = civil[1369353600]
+    assert[may[0] eq 2013 and may[1] eq 5 and may[2] eq 24 and may[6] eq 5]
+    epoch = civil[0]
+    assert[epoch[0] eq 1970 and epoch[1] eq 1 and epoch[2] eq 1 and epoch[3] eq 0 and epoch[6] eq 4]
     assert[uri_encode['2026/07/trades one.csv'] eq '2026/07/trades%20one.csv']
     assert[uri_encode['a+b&c'] eq 'a%2Bb%26c']

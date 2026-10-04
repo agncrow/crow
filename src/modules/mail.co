@@ -1,0 +1,208 @@
+--- `use web.mail`: `mail`, written in Crow on the sys layer (design rule
+--- 20) — SMTP as RFC 5321 says, over a connection to the mailer's host:
+--- the greeting, EHLO, the connection secured with STARTTLS where the
+--- server offers it (or opened behind TLS on port 465), AUTH PLAIN, the
+--- envelope, the message's head and body with its dots stuffed, QUIT. Its
+--- row in the builtin table (src/table.rs) is its contract; `smtp` makes
+--- the mailer, a handle whose password is in no value a program prints,
+--- and the session layer holds a handler's message to its commit in both
+--- modes. The tests are the module's own (`crow test src/modules/mail.co`),
+--- and tests/smtp_server.rs runs it against a server in both modes.
+use sys
+
+--- whether text is an address: a name, one `@`, a host
+fn addressed[address]
+    parts = split[address, '@']
+    if len[parts] ne 2
+        return false
+    return len[parts[0]] gt 0 and len[parts[1]] gt 0 and len[split[address, ' ']] eq 1
+
+--- a reply read whole: its lines until the one that ends it (a space
+--- after the code); the code is the answer's status, the last line's
+--- text its phrase, every line's text its body
+fn reply_of[s, patience]
+    buffer = bytes['']
+    deadline = now[] + patience
+    while true
+        spelled = text[buffer, '�']
+        if ends[spelled, '\r\n']
+            lines = split[spelled, '\r\n']
+            last = lines[len[lines] - 2]
+            if len[last] gte 4 and slice[last, 3, 4] eq ' '
+                code = int[slice[last, 0, 3]]
+                if not code.ok
+                    return error['the server\'s reply has no code: \'`last`\'', 'mail']
+                return answer[code, slice[last, 4, len[last]], map[], buffer]
+        wait = deadline - now[]
+        if wait lt 0.01
+            wait = 0.01
+        got = recv[s, 65536, wait]
+        if not got.ok
+            return error[got.reason, 'mail']
+        if len[got] eq 0
+            return error['the server closed the connection', 'mail']
+        buffer = concat[buffer, got]
+
+--- a command sent and its reply read, which must carry one of the codes
+--- expected, else the reason naming the step
+fn ask[s, command, codes, step, patience]
+    if len[command] gt 0
+        sent = send[s, bytes['`command`\r\n']]
+        if not sent.ok
+            return error[sent.reason, 'mail']
+    r = reply_of[s, patience]
+    if not r.ok
+        return error[r.reason, 'mail']
+    if not contains[codes, r.status]
+        return error['the server answered `r.status` `r.phrase` at `step`', 'mail']
+    return r
+
+--- whether the server's EHLO reply offers STARTTLS
+fn offers_starttls[hello]
+    return len[split[upper[text[hello.body, '�']], 'STARTTLS']] gt 1
+
+--- a message's lines as SMTP sends them: `\r\n` between lines, a line that
+--- begins with a dot given another, and the final dot alone
+fn stuffed[body]
+    unified = replace[replace[body, '\r\n', '\n'], '\n', '\r\n']
+    dotted = replace[unified, '\r\n.', '\r\n..']
+    if starts[dotted, '.']
+        dotted = '.`dotted`'
+    return '`dotted`\r\n.'
+
+--- base64 wrapped at 76 characters a line, as MIME wants it
+fn wrapped[b]
+    whole = base64[b]
+    out = ''
+    at = 0
+    while at lt len[whole]
+        stop = at + 76
+        if stop gt len[whole]
+            stop = len[whole]
+        piece = slice[whole, at, stop]
+        if len[out] gt 0
+            out = '`out`\r\n`piece`'
+        else
+            out = piece
+        at = stop
+    return out
+
+--- a subject as a header holds it: as written when ASCII, else as RFC
+--- 2047's encoded word
+fn subject_line[subject]
+    if len[bytes[subject]] eq len[subject]
+        return subject
+    encoded = base64[bytes[subject]]
+    return '=?utf-8?B?`encoded`?='
+
+--- a number as two digits
+fn two[n]
+    if n lt 10
+        return '0`n`'
+    return '`n`'
+
+--- the date as RFC 5322 writes it, for the message's `Date` header
+fn dated[t]
+    parts = civil[t]
+    days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+    months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    day = days[parts[6]]
+    month = months[parts[1] - 1]
+    year = parts[0]
+    d = two[parts[2]]
+    h = two[parts[3]]
+    mi = two[parts[4]]
+    sec = two[parts[5]]
+    return '`day`, `d` `month` `year` `h`:`mi`:`sec` +0000'
+
+--- `mail[mailer, to, subject, body]`: a plain-text message from the
+--- mailer's user, sent through its server; `true`, or the reason as an
+--- error value of kind `'mail'`
+fn mail[mailer, to, subject, body]
+    host = mailer_field[mailer, 'host']
+    user = mailer_field[mailer, 'user']
+    pass = mailer_field[mailer, 'pass']
+    port = int[mailer_field[mailer, 'port']]
+    if not port.ok
+        return error['mail to `to` failed: the mailer\'s port is none', 'mail']
+    if not addressed[to]
+        return error['mail to `to` failed: \'`to`\' is no address (name@host)', 'mail']
+    if not addressed[user]
+        return error['mail to `to` failed: the mailer\'s user \'`user`\' is no address (name@host)', 'mail']
+    tls = port eq 465
+    patience = 30.0
+    s = open[host, port, tls, patience]
+    if not s.ok
+        return error['mail to `to` failed: `s.reason`', 'mail']
+    greeting = ask[s, '', [220], 'the greeting', patience]
+    if not greeting.ok
+        close[s]
+        return error['mail to `to` failed: `greeting.reason`', 'mail']
+    hello = ask[s, 'EHLO localhost', [250], 'EHLO', patience]
+    if not hello.ok
+        close[s]
+        return error['mail to `to` failed: `hello.reason`', 'mail']
+    if not tls
+        if offers_starttls[hello]
+            started = ask[s, 'STARTTLS', [220], 'STARTTLS', patience]
+            if not started.ok
+                close[s]
+                return error['mail to `to` failed: `started.reason`', 'mail']
+            secured = secure[s, host]
+            if not secured.ok
+                close[s]
+                return error['mail to `to` failed: `secured.reason`', 'mail']
+            hello = ask[s, 'EHLO localhost', [250], 'EHLO', patience]
+            if not hello.ok
+                close[s]
+                return error['mail to `to` failed: `hello.reason`', 'mail']
+        else
+            if not (host eq 'localhost' or host eq '127.0.0.1' or host eq '::1')
+                close[s]
+                return error['mail to `to` failed: `host` offers no STARTTLS — a password travels only encrypted: port 465, or a server that offers STARTTLS', 'mail']
+    token = base64[gather[[pack[0, 1], bytes[user], pack[0, 1], bytes[pass]]]]
+    signed = ask[s, 'AUTH PLAIN `token`', [235], 'AUTH', patience]
+    if not signed.ok
+        close[s]
+        return error['mail to `to` failed: `signed.reason`', 'mail']
+    sender = ask[s, 'MAIL FROM:<`user`>', [250], 'MAIL FROM', patience]
+    if not sender.ok
+        close[s]
+        return error['mail to `to` failed: `sender.reason`', 'mail']
+    taker = ask[s, 'RCPT TO:<`to`>', [250, 251], 'RCPT TO', patience]
+    if not taker.ok
+        close[s]
+        return error['mail to `to` failed: `taker.reason`', 'mail']
+    go = ask[s, 'DATA', [354], 'DATA', patience]
+    if not go.ok
+        close[s]
+        return error['mail to `to` failed: `go.reason`', 'mail']
+    heading = subject_line[subject]
+    date = dated[int[time[]]]
+    head = 'From: <`user`>\r\nTo: <`to`>\r\nSubject: `heading`\r\nDate: `date`\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n'
+    content = ''
+    if len[bytes[body]] eq len[body]
+        content = '`head`Content-Transfer-Encoding: 7bit\r\n\r\n`stuffed[body]`'
+    else
+        encoded = wrapped[bytes[body]]
+        content = '`head`Content-Transfer-Encoding: base64\r\n\r\n`encoded`\r\n.'
+    taken = ask[s, content, [250], 'the message', patience]
+    if not taken.ok
+        close[s]
+        return error['mail to `to` failed: `taken.reason`', 'mail']
+    ask[s, 'QUIT', [221], 'QUIT', 5.0]
+    close[s]
+    return true
+
+--- an address is a name and a host; a body's dots are stuffed and its
+--- lines end as SMTP ends them; a subject beyond ASCII is an encoded
+--- word; base64 wraps; a date reads as RFC 5322 writes it
+test a_message_is_written_as_smtp_wants_it[]
+    assert[addressed['ada@example.com'] and not addressed['nobody'] and not addressed['a b@c'] and not addressed['@x']]
+    assert[stuffed['one\n.two\n\nthree'] eq 'one\r\n..two\r\n\r\nthree\r\n.']
+    assert[stuffed['.first'] eq '..first\r\n.']
+    assert[subject_line['Hello'] eq 'Hello']
+    assert[subject_line['Héllo'] eq '=?utf-8?B?SMOpbGxv?=']
+    assert[wrapped[bytes[repeat['a', 60]]] eq 'YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh\r\nYWFh']
+    assert[dated[0] eq 'Thu, 01 Jan 1970 00:00:00 +0000']
+    assert[dated[1369353600] eq 'Fri, 24 May 2013 00:00:00 +0000']

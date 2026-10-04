@@ -1595,13 +1595,13 @@ fn test_web_no_async_without_web() {
 #[test]
 fn test_web_smtp() {
     let rust = transpile("use web\nuse web.mail\nmailer = smtp['smtp.example.com', 587, 'user', 'pass']\n");
-    assert!(rust.contains("CrowMailer::new("), "should emit CrowMailer::new()\n{}", rust);
+    assert!(rust.contains("crow_runtime::sys::mailer("), "a mailer is the runtime's handle\n{}", rust);
 }
 
 #[test]
 fn test_web_smtp_import() {
     let rust = transpile("use web\nuse web.mail\nmailer = smtp['smtp.example.com', 587, 'user', 'pass']\n");
-    assert!(rust.contains("use crow_web::mail::CrowMailer;"), "should import CrowMailer\n{}", rust);
+    assert!(!rust.contains("crow_web::mail"), "the Rust mailer is gone: mail is written in Crow\n{}", rust);
 }
 
 /// A function nothing the program runs calls, whose list parameter holds
@@ -1625,11 +1625,11 @@ fn mail_in_a_handler_goes_through_the_session() {
     let rust = transpile("use web, ui\nuse web.mail\nmailer = smtp['smtp.example.com', 587, 'user', 'pass']\nn = 0\nfn welcome[]\n    mail[mailer, 'ada@example.com', 'Hello', 'Welcome']\nfn asked[]\n    r = mail[mailer, 'cy@example.com', 'Asked', 'now']\n    if r.ok\n        n = 1\nview v[]\n    return stack[button['A', click = welcome], button['B', click = asked]]\npage['/', v]\n");
     assert!(rust.contains("state.mail(_mail, _send)"), "held to the commit\n{}", rust);
     assert!(rust.contains("state.mail_now(_mail, _send)"), "sent when asked\n{}", rust);
-    assert!(rust.contains("static __crow_handle_mailer: std::sync::OnceLock<crow_web::mail::CrowMailer>"), "a static mailer\n{}", rust);
+    assert!(rust.contains("static __crow_handle_mailer: std::sync::OnceLock<crow_runtime::sys::Mailer>"), "a static mailer\n{}", rust);
     assert!(!rust.contains("\"mailer\", serde_json"), "not a session fact\n{}", rust);
     // a script sends at once
     let rust = transpile("use web\nuse web.mail\nmailer = smtp['smtp.example.com', 587, 'user', 'pass']\nr = mail[mailer, 'ada@example.com', 'Hello', 'Welcome']\nlog[r.ok]\n");
-    assert!(rust.contains(".send_blocking(&_to, &_subject, &_body)"), "{}", rust);
+    assert!(rust.contains("_web_mail_mail(mailer.clone(), ") && !rust.contains("state.mail("), "a script sends through the row written in Crow, at once\n{}", rust);
 }
 
 #[test]

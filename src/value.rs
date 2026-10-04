@@ -174,9 +174,9 @@ pub enum Value {
     Sparse(Box<CrowSparse>), // sparse matrix (CSR format)
     Frame(Box<CrowFrame>), // column-oriented data frame
     DbConn(DbHandle), // database connection handle
-    /// A mailer `smtp[…]` made: its place among the interpreter's mailers
-    /// and its host. The password stays with the mailer, out of every value.
-    Mailer(usize, std::sync::Arc<str>),
+    /// A mailer `smtp[…]` made (crow_runtime::sys): the password stays with
+    /// the mailer, out of every value a program prints.
+    Mailer(crow_runtime::sys::Mailer),
     /// A WebSocket client's connection (`socket[url]`, written in Crow over
     /// the sys layer), shared by every value that holds it.
     Socket(crow_runtime::sys::Socket),
@@ -295,7 +295,7 @@ impl fmt::Display for Value {
             Value::Sparse(s) => write!(f, "{}", s),
             Value::Frame(frame) => write!(f, "{}", frame),
             Value::DbConn(h) => write!(f, "<db:{}>", h.backend_name()),
-            Value::Mailer(_, host) => write!(f, "<mailer:{}>", host),
+            Value::Mailer(m) => write!(f, "{}", m),
             Value::Socket(s) => write!(f, "<{:?}>", s),
             Value::Bytes(b) => write!(f, "{}", b),
             Value::Stream(s) => write!(f, "<{:?}>", s),

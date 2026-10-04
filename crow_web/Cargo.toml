@@ -18,7 +18,6 @@ tower = { version = "0.5.3", features = ["util"], optional = true }
 # a route's multipart body: its fields and files
 multer = { version = "3", optional = true }
 bytes = { version = "1", optional = true }
-lettre = { version = "0.11.19", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls"], optional = true }
 uuid = { version = "1.21.0", features = ["v4"], optional = true }
 # the signed cookie a sign-in travels in
 hmac = { version = "0.12", optional = true }
@@ -33,7 +32,6 @@ default = []
 # the server: routes, their CORS, files, rate limits and uploads (serve's
 # and route's options)
 http = ["dep:axum", "dep:tokio", "dep:tokio-stream", "dep:tower-http", "dep:tower", "dep:multer", "dep:bytes", "dep:futures-util"]
-mail = ["dep:lettre", "dep:tokio"]
 # a live page is served, so live carries the server (http): a program that
 # imports ui and not web had not built compiled
 live = ["http", "dep:axum", "dep:tokio", "dep:tokio-stream", "dep:futures-util", "dep:reqwest", "dep:uuid", "dep:hmac", "dep:sha2", "dep:base64"]
