@@ -10,8 +10,6 @@ serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "signal", "sync"], optional = true }
 # a live page's `fetch[]` sources, polled by the server
 reqwest = { version = "0.12", features = ["blocking", "json"], optional = true }
-# a socket to a live feed, wss:// included
-tungstenite = { version = "0.28.0", features = ["rustls-tls-webpki-roots"], optional = true }
 tokio-stream = { version = "0.1", optional = true }
 futures-util = { version = "0.3", optional = true }
 tower-http = { version = "0.6.8", features = ["cors", "fs"], optional = true }
@@ -35,7 +33,6 @@ default = []
 # the server: routes, their CORS, files, rate limits and uploads (serve's
 # and route's options)
 http = ["dep:axum", "dep:tokio", "dep:tokio-stream", "dep:tower-http", "dep:tower", "dep:multer", "dep:bytes", "dep:futures-util"]
-ws = ["dep:tungstenite"]
 mail = ["dep:lettre", "dep:tokio"]
 # a live page is served, so live carries the server (http): a program that
 # imports ui and not web had not built compiled

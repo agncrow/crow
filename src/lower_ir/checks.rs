@@ -112,7 +112,7 @@ pub(crate) const BUILTINS: &[&str] = &[
     "route", "serve", "respond", "redirect", "html", "text",
     "arrow", "bytes", "stream",
     "exec", "query",
-    "connect", "socket", "send", "recv", "close",
+    "connect",
     "page", "smtp", "mail",
     // UI reactive builtins
     "fetch", "poll", "field", "slider", "checkbox", "toggle", "radio", "tabs", "select", "progress", "icon", "today",
@@ -974,6 +974,15 @@ impl<'a> Lowerer<'a> {
         if self.ctx.registry.has_function(name) {
             let providers = self.ctx.registry.providers_of(name);
             if providers.len() > 1 {
+                // (two modules' rows of one name that the arguments' kinds
+                // tell apart are no ambiguity — sys's `send` of a stream
+                // beside a socket's — the kinds pick, as they pick among one
+                // module's rows; the call is then checked as the row's)
+                let kinds: Vec<crate::table::Arg> = types.iter().map(crate::table::Arg::of_type).collect();
+                let taking = providers.iter().filter(|m| crate::table::row_taking(m, name, &kinds).is_some()).count();
+                if taking == 1 {
+                    return;
+                }
                 let forms: Vec<String> = providers.iter().map(|m| format!("{}.{}[...]", m, name)).collect();
                 self.refuse(format!("'{}' is ambiguous — provided by {}; use {}", name, providers.join(" and "), forms.join(" or ")));
                 return;
@@ -1225,10 +1234,6 @@ fn builtin_arity_ok(name: &str, argc: usize) -> bool {
         "stream" => argc >= 1, // stream[feed, a, …] calls feed[put, a, …]
         "exec" | "query" => argc >= 2,
         "connect" => argc == 1,               // connect[url] (db)
-        "socket" => argc == 1,                // socket[url]
-        "send" => argc == 2,                  // send[socket, text]
-        "recv" => argc == 1 || argc == 2,     // recv[socket] or recv[socket, secs]
-        "close" => argc == 1,                 // close[socket]
         "page" => argc == 2 || argc == 3,     // page[path, render] or page[path, render, handle]
         "smtp" => argc == 4,                  // smtp[host, port, user, pass]
         "mail" => argc == 4,                  // mail[mailer, to, subject, body]

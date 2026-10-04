@@ -100,6 +100,7 @@ impl Emitter {
             "io" => std::sync::Arc::new(crate::modules::io::IoModule),
             "web" => std::sync::Arc::new(crate::modules::web::WebModule),
             "web.auth" => std::sync::Arc::new(crate::modules::web::AuthModule),
+            "web.ws" => std::sync::Arc::new(crate::modules::web::WsModule),
             _ => return,
         };
         self.registry.load(m);
@@ -157,12 +158,12 @@ impl Emitter {
                 }
                 // a module of web's written in Crow: its rows, no feature
                 // of crow_web's to build in
-                "web.auth" => {
+                "web.auth" | "web.ws" => {
                     self.needs_crow_web = true;
                     self.needs_crow_runtime = true;
                     self.modules.insert("web".to_string());
                     self.load_module("web");
-                    self.load_module("web.auth");
+                    self.load_module(&path);
                 }
                 p if p.starts_with("web.") => {
                     self.needs_crow_web = true;
@@ -641,7 +642,6 @@ impl Emitter {
             self.line("use std::sync::Arc;");
             let web: Vec<(&str, &str)> = vec![
                 ("mail", "use crow_web::mail::CrowMailer;"),
-                ("ws", "use crow_web::ws;"),
             ];
             for (f, l) in web {
                 if self.web_features.contains(f) {

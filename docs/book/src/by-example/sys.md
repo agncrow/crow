@@ -143,6 +143,8 @@ log[hex[pack[258, 2]]]
 log[hex[pack[-1, 1]]]
 log[hex[ieee[1.0]]]
 log[type[binary[b, 'text/plain']]]
+log[hex[digest[bytes['abc'], 'sha1']]]
+log[hex[mask[bytes['Hello'], pack[939139389, 4]]]]
 ```
 
 ```text
@@ -155,6 +157,8 @@ false
 ff
 3ff0000000000000
 response
+a9993e364706816aba3e25717850c26c9cd0d89d
+7f9f4d5158
 ```
 
 The protocol itself reaches a host — one exchange, a reader's fetch with its options and redirects, an S3 object put signed with the environment's credentials — so these lines are not run here:
@@ -168,6 +172,11 @@ page = fetch['https://example.com/data.csv', map[authorization = 'Bearer k'], ma
 log[page.ok]
 kept = put['s3://reports/aapl.parquet', bytes['PAR1']]
 log[kept.ok]
+s = upgrade['wss://feed.example.com/stocks', 0.0]
+first = leftover[s]
+unread[s, first]
+head = read_head[stream_of[s], now[] + 30.0]
+same_socket = socket_of[stream_of[s], 'wss://feed.example.com/stocks', bytes['']]
 ```
 
 Reference: spec section 13 (sys).

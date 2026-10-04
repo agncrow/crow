@@ -138,6 +138,14 @@ impl TypeContext {
                         return t;
                     }
                 }
+                // (any two modules' rows the kinds tell apart: sys's `recv`
+                // of a stream beside a socket's, inside the socket's module)
+                let taking: Vec<&str> = self.registry.providers_of(name).into_iter().filter(|m| crate::table::row_taking(m, name, &kinds).is_some()).collect();
+                if taking.len() == 1 {
+                    if let Some(t) = self.registry.type_of_in(taking[0], name, &args.iter().map(|a| arg_ty(a)).collect::<Vec<_>>()) {
+                        return t;
+                    }
+                }
             }
             if let Some(t) = self.registry.type_of(name, &args.iter().map(|a| arg_ty(a)).collect::<Vec<_>>()) {
                 return t;
@@ -357,9 +365,6 @@ impl TypeContext {
             // not (expired, a signature that does not match, not a token)
             // Web.ws: a socket, or why not; send answers empty text or why
             // not, recv the next message or why not (closed, a wait passed)
-            "socket" => CrowType::Result(Box::new(CrowType::Socket)),
-            "send" | "recv" if matches!(args.first().map(&arg_ty), Some(CrowType::Socket)) => CrowType::Result(Box::new(CrowType::Str)),
-            "close" if matches!(args.first().map(&arg_ty), Some(CrowType::Socket)) => CrowType::Str,
             // Reactive data sources (UI)
             "poll" | "fetch" => CrowType::Frame(None),
             "today" => CrowType::Str,

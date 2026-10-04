@@ -177,9 +177,9 @@ pub enum Value {
     /// A mailer `smtp[…]` made: its place among the interpreter's mailers
     /// and its host. The password stays with the mailer, out of every value.
     Mailer(usize, std::sync::Arc<str>),
-    /// A WebSocket client's connection (`socket[url]`), shared by every
-    /// value that holds it.
-    Socket(crow_web::ws::CrowSocket),
+    /// A WebSocket client's connection (`socket[url]`, written in Crow over
+    /// the sys layer), shared by every value that holds it.
+    Socket(crow_runtime::sys::Socket),
     /// Bytes (`use sys`): what a connection reads and writes.
     Bytes(crow_runtime::sys::Bytes),
     /// A connection `sys.open` made, shared by every value that holds it.

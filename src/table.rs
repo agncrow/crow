@@ -127,6 +127,9 @@ pub enum Kind {
     /// `CrowResponse` given (crow_web::core): a response a route answers,
     /// made by a row (`sys.binary`, `msgpack`).
     Response,
+    /// `&Socket` taken, `Socket` given (crow_runtime::sys): a WebSocket
+    /// client's connection, `socket[url]`'s.
+    Socket,
     /// `String` given: markup a view places as markup (`doc.markdown`).
     Markup,
     /// `Vec<BTreeMap<String, String>>` given: rows of text by column
@@ -264,6 +267,7 @@ impl Kind {
             Kind::Reply => CrowType::Struct("CrowReply".to_string()),
             Kind::Answer => CrowType::Struct("CrowAnswer".to_string()),
             Kind::Response => CrowType::WebResponse,
+            Kind::Socket => CrowType::Socket,
             Kind::TextMap => CrowType::Map(Box::new(CrowType::Str)),
             Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn | Kind::Operands | Kind::Operand | Kind::Scalars | Kind::Scalar => CrowType::Unknown,
             Kind::JsonList => CrowType::Array(Box::new(CrowType::Json)),
@@ -364,6 +368,7 @@ impl Kind {
             Kind::Reply => "crow_runtime::sources::Reply::default()",
             Kind::Answer => "crow_runtime::sys::Answer::default()",
             Kind::Response => "crow_web::core::CrowResponse::default()",
+            Kind::Socket => "crow_runtime::sys::Socket::closed()",
             Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn | Kind::Operands | Kind::Operand | Kind::Scalars | Kind::Scalar => "unreachable!()",
             Kind::JsonList => "Vec::<serde_json::Value>::new()",
             // a generic answer never fails as a value (its rows answer or stop)
@@ -813,6 +818,17 @@ pub fn write_stream(s: crow_runtime::sys::CrowStream) -> CrowValue {
     CrowValue::ok(Value::Stream(s))
 }
 
+pub fn read_socket(v: &CrowValue) -> Result<crow_runtime::sys::Socket, String> {
+    match &v.value {
+        Value::Socket(s) => Ok(s.clone()),
+        _ => Err(format!("expected a socket, got {}", named(v))),
+    }
+}
+
+pub fn write_socket(s: crow_runtime::sys::Socket) -> CrowValue {
+    CrowValue::ok(Value::Socket(s))
+}
+
 pub fn write_list(items: Vec<CrowValue>) -> CrowValue {
     CrowValue::ok(Value::Array(items))
 }
@@ -986,6 +1002,7 @@ macro_rules! read {
     (Column, $g:expr) => { &read_column(one($g)?)? };
     (Bytes, $g:expr) => { &read_bytes(one($g)?)? };
     (Stream, $g:expr) => { &read_stream(one($g)?)? };
+    (Socket, $g:expr) => { &read_socket(one($g)?)? };
     (Shown, $g:expr) => { one($g)? };
     (Encoded, $g:expr) => { one($g)? };
 }
@@ -1018,6 +1035,7 @@ macro_rules! answer {
     (Reply, $x:expr) => { write_reply($x) };
     (Answer, $x:expr) => { write_answer($x) };
     (Response, $x:expr) => { write_response($x) };
+    (Socket, $x:expr) => { write_socket($x) };
     (Json, $x:expr) => { write_json($x) };
     (JsonList, $x:expr) => { write_json_list($x) };
 }
@@ -1116,6 +1134,7 @@ pub fn value_as(kind: Kind, v: &CrowValue) -> Result<CrowValue, String> {
         // (`crow_param_type`): the one form a map, a record or a list of
         // either takes in Crow
         Kind::Encoded => CrowValue::ok(Value::Str(crate::builtins::crow_to_encoded(v).to_string())),
+        Kind::Socket => CrowValue::ok(Value::Socket(read_socket(v)?)),
         other => return Err(format!("a bug in Crow: a builtin written in Crow takes {} here, which the runtime cannot hand it", other.words())),
     })
 }
@@ -1573,6 +1592,14 @@ pub static ROWS: &[Row] = &[
     row!("sys.pack", "sys", "pack", crow_runtime::sys::pack, (Int, Int) -> Bytes, stops),
     row!("sys.ieee", "sys", "ieee", crow_runtime::sys::ieee, (Float) -> Bytes, never),
     row!("sys.binary", "sys", "binary", crow_web::core::response::binary_of, (Bytes, Str) -> Response, never),
+    // a socket: the stream it talks over, what it holds unread, a frame's
+    // mask, a digest as bytes (the handshake's accept key)
+    row!("sys.socket_of", "sys", "socket_of", crow_runtime::sys::socket_of, (Stream, Str, Bytes) -> Socket, never),
+    row!("sys.stream_of", "sys", "stream_of", crow_runtime::sys::stream_of, (Socket) -> Stream, never),
+    row!("sys.leftover", "sys", "leftover", crow_runtime::sys::leftover, (Socket) -> Bytes, never),
+    row!("sys.unread", "sys", "unread", crow_runtime::sys::unread, (Socket, Bytes) -> Unit, never),
+    row!("sys.mask", "sys", "mask", crow_runtime::sys::mask, (Bytes, Bytes) -> Bytes, stops),
+    row!("sys.digest", "sys", "digest", crow_runtime::sys::digest, (Bytes, Str) -> Bytes, stops),
     row!("sys.answer", "sys", "answer", crow_runtime::sys::answer, (Int, Str, TextMap, Bytes) -> Answer, never),
     // the parse kernels the readers written in Crow stand on
     row!("sys.csv_rows", "sys", "csv_rows", crow_runtime::sys::csv_rows, (Str) -> TextRows, value "io"),
@@ -1594,11 +1621,20 @@ pub static ROWS: &[Row] = &[
     crow!("sys.with_query", "sys", "with_query", (Str, TextMap) -> Str, never),
     crow!("sys.redirected", "sys", "redirected", (Str, Str) -> Str, never),
     crow!("sys.format_sniffed", "sys", "format_sniffed", (Str, Bytes) -> Str, never),
+    crow!("sys.read_head", "sys", "read_head", (Stream, Float) -> Answer, value "sys"),
+    crow!("sys.upgrade", "sys", "upgrade", (Str, Float) -> Socket, value "sys"),
     // web's rows written in Crow: a token signed and read (src/modules/auth.co),
     // a value packed as MessagePack (src/modules/web.co)
     crow!("web.auth.sign", "web.auth", "sign", (Encoded, Str) -> Str, value "auth"),
     crow!("web.auth.verify", "web.auth", "verify", (Str, Str) -> Json, value "auth"),
     crow!("web.msgpack", "web", "msgpack", (Encoded) -> Response, never),
+    // the WebSocket client written in Crow (src/modules/ws.co): a socket's
+    // row is named as the program calls it, its function by the row's id
+    crow!("web.ws.socket", "web.ws", "socket", (Str) -> Socket, value "socket"),
+    crow!("web.ws.send_text", "web.ws", "send", (Socket, Str) -> Str, value "socket"),
+    crow!("web.ws.recv_text", "web.ws", "recv", (Socket) -> Str, value "socket"),
+    crow!("web.ws.recv_for", "web.ws", "recv", (Socket, Float) -> Str, value "socket"),
+    crow!("web.ws.close_socket", "web.ws", "close", (Socket) -> Str, never),
     // frame (a column the frame lacks, an aggregation or a join it does not
     // know, a mask or a count that does not fit: the reason the program
     // stops with, as df.col of a missing column is — the interpreter had
@@ -1747,6 +1783,7 @@ pub enum Arg {
     Float,
     Bytes,
     Stream,
+    Socket,
     /// A list of bytes (a connection's chunks).
     Chunks,
     /// A parsed JSON value, whose kind shows only as it runs.
@@ -1821,6 +1858,7 @@ impl Arg {
             Arg::Sparse => "a sparse matrix",
             Arg::Bytes => "bytes",
             Arg::Stream => "a stream",
+            Arg::Socket => "a socket",
             Arg::Frame => "a frame",
             Arg::Fn => "a function",
             Arg::AnyList => "a list",
@@ -1851,6 +1889,7 @@ impl Arg {
             CrowType::Sparse => Arg::Sparse,
             CrowType::Bytes => Arg::Bytes,
             CrowType::Stream => Arg::Stream,
+            CrowType::Socket => Arg::Socket,
             CrowType::Frame(_) => Arg::Frame,
             CrowType::Fn(..) => Arg::Fn,
             _ => Arg::Unknown,
@@ -1894,6 +1933,7 @@ impl Arg {
             Value::Sparse(_) => Arg::Sparse,
             Value::Bytes(_) => Arg::Bytes,
             Value::Stream(_) => Arg::Stream,
+            Value::Socket(_) => Arg::Socket,
             Value::Frame(_) => Arg::Frame,
             Value::Fn(_) | Value::GradFn(_) => Arg::Fn,
             Value::Json(_) => Arg::Json,
@@ -1940,6 +1980,7 @@ impl Kind {
             Kind::Reply => "a request's answer",
             Kind::Answer => "a connection's answer",
             Kind::Response => "a response",
+            Kind::Socket => "a socket",
             Kind::Shown | Kind::Shows | Kind::ShownDyn => "a value",
             Kind::Encoded => "a value JSON can hold",
             Kind::JsonList => "a list of JSON values",
@@ -1970,6 +2011,7 @@ impl Kind {
                 Kind::Sparse => a == Arg::Sparse,
                 Kind::Bytes => a == Arg::Bytes,
                 Kind::Stream => a == Arg::Stream,
+                Kind::Socket => a == Arg::Socket,
                 Kind::Frame => a == Arg::Frame,
                 Kind::Cell => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Json),
                 Kind::Cells => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Column),
@@ -2009,6 +2051,13 @@ fn takes(row: &Row, args: &[Arg]) -> bool {
 /// its name, the first that takes their count and kinds (`exp` of a number
 /// or of a tensor, `norm[t]` or `norm[t, p]`); then the first that takes
 /// their count; then the first, whose own check refuses the call.
+/// A module's row of a name that takes these arguments, or none: what
+/// tells two modules' rows of one name apart (sys's `send` of a stream,
+/// a socket's of a socket).
+pub fn row_taking(module: &str, name: &str, args: &[Arg]) -> Option<&'static Row> {
+    ROWS.iter().find(|r| r.module == module && r.name == name && takes(r, args))
+}
+
 pub fn module(module: &str, name: &str, args: &[Arg]) -> Option<&'static Row> {
     let named = || ROWS.iter().filter(move |r| r.module == module && r.name == name);
     named()

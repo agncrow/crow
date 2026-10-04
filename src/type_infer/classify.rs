@@ -167,6 +167,9 @@ impl TypeContext {
                     if path == "web.auth" && !self.registry.is_loaded("web.auth") {
                         self.registry.load(std::sync::Arc::new(crate::modules::web::AuthModule));
                     }
+                    if path == "web.ws" && !self.registry.is_loaded("web.ws") {
+                        self.registry.load(std::sync::Arc::new(crate::modules::web::WsModule));
+                    }
                 }
                 Stmt::Resource { kind, count } => {
                     if kind == "cpu" {

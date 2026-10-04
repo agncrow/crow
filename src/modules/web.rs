@@ -19,6 +19,20 @@ impl CrowModule for WebModule {
     }
 }
 
+pub struct WsModule;
+
+pub(crate) const WS_FUNCTIONS: &[&str] = &["socket", "send", "recv", "close"];
+
+impl CrowModule for WsModule {
+    fn name(&self) -> &str {
+        "web.ws"
+    }
+
+    fn functions(&self) -> &[&str] {
+        WS_FUNCTIONS
+    }
+}
+
 pub struct AuthModule;
 
 pub(crate) const AUTH_FUNCTIONS: &[&str] = &["sign", "verify"];

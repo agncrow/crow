@@ -228,9 +228,93 @@ pub fn hash(b: &Bytes, algo: &str) -> Result<String, String> {
     match algo {
         "sha256" => Ok(format!("{:x}", sha2::Sha256::digest(&b.0))),
         "sha512" => Ok(format!("{:x}", sha2::Sha512::digest(&b.0))),
+        "sha1" => Ok(format!("{:x}", sha1::Sha1::digest(&b.0))),
         "md5" => Ok(format!("{:x}", md5::Md5::digest(&b.0))),
-        other => Err(format!("hash: '{}' is not a digest of bytes — sha256, sha512 or md5", other)),
+        other => Err(format!("hash: '{}' is not a digest of bytes — sha256, sha512, sha1 or md5", other)),
     }
+}
+
+/// `sys.digest[bytes, algo]`: the digest as bytes — `'sha1'` (a socket's
+/// accept key), `'sha256'`, `'sha512'` or `'md5'`.
+pub fn digest(b: &Bytes, algo: &str) -> Result<Bytes, String> {
+    use sha2::Digest;
+    match algo {
+        "sha1" => Ok(Bytes(sha1::Sha1::digest(&b.0).to_vec())),
+        "sha256" => Ok(Bytes(sha2::Sha256::digest(&b.0).to_vec())),
+        "sha512" => Ok(Bytes(sha2::Sha512::digest(&b.0).to_vec())),
+        "md5" => Ok(Bytes(md5::Md5::digest(&b.0).to_vec())),
+        other => Err(format!("digest: '{}' is not a digest of bytes — sha1, sha256, sha512 or md5", other)),
+    }
+}
+
+/// `sys.mask[bytes, key]`: the bytes XORed with the 4-byte key, cycling —
+/// a client's frame masked, a masked frame read (RFC 6455). A key of
+/// another length stops.
+pub fn mask(b: &Bytes, key: &Bytes) -> Result<Bytes, String> {
+    if key.0.len() != 4 {
+        return Err(format!("mask: a key is 4 bytes, got {}", key.0.len()));
+    }
+    Ok(Bytes(b.0.iter().enumerate().map(|(i, x)| x ^ key.0[i % 4]).collect()))
+}
+
+/// A WebSocket client's connection (`socket[url]`, written in Crow over
+/// this layer): the stream after its handshake, the URL it was opened to,
+/// and the bytes read past what the socket last needed — the handshake's
+/// head, a frame's end — held until it reads on. Shared by every value
+/// that holds it.
+#[derive(Clone)]
+pub struct Socket(Arc<SocketInner>);
+
+struct SocketInner {
+    stream: CrowStream,
+    url: String,
+    unread: Mutex<Vec<u8>>,
+}
+
+impl std::fmt::Debug for Socket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "socket {}", self.0.url)
+    }
+}
+
+impl crate::display::CrowDisplay for Socket {
+    fn crow_repr(&self) -> String {
+        format!("<socket {}>", self.0.url)
+    }
+}
+
+impl Socket {
+    /// A socket that is closed: what a socket that failed to open holds,
+    /// so every call on it answers that it is closed.
+    pub fn closed() -> Self {
+        Socket(Arc::new(SocketInner { stream: CrowStream::closed(), url: String::new(), unread: Mutex::new(Vec::new()) }))
+    }
+}
+
+/// `sys.socket_of[stream, url, unread]`: a socket over a stream the
+/// handshake upgraded, holding what came after the handshake's head.
+pub fn socket_of(stream: &CrowStream, url: &str, unread: &Bytes) -> Socket {
+    Socket(Arc::new(SocketInner { stream: stream.clone(), url: url.to_string(), unread: Mutex::new(unread.0.clone()) }))
+}
+
+/// `sys.stream_of[socket]`: the stream a socket talks over.
+pub fn stream_of(s: &Socket) -> CrowStream {
+    s.0.stream.clone()
+}
+
+/// `sys.leftover[socket]`: the bytes a socket holds unread, taken — none
+/// stay with it.
+pub fn leftover(s: &Socket) -> Bytes {
+    Bytes(std::mem::take(&mut *crate::lock(&s.0.unread)))
+}
+
+/// `sys.unread[socket, bytes]`: bytes put back for the socket's next read,
+/// before anything it holds (what a read took past a frame's end).
+pub fn unread(s: &Socket, b: &Bytes) {
+    let mut held = crate::lock(&s.0.unread);
+    let mut again = b.0.clone();
+    again.extend_from_slice(&held);
+    *held = again;
 }
 
 /// `sys.base64[bytes]`: the bytes as base64, the standard alphabet padded
@@ -313,27 +397,31 @@ impl Conn {
 /// A connection to a host: one, behind a lock, however many values hold
 /// it; closed by `close` or when it is let go.
 #[derive(Clone)]
-pub struct CrowStream {
-    inner: Arc<Mutex<Option<Conn>>>,
-    name: Arc<str>,
+pub struct CrowStream(Arc<StreamInner>);
+
+struct StreamInner {
+    conn: Mutex<Option<Conn>>,
+    name: String,
+    /// The wait `open` gave it, which a read given no seconds goes back to.
+    wait: Option<std::time::Duration>,
 }
 
 impl std::fmt::Debug for CrowStream {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "stream {}", self.name)
+        write!(f, "stream {}", self.0.name)
     }
 }
 
 impl crate::display::CrowDisplay for CrowStream {
     fn crow_repr(&self) -> String {
-        format!("<stream {}>", self.name)
+        format!("<stream {}>", self.0.name)
     }
 }
 
 impl CrowStream {
     /// What a failed `open` holds: a stream that is closed.
     pub fn closed() -> Self {
-        CrowStream { inner: Arc::new(Mutex::new(None)), name: Arc::from("closed") }
+        CrowStream(Arc::new(StreamInner { conn: Mutex::new(None), name: "closed".to_string(), wait: None }))
     }
 }
 
@@ -373,18 +461,18 @@ pub fn open(host: &str, port: i64, tls: bool, seconds: f64) -> Result<CrowStream
     } else {
         Conn::Plain(tcp)
     };
-    Ok(CrowStream { inner: Arc::new(Mutex::new(Some(conn))), name: Arc::from(format!("{}:{}", host, port)) })
+    Ok(CrowStream(Arc::new(StreamInner { conn: Mutex::new(Some(conn)), name: format!("{}:{}", host, port), wait: timeout })))
 }
 
 /// `sys.send[stream, bytes]`: the bytes written, all of them, or the reason.
 pub fn send(s: &CrowStream, b: &Bytes) -> Result<i64, String> {
-    let mut guard = s.inner.lock().map_err(|_| "the stream is held by a thread that stopped".to_string())?;
+    let mut guard = s.0.conn.lock().map_err(|_| "the stream is held by a thread that stopped".to_string())?;
     let Some(conn) = guard.as_mut() else { return Err("the stream is closed".to_string()) };
     let r = match conn {
         Conn::Plain(t) => t.write_all(&b.0).and_then(|_| t.flush()),
         Conn::Tls(t) => t.write_all(&b.0).and_then(|_| t.flush()),
     };
-    r.map_err(|e| format!("cannot send to {}: {}", s.name, e))?;
+    r.map_err(|e| format!("cannot send to {}: {}", s.0.name, e))?;
     Ok(b.len())
 }
 
@@ -396,11 +484,12 @@ pub fn recv(s: &CrowStream, most: i64, seconds: f64) -> Result<Bytes, String> {
     if most <= 0 {
         return Err(format!("recv[] reads at most a positive number of bytes, got {}", most));
     }
-    let mut guard = s.inner.lock().map_err(|_| "the stream is held by a thread that stopped".to_string())?;
+    let mut guard = s.0.conn.lock().map_err(|_| "the stream is held by a thread that stopped".to_string())?;
     let Some(conn) = guard.as_mut() else { return Err("the stream is closed".to_string()) };
-    if seconds > 0.0 {
-        conn.tcp().set_read_timeout(Some(std::time::Duration::from_secs_f64(seconds))).map_err(|e| e.to_string())?;
-    }
+    // (a read given no seconds waits as the connection was opened to,
+    // whatever the read before it waited)
+    let wait = if seconds > 0.0 { Some(std::time::Duration::from_secs_f64(seconds)) } else { s.0.wait };
+    conn.tcp().set_read_timeout(wait).map_err(|e| e.to_string())?;
     let mut buf = vec![0u8; most as usize];
     let r = match conn {
         Conn::Plain(t) => t.read(&mut buf),
@@ -411,14 +500,14 @@ pub fn recv(s: &CrowStream, most: i64, seconds: f64) -> Result<Bytes, String> {
             buf.truncate(n);
             Ok(Bytes(buf))
         }
-        Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => Err(format!("no data from {} in {} s", s.name, seconds)),
-        Err(e) => Err(format!("cannot read from {}: {}", s.name, e)),
+        Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => Err(format!("no data from {} in {} s", s.0.name, seconds)),
+        Err(e) => Err(format!("cannot read from {}: {}", s.0.name, e)),
     }
 }
 
 /// `sys.close[stream]`: the connection let go; every call after is refused.
 pub fn close(s: &CrowStream) {
-    if let Ok(mut guard) = s.inner.lock() {
+    if let Ok(mut guard) = s.0.conn.lock() {
         *guard = None;
     }
 }
@@ -445,6 +534,28 @@ mod tests {
         let rows = csv_rows("name,age\nalice,30\nbob,25\n").unwrap();
         assert_eq!((rows.len(), rows[1]["age"].as_str()), (2, "25"));
         assert!(csv_rows("").is_err());
+    }
+
+    /// A read given no seconds waits as the connection was opened to,
+    /// whatever the read before it waited (a timed read had left its wait
+    /// on the connection, and a socket's untimed read gave up after it)
+    #[test]
+    fn a_read_given_no_seconds_waits_as_the_connection_does() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((s, _)) = listener.accept() {
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+                drop(s);
+            }
+        });
+        let s = open("127.0.0.1", port as i64, false, 0.6).unwrap();
+        let quick = std::time::Instant::now();
+        assert!(recv(&s, 1, 0.1).unwrap_err().contains("in 0.1 s"));
+        assert!(quick.elapsed() < std::time::Duration::from_millis(500));
+        let own = std::time::Instant::now();
+        assert!(recv(&s, 1, 0.0).unwrap_err().contains("no data"));
+        assert!(own.elapsed() >= std::time::Duration::from_millis(500), "waited {:?}", own.elapsed());
     }
 
     /// A server that echoes what it is sent, once, then closes.

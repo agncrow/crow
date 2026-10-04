@@ -1636,10 +1636,10 @@ fn mail_in_a_handler_goes_through_the_session() {
 fn test_web_socket() {
     // a socket, and what acts on it, are crow_web's
     let rust = transpile("use web\nuse web.ws\nurl = 'ws://localhost:3000'\nsock = socket[url]\nsend[sock, 'hi']\nmsg = recv[sock, 5]\nclose[sock]\n");
-    assert!(rust.contains("crow_web::ws::open("), "should open a socket\n{}", rust);
-    assert!(rust.contains(".send(&"), "should emit .send()\n{}", rust);
-    assert!(rust.contains(".recv(Some((5_i64) as f64))"), "should emit .recv() with its wait\n{}", rust);
-    assert!(rust.contains(".close();"), "should emit .close()\n{}", rust);
+    assert!(rust.contains("_web_ws_socket("), "the socket written in Crow\n{}", rust);
+    assert!(rust.contains("_web_ws_send_text("), "a send is the module's\n{}", rust);
+    assert!(rust.contains("_web_ws_recv_for("), "a recv with its wait is the module's\n{}", rust);
+    assert!(rust.contains("_web_ws_close_socket("), "a close is the module's\n{}", rust);
 }
 
 // --- DB module codegen tests ---

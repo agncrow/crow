@@ -1597,7 +1597,7 @@ impl Emitter {
                     && local_read
                     && matches!(
                         Self::inner(&self.tt(a)),
-                        CrowType::NumArray(..) | CrowType::Array(_) | CrowType::Map(_) | CrowType::Str | CrowType::Markup | CrowType::Frame(_) | CrowType::Struct(_) | CrowType::Bytes | CrowType::Stream | CrowType::DbHandle
+                        CrowType::NumArray(..) | CrowType::Array(_) | CrowType::Map(_) | CrowType::Str | CrowType::Markup | CrowType::Frame(_) | CrowType::Struct(_) | CrowType::Bytes | CrowType::Stream | CrowType::Socket | CrowType::Mailer | CrowType::DbHandle
                     );
                 let s = self.expr(a);
                 arg_strs.push(if needs_clone && !(matches!(a, Expr::Load(n, _) if self.static_handle_vars.contains(n))) { format!("{}.clone()", s) } else { s });

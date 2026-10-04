@@ -1,0 +1,155 @@
+--- `use web.ws`: the WebSocket client, written in Crow on the sys layer
+--- (design rule 20) — RFC 6455's framing over a stream the handshake
+--- upgraded (`sys.upgrade`): a message sent masked, the next message read
+--- whole across its fragments, a ping answered, a close answered and the
+--- connection let go. Each row in the builtin table (src/table.rs) is its
+--- contract: a socket's `send`, `recv` and `close` are named as the
+--- program calls them, their functions by the rows' ids. The tests are
+--- the module's own (`crow test src/modules/ws.co`), and tests/socket.rs
+--- runs the client against a server in both modes.
+use sys
+
+--- `socket[url]`: a connection to a WebSocket server, `ws://` or `wss://`
+fn socket[url]
+    if not (starts[url, 'ws://'] or starts[url, 'wss://'])
+        return error['cannot open a socket to `url`: a socket\'s URL is ws:// or wss://', 'socket']
+    s = upgrade[url, 0.0]
+    if not s.ok
+        return error[s.reason, 'socket']
+    return s
+
+--- a frame as a client sends it: FIN set with the opcode, the length in
+--- its smallest form with the mask bit, the key, and the payload masked
+fn framed[opcode, payload, key]
+    n = len[payload]
+    head = pack[128 + opcode, 1]
+    if n lte 125
+        head = concat[head, pack[128 + n, 1]]
+    else
+        if n lt 65536
+            head = concat[concat[head, pack[254, 1]], pack[n, 2]]
+        else
+            head = concat[concat[head, pack[255, 1]], pack[n, 8]]
+    return gather[[head, key, mask[payload, key]]]
+
+--- the reason a socket's call failed, in the socket's words
+fn socket_reason[reason]
+    if reason eq 'the stream is closed'
+        return 'the socket is closed'
+    return reason
+
+--- a frame sent, masked with four random bytes, as a client sends every
+--- frame; answers empty text
+fn frame[s, opcode, payload]
+    sent = send[stream_of[s], framed[opcode, payload, random[4]]]
+    if not sent.ok
+        return error[socket_reason[sent.reason], 'socket']
+    return ''
+
+--- `send[s, text]`: a text message, sent; answers empty text
+fn send_text[s, said]
+    return frame[s, 1, bytes[said]]
+
+--- exactly `n` bytes of what the socket reads: what it holds unread
+--- first, then the stream's, waiting at most the seconds for each piece
+--- (as the connection does, when 0); what came past the `n` is held for
+--- the next read. A server that closed the connection is `closed`.
+fn exact[s, n, secs]
+    have = leftover[s]
+    while len[have] lt n
+        got = recv[stream_of[s], n - len[have], secs]
+        if not got.ok
+            if starts[got.reason, 'no data']
+                return error['no message in `secs` s', 'socket']
+            return error[socket_reason[got.reason], 'socket']
+        if len[got] eq 0
+            close[stream_of[s]]
+            return error['closed', 'socket']
+        have = concat[have, got]
+    if len[have] gt n
+        unread[s, slice[have, n, len[have]]]
+    return slice[have, 0, n]
+
+--- `recv[s, secs]`: the next message as text, waiting at most the seconds
+--- — a text or a binary message, its fragments joined; a ping answered
+--- and passed over, a pong passed over; a close answered, the connection
+--- let go, and `closed` the reason
+fn recv_for[s, secs]
+    message = bytes['']
+    while true
+        head = exact[s, 2, secs]
+        if not head.ok
+            return error[head.reason, 'socket']
+        first = byte[head, 0]
+        second = byte[head, 1]
+        fin = first gte 128
+        opcode = first % 16
+        n = second % 128
+        if n eq 126
+            ext = exact[s, 2, secs]
+            if not ext.ok
+                return error[ext.reason, 'socket']
+            n = byte[ext, 0] * 256 + byte[ext, 1]
+        if n eq 127
+            wide = exact[s, 8, secs]
+            if not wide.ok
+                return error[wide.reason, 'socket']
+            n = 0
+            for i in range[8]
+                n = n * 256 + byte[wide, i]
+        key = bytes['']
+        if second gte 128
+            given = exact[s, 4, secs]
+            if not given.ok
+                return error[given.reason, 'socket']
+            key = given
+        payload = exact[s, n, secs]
+        if not payload.ok
+            return error[payload.reason, 'socket']
+        data = payload
+        if len[key] eq 4
+            data = mask[data, key]
+        if opcode eq 8
+            code = bytes['']
+            if len[data] gte 2
+                code = slice[data, 0, 2]
+            frame[s, 8, code]
+            close[stream_of[s]]
+            return error['closed', 'socket']
+        if opcode eq 9
+            answered = frame[s, 10, data]
+            if not answered.ok
+                return error[answered.reason, 'socket']
+        if opcode eq 0 or opcode eq 1 or opcode eq 2
+            message = concat[message, data]
+            if fin
+                return text[message, '�']
+
+--- `recv[s]`: the next message, waited for as the connection waits
+fn recv_text[s]
+    return recv_for[s, 0.0]
+
+--- `close[s]`: a close frame sent, the server's answer waited for briefly,
+--- the connection let go — for every value that holds it; answers empty
+--- text
+fn close_socket[s]
+    sent = frame[s, 8, pack[1000, 2]]
+    if sent.ok
+        deadline = now[] + 2.0
+        while now[] lt deadline
+            got = recv_for[s, 2.0]
+            if not got.ok
+                break
+    close[stream_of[s]]
+    return ''
+
+--- a frame is written as the RFC's example shows (a masked "Hello"), a
+--- longer one's length in two bytes, and a reason in the socket's words
+test a_frame_is_written_as_the_rfc_shows[]
+    key = pack[939139389, 4]
+    assert[hex[framed[1, bytes['Hello'], key]] eq '818537fa213d7f9f4d5158']
+    long = bytes[repeat['x', 200]]
+    assert[slice[hex[framed[2, long, key]], 0, 8] eq '82fe00c8']
+    assert[hex[mask[mask[bytes['Hello'], key], key]] eq hex[bytes['Hello']]]
+    assert[socket_reason['the stream is closed'] eq 'the socket is closed']
+    assert[socket_reason['no data'] eq 'no data']

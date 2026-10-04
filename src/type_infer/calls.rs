@@ -241,7 +241,9 @@ impl TypeContext {
             // call of that function with the row's parameters — its
             // contract — however the arguments came
             if !self.functions.contains_key(name) && !self.structs.contains_key(name) {
-                if let Some(m) = self.registry.module_name_for(name).map(str::to_string) {
+                // (every module in scope that answers the name: the row the
+                // kinds pick is the one noted)
+                for m in self.registry.providers_of(name).into_iter().map(str::to_string).collect::<Vec<_>>() {
                     self.note_crow_row(&m, name, arg_types);
                 }
                 // (a core builtin written in Crow: `request`)

@@ -167,9 +167,11 @@ fn dechunked[s, deadline, buffer]
         rest = slice[rest, size + 2, len[rest]]
     return gather[parts]
 
---- a connection's answer read whole: the head, then the body as the
---- headers say it comes
-fn read_answer[s, deadline, method]
+--- `read_head[stream, deadline]`: a connection's answer's head read to
+--- its blank line — the status and its phrase, the headers (their names
+--- in lower case, repeats joined) — and, as the answer's `body`, what
+--- came after the head: the start of a body, a socket's first frame
+fn read_head[s, deadline]
     buffer = bytes['']
     cut = find[buffer, bytes['\r\n\r\n']]
     while cut lt 0
@@ -203,6 +205,18 @@ fn read_answer[s, deadline, method]
                 headers = set[headers, name, '`before`, `value`']
             else
                 headers = set[headers, name, value]
+    return answer[status, phrase, headers, rest]
+
+--- a connection's answer read whole: the head, then the body as the
+--- headers say it comes
+fn read_answer[s, deadline, method]
+    got = read_head[s, deadline]
+    if not got.ok
+        return error[got.reason, 'sys']
+    status = got.status
+    phrase = got.phrase
+    headers = got.headers
+    rest = got.body
     body = bytes['']
     bodiless = method eq 'HEAD' or status eq 204 or status eq 304 or (status gte 100 and status lt 200)
     if not bodiless
@@ -264,6 +278,51 @@ fn exchange[url, method, head_lines, body_bytes, timeout]
     if not got.ok
         return error[unanswered[got.reason, timeout], 'sys']
     return got
+
+--- `upgrade[url, timeout]`: a connection to a `ws://` or `wss://` URL's
+--- host, upgraded to a WebSocket as RFC 6455 says — the handshake's key
+--- sent, the server's accept checked — or the reason; the socket holds
+--- whatever the server sent after its head (a first frame may come with
+--- it). A timeout of 0 waits as the connection does.
+fn upgrade[url, timeout]
+    http = ''
+    if starts[url, 'wss://']
+        tail = slice[url, 6, len[url]]
+        http = 'https://`tail`'
+    else
+        tail = slice[url, 5, len[url]]
+        http = 'http://`tail`'
+    parts = parse_url[http]
+    if not parts.ok
+        return error['cannot open a socket to `url`: `parts.reason`', 'sys']
+    s = open[parts.host, parts.port, parts.tls, timeout]
+    if not s.ok
+        return error['cannot open a socket to `url`: `s.reason`', 'sys']
+    patience = timeout
+    if timeout eq 0.0
+        patience = 30.0
+    key = base64[random[16]]
+    hostline = host_line[parts]
+    head = 'GET `parts.path` HTTP/1.1\r\nhost: `hostline`\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-key: `key`\r\nsec-websocket-version: 13\r\n\r\n'
+    sent = send[s, bytes[head]]
+    if not sent.ok
+        close[s]
+        return error['cannot open a socket to `url`: `sent.reason`', 'sys']
+    got = read_head[s, now[] + patience]
+    if not got.ok
+        close[s]
+        return error['cannot open a socket to `url`: `got.reason`', 'sys']
+    if got.status ne 101
+        close[s]
+        return error['cannot open a socket to `url`: the server answered `got.status` `got.phrase`', 'sys']
+    expected = base64[digest[bytes['`key`258EAFA5-E914-47DA-95CA-C5AB0DC85B11'], 'sha1']]
+    accepted = ''
+    if has[got.headers, 'sec-websocket-accept']
+        accepted = got.headers['sec-websocket-accept']
+    if accepted ne expected
+        close[s]
+        return error['cannot open a socket to `url`: the server\'s accept key does not match', 'sys']
+    return socket_of[s, url, got.body]
 
 --- where a redirect sends the request: the location, made absolute
 fn redirected[from, location]

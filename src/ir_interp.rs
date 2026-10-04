@@ -1953,38 +1953,6 @@ impl IrInterp {
                 }
                 Ok(CrowValue::done())
             }
-            // socket[url] and its send, recv and close: crow_web's, as the
-            // compiled program's are; each failure an error value of kind
-            // 'socket' (they had been stand-ins: a map, `true`, empty text)
-            "socket" if vals.len() == 1 => {
-                let url = match vals[0].unwrap_or_propagate()? {
-                    Value::Str(s) => s.clone(),
-                    _ => return Err("socket[] takes a URL: socket['wss://feed.example.com']".into()),
-                };
-                Ok(match crow_web::ws::open(&url) {
-                    Ok(s) => CrowValue::ok(Value::Socket(s)),
-                    Err(e) => CrowValue::error_with_kind(&e, "socket", ""),
-                })
-            }
-            "send" | "recv" | "close" if matches!(vals.first().map(|v| &v.value), Some(Value::Socket(_))) => {
-                let Some(Value::Socket(s)) = vals.first().map(|v| &v.value) else { unreachable!() };
-                let answer = |r: Result<String, String>| match r {
-                    Ok(t) => CrowValue::ok(Value::Str(t)),
-                    Err(e) => CrowValue::error_with_kind(&e, "socket", ""),
-                };
-                Ok(match (name, vals.get(1).map(|v| &v.value)) {
-                    ("send", Some(Value::Str(text))) => answer(s.send(text).map(|_| String::new())),
-                    ("send", _) => return Err("send[] takes a socket and text".into()),
-                    ("recv", None) => answer(s.recv(None)),
-                    ("recv", Some(Value::Int(n))) => answer(s.recv(Some(*n as f64))),
-                    ("recv", Some(Value::Float(x))) => answer(s.recv(Some(*x))),
-                    ("recv", _) => return Err("recv[] takes a socket and, at most, the seconds to wait".into()),
-                    _ => {
-                        s.close();
-                        CrowValue::ok(Value::Str(String::new()))
-                    }
-                })
-            }
             "smtp" => {
                 if vals.len() != 4 {
                     return Err("smtp[] takes 4 arguments".into());

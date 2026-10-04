@@ -148,7 +148,7 @@ A collection builtin takes the kinds its forms above say — a list, a map, text
 
 | Function | Description | Example |
 |----------|-------------|---|
-| `read[path]` | The text of a file, a URL or an S3 object (error-value on failure; Files, URLs and S3) | [Files and directories](../by-example/files.md) · [Moments and freshness](../by-example/moments.md) · [Handling Errors Explicitly](../ch07-04-explicit-handling.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) · [View Blocks](../ch12-01-views.md) |
+| `read[path]` | The text of a file, a URL or an S3 object (error-value on failure; Files, URLs and S3) | [Files and directories](../by-example/files.md) · [Moments and freshness](../by-example/moments.md) · [The standard library's layer: `use sys`](../by-example/sys.md) · [Handling Errors Explicitly](../ch07-04-explicit-handling.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) · [View Blocks](../ch12-01-views.md) |
 | `write[path, content]` | Write text to a file or an S3 object (error-value on failure) | [Databases: `use db`](../by-example/db.md) · [Files and directories](../by-example/files.md) · [Frames: `use frame`](../by-example/frames.md) · [Structured files: `use io`](../by-example/io.md) · [Moments and freshness](../by-example/moments.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) · [Reactive State and Events](../ch12-02-reactive-state.md) |
 | `exists[path]` | Check if file/directory exists (returns bool) | [Files and directories](../by-example/files.md) |
 | `mkdir[path]` | Create directory (and parents). Error-value on failure | [Databases: `use db`](../by-example/db.md) · [Files and directories](../by-example/files.md) |
@@ -336,7 +336,7 @@ date type exists.
 
 | Function | Description | Example |
 |----------|-------------|---|
-| `now[]` | The current moment (epoch seconds) — in a live program, the moment the current event began | [Moments and freshness](../by-example/moments.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) |
+| `now[]` | The current moment (epoch seconds) — in a live program, the moment the current event began | [Moments and freshness](../by-example/moments.md) · [The standard library's layer: `use sys`](../by-example/sys.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) |
 | `moment[y, m, d, hour = 0, minute = 0, second = 0, tz = 'UTC']` | Build a moment from calendar components in a named timezone | [Moments and freshness](../by-example/moments.md) |
 | `calendar[t, tz = 'UTC']` | Calendar components of a moment: `year month day hour minute second weekday` (weekday 1 = Monday) | [Moments and freshness](../by-example/moments.md) |
 | `parse_time[text, tz = 'UTC']` | Parse RFC3339, or `'YYYY-MM-DD[ HH:MM[:SS]]'` read in the named zone | [Moments and freshness](../by-example/moments.md) |

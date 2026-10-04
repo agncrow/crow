@@ -83,7 +83,7 @@ pub enum CrowType {
     DbTx,
     /// An SMTP mailer (crow_web::mail::CrowMailer) — `use web.mail` smtp[].
     Mailer,
-    /// A WebSocket client's connection (crow_web::ws::CrowSocket) — `socket[url]`.
+    /// A WebSocket client's connection (crow_runtime::sys::Socket) — `socket[url]`.
     Socket,
     /// Bytes (crow_runtime::sys::Bytes): what a connection reads and writes.
     Bytes,
@@ -176,7 +176,7 @@ impl CrowType {
             CrowType::DbHandle => "crow_db::DbHandle".into(),
             CrowType::DbTx => "&dyn crow_db::DbTx".into(),
             CrowType::Mailer => "crow_web::mail::CrowMailer".into(),
-            CrowType::Socket => "crow_web::ws::CrowSocket".into(),
+            CrowType::Socket => "crow_runtime::sys::Socket".into(),
             CrowType::Bytes => "crow_runtime::sys::Bytes".into(),
             CrowType::Stream => "crow_runtime::sys::CrowStream".into(),
             // (a test's session: a test block runs interpreted)
@@ -213,7 +213,7 @@ impl CrowType {
             CrowType::DbHandle => "panic!(\"no default db connection\")".into(),
             CrowType::DbTx => "panic!(\"no default db transaction\")".into(),
             CrowType::Mailer => "panic!(\"no default mailer\")".into(),
-            CrowType::Socket => "crow_web::ws::CrowSocket::closed()".into(),
+            CrowType::Socket => "crow_runtime::sys::Socket::closed()".into(),
             CrowType::Bytes => "crow_runtime::sys::Bytes::default()".into(),
             CrowType::Stream => "crow_runtime::sys::CrowStream::closed()".into(),
             CrowType::App => "()".into(),

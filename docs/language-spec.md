@@ -2289,7 +2289,8 @@ Import with `use sys` — **only in a module of the standard library.** `sys` is
 | `random[n]` | `n` bytes from the operating system's randomness |
 | `hex[bytes]` | The bytes as lowercase hex, two digits each |
 | `text[bytes, fill]` | The text the bytes spell, each run that spells none replaced by `fill` (`'�'`, as a browser shows one) — never an error |
-| `hash[bytes, algo]` | The digest as lowercase hex: `'sha256'`, `'sha512'` or `'md5'` |
+| `hash[bytes, algo]` | The digest as lowercase hex: `'sha256'`, `'sha512'`, `'sha1'` or `'md5'` |
+| `digest[bytes, algo]` | The digest as bytes: `'sha1'` (a socket's accept key), `'sha256'`, `'sha512'` or `'md5'` |
 | `hmac[key, message, algo]` | The keyed digest as bytes: `'sha256'` (an S3 signature's chain) or `'sha512'` |
 | `reply[status, body, headers]` | A request's answer from its parts: the record `request` answers, made by the client written in Crow |
 | `answer[status, phrase, headers, body]` | A server's answer from its parts, its body as bytes: the record `exchange` and `fetch` answer — `status`, `phrase`, `headers` (names in lower case) and `body` |
@@ -2304,6 +2305,11 @@ Import with `use sys` — **only in a module of the standard library.** `sys` is
 | `pack[n, width]` | An int as `width` bytes, big-endian — 1, 2, 4 or 8, the low bytes of its two's complement; another width stops |
 | `ieee[x]` | A number as the 8 bytes of its IEEE 754 double, big-endian |
 | `binary[bytes, media]` | A response of the bytes, as the media type names them (`msgpack`'s) |
+| `mask[bytes, key]` | The bytes XORed with the 4-byte key, cycling: a client's frame masked, a masked frame read |
+| `read_head[stream, deadline]` | A connection's answer's head read to its blank line — the status and phrase, the headers — and, as the answer's `body`, what came after it (a body's start, a socket's first frame); written in Crow |
+| `upgrade[url, timeout]` | A connection to a `ws://` or `wss://` URL's host upgraded to a WebSocket as RFC 6455 says — the key sent, the server's accept checked — or the reason; the socket holds what came after the head; written in Crow |
+| `socket_of[stream, url, unread]`, `stream_of[socket]` | A socket over an upgraded stream, holding bytes unread; the stream a socket talks over |
+| `leftover[socket]`, `unread[socket, bytes]` | The bytes a socket holds unread, taken; bytes put back for its next read (what a read took past a frame's end) |
 | `remote[path]` | Whether a path names a remote source: a URL (`http://`, `https://`) or an S3 object (`s3://`) |
 | `exchange[url, method, lines, body, timeout]` | One HTTP exchange, written in Crow: the request sent to the URL's host with its method, the header lines and the body, its answer read whole — an `answer`, or an error value of kind `'sys'` where none came in `timeout` seconds (0 as thirty to connect and ten minutes in all) |
 | `redirected[from, location]` | Where a redirect sends the request: its `location`, made absolute against the URL it came from |
@@ -2790,7 +2796,7 @@ A token is how an API, which has no page session, says who calls it: `sign` give
 | `recv[s]` / `recv[s, secs]` | The next message, as text — waiting for it, or at most `secs` seconds |
 | `close[s]` | Close the connection, for every value that holds it |
 
-A socket is a live feed a program reads — a market's trades, a service's events — in a script, a job, or a handler's background work. Each failure is the call's error value, of kind `'socket'`: a server that does not answer is `socket`'s (`cannot open a socket to …`), a wait that passes its seconds is `recv`'s (`no message in 5 s`), and a server that closed answers `closed`, after which every call says `the socket is closed`. A binary message reads as text, and a ping is answered and passed over. A socket is one connection however many values hold it — a function handed it, a loop — and `close` closes it for all of them. Both modes talk through the same client.
+A socket is a live feed a program reads — a market's trades, a service's events — in a script, a job, or a handler's background work. Each failure is the call's error value, of kind `'socket'`: a server that does not answer is `socket`'s (`cannot open a socket to …`), a wait that passes its seconds is `recv`'s (`no message in 5 s`), and a server that closed answers `closed`, after which every call says `the socket is closed`. A binary message reads as text, and a ping is answered and passed over. A socket is one connection however many values hold it — a function handed it, a loop — and `close` closes it for all of them. Both modes talk through the same client, which is written in Crow (`src/modules/ws.co`) on the `sys` layer: the handshake is the protocol's (`sys.upgrade`), and the framing — a message sent masked, the next read whole across its fragments, a ping answered, a close answered and the connection let go — a formula over `send`, `recv`, `pack` and `mask`. Its rows keep the contract above in both modes; its tests are the module's own (`crow test src/modules/ws.co`, the RFC's masked example among them), and `tests/socket.rs` runs it against a server in both modes.
 
 ```
 use web, web.ws

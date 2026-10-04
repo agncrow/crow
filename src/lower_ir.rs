@@ -3076,7 +3076,7 @@ impl<'a> Lowerer<'a> {
             // (an effect with a row is handed its arguments as any row's
             // call is — the core's, or the module's that answers the name:
             // a request's or a reader's options left out are maps of text)
-            let lowered = match self.ctx.registry.module_name_for(&name).map(str::to_string) {
+            let lowered = match self.module_for(&name, &lowered) {
                 Some(m) => self.row_arguments(&m, &name, lowered),
                 None => self.core_row_arguments(&name, lowered),
             };
@@ -3115,7 +3115,7 @@ impl<'a> Lowerer<'a> {
         }
         // a bare name a loaded module provides reaches it by the registry's
         // rule (`builtin_row`)
-        let lowered = match self.ctx.registry.module_name_for(&name).map(str::to_string) {
+        let lowered = match self.module_for(&name, &lowered) {
             Some(m) => {
                 // a name only a module answers — not the core's, not an
                 // element's — reaches it, so a count none of its rows take
@@ -3202,6 +3202,22 @@ impl<'a> Lowerer<'a> {
     /// pick the row as the program runs. A parsed value is JSON in both
     /// modes, and names the rows that take JSON (it had been left by name:
     /// the interpreter held it as the value it parsed to).
+    /// The module a bare name reaches: the one that provides it — or, where
+    /// several do (a standard module's function sees its own rows beside
+    /// its imports': sys's `close` of a stream beside a socket's), the one
+    /// whose row takes the arguments' kinds, as the kinds pick among one
+    /// module's rows; none where they tell nothing apart.
+    fn module_for(&self, name: &str, lowered: &[Expr]) -> Option<String> {
+        let providers = self.ctx.registry.providers_of(name);
+        if providers.len() <= 1 {
+            return self.ctx.registry.module_name_for(name).map(str::to_string);
+        }
+        let kinds: Vec<crate::table::Arg> = lowered.iter().map(|x| crate::table::Arg::of_type(&read(x))).collect();
+        let mut taking = providers.iter().filter(|m| crate::table::row_taking(m, name, &kinds).is_some());
+        let first = taking.next()?;
+        taking.next().is_none().then(|| first.to_string())
+    }
+
     fn builtin_row(&self, module: Option<&str>, name: &str, lowered: &[Expr]) -> Option<&'static crate::table::Row> {
         use crate::table::Arg;
         let pinned = match module {
@@ -3230,10 +3246,13 @@ impl<'a> Lowerer<'a> {
         if !(overlapping && tensor_among) && (overlapping || control || frame_core || element) {
             return None;
         }
+        let chosen;
         let m = match pinned {
             Some(m) => m,
-            None if registry.providers_of(name).len() == 1 => registry.module_name_for(name)?,
-            None => return None,
+            None => {
+                chosen = self.module_for(name, lowered)?;
+                chosen.as_str()
+            }
         };
         if crate::table::miscounted(m, name, lowered.len()).is_some() {
             return None;
