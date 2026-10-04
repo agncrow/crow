@@ -86,6 +86,77 @@ pub fn len_bytes(b: &Bytes) -> i64 {
     b.len()
 }
 
+/// `sys.gather[chunks]`: the chunks joined in order — what a connection
+/// read, piece by piece, as one (a `concat` per piece would copy the whole
+/// each time).
+pub fn gather(chunks: &[Bytes]) -> Bytes {
+    let mut out = Vec::with_capacity(chunks.iter().map(|c| c.0.len()).sum());
+    for c in chunks {
+        out.extend_from_slice(&c.0);
+    }
+    Bytes(out)
+}
+
+/// `sys.file[path]`: a file's bytes, as they are.
+pub fn file(path: &str) -> Result<Bytes, String> {
+    std::fs::read(path).map(Bytes).map_err(|e| format!("cannot read the file '{}': {}", path, e))
+}
+
+/// `sys.store[path, bytes]`: the bytes written to a file, as they are.
+pub fn store(path: &str, b: &Bytes) -> Result<(), String> {
+    std::fs::write(path, &b.0).map_err(|e| format!("cannot write '{}': {}", path, e))
+}
+
+/// `sys.random[n]`: n bytes from the operating system's randomness.
+pub fn random(n: i64) -> Result<Bytes, String> {
+    let n = usize::try_from(n).map_err(|_| format!("random: a count cannot be negative (got {})", n))?;
+    crate::signin::random_bytes(n).map(Bytes)
+}
+
+/// `sys.hex[bytes]`: the bytes as lowercase hex, two digits each.
+pub fn hex(b: &Bytes) -> String {
+    b.0.iter().map(|x| format!("{:02x}", x)).collect()
+}
+
+/// `sys.text[bytes, fill]`: the text the bytes spell, each run that spells
+/// none replaced by `fill` (an answer's body shown whatever it holds: the
+/// replacement character U+FFFD, as a browser shows it, or any text).
+pub fn text_with(b: &Bytes, fill: &str) -> String {
+    let lossy = String::from_utf8_lossy(&b.0);
+    if fill == "\u{FFFD}" { lossy.to_string() } else { lossy.replace('\u{FFFD}', fill) }
+}
+
+/// `sys.hash[bytes, algo]`: the digest as lowercase hex — `'sha256'`,
+/// `'sha512'`, `'md5'`.
+pub fn hash(b: &Bytes, algo: &str) -> Result<String, String> {
+    use sha2::Digest;
+    match algo {
+        "sha256" => Ok(format!("{:x}", sha2::Sha256::digest(&b.0))),
+        "sha512" => Ok(format!("{:x}", sha2::Sha512::digest(&b.0))),
+        "md5" => Ok(format!("{:x}", md5::Md5::digest(&b.0))),
+        other => Err(format!("hash: '{}' is not a digest of bytes — sha256, sha512 or md5", other)),
+    }
+}
+
+/// `sys.hmac[key, message, algo]`: the keyed digest, as bytes — `'sha256'`
+/// (an S3 signature's chain) or `'sha512'`.
+pub fn hmac(key: &Bytes, message: &Bytes, algo: &str) -> Result<Bytes, String> {
+    use hmac::{Hmac, Mac};
+    Ok(Bytes(match algo {
+        "sha256" => {
+            let mut mac = Hmac::<sha2::Sha256>::new_from_slice(&key.0).map_err(|e| format!("hmac: {}", e))?;
+            mac.update(&message.0);
+            mac.finalize().into_bytes().to_vec()
+        }
+        "sha512" => {
+            let mut mac = Hmac::<sha2::Sha512>::new_from_slice(&key.0).map_err(|e| format!("hmac: {}", e))?;
+            mac.update(&message.0);
+            mac.finalize().into_bytes().to_vec()
+        }
+        other => return Err(format!("hmac: '{}' is not a keyed digest — sha256 or sha512", other)),
+    }))
+}
+
 enum Conn {
     Plain(std::net::TcpStream),
     Tls(Box<rustls::StreamOwned<rustls::ClientConnection, std::net::TcpStream>>),

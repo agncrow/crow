@@ -300,7 +300,7 @@ impl Emitter {
             }
             let non_copy = matches!(
                 t.text(),
-                CrowType::Str | CrowType::Array(_) | CrowType::NumArray(..) | CrowType::Map(_) | CrowType::Struct(_) | CrowType::Frame(_) | CrowType::Json | CrowType::Result(_)
+                CrowType::Str | CrowType::Array(_) | CrowType::NumArray(..) | CrowType::Map(_) | CrowType::Struct(_) | CrowType::Frame(_) | CrowType::Json | CrowType::Bytes | CrowType::Stream | CrowType::Result(_)
             );
             if non_copy {
                 return format!("{}.clone()", s);
@@ -318,7 +318,7 @@ impl Emitter {
                 return s;
             }
             let t = self.local_ty(name).unwrap_or_else(|| crow_type(ty));
-            if matches!(t.text(), CrowType::Str | CrowType::Array(_) | CrowType::NumArray(..) | CrowType::Map(_) | CrowType::Struct(_) | CrowType::Frame(_) | CrowType::Json | CrowType::Result(_)) {
+            if matches!(t.text(), CrowType::Str | CrowType::Array(_) | CrowType::NumArray(..) | CrowType::Map(_) | CrowType::Struct(_) | CrowType::Frame(_) | CrowType::Json | CrowType::Bytes | CrowType::Stream | CrowType::Result(_)) {
                 return format!("{}.clone()", s);
             }
         }
@@ -1567,7 +1567,7 @@ impl Emitter {
                     && local_read
                     && matches!(
                         Self::inner(&self.tt(a)),
-                        CrowType::NumArray(..) | CrowType::Array(_) | CrowType::Map(_) | CrowType::Str | CrowType::Markup | CrowType::Frame(_) | CrowType::Struct(_) | CrowType::DbHandle
+                        CrowType::NumArray(..) | CrowType::Array(_) | CrowType::Map(_) | CrowType::Str | CrowType::Markup | CrowType::Frame(_) | CrowType::Struct(_) | CrowType::Bytes | CrowType::Stream | CrowType::DbHandle
                     );
                 let s = self.expr(a);
                 arg_strs.push(if needs_clone && !(matches!(a, Expr::Load(n, _) if self.static_handle_vars.contains(n))) { format!("{}.clone()", s) } else { s });
@@ -1715,6 +1715,9 @@ impl Emitter {
             Target::Row(row) if row.module.is_empty() && self.emitting_dual && matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round") => {
                 self.builtin(name, args, arg_strs, whole).unwrap_or_else(|| format!("{}({})", name, arg_strs.join(", ")))
             }
+            // a builtin written in Crow: the program's function its body is
+            // inlined as (an effect's row reaches here too)
+            Target::Row(row) if row.is_crow() => self.user_call(&crate::table::crow_fn_name(row), args, arg_strs.to_vec()),
             Target::Row(row) if row.module.is_empty() => self.table_call(row, args, arg_strs, whole),
             Target::Row(row) => self.module_row_call(row, args, arg_strs),
             Target::User(n) => self.user_call(n, args, arg_strs.to_vec()),

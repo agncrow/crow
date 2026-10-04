@@ -24,6 +24,7 @@ pub(crate) use checks::{BUILTINS, CORE_RESERVED, UI_RESERVED, WEB_EXTRA_FUNCTION
 
 /// Lower a whole (expanded, lowered, inferred) program.
 pub fn lower(stmts: &[S], ctx: &mut TypeContext, part_name: &str) -> Result<Program, String> {
+    crate::modules::ModuleRegistry::reset_scope();
     lower_checked(stmts, ctx, part_name, &HashSet::new()).map_err(|r| r.message())
 }
 
@@ -930,6 +931,7 @@ impl<'a> Lowerer<'a> {
                     let scan = self.ctx.enter_fn_scan(name);
                     self.at = Where::In(self.kind_of(name, body, *is_view));
                     self.current_fn = name.clone();
+                    self.ctx.registry.enter(&self.current_fn);
                     self.provisional(Pass::Scan, Some(params.iter().cloned().collect()), body);
                     self.ctx.leave_fn_scan(name, scan);
                 }
@@ -937,6 +939,7 @@ impl<'a> Lowerer<'a> {
                     let scan = self.ctx.enter_derive_scan(name);
                     self.at = Where::Derive;
                     self.current_fn = name.clone();
+                    self.ctx.registry.enter(&self.current_fn);
                     self.provisional(Pass::Scan, Some(HashSet::new()), body);
                     self.ctx.leave_derive_scan(scan);
                 }
@@ -944,6 +947,7 @@ impl<'a> Lowerer<'a> {
                 other => {
                     self.at = Where::Top;
                     self.current_fn = "<main>".to_string();
+                    self.ctx.registry.enter(&self.current_fn);
                     self.provisional(Pass::Scan, None, std::slice::from_ref(other));
                 }
             }
@@ -958,6 +962,7 @@ impl<'a> Lowerer<'a> {
         let scope = self.ctx.enter_body(name);
         self.at = if self.ctx.derives.contains(name) { Where::Derive } else { Where::In(self.kind_of(name, body, false)) };
         self.current_fn = name.to_string();
+        self.ctx.registry.enter(&self.current_fn);
         let seen = self.provisional(Pass::Settle, Some(params), body);
         self.ctx.finish_body(name, scope, &seen.returns, !seen.refusals.is_empty());
     }
@@ -982,6 +987,7 @@ impl<'a> Lowerer<'a> {
                 }
                 self.at = Where::Test;
                 self.current_fn = name.clone().unwrap_or_default();
+                self.ctx.registry.enter(&self.current_fn);
                 self.clicks = Some(Vec::new());
                 self.tested = Some(Vec::new());
                 self.provisional(Pass::Settle, Some(params.iter().cloned().collect()), body);
@@ -1014,6 +1020,7 @@ impl<'a> Lowerer<'a> {
                 let saved = self.ctx.bind_params(mangled);
                 self.at = Where::In(self.kind_of(mangled, &body, false));
                 self.current_fn = mangled.clone();
+                self.ctx.registry.enter(&self.current_fn);
                 self.provisional(Pass::Scan, Some(params), &body);
                 self.ctx.vars = saved;
                 self.infer_body(mangled, &body);
@@ -1033,6 +1040,7 @@ impl<'a> Lowerer<'a> {
     fn settle_top(&mut self, stmts: &[S]) {
         self.at = Where::Top;
         self.current_fn = "<main>".to_string();
+        self.ctx.registry.enter(&self.current_fn);
         for s in stmts {
             match s {
                 S::FnDecl { .. } | S::Derive { .. } | S::TestBlock { .. } | S::StructDecl { .. } | S::Use { .. } | S::Resource { .. } => {}
@@ -1165,6 +1173,7 @@ impl<'a> Lowerer<'a> {
                 S::Assign { name, value } if self.in_ui && fact_names.contains(name) && !self.declared(name) => {
                     self.at = Where::Top;
                     self.current_fn = self.main_of_part();
+                    self.ctx.registry.enter(&self.current_fn);
                     if self.ctx.derives.contains(name) {
                         self.refuse(format!("'{}' is derived — it follows what it reads; change those facts instead of assigning it", name));
                     }
@@ -1202,6 +1211,7 @@ impl<'a> Lowerer<'a> {
                 other => {
                     self.at = Where::Top;
                     self.current_fn = self.main_of_part();
+                    self.ctx.registry.enter(&self.current_fn);
                     let lowered = self.lower_stmt(other)?;
                     self.flush_pre_into(&mut part.main);
                     part.main.extend(lowered);
@@ -1359,6 +1369,7 @@ impl<'a> Lowerer<'a> {
         let ret = if kind == FnKind::View { Ty::Node } else { ret };
         self.at = Where::In(kind);
         self.current_fn = name.to_string();
+        self.ctx.registry.enter(&self.current_fn);
         // a view or handler of a ui program sees its reactive state, the
         // sanctioned exception to function-scope isolation
         self.v.reactive = self.v.ui_mode && matches!(kind, FnKind::View | FnKind::Handler);
@@ -1399,6 +1410,7 @@ impl<'a> Lowerer<'a> {
         let scope = self.ctx.enter_body(name);
         self.at = Where::Derive;
         self.current_fn = name.to_string();
+        self.ctx.registry.enter(&self.current_fn);
         self.v.local_types.clear();
         self.v.stored.clear();
         self.provisional(Pass::Settle, Some(HashSet::new()), body);
@@ -1432,6 +1444,7 @@ impl<'a> Lowerer<'a> {
         }
         self.at = Where::Test;
         self.current_fn = name.clone().unwrap_or_default();
+        self.ctx.registry.enter(&self.current_fn);
         let own: HashSet<String> = params.iter().cloned().collect();
         // its inputs are typed by their use, for the runner to generate: a
         // parameter handed to a function takes that parameter's type, one in
@@ -2972,10 +2985,13 @@ impl<'a> Lowerer<'a> {
                 }
                 let lowered = self.row_arguments(&m, &name, lowered);
                 let row = self.builtin_row(Some(&m), &name, &lowered);
+                let lowered = Self::crow_call_args(row, lowered);
                 return Ok(Expr::Effect { name: format!("{}.{}", m, name), row, args: lowered, ty, answered: true, propagates });
             }
             let lowered = self.row_arguments(&m, &name, lowered);
-            let target = match self.builtin_row(Some(&m), &name, &lowered) {
+            let row = self.builtin_row(Some(&m), &name, &lowered);
+            let lowered = Self::crow_call_args(row, lowered);
+            let target = match row {
                 Some(row) if row.is_crow() => self.crow_target(row),
                 Some(row) => Target::Row(row),
                 None => {
@@ -3050,6 +3066,7 @@ impl<'a> Lowerer<'a> {
                 None => self.core_row_arguments(&name, lowered),
             };
             let row = self.builtin_row(None, &name, &lowered);
+            let lowered = Self::crow_call_args(row, lowered);
             return Ok(Expr::Effect { name, row, args: lowered, ty, answered: true, propagates });
         }
         if RUNTIME_TABLE.iter().any(|(b, _)| *b == name) {
@@ -3104,6 +3121,7 @@ impl<'a> Lowerer<'a> {
             Some(row) => Self::widen_items(row, lowered, ty),
             None => (lowered, ty),
         };
+        let lowered = Self::crow_call_args(row, lowered);
         let target = match row {
             Some(row) if row.is_crow() => self.crow_target(row),
             Some(row) => {
@@ -3113,6 +3131,22 @@ impl<'a> Lowerer<'a> {
             None => Target::Runtime(name),
         };
         Ok(Expr::Call { target, args: lowered, ty, propagates })
+    }
+
+    /// A Crow row's arguments as its parameters take them: an int where the
+    /// row takes a number is a float, as the user-function path converts
+    /// it (a Rust row's printing casts; the Crow body is a function of
+    /// floats, and `timeout = 5` did not build compiled).
+    fn crow_call_args(row: Option<&'static crate::table::Row>, lowered: Vec<Expr>) -> Vec<Expr> {
+        let Some(row) = row.filter(|r| r.is_crow()) else { return lowered };
+        lowered
+            .into_iter()
+            .zip(row.params.iter().copied().map(Some).chain(std::iter::repeat(None)))
+            .map(|(x, k)| match (k, x.ty()) {
+                (Some(crate::table::Kind::Float), Ty::Int) => Expr::Convert { how: Convert::IntToFloat, expr: Box::new(x), ty: Ty::Float },
+                _ => x,
+            })
+            .collect()
     }
 
     /// A builtin written in Crow (crate::table, `crow!`): its call is a call
@@ -3210,6 +3244,10 @@ impl<'a> Lowerer<'a> {
                 if k == Some(Kind::TextMap) {
                     return match x {
                         Expr::MapLit(pairs, Ty::Map(e)) if pairs.is_empty() && *e == Ty::Unknown => Expr::MapLit(pairs, Ty::Map(Box::new(Ty::Str))),
+                        // (`map[]` written out is the call that makes one: a
+                        // map of text where the row takes one, as the literal
+                        // is — compiled, its type had nothing to be read from)
+                        Expr::Call { target: Target::Row(row), args, ty: Ty::Map(e), .. } if row.id == "core.map_new" && args.is_empty() && *e == Ty::Unknown => Expr::MapLit(Vec::new(), Ty::Map(Box::new(Ty::Str))),
                         other => other,
                     };
                 }
@@ -3218,6 +3256,7 @@ impl<'a> Lowerer<'a> {
                     Some(Kind::Ints) => Ty::Int,
                     Some(Kind::Floats) => Ty::Float,
                     Some(Kind::Bools) => Ty::Bool,
+                    Some(Kind::Chunks) => Ty::Bytes,
                     Some(Kind::Tensors) => Ty::tensor(Ty::Float),
                     Some(Kind::Tensor) => Ty::Float,
                     _ => return x,
@@ -5023,5 +5062,21 @@ mod tests {
         assert!(ir.contains("pure g(x: ?) -> ?"), "{}", ir);
         let r = refusal_of("use math, math.nn\nfn loss[w, y]\n    return mse[flatten[w], y]\ngrads = grad[loss][[[1.0], [2.0]], [1.0, 2.0]]\nlog[grads[0][0][0]]\n");
         assert!(r.contains("the rank of the tensor is not known here"), "{}", r);
+    }
+
+    /// A parameter named like an effect, indexed, is the parameter; a call
+    /// of a name a module in scope also answers is typed by the core's row
+    /// where one takes the arguments (`slice` of text beside sys's of
+    /// bytes); and `map[]` handed where a row takes a map of text is one.
+    #[test]
+    fn a_parameter_named_like_an_effect_and_a_name_two_tables_answer() {
+        let ir = ir_of("fn f[query]\n    return query[0]\nlog[f[[1, 2]]]\n");
+        assert!(ir.contains("return query[0]"), "{}", ir);
+        let ir = ir_of("use sys\nfn parse[head]\n    lines = split[head, '|']\n    out = ''\n    for line in slice[lines, 1, len[lines]]\n        out = trim[slice[line, 0, 1]]\n    return out\nlog[parse['ab|cd|ef']]\n");
+        assert!(ir.contains("core.slice_str(") && ir.contains("let lines: List(Str)"), "{}", ir);
+        // (`map[]` typed as a map of text: the IR shows the literal, the
+        // book's sys page builds it compiled)
+        let ir = ir_of("use sys\nr = reply[404, 'no', map[]]\nlog[r.status]\n");
+        assert!(ir.contains("sys.reply(404, \"no\", {})"), "{}", ir);
     }
 }

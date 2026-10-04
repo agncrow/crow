@@ -89,6 +89,7 @@ Strings support escape sequences with backslash:
 |--------|-----------|
 | `\n` | Newline |
 | `\t` | Tab |
+| `\r` | Carriage return (a line of a wire protocol ends `\r\n`) |
 | `\\` | Literal backslash |
 | `\'` | Literal single quote |
 | `` \` `` | Literal backtick (not interpolation) |
@@ -1472,6 +1473,8 @@ got = request['https://example.com/logo.png', save = 'logo.png']
 
 A request is answered, whatever its status: a 404 or a 500 is the record's `status`, read as `shell`'s is, and only a request that got no answer is an error value, of kind `'http'` — a server that does not answer (`cannot request 'https://…': …`), a URL that is none, a server that does not answer in time (`cannot request 'https://…': no answer in 5 s`), a URL that is none, a method that is not one (`'FETCH' is not an HTTP method — GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS`), a body, a form or files on a method that sends none (`a GET request sends no body — send it with POST, PUT or PATCH`; a form's fields can go as `query = map[…]` instead), a body beside a form or files (`a request sends a body, or a form and its files — not both`), a timeout below 0, a file to send that cannot be read and one to `save` that cannot be written. The method is a word in either case (`'post'` is `'POST'`). A body that is JSON — `encode[…]`, which opens with `{` or `[` — goes as `application/json`, any other as text, a form and files as their own types say, unless a `content-type` header names the type. A map's values go as text, each as it shows. A body answered is text — its bytes read as UTF-8, any that are not as `�` — so bytes that are not text are `save`d, not held. `request` is an effect: in a handler, one whose answer is used runs when asked, and one whose answer is not — a webhook told what happened — runs when the handler commits, so a handler that stops sends nothing (A handler is a transaction). A rehearsal (`crow check`) records a request instead of sending it. Both modes send it through the one client the readers use (`crow_runtime::sources`). `read` and `load` stay the readers: they want data, so a server's refusal is their error, where a request's record says it.
 
+`request` is written in Crow (`src/modules/core.co`) on the `sys` layer — the second standard module moved (design rule 20) and the first that reaches the operating system: its row keeps the contract above, in both modes, and its own tests (`crow test src/modules/core.co`) read a URL apart, add a query, name a part's type, decode a chunk's size and spell a timeout; `tests/http_request.rs` runs it against a server in both modes. The Rust client it replaces (`crow_runtime::sources::request`, over `ureq`) is gone; the readers' remote branch (`read[url]`, `load[url]`, S3) still reads through `ureq` until they move.
+
 **Design Note: one `request`, its method named.** Considered: a word for each method — `get`, `post`, `put`, `delete` — as many HTTP clients spell them. Decided: one `request` with its method as text, as `route['/up', 'POST', handler]` names the server's (Vijay, 2026-10-01): `get` would be a second `read`, `put` is the name a stream's feed is handed (`fn numbered[put, n]`), and `delete` would stand beside the map's `del`; a method as text reaches PATCH, HEAD and OPTIONS with no more names.
 
 ### Hashing
@@ -2278,8 +2281,17 @@ Import with `use sys` — **only in a module of the standard library.** `sys` is
 | `send[stream, bytes]` | The bytes written, all of them; the count. An error value of kind `'sys'` on a stream that is closed or broke |
 | `recv[stream, most, seconds]` | Up to `most` bytes as they arrive — none when the other side closed — waiting at most `seconds` (the connection's own wait when 0). An error value of kind `'sys'`: `no data from host:port in 2 s`, `the stream is closed` |
 | `close[stream]` | The connection let go; every call after is refused |
+| `gather[chunks]` | A list of bytes joined in order, as one (what a connection read, piece by piece) |
+| `file[path]` | A file's bytes, as they are; an error value of kind `'sys'` where it cannot be read |
+| `store[path, bytes]` | The bytes written to a file, as they are; an error value of kind `'sys'` where it cannot be written |
+| `random[n]` | `n` bytes from the operating system's randomness |
+| `hex[bytes]` | The bytes as lowercase hex, two digits each |
+| `text[bytes, fill]` | The text the bytes spell, each run that spells none replaced by `fill` (`'�'`, as a browser shows one) — never an error |
+| `hash[bytes, algo]` | The digest as lowercase hex: `'sha256'`, `'sha512'` or `'md5'` |
+| `hmac[key, message, algo]` | The keyed digest as bytes: `'sha256'` (an S3 signature's chain) or `'sha512'` |
+| `reply[status, body, headers]` | A request's answer from its parts: the record `request` answers, made by the client written in Crow |
 
-A stream is one connection however many values hold it, as a socket is; `type[s]` is `stream`. Every function works identically in both modes (`crow_runtime::sys`).
+A stream is one connection however many values hold it, as a socket is; `type[s]` is `stream`. Every function works identically in both modes (`crow_runtime::sys`). The HTTP client — `request` (Requests) — is written on this layer, in `src/modules/core.co`: a URL taken apart, a connection opened plain or behind TLS, the request line, headers and body sent, the answer's head read to its blank line and its body by its length, by its chunks, or until the server closes, redirects followed, the answer made by `reply`. A program never sees the layer: it sees `request`, whose row in the builtin table is the contract the Crow body keeps (math.nn, Design Note "a builtin written in Crow keeps its row").
 
 ```
 use sys

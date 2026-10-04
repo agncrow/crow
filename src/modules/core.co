@@ -1,0 +1,433 @@
+--- The core builtins written in Crow, on the sys layer (design rule 20):
+--- `request[url, method, body]` — the HTTP client. Its row in the builtin
+--- table (src/table.rs, `crow!("core.request", …)`) is its contract: the
+--- nine parameters the lowering fills from `headers = …`, `query = …`,
+--- `form = …`, `files = …`, `save = …` and `timeout = …`, and an error
+--- value of kind 'http' where no answer came. This source is inlined into
+--- a program that calls one of these; `crow test src/modules/core.co`
+--- runs its own tests.
+use sys
+
+--- a request's answer: the status line read, the headers as a map (names
+--- in lower case, repeated ones joined), the body read to its end — by
+--- its length, by its chunks, or until the server closes
+struct Answer [status, headers, body]
+
+--- the URL's parts: behind TLS or not, the host, the port, and the path
+--- with its query (a fragment is not sent)
+struct Url [tls, host, port, path]
+
+--- what a request may be sent with
+fn methods[]
+    return ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
+
+--- the value of a decimal number's digits, or -1 where a character is none
+fn decimal[s]
+    digits = '0123456789'
+    t = trim[s]
+    if len[t] eq 0
+        return -1
+    value = 0
+    for i in range[len[t]]
+        c = slice[t, i, i + 1]
+        found = -1
+        for d in range[10]
+            if slice[digits, d, d + 1] eq c
+                found = d
+        if found lt 0
+            return -1
+        value = value * 10 + found
+    return value
+
+--- the value of a hex number's digits, or -1 where a character is none
+fn hex_value[s]
+    digits = '0123456789abcdef'
+    t = lower[trim[s]]
+    if len[t] eq 0
+        return -1
+    value = 0
+    for i in range[len[t]]
+        c = slice[t, i, i + 1]
+        found = -1
+        for d in range[16]
+            if slice[digits, d, d + 1] eq c
+                found = d
+        if found lt 0
+            return -1
+        value = value * 16 + found
+    return value
+
+--- a URL taken apart, or the reason it is not an http(s) one
+fn parse_url[url]
+    tls = starts[url, 'https://']
+    plain = starts[url, 'http://']
+    if not tls and not plain
+        return error['cannot request \'`url`\': a request goes to an http:// or https:// URL', 'http']
+    rest = ''
+    if tls
+        rest = slice[url, 8, len[url]]
+    else
+        rest = slice[url, 7, len[url]]
+    rest = split[rest, '#'][0]
+    hostport = split[rest, '/'][0]
+    path = slice[rest, len[hostport], len[rest]]
+    if len[path] eq 0
+        path = '/'
+    host = hostport
+    port = 80
+    if tls
+        port = 443
+    named = split[hostport, ':']
+    if len[named] eq 2
+        host = named[0]
+        port = decimal[named[1]]
+        if port lt 0
+            return error['cannot request \'`url`\': \'`hostport`\' is no host and port', 'http']
+    if len[host] eq 0
+        return error['cannot request \'`url`\': it names no host', 'http']
+    return Url[tls, host, port, path]
+
+--- the URL with a query's pairs added, each name and value URL-encoded,
+--- after the `?` it has or one it is given
+fn with_query[url, pairs_asked]
+    if len[pairs_asked] eq 0
+        return url
+    base = split[url, '#'][0]
+    fragment = slice[url, len[base], len[url]]
+    pairs = []
+    for k in keys[pairs_asked]
+        ek = encode[k, 'url']
+        ev = encode[pairs_asked[k], 'url']
+        pairs = push[pairs, '`ek`=`ev`']
+    joiner = '?'
+    if len[split[base, '?']] gt 1
+        joiner = '&'
+        if ends[base, '?'] or ends[base, '&']
+            joiner = ''
+    joined = join[pairs, '&']
+    return '`base``joiner``joined``fragment`'
+
+--- a file's media type by its extension, as a multipart part names it
+fn media_of[path]
+    pieces = split[path, '.']
+    ext = lower[pieces[len[pieces] - 1]]
+    types = map[csv = 'text/csv', json = 'application/json', txt = 'text/plain', md = 'text/plain', html = 'text/html', png = 'image/png', jpg = 'image/jpeg', jpeg = 'image/jpeg', gif = 'image/gif', pdf = 'application/pdf', parquet = 'application/vnd.apache.parquet']
+    if has[types, ext]
+        return types[ext]
+    return 'application/octet-stream'
+
+--- a name in a multipart part, its quote and line breaks escaped as a
+--- browser escapes them
+fn quoted[s]
+    return replace[replace[replace[s, '"', '%22'], '\r', '%0D'], '\n', '%0A']
+
+--- how long the next read may wait: what is left of the deadline
+fn left[deadline]
+    return max[deadline - now[], 0.001]
+
+--- whether a connection's failure was the wait running out (the sys
+--- layer's words for it)
+fn timed_out[reason]
+    waited = starts[reason, 'no data from']
+    connecting = starts[reason, 'cannot connect'] and (len[split[reason, 'timed out']] gt 1)
+    return waited or connecting
+
+--- the reason a request got no answer, in the client's words
+fn unanswered[url, reason, timeout]
+    if timed_out[reason]
+        if timeout gt 0.0
+            return 'cannot request \'`url`\': no answer in `timeout` s'
+        return 'cannot request \'`url`\': no answer in time'
+    return 'cannot request \'`url`\': `reason`'
+
+--- the bytes read from a connection until it closes, the deadline kept
+fn read_rest[s, deadline, first]
+    chunks = [first]
+    while true
+        got = recv[s, 65536, left[deadline]]
+        if not got.ok
+            return error[got.reason, 'http']
+        if len[got] eq 0
+            break
+        chunks = push[chunks, got]
+    return gather[chunks]
+
+--- the bytes read until the buffer holds `n`, the deadline kept
+fn read_until[s, deadline, buffer, n]
+    chunks = [buffer]
+    have = len[buffer]
+    while have lt n
+        got = recv[s, 65536, left[deadline]]
+        if not got.ok
+            return error[got.reason, 'http']
+        if len[got] eq 0
+            break
+        chunks = push[chunks, got]
+        have = have + len[got]
+    return gather[chunks]
+
+--- a chunked body decoded: each chunk's size in hex on its own line, the
+--- chunk, a line break, and a last chunk of size 0
+fn dechunked[s, deadline, buffer]
+    parts = []
+    rest = buffer
+    while true
+        line_end = find[rest, bytes['\r\n']]
+        while line_end lt 0
+            more = recv[s, 65536, left[deadline]]
+            if not more.ok
+                return error[more.reason, 'http']
+            if len[more] eq 0
+                return error['the server closed the connection mid-chunk', 'http']
+            rest = concat[rest, more]
+            line_end = find[rest, bytes['\r\n']]
+        size_line = text[slice[rest, 0, line_end], '�']
+        size = hex_value[split[size_line, ';'][0]]
+        if size lt 0
+            return error['the server sent a chunk size that is none: \'`size_line`\'', 'http']
+        rest = slice[rest, line_end + 2, len[rest]]
+        if size eq 0
+            break
+        filled = read_until[s, deadline, rest, size + 2]
+        if not filled.ok
+            return error[filled.reason, 'http']
+        rest = filled
+        if len[rest] lt size + 2
+            return error['the server closed the connection mid-chunk', 'http']
+        parts = push[parts, slice[rest, 0, size]]
+        rest = slice[rest, size + 2, len[rest]]
+    return gather[parts]
+
+--- a connection's answer read whole: the head, then the body as the
+--- headers say it comes
+fn read_answer[s, deadline, method]
+    buffer = bytes['']
+    cut = find[buffer, bytes['\r\n\r\n']]
+    while cut lt 0
+        got = recv[s, 65536, left[deadline]]
+        if not got.ok
+            return error[got.reason, 'http']
+        if len[got] eq 0
+            return error['the server closed the connection before answering', 'http']
+        buffer = concat[buffer, got]
+        cut = find[buffer, bytes['\r\n\r\n']]
+    head = text[slice[buffer, 0, cut], '�']
+    rest = slice[buffer, cut + 4, len[buffer]]
+    lines = split[head, '\r\n']
+    status_line = lines[0]
+    words = split[status_line, ' ']
+    status = -1
+    if len[words] gte 2
+        status = decimal[words[1]]
+    if status lt 0
+        return error['the server\'s status line is none: \'`status_line`\'', 'http']
+    headers = map[]
+    for line in slice[lines, 1, len[lines]]
+        pair = split[line, ':']
+        if len[pair] gte 2
+            name = lower[trim[pair[0]]]
+            value = trim[slice[line, len[pair[0]] + 1, len[line]]]
+            if has[headers, name]
+                before = headers[name]
+                headers = set[headers, name, '`before`, `value`']
+            else
+                headers = set[headers, name, value]
+    body = bytes['']
+    bodiless = method eq 'HEAD' or status eq 204 or status eq 304 or (status gte 100 and status lt 200)
+    if not bodiless
+        chunked = false
+        if has[headers, 'transfer-encoding']
+            chunked = len[split[lower[headers['transfer-encoding']], 'chunked']] gt 1
+        if chunked
+            decoded = dechunked[s, deadline, rest]
+            if not decoded.ok
+                return error[decoded.reason, 'http']
+            body = decoded
+        else
+            if has[headers, 'content-length']
+                length = decimal[headers['content-length']]
+                if length lt 0
+                    said = headers['content-length']
+                    return error['the server\'s content-length is none: \'`said`\'', 'http']
+                filled = read_until[s, deadline, rest, length]
+                if not filled.ok
+                    return error[filled.reason, 'http']
+                body = slice[filled, 0, length]
+            else
+                whole = read_rest[s, deadline, rest]
+                if not whole.ok
+                    return error[whole.reason, 'http']
+                body = whole
+    return Answer[status, headers, body]
+
+--- one request sent and its answer read, redirects not followed
+fn exchange[url, method, head_lines, body_bytes, timeout]
+    parts = parse_url[url]
+    if not parts.ok
+        return error[parts.reason, 'http']
+    connect = timeout
+    total = timeout
+    if timeout eq 0.0
+        connect = 30.0
+        total = 600.0
+    deadline = now[] + total
+    s = open[parts.host, parts.port, parts.tls, connect]
+    if not s.ok
+        return error[unanswered[url, s.reason, timeout], 'http']
+    hostline = parts.host
+    if (parts.tls and parts.port ne 443) or (not parts.tls and parts.port ne 80)
+        hostline = '`parts.host`:`parts.port`'
+    size = len[body_bytes]
+    head = '`method` `parts.path` HTTP/1.1\r\nhost: `hostline`\r\nconnection: close\r\ncontent-length: `size`\r\n'
+    for line in head_lines
+        head = '`head``line`\r\n'
+    sent = send[s, concat[bytes['`head`\r\n'], body_bytes]]
+    if not sent.ok
+        close[s]
+        return error[unanswered[url, sent.reason, timeout], 'http']
+    answer = read_answer[s, deadline, method]
+    close[s]
+    if not answer.ok
+        return error[unanswered[url, answer.reason, timeout], 'http']
+    return answer
+
+--- where a redirect sends the request: the location, made absolute
+fn redirected[from, location]
+    if starts[location, 'http://'] or starts[location, 'https://']
+        return location
+    parts = parse_url[from]
+    if not parts.ok
+        return from
+    scheme = 'http://'
+    if parts.tls
+        scheme = 'https://'
+    hostport = parts.host
+    if (parts.tls and parts.port ne 443) or (not parts.tls and parts.port ne 80)
+        hostport = '`parts.host`:`parts.port`'
+    if starts[location, '/']
+        return '`scheme``hostport``location`'
+    return '`scheme``hostport`/`location`'
+
+--- `request[url, method, body]` with every option (the spec, Requests)
+fn request[url, method, body, headers, queried, fields, files, save, timeout]
+    if not (starts[url, 'http://'] or starts[url, 'https://'])
+        return error['cannot request \'`url`\': a request goes to an http:// or https:// URL', 'http']
+    method = upper[method]
+    if not contains[methods[], method]
+        listed = join[methods[], ', ']
+        return error['\'`method`\' is not an HTTP method — `listed`', 'http']
+    if not (timeout gte 0.0)
+        return error['a timeout is a number of seconds, 0 or more — not `timeout`', 'http']
+    sends = len[body] gt 0 or len[fields] gt 0 or len[files] gt 0
+    if sends and (method eq 'GET' or method eq 'HEAD' or method eq 'OPTIONS')
+        instead = ''
+        if len[body] eq 0 and len[files] eq 0
+            instead = ', or its fields as query = map[…]'
+        return error['a `method` request sends no body — send it with POST, PUT or PATCH`instead`', 'http']
+    if len[body] gt 0 and (len[fields] gt 0 or len[files] gt 0)
+        return error['a request sends a body, or a form and its files — not both', 'http']
+    lines = []
+    typed = false
+    for k in keys[headers]
+        v = headers[k]
+        lines = push[lines, '`k`: `v`']
+        if lower[k] eq 'content-type'
+            typed = true
+    body_bytes = bytes['']
+    if len[files] gt 0
+        boundary = 'crow-`hex[random[6]]`'
+        pieces = []
+        for name in keys[fields]
+            field = quoted[name]
+            value = fields[name]
+            pieces = push[pieces, bytes['--`boundary`\r\nContent-Disposition: form-data; name="`field`"\r\n\r\n`value`\r\n']]
+        for name in keys[files]
+            path = files[name]
+            data = file[path]
+            if not data.ok
+                return error['cannot request \'`url`\': cannot read the file \'`path`\': `data.reason`', 'http']
+            segments = split[path, '/']
+            file_name = quoted[segments[len[segments] - 1]]
+            field = quoted[name]
+            media = media_of[path]
+            pieces = push[pieces, bytes['--`boundary`\r\nContent-Disposition: form-data; name="`field`"; filename="`file_name`"\r\nContent-Type: `media`\r\n\r\n']]
+            pieces = push[pieces, data]
+            pieces = push[pieces, bytes['\r\n']]
+        pieces = push[pieces, bytes['--`boundary`--\r\n']]
+        body_bytes = gather[pieces]
+        if not typed
+            lines = push[lines, 'content-type: multipart/form-data; boundary=`boundary`']
+    else
+        if len[fields] gt 0
+            if not typed
+                lines = push[lines, 'content-type: application/x-www-form-urlencoded']
+            pairs = []
+            for k in keys[fields]
+                ek = encode[k, 'url']
+                ev = encode[fields[k], 'url']
+                pairs = push[pairs, '`ek`=`ev`']
+            body_bytes = bytes[join[pairs, '&']]
+        else
+            if len[body] gt 0
+                if not typed
+                    first = slice[trim[body], 0, 1]
+                    if first eq '{' or first eq '['
+                        lines = push[lines, 'content-type: application/json']
+                    else
+                        lines = push[lines, 'content-type: text/plain; charset=utf-8']
+                body_bytes = bytes[body]
+    full = with_query[url, queried]
+    answer = exchange[full, method, lines, body_bytes, timeout]
+    --- a redirect followed, as a browser follows one: up to ten, a 303
+    --- (and a 301 or 302 of a POST) as a GET without the body
+    hops = 0
+    while hops lt 10
+        if not answer.ok
+            break
+        code = answer.status
+        moved = code eq 301 or code eq 302 or code eq 303 or code eq 307 or code eq 308
+        if not moved or not has[answer.headers, 'location']
+            break
+        full = redirected[full, answer.headers['location']]
+        if code eq 303 or ((code eq 301 or code eq 302) and method eq 'POST')
+            method = 'GET'
+            body_bytes = bytes['']
+        hops = hops + 1
+        answer = exchange[full, method, lines, body_bytes, timeout]
+    if not answer.ok
+        return error[answer.reason, 'http']
+    text_body = ''
+    if len[save] gt 0 and answer.status gte 200 and answer.status lt 300
+        kept = store[save, answer.body]
+        if not kept.ok
+            return error['cannot request \'`full`\': `kept.reason`', 'http']
+    else
+        text_body = text[answer.body, '�']
+    return reply[answer.status, text_body, answer.headers]
+
+--- the client's own pieces, at known values
+test a_url_is_taken_apart[]
+    u = parse_url['https://example.com/a/b?x=1#frag']
+    assert[u.tls and u.host eq 'example.com' and u.port eq 443 and u.path eq '/a/b?x=1']
+    v = parse_url['http://127.0.0.1:8080']
+    assert[not v.tls and v.host eq '127.0.0.1' and v.port eq 8080 and v.path eq '/']
+    assert[not parse_url['ftp://x'].ok]
+    assert[not parse_url['http://host:port/'].ok]
+    assert[with_query['http://h/p', map[q = 'a b', page = '2']] eq 'http://h/p?page=2&q=a%20b']
+    assert[with_query['http://h/p?x=1', map[q = 'y']] eq 'http://h/p?x=1&q=y']
+    assert[with_query['http://h/p?', map[q = 'y']] eq 'http://h/p?q=y']
+    assert[with_query['http://h/p#top', map[q = 'y']] eq 'http://h/p?q=y#top']
+    assert[with_query['http://h/p', map[]] eq 'http://h/p']
+    assert[redirected['http://h:81/a/b', '/c'] eq 'http://h:81/c']
+    assert[redirected['https://h/a/b', 'c'] eq 'https://h/c']
+    assert[redirected['http://h/a', 'https://other/x'] eq 'https://other/x']
+
+test the_helpers_spell_what_the_wire_needs[]
+    assert[media_of['report.csv'] eq 'text/csv' and media_of['x.PNG'] eq 'image/png' and media_of['noext'] eq 'application/octet-stream']
+    assert[quoted['a"b\r\nc'] eq 'a%22b%0D%0Ac']
+    assert[hex_value['1A'] eq 26 and hex_value['0'] eq 0 and hex_value['zz'] eq -1 and hex_value[''] eq -1]
+    assert[decimal['204'] eq 204 and decimal[' 7 '] eq 7 and decimal['x'] eq -1 and decimal[''] eq -1]
+    assert[unanswered['http://h/x', 'no data from h:80 in 0.5 s', 0.5] eq 'cannot request \'http://h/x\': no answer in 0.5 s']
+    assert[unanswered['http://h/x', 'no data from h:80 in 600 s', 0.0] eq 'cannot request \'http://h/x\': no answer in time']
+    assert[unanswered['http://h/x', 'connection refused', 0.5] eq 'cannot request \'http://h/x\': connection refused']
+    assert[contains[methods[], 'PATCH'] and len[methods[]] eq 7]

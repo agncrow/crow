@@ -209,121 +209,10 @@ impl crate::json::ToJson for Reply {
     }
 }
 
-/// The methods a request is sent with.
-const METHODS: &[&str] = &["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
-
-/// A file's media type, by its extension, as a multipart part names it.
-fn media_of(path: &str) -> &'static str {
-    let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-    match ext.as_str() {
-        "csv" => "text/csv",
-        "json" => "application/json",
-        "txt" | "md" => "text/plain",
-        "html" => "text/html",
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "pdf" => "application/pdf",
-        "parquet" => "application/vnd.apache.parquet",
-        _ => "application/octet-stream",
-    }
-}
-
-/// `request[url, method, body]` with every option: `headers`, a `query`
-/// encoded into the URL, a `form` sent URL-encoded, `files` sent with the
-/// form as a multipart body (each by its path), the answer's bytes `save`d
-/// to a file instead of held, and a `timeout` in seconds (0: thirty to
-/// connect, ten minutes in all). Answered whatever its status; a server
-/// that does not answer in time, a URL that is none, a method that is not
-/// one, a body where none goes, and a file that cannot be read or written
-/// are the call's error.
-#[allow(clippy::too_many_arguments)]
-pub fn request(
-    url: &str,
-    method: &str,
-    body: &str,
-    headers: &BTreeMap<String, String>,
-    query: &BTreeMap<String, String>,
-    form: &BTreeMap<String, String>,
-    files: &BTreeMap<String, String>,
-    save: &str,
-    timeout: f64,
-) -> Result<Reply, String> {
-    if !(url.starts_with("http://") || url.starts_with("https://")) {
-        return Err(format!("cannot request '{}': a request goes to an http:// or https:// URL", url));
-    }
-    let method = method.to_ascii_uppercase();
-    if !METHODS.contains(&method.as_str()) {
-        return Err(format!("'{}' is not an HTTP method — {}", method, METHODS.join(", ")));
-    }
-    if let Some(why) = timeout_refused(timeout) {
-        return Err(why);
-    }
-    let sends = !body.is_empty() || !form.is_empty() || !files.is_empty();
-    if sends && matches!(method.as_str(), "GET" | "HEAD" | "OPTIONS") {
-        // (a form's fields can ride in the URL instead)
-        let instead = if body.is_empty() && files.is_empty() { ", or its fields as query = map[…]" } else { "" };
-        return Err(format!("a {} request sends no body — send it with POST, PUT or PATCH{}", method, instead));
-    }
-    if !body.is_empty() && (!form.is_empty() || !files.is_empty()) {
-        return Err("a request sends a body, or a form and its files — not both".to_string());
-    }
-    let mut headers: Vec<(String, String)> = headers.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-    let typed = headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("content-type"));
-    let bytes: Vec<u8> = if !files.is_empty() {
-        // a multipart body: the form's fields as text, each file's bytes
-        let boundary = format!("crow-{}", crate::signin::random_hex(12)?);
-        // (a name's quote and line breaks escaped, as a browser escapes them)
-        let quoted = |s: &str| s.replace('"', "%22").replace('\r', "%0D").replace('\n', "%0A");
-        let mut out: Vec<u8> = Vec::new();
-        for (name, value) in form {
-            out.extend(format!("--{}\r\nContent-Disposition: form-data; name=\"{}\"\r\n\r\n{}\r\n", boundary, quoted(name), value).into_bytes());
-        }
-        for (name, path) in files {
-            let data = std::fs::read(path).map_err(|e| format!("cannot request '{}': cannot read the file '{}': {}", url, path, e))?;
-            let file_name = std::path::Path::new(path).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_else(|| path.clone());
-            out.extend(format!("--{}\r\nContent-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\nContent-Type: {}\r\n\r\n", boundary, quoted(name), quoted(&file_name), media_of(path)).into_bytes());
-            out.extend(data);
-            out.extend(b"\r\n");
-        }
-        out.extend(format!("--{}--\r\n", boundary).into_bytes());
-        if !typed {
-            headers.push(("content-type".to_string(), format!("multipart/form-data; boundary={}", boundary)));
-        }
-        out
-    } else if !form.is_empty() {
-        if !typed {
-            headers.push(("content-type".to_string(), "application/x-www-form-urlencoded".to_string()));
-        }
-        form.iter().map(|(k, v)| format!("{}={}", crate::text::url_encode(k), crate::text::url_encode(v))).collect::<Vec<_>>().join("&").into_bytes()
-    } else {
-        // a body that is JSON (`encode[…]`) goes as JSON, any other as text
-        if !body.is_empty() && !typed {
-            let json = matches!(body.trim_start().chars().next(), Some('{') | Some('['));
-            headers.push(("content-type".to_string(), if json { "application/json" } else { "text/plain; charset=utf-8" }.to_string()));
-        }
-        body.as_bytes().to_vec()
-    };
-    let query: Vec<(String, String)> = query.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-    let url = with_query(url, &query);
-    #[cfg(feature = "net")]
-    {
-        let (status, answered, got) = net::request(&url, &method, &bytes, &headers, timeout)?;
-        let body = if save.is_empty() || !(200..300).contains(&status) {
-            String::from_utf8_lossy(&got).to_string()
-        } else {
-            // a success's bytes kept as they came — an image, an archive;
-            // any other answer's body stays to say why
-            std::fs::write(save, &got).map_err(|e| format!("cannot request '{}': cannot write '{}': {}", url, save, e))?;
-            String::new()
-        };
-        Ok(Reply { status, body, headers: answered })
-    }
-    #[cfg(not(feature = "net"))]
-    {
-        let _ = (bytes, headers, save, timeout);
-        Err(format!("cannot request '{}': this program was built without network sources", url))
-    }
+/// `sys.reply[status, body, headers]`: a request's answer from its parts,
+/// the record `request` answers — made by the client written in Crow.
+pub fn reply(status: i64, body: &str, headers: &std::collections::BTreeMap<String, String>) -> Reply {
+    Reply { status, body: body.to_string(), headers: headers.clone() }
 }
 
 /// Lowercase hex, as SigV4 spells a digest.
@@ -493,40 +382,6 @@ mod net {
             request = request.header(name.as_str(), value.as_str());
         }
         request
-    }
-
-    /// What a request was answered: its status, its headers (names in
-    /// lower case, repeated ones joined) and its bytes.
-    pub type Answer = (i64, BTreeMap<String, String>, Vec<u8>);
-
-    /// A request sent and answered, whatever its status.
-    pub fn request(url: &str, method: &str, body: &[u8], headers: &[(String, String)], timeout: f64) -> Result<Answer, String> {
-        let a = agent_waiting(timeout);
-        let sent = match method {
-            "POST" => with_headers(a.post(url), headers).send(body),
-            "PUT" => with_headers(a.put(url), headers).send(body),
-            "PATCH" => with_headers(a.patch(url), headers).send(body),
-            "DELETE" if !body.is_empty() => with_headers(a.delete(url), headers).force_send_body().send(body),
-            "DELETE" => with_headers(a.delete(url), headers).call(),
-            "HEAD" => with_headers(a.head(url), headers).call(),
-            "OPTIONS" => with_headers(a.options(url), headers).call(),
-            _ => with_headers(a.get(url), headers).call(),
-        };
-        let mut resp = sent.map_err(|e| unanswered("request", url, e, timeout))?;
-        let status = resp.status().as_u16() as i64;
-        let mut answered = BTreeMap::new();
-        for (name, value) in resp.headers() {
-            let value = String::from_utf8_lossy(value.as_bytes()).to_string();
-            answered
-                .entry(name.as_str().to_ascii_lowercase())
-                .and_modify(|v: &mut String| {
-                    v.push_str(", ");
-                    v.push_str(&value);
-                })
-                .or_insert(value);
-        }
-        let bytes = resp.body_mut().with_config().limit(LIMIT).read_to_vec().map_err(|e| unanswered("request", url, e, timeout))?;
-        Ok((status, answered, bytes))
     }
 
     fn env(name: &str) -> Option<String> {

@@ -161,7 +161,10 @@ impl TypeContext {
                 _ => {}
             }
         }
-
+        // a standard module written in Crow, inlined, resolves its names in
+        // its own scope: what its `use` lines import, which the program's
+        // scope does not see
+        crate::modules::load_crow_scopes(&mut self.registry);
     }
 
     /// Which functions are handlers, which top-level names are facts, and

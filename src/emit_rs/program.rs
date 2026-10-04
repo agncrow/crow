@@ -162,6 +162,7 @@ impl Emitter {
             }
             self.modules.insert(module_name);
         }
+        crate::modules::load_crow_scopes(&mut self.registry);
     }
 
     /// The whole-program analyses the backend prints from, made over the
@@ -442,6 +443,9 @@ impl Emitter {
         let note = |e: &Expr, todo: &mut Vec<String>| match e {
             Expr::Call { target: Target::User(n), .. } | Expr::FnRef(n, _) => todo.push(n.clone()),
             Expr::Deferred { name, .. } => todo.push(name.clone()),
+            // a builtin written in Crow reaches its function (an effect's
+            // row, or a call's)
+            Expr::Call { target: Target::Row(row), .. } | Expr::Effect { row: Some(row), .. } if row.is_crow() => todo.push(crate::table::crow_fn_name(row)),
             _ => {}
         };
         visit_block(&self.part.main, &mut |e| note(e, &mut todo));
@@ -731,7 +735,9 @@ impl Emitter {
                 continue;
             }
             self.in_crow_fn = crate::modules::is_crow_fn(&f.name);
+            let scope = self.registry.enter(&f.name);
             self.emit_function(&f);
+            self.registry.resume(scope);
             self.in_crow_fn = false;
         }
         let derives: Vec<Derive> = self.part.derives.clone();
@@ -751,7 +757,9 @@ impl Emitter {
         for t in self.traced_functions.clone() {
             if let Some(f) = self.fns.get(&t).cloned() {
                 self.in_crow_fn = crate::modules::is_crow_fn(&f.name);
+                let scope = self.registry.enter(&f.name);
                 self.emit_traced_function(&f);
+                self.registry.resume(scope);
                 self.in_crow_fn = false;
             }
         }
@@ -1590,7 +1598,9 @@ impl Emitter {
             self.line("#[allow(dead_code)]");
             self.line("type CrowShell = crow_runtime::core::Shell;");
         }
-        if self.needs_reply_struct {
+        // (the record `request` answers — made by `sys.reply` in the client
+        // written in Crow, and named as a type wherever the answer is held)
+        if self.needs_reply_struct || self.out.contains("CrowReply") {
             // the runtime's own record, which `request`'s rows answer
             self.needs_crow_runtime = true;
             self.line("");

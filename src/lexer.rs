@@ -403,6 +403,7 @@ impl Lexer {
                     match self.peek() {
                         Some('n') => { s.push('\n'); self.advance(); }
                         Some('t') => { s.push('\t'); self.advance(); }
+                        Some('r') => { s.push('\r'); self.advance(); }
                         Some('\\') => { s.push('\\'); self.advance(); }
                         Some('\'') => { s.push('\''); self.advance(); }
                         // Escaped backtick: kept as \` in the raw string so

@@ -113,8 +113,12 @@ impl TypeContext {
         if frame_core_fallback && matches!(arg0, Some(CrowType::Unknown | CrowType::Void)) {
             return CrowType::Unknown;
         }
-        // Non-overlapping module functions
-        if !is_overlapping && !frame_core_fallback && self.registry.has_function(name) {
+        // Non-overlapping module functions — unless a row of the core's takes
+        // these kinds: the core's row is the one both backends pick (`slice`
+        // of text where a module in scope answers `slice` of bytes)
+        let kinds: Vec<crate::table::Arg> = args.iter().map(|a| crate::table::Arg::of_type(&arg_ty(a))).collect();
+        let cores = crate::table::has_core_rows(name) && !kinds.iter().any(|k| matches!(k, crate::table::Arg::Unknown | crate::table::Arg::AnyList)) && crate::table::core_row(name, &kinds).is_some();
+        if !is_overlapping && !frame_core_fallback && !cores && self.registry.has_function(name) {
             // A name two modules export (stack, unique, load: frame + math)
             // resolves by its first argument's type — the same dispatch the
             // emitters use — so a qualified call that lowering made bare

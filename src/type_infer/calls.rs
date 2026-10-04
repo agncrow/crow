@@ -10,6 +10,7 @@ pub(crate) struct FnScan {
     saved_fn_name: Option<String>,
     saved_in_view: bool,
     saved_assigned: Option<std::collections::HashSet<String>>,
+    saved_scope: String,
 }
 
 /// What `enter_derive_scan` saved: restored by `leave_derive_scan`.
@@ -229,6 +230,10 @@ impl TypeContext {
             if !self.functions.contains_key(name) && !self.structs.contains_key(name) {
                 if let Some(m) = self.registry.module_name_for(name).map(str::to_string) {
                     self.note_crow_row(&m, name, arg_types);
+                }
+                // (a core builtin written in Crow: `request`)
+                if crate::table::has_core_rows(name) {
+                    self.note_crow_row("", name, arg_types);
                 }
             }
 
@@ -450,14 +455,16 @@ impl TypeContext {
             }
         }
         let saved_assigned = self.body_assigned.replace(assigned);
-        FnScan { saved_vars, saved_fn_name, saved_in_view, saved_assigned }
+        let saved_scope = self.registry.enter(name);
+        FnScan { saved_vars, saved_fn_name, saved_in_view, saved_assigned, saved_scope }
     }
 
     /// Out of a function's body after its calls were read: reactive state
     /// it refined keeps the refinement, and a parameter called as a
     /// function keeps what its calls said of it.
     pub(crate) fn leave_fn_scan(&mut self, name: &str, scan: FnScan) {
-        let FnScan { saved_vars, saved_fn_name, saved_in_view, saved_assigned } = scan;
+        let FnScan { saved_vars, saved_fn_name, saved_in_view, saved_assigned, saved_scope } = scan;
+        self.registry.resume(saved_scope);
         self.body_assigned = saved_assigned;
         // A module-level variable assigned in this body (reactive
         // state written by a handler) keeps the refined type: an

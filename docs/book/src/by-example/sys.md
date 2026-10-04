@@ -54,4 +54,34 @@ sys
 false
 ```
 
+The rest of the layer, for the modules written on it — a file's bytes, chunks gathered, digests, and a request's answer made from its parts:
+
+```crow
+use sys
+
+store['sys-note.txt', bytes['one\ntwo']]
+log[len[file['sys-note.txt']]]
+log[text[gather[[bytes['ab'], bytes['cd']]], '?']]
+log[hex[bytes['hi']]]
+log[hash[bytes['hello'], 'sha256']]
+log[hex[hmac[bytes['key'], bytes['hello'], 'sha256']]]
+log[len[random[8]]]
+log[text[slice[bytes['héllo'], 0, 2], '?']]
+r = reply[404, 'no such thing', map[]]
+log[r.status]
+log[len[file['no-such-file'].reason] gt 0]
+```
+
+```text
+7
+abcd
+6869
+2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+9307b3b915efb5171ff14d8cb55fbcc798c6c0ef1456d66ded1a6aa723a58b7b
+8
+h?
+404
+true
+```
+
 Reference: spec section 13 (sys).

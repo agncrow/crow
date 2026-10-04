@@ -19,12 +19,70 @@ use crate::type_infer::CrowType;
 pub fn crow_source(path: &str) -> Option<&'static str> {
     match path {
         "math.nn" => Some(nn::NN_SOURCE),
+        "" => Some(CORE_SOURCE),
         _ => None,
     }
 }
 
-/// The modules written in Crow, with the prefix their functions carry.
-const CROW_MODULES: &[(&str, &str)] = &[("math.nn", "_math_nn")];
+/// The core builtins written in Crow (`request`): no import brings them,
+/// so the source is inlined into a program that calls one of them.
+pub(crate) const CORE_SOURCE: &str = include_str!("core.co");
+
+/// The modules written in Crow, with the prefix their functions carry (the
+/// core's, imported by no `use`, carries `_core`).
+const CROW_MODULES: &[(&str, &str)] = &[("math.nn", "_math_nn"), ("", "_core")];
+
+thread_local! {
+    /// What each inlined module imports (its own `use` lines), by its
+    /// prefix: the registry loads them into the module's scope.
+    static CROW_IMPORTS: std::cell::RefCell<Vec<(String, Vec<String>)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// A standard module by its import path, for a registry's scope.
+pub fn module_by_path(path: &str) -> Option<Arc<dyn CrowModule>> {
+    Some(match path {
+        "math" => Arc::new(math::MathModule),
+        "math.stats" => Arc::new(stats::StatsModule),
+        "math.nn" => Arc::new(nn::NnModule),
+        "io" => Arc::new(io::IoModule),
+        "sys" => Arc::new(sys::SysModule),
+        "frame" => Arc::new(frame::FrameModule),
+        "doc" => Arc::new(doc::DocModule),
+        "chart" => Arc::new(chart::ChartModule),
+        "db" => Arc::new(db::DbModule),
+        _ => return None,
+    })
+}
+
+/// Every inlined module's imports loaded into its own scope of a
+/// registry (a module's `use math.nn` loads math too, as a program's does).
+pub fn load_crow_scopes(registry: &mut ModuleRegistry) {
+    for (prefix, imports) in crow_imports() {
+        for path in imports {
+            if path.starts_with("math.") {
+                if let Some(m) = module_by_path("math") {
+                    registry.load_for(&prefix, m);
+                }
+            }
+            if let Some(m) = module_by_path(&path) {
+                registry.load_for(&prefix, m);
+            }
+        }
+    }
+}
+
+/// The imports of every standard module the program inlined, by prefix.
+pub fn crow_imports() -> Vec<(String, Vec<String>)> {
+    CROW_IMPORTS.with(|c| c.borrow().clone())
+}
+
+/// The scope a function's names are resolved in: a standard module's
+/// prefix for one of its functions (inlined, or its traced copy), none for
+/// the program's own.
+pub fn crow_scope_of(name: &str) -> Option<String> {
+    let name = name.strip_prefix("_traced_").unwrap_or(name);
+    CROW_MODULES.iter().find(|(_, prefix)| name.starts_with(prefix) && name.len() > prefix.len() && name.as_bytes()[prefix.len()] == b'_').map(|(_, p)| p.to_string())
+}
 
 /// Whether a function of the program is a standard module's, inlined: its
 /// stops name the line it was called from, not a line of the module's.
@@ -47,18 +105,31 @@ pub fn inline_crow_modules(stmts: &[crate::ast::Stmt]) -> Result<Vec<crate::ast:
     use crate::ast::Stmt;
     let mut out: Vec<Stmt> = Vec::with_capacity(stmts.len());
     let mut done: std::collections::HashSet<String> = std::collections::HashSet::new();
+    CROW_IMPORTS.with(|c| c.borrow_mut().clear());
+    // the core's, where the program calls one of its rows (a name of the
+    // core's that is written in Crow: `request`)
+    let core_rows: Vec<&str> = crate::table::ROWS.iter().filter(|r| r.module.is_empty() && r.is_crow()).map(|r| r.name).collect();
+    let mut called = std::collections::BTreeSet::new();
+    stmts.iter().for_each(|s| called_in_stmt(s, &mut called));
+    let imports: Vec<(String, Option<&'static str>)> = std::iter::once(("".to_string(), core_rows.iter().any(|r| called.contains(*r)).then_some(CORE_SOURCE)))
+        .chain(stmts.iter().filter_map(|s| if let Stmt::Use { path, .. } = s { Some((path.clone(), crow_source(path))) } else { None }))
+        .collect();
     for st in stmts {
         out.push(st.clone());
-        let Stmt::Use { path, .. } = st else { continue };
-        let Some(source) = crow_source(path) else { continue };
+    }
+    for (path, source) in imports {
+        let Some(source) = source else { continue };
         if !done.insert(path.clone()) {
             continue;
         }
-        let prefix = CROW_MODULES.iter().find(|(m, _)| m == path).map(|(_, p)| *p).unwrap_or("_");
+        let path = path.as_str();
+        let prefix = CROW_MODULES.iter().find(|(m, _)| *m == path).map(|(_, p)| *p).unwrap_or("_");
         let mut lexer = crate::lexer::Lexer::new(source);
         let tokens = lexer.tokenize().map_err(|e| format!("a bug in Crow: the module {} does not lex: {}", path, e))?;
         let mut parser = crate::parser::Parser::new(tokens);
         let mod_stmts = parser.parse().map_err(|e| format!("a bug in Crow: the module {} does not parse: {}", path, e))?;
+        let imports: Vec<String> = mod_stmts.iter().filter_map(|m| if let Stmt::Use { path, .. } = m { Some(path.clone()) } else { None }).collect();
+        CROW_IMPORTS.with(|c| c.borrow_mut().push((prefix.to_string(), imports)));
         // the rows' functions, and what they reach among the module's own
         let rows: std::collections::BTreeSet<String> = crate::table::ROWS.iter().filter(|r| r.module == path && r.is_crow()).map(|r| r.name.to_string()).collect();
         let bodies: std::collections::BTreeMap<String, &Vec<Stmt>> = mod_stmts.iter().filter_map(|m| if let Stmt::FnDecl { name, body, .. } = m { Some((name.clone(), body)) } else { None }).collect();
@@ -250,6 +321,23 @@ pub struct ModuleRegistry {
     fn_map: HashMap<String, Vec<usize>>,
     /// Maps constant name → index into `modules` vec.
     const_map: HashMap<String, usize>,
+    /// Which modules each scope sees: the program's (`PROGRAM`, what its
+    /// `use` lines import) and each standard module's written in Crow (its
+    /// prefix, what its own `use` lines import — `sys`, which a program
+    /// never sees). A name is resolved in the scope of the function it is
+    /// read in (`enter`), so a program's imports never reach into a
+    /// module's formulas, and a module's layer never reaches the program.
+    scopes: HashMap<String, Vec<usize>>,
+}
+
+/// The program's own scope.
+pub const PROGRAM: &str = "program";
+
+thread_local! {
+    /// The scope names are resolved in on this thread (a registry is shared
+    /// by the threads a served program runs on; each resolves in the scope
+    /// of the function it is running).
+    static CURRENT_SCOPE: std::cell::RefCell<String> = std::cell::RefCell::new(PROGRAM.to_string());
 }
 
 impl std::fmt::Debug for ModuleRegistry {
@@ -267,19 +355,66 @@ impl ModuleRegistry {
             modules: Vec::new(),
             fn_map: HashMap::new(),
             const_map: HashMap::new(),
+            scopes: HashMap::new(),
         }
     }
 
-    /// Load a module, registering all its functions and constants.
+    /// Load a module into the program's scope, registering all its
+    /// functions and constants.
     pub fn load(&mut self, module: Arc<dyn CrowModule>) {
-        let idx = self.modules.len();
-        for &fname in module.functions() {
-            self.fn_map.entry(fname.to_string()).or_default().push(idx);
+        self.load_for(PROGRAM, module);
+    }
+
+    /// Load a module into a scope: a module already loaded (by another
+    /// scope) is shared, and becomes visible in this one.
+    pub fn load_for(&mut self, scope: &str, module: Arc<dyn CrowModule>) {
+        let idx = match self.modules.iter().position(|m| m.name() == module.name()) {
+            Some(i) => i,
+            None => {
+                let idx = self.modules.len();
+                for &fname in module.functions() {
+                    self.fn_map.entry(fname.to_string()).or_default().push(idx);
+                }
+                for (cname, _) in module.constants() {
+                    self.const_map.entry(cname.to_string()).or_insert(idx);
+                }
+                self.modules.push(module);
+                idx
+            }
+        };
+        let seen = self.scopes.entry(scope.to_string()).or_default();
+        if !seen.contains(&idx) {
+            seen.push(idx);
         }
-        for (cname, _) in module.constants() {
-            self.const_map.insert(cname.to_string(), idx);
-        }
-        self.modules.push(module);
+    }
+
+    /// Resolve names in the scope of a function from here on: a standard
+    /// module's written in Crow sees its own imports, any other function
+    /// the program's.
+    pub fn enter(&self, fn_name: &str) -> String {
+        let scope = crow_scope_of(fn_name).unwrap_or_else(|| PROGRAM.to_string());
+        CURRENT_SCOPE.with(|c| c.replace(scope))
+    }
+
+    /// Back to a scope `enter` answered.
+    pub fn resume(&self, scope: String) {
+        CURRENT_SCOPE.with(|c| c.replace(scope));
+    }
+
+    /// The program's scope, where a pass over the program begins: a pass
+    /// before it may have left a module's (the last function it typed).
+    pub fn reset_scope() {
+        CURRENT_SCOPE.with(|c| c.replace(PROGRAM.to_string()));
+    }
+
+    /// Whether the module at `idx` is visible in the current scope.
+    fn visible(&self, idx: usize) -> bool {
+        CURRENT_SCOPE.with(|c| self.scopes.get(c.borrow().as_str()).is_some_and(|v| v.contains(&idx)))
+    }
+
+    /// The modules providing a name, in the current scope.
+    fn providers(&self, name: &str) -> Vec<usize> {
+        self.fn_map.get(name).map(|idxs| idxs.iter().copied().filter(|&i| self.visible(i)).collect()).unwrap_or_default()
     }
 
     /// A registry with every stdlib module loaded — for tooling (checker,
@@ -301,34 +436,33 @@ impl ModuleRegistry {
     pub fn all_function_names(&self) -> Vec<&str> {
         self.modules
             .iter()
-            .flat_map(|m| m.functions().iter().copied())
+            .enumerate()
+            .filter(|(i, _)| self.visible(*i))
+            .flat_map(|(_, m)| m.functions().iter().copied())
             .collect()
     }
 
     /// Check if a function name belongs to any loaded module.
     pub fn has_function(&self, name: &str) -> bool {
-        self.fn_map.contains_key(name)
+        !self.providers(name).is_empty()
     }
 
     /// All loaded modules providing this name — >1 means a bare call is
     /// ambiguous (spec: Conflict Resolution).
     pub fn providers_of(&self, name: &str) -> Vec<&str> {
-        self.fn_map
-            .get(name)
-            .map(|idxs| idxs.iter().map(|&i| self.modules[i].name()).collect())
-            .unwrap_or_default()
+        self.providers(name).into_iter().map(|i| self.modules[i].name()).collect()
     }
 
     /// Which loaded module provides this function (for reservation messages).
     /// Returns the first provider when several do.
     pub fn module_name_of(&self, name: &str) -> Option<&str> {
-        let idx = self.fn_map.get(name)?.first()?;
-        Some(self.modules[*idx].name())
+        let idx = self.providers(name).into_iter().next()?;
+        Some(self.modules[idx].name())
     }
 
     /// Resolve a function within one specific module (prefixed calls).
     fn idx_in(&self, module_name: &str, fname: &str) -> Option<usize> {
-        self.fn_map.get(fname)?.iter().copied().find(|&i| self.modules[i].name() == module_name)
+        self.providers(fname).into_iter().find(|&i| self.modules[i].name() == module_name)
     }
 
     /// Call a module function through its module prefix.
@@ -393,9 +527,11 @@ impl ModuleRegistry {
         // answer had been taken: `exp` of a parameter no call had typed was
         // a number, and stuck as the function's return)
         if kinds.iter().any(|k| matches!(k, crate::table::Arg::Unknown | crate::table::Arg::AnyList)) {
+            // (the core's rows of the name too, where it has them: `slice`
+            // of text or of bytes is picked as the program runs)
             let answers: Vec<CrowType> = crate::table::ROWS
                 .iter()
-                .filter(|r| r.module == module && r.name == name && crate::table::kinds_of(r.params, arg_types.len()).is_some())
+                .filter(|r| (r.module == module || r.module.is_empty()) && r.name == name && crate::table::kinds_of(r.params, arg_types.len()).is_some())
                 .map(|r| r.crow_type())
                 .collect();
             if answers.iter().any(|t| *t != answers[0]) {
@@ -410,12 +546,12 @@ impl ModuleRegistry {
 
     /// Check if a constant name belongs to any loaded module.
     pub fn has_constant(&self, name: &str) -> bool {
-        self.const_map.contains_key(name)
+        self.const_map.get(name).is_some_and(|&i| self.visible(i))
     }
 
     /// Get the constant value for a name.
     pub fn get_constant(&self, name: &str) -> Option<CrowValue> {
-        let idx = self.const_map.get(name)?;
+        let idx = self.const_map.get(name).filter(|&&i| self.visible(i))?;
         let module = &self.modules[*idx];
         module.constants().into_iter().find(|(n, _)| *n == name).map(|(_, v)| v)
     }
@@ -441,7 +577,7 @@ impl ModuleRegistry {
         if let Some(msg) = self.ambiguity(name) {
             return Err(msg);
         }
-        let idx = self.fn_map.get(name).and_then(|v| v.first().copied())
+        let idx = self.providers(name).into_iter().next()
             .ok_or_else(|| format!("unknown module function: {}", name))?;
         self.call_at(idx, name, args)
     }
@@ -451,7 +587,7 @@ impl ModuleRegistry {
         if let Some(msg) = self.ambiguity(name) {
             return Err(msg);
         }
-        let idx = self.fn_map.get(name).and_then(|v| v.first().copied())
+        let idx = self.providers(name).into_iter().next()
             .ok_or_else(|| format!("unknown module function: {}", name))?;
         self.emit_at(idx, name, arg_strs, arg_types)
     }
@@ -459,34 +595,34 @@ impl ModuleRegistry {
     /// Infer return type of a module function (bare call; None when
     /// ambiguous), from the arguments' types.
     pub fn type_of(&self, name: &str, arg_types: &[CrowType]) -> Option<CrowType> {
-        let idxs = self.fn_map.get(name)?;
-        if idxs.len() > 1 {
+        let idxs = self.providers(name);
+        if idxs.len() != 1 {
             return None;
         }
-        Some(self.type_at(*idxs.first()?, name, arg_types))
+        Some(self.type_at(idxs[0], name, arg_types))
     }
 
 
     /// Check if a specific module (by name) has been loaded.
     pub fn is_loaded(&self, module_name: &str) -> bool {
-        self.modules.iter().any(|m| m.name() == module_name)
+        self.modules.iter().enumerate().any(|(i, m)| m.name() == module_name && self.visible(i))
     }
 
-    /// All registered function names.
+    /// All registered function names, in the current scope.
     pub fn fn_names(&self) -> Vec<&str> {
-        self.fn_map.keys().map(|s| s.as_str()).collect()
+        self.fn_map.iter().filter(|(_, idxs)| idxs.iter().any(|&i| self.visible(i))).map(|(s, _)| s.as_str()).collect()
     }
 
-    /// All registered constant names.
+    /// All registered constant names, in the current scope.
     pub fn const_names(&self) -> Vec<&str> {
-        self.const_map.keys().map(|s| s.as_str()).collect()
+        self.const_map.iter().filter(|(_, i)| self.visible(**i)).map(|(s, _)| s.as_str()).collect()
     }
 
     /// Return the module name that owns a given function, if any.
     /// (First provider when several do — prefer providers_of for messages.)
     pub fn module_name_for(&self, fn_name: &str) -> Option<&str> {
-        let idx = self.fn_map.get(fn_name)?.first()?;
-        Some(self.modules[*idx].name())
+        let idx = self.providers(fn_name).into_iter().next()?;
+        Some(self.modules[idx].name())
     }
 }
 
@@ -531,5 +667,28 @@ mod tests {
         assert!(is_crow_fn("_math_nn_relu") && is_crow_fn("_traced__math_nn_relu") && !is_crow_fn("relu") && !is_crow_fn("_math_nnx"));
         let plain = crate::build("use math\nlog[1]\n").expect("parses");
         assert_eq!(inline_crow_modules(&plain).expect("inlines").len(), plain.len());
+    }
+
+    /// A registry resolves a name in the scope of the function it is read
+    /// in: the program's imports, or a standard module's own (`sys`, which
+    /// the program never sees); the core's Crow source is inlined where a
+    /// program calls one of its rows.
+    #[test]
+    fn a_name_is_resolved_in_its_functions_scope() {
+        let mut r = ModuleRegistry::new();
+        r.load(module_by_path("math").expect("math"));
+        r.load_for("_core", module_by_path("sys").expect("sys"));
+        assert!(r.has_function("exp") && !r.has_function("open"));
+        let saved = r.enter("_core_request");
+        assert!(r.has_function("open") && !r.has_function("exp"), "a module's scope is its own imports");
+        assert_eq!(r.providers_of("slice"), vec!["sys"]);
+        r.resume(saved);
+        assert!(r.has_function("exp") && !r.has_function("open"));
+        let stmts = crate::build("r = request['http://x/y']\nlog[r.status]\n").expect("parses");
+        let out = inline_crow_modules(&stmts).expect("inlines");
+        assert!(out.iter().any(|s| matches!(s, Stmt::FnDecl { name, .. } if name == "_core_request")), "the core's source is inlined for a call of request");
+        assert!(crow_imports().iter().any(|(p, i)| p == "_core" && i.iter().any(|m| m == "sys")));
+        let none = crate::build("log[1]\n").expect("parses");
+        assert!(!inline_crow_modules(&none).expect("inlines").iter().any(|s| matches!(s, Stmt::FnDecl { .. })));
     }
 }

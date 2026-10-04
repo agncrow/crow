@@ -437,6 +437,9 @@ pub fn run_prepared_test(program: &Program, ctx: &crate::type_infer::TypeContext
 
 impl IrInterp {
     pub fn new(registry: &ModuleRegistry, source_file: &str) -> Self {
+        // the program's names, from its top level on (a function entered
+        // sets its own scope and resumes this one)
+        crate::modules::ModuleRegistry::reset_scope();
         let file = std::path::Path::new(source_file)
             .file_stem()
             .map(|s| s.to_string_lossy().to_string())
@@ -1598,6 +1601,11 @@ impl IrInterp {
     /// the compiled program prints (a dual number a function grad
     /// differentiates takes the derivative's own form).
     fn row_call(&mut self, row: &'static crate::table::Row, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
+        // a builtin written in Crow (an effect's row reaches here): its function
+        if row.is_crow() {
+            let handed: Vec<CrowValue> = row.params.iter().zip(&vals).map(|(k, v)| crate::table::value_as(*k, v)).collect::<Result<_, _>>()?;
+            return self.call_user(&crate::table::crow_fn_name(row), handed);
+        }
         if vals.iter().any(|v| matches!(v.value, Value::Dual(..))) {
             return self.bare_call(row.name, vals);
         }
@@ -2364,6 +2372,15 @@ impl IrInterp {
     }
 
     fn call_user(&mut self, name: &str, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
+        // (a standard module's function resolves the names its row left to
+        // the runtime in its own scope)
+        let scope = self.registry.enter(name);
+        let r = self.call_user_in(name, vals);
+        self.registry.resume(scope);
+        r
+    }
+
+    fn call_user_in(&mut self, name: &str, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
         self.check_cancel()?;
         if name == PUT {
             return Self::put(&vals);

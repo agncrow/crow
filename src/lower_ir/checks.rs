@@ -395,7 +395,13 @@ impl<'a> Lowerer<'a> {
     /// may not take a name the language or an imported module owns.
     /// (Spec Design Note "Names Are Never Ambiguous".)
     pub(super) fn check_reserved(&mut self, name: &str, what: &str) {
-        if CORE_RESERVED.contains(&name) {
+        // (the standard library's own source — the one kind of file that
+        // imports `sys` — defines the functions its Crow rows name:
+        // `fn request` in src/modules/core.co, tested on its own)
+        let own_row = what == "function"
+            && self.ctx.bare_modules.contains("sys")
+            && crate::table::ROWS.iter().any(|r| r.module.is_empty() && r.name == name && r.is_crow());
+        if CORE_RESERVED.contains(&name) && !own_row {
             self.refuse(format!("'{}' is a core builtin — pick another name for this {}", name, what));
             return;
         }
@@ -789,7 +795,9 @@ impl<'a> Lowerer<'a> {
         let web_program = self.ctx.bare_modules.iter().any(|m| m == "web" || m.starts_with("web."));
         // (a module imported bare that provides the name answers it: `bytes`
         // under `use sys` is the standard library's, not a response)
-        let provided = self.ctx.registry.providers_of(name).iter().any(|m| self.ctx.bare_modules.contains(*m));
+        // (inside a standard module written in Crow, the registry's scope is
+        // the module's own imports: a provider there is one it imported)
+        let provided = self.ctx.registry.providers_of(name).iter().any(|m| self.ctx.bare_modules.contains(*m) || crate::modules::is_crow_fn(&self.current_fn));
         if !own && !web_program && !provided && matches!(name, "route" | "serve" | "respond" | "redirect" | "msgpack" | "arrow" | "bytes" | "stream") {
             self.refuse(format!("{}[] is web's: add `use web`", name));
             return;
@@ -988,7 +996,9 @@ impl<'a> Lowerer<'a> {
         }
 
         // Known builtin? Check where it is called and its argument count
-        if BUILTINS.contains(&name) {
+        // (a local or a parameter of the name, indexed — `query[0]` of a
+        // parameter `query` — is a value read, not the builtin)
+        if BUILTINS.contains(&name) && !self.declared(name) {
             let for_session = self.in_fn().map_or(false, |f| self.ctx.view_handlers.contains(&f));
             // the notice is the session's: only something acting for a
             // session — a handler, or a function a handler calls — can say it

@@ -723,6 +723,19 @@ impl TypeContext {
             if takes != types.len() {
                 continue;
             }
+            // a test's call at a signature of its own is a call like any
+            // other: the function gets a copy for it (F2), where the test
+            // had been lowered against the program's signature and handed
+            // a tensor to a parameter the program made a number
+            if self.functions.contains_key(f) {
+                let sig: Vec<CrowType> = types.iter().map(reaching).collect();
+                if sig.iter().all(Self::type_is_concrete) {
+                    let entry = self.call_signatures.entry(f.clone()).or_default();
+                    if !entry.iter().any(|existing| Self::same_signature(existing, &sig)) {
+                        entry.push(sig);
+                    }
+                }
+            }
             for (i, t) in types.iter().enumerate() {
                 let t = reaching(t);
                 let entry = agreed.entry((f.clone(), i)).or_insert_with(|| Some(t.clone()));

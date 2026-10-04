@@ -676,6 +676,7 @@ fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
             Kind::Tensor => matches!(t, Ty::Tensor(..)) || items(t, &|_| false),
             Kind::Tensors => items(t, &|e| matches!(e, Ty::Tensor(..))),
             Kind::Strs => items(t, &|e| matches!(e, Ty::Str | Ty::Markup)),
+            Kind::Chunks => items(t, &|e| *e == Ty::Bytes),
             Kind::Bools => items(t, &|e| *e == Ty::Bool),
             Kind::Sparse => matches!(t, Ty::Handle(h) if h == "sparse"),
             Kind::Frame => matches!(t, Ty::Frame(_)),

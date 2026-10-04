@@ -17,8 +17,17 @@ Import with `use sys` — **only in a module of the standard library.** `sys` is
 | `send[stream, bytes]` | The bytes written, all of them; the count. An error value of kind `'sys'` on a stream that is closed or broke | [The standard library's layer: `use sys`](../by-example/sys.md) · [Web: responses and submodules](../by-example/web-more.md) |
 | `recv[stream, most, seconds]` | Up to `most` bytes as they arrive — none when the other side closed — waiting at most `seconds` (the connection's own wait when 0). An error value of kind `'sys'`: `no data from host:port in 2 s`, `the stream is closed` | [Web: responses and submodules](../by-example/web-more.md) |
 | `close[stream]` | The connection let go; every call after is refused | [Web: responses and submodules](../by-example/web-more.md) |
+| `gather[chunks]` | A list of bytes joined in order, as one (what a connection read, piece by piece) | [The standard library's layer: `use sys`](../by-example/sys.md) |
+| `file[path]` | A file's bytes, as they are; an error value of kind `'sys'` where it cannot be read | [The standard library's layer: `use sys`](../by-example/sys.md) |
+| `store[path, bytes]` | The bytes written to a file, as they are; an error value of kind `'sys'` where it cannot be written | [The standard library's layer: `use sys`](../by-example/sys.md) |
+| `random[n]` | `n` bytes from the operating system's randomness | [The standard library's layer: `use sys`](../by-example/sys.md) |
+| `hex[bytes]` | The bytes as lowercase hex, two digits each | [The standard library's layer: `use sys`](../by-example/sys.md) |
+| `text[bytes, fill]` | The text the bytes spell, each run that spells none replaced by `fill` (`'�'`, as a browser shows one) — never an error | [The standard library's layer: `use sys`](../by-example/sys.md) · [Web: responses and submodules](../by-example/web-more.md) |
+| `hash[bytes, algo]` | The digest as lowercase hex: `'sha256'`, `'sha512'` or `'md5'` | [The standard library's layer: `use sys`](../by-example/sys.md) · [The system: shell, environment, time, arguments](../by-example/system.md) · [Reactive State and Events](../ch12-02-reactive-state.md) |
+| `hmac[key, message, algo]` | The keyed digest as bytes: `'sha256'` (an S3 signature's chain) or `'sha512'` | [The standard library's layer: `use sys`](../by-example/sys.md) |
+| `reply[status, body, headers]` | A request's answer from its parts: the record `request` answers, made by the client written in Crow | [The standard library's layer: `use sys`](../by-example/sys.md) |
 
-A stream is one connection however many values hold it, as a socket is; `type[s]` is `stream`. Every function works identically in both modes (`crow_runtime::sys`).
+A stream is one connection however many values hold it, as a socket is; `type[s]` is `stream`. Every function works identically in both modes (`crow_runtime::sys`). The HTTP client — `request` (Requests) — is written on this layer, in `src/modules/core.co`: a URL taken apart, a connection opened plain or behind TLS, the request line, headers and body sent, the answer's head read to its blank line and its body by its length, by its chunks, or until the server closes, redirects followed, the answer made by `reply`. A program never sees the layer: it sees `request`, whose row in the builtin table is the contract the Crow body keeps (math.nn, Design Note "a builtin written in Crow keeps its row").
 
 ```
 use sys

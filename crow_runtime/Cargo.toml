@@ -44,14 +44,15 @@ bytes = { version = "1", optional = true }
 # a URL or an S3 object wherever a path is read: a blocking client, no
 # async runtime of its own, and S3's request signing
 ureq = { version = "3", optional = true }
-hmac = { version = "0.12", optional = true }
+# `sys`: an HMAC for the modules written in Crow (S3's signature)
+hmac = "0.12"
 
 [features]
 arrow = ["dep:arrow"]
 # the features a compiled program asks for by what its paths may name
 # (crate::sources): the interpreter has both
 parquet = ["dep:parquet", "dep:bytes", "arrow"]
-net = ["dep:ureq", "dep:hmac"]
+net = ["dep:ureq"]
 
 [dev-dependencies]
 serde_json = "1"

@@ -119,6 +119,8 @@ pub enum Kind {
     /// `&CrowStream` taken, `CrowStream` given: a connection `sys.open`
     /// made.
     Stream,
+    /// A list of bytes: a connection's chunks, gathered.
+    Chunks,
     /// `String` given: markup a view places as markup (`doc.markdown`).
     Markup,
     /// `Vec<BTreeMap<String, String>>` given: rows of text by column
@@ -239,6 +241,7 @@ impl Kind {
             Kind::Sparse => CrowType::Sparse,
             Kind::Frame => CrowType::Frame(None),
             Kind::Strs => CrowType::Array(Box::new(CrowType::Str)),
+            Kind::Chunks => CrowType::Array(Box::new(CrowType::Bytes)),
             Kind::Bools => CrowType::Array(Box::new(CrowType::Bool)),
             Kind::Cell | Kind::Cells => CrowType::Unknown,
             Kind::Lists => CrowType::Array(Box::new(CrowType::Array(Box::new(CrowType::Str)))),
@@ -285,7 +288,7 @@ impl Kind {
             Kind::Bool => format!("({})", arg),
             Kind::Str => format!("&*({})", arg),
             Kind::Unit => format!("({})", arg),
-            Kind::Strs | Kind::Bools => format!("&({})[..]", arg),
+            Kind::Strs | Kind::Bools | Kind::Chunks => format!("&({})[..]", arg),
             Kind::Cell => format!("&crow_runtime::cell::Cell::from(({}).clone())", arg),
             Kind::Words => format!("&crow_runtime::cell::words(&({})).unwrap_or_else(|e| crow_stop({}, e))[..]", arg, line),
             Kind::Cells => format!("crow_runtime::frames::Cells::from(({}).clone())", arg),
@@ -334,6 +337,7 @@ impl Kind {
             Kind::Sparse => "crow_runtime::sparse::CrowSparse::from_dense(&crow_runtime::tensor::CrowTensor::zeros(vec![0, 0]))",
             Kind::Frame => "crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![])",
             Kind::Strs => "Vec::<String>::new()",
+            Kind::Chunks => "Vec::<crow_runtime::sys::Bytes>::new()",
             Kind::Bools => "Vec::<bool>::new()",
             Kind::Cell => "crow_runtime::cell::Cell::Int(0)",
             Kind::Cells => "crow_runtime::frames::Cells::One(crow_runtime::cell::Cell::Int(0))",
@@ -775,6 +779,14 @@ pub fn read_bytes(v: &CrowValue) -> Result<crow_runtime::sys::Bytes, String> {
     }
 }
 
+/// A list of bytes values, as a connection's chunks are gathered.
+pub fn read_chunks(v: &CrowValue) -> Result<Vec<crow_runtime::sys::Bytes>, String> {
+    match &v.value {
+        Value::Array(items) => items.iter().map(read_bytes).collect(),
+        _ => Err(format!("expected a list of bytes, got {}", named(v))),
+    }
+}
+
 pub fn write_bytes(b: crow_runtime::sys::Bytes) -> CrowValue {
     CrowValue::ok(Value::Bytes(b))
 }
@@ -924,6 +936,7 @@ macro_rules! read {
     (Sparse, $g:expr) => { read_sparse(one($g)?)? };
     (Frame, $g:expr) => { read_frame(one($g)?)? };
     (Strs, $g:expr) => { &read_strs(one($g)?)? };
+    (Chunks, $g:expr) => { &read_chunks(one($g)?)? };
     (Sizes, $g:expr) => { &read_sizes($g)? };
     (Groups, $g:expr) => { &read_groups($g)?.iter().map(|t| &**t).collect::<Vec<&CrowTensor>>() };
     (Bools, $g:expr) => { &read_bools(one($g)?)? };
@@ -1025,7 +1038,8 @@ pub const IN_CROW: &str = "crow";
 /// the module's path and the name, behind an underscore no program
 /// spells (`_math_nn_relu`); `crate::modules::inline` makes them.
 pub fn crow_fn_name(row: &Row) -> String {
-    format!("_{}_{}", row.module.replace('.', "_"), row.name)
+    let module = if row.module.is_empty() { "core" } else { row.module };
+    format!("_{}_{}", module.replace('.', "_"), row.name)
 }
 
 /// The Crow row of a module's name that takes these kinds, when it is one.
@@ -1047,6 +1061,9 @@ pub fn value_as(kind: Kind, v: &CrowValue) -> Result<CrowValue, String> {
         Kind::Int | Kind::Whole => CrowValue::ok(Value::Int(read_int(v)?)),
         Kind::Str => CrowValue::ok(Value::Str(read_str(v)?.to_string())),
         Kind::Bool => CrowValue::ok(Value::Bool(read_bool(v)?)),
+        Kind::Bytes => CrowValue::ok(Value::Bytes(read_bytes(v)?)),
+        Kind::Chunks => CrowValue::ok(Value::Array(read_chunks(v)?.into_iter().map(write_bytes).collect())),
+        Kind::TextMap => CrowValue::ok(Value::Map(read_text_map(v)?.into_iter().map(|(k, t)| (k, CrowValue::ok(Value::Str(t)))).collect())),
         other => return Err(format!("a bug in Crow: a builtin written in Crow takes {} here, which the runtime cannot hand it", other.words())),
     })
 }
@@ -1236,7 +1253,8 @@ pub static ROWS: &[Row] = &[
     // an HTTP request, answered whatever its status: its URL, method and
     // body, then its headers, query, form, files, save and timeout (the
     // lowering fills in what the call leaves out: `request[url]` is a GET)
-    row!("core.request", "", "request", crow_runtime::sources::request, (Str, Str, Str, TextMap, TextMap, TextMap, TextMap, Str, Float) -> Reply, value "http"),
+    // written in Crow (src/modules/core.co) on the sys layer
+    crow!("core.request", "", "request", (Str, Str, Str, TextMap, TextMap, TextMap, TextMap, Str, Float) -> Reply, value "http"),
     // min and max of numbers (text was compared compiled and refused
     // interpreted: min['a', 'b'] is refused before the program runs)
     row!("core.min_ints", "", "min", crow_runtime::core::min_ints, (Whole, Whole) -> Int, never),
@@ -1471,6 +1489,15 @@ pub static ROWS: &[Row] = &[
     row!("sys.find", "sys", "find", crow_runtime::sys::find, (Bytes, Bytes) -> Int, never),
     row!("sys.concat", "sys", "concat", crow_runtime::sys::concat, (Bytes, Bytes) -> Bytes, never),
     row!("sys.byte", "sys", "byte", crow_runtime::sys::byte, (Bytes, Int) -> Int, stops),
+    row!("sys.gather", "sys", "gather", crow_runtime::sys::gather, (Chunks) -> Bytes, never),
+    row!("sys.file", "sys", "file", crow_runtime::sys::file, (Str) -> Bytes, value "sys"),
+    row!("sys.store", "sys", "store", crow_runtime::sys::store, (Str, Bytes) -> Unit, value "sys"),
+    row!("sys.random", "sys", "random", crow_runtime::sys::random, (Int) -> Bytes, stops),
+    row!("sys.hex", "sys", "hex", crow_runtime::sys::hex, (Bytes) -> Str, never),
+    row!("sys.text_with", "sys", "text", crow_runtime::sys::text_with, (Bytes, Str) -> Str, never),
+    row!("sys.hash", "sys", "hash", crow_runtime::sys::hash, (Bytes, Str) -> Str, stops),
+    row!("sys.hmac", "sys", "hmac", crow_runtime::sys::hmac, (Bytes, Bytes, Str) -> Bytes, stops),
+    row!("sys.reply", "sys", "reply", crow_runtime::sources::reply, (Int, Str, TextMap) -> Reply, never),
     // frame (a column the frame lacks, an aggregation or a join it does not
     // know, a mask or a count that does not fit: the reason the program
     // stops with, as df.col of a missing column is — the interpreter had
@@ -1617,6 +1644,8 @@ pub enum Arg {
     Float,
     Bytes,
     Stream,
+    /// A list of bytes (a connection's chunks).
+    Chunks,
     /// A parsed JSON value, whose kind shows only as it runs.
     Json,
     /// A tensor.
@@ -1675,6 +1704,7 @@ impl Arg {
             Arg::Tensors => "a list of tensors",
             Arg::Text => "text",
             Arg::Texts => "a list of text",
+            Arg::Chunks => "a list of bytes",
             Arg::Truth => "a bool",
             Arg::Truths => "a list of bools",
             Arg::Records => "a list of records",
@@ -1731,6 +1761,7 @@ impl Arg {
             Arg::Float => Arg::Floats,
             Arg::Tensor | Arg::Ints | Arg::Floats => Arg::Tensors,
             Arg::Text => Arg::Texts,
+            Arg::Bytes => Arg::Chunks,
             Arg::Truth => Arg::Truths,
             Arg::Record => Arg::Records,
             Arg::Map => Arg::Maps,
@@ -1781,6 +1812,7 @@ impl Kind {
             Kind::Bytes => "bytes",
             Kind::Stream => "a stream",
             Kind::Strs => "a list of text",
+            Kind::Chunks => "a list of bytes",
             Kind::Bools => "a list of bools",
             Kind::Sparse => "a sparse matrix",
             Kind::Frame => "a frame",
@@ -1827,6 +1859,7 @@ impl Kind {
                 Kind::Tensors => a == Arg::Tensors,
                 Kind::Str => a == Arg::Text,
                 Kind::Strs | Kind::Texts => a == Arg::Texts,
+                Kind::Chunks => a == Arg::Chunks,
                 Kind::Bool => a == Arg::Truth,
                 Kind::Bools => a == Arg::Truths,
                 Kind::Sparse => a == Arg::Sparse,
@@ -1836,7 +1869,7 @@ impl Kind {
                 Kind::Cell => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Json),
                 Kind::Cells => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Column),
                 Kind::Words => matches!(a, Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Column),
-                Kind::List | Kind::Seq => matches!(a, Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Tensors | Arg::Records | Arg::Maps | Arg::Items | Arg::Fallible | Arg::FallibleNumbers),
+                Kind::List | Kind::Seq => matches!(a, Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Tensors | Arg::Records | Arg::Maps | Arg::Items | Arg::Chunks | Arg::Fallible | Arg::FallibleNumbers),
                 Kind::Item | Kind::ItemRef => true,
                 Kind::MapOf | Kind::MapRef | Kind::TextMap => a == Arg::Map,
                 Kind::Ints => a == Arg::Ints,
