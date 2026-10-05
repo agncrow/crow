@@ -1,0 +1,17 @@
+--- A tensor that can fail, handed to a call as a list's items — its
+--- payload converted — fails as the tensor does: the call's value is the
+--- failure. The compiled program had read the payload of the failed value
+--- and built a plain list, and did not build; the fuzzer found it (seed
+--- 1791172766).
+use math, frame
+
+f = with[frame.new[], 'a', [1, 2, 3]]
+v0 = push[[3, 1, 2], len[f]]
+v1 = concat[range[2], push[v0, -6]]
+log[v1]
+log[len[v1]]
+bad = push[[1.0], len[frame.load['no_such_table.csv']]]
+v2 = concat[range[1], push[bad, 2]]
+log[v2.ok]
+log[v2.reason]
+log[len[v2]]

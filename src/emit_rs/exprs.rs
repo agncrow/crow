@@ -97,6 +97,9 @@ impl Emitter {
                     }
                 }
                 Convert::Unwrap => {
+                    if let Some(bound) = self.unwrap_as.get(&(e as *const Expr as usize)) {
+                        return bound.clone();
+                    }
                     let inner = self.expr(expr);
                     if matches!(self.tt(expr), CrowType::Result(_)) {
                         format!("({}).value", inner)
@@ -1613,9 +1616,22 @@ impl Emitter {
             || matches!(name.as_str(), "log" | "assert" | "cpu" | "gpu" | "nodes" | "type" | "error" | "captured" | "running")
             || (self.needs_ui && !from_module && !matches!(target, Target::User(_)) && (name == "chart" || name == "table" || crate::lower::UI_ELEMENTS.contains(&name.as_str())));
         if !skip {
-            let result_idx: Vec<usize> = raw_args.iter().enumerate().filter(|(_, a)| matches!(self.tt(a), CrowType::Result(_))).map(|(i, _)| i).collect();
+            // an argument that converts a failed value's payload — `list(unwrap
+            // push(…))`, a tensor that can fail as a list's items — fails as
+            // the value does: the call binds the value, and the conversion
+            // is printed over its payload
+            let through: Vec<Option<(usize, String)>> = raw_args
+                .iter()
+                .map(|a| self.unwrapped_through(a).map(|(node, inner)| (node as *const Expr as usize, self.expr(inner))))
+                .collect();
+            let result_idx: Vec<usize> = raw_args
+                .iter()
+                .enumerate()
+                .filter(|(i, a)| matches!(self.tt(a), CrowType::Result(_)) || through[*i].is_some())
+                .map(|(i, _)| i)
+                .collect();
             if !result_idx.is_empty() {
-                let orig: Vec<String> = result_idx.iter().map(|&i| arg_strs[i].clone()).collect();
+                let orig: Vec<String> = result_idx.iter().map(|&i| through[i].as_ref().map_or_else(|| arg_strs[i].clone(), |(_, s)| s.clone())).collect();
                 // a view, or a control, renders a failed argument as its reason
                 let renders = match &target {
                     Target::User(v) => self.views.contains(v),
@@ -1632,7 +1648,10 @@ impl Emitter {
                         for (k, &i) in result_idx.iter().enumerate() {
                             pre.push_str(&format!("let _va{} = &({}); ", k, orig[k]));
                             checks.push(format!("if !_va{k}.ok {{ CrowVNode::failed(&_va{k}.reason) }} else", k = k));
-                            bound[i] = format!("_va{}.value.clone()", k);
+                            bound[i] = match &through[i] {
+                                Some((node, _)) => self.printed_over(&raw_args[i], *node, format!("_va{}.value.clone()", k)),
+                                None => format!("_va{}.value.clone()", k),
+                            };
                         }
                         let call = match &target {
                             Target::User(v) => self.user_call(v, &raw_args, bound),
@@ -1645,7 +1664,9 @@ impl Emitter {
                 let mut unwrapped = arg_strs.clone();
                 for &i in &result_idx {
                     // a value that has none (an `error[…]`) never reaches the call
-                    unwrapped[i] = if matches!(Self::inner(&self.tt(&raw_args[i])), CrowType::Void) {
+                    unwrapped[i] = if let Some((node, _)) = &through[i] {
+                        self.printed_over(&raw_args[i], *node, format!("_prop_{}.value.clone()", i))
+                    } else if matches!(Self::inner(&self.tt(&raw_args[i])), CrowType::Void) {
                         "unreachable!()".to_string()
                     } else if ref_flags.get(i).copied().unwrap_or(false) {
                         // a struct the callee borrows is lent, not copied
@@ -1671,6 +1692,30 @@ impl Emitter {
         let out = self.dispatch(&target, &name, &raw_args, &arg_strs, e);
         self.pinned_module = saved_pin;
         out
+    }
+
+    /// The failed value a value conversion reads the payload of, through
+    /// the unwrap the lowering marked it with: the unwrap node and what it
+    /// unwraps, when that can fail (`list(unwrap push(…))`,
+    /// `tensor(unwrap xs)`); none for an argument that is not such a
+    /// conversion (a bare unwrap is read past by `raw`).
+    fn unwrapped_through<'a>(&self, a: &'a Expr) -> Option<(&'a Expr, &'a Expr)> {
+        match a {
+            Expr::Convert { how: Convert::ToList | Convert::ToTensor | Convert::ToStr | Convert::IntToFloat | Convert::IntsToFloats, expr, .. } => match expr.as_ref() {
+                node @ Expr::Convert { how: Convert::Unwrap, expr: inner, .. } if matches!(self.tt(inner), CrowType::Result(_)) => Some((node, inner)),
+                deeper => self.unwrapped_through(deeper),
+            },
+            _ => None,
+        }
+    }
+
+    /// An argument printed with one of its unwraps read as the payload a
+    /// propagation bound (`_prop_0.value.clone()`).
+    fn printed_over(&mut self, a: &Expr, node: usize, bound: String) -> String {
+        self.unwrap_as.insert(node, bound);
+        let printed = self.expr(a);
+        self.unwrap_as.remove(&node);
+        printed
     }
 
     fn propagation_block(&self, idx: &[usize], orig: &[String], inner: &str, inner_type: &CrowType, already: bool, stop_as: Option<String>) -> String {

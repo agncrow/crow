@@ -129,6 +129,12 @@ pub(crate) struct Emitter {
     /// (spec, db, The schema a program declares); without one, verify.
     pub(crate) schema_mode: Option<crow_db::schema::Mode>,
     pub(crate) by_ref_params: BTreeMap<String, HashSet<String>>,
+    /// An unwrap (by its node's address) printed as the payload the
+    /// enclosing call's propagation bound: `list(unwrap push(…))` handed
+    /// to a call is printed as the conversion over `_prop_0.value`, the
+    /// failure the call's (the conversion had read `.value` of the block
+    /// and dropped the failure, and the program did not build).
+    pub(crate) unwrap_as: std::collections::HashMap<usize, String>,
     pub(crate) grad_functions: BTreeSet<String>,
     /// The functions grad differentiates over tensors, and those they
     /// reach (the IR's `traced`): each printed again over traced values.
@@ -231,6 +237,7 @@ impl Emitter {
             cpu_count: None,
             schema_mode: None,
             by_ref_params: BTreeMap::new(),
+            unwrap_as: std::collections::HashMap::new(),
             grad_functions: BTreeSet::new(),
             traced_functions: BTreeSet::new(),
             emitting_traced: false,

@@ -1419,6 +1419,20 @@ fn test_sparse_import_transpile() {
 
 // ===== Stats sub-module =====
 
+/// A tensor that can fail handed to a call as a list's items fails as the
+/// tensor does: the call binds the value and converts its payload (the
+/// conversion had read the payload of the failed value, and the plain
+/// list did not fit the result the statement is — fuzz seed 1791172766)
+#[test]
+fn a_failed_values_payload_converted_in_a_call_keeps_the_failure() {
+    let rust = transpile("use math, frame\nf = with[frame.new[], 'a', [1, 2, 3]]\nv0 = push[[3, 1, 2], len[f]]\nv1 = concat[range[2], push[v0, -6]]\nlog[v1]\n");
+    let line = rust.lines().find(|l| l.contains("let v1:")).expect("v1");
+    assert!(line.contains("CrowResult<Vec<i64>>"), "v1 can fail\n{}", line);
+    assert!(line.contains("CrowResult { ok: true, value: crow_runtime::core::concat("), "the call is lifted\n{}", line);
+    assert!(line.contains("(_prop_1.value.clone()).to_vec()"), "the conversion reads the bound payload\n{}", line);
+    assert!(!line.contains("}).value).to_vec()"), "no payload read off a failed block\n{}", line);
+}
+
 /// A text literal handed to a builtin is the literal, and an indexed read
 /// of a list of text handed to one is referenced: a parser's loop
 /// allocates nothing for its separator and copies no cell it only reads
