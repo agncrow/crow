@@ -617,17 +617,15 @@ pub fn recv(s: &CrowStream, most: i64, seconds: f64) -> Result<Bytes, String> {
     // whatever the read before it waited)
     let wait = if seconds > 0.0 { Some(std::time::Duration::from_secs_f64(seconds)) } else { s.0.wait };
     let mut buf = vec![0u8; most as usize];
-    // inside work that can be stopped — a derivation's query, whose flag
-    // is raised when nobody waits for it any more — the wait is taken in
-    // slices, and ends with the stop (the driver written in Crow then
-    // tells the server; crow_db::driven lets the connection go)
-    let watched = crate::cancel::current().is_some();
+    // the wait is taken in slices, and ends with a stop: of the work this
+    // is in — a derivation's query, whose flag is raised when nobody waits
+    // for it any more — or of the program (the driver written in Crow
+    // then tells the server; crow_db::driven lets the connection go)
     let deadline = wait.map(|w| std::time::Instant::now() + w);
     loop {
-        let slice = match (watched, deadline) {
-            (false, _) => wait,
-            (true, Some(d)) => Some(d.saturating_duration_since(std::time::Instant::now()).min(std::time::Duration::from_millis(100)).max(std::time::Duration::from_millis(1))),
-            (true, None) => Some(std::time::Duration::from_millis(100)),
+        let slice = match deadline {
+            Some(d) => Some(d.saturating_duration_since(std::time::Instant::now()).min(std::time::Duration::from_millis(100)).max(std::time::Duration::from_millis(1))),
+            None => Some(std::time::Duration::from_millis(100)),
         };
         conn.tcp().set_read_timeout(slice).map_err(|e| e.to_string())?;
         let r = match conn {
@@ -640,10 +638,10 @@ pub fn recv(s: &CrowStream, most: i64, seconds: f64) -> Result<Bytes, String> {
                 return Ok(Bytes(buf));
             }
             Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
-                if watched && crate::cancel::current_stopped() {
+                if crate::cancel::current_stopped() {
                     return Err("cancelled: nobody waits for this query any more".to_string());
                 }
-                if !watched || deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+                if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
                     return Err(format!("no data from {} in {} s", s.0.name, seconds));
                 }
             }

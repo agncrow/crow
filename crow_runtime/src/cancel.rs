@@ -7,7 +7,7 @@
 //! predecessor's queries.
 
 use std::cell::RefCell;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 thread_local! {
@@ -17,21 +17,51 @@ thread_local! {
 /// Set once the program is told to stop.
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
+/// How much work runs under a flag right now: a stop waits for it to
+/// notice (a driver tells its server to stop the query it was waiting
+/// for) before the process ends.
+static IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
+
+/// How long a stop waits for the work in flight.
+const STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+
 /// What the drivers do when the program stops: stop what they started.
 static HOOKS: Mutex<Vec<Box<dyn Fn() + Send + Sync>>> = Mutex::new(Vec::new());
 
 /// Run `f` with `flag` as the current work's flag, on this thread.
 pub fn with_flag<T>(flag: Arc<AtomicBool>, f: impl FnOnce() -> T) -> T {
     let saved = CURRENT.with(|c| c.replace(Some(flag)));
+    IN_FLIGHT.fetch_add(1, Ordering::SeqCst);
     struct Restore(Option<Arc<AtomicBool>>);
     impl Drop for Restore {
         fn drop(&mut self) {
             let saved = self.0.take();
             CURRENT.with(|c| *c.borrow_mut() = saved);
+            IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
         }
     }
     let _restore = Restore(saved);
     f()
+}
+
+/// How much work runs under a flag right now.
+pub fn in_flight() -> usize {
+    IN_FLIGHT.load(Ordering::SeqCst)
+}
+
+/// Work a stop waits for while this is held: a driver's statement, whose
+/// server is told to stop it before the program is gone.
+pub struct FlightGuard(());
+
+impl Drop for FlightGuard {
+    fn drop(&mut self) {
+        IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+pub fn in_flight_guard() -> FlightGuard {
+    IN_FLIGHT.fetch_add(1, Ordering::SeqCst);
+    FlightGuard(())
 }
 
 /// The flag of the work running on this thread, if it runs under one.
@@ -60,7 +90,10 @@ pub fn on_shutdown(hook: Box<dyn Fn() + Send + Sync>) {
 }
 
 /// The program is stopping: every flag reads as set, and every driver
-/// stops what it started. Runs its hooks once.
+/// stops what it started. Runs its hooks once, then waits — three seconds
+/// at most — for the work in flight to notice and tell its server (a
+/// query a derivation was waiting for is cancelled there, not left
+/// running after the program is gone).
 pub fn shutdown() {
     if SHUTDOWN.swap(true, Ordering::SeqCst) {
         return;
@@ -68,6 +101,10 @@ pub fn shutdown() {
     let hooks = std::mem::take(&mut *HOOKS.lock().unwrap_or_else(|p| p.into_inner()));
     for hook in hooks {
         hook();
+    }
+    let by = std::time::Instant::now() + STOP_WAIT;
+    while in_flight() > 0 && std::time::Instant::now() < by {
+        std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }
 

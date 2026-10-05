@@ -1,0 +1,15 @@
+--- A tensor plus a value that can fail — `float[len[f]]`, which the
+--- compiled program types as fallible — is a tensor in both modes, and so
+--- is a value that can fail plus a tensor. (The compiled program had added
+--- the payload with a bare `+`, which Rust has no rule for between a
+--- tensor and a number: found by the fuzzer, seed 1791237824.)
+use math, frame
+
+f = frame.new[]
+f = with[f, 'a', [4, 3, 2, 1]]
+v = (tensor[[2.0, 2.0, 2.0]] + clip[ones[3], -1.0, 2.0]) + float[len[f]]
+log[v]
+w = float[len[f]] + ones[2]
+log[w]
+log[float[len[f]] * tensor[[1.0, 2.0]] - 1.0]
+log[tensor[[1.0, 2.0]] / float[len[f]]]

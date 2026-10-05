@@ -1461,6 +1461,10 @@ pub(crate) fn declarations(stmts: &[Stmt]) -> Vec<Stmt> {
     fn is_literal(e: &Expr) -> bool {
         match e {
             Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Bool(_) => true,
+            // a negative number is a literal too (`low = -1.0`): a fact
+            // with one had been left out of what the harness sets, and a
+            // derivation reading it found no such name
+            Expr::UnaryOp { op: UnaryOp::Neg, expr } => matches!(expr.as_ref(), Expr::Int(_) | Expr::Float(_)),
             Expr::Array(items) => items.iter().all(is_literal),
             // a default built from literals by a constructor — map[...] (a
             // set[] chain after lowering), frame.new[], with[...] — is a literal too
@@ -1520,7 +1524,7 @@ fn stdlib_names() -> &'static BTreeSet<String> {
 }
 
 fn find_undefined_vars_in_fn(
-    name: &str, params: &[String], body: &[Stmt], ctx: &TypeContext,
+    name: &str, params: &[String], body: &[Stmt], ctx: &TypeContext, top_names: &BTreeSet<String>,
 ) -> Vec<Issue> {
     let mut defined: BTreeSet<String> = BTreeSet::new();
     // Parameters are defined
@@ -1547,6 +1551,12 @@ fn find_undefined_vars_in_fn(
         // Reactive state is the sanctioned channel: views and handlers read
         // top-level variables (the function-scope isolation exemption).
         for v in ctx.vars.keys() {
+            defined.insert(v.clone());
+        }
+        // (a top-level assignment is one whatever inference made of its
+        // value: a map literal of several entries had no entry in `vars`,
+        // and a handler reading it was told it used an undefined name)
+        for v in top_names {
             defined.insert(v.clone());
         }
     }
@@ -1693,6 +1703,15 @@ pub fn run_static_checks(ctx: &TypeContext, top_level_stmts: &[Stmt]) -> Vec<Iss
             _ => None,
         })
         .collect();
+    // the names the top level assigns: reactive state a view, a handler
+    // or a derivation reads
+    let top_names: BTreeSet<String> = top_level_stmts
+        .iter()
+        .filter_map(|s| match s {
+            Stmt::Assign { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
     // Check user-defined functions
     for (name, sig) in &ctx.functions {
         let param_names: Vec<String> = sig.params.iter().map(|(n, _)| n.clone()).collect();
@@ -1714,7 +1733,7 @@ pub fn run_static_checks(ctx: &TypeContext, top_level_stmts: &[Stmt]) -> Vec<Iss
             };
         issues.extend(find_unused_vars_in_fn(name, checked_params, &sig.body, &state_writes));
         issues.extend(find_unreachable_code(name, &sig.body));
-        issues.extend(find_undefined_vars_in_fn(name, &param_names, &sig.body, ctx));
+        issues.extend(find_undefined_vars_in_fn(name, &param_names, &sig.body, ctx, &top_names));
     }
     // Check top-level code
     let top_stmts: Vec<&Stmt> = top_level_stmts.iter()
@@ -1732,7 +1751,7 @@ pub fn run_static_checks(ctx: &TypeContext, top_level_stmts: &[Stmt]) -> Vec<Iss
         }
         issues.extend(find_unused_vars_in_fn("<top-level>", &[], &top_owned, &view_reads));
         issues.extend(find_unreachable_code("<top-level>", &top_owned));
-        issues.extend(find_undefined_vars_in_fn("<top-level>", &[], &top_owned, ctx));
+        issues.extend(find_undefined_vars_in_fn("<top-level>", &[], &top_owned, ctx, &top_names));
     }
     issues
 }
@@ -2264,6 +2283,32 @@ mod tests {
         let stmts = crate::build(src).unwrap();
         let decls = declarations(&stmts);
         assert!(decls.iter().any(|s| matches!(s, Stmt::Assign { name, .. } if name == "names")), "{:?}", decls);
+        assert!(crate::ir_interp::prepare(&decls, "check").is_ok());
+    }
+
+    /// A handler reading a map literal the top level declares reads a
+    /// defined name: `names = map[launch = 'VWAP Launch', …]` had no entry
+    /// in the type context's vars, and finch's next_setup was told it used
+    /// an undefined 'setup_names'
+    #[test]
+    fn a_handler_reads_a_top_level_map_literal() {
+        let src = "use web, ui\n\ncount = 0\nnames = map[launch = 'VWAP Launch', burst = 'Burst']\nstatus = ''\n\nfn bump[]\n    count = count + 1\n    status = names['launch']\n\nview render[]\n    return stack[p['`count` `status`'], button['go', bump]]\n\npage['/', render]\nserve[3000]\n";
+        let stmts = crate::build(src).unwrap();
+        let mut ctx = TypeContext::new();
+        ctx.infer_program(&stmts);
+        let issues = run_static_checks(&ctx, &stmts);
+        assert!(!issues.iter().any(|i| matches!(i, Issue::UndefinedVariable { .. })), "{:?}", issues);
+    }
+
+    /// A fact declared with a negative number is a declaration: the
+    /// harness had left `low = -1.0` out of what it set, and a derivation
+    /// reading it was told the name was undefined
+    #[test]
+    fn a_negative_literal_is_a_declaration() {
+        let src = "use web, ui\nlow = -1.0\nhigh = 2.0\nderive band\n    return [low, high]\nview render[]\n    return p['`band`']\npage['/', render]\n";
+        let stmts = crate::build(src).unwrap();
+        let decls = declarations(&stmts);
+        assert!(decls.iter().any(|s| matches!(s, Stmt::Assign { name, .. } if name == "low")), "{:?}", decls);
         assert!(crate::ir_interp::prepare(&decls, "check").is_ok());
     }
 

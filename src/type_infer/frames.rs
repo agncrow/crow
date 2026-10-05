@@ -103,14 +103,20 @@ impl TypeContext {
 
 thread_local! {
     static DESCRIBE_HANDLES: std::cell::RefCell<std::collections::HashMap<String, Result<crow_db::DbHandle, String>>> = std::cell::RefCell::new(std::collections::HashMap::new());
-    /// What each database answered for each statement, and when: a test
-    /// file's programs, each lowered alone, ask again about the same
-    /// statements within seconds (a run of finch's nav.co sent 147
-    /// describes for 19 queries), and a server that is asked less is a
-    /// server under less load. An answer is kept a minute, so a long-lived
-    /// process (the language server) sees a changed table soon.
-    static DESCRIBE_ANSWERS: std::cell::RefCell<std::collections::HashMap<(String, String), (std::time::Instant, Vec<(String, String)>)>> = std::cell::RefCell::new(std::collections::HashMap::new());
 }
+
+/// What each database answered for each statement, and when: a test
+/// file's programs, each lowered alone, ask again about the same
+/// statements within seconds (a run of finch's nav.co sent 147 describes
+/// for 19 queries), and a server that is asked less is a server under less
+/// load. One cache for the process, whatever thread lowers: `crow check`
+/// lowers a part per worker, and a cache per thread sent finch's 26
+/// statements 578 times. An answer is kept a minute, so a long-lived
+/// process (the language server) sees a changed table soon. A refusal is
+/// kept as an answer is: a statement of one database's dialect is asked
+/// of every connection a program has when none is named, and the one that
+/// refuses it would be asked again by every worker.
+static DESCRIBE_ANSWERS: std::sync::Mutex<Option<std::collections::HashMap<(String, String), (std::time::Instant, Result<Vec<(String, String)>, String>)>>> = std::sync::Mutex::new(None);
 
 /// How long a database's answer about a statement is kept
 const DESCRIBE_KEPT: std::time::Duration = std::time::Duration::from_secs(60);
@@ -193,13 +199,12 @@ fn program_key(url: &str, ddl: &[String]) -> String {
 /// `ddl` when it is new).
 pub(super) fn describe_on(key: &str, url: &str, ddl: &[String], sql: &str) -> Result<Vec<(String, String)>, String> {
     let asked = (key.to_string(), sql.to_string());
-    if let Some(cols) = DESCRIBE_ANSWERS.with(|a| a.borrow().get(&asked).filter(|(at, _)| at.elapsed() < DESCRIBE_KEPT).map(|(_, c)| c.clone())) {
-        return Ok(cols);
+    let kept = DESCRIBE_ANSWERS.lock().unwrap_or_else(|p| p.into_inner()).as_ref().and_then(|a| a.get(&asked).filter(|(at, _)| at.elapsed() < DESCRIBE_KEPT).map(|(_, c)| c.clone()));
+    if let Some(answer) = kept {
+        return answer;
     }
     let answer = describe_asking(key, url, ddl, sql);
-    if let Ok(cols) = &answer {
-        DESCRIBE_ANSWERS.with(|a| a.borrow_mut().insert(asked, (std::time::Instant::now(), cols.clone())));
-    }
+    DESCRIBE_ANSWERS.lock().unwrap_or_else(|p| p.into_inner()).get_or_insert_with(std::collections::HashMap::new).insert(asked, (std::time::Instant::now(), answer.clone()));
     answer
 }
 
@@ -210,6 +215,9 @@ fn describe_by_process(url: &str, sql: &str) -> Result<Vec<(String, String)>, St
     // does not answer is not)
     if exe.file_stem().and_then(|s| s.to_str()) != Some("crow") {
         return Err("crow db describe runs from the crow binary alone".to_string());
+    }
+    if std::env::var("CROW_DEBUG_SCHEMAS").is_ok() {
+        eprintln!("DESCRIBE asks {} for `{}…`", crow_db::schema::shown_url(url), sql.chars().take(50).collect::<String>());
     }
     let out = std::process::Command::new(exe).args(["db", "describe", url, sql]).env("CROW_NO_DESCRIBE", "1").output().map_err(|e| format!("cannot run crow db describe: {}", e))?;
     if !out.status.success() {

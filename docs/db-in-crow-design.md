@@ -86,8 +86,13 @@ once. `postgres://user:pass@host:port/database` as before.
 
 ## 5. What the Rust drivers did that the Crow drivers keep
 
-Reconnect after the server dropped an idle connection; a statement that a
-stopping program had in flight killed on the server; ClickHouse's
+Reconnect after the server dropped a connection (an idle ClickHouse
+connection is let go before its keep-alive runs out, as the server's
+`Keep-Alive` header says, so a reconnect is a restart's, not every idle
+gap's); a statement that a stopping program had in flight killed on the
+server — every wait on a connection ends with the program's stop, the
+driver tells the server, and the stop waits for that, three seconds at
+most (`crow_runtime::cancel`, tests/query_cancel.rs); ClickHouse's
 statements a dead run of this machine left running swept at connect; a
 server that does not answer stopping the program at connect with the
 reason; Postgres's advisory lock around reconciling a schema; a handler's

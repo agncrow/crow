@@ -242,10 +242,16 @@ impl Driven {
     }
 
     fn take_stream(&self, calls: &Holder) -> Result<CrowStream, String> {
-        let idle = self.idle.lock().unwrap_or_else(|p| p.into_inner()).pop();
-        match idle {
-            Some(s) => Ok(s),
-            None => calls.with(|c| c.open(&self.parts)).map_err(|f| unanswered(self.url.backend, f.reason)),
+        loop {
+            let idle = self.idle.lock().unwrap_or_else(|p| p.into_inner()).pop();
+            match idle {
+                // (the driver noted until when the server keeps the
+                // connection: one the server is about to close is let go
+                // here, not found closed under the next statement)
+                Some(s) if expired(&s) => crow_runtime::sys::close(&s),
+                Some(s) => return Ok(s),
+                None => return calls.with(|c| c.open(&self.parts)).map_err(|f| unanswered(self.url.backend, f.reason)),
+            }
         }
     }
 
@@ -258,6 +264,9 @@ impl Driven {
     /// is let go, another opened, the call made once more; a call a stop
     /// abandoned is cancelled on the server and its connection let go.
     fn with_stream<T>(&self, op: impl Fn(&dyn Calls, &CrowStream) -> Result<T, Failure>) -> Result<T, String> {
+        // (a stop waits for this: the statement the server runs is stopped
+        // there before the program is gone)
+        let _flight = crow_runtime::cancel::in_flight_guard();
         let _slot = self.slots.take();
         let calls = calls_for(self.url.backend)?;
         let s = self.take_stream(&calls)?;
@@ -298,6 +307,15 @@ impl Driven {
     fn params_json(params: &[serde_json::Value]) -> String {
         serde_json::Value::Array(params.to_vec()).to_string()
     }
+}
+
+/// Whether an idle connection's note says the server's keep-alive has
+/// run out (`until <epoch seconds>`, as the ClickHouse driver notes it).
+fn expired(s: &CrowStream) -> bool {
+    let note = crow_runtime::sys::noted(s);
+    let Some(until) = note.strip_prefix("until ").and_then(|t| t.trim().parse::<f64>().ok()) else { return false };
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+    now >= until
 }
 
 /// A connection the driver could not open after the first: the database

@@ -443,6 +443,7 @@ impl Emitter {
                     let not = if op == "ne" { "!" } else { "" };
                     format!("{}crow_runtime::tensor::numbers_equal(&{}, &{})", not, l_val, r_val)
                 }
+                _ if self.tensor_arith(op, &l_val, &lti, &r_val, &rti).is_some() => self.tensor_arith(op, &l_val, &lti, &r_val, &rti).unwrap_or_default(),
                 (CrowType::Int, CrowType::Float) => format!("({}) as f64 {} {}", l_val, op_str, r_val),
                 (CrowType::Float, CrowType::Int) => format!("{} {} ({}) as f64", l_val, op_str, r_val),
                 (CrowType::Int, CrowType::Int) if self.int_op(op, &l_val, &r_val).is_some() => self.int_op(op, &l_val, &r_val).unwrap_or_default(),
@@ -498,47 +499,9 @@ impl Emitter {
             let not = if op == "ne" { "!" } else { "" };
             return format!("({}{{ let _l = &({}); let _r = &({}); crow_runtime::tensor::numbers_equal(_l, _r) }})", not, l, r);
         }
-        let l_t = matches!(lti, CrowType::NumArray(..));
-        let r_t = matches!(rti, CrowType::NumArray(..));
         let cmp = matches!(op, "gt" | "lt" | "gte" | "lte" | "eq" | "ne");
-        if l_t && r_t {
-            return match op {
-                // a shape mismatch stops the program as the interpreter
-                // stops it, with the runtime's words, never a bare panic
-                "add" => format!("{}.try_elementwise(&{}, \"+\").unwrap_or_else(|e| crow_stop({}, e))", l, r, self.line_now()),
-                "sub" => format!("{}.try_elementwise(&{}, \"-\").unwrap_or_else(|e| crow_stop({}, e))", l, r, self.line_now()),
-                "mul" => format!("{}.try_matmul(&{}).unwrap_or_else(|e| crow_stop({}, e))", l, r, self.line_now()),
-                "div" => "compile_error!(\"use ./ for element-wise tensor division\")".to_string(),
-                "elemmul" => format!("{}.try_elementwise(&{}, \".*\").unwrap_or_else(|e| crow_stop({}, e))", l, r, self.line_now()),
-                "elemdiv" => format!("{}.try_elementwise(&{}, \"./\").unwrap_or_else(|e| crow_stop({}, e))", l, r, self.line_now()),
-                "elempow" => format!("{}.try_elementwise(&{}, \".^\").unwrap_or_else(|e| crow_stop({}, e))", l, r, self.line_now()),
-                "eq" => format!("{} == {}", l, r),
-                "ne" => format!("{} != {}", l, r),
-                _ => format!("{} {} {}", l, op_str, r),
-            };
-        }
-        if l_t && matches!(rti, CrowType::Int | CrowType::Float) {
-            return match op {
-                "add" => format!("{}.add_scalar({} as f64)", l, r),
-                "sub" => format!("{}.sub_scalar({} as f64)", l, r),
-                "mul" | "elemmul" => format!("{}.mul_scalar({} as f64)", l, r),
-                "div" | "elemdiv" => format!("{}.mul_scalar(1.0 / ({} as f64))", l, r),
-                "elempow" => format!("{}.map(|x| x.powf({} as f64))", l, r),
-                _ if cmp => format!("{{ let _s = {} as f64; {}.to_vec().iter().map(|&_v| _v {} _s).collect::<Vec<bool>>() }}", r, l, op_str),
-                _ => format!("{} {} {}", l, op_str, r),
-            };
-        }
-        if r_t && matches!(lti, CrowType::Int | CrowType::Float) {
-            if cmp {
-                return format!("{{ let _s = {} as f64; {}.to_vec().iter().map(|&_v| _s {} _v).collect::<Vec<bool>>() }}", l, r, op_str);
-            }
-            return match op {
-                "add" => format!("{}.add_scalar({} as f64)", r, l),
-                "sub" => format!("({}).neg().add_scalar({} as f64)", r, l),
-                "mul" | "elemmul" => format!("{}.mul_scalar({} as f64)", r, l),
-                "div" | "elemdiv" => format!("{{ let _t = &{}; crow_runtime::tensor::CrowTensor::from_vec(_t.to_vec().iter().map(|&v| ({} as f64) / v).collect(), _t.shape().to_vec()) }}", r, l),
-                _ => format!("{} {} {}", l, op_str, r),
-            };
+        if let Some(code) = self.tensor_arith(op, &l, &lti, &r, &rti) {
+            return code;
         }
         let bool_list = |t: &CrowType| matches!(t, CrowType::Array(i) if matches!(i.as_ref(), CrowType::Bool));
         if matches!(op, "and" | "or") && bool_list(&lti) && bool_list(&rti) {
@@ -571,6 +534,71 @@ impl Emitter {
             (CrowType::Float, CrowType::Int) => format!("{} {} ({}) as f64", l, op_str, r),
             _ => format!("{} {} {}", l, op_str, r),
         }
+    }
+
+    /// Arithmetic and comparison with a tensor on either side, as the
+    /// runtime does them: two tensors element by element (a shape
+    /// mismatch stops the program with the runtime's words, never a bare
+    /// panic), a tensor and a number through the tensor's own methods.
+    /// None where neither side is a tensor. The same code serves an
+    /// operand that can fail: its payload is the tensor (the fuzzer found
+    /// `tensor + float[len[f]]` written as a bare `+`, seed 1791237824).
+    fn tensor_arith(&self, op: &str, l: &str, lti: &CrowType, r: &str, rti: &CrowType) -> Option<String> {
+        let op_str = match op {
+            "add" => "+",
+            "sub" => "-",
+            "mul" => "*",
+            "div" => "/",
+            "mod" => "%",
+            "eq" => "==",
+            "ne" => "!=",
+            "gt" => ">",
+            "lt" => "<",
+            "gte" => ">=",
+            "lte" => "<=",
+            other => other,
+        };
+        let l_t = matches!(lti, CrowType::NumArray(..));
+        let r_t = matches!(rti, CrowType::NumArray(..));
+        let cmp = matches!(op, "gt" | "lt" | "gte" | "lte" | "eq" | "ne");
+        if l_t && r_t {
+            return Some(match op {
+                "add" => format!("{}.try_elementwise(&{}, \"+\").unwrap_or_else(|e| crow_stop({}, e))", l, r, self.line_now()),
+                "sub" => format!("{}.try_elementwise(&{}, \"-\").unwrap_or_else(|e| crow_stop({}, e))", l, r, self.line_now()),
+                "mul" => format!("{}.try_matmul(&{}).unwrap_or_else(|e| crow_stop({}, e))", l, r, self.line_now()),
+                "div" => "compile_error!(\"use ./ for element-wise tensor division\")".to_string(),
+                "elemmul" => format!("{}.try_elementwise(&{}, \".*\").unwrap_or_else(|e| crow_stop({}, e))", l, r, self.line_now()),
+                "elemdiv" => format!("{}.try_elementwise(&{}, \"./\").unwrap_or_else(|e| crow_stop({}, e))", l, r, self.line_now()),
+                "elempow" => format!("{}.try_elementwise(&{}, \".^\").unwrap_or_else(|e| crow_stop({}, e))", l, r, self.line_now()),
+                "eq" => format!("{} == {}", l, r),
+                "ne" => format!("{} != {}", l, r),
+                _ => format!("{} {} {}", l, op_str, r),
+            });
+        }
+        if l_t && matches!(rti, CrowType::Int | CrowType::Float) {
+            return Some(match op {
+                "add" => format!("{}.add_scalar({} as f64)", l, r),
+                "sub" => format!("{}.sub_scalar({} as f64)", l, r),
+                "mul" | "elemmul" => format!("{}.mul_scalar({} as f64)", l, r),
+                "div" | "elemdiv" => format!("{}.mul_scalar(1.0 / ({} as f64))", l, r),
+                "elempow" => format!("{}.map(|x| x.powf({} as f64))", l, r),
+                _ if cmp => format!("{{ let _s = {} as f64; {}.to_vec().iter().map(|&_v| _v {} _s).collect::<Vec<bool>>() }}", r, l, op_str),
+                _ => format!("{} {} {}", l, op_str, r),
+            });
+        }
+        if r_t && matches!(lti, CrowType::Int | CrowType::Float) {
+            if cmp {
+                return Some(format!("{{ let _s = {} as f64; {}.to_vec().iter().map(|&_v| _s {} _v).collect::<Vec<bool>>() }}", l, r, op_str));
+            }
+            return Some(match op {
+                "add" => format!("{}.add_scalar({} as f64)", r, l),
+                "sub" => format!("({}).neg().add_scalar({} as f64)", r, l),
+                "mul" | "elemmul" => format!("{}.mul_scalar({} as f64)", r, l),
+                "div" | "elemdiv" => format!("{{ let _t = &{}; crow_runtime::tensor::CrowTensor::from_vec(_t.to_vec().iter().map(|&v| ({} as f64) / v).collect(), _t.shape().to_vec()) }}", r, l),
+                _ => format!("{} {} {}", l, op_str, r),
+            });
+        }
+        None
     }
 
     /// A mask: a frame's column, or a list of numbers, text or bools,
