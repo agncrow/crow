@@ -101,6 +101,7 @@ pub enum CrowType {
 mod calls;
 mod classify;
 mod frames;
+pub(crate) use frames::mark_nullable;
 mod rules;
 pub(crate) mod settle;
 #[cfg(test)]

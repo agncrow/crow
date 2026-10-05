@@ -18,6 +18,17 @@ transact[conn, add_c]
 log[len[query[conn, 'SELECT k FROM t']]]
 log[describe[conn, 'SELECT k, v FROM t']]
 
+--- a function that fails rolls its transaction back, and transact
+--- answers its error
+fn add_d_then_fail[tx]
+    exec[tx, 'INSERT INTO t VALUES (?, ?)', ['d', 4]]
+    return error['not today', 'db']
+
+r = transact[conn, add_d_then_fail]
+log[r.ok]
+log[r.reason]
+log[len[query[conn, 'SELECT k FROM t']]]
+
 --- bulk-load a frame, and apply .sql migrations from a directory
 use frame
 write['ex_rows.csv', 'k,v\nd,4\ne,5\n']
@@ -43,13 +54,18 @@ name  kind
    v   int
 
 [2 rows x 2 cols]
+false
+not today
+3
 2
 5
 1
 0
 ```
 
-`insert` uses each backend's bulk path (COPY, RowBinary, batched
+`transact` answers what its function answers, committed — or the error of
+a function that failed, its transaction rolled back. `insert` uses each
+backend's bulk path (COPY, RowBinary, batched
 statements) and returns the row count; `migrate` applies new files in name
 order, records them in `_crow_migrations`, and returns how many it ran —
 zero the second time.

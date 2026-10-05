@@ -245,7 +245,7 @@ impl Driven {
         let idle = self.idle.lock().unwrap_or_else(|p| p.into_inner()).pop();
         match idle {
             Some(s) => Ok(s),
-            None => calls.with(|c| c.open(&self.parts)).map_err(|f| f.reason),
+            None => calls.with(|c| c.open(&self.parts)).map_err(|f| unanswered(self.url.backend, f.reason)),
         }
     }
 
@@ -274,7 +274,7 @@ impl Driven {
             Err(f) if f.lost => {
                 eprintln!("crow db: the {} connection to {} was lost ({}); reconnecting", self.url.backend, self.url.shown(), f.reason);
                 crow_runtime::sys::close(&s);
-                let fresh = calls.with(|c| c.open(&self.parts)).map_err(|f| f.reason)?;
+                let fresh = calls.with(|c| c.open(&self.parts)).map_err(|f| unanswered(self.url.backend, f.reason))?;
                 match calls.with(|c| op(c, &fresh)) {
                     Ok(v) => {
                         self.give_back(fresh);
@@ -298,6 +298,15 @@ impl Driven {
     fn params_json(params: &[serde_json::Value]) -> String {
         serde_json::Value::Array(params.to_vec()).to_string()
     }
+}
+
+/// A connection the driver could not open after the first: the database
+/// does not answer (it is down, restarting, or out of reach), and why —
+/// what a program's error value and a stopped handler's log say of an
+/// outage, in the words tests/lost_connection.rs reads.
+fn unanswered(backend: &str, reason: String) -> String {
+    let why = reason.strip_prefix(&format!("{} connection failed: ", backend)).map(str::to_string).unwrap_or(reason);
+    format!("the database does not answer: {}", why)
 }
 
 /// A ClickHouse type name as the kinds the compiler knows (the catalog's

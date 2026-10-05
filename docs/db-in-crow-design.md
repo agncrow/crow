@@ -91,7 +91,11 @@ stopping program had in flight killed on the server; ClickHouse's
 statements a dead run of this machine left running swept at connect; a
 server that does not answer stopping the program at connect with the
 reason; Postgres's advisory lock around reconciling a schema; a handler's
-transaction on one connection; `transact` on one connection; typed
+transaction on one connection; `transact` on one connection — what the
+function answers, committed, or its error, rolled back; a savepoint inside
+a handler's transaction (`crow_db::DbHandle::transact`, and
+`transact_calling` for the interpreter, whose function speaks through the
+handle itself); typed
 parameters (`?::date` a cast from text); `IN ?` lists; the server's own
 error words.
 

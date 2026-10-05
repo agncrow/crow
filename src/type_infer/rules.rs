@@ -585,6 +585,20 @@ impl TypeContext {
     /// failure made the call's (auto-propagation) unless the callee renders
     /// what it is given.
     pub(crate) fn named_call_type(&self, name: &str, args: &[Expr], callee: &Expr, arg_types: &[CrowType], full: &[CrowType]) -> CrowType {
+        // db's transact[conn, f]: what `f` answers, as a value that can
+        // fail — `f`'s error when it failed (the transaction rolled back),
+        // the server's when the commit was refused
+        if name == "transact" && args.len() == 2 && !self.functions.contains_key(name) {
+            if let Expr::Ident(f) = &args[1] {
+                if let Some(sig) = self.functions.get(f) {
+                    let payload = match &sig.return_type {
+                        CrowType::Result(inner) => inner.as_ref().clone(),
+                        other => other.clone(),
+                    };
+                    return CrowType::Result(Box::new(payload));
+                }
+            }
+        }
         let base = self.infer_call_base_typed(name, args, callee, arg_types, full);
         // Auto-propagation: wrap in CrowResult if any arg is CrowResult
         // a view renders what it is given: a failed argument shows

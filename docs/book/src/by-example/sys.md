@@ -158,6 +158,8 @@ log[machine[] ne '']
 log[process[] gt 0]
 log[alive[process[]]]
 log[len[rowbinary_of_frame[frame_of_csv['n,s\n1,a\n2,b\n'], push[push[[], 'UInt64'], 'String']]]]
+log[hex[xor[bytes['ab'], bytes['  ']]]]
+log[len[copy_of_frame[frame_of_csv['n,s\n1,a\n2,b\n']]]]
 ```
 
 ```text
@@ -196,6 +198,8 @@ true
 true
 true
 20
+4142
+8
 ```
 
 The protocol itself reaches a host — one exchange, a reader's fetch with its options and redirects, an S3 object put signed with the environment's credentials — so these lines are not run here:

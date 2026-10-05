@@ -13,7 +13,7 @@ Feature-gated backends via Cargo feature flags:
 | Feature | Crate | Protocol |
 |---|---|---|
 | `sqlite` | `rusqlite` | File-based |
-| `postgres` | `tokio-postgres` + `deadpool-postgres` | TCP, COPY protocol |
+| `postgres` | written in Crow (`src/modules/postgres.co`, over `sys`) | the wire protocol, COPY |
 | `clickhouse` | written in Crow (`src/modules/clickhouse.co`, over `sys`) | HTTP interface, RowBinary |
 
 `use db` in Crow source triggers `needs_crow_db` in the transpiler, adding the crate to the generated `Cargo.toml`.
@@ -46,7 +46,7 @@ Executes DDL/DML (CREATE, INSERT, UPDATE, DELETE). Returns affected row count as
 
 Bulk inserts a frame into a table. Uses backend-specific fast paths:
 
-- **PostgreSQL:** COPY protocol (~5-10s for 1M rows)
+- **PostgreSQL:** `COPY … FROM STDIN` in the text format (`copy_of_frame`)
 - **ClickHouse:** Native RowBinary (~2-3s for 1M rows)
 - **SQLite:** Batched prepared statements in a transaction (~10-15s for 1M rows)
 
@@ -112,7 +112,7 @@ SQL parameters are passed as `serde_json::Value` arrays — the Crow interpreter
 | Backend | Status | Notes |
 |---|---|---|
 | SQLite | ✅ Done | Full support: query, exec, insert, transact, migrate |
-| PostgreSQL | ✅ Done | `tokio-postgres` + `deadpool-postgres`. Connection pooling, parameterized queries ($1/$2), transactions, bulk insert, migrations. Tested against PostgreSQL on port 5432. |
+| PostgreSQL | ✅ Done | Written in Crow over the wire protocol (docs/db-in-crow-design.md): trust, password, md5 and SCRAM-SHA-256; the extended protocol with typed parameters; `frame_of_postgres` for the rows; COPY for inserts; Parse and Describe for describe; CancelRequest; a kept connection per statement at a time; the advisory lock and the handler's transaction in `crow_db::driven`. |
 | ClickHouse | ✅ Done | Written in Crow over the HTTP interface (port 8123; docs/db-in-crow-design.md): statements by id, rows as RowBinary decoded by a kernel, inserts as RowBinary encoded by the table's types, `DESCRIBE` for describe, a kept connection per statement at a time, cancel by id, a dead run's statements swept at connect. Transactions correctly refused (OLAP engine). |
 
 ### Interpreter

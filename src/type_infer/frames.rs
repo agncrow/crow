@@ -227,7 +227,7 @@ pub(super) fn describe_asking(key: &str, url: &str, ddl: &[String], sql: &str) -
     // a database whose driver is written in Crow is asked by a process of
     // its own (`crow db describe`): the driver runs in an interpreter, and
     // this lowering, which asks from inside, is not a place to start one
-    if url.starts_with("clickhouse://") {
+    if url.starts_with("clickhouse://") || url.starts_with("postgres://") || url.starts_with("postgresql://") {
         return describe_by_process(url, sql);
     }
     DESCRIBE_HANDLES.with(|h| {
@@ -284,7 +284,7 @@ pub(super) fn describe_asking(key: &str, url: &str, ddl: &[String], sql: &str) -
 /// describe no column's nullability, so each table's declared NOT NULLs
 /// are asked for; a statement that is not read that way can hold NULL in
 /// every column. ClickHouse's DESCRIBE says it itself (`Nullable(…)`).
-pub(super) fn mark_nullable(db: &crow_db::DbHandle, url: &str, sql: &str, cols: &mut [(String, String)]) {
+pub(crate) fn mark_nullable(db: &crow_db::DbHandle, url: &str, sql: &str, cols: &mut [(String, String)]) {
     use crow_runtime::frame::Column;
     let postgres = url.starts_with("postgres");
     if !postgres && !url.starts_with("sqlite://") {

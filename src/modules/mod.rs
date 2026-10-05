@@ -31,6 +31,7 @@ pub fn crow_source(path: &str) -> Option<&'static str> {
         "math.stats" => Some(STATS_SOURCE),
         "web" => Some(WEB_SOURCE),
         "db.clickhouse" => Some(CLICKHOUSE_SOURCE),
+        "db.postgres" => Some(POSTGRES_SOURCE),
         _ => None,
     }
 }
@@ -53,6 +54,9 @@ pub(crate) const STATS_SOURCE: &str = include_str!("stats.co");
 /// The ClickHouse driver, written in Crow (carried by `use db`).
 pub(crate) const CLICKHOUSE_SOURCE: &str = include_str!("clickhouse.co");
 
+/// The Postgres driver, written in Crow (carried by `use db`).
+pub(crate) const POSTGRES_SOURCE: &str = include_str!("postgres.co");
+
 /// The protocol the HTTP client and the readers stand on, written in Crow
 /// over the sys primitives: `sys.exchange`, `sys.fetch`, `sys.put`, the
 /// formats; a module that imports `sys` inlines it.
@@ -70,7 +74,7 @@ pub(crate) const CORE_SOURCE: &str = include_str!("core.co");
 
 /// The modules written in Crow, with the prefix their functions carry (the
 /// core's, imported by no `use`, carries `_core`).
-const CROW_MODULES: &[(&str, &str)] = &[("math.nn", "_math_nn"), ("", "_core"), ("sys", "_sys"), ("io", "_io"), ("frame", "_frame"), ("math", "_math"), ("web.auth", "_web_auth"), ("web.ws", "_web_ws"), ("web.mail", "_web_mail"), ("web", "_web"), ("math.stats", "_math_stats"), ("db.clickhouse", "_db_clickhouse")];
+const CROW_MODULES: &[(&str, &str)] = &[("math.nn", "_math_nn"), ("", "_core"), ("sys", "_sys"), ("io", "_io"), ("frame", "_frame"), ("math", "_math"), ("web.auth", "_web_auth"), ("web.ws", "_web_ws"), ("web.mail", "_web_mail"), ("web", "_web"), ("math.stats", "_math_stats"), ("db.clickhouse", "_db_clickhouse"), ("db.postgres", "_db_postgres")];
 
 thread_local! {
     /// What each inlined module imports (its own `use` lines), by its
@@ -91,6 +95,7 @@ pub fn module_by_path(path: &str) -> Option<Arc<dyn CrowModule>> {
         "chart" => Arc::new(chart::ChartModule),
         "db" => Arc::new(db::DbModule),
         "db.clickhouse" => Arc::new(db::ClickhouseDriver),
+        "db.postgres" => Arc::new(db::PostgresDriver),
         "web" => Arc::new(web::WebModule),
         "web.auth" => Arc::new(web::AuthModule),
         "web.ws" => Arc::new(web::WsModule),

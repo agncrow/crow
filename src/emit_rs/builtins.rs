@@ -52,11 +52,9 @@ impl Emitter {
         // file, a parameter — could name any backend, so the program is
         // built with each (it had been built with sqlite alone, and
         // `connect[env['DATABASE_URL']]` was refused at run time)
-        // (ClickHouse's driver is written in Crow: no feature of the crate)
-        let spelled = ["sqlite://", "postgres://", "postgresql://", "clickhouse://"].iter().any(|s| url.contains(s));
-        if url.contains("postgres://") || url.contains("postgresql://") || !spelled {
-            self.db_features.insert("postgres".to_string());
-        }
+        // (the ClickHouse and Postgres drivers are written in Crow: no
+        // feature of the crate names them; sqlite is the crate's)
+        let _ = url;
     }
 
     /// SQL parameters: each element of a literal list binds as its own
@@ -154,6 +152,25 @@ impl Emitter {
         )
     }
 
+    /// `transact[conn, f]`: `f`'s value, committed — or the error that
+    /// rolled the transaction back: `f`'s own when it failed, the server's
+    /// when the commit was refused (crow_db::DbHandle::transact; the
+    /// interpreter's transact answers the same).
+    fn db_transact(&mut self, conn: &str, f: &str) -> String {
+        let ret = self.fns.get(f).map(|x| x.ret.clone()).unwrap_or(Ty::Unknown);
+        let fallible = matches!(ret, Ty::Result(_));
+        let default = Self::inner(&crow_type(&ret)).default_rust_value();
+        let failed = format!("CrowResult {{ ok: false, value: {}, reason: __e, kind: \"db\".to_string(), trace: vec![], captured: 0.0 }}", default);
+        let (judged, kept, refused) = if fallible {
+            ("let __failed = !__v.ok; let __why = __v.reason.clone();", "__v", "if !__v.ok { __v } else { CrowResult { ok: false, value: __v.value, reason: __e, kind: \"db\".to_string(), trace: vec![], captured: 0.0 } }")
+        } else {
+            ("let __failed = false; let __why = String::new();", "CrowResult { ok: true, value: __v, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }", "CrowResult { ok: false, value: __v, reason: __e, kind: \"db\".to_string(), trace: vec![], captured: 0.0 }")
+        };
+        format!(
+            "{{ let __kept = std::cell::RefCell::new(None); let __done = {conn}.transact(&|_tx| {{ let __v = {f}(_tx); {judged} *__kept.borrow_mut() = Some(__v); if __failed {{ Err(__why) }} else {{ Ok(()) }} }}); match (__done, __kept.into_inner()) {{ (Ok(()), Some(__v)) => {kept}, (Err(__e), Some(__v)) => {refused}, (Err(__e), None) => {{ let __e = format!(\"transaction rolled back: {{}}\", __e); {failed} }}, (Ok(()), None) => {{ let __e = \"transaction rolled back: the function never ran\".to_string(); {failed} }} }} }}"
+        )
+    }
+
     fn db_exec(&mut self, conn: &str, sql: &str, params: &[Expr]) -> String {
         self.needs_serde_json = true;
         let (p, fallible) = self.db_params(params);
@@ -213,7 +230,7 @@ impl Emitter {
                 "exec" if arg_strs.len() >= 2 => return self.db_exec(&arg_strs[0], &arg_strs[1], &args[2..]),
                 "insert" if arg_strs.len() == 3 => return format!("{}.insert(&{}, &{}).unwrap()", arg_strs[0], arg_strs[1], arg_strs[2]),
                 "migrate" if arg_strs.len() == 2 => return format!("{}.migrate(&{}).unwrap()", arg_strs[0], arg_strs[1]),
-                "transact" if arg_strs.len() == 2 => return format!("{}.transact(&|_tx| {{ {}(_tx); Ok(()) }}).unwrap()", arg_strs[0], arg_strs[1]),
+                "transact" if arg_strs.len() == 2 => return self.db_transact(&arg_strs[0], &arg_strs[1]),
                 _ => {}
             }
         }
@@ -695,7 +712,7 @@ impl Emitter {
             "exec" if db && n >= 2 => self.db_exec(&a[0], &a[1], &args[2..]),
             "insert" if db && n == 3 => format!("{}.insert(&{}, &{}).unwrap()", a[0], a[1], a[2]),
             "migrate" if db && n == 2 => format!("{}.migrate(&{}).unwrap()", a[0], a[1]),
-            "transact" if db && n == 2 => format!("{}.transact(&|_tx| {{ {}(_tx); Ok(()) }}).unwrap()", a[0], a[1]),
+            "transact" if db && n == 2 => self.db_transact(&a[0], &a[1]),
             "page" if web && (n == 2 || n == 3) => self.page_route(args, a),
             "fetch" if n == 1 => format!("{{ __crow_state.register_fetch(\"_anon\", &{}); serde_json::Value::Null }}", a[0]),
             "poll" if n == 2 => format!("{{ __crow_state.register_poll(\"_anon\", &{}, {} as u64); serde_json::Value::Null }}", a[0], a[1]),

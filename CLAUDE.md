@@ -41,6 +41,7 @@ cargo clippy --workspace --all-features
 ./target/release/crow test src/modules/mail.co
 ./target/release/crow test src/modules/stats.co
 ./target/release/crow test src/modules/clickhouse.co
+./target/release/crow test src/modules/postgres.co
 ```
 
 Use the release binary for the layout and site suites: the debug binary
@@ -75,7 +76,10 @@ steps on every push and must be green.
   helpers (`exchange_on` had to become a sys row for the driver to call it).
   A driver's rows are named `ch_*` so they collide with no program name
   (`db`'s `query` beside a driver's `query` was "ambiguous" in every
-  program).
+  program). A row called from Crow converts its arguments by its
+  signature: JSON text handed to an `Encoded` parameter arrives as a JSON
+  string (`'[]'` as `"[]"`), so a module's rows call helpers, never each
+  other (`pg_check` pinging through `pg_query` failed every connect).
 - Per-cell work written in Crow pays the language's price per operation
   (a copy, an allocation, a Result) where a kernel pays per byte: a parser
   of a million rows was 20–45× slower than `frame_of_csv`. The rows a

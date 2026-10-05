@@ -691,6 +691,57 @@ pub fn alive(pid: i64) -> bool {
     std::process::Command::new("kill").arg("-0").arg(pid.to_string()).output().map(|o| o.status.success()).unwrap_or(true)
 }
 
+/// `sys.xor[a, b]`: the bytes XORed one with the other, of one length (a
+/// SCRAM proof: the client key with its signature).
+pub fn xor(a: &Bytes, b: &Bytes) -> Result<Bytes, String> {
+    if a.0.len() != b.0.len() {
+        return Err(format!("xor: the byte strings are of two lengths, {} and {}", a.0.len(), b.0.len()));
+    }
+    Ok(Bytes(a.0.iter().zip(&b.0).map(|(x, y)| x ^ y).collect()))
+}
+
+/// `sys.copy_of_frame[frame]`: the frame's rows in Postgres's COPY text
+/// format — a tab between cells, a line per row, `\N` for a missing
+/// cell, a backslash, a tab, a line break and a return escaped; a whole
+/// float written without its decimals (an integer column takes it), a
+/// truth as `t` or `f`, a moment as it is written.
+pub fn copy_of_frame(f: &crate::frame::CrowFrame) -> Bytes {
+    use crate::frame::Column;
+    let mut out = Vec::with_capacity(f.nrows() * f.ncols() * 8);
+    for row in 0..f.nrows() {
+        for col in 0..f.ncols() {
+            if col > 0 {
+                out.push(b'\t');
+            }
+            if !f.validity[col][row] {
+                out.extend_from_slice(b"\\N");
+                continue;
+            }
+            let text = match f.data[col].as_ref() {
+                Column::Int(v) => v[row].to_string(),
+                Column::Float(v) => {
+                    let x = v[row];
+                    if x.is_finite() && x == x.trunc() && x.abs() < 1e15 { format!("{}", x as i64) } else { x.to_string() }
+                }
+                Column::Str(v) => v[row].clone(),
+                Column::Bool(v) => if v[row] { "t".to_string() } else { "f".to_string() },
+                Column::DateTime(v, z) => crate::frame::format_datetime(v[row], z[row]),
+            };
+            for c in text.bytes() {
+                match c {
+                    b'\\' => out.extend_from_slice(b"\\\\"),
+                    b'\t' => out.extend_from_slice(b"\\t"),
+                    b'\n' => out.extend_from_slice(b"\\n"),
+                    b'\r' => out.extend_from_slice(b"\\r"),
+                    c => out.push(c),
+                }
+            }
+        }
+        out.push(b'\n');
+    }
+    Bytes(out)
+}
+
 /// `sys.rowbinary_of_frame[frame, types]`: a frame as ClickHouse's
 /// RowBinary, each column encoded as the table's type for it names
 /// (crate::rowbinary).
@@ -736,6 +787,21 @@ mod tests {
         assert_eq!(got, sent);
         assert_eq!(super::recv(&s, 10, 0.0).unwrap().len(), 0, "the other side closed");
         server.join().unwrap();
+    }
+
+    /// COPY's text form of a frame: tabs, lines, `\N`, the escapes, a
+    /// whole float as an integer; and bytes XORed of one length
+    #[test]
+    fn a_frame_copies_in_as_postgres_reads_it() {
+        use crate::frame::{Column, CrowFrame};
+        let f = CrowFrame::new(
+            vec!["n".into(), "x".into(), "s".into(), "b".into(), "t".into()],
+            vec![Column::Int(vec![1, 2]), Column::Float(vec![2.0, 2.5]), Column::Str(vec!["a\tb".into(), "back\\slash".into()]), Column::Bool(vec![true, false]), Column::DateTime(vec![0, 86_400_000], vec![0, 0])],
+            vec![vec![true, true], vec![true, false], vec![true, true], vec![true, true], vec![true, true]],
+        );
+        assert_eq!(String::from_utf8(super::copy_of_frame(&f).0).unwrap(), "1\t2\ta\\tb\tt\t1970-01-01\n2\t\\N\tback\\\\slash\tf\t1970-01-02\n");
+        assert_eq!(super::xor(&Bytes(vec![0xf0, 0x0f]), &Bytes(vec![0xff, 0x01])).unwrap(), Bytes(vec![0x0f, 0x0e]));
+        assert_eq!(super::xor(&Bytes(vec![1]), &Bytes(vec![1, 2])).unwrap_err(), "xor: the byte strings are of two lengths, 1 and 2");
     }
 
     /// A name with several addresses connects to the one that answers:

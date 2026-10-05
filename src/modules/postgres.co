@@ -1,0 +1,463 @@
+--- `use db`'s Postgres driver, written in Crow on the sys layer (design
+--- rule 20, docs/db-in-crow-design.md): the wire protocol — a connection
+--- started and authenticated (trust, a clear password, md5, or
+--- SCRAM-SHA-256 as RFC 7677 says), a statement without parameters as a
+--- simple query and one with them through the extended protocol (each
+--- parameter typed by its kind, bound as text), the answer decoded by the
+--- `frame_of_postgres` kernel, a command's count from its completion, a
+--- frame inserted with COPY, the columns a statement answers from Parse
+--- and Describe, and a CancelRequest for a statement a stop abandoned. The
+--- handle, the pool, a handler's scope, `transact`, the reconnect and the
+--- advisory lock are crow_db's (`crow_db::driven`), which calls these
+--- through its table of calls; the rows in the builtin table (src/table.rs)
+--- are the contract. The tests are the module's own:
+--- `crow test src/modules/postgres.co`. An error of kind `'sys'` says the
+--- connection is gone; one of kind `'db'` is the server's word.
+use sys, frame
+
+--- a part of the URL, as the handle hands them: JSON of host, port,
+--- user, pass, database and tls
+fn part[parts, name]
+    j = json[parts]
+    if not j.ok or not has[j, name]
+        return ''
+    v = str[j[name]]
+    if not v.ok
+        return encode[j[name]]
+    return v
+
+fn port_of[parts]
+    j = json[parts]
+    if not j.ok or not has[j, 'port']
+        return 5432
+    p = int[j.port]
+    if not p.ok
+        return 5432
+    return p
+
+fn cstr[s]
+    return concat[bytes[s], pack[0, 1]]
+
+fn u32_at[b, i]
+    return byte[b, i] * 16777216 + byte[b, i + 1] * 65536 + byte[b, i + 2] * 256 + byte[b, i + 3]
+
+--- a message: its kind letter, then its payload with its length
+fn message[kind, payload]
+    return concat[bytes[kind], concat[pack[len[payload] + 4, 4], payload]]
+
+fn read_exactly[s, n]
+    got = bytes['']
+    while len[got] lt n
+        chunk = recv[s, n - len[got], 0]
+        if not chunk.ok
+            return error[chunk.reason, 'sys']
+        if len[chunk] eq 0
+            return error['the server closed the connection', 'sys']
+        got = concat[got, chunk]
+    return got
+
+--- one message read: its kind byte followed by its payload
+fn read_message[s]
+    head = read_exactly[s, 5]
+    if not head.ok
+        return error[head.reason, 'sys']
+    n = u32_at[head, 1]
+    body = read_exactly[s, n - 4]
+    if not body.ok
+        return error[body.reason, 'sys']
+    return concat[slice[head, 0, 1], body]
+
+--- the server's words, from an error message's fields (M, the message)
+fn error_words[payload]
+    rest = payload
+    said = 'the server answered an error'
+    reading = true
+    while reading and len[rest] gt 0
+        kind = byte[rest, 0]
+        if kind eq 0
+            reading = false
+        else
+            stop = find[rest, pack[0, 1]]
+            if stop lt 0
+                reading = false
+            else
+                if kind eq 77
+                    said = text[slice[rest, 1, stop], '?']
+                rest = slice[rest, stop + 1, len[rest]]
+    return said
+
+--- SCRAM-SHA-256's salted password: Hi(password, salt, rounds), PBKDF2
+--- over HMAC-SHA-256
+fn salted_password[password, salt, rounds]
+    u = hmac[bytes[password], concat[salt, pack[1, 4]], 'sha256']
+    salted = u
+    turn = 1
+    while turn lt rounds
+        u = hmac[bytes[password], u, 'sha256']
+        salted = xor[salted, u]
+        turn = turn + 1
+    return salted
+
+--- the client's final message — the channel binding, the server's
+--- nonce, the proof — for the server's first; and the signature the
+--- server must answer with (`scram_signature`)
+fn scram_final[user, password, nonce, server_first]
+    first_bare = 'n=`user`,r=`nonce`'
+    server_nonce = ''
+    salt = bytes['']
+    rounds = 0
+    for field in split[server_first, ',']
+        if starts[field, 'r=']
+            server_nonce = slice[field, 2, len[field]]
+        if starts[field, 's=']
+            salt = unbase64[slice[field, 2, len[field]]]
+        if starts[field, 'i=']
+            n = int[slice[field, 2, len[field]]]
+            if n.ok
+                rounds = n
+    if not starts[server_nonce, nonce] or rounds lt 1
+        return error['the server\'s SCRAM nonce does not carry the client\'s', 'db']
+    salted = salted_password[password, salt, rounds]
+    client_key = hmac[salted, bytes['Client Key'], 'sha256']
+    stored_key = digest[client_key, 'sha256']
+    final_bare = 'c=biws,r=`server_nonce`'
+    auth_message = bytes['`first_bare`,`server_first`,`final_bare`']
+    client_signature = hmac[stored_key, auth_message, 'sha256']
+    proof = base64[xor[client_key, client_signature]]
+    return '`final_bare`,p=`proof`'
+
+fn scram_signature[user, password, nonce, server_first]
+    first_bare = 'n=`user`,r=`nonce`'
+    server_nonce = ''
+    salt = bytes['']
+    rounds = 0
+    for field in split[server_first, ',']
+        if starts[field, 'r=']
+            server_nonce = slice[field, 2, len[field]]
+        if starts[field, 's=']
+            salt = unbase64[slice[field, 2, len[field]]]
+        if starts[field, 'i=']
+            n = int[slice[field, 2, len[field]]]
+            if n.ok
+                rounds = n
+    salted = salted_password[password, salt, rounds]
+    server_key = hmac[salted, bytes['Server Key'], 'sha256']
+    final_bare = 'c=biws,r=`server_nonce`'
+    auth_message = bytes['`first_bare`,`server_first`,`final_bare`']
+    return 'v=`base64[hmac[server_key, auth_message, \'sha256\']]`'
+
+--- SCRAM-SHA-256 on the connection: the client's first message sent, the
+--- server's first read, the proof sent, the server's signature checked
+fn scram[s, user, password]
+    nonce = base64[random[18]]
+    first_bare = 'n=`user`,r=`nonce`'
+    initial = concat[cstr['SCRAM-SHA-256'], concat[pack[len[first_bare] + 3, 4], bytes['n,,`first_bare`']]]
+    sent = send[s, message['p', initial]]
+    if not sent.ok
+        return error[sent.reason, 'sys']
+    m = read_message[s]
+    if not m.ok
+        return m
+    if byte[m, 0] eq 69
+        return error[error_words[slice[m, 1, len[m]]], 'db']
+    if byte[m, 0] ne 82 or u32_at[m, 1] ne 11
+        return error['the server did not continue the SCRAM exchange', 'db']
+    server_first = text[slice[m, 5, len[m]], '?']
+    final = scram_final[user, password, nonce, server_first]
+    if not final.ok
+        return final
+    sent = send[s, message['p', bytes[final]]]
+    if not sent.ok
+        return error[sent.reason, 'sys']
+    m = read_message[s]
+    if not m.ok
+        return m
+    if byte[m, 0] eq 69
+        return error[error_words[slice[m, 1, len[m]]], 'db']
+    if byte[m, 0] ne 82 or u32_at[m, 1] ne 12
+        return error['the server did not finish the SCRAM exchange', 'db']
+    if text[slice[m, 5, len[m]], '?'] ne scram_signature[user, password, nonce, server_first]
+        return error['the server\'s SCRAM signature does not match: not the server the password was for', 'db']
+    return 0
+
+--- `pg_open[parts]`: a connection started and authenticated, its backend's
+--- process and key noted for a cancel; an error value of kind `'sys'`
+--- where none can be made, `'db'` where the server refuses
+fn pg_open[parts]
+    host = part[parts, 'host']
+    port = port_of[parts]
+    user = part[parts, 'user']
+    password = part[parts, 'pass']
+    database = part[parts, 'database']
+    s = open[host, port, false, 30.0]
+    if not s.ok
+        return error['postgres connection failed: `s.reason`', 'sys']
+    payload = concat[pack[196608, 4], concat[cstr['user'], concat[cstr[user], concat[cstr['database'], concat[cstr[database], concat[cstr['client_encoding'], concat[cstr['UTF8'], pack[0, 1]]]]]]]]
+    sent = send[s, concat[pack[len[payload] + 4, 4], payload]]
+    if not sent.ok
+        return error['postgres connection failed: `sent.reason`', 'sys']
+    ready = false
+    while not ready
+        m = read_message[s]
+        if not m.ok
+            return error['postgres connection failed: `m.reason`', 'sys']
+        k = byte[m, 0]
+        if k eq 69
+            why = error_words[slice[m, 1, len[m]]]
+            return error['postgres connection failed: `why`', 'db']
+        if k eq 82
+            code = u32_at[m, 1]
+            if code eq 3
+                sent = send[s, message['p', cstr[password]]]
+            if code eq 5
+                salt = slice[m, 5, 9]
+                inner = hex[digest[bytes['`password``user`'], 'md5']]
+                outer = hex[digest[concat[bytes[inner], salt], 'md5']]
+                sent = send[s, message['p', cstr['md5`outer`']]]
+            if code eq 10
+                done = scram[s, user, password]
+                if not done.ok
+                    return error['postgres connection failed: `done.reason`', done.kind]
+            if code ne 0 and code ne 3 and code ne 5 and code ne 10
+                return error['postgres connection failed: authentication `code` is not spoken here (trust, password, md5 and SCRAM-SHA-256 are)', 'db']
+        if k eq 75
+            pid = u32_at[m, 1]
+            key = u32_at[m, 5]
+            note[s, '`pid` `key`']
+        if k eq 90
+            ready = true
+    return s
+
+--- the answer read in large pieces until the server is ready again — a
+--- piece that happens to end like a ready-for-query is told apart by the
+--- kernel's "ends early" — as bytes
+fn read_answer[s]
+    chunks = []
+    done = false
+    whole = bytes['']
+    while not done
+        chunk = recv[s, 4194304, 0]
+        if not chunk.ok
+            return error[chunk.reason, 'sys']
+        if len[chunk] eq 0
+            return error['the server closed the connection', 'sys']
+        chunks = push[chunks, chunk]
+        n = len[chunk]
+        if n gte 6 and byte[chunk, n - 6] eq 90 and byte[chunk, n - 5] eq 0 and byte[chunk, n - 4] eq 0 and byte[chunk, n - 3] eq 0 and byte[chunk, n - 2] eq 5
+            whole = gather[chunks]
+            complete = frame_of_postgres[whole]
+            if complete.ok or not starts[complete.reason, 'the answer ends early']
+                done = true
+    return whole
+
+--- `?` outside quotes as $1, $2, …
+fn numbered[sql]
+    out = ''
+    n = 0
+    in_string = false
+    for c in split[sql, '']
+        if len[c] gt 0
+            if c eq '\''
+                in_string = not in_string
+                out = '`out``c`'
+            else
+                if c eq '?' and not in_string
+                    n = n + 1
+                    out = '`out`$`n`'
+                else
+                    out = '`out``c`'
+    return out
+
+--- the extended protocol's messages for a statement with parameters:
+--- Parse (each parameter typed by its kind: text, int8, float8, bool),
+--- Bind (as text, NULL as none), Describe the portal, Execute, Sync
+fn extended[sql, params]
+    given = json[params]
+    if not given.ok or type[given] ne 'array'
+        return error['SQL params must be an array', 'db']
+    count = len[given]
+    types = pack[count, 2]
+    bound = pack[count, 2]
+    for p in given
+        oid = 25
+        if p.ok
+            kind = type[p]
+            if kind eq 'int'
+                oid = 20
+            if kind eq 'float'
+                oid = 701
+            if kind eq 'bool'
+                oid = 16
+        types = concat[types, pack[oid, 4]]
+        if p.ok
+            shown = encode[p]
+            if type[p] eq 'str'
+                v = str[p]
+                if v.ok
+                    shown = v
+            bound = concat[bound, concat[pack[len[bytes[shown]], 4], bytes[shown]]]
+        else
+            bound = concat[bound, pack[-1, 4]]
+    parse = concat[cstr[''], concat[cstr[numbered[sql]], types]]
+    bind = concat[cstr[''], concat[cstr[''], concat[pack[0, 2], concat[bound, pack[0, 2]]]]]
+    describe = concat[bytes['P'], cstr['']]
+    execute = concat[cstr[''], pack[0, 4]]
+    return concat[message['P', parse], concat[message['B', bind], concat[message['D', describe], concat[message['E', execute], message['S', bytes['']]]]]]
+
+--- a statement sent — a simple query when it has no parameters, the
+--- extended protocol when it has
+fn statement_sent[s, sql, params]
+    if params eq '[]'
+        return send[s, message['Q', cstr[sql]]]
+    messages = extended[sql, params]
+    if not messages.ok
+        return messages
+    return send[s, messages]
+
+--- `pg_query[parts, stream, sql, params]`: the statement run, its rows as
+--- a frame typed as the server names each column
+fn pg_query[parts, s, sql, params]
+    return answered[s, sql, params]
+
+--- a statement run on the connection, its rows as a frame (a helper, not
+--- the row: a row called from Crow converts its arguments by its
+--- signature, and `'[]'` handed to an Encoded parameter would arrive as
+--- the JSON string `"[]"`)
+fn answered[s, sql, params]
+    sent = statement_sent[s, sql, params]
+    if not sent.ok
+        return error['postgres query error: `sent.reason`', sent.kind]
+    whole = read_answer[s]
+    if not whole.ok
+        return error['postgres query error: `whole.reason`', 'sys']
+    f = frame_of_postgres[whole]
+    if not f.ok
+        return error['postgres query error: `f.reason`', 'db']
+    return f
+
+--- the count a command's completion carries (`INSERT 0 3`, `UPDATE 2`)
+fn command_count[whole]
+    i = 0
+    while i + 5 lte len[whole]
+        kind = byte[whole, i]
+        n = u32_at[whole, i + 1]
+        if kind eq 67
+            tag = text[slice[whole, i + 5, i + n], '?']
+            words = split[trim[tag], ' ']
+            last = int[words[len[words] - 1]]
+            if last.ok
+                return last
+            return 0
+        i = i + 1 + n
+    return 0
+
+--- `pg_exec[parts, stream, sql, params]`: the statement run; the rows it
+--- touched, as its completion says
+fn pg_exec[parts, s, sql, params]
+    sent = statement_sent[s, sql, params]
+    if not sent.ok
+        return error['postgres exec error: `sent.reason`', sent.kind]
+    whole = read_answer[s]
+    if not whole.ok
+        return error['postgres exec error: `whole.reason`', 'sys']
+    f = frame_of_postgres[whole]
+    if not f.ok
+        return error['postgres exec error: `f.reason`', 'db']
+    return command_count[whole]
+
+--- `pg_insert[parts, stream, table, frame]`: the frame's rows copied in
+--- (`COPY … FROM STDIN`, the text format: `copy_of_frame`); the count
+fn pg_insert[parts, s, table, f]
+    if len[f] eq 0
+        return 0
+    names = join[f.columns, ', ']
+    sent = send[s, message['Q', cstr['COPY `table` (`names`) FROM STDIN']]]
+    if not sent.ok
+        return error['postgres insert error: `sent.reason`', 'sys']
+    m = read_message[s]
+    if not m.ok
+        return error['postgres insert error: `m.reason`', 'sys']
+    if byte[m, 0] eq 69
+        why = error_words[slice[m, 1, len[m]]]
+        rest = read_answer[s]
+        return error['postgres insert error: `why`', 'db']
+    if byte[m, 0] ne 71
+        return error['postgres insert error: the server did not ask for the rows', 'db']
+    data = copy_of_frame[f]
+    sent = send[s, concat[message['d', data], message['c', bytes['']]]]
+    if not sent.ok
+        return error['postgres insert error: `sent.reason`', 'sys']
+    whole = read_answer[s]
+    if not whole.ok
+        return error['postgres insert error: `whole.reason`', 'sys']
+    done = frame_of_postgres[whole]
+    if not done.ok
+        return error['postgres insert error: `done.reason`', 'db']
+    return command_count[whole]
+
+--- `pg_describe[parts, stream, sql]`: the columns the statement answers,
+--- without running it — Parse, Describe the statement, Sync — as a frame
+--- of `name` and `kind`
+fn pg_describe[parts, s, sql]
+    parse = concat[cstr[''], concat[cstr[numbered[sql]], pack[0, 2]]]
+    describe = concat[bytes['S'], cstr['']]
+    sent = send[s, concat[message['P', parse], concat[message['D', describe], message['S', bytes['']]]]]
+    if not sent.ok
+        return error['postgres describe error: `sent.reason`', 'sys']
+    whole = read_answer[s]
+    if not whole.ok
+        return error['postgres describe error: `whole.reason`', 'sys']
+    f = frame_of_postgres[whole]
+    if not f.ok
+        return error['postgres describe error: `f.reason`', 'db']
+    out = frame.new[]
+    out = with[out, 'name', f.columns]
+    out = with[out, 'kind', f.dtypes]
+    return out
+
+--- `pg_cancel[parts, stream]`: the statement the connection runs stopped
+--- on the server, by the backend's process and key noted at open, from a
+--- connection of its own (the one it ran on is in the middle of an answer)
+fn pg_cancel[parts, s]
+    words = split[noted[s], ' ']
+    if len[words] ne 2
+        return 0
+    pid = int[words[0]]
+    key = int[words[1]]
+    if not pid.ok or not key.ok
+        return 0
+    other = open[part[parts, 'host'], port_of[parts], false, 10.0]
+    if not other.ok
+        return error['postgres cancel error: `other.reason`', 'sys']
+    send[other, concat[pack[16, 4], concat[pack[80877102, 4], concat[pack[pid, 4], pack[key, 4]]]]]
+    close[other]
+    return 0
+
+--- `pg_check[parts, stream]`: the server answers (`SELECT 1`)
+fn pg_check[parts, s]
+    f = answered[s, 'SELECT 1', '[]']
+    if not f.ok
+        return error['postgres ping failed: `f.reason`', f.kind]
+    return 0
+
+--- RFC 7677's example exchange: the proof and the server's signature for
+--- the user `user`, the password `pencil`, the client's nonce and the
+--- server's first message it gives
+test scram_answers_rfc_7677s_example[]
+    nonce = 'rOprNGfwEbeRWgbNEkqO'
+    server_first = 'r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,s=W22ZaJ0SNY7soEsUEjb6gQ==,i=4096'
+    assert[scram_final['user', 'pencil', nonce, server_first] eq 'c=biws,r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,p=dHzbZapWIk4jUhN+Ute9ytag9zjfMHgsqmmiz7AndVQ=']
+    assert[scram_signature['user', 'pencil', nonce, server_first] eq 'v=6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4=']
+    assert[not scram_final['user', 'pencil', 'other', server_first].ok]
+
+test the_statements_messages_are_as_the_protocol_says[]
+    assert[numbered['SELECT ? FROM t WHERE a = ? AND b = \'?\''] eq 'SELECT $1 FROM t WHERE a = $2 AND b = \'?\'']
+    assert[hex[message['Q', cstr['x']]] eq '51000000067800']
+    assert[hex[cstr['']] eq '00']
+    assert[error_words[concat[bytes['SERROR'], concat[pack[0, 1], concat[bytes['Mno such thing'], concat[pack[0, 1], pack[0, 1]]]]]] eq 'no such thing']
+    assert[command_count[concat[message['C', cstr['INSERT 0 3']], message['Z', bytes['I']]]] eq 3]
+    assert[command_count[message['Z', bytes['I']]] eq 0]
+    parts = '{"host":"localhost","port":5433,"user":"u","pass":"","database":"d","tls":false}'
+    assert[part[parts, 'user'] eq 'u' and port_of[parts] eq 5433]
+    assert[not extended['SELECT ?', 'nope'].ok]
+    assert[len[extended['SELECT ?', '[1]']] gt 0]

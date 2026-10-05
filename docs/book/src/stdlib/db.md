@@ -31,6 +31,8 @@ conn = connect['postgres://user:pass@host/mydb', 20]
 
 **The ClickHouse driver is written in Crow** (`src/modules/clickhouse.co`, design rule 20, docs/db-in-crow-design.md), over its HTTP interface: `clickhouse://user:pass@host:port/database` names that interface, port 8123 when none is given; the native protocol's port, 9000, is no longer spoken, and a URL that names it is read as the HTTP port, which the log says once. Each statement is sent with an id (`crow-<machine>-<process>-<draw>`), its rows come back as RowBinary and are decoded by the `frame_of_rowbinary` kernel, typed as the server names each column; an insert goes as RowBinary encoded by the table's types; a statement a stop abandoned is killed by its id; at connect, the statements a dead run of this machine left running are swept. The handle, its pool of kept connections (four, since ClickHouse runs one query on every core already), the reconnect and the cancel are `crow_db`'s, which calls the driver through a table of calls the program registers (the compiled program's generated functions; the interpreter's child over the program's functions). A program never imports the driver: `use db` carries the drivers its connection URLs name.
 
+**The Postgres driver is written in Crow too** (`src/modules/postgres.co`), speaking the wire protocol over `sys`: a connection started and authenticated — trust, a clear password, md5, or SCRAM-SHA-256 as RFC 7677 says, its proof held to the RFC's own example in the module's tests — and its backend's process and key noted for a cancel; a statement without parameters as a simple query, one with parameters through the extended protocol, each parameter typed by its kind (text, int8, float8, bool; a cast like `?::date` is a cast from text) and bound as text; the answer decoded by the `frame_of_postgres` kernel, typed as the server names each column; a command's count from its completion; `insert` as `COPY … FROM STDIN` in the text format (`copy_of_frame`); `describe` from Parse and Describe without an Execute; a statement a stop abandoned cancelled by a CancelRequest on a connection of its own. tokio-postgres and deadpool are gone; the pool (ten), a handler's transaction on one connection, `transact`, the advisory lock around reconciling a schema and the reconnect are `crow_db`'s.
+
 A connection is not the program's lifetime. When the server closes it — ClickHouse drops an idle connection after its keep-alive, and a restart drops every one — the next query reopens it and runs, and the server log says so; Postgres and ClickHouse connections are pooled, so queries from different sessions run side by side, and sqlite is a file. Every `connect` to one Postgres or ClickHouse URL in a program is one handle: parts that each connect to the same server share its pool.
 
 **A query nobody waits for is stopped.** A background recompute whose session has gone, or whose inputs moved while it ran, stops its query on the server (ClickHouse and Postgres); so does every query in flight when a served program is told to stop — `crow stop`, a rebuild, Ctrl-C. A program killed outright cannot stop anything; the next run that connects to a ClickHouse server on the same machine stops the queries the dead run left behind, and the log says so. Each ClickHouse statement carries a leading comment naming the machine, the process and a number, which is how it is found again.
@@ -70,7 +72,7 @@ log[n]
 | `insert[conn, table, frame]` | Bulk insert a frame into a table using native fast paths | [Databases: `use db`](../by-example/db.md) |
 
 Uses backend-specific protocols for maximum performance:
-- **PostgreSQL:** COPY protocol
+- **PostgreSQL:** `COPY … FROM STDIN`, the text format
 - **ClickHouse:** RowBinary over the HTTP interface, encoded by the table's types (`DESCRIBE` first)
 - **SQLite:** Batched prepared statements in a transaction
 
@@ -84,9 +86,9 @@ insert[conn, 'events', events_frame]
 
 | Function | Description | Example |
 |---|---|---|
-| `transact[conn, fn]` | Execute a named function inside a transaction (auto commit/rollback) | [Databases: `use db`](../by-example/db.md) · [Working with Databases](../ch11-00-databases.md) |
+| `transact[conn, fn]` | The function run inside a transaction: its value, committed; or its error, rolled back | [Databases: `use db`](../by-example/db.md) · [Working with Databases](../ch11-00-databases.md) |
 
-Checks out one connection from the pool, passes it to the function, commits on success, rolls back on error. No `begin`/`commit`/`rollback` builtins — one way to do transactions.
+One connection is checked out, `BEGIN` run on it, and the function handed it as its one parameter; its statements through that parameter are the transaction's. **`transact` answers what the function answers.** A function that fails — its value an error (`return error['no', 'db']`, or a failed value it returns), or a stop inside it — rolls the transaction back, and `transact` answers that error (a stop stops, as a stop does); a function that succeeds commits, and a commit the server refuses answers an error of kind `'db'` with the server's words. Inside a handler, whose writes through a connection are one transaction already (A handler is a transaction), `transact` is a savepoint on it: released when the function succeeds, rolled back to when it fails, the handler's other writes untouched. The same in both modes (parity 167). No `begin`/`commit`/`rollback` builtins — one way to do transactions.
 
 ```
 use db
@@ -148,7 +150,7 @@ CREATE TABLE IF NOT EXISTS labels (card INTEGER, name TEXT);
 | Backend | Default Pool Size | Notes | Example |
 |---|---|---|---|
 | SQLite | 1 | File-based, concurrent writes lock | |
-| PostgreSQL | 10 | Standard for web/data apps | |
+| PostgreSQL | 10 | Standard for web/data apps; the driver written in Crow keeps the connections it opened | |
 | ClickHouse | 4 | The HTTP interface, kept alive; opened as queries need them. One query already runs on every core of the server, so more at once contend rather than help | |
 
 

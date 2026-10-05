@@ -2181,17 +2181,37 @@ impl IrInterp {
             other => return Err(format!("transact[] first argument must be a db connection, got {}", other.type_name())),
         };
         let f = vals[1].clone();
-        conn.exec("BEGIN", &[]).map_err(|e| format!("transact[]: {}", e))?;
+        // the function's statements come through the handle it is handed:
+        // crow_db routes them to the transaction (one connection; inside a
+        // handler, a savepoint on its own). What the function answers is
+        // transact's value; a function that fails rolls back, and its
+        // error is the value; a stop stops.
         let tx_val = CrowValue::ok(Value::DbConn(conn.clone()));
-        match self.call_value(&f, vec![tx_val]) {
-            Ok(val) => {
-                conn.exec("COMMIT", &[]).map_err(|e| format!("transact[]: commit failed: {}", e))?;
-                Ok(val)
+        let mut answer: Option<CrowValue> = None;
+        let mut stopped: Option<String> = None;
+        let done = conn.transact_calling(&mut || match self.call_value(&f, vec![tx_val.clone()]) {
+            Ok(v) if v.is_error() => {
+                let why = v.reason().to_string();
+                answer = Some(v);
+                Err(why)
+            }
+            Ok(v) => {
+                answer = Some(v);
+                Ok(())
             }
             Err(e) => {
-                let _ = conn.exec("ROLLBACK", &[]);
-                Err(format!("transact[]: rolled back: {}", e))
+                stopped = Some(e.clone());
+                Err(e)
             }
+        });
+        if let Some(e) = stopped {
+            return Err(format!("transact[]: rolled back: {}", e));
+        }
+        match (done, answer) {
+            (Ok(()), Some(v)) => Ok(v),
+            (Ok(()), None) => Ok(CrowValue::ok(Value::Done)),
+            (Err(_), Some(v)) if v.is_error() => Ok(v),
+            (Err(e), _) => Ok(CrowValue::error_with_kind(&format!("transaction rolled back: {}", e), "db", &self.trace_entry())),
         }
     }
 

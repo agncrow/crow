@@ -23,9 +23,6 @@ use crow_runtime::frame::CrowFrame;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
 
-#[cfg(feature = "postgres")]
-pub mod postgres;
-
 pub mod migrate;
 
 /// The handle for a driver written in Crow: ClickHouse, Postgres.
@@ -34,19 +31,6 @@ pub mod driven;
 pub mod schema;
 /// What a recording kept, and the replay that answers from it.
 pub mod fixtures;
-
-/// Resolves when the work under `flag` — or the whole program — should
-/// stop: a driver that can stop a running query on its server races the
-/// query against this and stops it.
-#[cfg(feature = "postgres")]
-pub(crate) async fn stop_requested(flag: Option<Arc<std::sync::atomic::AtomicBool>>) {
-    loop {
-        if crow_runtime::cancel::stopped(&flag) {
-            return;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-    }
-}
 
 /// Operations available inside a transaction — exec and query only.
 /// No Send + Sync requirement (transaction handles are single-threaded).
@@ -225,6 +209,25 @@ fn scope_begin() {
     SCOPE.with(|s| *s.borrow_mut() = Some(Vec::new()));
 }
 
+/// Whether a handler (or a transaction of `transact_calling`'s own) is
+/// running on this thread: its statements are routed to its transactions.
+fn in_handler() -> bool {
+    SCOPE.with(|s| s.borrow().is_some())
+}
+
+/// A handler's transaction as the `DbTx` a `transact` function is handed.
+struct ScopeView(std::cell::RefCell<Box<dyn ScopeTx>>);
+
+impl DbTx for ScopeView {
+    fn query(&self, sql: &str, params: &[serde_json::Value]) -> Result<CrowFrame, String> {
+        self.0.try_borrow_mut().map_err(|_| "the transaction is busy".to_string())?.query(sql, params)
+    }
+
+    fn exec(&self, sql: &str, params: &[serde_json::Value]) -> Result<i64, String> {
+        self.0.try_borrow_mut().map_err(|_| "the transaction is busy".to_string())?.exec(sql, params)
+    }
+}
+
 fn scope_finish(commit: bool) -> Result<(), String> {
     let txs = SCOPE.with(|s| s.borrow_mut().take()).unwrap_or_default();
     let mut first_error = None;
@@ -279,7 +282,7 @@ impl DbHandle {
     /// inside it. `None` outside a handler, for a read before any write, and
     /// for a backend without transactions.
     fn in_scope<T>(&self, write: bool, f: impl FnOnce(&mut dyn ScopeTx) -> Result<T, String>) -> Option<Result<T, String>> {
-        let key = Arc::as_ptr(&self.inner) as *const () as usize;
+        let key = self.key();
         SCOPE.with(|s| {
             let mut s = s.borrow_mut();
             let txs = s.as_mut()?;
@@ -352,8 +355,102 @@ impl DbHandle {
         self.inner.insert(table, frame)
     }
 
+    /// `transact[conn, f]`: `f` inside a transaction — the backend's own,
+    /// on one connection (BEGIN; COMMIT when `f` answers Ok, ROLLBACK when
+    /// it answers Err). Inside a handler, whose statements on this handle
+    /// are one transaction already (`in_scope`), a savepoint on it:
+    /// released when `f` answers Ok, rolled back to when it answers Err,
+    /// the handler's other writes untouched.
     pub fn transact(&self, f: &dyn Fn(&dyn DbTx) -> Result<(), String>) -> Result<(), String> {
-        self.inner.transact(f)
+        if !in_handler() {
+            return self.inner.transact(f);
+        }
+        match self.in_scope(true, |tx| tx.exec("SAVEPOINT crow_transact", &[])) {
+            // a backend without a scope of a handler's own has no savepoint
+            // to make: its own transaction
+            None => return self.inner.transact(f),
+            Some(Err(e)) => return Err(e),
+            Some(Ok(_)) => {}
+        }
+        // the scope's transaction, taken out for the call: `f` speaks to
+        // it through the view, and a statement through another handle
+        // meanwhile finds the scope free
+        let Some(tx) = self.take_scope_tx() else { return Err("the handler's transaction is gone".to_string()) };
+        let view = ScopeView(std::cell::RefCell::new(tx));
+        let outcome = f(&view);
+        self.put_scope_tx(view.0.into_inner());
+        self.end_savepoint(outcome)
+    }
+
+    /// `transact` around a function the interpreter calls back, whose
+    /// statements come through this handle itself (its `tx` is the handle):
+    /// outside a handler, a scope of the transaction's own, so they are
+    /// routed to one connection as a handler's are — BEGIN and COMMIT on
+    /// the handle where the backend has no such scope (SQLite in memory
+    /// is one connection; ClickHouse has no transactions); inside a
+    /// handler, a savepoint on its transaction.
+    pub fn transact_calling(&self, f: &mut dyn FnMut() -> Result<(), String>) -> Result<(), String> {
+        if in_handler() {
+            match self.in_scope(true, |tx| tx.exec("SAVEPOINT crow_transact", &[])) {
+                None => return self.transact_plainly(f),
+                Some(Err(e)) => return Err(e),
+                Some(Ok(_)) => {}
+            }
+            let outcome = f();
+            return self.end_savepoint(outcome);
+        }
+        match self.inner.begin_scope() {
+            Some(Ok(tx)) => {
+                SCOPE.with(|s| *s.borrow_mut() = Some(vec![(self.key(), tx)]));
+                let outcome = f();
+                let finished = scope_finish(outcome.is_ok());
+                outcome.and(finished)
+            }
+            Some(Err(e)) => Err(e),
+            None => self.transact_plainly(f),
+        }
+    }
+
+    /// BEGIN, `f`, then COMMIT or ROLLBACK on the handle itself.
+    fn transact_plainly(&self, f: &mut dyn FnMut() -> Result<(), String>) -> Result<(), String> {
+        if self.inner.backend_name() == "clickhouse" {
+            return Err("ClickHouse does not support transactions (it is an OLAP engine)".to_string());
+        }
+        self.inner.exec("BEGIN", &[])?;
+        match f() {
+            Ok(()) => self.inner.exec("COMMIT", &[]).map(|_| ()),
+            Err(e) => {
+                let _ = self.inner.exec("ROLLBACK", &[]);
+                Err(e)
+            }
+        }
+    }
+
+    /// The savepoint released, or rolled back to, as the outcome says.
+    fn end_savepoint(&self, outcome: Result<(), String>) -> Result<(), String> {
+        let end = if outcome.is_ok() { "RELEASE SAVEPOINT crow_transact" } else { "ROLLBACK TO SAVEPOINT crow_transact" };
+        match self.in_scope(true, |tx| tx.exec(end, &[])) {
+            Some(Err(e)) => Err(e),
+            _ => outcome,
+        }
+    }
+
+    fn key(&self) -> usize {
+        Arc::as_ptr(&self.inner) as *const () as usize
+    }
+
+    fn take_scope_tx(&self) -> Option<Box<dyn ScopeTx>> {
+        let key = self.key();
+        SCOPE.with(|s| s.borrow_mut().as_mut().and_then(|txs| txs.iter().position(|(k, _)| *k == key).map(|i| txs.remove(i).1)))
+    }
+
+    fn put_scope_tx(&self, tx: Box<dyn ScopeTx>) {
+        let key = self.key();
+        SCOPE.with(|s| {
+            if let Some(txs) = s.borrow_mut().as_mut() {
+                txs.push((key, tx));
+            }
+        });
     }
 
     pub fn migrate(&self, dir: &str) -> Result<i64, String> {
@@ -442,20 +539,8 @@ fn open_handle(url: &str, pool_size: Option<usize>) -> Result<DbHandle, String> 
         {
             Err("SQLite support not enabled — compile with feature 'sqlite'".into())
         }
-    } else if url.starts_with("postgres://") || url.starts_with("postgresql://") {
-        #[cfg(feature = "postgres")]
-        {
-            let size = pool_size.unwrap_or(10);
-            let db = postgres::CrowPostgresDb::connect(url, size)?;
-            Ok(DbHandle::new(db))
-        }
-        #[cfg(not(feature = "postgres"))]
-        {
-            let _ = pool_size;
-            Err("PostgreSQL support not enabled — compile with feature 'postgres'".into())
-        }
-    } else if url.starts_with("clickhouse://") {
-        // the driver written in Crow (docs/db-in-crow-design.md)
+    } else if url.starts_with("postgres://") || url.starts_with("postgresql://") || url.starts_with("clickhouse://") {
+        // the drivers written in Crow (docs/db-in-crow-design.md)
         Ok(DbHandle::new(driven::Driven::open(url, pool_size)?))
     } else {
         Err(format!("unknown database URL scheme: {}", url))

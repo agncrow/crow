@@ -103,6 +103,7 @@ impl Emitter {
             "web.ws" => std::sync::Arc::new(crate::modules::web::WsModule),
             "web.mail" => std::sync::Arc::new(crate::modules::web::MailModule),
             "db.clickhouse" => std::sync::Arc::new(crate::modules::db::ClickhouseDriver),
+            "db.postgres" => std::sync::Arc::new(crate::modules::db::PostgresDriver),
             _ => return,
         };
         self.registry.load(m);
@@ -146,6 +147,7 @@ impl Emitter {
                     self.modules.insert("db".to_string());
                     // the drivers written in Crow, whose rows the program carries
                     self.load_module("db.clickhouse");
+                    self.load_module("db.postgres");
                 }
                 "ui" => {
                     self.needs_ui = true;
@@ -459,7 +461,7 @@ impl Emitter {
     /// The backends whose driver written in Crow the program carries, by
     /// the functions it has (docs/db-in-crow-design.md).
     pub(crate) fn drivers_carried(&self) -> Vec<(&'static str, &'static str)> {
-        [("clickhouse", "db.clickhouse")].iter().filter(|(_, m)| crate::table::ROWS.iter().any(|r| r.module == *m && r.is_crow() && self.fns.contains_key(&crate::table::crow_fn_name(r)))).copied().collect()
+        [("clickhouse", "db.clickhouse"), ("postgres", "db.postgres")].iter().filter(|(_, m)| crate::table::ROWS.iter().any(|r| r.module == *m && r.is_crow() && self.fns.contains_key(&crate::table::crow_fn_name(r)))).copied().collect()
     }
 
     /// The table of calls crow_db::driven calls a driver through, each the
@@ -468,6 +470,7 @@ impl Emitter {
     fn driver_glue(&mut self, backend: &str) {
         let prefix = match backend {
             "clickhouse" => "_db_clickhouse_ch",
+            "postgres" => "_db_postgres_pg",
             _ => return,
         };
         let failed = "Err(crow_db::driven::Failure { reason: _r.reason, lost: _r.kind == \"sys\" })";

@@ -1679,6 +1679,16 @@ pub static ROWS: &[Row] = &[
     row!("sys.process", "sys", "process", crow_runtime::sys::process, () -> Int, never),
     row!("sys.alive", "sys", "alive", crow_runtime::sys::alive, (Int) -> Bool, never),
     row!("sys.rowbinary_of_frame", "sys", "rowbinary_of_frame", crow_runtime::sys::rowbinary_of_frame, (Frame, Texts) -> Bytes, value "frame"),
+    row!("sys.xor", "sys", "xor", crow_runtime::sys::xor, (Bytes, Bytes) -> Bytes, stops),
+    row!("sys.copy_of_frame", "sys", "copy_of_frame", crow_runtime::sys::copy_of_frame, (Frame) -> Bytes, never),
+    // the Postgres driver written in Crow (src/modules/postgres.co)
+    crow!("db.postgres.pg_open", "db.postgres", "pg_open", (Encoded) -> Stream, value "db"),
+    crow!("db.postgres.pg_check", "db.postgres", "pg_check", (Encoded, Stream) -> Int, value "db"),
+    crow!("db.postgres.pg_query", "db.postgres", "pg_query", (Encoded, Stream, Str, Encoded) -> Frame, value "db"),
+    crow!("db.postgres.pg_exec", "db.postgres", "pg_exec", (Encoded, Stream, Str, Encoded) -> Int, value "db"),
+    crow!("db.postgres.pg_insert", "db.postgres", "pg_insert", (Encoded, Stream, Str, Frame) -> Int, value "db"),
+    crow!("db.postgres.pg_describe", "db.postgres", "pg_describe", (Encoded, Stream, Str) -> Frame, value "db"),
+    crow!("db.postgres.pg_cancel", "db.postgres", "pg_cancel", (Encoded, Stream) -> Int, value "db"),
     // the ClickHouse driver written in Crow (src/modules/clickhouse.co),
     // as crow_db::driven calls it (docs/db-in-crow-design.md)
     crow!("db.clickhouse.ch_open", "db.clickhouse", "ch_open", (Encoded) -> Stream, value "db"),

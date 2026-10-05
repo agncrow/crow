@@ -15,6 +15,22 @@ pub struct ClickhouseDriver;
 
 pub(crate) const CLICKHOUSE_FUNCTIONS: &[&str] = &["ch_open", "ch_check", "ch_query", "ch_exec", "ch_insert", "ch_describe", "ch_cancel"];
 
+/// The Postgres driver written in Crow (src/modules/postgres.co), as the
+/// registry answers its rows.
+pub struct PostgresDriver;
+
+pub(crate) const POSTGRES_FUNCTIONS: &[&str] = &["pg_open", "pg_check", "pg_query", "pg_exec", "pg_insert", "pg_describe", "pg_cancel"];
+
+impl CrowModule for PostgresDriver {
+    fn name(&self) -> &str {
+        "db.postgres"
+    }
+
+    fn functions(&self) -> &[&str] {
+        POSTGRES_FUNCTIONS
+    }
+}
+
 impl CrowModule for ClickhouseDriver {
     fn name(&self) -> &str {
         "db.clickhouse"
@@ -30,12 +46,20 @@ impl CrowModule for ClickhouseDriver {
 /// literal the source spells, or no connection is made (the tooling's
 /// `use db` alone).
 pub fn drivers_for(urls: &[String]) -> Vec<&'static str> {
-    const ALL: &[(&str, &str)] = &[("clickhouse://", "db.clickhouse")];
-    let spelled = |u: &String| ALL.iter().any(|(s, _)| u.starts_with(s)) || u.starts_with("sqlite://") || u.starts_with("postgres://") || u.starts_with("postgresql://");
-    if urls.is_empty() || urls.iter().any(|u| !spelled(u)) {
-        return ALL.iter().map(|(_, m)| *m).collect();
+    const ALL: &[(&str, &str)] = &[("clickhouse://", "db.clickhouse"), ("postgres://", "db.postgres"), ("postgresql://", "db.postgres")];
+    let spelled = |u: &String| ALL.iter().any(|(s, _)| u.starts_with(s)) || u.starts_with("sqlite://");
+    let mut out: Vec<&'static str> = Vec::new();
+    let wanted: Vec<&'static str> = if urls.is_empty() || urls.iter().any(|u| !spelled(u)) {
+        ALL.iter().map(|(_, m)| *m).collect()
+    } else {
+        ALL.iter().filter(|(s, _)| urls.iter().any(|u| u.starts_with(s))).map(|(_, m)| *m).collect()
+    };
+    for m in wanted {
+        if !out.contains(&m) {
+            out.push(m);
+        }
     }
-    ALL.iter().filter(|(s, _)| urls.iter().any(|u| u.starts_with(s))).map(|(_, m)| *m).collect()
+    out
 }
 
 impl CrowModule for DbModule {

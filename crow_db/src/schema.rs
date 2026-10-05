@@ -716,50 +716,6 @@ mod tests {
         sql.iter().filter_map(|s| parse_table(s)).collect()
     }
 
-    /// Against a Postgres of its own (`CROW_TEST_POSTGRES=postgres://…`):
-    /// reconciling under the advisory lock, verifying, and the catalog read
-    /// with names folded as Postgres folds them.
-    #[cfg(feature = "postgres")]
-    #[test]
-    #[ignore = "needs a Postgres: CROW_TEST_POSTGRES=postgres://user@host:port/db"]
-    fn reconciling_a_postgres_database() {
-        let url = std::env::var("CROW_TEST_POSTGRES").expect("CROW_TEST_POSTGRES names a scratch database");
-        let h = crate::connect(&url, Some(2)).unwrap();
-        h.exec("DROP TABLE IF EXISTS crow_schema_cards", &[]).unwrap();
-        h.exec("CREATE TABLE crow_schema_cards (id SERIAL PRIMARY KEY, points TEXT)", &[]).unwrap();
-        h.exec("INSERT INTO crow_schema_cards (points) VALUES ('three')", &[]).unwrap();
-        let declared = tables(&[
-            "CREATE TABLE IF NOT EXISTS Crow_Schema_Cards (id SERIAL PRIMARY KEY, points TEXT, title VARCHAR(40), done BOOLEAN NOT NULL DEFAULT false, at TIMESTAMPTZ)",
-        ]);
-        let refused = check(&h, &url, &declared, Mode::Verify).unwrap_err();
-        assert!(refused.contains("table 'Crow_Schema_Cards' lacks column 'title'\n      ALTER TABLE \"crow_schema_cards\" ADD COLUMN title VARCHAR(40);"), "{}", refused);
-        check(&h, &url, &declared, Mode::Reconcile).unwrap();
-        check(&h, &url, &declared, Mode::Verify).unwrap();
-        let done = h.query("SELECT done FROM crow_schema_cards", &[]).unwrap();
-        assert_eq!(done.col_as_strings("done").unwrap(), vec!["false"]);
-        let declared = tables(&["CREATE TABLE IF NOT EXISTS crow_schema_cards (id SERIAL PRIMARY KEY, points INTEGER, due TEXT NOT NULL)"]);
-        let refused = check(&h, &url, &declared, Mode::Reconcile).unwrap_err();
-        assert!(refused.contains("lacks column 'due' — it is NOT NULL without a default, and the table has rows"), "{}", refused);
-        assert!(refused.contains("column 'points' of table 'crow_schema_cards' is text in the database, declared INTEGER"), "{}", refused);
-        assert!(refused.contains("ALTER TABLE \"crow_schema_cards\" ALTER COLUMN \"points\" TYPE INTEGER USING \"points\"::INTEGER;"), "{}", refused);
-        // processes starting at once, each with a pool of its own, add a
-        // column once: the lock holds the rest until it is made
-        h.exec("DROP TABLE crow_schema_cards", &[]).unwrap();
-        h.exec("CREATE TABLE crow_schema_cards (id SERIAL PRIMARY KEY)", &[]).unwrap();
-        let declared = tables(&["CREATE TABLE IF NOT EXISTS crow_schema_cards (id SERIAL PRIMARY KEY, title TEXT, n INTEGER)"]);
-        std::thread::scope(|s| {
-            for _ in 0..4 {
-                let (url, declared) = (url.clone(), declared.clone());
-                s.spawn(move || {
-                    let own = DbHandle::new(crate::postgres::CrowPostgresDb::connect(&url, 1).unwrap());
-                    check(&own, &url, &declared, Mode::Reconcile).unwrap();
-                });
-            }
-        });
-        check(&h, &url, &declared, Mode::Verify).unwrap();
-        h.exec("DROP TABLE crow_schema_cards", &[]).unwrap();
-    }
-
     #[test]
     fn a_create_statement_declares_its_table_and_columns() {
         let t = parse_table(

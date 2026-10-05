@@ -81,7 +81,7 @@ crow_web/
 | `web` (server) | **axum** (on hyper + tokio) | #1 Rust web framework. Routing, extractors, middleware, WebSocket, SSE built-in. Made by the tokio team. |
 | `web.client` | **reqwest** (on hyper + tokio) | #1 Rust HTTP client. Async mode shares tokio runtime with server. Blocking mode works standalone without tokio. |
 | `web.ws` | **axum** (built-in) | `axum::extract::ws` — no extra dependency. |
-| `web.db` | **rusqlite** + **tokio-postgres** | Feature-gated: SQLite or PostgreSQL. |
+| `web.db` | **rusqlite**; the Postgres and ClickHouse drivers written in Crow | SQLite is the crate's; the others speak their protocols over `sys` (docs/db-in-crow-design.md). |
 | `web.auth` | **jsonwebtoken** | JWT creation/verification. |
 | `web.template` | **tera** | Jinja2-style templates. |
 | `web.mail` | **lettre** | SMTP email. |
@@ -177,7 +177,7 @@ Every `web.client` requirement mapped to reqwest support:
 | `web.cors` | ✅ tower-http | — | — |
 | `web.static` | ✅ tower-http | — | — |
 | `web.rate` | ✅ tower middleware | — | Pure Rust token bucket |
-| `web.db` | ✅ | `rusqlite`, `tokio-postgres` | Not an HTTP concern |
+| `web.db` | ✅ | `rusqlite`; the other drivers in Crow | Not an HTTP concern |
 | `web.docs` | ✅ | Transpiler + `serde_json` | Generation is compile-time, serving via axum |
 | `web.live` | ✅ | Custom diff engine | Diff/patch logic is ours |
 | `web.view` | ✅ | WASM target | Different compilation target entirely |

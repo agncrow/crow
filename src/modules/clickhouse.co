@@ -47,6 +47,12 @@ fn shown[parts]
 --- `ch_open[parts]`: a connection to the server's HTTP port, kept for the
 --- next statement; an error value of kind `'sys'` where none can be made
 fn ch_open[parts]
+    return connection[parts]
+
+--- a connection to the HTTP interface (a helper, not the row: a row called
+--- from Crow converts its arguments by its signature, and the parts, JSON
+--- text handed to an Encoded parameter, would arrive as a JSON string)
+fn connection[parts]
     s = open[part[parts, 'host'], port_of[parts], tls_of[parts], 30.0]
     if not s.ok
         where = shown[parts]
@@ -315,7 +321,7 @@ fn ch_cancel[parts, s]
     id = noted[s]
     if len[id] eq 0
         return 0
-    other = ch_open[parts]
+    other = connection[parts]
     if not other.ok
         return other
     a = request_on[parts, other, 'KILL QUERY WHERE query_id = \'`id`\' ASYNC', 'TabSeparated', fresh_id[]]
@@ -370,6 +376,12 @@ test the_statement_takes_its_parameters_as_literals[]
     assert[substituted['? ?', '[1]'].reason eq 'SQL has more ? placeholders than params (1 given)']
     assert[substituted['?', '[1, 2]'].reason eq 'SQL has 1 ? placeholders but 2 params were given']
     assert[not substituted['SELECT ?', '[[1, 2]]'].ok]
+
+test a_connection_is_opened_from_the_parts_as_handed[]
+    dead = '{"host":"127.0.0.1","port":1,"user":"","pass":"","database":"d","tls":false}'
+    refused = connection[dead]
+    assert[not refused.ok]
+    assert[starts[refused.reason, 'clickhouse connection failed: cannot connect to 127.0.0.1:1']]
 
 test the_servers_words_and_kinds_are_read[]
     assert[server_error['Code: 60. DB::Exception: DB::Exception: Table x does not exist. (UNKNOWN_TABLE) (version 25.7)\n0. Poco::Exception::Exception(...) @ 0x1\n1. DB::Exception'] eq 'Code: 60. DB::Exception: Table x does not exist. (UNKNOWN_TABLE) (version 25.7)']

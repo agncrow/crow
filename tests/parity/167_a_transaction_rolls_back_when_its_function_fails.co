@@ -1,0 +1,33 @@
+--- `transact[conn, f]` answers what `f` answers, committed; a function
+--- that fails — its value an error — rolls the transaction back, and
+--- transact answers that error, in both modes. (The interpreter had run
+--- BEGIN and COMMIT on whatever connections the pool handed it and
+--- committed a function that failed; the compiled program had committed
+--- too, and answered nothing — `r.ok` was true where the interpreter's
+--- was false.)
+use db
+
+conn = connect['sqlite://:memory:']
+exec[conn, 'CREATE TABLE t (k TEXT, v INT)']
+
+fn add[tx]
+    exec[tx, 'INSERT INTO t VALUES (?, ?)', ['a', 1]]
+    return 'added'
+
+fn fails[tx]
+    exec[tx, 'INSERT INTO t VALUES (?, ?)', ['b', 2]]
+    return error['no', 'db']
+
+fn refused[tx]
+    exec[tx, 'INSERT INTO nowhere VALUES (1)']
+
+r = transact[conn, add]
+log[r.ok]
+log[r]
+r2 = transact[conn, fails]
+log[r2.ok]
+log[r2.reason]
+log[r2.kind]
+r3 = transact[conn, refused]
+log[r3.ok]
+log[query[conn, 'SELECT k, v FROM t ORDER BY k']]

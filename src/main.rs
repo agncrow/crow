@@ -1802,7 +1802,14 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     // Verification harnesses (`crow test --book`, `--parity`) set
     // CROW_BUILD_PROFILE=dev: a checked program only has to run, not ship,
     // and skipping optimization + LTO is most of the per-block build time.
-    let release = release && std::env::var("CROW_BUILD_PROFILE").map(|v| v != "dev").unwrap_or(true);
+    // CROW_DEBUGINFO=1: the `debuginfo` profile — dev with debug info — in a
+    // target directory of its own, for a Rust backtrace with file and line
+    // when a program panics (a bug in Crow, never a Crow error). The plain
+    // dev build carries no debug info: macOS keeps an object file per unit
+    // for it, and the harness caches had grown by the hundred gigabytes.
+    let debuginfo = std::env::var("CROW_DEBUGINFO").map(|v| v == "1").unwrap_or(false);
+    let release = release && !debuginfo && std::env::var("CROW_BUILD_PROFILE").map(|v| v != "dev").unwrap_or(true);
+    let profile_dir = if release { "release" } else if debuginfo { "debuginfo" } else { "debug" };
     let source = read_file(entry);
     let stmts = match build(&source) {
         Ok(s) => s,
@@ -1946,11 +1953,7 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
 
     // Check if source has changed — skip compilation if binary is up-to-date
     let main_rs_path = src_dir.join("main.rs");
-    let binary_path = if release {
-        build_dir.join("target/release").join(&project_name)
-    } else {
-        build_dir.join("target/debug").join(&project_name)
-    };
+    let binary_path = build_dir.join("target").join(profile_dir).join(&project_name);
 
     let existing_source = std::fs::read_to_string(&main_rs_path).unwrap_or_default();
     let source_changed = existing_source != rust_source;
@@ -1967,6 +1970,8 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     let mut cmd = std::process::Command::new("cargo");
     if release {
         cmd.args(["build", "--release"]).current_dir(&build_dir);
+    } else if debuginfo {
+        cmd.args(["build", "--profile", "debuginfo"]).current_dir(&build_dir);
     } else {
         cmd.args(["build"]).current_dir(&build_dir);
     }
@@ -3304,7 +3309,11 @@ mod ir_tests {
 /// runners) optimizes the runtime crates and libraries a little and leaves
 /// the program itself unoptimized, so a rebuild stays fast while a page's
 /// render machinery runs near release speed; a release build (`crow
-/// build`) optimizes everything.
+/// build`) optimizes everything. A dev build carries no debug info (macOS
+/// keeps an object file per unit for it, and the harness caches had grown
+/// by the hundred gigabytes); the `debuginfo` profile, dev as cargo defines
+/// it, is built by `CROW_DEBUGINFO=1` into its own `target/debuginfo`, for a
+/// Rust backtrace with file and line when a program panics.
 /// The generated crate's name for a program's path: cargo takes letters,
 /// digits, `_` and `-`, and not a leading digit — `01_counter.co` builds as
 /// `app_01_counter`.
@@ -3319,7 +3328,7 @@ fn package_name(entry: &str) -> String {
 
 fn generated_cargo_toml(project_name: &str, deps: &str) -> String {
     format!(
-        "[workspace]\n\n[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n{}\n[profile.dev.package.\"*\"]\nopt-level = 1\n\n[profile.release]\nopt-level = 3\nlto = true\noverflow-checks = true\n",
+        "[workspace]\n\n[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n{}\n[profile.dev]\ndebug = 0\n\n[profile.dev.package.\"*\"]\nopt-level = 1\n\n[profile.debuginfo]\ninherits = \"dev\"\ndebug = true\n\n[profile.debuginfo.package.\"*\"]\nopt-level = 1\n\n[profile.release]\nopt-level = 3\nlto = true\noverflow-checks = true\n",
         project_name, deps
     )
 }
@@ -4162,7 +4171,13 @@ fn cmd_db(args: &[String]) {
             eprintln!("usage: crow db describe <url> <sql>");
             process::exit(1);
         };
-        let answered = driver::tooling_ready().and_then(|_| crow_db::connect(url, Some(1))).and_then(|db| db.describe(sql));
+        // (the columns that can hold NULL marked as the lowering marks them)
+        let answered = driver::tooling_ready().and_then(|_| crow_db::connect(url, Some(1))).and_then(|db| {
+            db.describe(sql).map(|mut cols| {
+                type_infer::mark_nullable(&db, url, sql, &mut cols);
+                cols
+            })
+        });
         match answered {
             Ok(cols) => println!("{}", serde_json::Value::Array(cols.into_iter().map(|(n, k)| serde_json::json!([n, k])).collect())),
             Err(e) => {
@@ -5701,6 +5716,8 @@ mod build_crate_tests {
         assert_eq!(package_name("my app.co"), "my_app");
         let toml = generated_cargo_toml("main", "[dependencies]\n");
         assert!(toml.contains("[profile.dev.package.\"*\"]\nopt-level = 1"), "{}", toml);
+        assert!(toml.contains("[profile.dev]\ndebug = 0\n"), "a dev build carries no debug info: {}", toml);
+        assert!(toml.contains("[profile.debuginfo]\ninherits = \"dev\"\ndebug = true\n\n[profile.debuginfo.package.\"*\"]\nopt-level = 1\n"), "CROW_DEBUGINFO=1 builds dev with debug info: {}", toml);
         assert!(toml.contains("[profile.release]\nopt-level = 3\nlto = true\noverflow-checks = true"), "{}", toml);
         assert!(toml.starts_with("[workspace]\n\n[package]\nname = \"main\""), "{}", toml);
     }

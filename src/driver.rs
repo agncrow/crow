@@ -30,7 +30,7 @@ static TEMPLATE: Mutex<Option<Arc<Template>>> = Mutex::new(None);
 
 /// The backends whose driver the program carries, by the functions it has.
 fn backends_in(fns: &HashMap<String, Arc<crate::ir::Fn>, crate::ir_interp::Names>) -> Vec<&'static str> {
-    [("clickhouse", "_db_clickhouse_ch_query")].iter().filter(|(_, f)| fns.contains_key(*f)).map(|(b, _)| *b).collect()
+    [("clickhouse", "_db_clickhouse_ch_query"), ("postgres", "_db_postgres_pg_query")].iter().filter(|(_, f)| fns.contains_key(*f)).map(|(b, _)| *b).collect()
 }
 
 /// The interpreter loaded a program: what it carries is what a child is
@@ -49,6 +49,7 @@ pub(crate) fn set_template(t: Template) {
             }
             let prefix = match backend {
                 "clickhouse" => "_db_clickhouse_ch",
+                "postgres" => "_db_postgres_pg",
                 _ => return None,
             };
             let child = IrInterp::from_template(&t);
