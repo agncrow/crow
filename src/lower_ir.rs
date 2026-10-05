@@ -3161,19 +3161,34 @@ impl<'a> Lowerer<'a> {
     /// floats, and `timeout = 5` did not build compiled).
     fn crow_call_args(row: Option<&'static crate::table::Row>, lowered: Vec<Expr>) -> Vec<Expr> {
         let Some(row) = row.filter(|r| r.is_crow()) else { return lowered };
+        // an argument as the parameter's kind takes it: an int handed to a
+        // float, a value JSON can hold as its JSON text
+        // (crate::table::crow_param_type)
+        let read_as = |k: crate::table::Kind, x: Expr| -> Expr {
+            match (k, x.ty()) {
+                (crate::table::Kind::Float, Ty::Int) => Expr::Convert { how: Convert::IntToFloat, expr: Box::new(x), ty: Ty::Float },
+                (crate::table::Kind::Encoded, ty) => {
+                    let fails = ty.is_result();
+                    let Some(encode) = crate::table::core_row("encode", &[crate::table::Arg::Unknown]) else { return x };
+                    Expr::Call { target: Target::Row(encode), args: vec![x], ty: if fails { Ty::Result(Box::new(Ty::Str)) } else { Ty::Str }, propagates: fails }
+                }
+                _ => x,
+            }
+        };
         // a parameter that takes the rest of the arguments (`anova[a, b,
-        // c]`) is handed them as one list, as the function takes it
+        // c]`, `normal[0, 1, 3, 4]`) is handed them as one list, as the
+        // function takes it; the parameters before it read theirs as above
         if row.params.iter().any(|k| k.is_rest()) {
             let Ok(spans) = crate::table::spans(row.params, lowered.len(), row.name) else { return lowered };
             let mut rest: Vec<Option<Expr>> = lowered.into_iter().map(Some).collect();
             let mut bundled = Vec::with_capacity(row.params.len());
             for (k, (a, b)) in row.params.iter().zip(spans) {
                 if k.is_rest() {
-                    let items: Vec<Expr> = (a..b).filter_map(|i| rest[i].take()).collect();
+                    let items: Vec<Expr> = (a..b).filter_map(|i| rest[i].take()).map(|x| read_as(k.each(), x)).collect();
                     let item = ty_of(&k.each().crow_type());
                     bundled.push(Expr::ListLit(items, Ty::List(Box::new(item))));
                 } else if let Some(x) = rest[a].take() {
-                    bundled.push(x);
+                    bundled.push(read_as(*k, x));
                 }
             }
             return bundled;
@@ -3181,16 +3196,9 @@ impl<'a> Lowerer<'a> {
         lowered
             .into_iter()
             .zip(row.params.iter().copied().map(Some).chain(std::iter::repeat(None)))
-            .map(|(x, k)| match (k, x.ty()) {
-                (Some(crate::table::Kind::Float), Ty::Int) => Expr::Convert { how: Convert::IntToFloat, expr: Box::new(x), ty: Ty::Float },
-                // a value JSON can hold reaches the function as its JSON
-                // text (crate::table::crow_param_type)
-                (Some(crate::table::Kind::Encoded), ty) => {
-                    let fails = ty.is_result();
-                    let Some(encode) = crate::table::core_row("encode", &[crate::table::Arg::Unknown]) else { return x };
-                    Expr::Call { target: Target::Row(encode), args: vec![x], ty: if fails { Ty::Result(Box::new(Ty::Str)) } else { Ty::Str }, propagates: fails }
-                }
-                _ => x,
+            .map(|(x, k)| match k {
+                Some(k) => read_as(k, x),
+                None => x,
             })
             .collect()
     }

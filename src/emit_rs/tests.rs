@@ -1224,9 +1224,12 @@ fn test_math_seed_transpile() {
 
 #[test]
 fn test_math_normal_transpile() {
-    let rust = transpile("use math\nx = normal[0, 1, 3, 4]\n");
-    // the builtin table's row: the runtime function, its sizes as a slice
-    assert!(rust.contains("crow_runtime::math::normal((0_i64) as f64, (1_i64) as f64, &[(3_i64) as i64, (4_i64) as i64]).unwrap_or_else(|e| crow_stop(2, e))"), "should call the runtime's normal\n{}", rust);
+    let rust = transpile("use math\nx = normal[0, 1, 3, 4]\nlog[x]\n");
+    // the builtin table's row is written in Crow: the module's function,
+    // its sizes handed as one list
+    assert!(rust.contains("fn _math_normal("), "the module's function is defined\n{}", rust);
+    assert!(rust.matches("_math_normal(").count() >= 2, "the module's function is called\n{}", rust);
+    assert!(!rust.contains("crow_runtime::math::normal("), "no runtime normal\n{}", rust);
 }
 
 #[test]

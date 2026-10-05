@@ -1,10 +1,11 @@
---- `use math`: `load`, written in Crow on the sys layer (design rule 20) —
---- a table of numbers as a matrix, from a file, a URL or an S3 object,
---- read as `frame.load` reads a table and taken as its cells. Its rows in
---- the builtin table (src/table.rs) are the contract; the kernel is
---- `sys.tensor_of_frame`. The tests are the module's own:
---- `crow test src/modules/math.co`.
-use sys, frame
+--- `use math`: what is written in Crow on the sys layer (design rule 20) —
+--- `load`, a table of numbers as a matrix, from a file, a URL or an S3
+--- object, read as `frame.load` reads a table and taken as its cells
+--- (the kernel is `sys.tensor_of_frame`); and the normal draws, `randn`
+--- and `normal`, Box–Muller over uniform draws. Their rows in the
+--- builtin table (src/table.rs) are the contract. The tests are the
+--- module's own: `crow test src/modules/math.co`.
+use sys, frame, math
 
 --- `load[path]`: a table of numbers as a matrix
 fn load[path]
@@ -26,3 +27,59 @@ test a_table_of_numbers_is_a_matrix[]
     m = load['math-note.csv']
     assert[m.shape eq [2, 2] and m[1][1] eq 4.0]
     assert[not load['no-such.csv'].ok and load['no-such.csv'].kind eq 'load']
+
+--- Standard normal draws in the sizes' shape, Box–Muller over two uniform
+--- draws a value — z = sqrt(−2 ln(1 − u1)) · cos(2π u2), u1 and u2 in
+--- [0, 1) (1 − u1 keeps the log finite). A seeded program draws the same
+--- values in both modes; a negative size stops it as the sizes say.
+fn draws[sizes]
+    n = 1
+    for d in sizes
+        if d lt 0
+            halt['randn: a size cannot be negative (got `d`)']
+        n = n * d
+    u1 = uniform[0.0, 1.0, n]
+    u2 = uniform[0.0, 1.0, n]
+    z = sqrt[-2.0 * ln[1.0 - u1]] .* cos[2.0 * pi * u2]
+    return shaped[z, sizes]
+
+--- `randn[d1, d2, …]`: standard normal draws (mean 0, spread 1)
+fn randn[sizes]
+    return draws[sizes]
+
+--- `normal[mean, std, d1, d2, …]`: mean + std · randn; one value when no
+--- size is given, as every sample is
+fn normal[centre, spread, sizes]
+    if not (spread gte 0.0)
+        halt['normal: std must be 0 or more (got `spread`)']
+    dims = sizes
+    if len[sizes] eq 0
+        dims = push[[], 1]
+    return draws[dims] * spread + centre
+
+--- (a row that takes the rest of its arguments is handed them as one
+--- list, which is how its own tests call it)
+fn one[n]
+    return push[[], n]
+
+fn two[a, b]
+    return push[push[[], a], b]
+
+--- the normal draws keep their laws: a mean of 0 and a spread of 1 over
+--- many draws, the shape asked for, and `normal` is `mean + std · randn`
+--- under the same seed
+test the_normal_draws_keep_their_laws[]
+    seed[3]
+    z = randn[one[100000]]
+    assert[abs[mean[z]] lt 0.02]
+    assert[abs[mean[z .* z] - 1.0] lt 0.02]
+    assert[randn[two[2, 3]].shape eq [2, 3] and randn[one[0]].shape eq [0]]
+    seed[5]
+    a = randn[one[4]]
+    seed[5]
+    b = normal[0.0, 1.0, one[4]]
+    assert[sum[abs[a - b]] eq 0.0]
+    seed[5]
+    c = normal[10.0, 2.0, one[4]]
+    assert[sum[abs[c - (a * 2.0 + 10.0)]] lt 0.000000001]
+    assert[sum[normal[3.0, 0.0, one[3]]] eq 9.0 and normal[3.0, 0.0, two[2, 2]].shape eq [2, 2]]

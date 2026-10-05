@@ -1,0 +1,17 @@
+--- The normal draws are written in Crow: a seeded program draws the same
+--- values in both modes, `normal` is mean + std · randn, and a sample with
+--- no sizes is one value; a negative spread stops the program
+use math
+
+seed[11]
+a = randn[2, 2]
+log[a.shape]
+log[fmt[sum[a], decimals = 6]]
+seed[11]
+b = normal[0.0, 1.0, 2, 2]
+log[fmt[sum[abs[a - b]], decimals = 6]]
+log[normal[3.0, 0.0, 3]]
+log[randn[0].shape]
+log[normal[1.0, 2.0].shape]
+log[randn[].shape]
+log[normal[0.0, -1.0, 3]]

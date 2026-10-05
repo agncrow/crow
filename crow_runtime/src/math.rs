@@ -32,11 +32,6 @@ pub fn ones(sizes: &[i64]) -> Result<CrowTensor, String> {
     Ok(CrowTensor::ones(shape("ones", sizes)?))
 }
 
-/// `randn[d1, d2, …]`: standard normal draws.
-pub fn randn(sizes: &[i64]) -> Result<CrowTensor, String> {
-    Ok(CrowTensor::randn(shape("randn", sizes)?))
-}
-
 /// `full[d1, d2, …, value]`.
 pub fn full(sizes: &[i64], value: f64) -> Result<CrowTensor, String> {
     Ok(CrowTensor::full(shape("full", sizes)?, value))
@@ -87,14 +82,6 @@ pub fn arange(start: f64, stop: f64, step: f64) -> Result<CrowTensor, String> {
 /// `diag[t]`: a vector's diagonal matrix, or a matrix's diagonal.
 pub fn diag(t: &CrowTensor) -> Result<CrowTensor, String> {
     CrowTensor::diag(t)
-}
-
-/// `normal[mean, std, d1, …]`.
-pub fn normal(mean: f64, std: f64, sizes: &[i64]) -> Result<CrowTensor, String> {
-    if !(std >= 0.0) {
-        return Err(format!("normal: std must be 0 or more (got {})", std));
-    }
-    Ok(CrowTensor::normal(sample_shape("normal", sizes)?, mean, std))
 }
 
 /// `uniform[low, high, d1, …]`.
@@ -355,6 +342,13 @@ pub fn where_(cond: &CrowTensor, a: &CrowTensor, b: &CrowTensor) -> Result<CrowT
 }
 
 /// `reshape[t, d1, d2, …]`: the same values in a new shape of as many.
+/// `sys.shaped[t, dims]`: the tensor's values in the shape the list of
+/// sizes names — `reshape` given its sizes as a list, as a Crow function's
+/// rest arrives (`randn`, written in Crow, shapes its draws with it).
+pub fn shaped(t: &CrowTensor, dims: Vec<i64>) -> Result<CrowTensor, String> {
+    reshape(t, &dims)
+}
+
 pub fn reshape(t: &CrowTensor, sizes: &[i64]) -> Result<CrowTensor, String> {
     let shape: Vec<usize> = sizes.iter().map(|&n| stops::size("reshape", n)).collect::<Result<_, _>>()?;
     let n: usize = shape.iter().product();
@@ -821,7 +815,6 @@ mod tests {
         assert_eq!(poisson(-1.0, &[]).map(|_| ()), Err("poisson: lambda must be > 0".to_string()));
         assert_eq!(bernoulli(2.0, &[3]).map(|_| ()), Err("bernoulli: p must be in [0, 1]".to_string()));
         assert_eq!(exponential(-1.0, &[]).map(|_| ()), Err("exponential: lambda must be 0 or more".to_string()));
-        assert_eq!(normal(0.0, -1.0, &[]).map(|_| ()), Err("normal: std must be 0 or more (got -1)".to_string()));
         assert_eq!(poisson(2.0, &[]).map(|t| t.shape().to_vec()), Ok(vec![1]));
         assert_eq!(uniform(0.0, 1.0, &[4]).map(|t| t.shape().to_vec()), Ok(vec![4]));
     }

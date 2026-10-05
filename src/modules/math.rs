@@ -176,13 +176,6 @@ mod tests {
     }
 
     #[test]
-    fn test_randn() {
-        let t = unwrap_tensor(call_math("randn", &[int(100)]));
-        assert_eq!(t.to_vec().len(), 100);
-        // Mean should be roughly 0 for large samples
-    }
-
-    #[test]
     fn test_linspace() {
         let t = unwrap_tensor(call_math("linspace", &[float(0.0), float(1.0), int(5)]));
         assert_tensor_eq(&t, &[0.0, 0.25, 0.5, 0.75, 1.0]);
@@ -559,12 +552,6 @@ mod tests {
         let r = call_math("seed", &[int(42)]);
         let cv = r.expect("seed failed");
         assert!(cv.is_ok());
-    }
-
-    #[test]
-    fn test_normal() {
-        let t = unwrap_tensor(call_math("normal", &[float(0.0), float(1.0), int(100)]));
-        assert_eq!(t.to_vec().len(), 100);
     }
 
     #[test]

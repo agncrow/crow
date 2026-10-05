@@ -1766,11 +1766,11 @@ The modules that ship with Crow. Their exports are bare names in files that impo
 **Design Note: what stays native, and why.** Considered: the standard library wholly in Crow, Rust kept for the compiler alone. Decided (design rule 20; Vijay, 2026-10-04): native code stays where one of four reasons holds, and every crate the manifests name (`Cargo.toml`, `crow_runtime/`, `crow_web/`, `crow_db/`) is accounted for here — a crate added gets its line, with its reason.
 
 - *A mechanism of the runtime, which no formula can be:* the server and its pages (axum, tokio, tower, tokio-stream, futures-util) and what runs inside its request handling — multipart uploads (multer), CORS and static files (tower-http), the signed sign-in cookie and session ids (hmac, sha2, base64, uuid), a live page's `fetch[]` sources polled by the server (reqwest); the database drivers' pools and the race of a query against a stop (tokio-postgres, deadpool-postgres, klickhouse, tokio, tokio-stream); the seeded process-global random source (rand); the autograd tape; parallel loops (rayon).
-- *A validated kernel:* TLS (rustls, webpki-roots); the digests, the keyed digests and the password hash (sha2, sha1, md-5, hmac, argon2), randomness from the operating system (getrandom); regular expressions (regex); the formats a table travels in (arrow, parquet, serde_json, bytes); linear algebra, the FFT, sparse matrices and the GPU (faer, rustfft, sprs, wgpu, pollster, bytemuck); time zones (chrono, chrono-tz); markdown (pulldown-cmark); a number written and read exactly (itoa, ryu), `erf` to the last bit (libm); the distributions drawn by rejection (rand_distr).
+- *A validated kernel:* TLS (rustls, webpki-roots); the digests, the keyed digests and the password hash (sha2, sha1, md-5, hmac, argon2), randomness from the operating system (getrandom); regular expressions (regex); the formats a table travels in (arrow, parquet, serde_json, bytes); linear algebra, the FFT, sparse matrices and the GPU (faer, rustfft, sprs, wgpu, pollster, bytemuck); time zones (chrono, chrono-tz); markdown (pulldown-cmark); a number written and read exactly (itoa, ryu), `erf` to the last bit (libm); the distributions drawn by rejection or a ziggurat — Poisson, Bernoulli, gamma, beta and exponential (rand_distr).
 - *A C library:* SQLite (rusqlite).
 - *The compiler's own tooling:* the Jupyter kernel (zeromq, libc), the REPL (rustyline), the language server (lsp-server, lsp-types), `crow check`'s SQL facts (sqlparser), snapshots of a program (bincode, serde), the served harness's client (tungstenite, in the compiler alone).
 
-Written in Crow on the `sys` layer, their crates gone: the HTTP client and every reader of a URL or an S3 object (ureq), tokens (jsonwebtoken), msgpack (rmp-serde), the WebSocket client (tungstenite, from the web runtime) and mail (lettre). Still native, and when each could move: ClickHouse over its HTTP interface, a `request` and a parser of its row format, after measuring against the native driver; the Postgres wire protocol — the startup, SCRAM over `hmac`, the rows — which is the session layer's driver, measured first; normal draws as Box–Muller over uniform tensors. What runs inside the Rust server's request handling moves only once the server can call Crow, or the design changes — a live page's sources polled by the program itself, with `request`.
+Written in Crow on the `sys` layer, their crates gone: the HTTP client and every reader of a URL or an S3 object (ureq), tokens (jsonwebtoken), msgpack (rmp-serde), the WebSocket client (tungstenite, from the web runtime) and mail (lettre); and, with no crate to drop, the statistics (`math.stats`) and the normal draws (`randn` and `normal`: Box–Muller over uniform draws). Still native, and when each could move: ClickHouse over its HTTP interface, a `request` and a parser of its row format, after measuring against the native driver; the Postgres wire protocol — the startup, SCRAM over `hmac`, the rows — which is the session layer's driver, measured first. What runs inside the Rust server's request handling moves only once the server can call Crow, or the design changes — a live page's sources polled by the program itself, with `request`.
 
 
 ### math
@@ -1789,7 +1789,7 @@ The `math` module is built in — no file needed. It provides tensor creation, e
 | `diag[tensor]` | Extract diagonal from a 2D tensor |
 | `linspace[start, end, n]` | `n` evenly spaced values from `start` to `end` |
 | `arange[start, end, step]` | Values from `start` to `end` by `step` |
-| `randn[d1, d2, ...]` | Normal random values (mean=0, std=1) |
+| `randn[d1, d2, ...]` | Normal random values (mean=0, std=1); written in Crow (see Random Numbers) |
 | `tensor[array]` | Convert an array to a tensor |
 
 #### Element-wise Operations
@@ -1927,8 +1927,8 @@ Negative indices are supported (wrap around from the end). The result tensor has
 | Function | Description |
 |---|---|
 | `seed[n]` | Set the program's RNG seed: every later draw, tensors and the core `rand[]` alike, is repeatable and identical in both modes. Statements run in the order written, and a loop that draws runs in order (§14), so a seeded program draws the same numbers on every run |
-| `randn[d1, d2, ...]` | Standard normal (mean=0, std=1) |
-| `normal[mean, std, d1, d2, ...]` | Normal with custom mean/std; a negative std stops the program |
+| `randn[d1, d2, ...]` | Standard normal (mean=0, std=1): Box–Muller over two uniform draws a value, written in Crow (`src/modules/math.co`, design rule 20); a negative size stops the program |
+| `normal[mean, std, d1, d2, ...]` | Normal with custom mean/std: `mean + std · randn`, written in Crow; a negative std stops the program |
 | `uniform[low, high, d1, d2, ...]` | Uniform in [low, high): `uniform[0.0, 1.0, 2, 3]` is a 2×3 tensor of values in [0, 1) |
 | `poisson[lambda, d1, d2, ...]` | Poisson distribution |
 | `bernoulli[p, d1, d2, ...]` | Bernoulli (0.0 or 1.0) |
@@ -2327,6 +2327,7 @@ Import with `use sys` — **only in a module of the standard library.** `sys` is
 | `betainc[x, a, b]` | The regularized incomplete beta function I_x(a, b): the t and F distributions are written over it |
 | `gammainc[a, x]` | The lower regularized incomplete gamma function P(a, x): the chi-square distribution is written over it |
 | `lgamma[x]` | The natural log of the gamma function |
+| `shaped[t, dims]` | The tensor's values in the shape the list of sizes names: `reshape` given its sizes as a list, as a Crow function's rest arrives |
 | `remote[path]` | Whether a path names a remote source: a URL (`http://`, `https://`) or an S3 object (`s3://`) |
 | `exchange[url, method, lines, body, timeout]` | One HTTP exchange, written in Crow: the request sent to the URL's host with its method, the header lines and the body, its answer read whole — an `answer`, or an error value of kind `'sys'` where none came in `timeout` seconds (0 as thirty to connect and ten minutes in all) |
 | `redirected[from, location]` | Where a redirect sends the request: its `location`, made absolute against the URL it came from |

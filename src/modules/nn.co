@@ -127,7 +127,7 @@ test the_formulas_keep_their_laws[]
         assert[sum[abs[p - softmax[flatten[x] + 100.0]]] lt 0.000000000001]
         assert[sum[abs[gelu[x] - gelu[x]]] eq 0.0]
         assert[max[abs[gelu[x] - relu[x]]] lt 0.2]
-        assert[mse[x, x] eq 0.0 and mse[x, x + 1.0] eq 1.0]
+        assert[mse[x, x] eq 0.0 and abs[mse[x, x + 1.0] - 1.0] lt 0.000000000001]
 
 --- a gradient through each formula agrees with central differences: the
 --- formulas are differentiated as any function is, with no rule of their own

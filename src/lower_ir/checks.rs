@@ -980,6 +980,16 @@ impl<'a> Lowerer<'a> {
         if self.ctx.registry.has_function(name) {
             let providers = self.ctx.registry.providers_of(name);
             if providers.len() > 1 {
+                // (the standard library's own source, tested on its own,
+                // calls the function it defines for a row of that name —
+                // math.co's `load` beside frame's — and the program's own
+                // function is the call, as it is with one provider)
+                let own_row = self.ctx.bare_modules.contains("sys")
+                    && self.ctx.functions.contains_key(name)
+                    && crate::table::ROWS.iter().any(|r| r.is_crow() && crate::table::crow_fn_base(r) == name);
+                if own_row {
+                    return;
+                }
                 // (two modules' rows of one name that the arguments' kinds
                 // tell apart are no ambiguity — sys's `send` of a stream
                 // beside a socket's — the kinds pick, as they pick among one

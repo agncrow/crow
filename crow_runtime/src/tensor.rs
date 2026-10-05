@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use rand::RngExt;
-use rand_distr::{Distribution, StandardNormal};
+use rand_distr::Distribution;
 
 use crate::gpu::{self, GpuBuffer, GpuContext};
 use crate::rng;
@@ -445,30 +445,10 @@ impl CrowTensor {
         Self::from_vec(data, shape).maybe_to_gpu()
     }
 
-    /// Create a tensor with standard normal random values (mean=0, std=1).
-    pub fn randn(shape: Vec<usize>) -> Self {
-        let n = Self::numel(&shape);
-        let data = rng::gen_random_vec(n, |r| {
-            let v: f64 = StandardNormal.sample(r);
-            v
-        });
-        Self::from_vec(data, shape).maybe_to_gpu()
-    }
-
     /// Create a tensor with uniform random values in [low, high).
     pub fn rand_range(shape: Vec<usize>, low: f64, high: f64) -> Self {
         let n = Self::numel(&shape);
         let data = rng::gen_random_vec(n, |r| r.random::<f64>() * (high - low) + low);
-        Self::from_vec(data, shape).maybe_to_gpu()
-    }
-
-    /// Create a tensor with normal random values (custom mean and std).
-    pub fn normal(shape: Vec<usize>, mean: f64, std: f64) -> Self {
-        let n = Self::numel(&shape);
-        let data = rng::gen_random_vec(n, |r| {
-            let v: f64 = StandardNormal.sample(r);
-            v * std + mean
-        });
         Self::from_vec(data, shape).maybe_to_gpu()
     }
 
@@ -2177,16 +2157,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_randn() {
-        let _rng = rng_lock();
-        let t = CrowTensor::randn(vec![1000]);
-        assert_eq!(t.shape(), &[1000]);
-        // Mean should be near 0
-        let mean = t.mean();
-        assert!(mean.abs() < 0.2, "randn mean too far from 0: {mean}");
-    }
-
-    #[test]
     fn test_rand_range() {
         let _rng = rng_lock();
         let t = CrowTensor::rand_range(vec![100], 5.0, 10.0);
@@ -2260,19 +2230,6 @@ pub(crate) mod tests {
         crate::rng::set_seed(42);
         let b = CrowTensor::rand(vec![5]);
         assert_eq!(a.to_vec(), b.to_vec(), "same seed should give same values");
-        crate::rng::clear_seed();
-    }
-
-    #[test]
-    fn test_normal_shape() {
-        let _rng = seeded(99);
-        let t = CrowTensor::normal(vec![3, 2], 5.0, 0.1);
-        assert_eq!(t.shape, vec![3, 2]);
-        assert_eq!(t.to_vec().len(), 6);
-        // Values should be near 5.0
-        for v in t.to_vec() {
-            assert!((v - 5.0).abs() < 2.0, "expected near 5.0, got {}", v);
-        }
         crate::rng::clear_seed();
     }
 

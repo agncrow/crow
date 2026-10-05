@@ -16,8 +16,8 @@ The `math` module is built in — no file needed. It provides tensor creation, e
 | `onehot[targets, classes]` | A row per target, 1 in its class's column and 0 elsewhere: the targets a vector of whole numbers from 0 to classes − 1 (a target that is no class stops the program: `onehot: 7 is not a class of 3 (0 to 2)`) | [Math: tensors](../by-example/math.md) |
 | `diag[tensor]` | Extract diagonal from a 2D tensor | [Math: tensors](../by-example/math.md) |
 | `linspace[start, end, n]` | `n` evenly spaced values from `start` to `end` | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) |
-| `arange[start, end, step]` | Values from `start` to `end` by `step` | [Math: tensors](../by-example/math.md) |
-| `randn[d1, d2, ...]` | Normal random values (mean=0, std=1) | [Math: tensors](../by-example/math.md) |
+| `arange[start, end, step]` | Values from `start` to `end` by `step` | [Math: tensors](../by-example/math.md) · [The standard library's layer: `use sys`](../by-example/sys.md) |
+| `randn[d1, d2, ...]` | Normal random values (mean=0, std=1); written in Crow (see Random Numbers) | [Math: tensors](../by-example/math.md) |
 | `tensor[array]` | Convert an array to a tensor | [Math: tensors](../by-example/math.md) |
 
 ### Element-wise Operations
@@ -155,8 +155,8 @@ Negative indices are supported (wrap around from the end). The result tensor has
 | Function | Description | Example |
 |---|---|---|
 | `seed[n]` | Set the program's RNG seed: every later draw, tensors and the core `rand[]` alike, is repeatable and identical in both modes. Statements run in the order written, and a loop that draws runs in order (§14), so a seeded program draws the same numbers on every run | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) |
-| `randn[d1, d2, ...]` | Standard normal (mean=0, std=1) | [Math: tensors](../by-example/math.md) |
-| `normal[mean, std, d1, d2, ...]` | Normal with custom mean/std; a negative std stops the program | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
+| `randn[d1, d2, ...]` | Standard normal (mean=0, std=1): Box–Muller over two uniform draws a value, written in Crow (`src/modules/math.co`, design rule 20); a negative size stops the program | [Math: tensors](../by-example/math.md) |
+| `normal[mean, std, d1, d2, ...]` | Normal with custom mean/std: `mean + std · randn`, written in Crow; a negative std stops the program | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `uniform[low, high, d1, d2, ...]` | Uniform in [low, high): `uniform[0.0, 1.0, 2, 3]` is a 2×3 tensor of values in [0, 1) | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `poisson[lambda, d1, d2, ...]` | Poisson distribution | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `bernoulli[p, d1, d2, ...]` | Bernoulli (0.0 or 1.0) | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
