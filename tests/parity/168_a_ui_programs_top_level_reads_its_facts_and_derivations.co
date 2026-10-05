@@ -1,0 +1,22 @@
+--- A ui program's top level runs once as it starts, and reads its facts
+--- as declared, and a derivation computed from them, in both modes. (The
+--- compiled program had bound a fact as a Rust local only when a later
+--- fact's default read it, so `log[count]` after the declarations did
+--- not build; and a derivation read there was computed against the state
+--- of a view that was not in scope.)
+use ui
+
+count = 21
+twice = count * 2
+
+derive data
+    return count * 2
+
+view render[]
+    return p['`data` `twice`']
+
+page['/', render]
+log[count]
+log[twice]
+log[data]
+log['`data` and `twice`']

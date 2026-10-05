@@ -2542,7 +2542,7 @@ view render[]
     return stack[p['total `total`'], table[trades]]
 ```
 
-`derive name` opens a block with a `return`, like a view; it never takes parameters. The name reads as a variable anywhere a fact can be read — views, handlers, tests, other derivations — and assigning it is an error that says what to change instead. A derivation writes no fact: only handlers write.
+`derive name` opens a block with a `return`, like a view; it never takes parameters. The name reads as a variable anywhere a fact can be read — views, handlers, tests, other derivations, and the program's top level, once, as it starts, over the facts as declared (parity 168) — and assigning it is an error that says what to change instead. A derivation writes no fact: only handlers write.
 
 **What it reads is decided once, from the source**, and both execution modes obey the same sets: the facts and derivations it names (transitively through the functions it calls, and inside interpolated strings), `now[]` if it or a callee reads the clock, and the tables its query literals read. A derivation recomputes, on its next read, when
 

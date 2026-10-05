@@ -181,6 +181,10 @@ pub(crate) struct Emitter {
     /// is read and written in place, in the session's facts the body is
     /// handed (typed-values-design.md §6).
     pub(crate) facts_in_state: bool,
+    /// Emitting a page program's top level (main's statements after the
+    /// facts are set): a derivation read there is computed against the
+    /// state main holds, not a view's.
+    pub(crate) in_main: bool,
     pub(crate) view_mark: bool,
     pub(crate) closure_depth: usize,
     pub(crate) current_line: usize,
@@ -264,6 +268,7 @@ impl Emitter {
             emitting_dual: false,
             reactive_epilogue: None,
             facts_in_state: false,
+            in_main: false,
             view_mark: false,
             closure_depth: 0,
             current_line: 0,

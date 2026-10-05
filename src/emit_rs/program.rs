@@ -1444,6 +1444,13 @@ impl Emitter {
                     }
                 });
             }
+            // (and one the top level reads after the declarations —
+            // `log[count]` — as the interpreter reads the declared value)
+            visit_block(&main, &mut |e| {
+                if let Expr::Load(n, _) = e {
+                    read_later.insert(n.clone());
+                }
+            });
             if !self.reactive_vars.is_empty() {
                 self.needs_serde_json = true;
             }
@@ -1476,6 +1483,7 @@ impl Emitter {
             // later top-level assignment set its default above
             let (serve, other): (Vec<Stmt>, Vec<Stmt>) = main.into_iter().partition(|s| matches!(s, Stmt::Do(e) if call_name(e).as_deref() == Some("serve")));
             let other: Vec<Stmt> = other.into_iter().filter(|s| !matches!(s, Stmt::Store { .. })).collect();
+            self.in_main = true;
             self.emit_block(&other);
             if self.test_control {
                 // the harness's routes beside the pages, on the port the
@@ -1487,6 +1495,7 @@ impl Emitter {
                 }
             }
             self.emit_block(&serve);
+            self.in_main = false;
         } else {
             // facts outside a page program are plain values, set first as
             // the interpreter sets them

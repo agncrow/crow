@@ -52,6 +52,10 @@ impl Emitter {
             Expr::Derived(d, _) => {
                 if self.declared(d) {
                     d.clone()
+                } else if self.in_main {
+                    // the top level, once, as the program starts: the
+                    // derivation over the facts as declared
+                    format!("__derive_{}(&__crow_state)", d)
                 } else {
                     format!("__derive_{}(state)", d)
                 }
