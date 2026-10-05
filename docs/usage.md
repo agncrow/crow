@@ -194,7 +194,8 @@ need to read it, but it is there.
 
 | Variable | Effect |
 |---|---|
-| `CROW_BUILD_PROFILE=dev` | Compile checked programs without optimisation (the verification harnesses set it). |
+| `CROW_BUILD_PROFILE=dev` | Compile checked programs without optimisation (the verification harnesses set it). A dev build carries no debug info, which keeps the build caches small: on macOS every unit's object file is kept for it, and the harness caches had grown to hundreds of GB. |
+| `CROW_DEBUGINFO=1` | Compile the program with debug info — the dev profile as cargo defines it — into `.crow_build/target/debuginfo/`, its own directory, so the plain dev cache is neither rebuilt nor grown by it. For a Rust backtrace with file and line (`RUST_BACKTRACE=1`) when a program panics, which is a bug in Crow, never an error a Crow program can make. The first such build compiles the runtime's crates again with debug info; later ones are incremental. When the bug is fixed, unset it and delete that directory. |
 | `CROW_NO_DESCRIBE=1` | Do not ask the program's databases what each query returns at compile time; frame cells then read as text in the compiled program. |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | The credentials an `s3://` path is read and written with (without them an object is read unsigned, as a public bucket's is). |
 | `AWS_REGION` | The region of an `s3://` path's bucket (`us-east-1` when unset). |
