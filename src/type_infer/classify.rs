@@ -159,6 +159,10 @@ impl TypeContext {
                         if !self.registry.is_loaded("db") {
                             self.registry.load(std::sync::Arc::new(crate::modules::db::DbModule));
                         }
+                        // the drivers written in Crow, whose rows db's calls reach
+                        if !self.registry.is_loaded("db.clickhouse") {
+                            self.registry.load(std::sync::Arc::new(crate::modules::db::ClickhouseDriver));
+                        }
                     }
                     // web and its modules answer the names written in Crow
                     if (path == "web" || path.starts_with("web.")) && !self.registry.is_loaded("web") {

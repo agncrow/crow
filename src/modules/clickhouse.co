@@ -1,0 +1,383 @@
+--- `use db`'s ClickHouse driver, written in Crow on the sys layer (design
+--- rule 20, docs/db-in-crow-design.md): the HTTP interface — a statement
+--- POSTed with its id, the rows answered as RowBinary and decoded by the
+--- `frame_of_rowbinary` kernel, a frame inserted as RowBinary encoded by
+--- `rowbinary_of_frame`, `DESCRIBE` for the columns a statement answers,
+--- a statement a stop abandoned killed by its id, and the statements a
+--- dead run of this machine left running swept at connect. The handle,
+--- the pool of connections, a handler's scope and the reconnect are
+--- crow_db's (`crow_db::driven`), which calls these through its table of
+--- calls; the rows in the builtin table (src/table.rs) are the contract.
+--- The tests are the module's own: `crow test src/modules/clickhouse.co`.
+--- An error of kind `'sys'` says the connection is gone (crow_db opens
+--- another and tries once more); one of kind `'db'` is the server's word.
+use sys, frame
+
+--- a part of the URL, as the handle hands them: JSON of host, port,
+--- user, pass, database and tls
+fn part[parts, name]
+    j = json[parts]
+    if not j.ok or not has[j, name]
+        return ''
+    v = str[j[name]]
+    if not v.ok
+        return encode[j[name]]
+    return v
+
+fn port_of[parts]
+    j = json[parts]
+    if not j.ok or not has[j, 'port']
+        return 8123
+    p = int[j.port]
+    if not p.ok
+        return 8123
+    return p
+
+fn tls_of[parts]
+    j = json[parts]
+    if not j.ok or not has[j, 'tls']
+        return false
+    return encode[j.tls] eq 'true'
+
+fn shown[parts]
+    host = part[parts, 'host']
+    p = port_of[parts]
+    return '`host`:`p`'
+
+--- `ch_open[parts]`: a connection to the server's HTTP port, kept for the
+--- next statement; an error value of kind `'sys'` where none can be made
+fn ch_open[parts]
+    s = open[part[parts, 'host'], port_of[parts], tls_of[parts], 30.0]
+    if not s.ok
+        where = shown[parts]
+        return error['clickhouse connection failed: `s.reason` (`where`)', 'sys']
+    return s
+
+--- a statement's id, under which the server lists and kills it: this
+--- machine, this process, a draw
+fn fresh_id[]
+    m = machine[]
+    p = process[]
+    r = hex[random[4]]
+    return 'crow-`m`-`p`-`r`'
+
+--- the request's header lines: the authorization, where the URL names a user
+fn auth_lines[parts]
+    lines = []
+    user = part[parts, 'user']
+    if len[user] gt 0
+        secret = part[parts, 'pass']
+        token = base64[bytes['`user`:`secret`']]
+        lines = push[lines, 'authorization: Basic `token`']
+    return lines
+
+--- one statement POSTed, its answer: the server's status and body. The
+--- query id is noted on the connection for a cancel
+fn request_on[parts, s, statement, format, id]
+    database = encode[part[parts, 'database'], 'url']
+    path = '/?database=`database`&default_format=`format`&query_id=`id`'
+    note[s, id]
+    deadline = now[] + 600.0
+    a = exchange_on[s, shown[parts], 'POST', path, auth_lines[parts], bytes[statement], deadline, true]
+    note[s, '']
+    return a
+
+--- a statement that carries bytes after it (an insert's rows)
+fn request_bytes_on[parts, s, statement, data, id]
+    database = encode[part[parts, 'database'], 'url']
+    path = '/?database=`database`&query_id=`id`'
+    note[s, id]
+    deadline = now[] + 600.0
+    a = exchange_on[s, shown[parts], 'POST', path, auth_lines[parts], concat[bytes['`statement`\n'], data], deadline, true]
+    note[s, '']
+    return a
+
+--- the server's exception, its C++ frames dropped: the message, with the
+--- "In scope SELECT …" tail it carries, its doubled prefix folded
+fn server_error[body]
+    message = body
+    for mark in ['\n0. Poco::Exception', ' 0. Poco::Exception', '\n0. ']
+        message = split[message, mark][0]
+    return replace[trim[message], 'DB::Exception: DB::Exception: ', 'DB::Exception: ']
+
+--- `?` placeholders outside string literals filled from the parameters
+--- (JSON, as the handle hands them): NULL, numbers, 1 or 0 for a truth,
+--- text quoted with its quotes and backslashes escaped; a count that
+--- does not fit the statement is an error of kind `'db'`
+fn substituted[sql, params]
+    given = json[params]
+    if not given.ok or type[given] ne 'array'
+        return error['SQL params must be an array', 'db']
+    count = len[given]
+    out = ''
+    idx = 0
+    in_string = false
+    escaping = false
+    for c in split[sql, '']
+        if len[c] gt 0
+            if escaping
+                out = '`out``c`'
+                escaping = false
+            else
+                if c eq '\''
+                    in_string = not in_string
+                    out = '`out``c`'
+                else
+                    if c eq '\\' and in_string
+                        out = '`out``c`'
+                        escaping = true
+                    else
+                        if c eq '?' and not in_string
+                            if idx gte count
+                                return error['SQL has more ? placeholders than params (`count` given)', 'db']
+                            item = given[idx]
+                            filled = 'NULL'
+                            if item.ok
+                                made = literal[item]
+                                if not made.ok
+                                    return error[made.reason, 'db']
+                                filled = made
+                            out = '`out``filled`'
+                            idx = idx + 1
+                        else
+                            out = '`out``c`'
+    if idx ne count
+        return error['SQL has `idx` ? placeholders but `count` params were given', 'db']
+    return out
+
+--- one parameter as the statement's literal (a NULL never reaches it)
+fn literal[p]
+    kind = type[p]
+    if kind eq 'bool'
+        if encode[p] eq 'true'
+            return '1'
+        return '0'
+    if kind eq 'int' or kind eq 'float'
+        return encode[p]
+    if kind eq 'str'
+        text = str[p]
+        if not text.ok
+            return error['cannot bind the parameter', 'db']
+        quoted = ''
+        for c in split[text, '']
+            if len[c] gt 0
+                if c eq '\''
+                    quoted = '`quoted`\\\''
+                else
+                    if c eq '\\'
+                        quoted = '`quoted`\\\\'
+                    else
+                        quoted = '`quoted``c`'
+        return '\'`quoted`\''
+    shown = encode[p]
+    return error['cannot bind `shown` as a ClickHouse param — use a string or number', 'db']
+
+--- a kind the compiler knows, from a ClickHouse type: an int, a float, a
+--- bool, a datetime or text, `?` after one that can hold NULL
+fn kind_of[t]
+    inner = trim[t]
+    nullable = false
+    stripping = true
+    while stripping
+        stripping = false
+        if starts[inner, 'LowCardinality(']
+            inner = slice[inner, 15, len[inner] - 1]
+            stripping = true
+        if starts[inner, 'Nullable(']
+            inner = slice[inner, 9, len[inner] - 1]
+            if inner ne 'Nothing'
+                nullable = true
+            stripping = true
+    kind = 'str'
+    if starts[inner, 'Int'] or starts[inner, 'UInt']
+        kind = 'int'
+    if starts[inner, 'Float'] or starts[inner, 'Decimal']
+        kind = 'float'
+    if inner eq 'Bool'
+        kind = 'bool'
+    if starts[inner, 'Date']
+        kind = 'datetime'
+    if nullable
+        return '`kind`?'
+    return kind
+
+--- `ch_query[parts, stream, sql, params]`: the statement run, its rows as a
+--- frame typed as the server names each column
+fn ch_query[parts, s, sql, params]
+    statement = substituted[sql, params]
+    if not statement.ok
+        return error[statement.reason, 'db']
+    a = request_on[parts, s, statement, 'RowBinaryWithNamesAndTypes', fresh_id[]]
+    if not a.ok
+        return error['clickhouse query error: `a.reason`', 'sys']
+    if a.status ne 200
+        said = server_error[text[a.body, '?']]
+        return error['clickhouse query error: `said`', 'db']
+    f = frame_of_rowbinary[a.body]
+    if not f.ok
+        return error['clickhouse query error: `f.reason`', 'db']
+    return f
+
+--- `ch_exec[parts, stream, sql, params]`: the statement run; 0, since
+--- ClickHouse reports no count of rows
+fn ch_exec[parts, s, sql, params]
+    statement = substituted[sql, params]
+    if not statement.ok
+        return error[statement.reason, 'db']
+    a = request_on[parts, s, statement, 'TabSeparated', fresh_id[]]
+    if not a.ok
+        return error['clickhouse exec error: `a.reason`', 'sys']
+    if a.status ne 200
+        said = server_error[text[a.body, '?']]
+        return error['clickhouse exec error: `said`', 'db']
+    return 0
+
+--- the table's columns and types, as DESCRIBE says them
+fn described[parts, s, what]
+    a = request_on[parts, s, 'DESCRIBE TABLE `what`', 'TabSeparated', fresh_id[]]
+    if not a.ok
+        return error['clickhouse describe error: `a.reason`', 'sys']
+    if a.status ne 200
+        said = server_error[text[a.body, '?']]
+        return error['clickhouse describe error: `said`', 'db']
+    return text[a.body, '?']
+
+--- `ch_insert[parts, stream, table, frame]`: the frame's rows inserted as
+--- RowBinary, each column encoded as the table's type for it; the count
+fn ch_insert[parts, s, table, f]
+    if len[f] eq 0
+        return 0
+    said = described[parts, s, table]
+    if not said.ok
+        return said
+    types = []
+    for name in f.columns
+        found = ''
+        for line in split[trim[said], '\n']
+            cells = split[line, '\t']
+            if len[cells] gt 1 and cells[0] eq name
+                found = cells[1]
+        if len[found] eq 0
+            return error['clickhouse insert error: table `table` has no column `name`', 'db']
+        types = push[types, found]
+    data = rowbinary_of_frame[f, types]
+    if not data.ok
+        return error['clickhouse insert error: `data.reason`', 'db']
+    names = join[f.columns, ', ']
+    a = request_bytes_on[parts, s, 'INSERT INTO `table` (`names`) FORMAT RowBinary', data, fresh_id[]]
+    if not a.ok
+        return error['clickhouse insert error: `a.reason`', 'sys']
+    if a.status ne 200
+        why = server_error[text[a.body, '?']]
+        return error['clickhouse insert error: `why`', 'db']
+    return len[f]
+
+--- `ch_describe[parts, stream, sql]`: the columns the statement answers,
+--- without running it — a frame of `name` and `kind`, a kind `?` after it
+--- where the column can hold NULL (its parameters stand in as NULL)
+fn ch_describe[parts, s, sql]
+    nulls = '['
+    n = 0
+    in_string = false
+    for c in split[sql, '']
+        if c eq '\''
+            in_string = not in_string
+        if c eq '?' and not in_string
+            if n gt 0
+                nulls = '`nulls`,'
+            nulls = '`nulls`null'
+            n = n + 1
+    nulls = '`nulls`]'
+    filled = substituted[sql, nulls]
+    if not filled.ok
+        return error[filled.reason, 'db']
+    said = described[parts, s, '(`filled`)']
+    if not said.ok
+        return said
+    names = []
+    kinds = []
+    for line in split[trim[said], '\n']
+        cells = split[line, '\t']
+        if len[cells] gt 1
+            names = push[names, cells[0]]
+            kinds = push[kinds, kind_of[cells[1]]]
+    if len[names] eq 0
+        return error['clickhouse describe: unexpected DESCRIBE output', 'db']
+    out = frame.new[]
+    out = with[out, 'name', names]
+    out = with[out, 'kind', kinds]
+    return out
+
+--- `ch_cancel[parts, stream]`: the statement the connection was running
+--- stopped on the server, by the id noted on it, from a connection of its
+--- own (the one it ran on is in the middle of an answer)
+fn ch_cancel[parts, s]
+    id = noted[s]
+    if len[id] eq 0
+        return 0
+    other = ch_open[parts]
+    if not other.ok
+        return other
+    a = request_on[parts, other, 'KILL QUERY WHERE query_id = \'`id`\' ASYNC', 'TabSeparated', fresh_id[]]
+    close[other]
+    if not a.ok
+        return error['clickhouse cancel error: `a.reason`', 'sys']
+    return 0
+
+--- `ch_check[parts, stream]`: the server answers (`SELECT 1`), and, for a
+--- server on this machine, the statements a dead run of this machine left
+--- running are stopped — a rebuilt app does not inherit its predecessor's
+--- queries
+fn ch_check[parts, s]
+    a = request_on[parts, s, 'SELECT 1', 'TabSeparated', fresh_id[]]
+    if not a.ok
+        return error['clickhouse ping failed: `a.reason`', 'sys']
+    if a.status ne 200
+        said = server_error[text[a.body, '?']]
+        return error['clickhouse ping failed: `said`', 'db']
+    host = part[parts, 'host']
+    if host eq 'localhost' or host eq '127.0.0.1' or host eq '::1'
+        sweep[parts, s]
+    return 0
+
+--- the statements a process of this machine that is gone left running,
+--- stopped: each process named in a query id, when it is not alive
+fn sweep[parts, s]
+    me = machine[]
+    mine = process[]
+    listed = request_on[parts, s, 'SELECT DISTINCT query_id FROM system.processes WHERE query_id LIKE \'crow-`me`-%\'', 'TabSeparated', fresh_id[]]
+    if not listed.ok or listed.status ne 200
+        return 0
+    stopped = []
+    for line in split[trim[text[listed.body, '?']], '\n']
+        pieces = split[line, '-']
+        if len[pieces] gte 4
+            owner = int[pieces[len[pieces] - 2]]
+            if owner.ok and owner ne mine and not alive[owner] and not contains[stopped, owner]
+                stopped = push[stopped, owner]
+    for owner in stopped
+        where = shown[parts]
+        log['crow db: stopping queries a finished run (process `owner`) left running on `where`']
+        request_on[parts, s, 'KILL QUERY WHERE query_id LIKE \'crow-`me`-`owner`-%\' ASYNC', 'TabSeparated', fresh_id[]]
+    return 0
+
+test the_statement_takes_its_parameters_as_literals[]
+    assert[substituted['SELECT * FROM t WHERE s = ? AND n = ? AND f = ? AND b = ?', '["VIVK", 42, 1.5, true]'] eq 'SELECT * FROM t WHERE s = \'VIVK\' AND n = 42 AND f = 1.5 AND b = 1']
+    assert[substituted['SELECT ?', '[null]'] eq 'SELECT NULL']
+    assert[substituted['SELECT * FROM t WHERE s = ?', '["x\'; DROP TABLE t; --"]'] eq 'SELECT * FROM t WHERE s = \'x\\\'; DROP TABLE t; --\'']
+    assert[substituted['SELECT ?', '["a\\\\b"]'] eq 'SELECT \'a\\\\b\'']
+    assert[substituted['SELECT \'a?b\', ?', '[7]'] eq 'SELECT \'a?b\', 7']
+    assert[substituted['? ?', '[1]'].reason eq 'SQL has more ? placeholders than params (1 given)']
+    assert[substituted['?', '[1, 2]'].reason eq 'SQL has 1 ? placeholders but 2 params were given']
+    assert[not substituted['SELECT ?', '[[1, 2]]'].ok]
+
+test the_servers_words_and_kinds_are_read[]
+    assert[server_error['Code: 60. DB::Exception: DB::Exception: Table x does not exist. (UNKNOWN_TABLE) (version 25.7)\n0. Poco::Exception::Exception(...) @ 0x1\n1. DB::Exception'] eq 'Code: 60. DB::Exception: Table x does not exist. (UNKNOWN_TABLE) (version 25.7)']
+    assert[kind_of['Nullable(Float64)'] eq 'float?' and kind_of['LowCardinality(Nullable(String))'] eq 'str?']
+    assert[kind_of['UInt64'] eq 'int' and kind_of['DateTime64(3)'] eq 'datetime' and kind_of['Bool'] eq 'bool']
+    assert[kind_of['Nullable(Nothing)'] eq 'str' and kind_of['Array(Nullable(Float64))'] eq 'str']
+    parts = '{"host":"localhost","port":8123,"user":"default","pass":"","database":"d","tls":false}'
+    assert[part[parts, 'host'] eq 'localhost' and port_of[parts] eq 8123 and shown[parts] eq 'localhost:8123']
+    assert[auth_lines[parts] eq ['authorization: Basic ZGVmYXVsdDo=']]
+    assert[len[auth_lines['{"host":"h","port":8123,"user":"","pass":"","database":"d","tls":false}']] eq 0]
+    assert[starts[fresh_id[], 'crow-']]

@@ -26,10 +26,10 @@ pub mod sqlite;
 #[cfg(feature = "postgres")]
 pub mod postgres;
 
-#[cfg(feature = "clickhouse")]
-pub mod clickhouse;
-
 pub mod migrate;
+
+/// The handle for a driver written in Crow: ClickHouse, Postgres.
+pub mod driven;
 
 pub mod schema;
 /// What a recording kept, and the replay that answers from it.
@@ -38,7 +38,7 @@ pub mod fixtures;
 /// Resolves when the work under `flag` — or the whole program — should
 /// stop: a driver that can stop a running query on its server races the
 /// query against this and stops it.
-#[cfg(any(feature = "clickhouse", feature = "postgres"))]
+#[cfg(feature = "postgres")]
 pub(crate) async fn stop_requested(flag: Option<Arc<std::sync::atomic::AtomicBool>>) {
     loop {
         if crow_runtime::cancel::stopped(&flag) {
@@ -146,7 +146,7 @@ pub trait CrowDb: Send + Sync {
 
 /// A backend's statements outside any transaction: what a backend without
 /// a schema lock reconciles through.
-struct Unlocked<'a, D: ?Sized>(&'a D);
+pub(crate) struct Unlocked<'a, D: ?Sized>(&'a D);
 
 impl<D: CrowDb + ?Sized> DbTx for Unlocked<'_, D> {
     fn query(&self, sql: &str, params: &[serde_json::Value]) -> Result<CrowFrame, String> {
@@ -455,17 +455,8 @@ fn open_handle(url: &str, pool_size: Option<usize>) -> Result<DbHandle, String> 
             Err("PostgreSQL support not enabled — compile with feature 'postgres'".into())
         }
     } else if url.starts_with("clickhouse://") {
-        #[cfg(feature = "clickhouse")]
-        {
-            let _ = pool_size; // the driver keeps its own pool (clickhouse.rs, POOL)
-            let db = clickhouse::CrowClickhouseDb::connect(url)?;
-            Ok(DbHandle::new(db))
-        }
-        #[cfg(not(feature = "clickhouse"))]
-        {
-            let _ = pool_size;
-            Err("ClickHouse support not enabled — compile with feature 'clickhouse'".into())
-        }
+        // the driver written in Crow (docs/db-in-crow-design.md)
+        Ok(DbHandle::new(driven::Driven::open(url, pool_size)?))
     } else {
         Err(format!("unknown database URL scheme: {}", url))
     }

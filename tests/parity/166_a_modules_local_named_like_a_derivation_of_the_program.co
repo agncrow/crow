@@ -1,0 +1,23 @@
+--- A standard module written in Crow has locals of its own: one named
+--- like a derivation of the program's is still the module's local, and
+--- assigning it there is no assignment of the derivation (core's `read`
+--- has `data`; the ClickHouse driver's `ch_insert` has `found`, which an
+--- app derives — every part of that app was refused, in both modes). A
+--- program derives what it likes.
+use ui
+
+count = 21
+
+derive data
+    return count * 2
+
+view render[]
+    return p['`data`']
+
+test[]
+    data eq 42
+
+page['/', render]
+kept = write['/tmp/crow_parity_166_note.txt', 'hello\n']
+log[kept.ok]
+log[read['/tmp/crow_parity_166_note.txt']]

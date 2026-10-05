@@ -16,6 +16,7 @@ fn add_c[tx]
 
 transact[conn, add_c]
 log[len[query[conn, 'SELECT k FROM t']]]
+log[describe[conn, 'SELECT k, v FROM t']]
 
 --- bulk-load a frame, and apply .sql migrations from a directory
 use frame
@@ -35,6 +36,13 @@ rm['ex_migrations']
 ['a', 'b']
 [1, 2]
 3
+name  kind
+ str   str
+----  ----
+   k   str
+   v   int
+
+[2 rows x 2 cols]
 2
 5
 1

@@ -14,7 +14,7 @@ Feature-gated backends via Cargo feature flags:
 |---|---|---|
 | `sqlite` | `rusqlite` | File-based |
 | `postgres` | `tokio-postgres` + `deadpool-postgres` | TCP, COPY protocol |
-| `clickhouse` | `klickhouse` | Native RowBinary |
+| `clickhouse` | written in Crow (`src/modules/clickhouse.co`, over `sys`) | HTTP interface, RowBinary |
 
 `use db` in Crow source triggers `needs_crow_db` in the transpiler, adding the crate to the generated `Cargo.toml`.
 
@@ -113,7 +113,7 @@ SQL parameters are passed as `serde_json::Value` arrays — the Crow interpreter
 |---|---|---|
 | SQLite | ✅ Done | Full support: query, exec, insert, transact, migrate |
 | PostgreSQL | ✅ Done | `tokio-postgres` + `deadpool-postgres`. Connection pooling, parameterized queries ($1/$2), transactions, bulk insert, migrations. Tested against PostgreSQL on port 5432. |
-| ClickHouse | ✅ Done | `klickhouse` native TCP protocol (port 9000). Streaming block-based queries, columnar-to-frame conversion, bulk insert. Transactions correctly refused (OLAP engine). Parameterized queries not supported (use string interpolation). Tested against ClickHouse on port 9000. |
+| ClickHouse | ✅ Done | Written in Crow over the HTTP interface (port 8123; docs/db-in-crow-design.md): statements by id, rows as RowBinary decoded by a kernel, inserts as RowBinary encoded by the table's types, `DESCRIBE` for describe, a kept connection per statement at a time, cancel by id, a dead run's statements swept at connect. Transactions correctly refused (OLAP engine). |
 
 ### Interpreter
 

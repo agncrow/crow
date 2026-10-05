@@ -16,8 +16,8 @@ conn = connect['sqlite://data.db']
 --- PostgreSQL (default pool: 10 connections)
 conn = connect['postgres://user:pass@host/mydb']
 
---- ClickHouse
-conn = connect['http://localhost:8123/default']
+--- ClickHouse (its HTTP interface: port 8123 when none is given)
+conn = connect['clickhouse://default@localhost:8123/default']
 
 --- Custom pool size
 conn = connect['postgres://user:pass@host/mydb', 20]
@@ -27,8 +27,11 @@ conn = connect['postgres://user:pass@host/mydb', 20]
 |---|---|---|
 | `connect[url]` | Open a database connection (pool) with default pool size, checking its database holds the tables the program declares on it (The schema a program declares, below) | [Databases: `use db`](../by-example/db.md) · [Web: responses and submodules](../by-example/web-more.md) · [Working with Databases](../ch11-00-databases.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [Derivations](../ch12-08-derive.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
 | `connect[url, pool_size]` | Open a database connection (pool) with custom pool size; a pool size of 0 is the default | [Databases: `use db`](../by-example/db.md) · [Web: responses and submodules](../by-example/web-more.md) · [Working with Databases](../ch11-00-databases.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [Derivations](../ch12-08-derive.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
+| `describe[conn, sql]` | The columns a statement answers, without running it: a frame of `name` and `kind` (`int`, `float`, `str`, `bool`, `datetime`, with `?` after a kind where the column can hold NULL); a `?` placeholder stands in as NULL. What the compiler asks at build time (Typed cells, below), asked by the program | [Databases: `use db`](../by-example/db.md) |
 
-A connection is not the program's lifetime. When the server closes it — ClickHouse drops an idle native connection after an hour, and a restart drops every one — the next query reopens it and runs, and the server log says so; Postgres and ClickHouse connections are pooled, so queries from different sessions run side by side, and sqlite is a file. Every `connect` to one Postgres or ClickHouse URL in a program is one handle: parts that each connect to the same server share its pool.
+**The ClickHouse driver is written in Crow** (`src/modules/clickhouse.co`, design rule 20, docs/db-in-crow-design.md), over its HTTP interface: `clickhouse://user:pass@host:port/database` names that interface, port 8123 when none is given; the native protocol's port, 9000, is no longer spoken, and a URL that names it is read as the HTTP port, which the log says once. Each statement is sent with an id (`crow-<machine>-<process>-<draw>`), its rows come back as RowBinary and are decoded by the `frame_of_rowbinary` kernel, typed as the server names each column; an insert goes as RowBinary encoded by the table's types; a statement a stop abandoned is killed by its id; at connect, the statements a dead run of this machine left running are swept. The handle, its pool of kept connections (four, since ClickHouse runs one query on every core already), the reconnect and the cancel are `crow_db`'s, which calls the driver through a table of calls the program registers (the compiled program's generated functions; the interpreter's child over the program's functions). A program never imports the driver: `use db` carries the drivers its connection URLs name.
+
+A connection is not the program's lifetime. When the server closes it — ClickHouse drops an idle connection after its keep-alive, and a restart drops every one — the next query reopens it and runs, and the server log says so; Postgres and ClickHouse connections are pooled, so queries from different sessions run side by side, and sqlite is a file. Every `connect` to one Postgres or ClickHouse URL in a program is one handle: parts that each connect to the same server share its pool.
 
 **A query nobody waits for is stopped.** A background recompute whose session has gone, or whose inputs moved while it ran, stops its query on the server (ClickHouse and Postgres); so does every query in flight when a served program is told to stop — `crow stop`, a rebuild, Ctrl-C. A program killed outright cannot stop anything; the next run that connects to a ClickHouse server on the same machine stops the queries the dead run left behind, and the log says so. Each ClickHouse statement carries a leading comment naming the machine, the process and a number, which is how it is found again.
 
@@ -68,12 +71,12 @@ log[n]
 
 Uses backend-specific protocols for maximum performance:
 - **PostgreSQL:** COPY protocol
-- **ClickHouse:** Native RowBinary
+- **ClickHouse:** RowBinary over the HTTP interface, encoded by the table's types (`DESCRIBE` first)
 - **SQLite:** Batched prepared statements in a transaction
 
 ```
 use db
-conn = connect['http://localhost:8123/default']
+conn = connect['clickhouse://localhost/default']
 insert[conn, 'events', events_frame]
 ```
 
@@ -146,7 +149,7 @@ CREATE TABLE IF NOT EXISTS labels (card INTEGER, name TEXT);
 |---|---|---|---|
 | SQLite | 1 | File-based, concurrent writes lock | |
 | PostgreSQL | 10 | Standard for web/data apps | |
-| ClickHouse | 4 | Native protocol; opened as queries need them. One query already runs on every core of the server, so more at once contend rather than help | |
+| ClickHouse | 4 | The HTTP interface, kept alive; opened as queries need them. One query already runs on every core of the server, so more at once contend rather than help | |
 
 
 

@@ -102,6 +102,7 @@ impl Emitter {
             "web.auth" => std::sync::Arc::new(crate::modules::web::AuthModule),
             "web.ws" => std::sync::Arc::new(crate::modules::web::WsModule),
             "web.mail" => std::sync::Arc::new(crate::modules::web::MailModule),
+            "db.clickhouse" => std::sync::Arc::new(crate::modules::db::ClickhouseDriver),
             _ => return,
         };
         self.registry.load(m);
@@ -143,6 +144,8 @@ impl Emitter {
                     self.needs_crow_runtime = true;
                     self.db_features.insert("sqlite".to_string());
                     self.modules.insert("db".to_string());
+                    // the drivers written in Crow, whose rows the program carries
+                    self.load_module("db.clickhouse");
                 }
                 "ui" => {
                     self.needs_ui = true;
@@ -453,8 +456,41 @@ impl Emitter {
     /// Every function the compiled program can run: what its top level,
     /// its facts, its derivations and its views and handlers call, name or
     /// hand on, and what those call in turn.
+    /// The backends whose driver written in Crow the program carries, by
+    /// the functions it has (docs/db-in-crow-design.md).
+    pub(crate) fn drivers_carried(&self) -> Vec<(&'static str, &'static str)> {
+        [("clickhouse", "db.clickhouse")].iter().filter(|(_, m)| crate::table::ROWS.iter().any(|r| r.module == *m && r.is_crow() && self.fns.contains_key(&crate::table::crow_fn_name(r)))).copied().collect()
+    }
+
+    /// The table of calls crow_db::driven calls a driver through, each the
+    /// generated function of the driver's row: a result's failure of kind
+    /// `sys` says the connection is gone.
+    fn driver_glue(&mut self, backend: &str) {
+        let prefix = match backend {
+            "clickhouse" => "_db_clickhouse_ch",
+            _ => return,
+        };
+        let failed = "Err(crow_db::driven::Failure { reason: _r.reason, lost: _r.kind == \"sys\" })";
+        self.line(&format!("struct __CrowDriver{};", backend));
+        self.line(&format!("impl crow_db::driven::Calls for __CrowDriver{} {{", backend));
+        self.line(&format!("    fn open(&self, parts: &str) -> Result<crow_runtime::sys::CrowStream, crow_db::driven::Failure> {{ let _r = {p}_open(parts.to_string()); if _r.ok {{ Ok(_r.value) }} else {{ {f} }} }}", p = prefix, f = failed));
+        self.line(&format!("    fn check(&self, parts: &str, s: &crow_runtime::sys::CrowStream) -> Result<(), crow_db::driven::Failure> {{ let _r = {p}_check(parts.to_string(), s.clone()); if _r.ok {{ Ok(()) }} else {{ {f} }} }}", p = prefix, f = failed));
+        self.line(&format!("    fn query(&self, parts: &str, s: &crow_runtime::sys::CrowStream, sql: &str, params: &str) -> Result<crow_runtime::frame::CrowFrame, crow_db::driven::Failure> {{ let _r = {p}_query(parts.to_string(), s.clone(), sql.to_string(), params.to_string()); if _r.ok {{ Ok(_r.value) }} else {{ {f} }} }}", p = prefix, f = failed));
+        self.line(&format!("    fn exec(&self, parts: &str, s: &crow_runtime::sys::CrowStream, sql: &str, params: &str) -> Result<i64, crow_db::driven::Failure> {{ let _r = {p}_exec(parts.to_string(), s.clone(), sql.to_string(), params.to_string()); if _r.ok {{ Ok(_r.value) }} else {{ {f} }} }}", p = prefix, f = failed));
+        self.line(&format!("    fn insert(&self, parts: &str, s: &crow_runtime::sys::CrowStream, table: &str, frame: &crow_runtime::frame::CrowFrame) -> Result<i64, crow_db::driven::Failure> {{ let _r = {p}_insert(parts.to_string(), s.clone(), table.to_string(), frame.clone()); if _r.ok {{ Ok(_r.value) }} else {{ {f} }} }}", p = prefix, f = failed));
+        self.line(&format!("    fn describe(&self, parts: &str, s: &crow_runtime::sys::CrowStream, sql: &str) -> Result<crow_runtime::frame::CrowFrame, crow_db::driven::Failure> {{ let _r = {p}_describe(parts.to_string(), s.clone(), sql.to_string()); if _r.ok {{ Ok(_r.value) }} else {{ {f} }} }}", p = prefix, f = failed));
+        self.line(&format!("    fn cancel(&self, parts: &str, s: &crow_runtime::sys::CrowStream) -> Result<(), crow_db::driven::Failure> {{ let _r = {p}_cancel(parts.to_string(), s.clone()); if _r.ok {{ Ok(()) }} else {{ {f} }} }}", p = prefix, f = failed));
+        self.line("}");
+        self.line("");
+    }
+
     fn reached_functions(&self) -> BTreeSet<String> {
         let mut todo: Vec<String> = Vec::new();
+        // a database driver written in Crow is called from Rust, not the
+        // program: every row of it is reached
+        for (_, module) in self.drivers_carried() {
+            todo.extend(crate::table::ROWS.iter().filter(|r| r.module == module && r.is_crow()).map(crate::table::crow_fn_name));
+        }
         let note = |e: &Expr, todo: &mut Vec<String>| match e {
             Expr::Call { target: Target::User(n), .. } | Expr::FnRef(n, _) => todo.push(n.clone()),
             Expr::Deferred { name, .. } => todo.push(name.clone()),
@@ -655,6 +691,9 @@ impl Emitter {
         if self.needs_crow_db {
             self.line("#[allow(unused_imports)]");
             self.line("use crow_db::DbHandle;");
+            for (backend, _) in self.drivers_carried() {
+                self.driver_glue(backend);
+            }
         }
         self.line("");
 
@@ -1339,6 +1378,11 @@ impl Emitter {
         self.line("    crow_runtime::stops::install_hook();");
         if let (true, Some(mode)) = (self.needs_crow_db, self.schema_mode) {
             self.line(&format!("    crow_db::schema::set_mode(crow_db::schema::Mode::{:?});", mode));
+        }
+        // the drivers written in Crow the program carries, registered for
+        // crow_db to call (docs/db-in-crow-design.md)
+        for (backend, _) in self.drivers_carried() {
+            self.line(&format!("    crow_db::driven::register({:?}, std::sync::Arc::new(__CrowDriver{}));", backend, backend));
         }
         if self.needs_crow_web {
             // the runtime's threads compute a page's derivations and run its

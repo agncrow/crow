@@ -154,6 +154,10 @@ log[fmt[lgamma[5.0], decimals = 3]]
 log[shaped[arange[0, 6, 1], push[push[[], 2], 3]]]
 log[frame_of_rowbinary[unbase64['AgFuAXgGVUludDY0EU51bGxhYmxlKEZsb2F0NjQpAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAE=']]]
 log[frame_of_postgres[unbase64['VAAAAC4AAm4AAAAAAAAAAAAAFwAE/////wAAcwAAAAAAAAAAAAAZ////////AABEAAAAEAACAAAAATEAAAABYUQAAAAPAAIAAAABMv////9DAAAADVNFTEVDVCAyAFoAAAAFSQ==']]]
+log[machine[] ne '']
+log[process[] gt 0]
+log[alive[process[]]]
+log[len[rowbinary_of_frame[frame_of_csv['n,s\n1,a\n2,b\n'], push[push[[], 'UInt64'], 'String']]]]
 ```
 
 ```text
@@ -188,6 +192,10 @@ int  str
 2  nan
 
 [2 rows x 2 cols]
+true
+true
+true
+20
 ```
 
 The protocol itself reaches a host — one exchange, a reader's fetch with its options and redirects, an S3 object put signed with the environment's credentials — so these lines are not run here:
@@ -211,3 +219,17 @@ secured = secure[relay, 'smtp.example.com']
 ```
 
 Reference: spec section 13 (sys).
+
+A driver written in Crow keeps a connection and sends statements on it
+(docs/db-in-crow-design.md): a note on the connection for a cancel later,
+one request on the connection already open, kept alive for the next.
+
+```crow,norun
+use sys
+
+s = open['db.example.com', 8123, false, 5.0]
+note[s, 'crow-local-4242-1a2b']
+log[noted[s]]
+a = exchange_on[s, 'db.example.com:8123', 'POST', '/?default_format=TabSeparated', [], bytes['SELECT 1'], now[] + 30.0, true]
+log[a.status]
+```

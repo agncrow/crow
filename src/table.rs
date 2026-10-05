@@ -1673,6 +1673,21 @@ pub static ROWS: &[Row] = &[
     row!("sys.gammainc", "sys", "gammainc", crow_runtime::stats::gammainc, (Float, Float) -> Float, never),
     row!("sys.lgamma", "sys", "lgamma", crow_runtime::stats::lgamma, (Float) -> Float, never),
     row!("sys.shaped", "sys", "shaped", crow_runtime::math::shaped, (Tensor, Ints) -> Tensor, stops),
+    row!("sys.note", "sys", "note", crow_runtime::sys::note, (Stream, Str) -> Unit, never),
+    row!("sys.noted", "sys", "noted", crow_runtime::sys::noted, (Stream) -> Str, never),
+    row!("sys.machine", "sys", "machine", crow_runtime::sys::machine, () -> Str, never),
+    row!("sys.process", "sys", "process", crow_runtime::sys::process, () -> Int, never),
+    row!("sys.alive", "sys", "alive", crow_runtime::sys::alive, (Int) -> Bool, never),
+    row!("sys.rowbinary_of_frame", "sys", "rowbinary_of_frame", crow_runtime::sys::rowbinary_of_frame, (Frame, Texts) -> Bytes, value "frame"),
+    // the ClickHouse driver written in Crow (src/modules/clickhouse.co),
+    // as crow_db::driven calls it (docs/db-in-crow-design.md)
+    crow!("db.clickhouse.ch_open", "db.clickhouse", "ch_open", (Encoded) -> Stream, value "db"),
+    crow!("db.clickhouse.ch_check", "db.clickhouse", "ch_check", (Encoded, Stream) -> Int, value "db"),
+    crow!("db.clickhouse.ch_query", "db.clickhouse", "ch_query", (Encoded, Stream, Str, Encoded) -> Frame, value "db"),
+    crow!("db.clickhouse.ch_exec", "db.clickhouse", "ch_exec", (Encoded, Stream, Str, Encoded) -> Int, value "db"),
+    crow!("db.clickhouse.ch_insert", "db.clickhouse", "ch_insert", (Encoded, Stream, Str, Frame) -> Int, value "db"),
+    crow!("db.clickhouse.ch_describe", "db.clickhouse", "ch_describe", (Encoded, Stream, Str) -> Frame, value "db"),
+    crow!("db.clickhouse.ch_cancel", "db.clickhouse", "ch_cancel", (Encoded, Stream) -> Int, value "db"),
     // a mailer's fields, and a connection secured (SMTP's STARTTLS)
     row!("sys.mailer_field", "sys", "mailer_field", crow_runtime::sys::mailer_field, (Mailer, Str) -> Str, stops),
     row!("sys.secure", "sys", "secure", crow_runtime::sys::secure, (Stream, Str) -> Stream, value "sys"),
@@ -1694,6 +1709,7 @@ pub static ROWS: &[Row] = &[
     // and answered; a remote source read with a reader's options, or an S3
     // object; bytes written to an S3 object
     crow!("sys.exchange", "sys", "exchange", (Str, Str, Strs, Bytes, Float) -> Answer, value "sys"),
+    crow!("sys.exchange_on", "sys", "exchange_on", (Stream, Str, Str, Str, Strs, Bytes, Float, Bool) -> Answer, value "sys"),
     crow!("sys.fetch", "sys", "fetch", (Str, TextMap, TextMap, Float) -> Answer, value "sys"),
     crow!("sys.put", "sys", "put", (Str, Bytes) -> Str, value "sys"),
     crow!("sys.format_of", "sys", "format_of", (Str) -> Str, never),
@@ -2214,7 +2230,7 @@ pub const TO_MOVE: &[&str] = &[];
 /// which the session layer performs (a connection, a transaction, a write
 /// held to the handler's commit).
 #[cfg_attr(not(test), allow(dead_code))] // read by the drift test
-pub const MODULE_OWN_FORM: &[(&str, &str)] = &[("db", "connect"), ("db", "query"), ("db", "exec"), ("db", "insert"), ("db", "migrate"), ("db", "transact")];
+pub const MODULE_OWN_FORM: &[(&str, &str)] = &[("db", "connect"), ("db", "query"), ("db", "exec"), ("db", "insert"), ("db", "migrate"), ("db", "transact"), ("db", "describe")];
 
 /// The module functions still written twice, each to become a row (docs/
 /// bug-classes.md §4); like TO_MOVE, it only shrinks.

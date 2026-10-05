@@ -1626,7 +1626,11 @@ impl<'a> Lowerer<'a> {
                 vec![Stmt::Line(*n)]
             }
             S::Assign { name, value } => {
-                if self.ctx.derives.contains(name) {
+                // (a standard module's function, inlined, has locals of its
+                // own: one named like a derivation of the program's is still
+                // its local — the ClickHouse driver's `found`, which finch
+                // derives)
+                if self.ctx.derives.contains(name) && !crate::modules::is_crow_fn(&self.current_fn) {
                     self.refuse(format!("'{}' is derived — it follows what it reads; change those facts instead of assigning it", name));
                 }
                 if !self.defined(name) {

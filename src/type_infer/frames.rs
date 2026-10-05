@@ -203,10 +203,33 @@ pub(super) fn describe_on(key: &str, url: &str, ddl: &[String], sql: &str) -> Re
     answer
 }
 
+/// The answer of `crow db describe <url> <sql>`, run by this very binary.
+fn describe_by_process(url: &str, sql: &str) -> Result<Vec<(String, String)>, String> {
+    let exe = std::env::current_exe().map_err(|e| format!("cannot find crow itself: {}", e))?;
+    // (a test binary is not crow: the database is not reached, as one that
+    // does not answer is not)
+    if exe.file_stem().and_then(|s| s.to_str()) != Some("crow") {
+        return Err("crow db describe runs from the crow binary alone".to_string());
+    }
+    let out = std::process::Command::new(exe).args(["db", "describe", url, sql]).env("CROW_NO_DESCRIBE", "1").output().map_err(|e| format!("cannot run crow db describe: {}", e))?;
+    if !out.status.success() {
+        let said = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(if said.is_empty() { "crow db describe answered nothing".to_string() } else { said });
+    }
+    let cols: Vec<(String, String)> = serde_json::from_slice(&out.stdout).map_err(|e| format!("crow db describe answered no columns: {}", e))?;
+    Ok(cols)
+}
+
 /// Ask the database (see `describe_on`, which keeps the answers).
 pub(super) fn describe_asking(key: &str, url: &str, ddl: &[String], sql: &str) -> Result<Vec<(String, String)>, String> {
     #[cfg(test)]
     DESCRIBES_ASKED.with(|n| n.set(n.get() + 1));
+    // a database whose driver is written in Crow is asked by a process of
+    // its own (`crow db describe`): the driver runs in an interpreter, and
+    // this lowering, which asks from inside, is not a place to start one
+    if url.starts_with("clickhouse://") {
+        return describe_by_process(url, sql);
+    }
     DESCRIBE_HANDLES.with(|h| {
         let mut map = h.borrow_mut();
         let handle = map.entry(key.to_string()).or_insert_with(|| {

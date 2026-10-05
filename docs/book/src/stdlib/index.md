@@ -9,10 +9,10 @@ Every module ships with the compiler: `use` it and its names are there in both e
 | math.stats | `use math.stats` | 13 | [math.stats](math-stats.md) |
 | math.nn | `use math.nn` | 8 | [math.nn](math-nn.md) |
 | frame | `use frame` | 20 | [frame](frame.md) |
-| db | `use db` | 6 | [db](db.md) |
+| db | `use db` | 7 | [db](db.md) |
 | io | `use io` | 2 | [io](io.md) |
 | doc | `use doc` | 6 | [doc](doc.md) |
 | chart | `use chart` | 7 | [chart](chart.md) |
-| sys | `use sys` | 59 | [sys](sys.md) |
+| sys | `use sys` | 66 | [sys](sys.md) |
 | ui | `use ui` | 10 | [ui](ui.md) |
 | web | `use web` | 32 | [web](web.md) |

@@ -264,20 +264,30 @@ fn exchange[url, method, head_lines, body_bytes, timeout]
     s = open[parts.host, parts.port, parts.tls, connect]
     if not s.ok
         return error[unanswered[s.reason, timeout], 'sys']
-    hostline = host_line[parts]
-    size = len[body_bytes]
-    head = '`method` `parts.path` HTTP/1.1\r\nhost: `hostline`\r\nconnection: close\r\ncontent-length: `size`\r\n'
-    for line in head_lines
-        head = '`head``line`\r\n'
-    sent = send[s, concat[bytes['`head`\r\n'], body_bytes]]
-    if not sent.ok
-        close[s]
-        return error[unanswered[sent.reason, timeout], 'sys']
-    got = read_answer[s, deadline, method]
+    got = exchange_on[s, host_line[parts], method, parts.path, head_lines, body_bytes, deadline, false]
     close[s]
     if not got.ok
         return error[unanswered[got.reason, timeout], 'sys']
     return got
+
+--- `exchange_on[stream, hostline, method, path, lines, body, deadline, keep]`:
+--- one request on a connection already open — the method, the path, the
+--- host line, `connection: keep-alive` when the connection is kept for
+--- the next request (a driver's) else `close`, the body's length, the
+--- header lines given — and its answer read: what `exchange` does on a
+--- connection of its own
+fn exchange_on[s, hostline, method, path, head_lines, body_bytes, deadline, keep]
+    size = len[body_bytes]
+    connection = 'close'
+    if keep
+        connection = 'keep-alive'
+    head = '`method` `path` HTTP/1.1\r\nhost: `hostline`\r\nconnection: `connection`\r\ncontent-length: `size`\r\n'
+    for line in head_lines
+        head = '`head``line`\r\n'
+    sent = send[s, concat[bytes['`head`\r\n'], body_bytes]]
+    if not sent.ok
+        return error[sent.reason, 'sys']
+    return read_answer[s, deadline, method]
 
 --- `upgrade[url, timeout]`: a connection to a `ws://` or `wss://` URL's
 --- host, upgraded to a WebSocket as RFC 6455 says — the handshake's key

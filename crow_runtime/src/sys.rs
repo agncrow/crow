@@ -513,6 +513,9 @@ struct StreamInner {
     name: String,
     /// The wait `open` gave it, which a read given no seconds goes back to.
     wait: Option<std::time::Duration>,
+    /// What a protocol written in Crow notes on the connection: a query's
+    /// id, a backend's process and key — what a cancel needs later.
+    note: Mutex<String>,
 }
 
 impl std::fmt::Debug for CrowStream {
@@ -530,7 +533,7 @@ impl crate::display::CrowDisplay for CrowStream {
 impl CrowStream {
     /// What a failed `open` holds: a stream that is closed.
     pub fn closed() -> Self {
-        CrowStream(Arc::new(StreamInner { conn: Mutex::new(None), name: "closed".to_string(), wait: None }))
+        CrowStream(Arc::new(StreamInner { conn: Mutex::new(None), name: "closed".to_string(), wait: None, note: Mutex::new(String::new()) }))
     }
 }
 
@@ -585,7 +588,7 @@ pub fn open(host: &str, port: i64, tls: bool, seconds: f64) -> Result<CrowStream
     } else {
         Conn::plain(tcp)
     };
-    Ok(CrowStream(Arc::new(StreamInner { conn: Mutex::new(Some(conn)), name: format!("{}:{}", host, port), wait: timeout })))
+    Ok(CrowStream(Arc::new(StreamInner { conn: Mutex::new(Some(conn)), name: format!("{}:{}", host, port), wait: timeout, note: Mutex::new(String::new()) })))
 }
 
 /// `sys.send[stream, bytes]`: the bytes written, all of them, or the reason.
@@ -613,20 +616,86 @@ pub fn recv(s: &CrowStream, most: i64, seconds: f64) -> Result<Bytes, String> {
     // (a read given no seconds waits as the connection was opened to,
     // whatever the read before it waited)
     let wait = if seconds > 0.0 { Some(std::time::Duration::from_secs_f64(seconds)) } else { s.0.wait };
-    conn.tcp().set_read_timeout(wait).map_err(|e| e.to_string())?;
     let mut buf = vec![0u8; most as usize];
-    let r = match conn {
-        Conn::Plain(t) => t.read(&mut buf),
-        Conn::Tls(t) => t.read(&mut buf),
-    };
-    match r {
-        Ok(n) => {
-            buf.truncate(n);
-            Ok(Bytes(buf))
+    // inside work that can be stopped — a derivation's query, whose flag
+    // is raised when nobody waits for it any more — the wait is taken in
+    // slices, and ends with the stop (the driver written in Crow then
+    // tells the server; crow_db::driven lets the connection go)
+    let watched = crate::cancel::current().is_some();
+    let deadline = wait.map(|w| std::time::Instant::now() + w);
+    loop {
+        let slice = match (watched, deadline) {
+            (false, _) => wait,
+            (true, Some(d)) => Some(d.saturating_duration_since(std::time::Instant::now()).min(std::time::Duration::from_millis(100)).max(std::time::Duration::from_millis(1))),
+            (true, None) => Some(std::time::Duration::from_millis(100)),
+        };
+        conn.tcp().set_read_timeout(slice).map_err(|e| e.to_string())?;
+        let r = match conn {
+            Conn::Plain(t) => t.read(&mut buf),
+            Conn::Tls(t) => t.read(&mut buf),
+        };
+        match r {
+            Ok(n) => {
+                buf.truncate(n);
+                return Ok(Bytes(buf));
+            }
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
+                if watched && crate::cancel::current_stopped() {
+                    return Err("cancelled: nobody waits for this query any more".to_string());
+                }
+                if !watched || deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+                    return Err(format!("no data from {} in {} s", s.0.name, seconds));
+                }
+            }
+            Err(e) => return Err(format!("cannot read from {}: {}", s.0.name, e)),
         }
-        Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => Err(format!("no data from {} in {} s", s.0.name, seconds)),
-        Err(e) => Err(format!("cannot read from {}: {}", s.0.name, e)),
     }
+}
+
+/// `sys.note[stream, text]`: a note kept on the connection — a query's
+/// id, a backend's process and key — read back by `noted`.
+pub fn note(s: &CrowStream, text: &str) {
+    if let Ok(mut n) = s.0.note.lock() {
+        *n = text.to_string();
+    }
+}
+
+/// `sys.noted[stream]`: the note the connection carries.
+pub fn noted(s: &CrowStream) -> String {
+    s.0.note.lock().map(|n| n.clone()).unwrap_or_default()
+}
+
+/// `sys.machine[]`: this machine's name, as a query's tag carries it:
+/// letters, digits, dots and dashes, or `local`.
+pub fn machine() -> String {
+    static HOST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HOST.get_or_init(|| {
+        let raw = std::process::Command::new("hostname").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+        let clean: String = raw.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '-').collect();
+        if clean.is_empty() { "local".to_string() } else { clean }
+    })
+    .clone()
+}
+
+/// `sys.process[]`: this process's number.
+pub fn process() -> i64 {
+    std::process::id() as i64
+}
+
+/// `sys.alive[pid]`: whether a process of this machine is running (a
+/// number that is none is taken as running: nothing is stopped on a guess).
+pub fn alive(pid: i64) -> bool {
+    if pid <= 0 {
+        return true;
+    }
+    std::process::Command::new("kill").arg("-0").arg(pid.to_string()).output().map(|o| o.status.success()).unwrap_or(true)
+}
+
+/// `sys.rowbinary_of_frame[frame, types]`: a frame as ClickHouse's
+/// RowBinary, each column encoded as the table's type for it names
+/// (crate::rowbinary).
+pub fn rowbinary_of_frame(frame: &crate::frame::CrowFrame, types: Vec<String>) -> Result<Bytes, String> {
+    crate::rowbinary::rowbinary_of_frame(frame, &types).map(Bytes)
 }
 
 /// `sys.close[stream]`: the connection let go; every call after is refused.

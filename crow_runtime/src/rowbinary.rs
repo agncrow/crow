@@ -8,6 +8,8 @@
 //! 128- and 256-bit integers and arrays (as text) a text column; a
 //! `Nullable` cell that is NULL is a missing cell; `LowCardinality` is
 //! its inner type. A type no frame cell can hold refuses the whole.
+//! The other way, `rowbinary_of_frame` encodes a frame's rows as the
+//! table's types name them, for `INSERT … FORMAT RowBinary`.
 use crate::frame::{Column, CrowFrame};
 
 /// A column being filled, by the kind its type names.
@@ -253,6 +255,214 @@ fn decode(b: &[u8]) -> Result<(Vec<String>, Vec<Col>, Vec<Vec<bool>>), String> {
 }
 
 
+// ── a frame as RowBinary ─────────────────────────────────────────────
+
+fn put_leb(out: &mut Vec<u8>, mut n: u64) {
+    loop {
+        let byte = (n & 0x7f) as u8;
+        n >>= 7;
+        if n == 0 {
+            out.push(byte);
+            return;
+        }
+        out.push(byte | 0x80);
+    }
+}
+
+fn put_str(out: &mut Vec<u8>, s: &str) {
+    put_leb(out, s.len() as u64);
+    out.extend_from_slice(s.as_bytes());
+}
+
+/// A cell of a frame, as the kinds a column holds.
+enum Cell<'a> {
+    Int(i64),
+    Float(f64),
+    Str(&'a str),
+    Bool(bool),
+    /// UTC milliseconds
+    Moment(i64),
+}
+
+fn cell_at(frame: &CrowFrame, col: usize, row: usize) -> Cell<'_> {
+    match frame.data[col].as_ref() {
+        Column::Int(v) => Cell::Int(v[row]),
+        Column::Float(v) => Cell::Float(v[row]),
+        Column::Str(v) => Cell::Str(&v[row]),
+        Column::Bool(v) => Cell::Bool(v[row]),
+        Column::DateTime(v, _) => Cell::Moment(v[row]),
+    }
+}
+
+fn as_int(cell: &Cell, what: &str) -> Result<i64, String> {
+    match cell {
+        Cell::Int(n) => Ok(*n),
+        Cell::Float(x) => Ok(*x as i64),
+        Cell::Bool(b) => Ok(i64::from(*b)),
+        Cell::Moment(ms) => Ok(ms / 1000),
+        Cell::Str(s) => s.trim().parse().map_err(|_| format!("cannot write '{}' as {}", s, what)),
+    }
+}
+
+fn as_float(cell: &Cell, what: &str) -> Result<f64, String> {
+    match cell {
+        Cell::Int(n) => Ok(*n as f64),
+        Cell::Float(x) => Ok(*x),
+        Cell::Bool(b) => Ok(if *b { 1.0 } else { 0.0 }),
+        Cell::Moment(ms) => Ok(*ms as f64 / 1000.0),
+        Cell::Str(s) => s.trim().parse().map_err(|_| format!("cannot write '{}' as {}", s, what)),
+    }
+}
+
+/// A cell as UTC milliseconds: a moment as it is, a number as seconds,
+/// text as the frame reads a date or time.
+fn as_millis(cell: &Cell, what: &str) -> Result<i64, String> {
+    match cell {
+        Cell::Moment(ms) => Ok(*ms),
+        Cell::Int(n) => Ok(n * 1000),
+        Cell::Float(x) => Ok((x * 1000.0) as i64),
+        Cell::Bool(_) => Err(format!("cannot write a bool as {}", what)),
+        Cell::Str(s) => crate::frame::parse_datetime(s).map(|(ms, _)| ms).ok_or_else(|| format!("cannot write '{}' as {}", s, what)),
+    }
+}
+
+fn as_text(cell: &Cell) -> String {
+    match cell {
+        Cell::Str(s) => (*s).to_string(),
+        Cell::Int(n) => n.to_string(),
+        Cell::Float(x) => x.to_string(),
+        Cell::Bool(b) => b.to_string(),
+        Cell::Moment(ms) => crate::frame::format_datetime(*ms, 0),
+    }
+}
+
+fn put_cell(out: &mut Vec<u8>, t: &Ty, cell: &Cell, column: &str) -> Result<(), String> {
+    let what = |t: &Ty| format!("column '{}' ({:?})", column, t);
+    match t {
+        Ty::Nullable(inner) => {
+            out.push(0);
+            return put_cell(out, inner, cell, column);
+        }
+        Ty::U8 => out.push(as_int(cell, &what(t))? as u8),
+        Ty::I8 => out.push(as_int(cell, &what(t))? as i8 as u8),
+        Ty::U16 => out.extend_from_slice(&(as_int(cell, &what(t))? as u16).to_le_bytes()),
+        Ty::I16 => out.extend_from_slice(&(as_int(cell, &what(t))? as i16).to_le_bytes()),
+        Ty::U32 => out.extend_from_slice(&(as_int(cell, &what(t))? as u32).to_le_bytes()),
+        Ty::I32 => out.extend_from_slice(&(as_int(cell, &what(t))? as i32).to_le_bytes()),
+        Ty::U64 => out.extend_from_slice(&(as_int(cell, &what(t))? as u64).to_le_bytes()),
+        Ty::I64 => out.extend_from_slice(&as_int(cell, &what(t))?.to_le_bytes()),
+        Ty::Wide(n) => {
+            let v = as_int(cell, &what(t))? as i128;
+            let bytes = v.to_le_bytes();
+            out.extend_from_slice(&bytes);
+            // the high bytes of a 256-bit integer: the sign spread
+            out.extend(std::iter::repeat_n(if v < 0 { 0xff } else { 0 }, n - 16));
+        }
+        Ty::F32 => out.extend_from_slice(&(as_float(cell, &what(t))? as f32).to_le_bytes()),
+        Ty::F64 => out.extend_from_slice(&as_float(cell, &what(t))?.to_le_bytes()),
+        Ty::Decimal(width, scale) => {
+            let raw = (as_float(cell, &what(t))? * 10f64.powi(*scale as i32)).round() as i128;
+            match width {
+                4 => out.extend_from_slice(&(raw as i32).to_le_bytes()),
+                8 => out.extend_from_slice(&(raw as i64).to_le_bytes()),
+                16 => out.extend_from_slice(&raw.to_le_bytes()),
+                _ => {
+                    out.extend_from_slice(&raw.to_le_bytes());
+                    out.extend(std::iter::repeat_n(if raw < 0 { 0xff } else { 0 }, 16));
+                }
+            }
+        }
+        Ty::Str => put_str(out, &as_text(cell)),
+        Ty::Fixed(n) => {
+            let text = as_text(cell);
+            let bytes = text.as_bytes();
+            if bytes.len() > *n {
+                return Err(format!("cannot write '{}' as {}: longer than {}", text, what(t), n));
+            }
+            out.extend_from_slice(bytes);
+            out.extend(std::iter::repeat_n(0, n - bytes.len()));
+        }
+        Ty::Date => out.extend_from_slice(&((as_millis(cell, &what(t))?.div_euclid(86_400_000)) as u16).to_le_bytes()),
+        Ty::Date32 => out.extend_from_slice(&((as_millis(cell, &what(t))?.div_euclid(86_400_000)) as i32).to_le_bytes()),
+        Ty::DateTime => out.extend_from_slice(&((as_millis(cell, &what(t))?.div_euclid(1000)) as u32).to_le_bytes()),
+        Ty::DateTime64(scale) => {
+            let ms = as_millis(cell, &what(t))?;
+            let ticks = if *scale >= 3 { ms * 10i64.pow(scale - 3) } else { ms / 10i64.pow(3 - scale) };
+            out.extend_from_slice(&ticks.to_le_bytes());
+        }
+        Ty::Bool => out.push(u8::from(match cell {
+            Cell::Bool(b) => *b,
+            other => as_int(other, &what(t))? != 0,
+        })),
+        Ty::Enum8(names) | Ty::Enum16(names) => {
+            let value = match cell {
+                Cell::Str(s) => names.iter().find(|(_, n)| n == s).map(|(v, _)| *v).ok_or_else(|| format!("cannot write '{}' as {}: no such name", s, what(t)))?,
+                other => as_int(other, &what(t))?,
+            };
+            if matches!(t, Ty::Enum8(_)) {
+                out.push(value as i8 as u8);
+            } else {
+                out.extend_from_slice(&(value as i16).to_le_bytes());
+            }
+        }
+        Ty::Uuid => {
+            let text = as_text(cell);
+            let hex: String = text.chars().filter(|c| *c != '-').collect();
+            let x = u128::from_str_radix(&hex, 16).map_err(|_| format!("cannot write '{}' as {}", text, what(t)))?;
+            out.extend_from_slice(&((x >> 64) as u64).to_le_bytes());
+            out.extend_from_slice(&(x as u64).to_le_bytes());
+        }
+        Ty::Ipv4 => {
+            let text = as_text(cell);
+            let ip: std::net::Ipv4Addr = text.parse().map_err(|_| format!("cannot write '{}' as {}", text, what(t)))?;
+            out.extend_from_slice(&u32::from(ip).to_le_bytes());
+        }
+        Ty::Ipv6 => {
+            let text = as_text(cell);
+            let ip: std::net::Ipv6Addr = text.parse().map_err(|_| format!("cannot write '{}' as {}", text, what(t)))?;
+            out.extend_from_slice(&ip.octets());
+        }
+        Ty::Array(_) => return Err(format!("cannot write {} from a frame's cell", what(t))),
+    }
+    Ok(())
+}
+
+/// A missing cell: NULL where the column can hold one, else the type's
+/// own nothing — 0, an empty string, the epoch.
+fn put_missing(out: &mut Vec<u8>, t: &Ty, column: &str) -> Result<(), String> {
+    match t {
+        Ty::Nullable(_) => {
+            out.push(1);
+            Ok(())
+        }
+        Ty::Str | Ty::Fixed(_) | Ty::Uuid | Ty::Ipv4 | Ty::Ipv6 | Ty::Enum8(_) | Ty::Enum16(_) => put_cell(out, t, &Cell::Str(match t { Ty::Uuid => "00000000-0000-0000-0000-000000000000", Ty::Ipv4 => "0.0.0.0", Ty::Ipv6 => "::", Ty::Enum8(n) | Ty::Enum16(n) => n.first().map_or("", |(_, s)| s.as_str()), _ => "" }), column),
+        other => put_cell(out, other, &Cell::Int(0), column),
+    }
+}
+
+/// A frame's rows as RowBinary, column by column as `types` names each
+/// (the table's types, as `DESCRIBE` says them, one per frame column, in
+/// the frame's order): what `INSERT INTO t (…) FORMAT RowBinary` takes
+/// after the statement. A cell a type cannot hold refuses the whole,
+/// naming the column.
+pub fn rowbinary_of_frame(frame: &CrowFrame, types: &[String]) -> Result<Vec<u8>, String> {
+    if types.len() != frame.ncols() {
+        return Err(format!("{} types for {} columns", types.len(), frame.ncols()));
+    }
+    let parsed: Vec<Ty> = types.iter().map(|t| parse_type(t)).collect::<Result<_, _>>()?;
+    let mut out = Vec::with_capacity(frame.nrows() * frame.ncols() * 8);
+    for row in 0..frame.nrows() {
+        for col in 0..frame.ncols() {
+            if !frame.validity[col][row] {
+                put_missing(&mut out, &parsed[col], &frame.columns[col])?;
+            } else {
+                put_cell(&mut out, &parsed[col], &cell_at(frame, col, row), &frame.columns[col])?;
+            }
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,6 +502,56 @@ mod tests {
         assert!(matches!(col("q").0, Column::Float(v) if v == &[1.5]));
         // a UInt64 past i64's range wraps, as the native driver's did
         assert!(matches!(col("r").0, Column::Int(v) if v == &[-1]));
+    }
+
+    /// A frame encoded as a table's types, decoded again, is the frame: every
+    /// kind of cell, a missing cell as NULL where the type holds one and
+    /// as nothing where it does not, and a cell a type cannot hold refused
+    #[test]
+    fn a_frame_encoded_is_the_frame_decoded() {
+        let frame = CrowFrame::new(
+            vec!["n".into(), "x".into(), "s".into(), "b".into(), "t".into(), "d".into(), "e".into(), "u".into()],
+            vec![
+                Column::Int(vec![1, -2, 0]),
+                Column::Float(vec![2.5, 0.0, 12.34]),
+                Column::Str(vec!["hi".into(), "".into(), "yo".into()]),
+                Column::Bool(vec![true, false, true]),
+                Column::DateTime(vec![1_704_164_645_123, 0, 86_400_000], vec![0, 0, 0]),
+                Column::Str(vec!["x".into(), "y".into(), "x".into()]),
+                Column::Str(vec!["61f0c404-5cb3-11e7-907b-a6006ad3dba0".into(), "".into(), "61f0c404-5cb3-11e7-907b-a6006ad3dba0".into()]),
+                Column::Int(vec![7, 8, 9]),
+            ],
+            vec![vec![true, true, true], vec![true, false, true], vec![true, false, true], vec![true; 3], vec![true, true, true], vec![true; 3], vec![true, false, true], vec![true, true, false]],
+        );
+        let types: Vec<String> = ["Int64", "Nullable(Float64)", "Nullable(String)", "Bool", "DateTime64(3, 'UTC')", "Enum8('x' = 1, 'y' = 2)", "Nullable(UUID)", "UInt8"].iter().map(|s| s.to_string()).collect();
+        let bytes = rowbinary_of_frame(&frame, &types).unwrap();
+        // a header the decoder reads: the names and the types, then the rows
+        let mut blob = vec![8u8];
+        for name in &frame.columns {
+            blob.push(name.len() as u8);
+            blob.extend_from_slice(name.as_bytes());
+        }
+        for t in &types {
+            blob.push(t.len() as u8);
+            blob.extend_from_slice(t.as_bytes());
+        }
+        blob.extend_from_slice(&bytes);
+        let back = frame_of_rowbinary(&blob).unwrap();
+        assert_eq!(back.columns, frame.columns);
+        assert_eq!(back.nrows(), 3);
+        assert!(matches!(back.data[0].as_ref(), Column::Int(v) if v == &[1, -2, 0]));
+        assert!(matches!((back.data[1].as_ref(), &back.validity[1][..]), (Column::Float(v), [true, false, true]) if v[0] == 2.5 && v[2] == 12.34));
+        assert!(matches!((back.data[2].as_ref(), &back.validity[2][..]), (Column::Str(v), [true, false, true]) if v[0] == "hi" && v[2] == "yo"));
+        assert!(matches!(back.data[3].as_ref(), Column::Bool(v) if v == &[true, false, true]));
+        assert!(matches!(back.data[4].as_ref(), Column::DateTime(v, _) if v == &[1_704_164_645_123, 0, 86_400_000]));
+        assert!(matches!(back.data[5].as_ref(), Column::Str(v) if v == &["x", "y", "x"]));
+        assert!(matches!(&back.validity[6][..], [true, false, true]));
+        // a missing cell where the type holds no NULL is its nothing
+        assert!(matches!(back.data[7].as_ref(), Column::Int(v) if v == &[7, 8, 0]));
+        // a cell a type cannot hold, and a type count that does not fit
+        let bad = CrowFrame::new(vec!["n".into()], vec![Column::Str(vec!["x".into()])], vec![vec![true]]);
+        assert_eq!(rowbinary_of_frame(&bad, &["UInt8".to_string()]).unwrap_err(), "cannot write 'x' as column 'n' (U8)");
+        assert_eq!(rowbinary_of_frame(&bad, &[]).unwrap_err(), "0 types for 1 columns");
     }
 
     /// Bytes that end inside a row, and a type no cell holds, are refused

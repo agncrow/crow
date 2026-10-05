@@ -1765,7 +1765,7 @@ The modules that ship with Crow. Their exports are bare names in files that impo
 
 **Design Note: what stays native, and why.** Considered: the standard library wholly in Crow, Rust kept for the compiler alone. Decided (design rule 20; Vijay, 2026-10-04): native code stays where one of four reasons holds, and every crate the manifests name (`Cargo.toml`, `crow_runtime/`, `crow_web/`, `crow_db/`) is accounted for here — a crate added gets its line, with its reason.
 
-- *A mechanism of the runtime, which no formula can be:* the server and its pages (axum, tokio, tower, tokio-stream, futures-util) and what runs inside its request handling — multipart uploads (multer), CORS and static files (tower-http), the signed sign-in cookie and session ids (hmac, sha2, base64, uuid), a live page's `fetch[]` sources polled by the server (reqwest); the database drivers' pools and the race of a query against a stop (tokio-postgres, deadpool-postgres, klickhouse, tokio, tokio-stream); the seeded process-global random source (rand); the autograd tape; parallel loops (rayon).
+- *A mechanism of the runtime, which no formula can be:* the server and its pages (axum, tokio, tower, tokio-stream, futures-util) and what runs inside its request handling — multipart uploads (multer), CORS and static files (tower-http), the signed sign-in cookie and session ids (hmac, sha2, base64, uuid), a live page's `fetch[]` sources polled by the server (reqwest); the database handles — their pools, a handler's transaction, the race of a query against a stop — and the Postgres driver (tokio-postgres, deadpool-postgres, tokio); the ClickHouse driver is written in Crow (docs/db-in-crow-design.md); the seeded process-global random source (rand); the autograd tape; parallel loops (rayon).
 - *A validated kernel:* TLS (rustls, webpki-roots); the digests, the keyed digests and the password hash (sha2, sha1, md-5, hmac, argon2), randomness from the operating system (getrandom); regular expressions (regex); the formats a table travels in (arrow, parquet, serde_json, bytes); linear algebra, the FFT, sparse matrices and the GPU (faer, rustfft, sprs, wgpu, pollster, bytemuck); time zones (chrono, chrono-tz); markdown (pulldown-cmark); a number written and read exactly (itoa, ryu), `erf` to the last bit (libm); the distributions drawn by rejection or a ziggurat — Poisson, Bernoulli, gamma, beta and exponential (rand_distr).
 - *A C library:* SQLite (rusqlite).
 - *The compiler's own tooling:* the Jupyter kernel (zeromq, libc), the REPL (rustyline), the language server (lsp-server, lsp-types), `crow check`'s SQL facts (sqlparser), snapshots of a program (bincode, serde), the served harness's client (tungstenite, in the compiler alone).
@@ -2327,8 +2327,12 @@ Import with `use sys` — **only in a module of the standard library.** `sys` is
 | `betainc[x, a, b]` | The regularized incomplete beta function I_x(a, b): the t and F distributions are written over it |
 | `gammainc[a, x]` | The lower regularized incomplete gamma function P(a, x): the chi-square distribution is written over it |
 | `lgamma[x]` | The natural log of the gamma function |
+| `note[stream, text]`, `noted[stream]` | A note kept on a connection, read back: a query's id, a backend's process and key — what a cancel needs later |
+| `machine[]`, `process[]`, `alive[pid]` | This machine's name (letters, digits, dots and dashes, or `local`), this process's number, and whether a process of this machine is running (a number that is none counts as running) |
+| `rowbinary_of_frame[frame, types]` | A frame as ClickHouse's RowBinary, each column encoded as the table's type for it names (one per frame column, in the frame's order): what `INSERT … FORMAT RowBinary` takes after the statement; a missing cell NULL where the type holds one, else the type's own nothing; a cell a type cannot hold is an error value of kind `'frame'` naming the column |
 | `shaped[t, dims]` | The tensor's values in the shape the list of sizes names: `reshape` given its sizes as a list, as a Crow function's rest arrives |
 | `remote[path]` | Whether a path names a remote source: a URL (`http://`, `https://`) or an S3 object (`s3://`) |
+| `exchange_on[stream, hostline, method, path, lines, body, deadline, keep]` | One request on a connection already open, written in Crow — the method, the path, the host line, `connection: keep-alive` when the connection is kept for the next request else `close`, the body's length and the header lines — and its answer read: what `exchange` does on a connection of its own, and a driver on one it keeps |
 | `exchange[url, method, lines, body, timeout]` | One HTTP exchange, written in Crow: the request sent to the URL's host with its method, the header lines and the body, its answer read whole — an `answer`, or an error value of kind `'sys'` where none came in `timeout` seconds (0 as thirty to connect and ten minutes in all) |
 | `redirected[from, location]` | Where a redirect sends the request: its `location`, made absolute against the URL it came from |
 | `with_query[url, pairs]` | The URL with the pairs added, each name and value URL-encoded, after the `?` it has or one it is given |
@@ -2885,8 +2889,8 @@ conn = connect['sqlite://data.db']
 --- PostgreSQL (default pool: 10 connections)
 conn = connect['postgres://user:pass@host/mydb']
 
---- ClickHouse
-conn = connect['http://localhost:8123/default']
+--- ClickHouse (its HTTP interface: port 8123 when none is given)
+conn = connect['clickhouse://default@localhost:8123/default']
 
 --- Custom pool size
 conn = connect['postgres://user:pass@host/mydb', 20]
@@ -2896,8 +2900,11 @@ conn = connect['postgres://user:pass@host/mydb', 20]
 |---|---|
 | `connect[url]` | Open a database connection (pool) with default pool size, checking its database holds the tables the program declares on it (The schema a program declares, below) |
 | `connect[url, pool_size]` | Open a database connection (pool) with custom pool size; a pool size of 0 is the default |
+| `describe[conn, sql]` | The columns a statement answers, without running it: a frame of `name` and `kind` (`int`, `float`, `str`, `bool`, `datetime`, with `?` after a kind where the column can hold NULL); a `?` placeholder stands in as NULL. What the compiler asks at build time (Typed cells, below), asked by the program |
 
-A connection is not the program's lifetime. When the server closes it — ClickHouse drops an idle native connection after an hour, and a restart drops every one — the next query reopens it and runs, and the server log says so; Postgres and ClickHouse connections are pooled, so queries from different sessions run side by side, and sqlite is a file. Every `connect` to one Postgres or ClickHouse URL in a program is one handle: parts that each connect to the same server share its pool.
+**The ClickHouse driver is written in Crow** (`src/modules/clickhouse.co`, design rule 20, docs/db-in-crow-design.md), over its HTTP interface: `clickhouse://user:pass@host:port/database` names that interface, port 8123 when none is given; the native protocol's port, 9000, is no longer spoken, and a URL that names it is read as the HTTP port, which the log says once. Each statement is sent with an id (`crow-<machine>-<process>-<draw>`), its rows come back as RowBinary and are decoded by the `frame_of_rowbinary` kernel, typed as the server names each column; an insert goes as RowBinary encoded by the table's types; a statement a stop abandoned is killed by its id; at connect, the statements a dead run of this machine left running are swept. The handle, its pool of kept connections (four, since ClickHouse runs one query on every core already), the reconnect and the cancel are `crow_db`'s, which calls the driver through a table of calls the program registers (the compiled program's generated functions; the interpreter's child over the program's functions). A program never imports the driver: `use db` carries the drivers its connection URLs name.
+
+A connection is not the program's lifetime. When the server closes it — ClickHouse drops an idle connection after its keep-alive, and a restart drops every one — the next query reopens it and runs, and the server log says so; Postgres and ClickHouse connections are pooled, so queries from different sessions run side by side, and sqlite is a file. Every `connect` to one Postgres or ClickHouse URL in a program is one handle: parts that each connect to the same server share its pool.
 
 **A query nobody waits for is stopped.** A background recompute whose session has gone, or whose inputs moved while it ran, stops its query on the server (ClickHouse and Postgres); so does every query in flight when a served program is told to stop — `crow stop`, a rebuild, Ctrl-C. A program killed outright cannot stop anything; the next run that connects to a ClickHouse server on the same machine stops the queries the dead run left behind, and the log says so. Each ClickHouse statement carries a leading comment naming the machine, the process and a number, which is how it is found again.
 
@@ -2937,12 +2944,12 @@ log[n]
 
 Uses backend-specific protocols for maximum performance:
 - **PostgreSQL:** COPY protocol
-- **ClickHouse:** Native RowBinary
+- **ClickHouse:** RowBinary over the HTTP interface, encoded by the table's types (`DESCRIBE` first)
 - **SQLite:** Batched prepared statements in a transaction
 
 ```
 use db
-conn = connect['http://localhost:8123/default']
+conn = connect['clickhouse://localhost/default']
 insert[conn, 'events', events_frame]
 ```
 
@@ -3015,7 +3022,7 @@ CREATE TABLE IF NOT EXISTS labels (card INTEGER, name TEXT);
 |---|---|---|
 | SQLite | 1 | File-based, concurrent writes lock |
 | PostgreSQL | 10 | Standard for web/data apps |
-| ClickHouse | 4 | Native protocol; opened as queries need them. One query already runs on every core of the server, so more at once contend rather than help |
+| ClickHouse | 4 | The HTTP interface, kept alive; opened as queries need them. One query already runs on every core of the server, so more at once contend rather than help |
 
 
 ## 14. Parallelism

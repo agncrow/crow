@@ -30,6 +30,7 @@ pub fn crow_source(path: &str) -> Option<&'static str> {
         "web.mail" => Some(MAIL_SOURCE),
         "math.stats" => Some(STATS_SOURCE),
         "web" => Some(WEB_SOURCE),
+        "db.clickhouse" => Some(CLICKHOUSE_SOURCE),
         _ => None,
     }
 }
@@ -49,6 +50,9 @@ pub(crate) const MAIL_SOURCE: &str = include_str!("mail.co");
 /// The statistics, written in Crow (`use math.stats`).
 pub(crate) const STATS_SOURCE: &str = include_str!("stats.co");
 
+/// The ClickHouse driver, written in Crow (carried by `use db`).
+pub(crate) const CLICKHOUSE_SOURCE: &str = include_str!("clickhouse.co");
+
 /// The protocol the HTTP client and the readers stand on, written in Crow
 /// over the sys primitives: `sys.exchange`, `sys.fetch`, `sys.put`, the
 /// formats; a module that imports `sys` inlines it.
@@ -66,7 +70,7 @@ pub(crate) const CORE_SOURCE: &str = include_str!("core.co");
 
 /// The modules written in Crow, with the prefix their functions carry (the
 /// core's, imported by no `use`, carries `_core`).
-const CROW_MODULES: &[(&str, &str)] = &[("math.nn", "_math_nn"), ("", "_core"), ("sys", "_sys"), ("io", "_io"), ("frame", "_frame"), ("math", "_math"), ("web.auth", "_web_auth"), ("web.ws", "_web_ws"), ("web.mail", "_web_mail"), ("web", "_web"), ("math.stats", "_math_stats")];
+const CROW_MODULES: &[(&str, &str)] = &[("math.nn", "_math_nn"), ("", "_core"), ("sys", "_sys"), ("io", "_io"), ("frame", "_frame"), ("math", "_math"), ("web.auth", "_web_auth"), ("web.ws", "_web_ws"), ("web.mail", "_web_mail"), ("web", "_web"), ("math.stats", "_math_stats"), ("db.clickhouse", "_db_clickhouse")];
 
 thread_local! {
     /// What each inlined module imports (its own `use` lines), by its
@@ -86,6 +90,7 @@ pub fn module_by_path(path: &str) -> Option<Arc<dyn CrowModule>> {
         "doc" => Arc::new(doc::DocModule),
         "chart" => Arc::new(chart::ChartModule),
         "db" => Arc::new(db::DbModule),
+        "db.clickhouse" => Arc::new(db::ClickhouseDriver),
         "web" => Arc::new(web::WebModule),
         "web.auth" => Arc::new(web::AuthModule),
         "web.ws" => Arc::new(web::WsModule),
@@ -205,6 +210,18 @@ pub fn inline_crow_modules(stmts: &[crate::ast::Stmt]) -> Result<Vec<crate::ast:
             }
         }
     }
+    // a program that imports db carries the drivers written in Crow its
+    // connection URLs name, every row of each reached: crow_db calls them
+    // from Rust, not the program (docs/db-in-crow-design.md)
+    let mut carried: BTreeSet<String> = BTreeSet::new();
+    if todo.iter().any(|p| p == "db") {
+        let mut urls: Vec<String> = Vec::new();
+        stmts.iter().for_each(|s| connect_urls_in_stmt(s, &mut urls));
+        for driver in db::drivers_for(&urls) {
+            todo.push(driver.to_string());
+            carried.insert(driver.to_string());
+        }
+    }
     // the modules whose rows the program itself may call: what it imports
     // (the core's rows need no import)
     let imported: BTreeSet<String> = todo.iter().cloned().collect();
@@ -241,6 +258,9 @@ pub fn inline_crow_modules(stmts: &[crate::ast::Stmt]) -> Result<Vec<crate::ast:
             let mut called: BTreeSet<String> = BTreeSet::new();
             if m.path.is_empty() || imported.contains(&m.path) {
                 called.extend(named.iter().cloned());
+            }
+            if carried.contains(&m.path) {
+                called.extend(crate::table::ROWS.iter().filter(|r| r.module == m.path && r.is_crow()).map(|r| r.name.to_string()));
             }
             for k in &modules {
                 if !(m.path.is_empty() || k.imports.contains(&m.path)) {
@@ -331,6 +351,73 @@ pub fn inline_crow_modules(stmts: &[crate::ast::Stmt]) -> Result<Vec<crate::ast:
 
 /// The names a statement calls, by a bare name, through every nested
 /// block and expression.
+/// The URLs a program's `connect[…]` calls spell as literals, in its
+/// statements (a call whose URL is not a literal counts as one spelled by
+/// nothing: `drivers_for` then carries every driver).
+fn connect_urls_in_stmt(st: &crate::ast::Stmt, out: &mut Vec<String>) {
+    use crate::ast::Stmt;
+    match st {
+        Stmt::Assign { value, .. } => connect_urls_in_expr(value, out),
+        Stmt::MultiAssign { values, .. } => values.iter().for_each(|v| connect_urls_in_expr(v, out)),
+        Stmt::Return(Some(e)) | Stmt::ExprStmt(e) => connect_urls_in_expr(e, out),
+        Stmt::If { condition, then_body, else_body } => {
+            connect_urls_in_expr(condition, out);
+            then_body.iter().for_each(|s| connect_urls_in_stmt(s, out));
+            if let Some(e) = else_body {
+                e.iter().for_each(|s| connect_urls_in_stmt(s, out));
+            }
+        }
+        Stmt::For { iter, body, .. } => {
+            connect_urls_in_expr(iter, out);
+            body.iter().for_each(|s| connect_urls_in_stmt(s, out));
+        }
+        Stmt::While { condition, body } => {
+            connect_urls_in_expr(condition, out);
+            body.iter().for_each(|s| connect_urls_in_stmt(s, out));
+        }
+        Stmt::FnDecl { body, .. } => body.iter().for_each(|s| connect_urls_in_stmt(s, out)),
+        Stmt::Derive { body, .. } => body.iter().for_each(|s| connect_urls_in_stmt(s, out)),
+        _ => {}
+    }
+}
+
+fn connect_urls_in_expr(e: &crate::ast::Expr, out: &mut Vec<String>) {
+    use crate::ast::Expr;
+    if let Expr::Call { callee, args } = e {
+        let is_connect = match callee.as_ref() {
+            Expr::Ident(n) => n == "connect",
+            Expr::FieldAccess { object, field } => field == "connect" && matches!(object.as_ref(), Expr::Ident(m) if m == "db"),
+            _ => false,
+        };
+        if is_connect {
+            match args.first() {
+                Some(Expr::Str(url)) if !url.contains('`') => out.push(url.clone()),
+                _ => out.push(String::new()),
+            }
+        }
+        args.iter().for_each(|a| connect_urls_in_expr(a, out));
+        connect_urls_in_expr(callee, out);
+        return;
+    }
+    match e {
+        Expr::BinOp { left, right, .. } => {
+            connect_urls_in_expr(left, out);
+            connect_urls_in_expr(right, out);
+        }
+        Expr::UnaryOp { expr, .. } | Expr::Named { value: expr, .. } | Expr::FieldAccess { object: expr, .. } => connect_urls_in_expr(expr, out),
+        Expr::Array(items) => items.iter().for_each(|i| connect_urls_in_expr(i, out)),
+        Expr::Map(pairs) => pairs.iter().for_each(|(k, v)| {
+            connect_urls_in_expr(k, out);
+            connect_urls_in_expr(v, out);
+        }),
+        Expr::ForExpr { iter, body, .. } => {
+            connect_urls_in_expr(iter, out);
+            body.iter().for_each(|s| connect_urls_in_stmt(s, out));
+        }
+        _ => {}
+    }
+}
+
 fn called_in_stmt(st: &crate::ast::Stmt, out: &mut std::collections::BTreeSet<String>) {
     use crate::ast::Stmt;
     match st {

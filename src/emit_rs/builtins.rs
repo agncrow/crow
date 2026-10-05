@@ -52,10 +52,8 @@ impl Emitter {
         // file, a parameter — could name any backend, so the program is
         // built with each (it had been built with sqlite alone, and
         // `connect[env['DATABASE_URL']]` was refused at run time)
+        // (ClickHouse's driver is written in Crow: no feature of the crate)
         let spelled = ["sqlite://", "postgres://", "postgresql://", "clickhouse://"].iter().any(|s| url.contains(s));
-        if url.contains("clickhouse://") || !spelled {
-            self.db_features.insert("clickhouse".to_string());
-        }
         if url.contains("postgres://") || url.contains("postgresql://") || !spelled {
             self.db_features.insert("postgres".to_string());
         }
@@ -146,6 +144,16 @@ impl Emitter {
         )
     }
 
+    /// `describe[conn, sql]`: the columns a statement answers, as a frame
+    /// of name and kind; what the compiler asks at build time, asked by
+    /// the program as it runs.
+    fn db_describe(&mut self, conn: &str, sql: &str) -> String {
+        format!(
+            "{{ match {}.describe(&{}) {{ Ok(_c) => CrowResult {{ ok: true, value: crow_db::driven::describe_frame(&_c), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_e) => CrowResult {{ ok: false, value: crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![]), reason: _e, kind: \"db\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
+            conn, sql
+        )
+    }
+
     fn db_exec(&mut self, conn: &str, sql: &str, params: &[Expr]) -> String {
         self.needs_serde_json = true;
         let (p, fallible) = self.db_params(params);
@@ -201,6 +209,7 @@ impl Emitter {
                     return self.db_connect(args, arg_strs);
                 }
                 "query" if arg_strs.len() >= 2 => return self.db_query(&arg_strs[0], &arg_strs[1], &args[2..]),
+                "describe" if arg_strs.len() == 2 => return self.db_describe(&arg_strs[0], &arg_strs[1]),
                 "exec" if arg_strs.len() >= 2 => return self.db_exec(&arg_strs[0], &arg_strs[1], &args[2..]),
                 "insert" if arg_strs.len() == 3 => return format!("{}.insert(&{}, &{}).unwrap()", arg_strs[0], arg_strs[1], arg_strs[2]),
                 "migrate" if arg_strs.len() == 2 => return format!("{}.migrate(&{}).unwrap()", arg_strs[0], arg_strs[1]),
@@ -682,6 +691,7 @@ impl Emitter {
                 self.db_connect(args, a)
             }
             "query" if db && n >= 2 => self.db_query(&a[0], &a[1], &args[2..]),
+            "describe" if db && n == 2 => self.db_describe(&a[0], &a[1]),
             "exec" if db && n >= 2 => self.db_exec(&a[0], &a[1], &args[2..]),
             "insert" if db && n == 3 => format!("{}.insert(&{}, &{}).unwrap()", a[0], a[1], a[2]),
             "migrate" if db && n == 2 => format!("{}.migrate(&{}).unwrap()", a[0], a[1]),

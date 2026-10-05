@@ -1681,7 +1681,7 @@ fn a_web_programs_connection_from_the_environment_compiles() {
     let program = crate::lower_ir::lower(&stmts, &mut ctx, "t").expect("lowering to the IR failed");
     let emitted = crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), None, false, None).expect("emitting failed");
     let features: Vec<&str> = emitted.db_features.iter().map(String::as_str).collect();
-    assert_eq!(features, ["clickhouse", "postgres", "sqlite"]);
+    assert_eq!(features, ["postgres", "sqlite"]);
     // a URL the source spells builds its own backend alone
     let stmts = crate::lower::lower_program(&crate::build("use db\nconn = connect['sqlite://a.db']\n").expect("parse failed")).expect("lowering failed");
     let mut ctx = TypeContext::new();

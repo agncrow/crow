@@ -39,7 +39,7 @@ enum Flow {
 /// How the walker's own maps hash a name: cheaply (FxHash's rotate and
 /// multiply), since their keys are the program's names, not outside input.
 #[derive(Default, Clone, Copy)]
-struct NameHasher(u64);
+pub(crate) struct NameHasher(u64);
 
 impl std::hash::Hasher for NameHasher {
     fn finish(&self) -> u64 {
@@ -66,7 +66,7 @@ impl NameHasher {
     }
 }
 
-type Names = std::hash::BuildHasherDefault<NameHasher>;
+pub(crate) type Names = std::hash::BuildHasherDefault<NameHasher>;
 
 /// A scope is shared until written (a parallel loop clones the walker per
 /// chunk of items; the clone costs one reference per scope).
@@ -536,6 +536,17 @@ impl IrInterp {
                 self.structs.insert(s.name.clone(), Arc::new(s.clone()));
             }
         }
+        // a program that carries a database driver written in Crow: what
+        // a child interpreter is made from, for the driver's calls
+        crate::driver::set_template(crate::driver::Template { fns: self.fns.clone(), structs: self.structs.clone(), registry: self.registry.clone(), file: self.file.clone() });
+    }
+
+    /// A child over a program's functions: the driver's calls run in it.
+    pub(crate) fn from_template(t: &crate::driver::Template) -> Self {
+        let mut it = IrInterp::new(&t.registry, &t.file);
+        it.fns = t.fns.clone();
+        it.structs = t.structs.clone();
+        it
     }
 
     /// A struct's fields and their types, as the program declared it.
@@ -2309,7 +2320,7 @@ impl IrInterp {
         }
     }
 
-    fn call_user(&mut self, name: &str, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
+    pub(crate) fn call_user(&mut self, name: &str, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
         // (a standard module's function resolves the names its row left to
         // the runtime in its own scope)
         let scope = self.registry.enter(name);

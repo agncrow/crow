@@ -337,7 +337,6 @@ fn kind(backend: &str, ty: &str) -> String {
     match backend {
         #[cfg(feature = "sqlite")]
         "sqlite" => crate::sqlite::kind_of_decl(ty).unwrap_or_default(),
-        #[cfg(feature = "clickhouse")]
         "clickhouse" => clickhouse_kind(ty).to_string(),
         _ => postgres_kind(ty).to_string(),
     }
@@ -378,7 +377,6 @@ fn postgres_kind(ty: &str) -> &'static str {
 
 /// A ClickHouse type's kind: a SQL name it takes for one of its types
 /// (`INT`, `TEXT`, `DOUBLE`), or its own name as the catalog gives it.
-#[cfg(feature = "clickhouse")]
 fn clickhouse_kind(ty: &str) -> &'static str {
     match folded(ty).as_str() {
         "int" | "integer" | "tinyint" | "smallint" | "mediumint" | "bigint" | "int1" | "byte" | "signed" | "unsigned" => "int",
@@ -387,7 +385,7 @@ fn clickhouse_kind(ty: &str) -> &'static str {
         "text" | "varchar" | "char" | "character" | "character varying" | "string" | "tinytext" | "mediumtext" | "longtext" | "blob" | "clob" | "nvarchar"
         | "varbinary" | "binary" => "str",
         "date" | "datetime" | "timestamp" => "datetime",
-        _ => crate::clickhouse::ch_kind(ty),
+        _ => crate::driven::ch_kind(ty),
     }
 }
 
@@ -809,7 +807,6 @@ mod tests {
         assert_eq!(postgres_kind("character varying"), "str");
         assert_eq!(postgres_kind("INTEGER[]"), "str");
         assert_eq!(postgres_kind("BIGSERIAL"), "int");
-        #[cfg(feature = "clickhouse")]
         {
             assert_eq!(clickhouse_kind("INT"), "int");
             assert_eq!(clickhouse_kind("Int32"), "int");

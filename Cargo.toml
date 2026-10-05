@@ -21,7 +21,7 @@ regex = "1.12.3"
 sha2 = "0.10.9"
 md-5 = "0.10.6"
 chrono = "0.4.44"
-crow_db = { version = "0.1.0", path = "crow_db", features = ["postgres", "sqlite", "clickhouse"] }
+crow_db = { version = "0.1.0", path = "crow_db", features = ["postgres", "sqlite"] }
 # the interpreter answers every response the compiled program does:
 # msgpack and arrow among them (spec, Core (Server))
 crow_web = { version = "0.1.0", path = "crow_web", default-features = false, features = ["live", "http", "arrow_ipc"] }

@@ -40,6 +40,7 @@ cargo clippy --workspace --all-features
 ./target/release/crow test src/modules/ws.co
 ./target/release/crow test src/modules/mail.co
 ./target/release/crow test src/modules/stats.co
+./target/release/crow test src/modules/clickhouse.co
 ```
 
 Use the release binary for the layout and site suites: the debug binary
@@ -68,6 +69,13 @@ steps on every push and must be green.
   before a gate: three unit tests looked flaky for an hour until the
   variable, exported in some shells and not others, turned out to be what
   differed — and the finding was real.
+- Crow has no `pass`, `continue` or `lambda` (the parser names each) and
+  no `chars[]`: characters are `split[text, '']` with its empty ends
+  skipped. A module written in Crow sees another module's ROWS, never its
+  helpers (`exchange_on` had to become a sys row for the driver to call it).
+  A driver's rows are named `ch_*` so they collide with no program name
+  (`db`'s `query` beside a driver's `query` was "ambiguous" in every
+  program).
 - Per-cell work written in Crow pays the language's price per operation
   (a copy, an allocation, a Result) where a kernel pays per byte: a parser
   of a million rows was 20–45× slower than `frame_of_csv`. The rows a

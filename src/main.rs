@@ -12,6 +12,7 @@ mod harness;
 #[cfg(test)]
 mod interp_tests;
 mod ir_interp;
+mod driver;
 mod ir_verify;
 mod lower_ir;
 mod emit_rs;
@@ -4153,8 +4154,30 @@ fn crowfile_schema_or_stop() -> Option<crow_db::schema::Mode> {
 /// and, commented out, what it will not — a draft for a migration. Only
 /// the catalog is read.
 fn cmd_db(args: &[String]) {
+    // `crow db describe <url> <sql>`: the columns the statement answers,
+    // as JSON — what the compiler asks of a database whose driver is
+    // written in Crow, from a process of its own (docs/db-in-crow-design.md)
+    if args.first().map(|s| s.as_str()) == Some("describe") {
+        let (Some(url), Some(sql)) = (args.get(1), args.get(2)) else {
+            eprintln!("usage: crow db describe <url> <sql>");
+            process::exit(1);
+        };
+        let answered = driver::tooling_ready().and_then(|_| crow_db::connect(url, Some(1))).and_then(|db| db.describe(sql));
+        match answered {
+            Ok(cols) => println!("{}", serde_json::Value::Array(cols.into_iter().map(|(n, k)| serde_json::json!([n, k])).collect())),
+            Err(e) => {
+                eprintln!("{}", e);
+                process::exit(1);
+            }
+        }
+        return;
+    }
     if args.first().map(|s| s.as_str()) != Some("diff") {
         eprintln!("usage: crow db diff [file.co]");
+        process::exit(1);
+    }
+    if let Err(e) = driver::tooling_ready() {
+        eprintln!("error: {}", e);
         process::exit(1);
     }
     let file = args.iter().skip(1).find(|a| !a.starts_with('-')).cloned().unwrap_or_else(|| parse_crowfile().entry);
@@ -4489,6 +4512,9 @@ pub(crate) fn expand_module_imports_checked(
             ast::Stmt::Use { path, alias } => {
                 if path == "sys" && !sys_allowed(source_dir) {
                     return Err(sys_refusal(line));
+                }
+                if path.starts_with("db.") && !sys_allowed(source_dir) {
+                    return Err(format!("line {}: `{}` is the driver's own, which `use db` carries — a program connects with connect[…]", line, path));
                 }
                 own_lines.entry(use_key(path, alias)).or_insert(line);
             }

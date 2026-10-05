@@ -5,8 +5,38 @@ use crate::modules::CrowModule;
 pub struct DbModule;
 
 pub(crate) const DB_FUNCTIONS: &[&str] = &[
-    "connect", "query", "exec", "insert", "migrate", "transact",
+    "connect", "query", "exec", "insert", "migrate", "transact", "describe",
 ];
+
+/// The ClickHouse driver written in Crow (src/modules/clickhouse.co), as
+/// the registry answers its rows: a program never imports it — `use db`
+/// carries it — and crow_db::driven calls it (docs/db-in-crow-design.md).
+pub struct ClickhouseDriver;
+
+pub(crate) const CLICKHOUSE_FUNCTIONS: &[&str] = &["ch_open", "ch_check", "ch_query", "ch_exec", "ch_insert", "ch_describe", "ch_cancel"];
+
+impl CrowModule for ClickhouseDriver {
+    fn name(&self) -> &str {
+        "db.clickhouse"
+    }
+
+    fn functions(&self) -> &[&str] {
+        CLICKHOUSE_FUNCTIONS
+    }
+}
+
+/// The modules a program that imports `db` carries: the drivers written
+/// in Crow its connection URLs name — every driver when a URL is not a
+/// literal the source spells, or no connection is made (the tooling's
+/// `use db` alone).
+pub fn drivers_for(urls: &[String]) -> Vec<&'static str> {
+    const ALL: &[(&str, &str)] = &[("clickhouse://", "db.clickhouse")];
+    let spelled = |u: &String| ALL.iter().any(|(s, _)| u.starts_with(s)) || u.starts_with("sqlite://") || u.starts_with("postgres://") || u.starts_with("postgresql://");
+    if urls.is_empty() || urls.iter().any(|u| !spelled(u)) {
+        return ALL.iter().map(|(_, m)| *m).collect();
+    }
+    ALL.iter().filter(|(s, _)| urls.iter().any(|u| u.starts_with(s))).map(|(_, m)| *m).collect()
+}
 
 impl CrowModule for DbModule {
     fn name(&self) -> &str { "db" }
@@ -119,6 +149,19 @@ fn call_db(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
             let count = conn.insert(table, frame)?;
             Ok(CrowValue::ok(Value::Int(count)))
         }
+        "describe" => {
+            // describe[conn, sql]: the columns a statement answers, as a
+            // frame of name and kind, without running it
+            if args.len() != 2 {
+                return Err("describe[] takes 2 arguments".into());
+            }
+            let conn = to_db(&args[0], "describe")?;
+            let sql = to_str(&args[1], "describe")?;
+            match conn.describe(sql) {
+                Ok(cols) => Ok(CrowValue::ok(Value::Frame(Box::new(crow_db::driven::describe_frame(&cols))))),
+                Err(e) => Ok(CrowValue::error_with_kind(&e, "db", "")),
+            }
+        }
         "migrate" => {
             // migrate[conn, dir]
             if args.len() != 2 {
@@ -187,6 +230,7 @@ fn db_type_of(name: &str) -> CrowType {
         "connect" => CrowType::DbHandle,
         "query" => CrowType::Result(Box::new(CrowType::Frame(None))),
         "exec" => CrowType::Result(Box::new(CrowType::Int)),
+        "describe" => CrowType::Result(Box::new(CrowType::Frame(None))),
         "insert" => CrowType::Int,
         "migrate" => CrowType::Int,
         "transact" => CrowType::Unknown,
