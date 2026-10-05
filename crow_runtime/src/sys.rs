@@ -524,12 +524,27 @@ pub fn open(host: &str, port: i64, tls: bool, seconds: f64) -> Result<CrowStream
     }
     let timeout = (seconds > 0.0).then(|| std::time::Duration::from_secs_f64(seconds));
     let addrs: Vec<std::net::SocketAddr> = (host, port as u16).to_socket_addrs().map_err(|e| format!("cannot resolve {}: {}", host, e))?.collect();
-    let Some(addr) = addrs.first() else { return Err(format!("cannot resolve {}", host)) };
-    let tcp = match timeout {
-        Some(t) => std::net::TcpStream::connect_timeout(addr, t),
-        None => std::net::TcpStream::connect(addr),
+    if addrs.is_empty() {
+        return Err(format!("cannot resolve {}", host));
     }
-    .map_err(|e| format!("cannot connect to {}:{}: {}", host, port, e))?;
+    // a name's addresses in turn (`localhost` is ::1 and 127.0.0.1, and a
+    // server may listen on one), the last refusal the reason when none answers
+    let mut tcp = None;
+    let mut refused = String::new();
+    for addr in &addrs {
+        let tried = match timeout {
+            Some(t) => std::net::TcpStream::connect_timeout(addr, t),
+            None => std::net::TcpStream::connect(addr),
+        };
+        match tried {
+            Ok(t) => {
+                tcp = Some(t);
+                break;
+            }
+            Err(e) => refused = e.to_string(),
+        }
+    }
+    let Some(tcp) = tcp else { return Err(format!("cannot connect to {}:{}: {}", host, port, refused)) };
     tcp.set_read_timeout(timeout).map_err(|e| e.to_string())?;
     tcp.set_write_timeout(timeout).map_err(|e| e.to_string())?;
     let conn = if tls {
@@ -592,6 +607,20 @@ pub fn close(s: &CrowStream) {
 
 #[cfg(test)]
 mod tests {
+    /// A name with several addresses connects to the one that answers:
+    /// `localhost` is ::1 before 127.0.0.1 on macOS, and a server listening
+    /// on 127.0.0.1 alone was refused as "connection refused" by the first
+    #[test]
+    fn a_name_with_several_addresses_connects_to_the_one_that_answers() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port() as i64;
+        let accepting = std::thread::spawn(move || listener.accept().map(|_| ()));
+        let opened = super::open("localhost", port, false, 2.0);
+        assert!(opened.is_ok(), "{:?}", opened.err());
+        drop(opened);
+        assert!(accepting.join().unwrap().is_ok());
+    }
+
     use super::*;
 
     /// A table's cells are a matrix, a row each; a cell that is no number

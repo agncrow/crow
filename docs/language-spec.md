@@ -2290,7 +2290,7 @@ Import with `use sys` — **only in a module of the standard library.** `sys` is
 | `find[bytes, needle]` | Where the needle first occurs, or -1 |
 | `concat[a, b]` | The two in order |
 | `byte[bytes, i]` | The byte at `i` as an int, counted from the end when negative; outside stops |
-| `open[host, port, tls, seconds]` | A connection to the host's port, behind TLS when `tls` is true (the system's roots); each read and write gives up after `seconds` (none when 0). An error value of kind `'sys'` when none can be made: a host that does not resolve, a port nobody listens on, a certificate that does not fit |
+| `open[host, port, tls, seconds]` | A connection to the host's port — each address the host's name resolves to tried in turn (`localhost` is `::1` and `127.0.0.1`, and a server may listen on one) — behind TLS when `tls` is true (the system's roots); each read and write gives up after `seconds` (none when 0). An error value of kind `'sys'` when none can be made: a host that does not resolve, a port nobody listens on, a certificate that does not fit |
 | `send[stream, bytes]` | The bytes written, all of them; the count. An error value of kind `'sys'` on a stream that is closed or broke |
 | `recv[stream, most, seconds]` | Up to `most` bytes as they arrive — none when the other side closed — waiting at most `seconds` (the connection's own wait when 0). An error value of kind `'sys'`: `no data from host:port in 2 s`, `the stream is closed` |
 | `close[stream]` | The connection let go; every call after is refused |
