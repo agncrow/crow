@@ -100,6 +100,14 @@ Found and fixed (Vijay's decision, 2026-10-01):
   the reason beside the id, in both modes, and under `crow dev` the dev
   panel lists it (`tests/dev.rs`, served 06; Vijay, 2026-10-01). A test
   reads the reason from the click's value.
+- A value that failed, rendered by a view, showed its reason in place —
+  `error: cannot read '/etc/finch/db.txt': …` — on every render, to every
+  reader of the page. It now shows `error: the server's log has why, as
+  <id>`, and the log has the reason beside the id once (the same id for
+  the same reason, so the page is stable under re-rendering), in both
+  modes (`crow_web::core::response::failed_in_view`; served 11, 12, 14).
+  A derivation still being computed shows `error: loading` as before
+  (Vijay, 2026-10-05).
 
 ## Uploads
 

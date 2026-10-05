@@ -154,7 +154,7 @@ fn page_render(t: Arc<IrInterp>, view_name: String) -> impl Fn(&CrowLiveState) -
                 }
                 CrowVNode::raw(&html)
             }
-            Err(e) => CrowVNode::text(&format!("error: {}", e)),
+            Err(e) => CrowVNode::failed(&e),
         }
     }
 }

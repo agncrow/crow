@@ -1,5 +1,5 @@
 [
-  {"expect": "<p>error: cannot read "},
+  {"expect": "<p>error: the server's log has why, as "},
   {"expect": "<p>12</p><p>12</p>"},
   {"event": "double"},
   {"expect": "<p>12 doubled is 24</p>"}

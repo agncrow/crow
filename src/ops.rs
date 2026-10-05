@@ -914,7 +914,7 @@ fn render_widget(vals: &[CrowValue]) -> String {
                         // props that failed: the widget shows the reason in
                         // its place, as a control shows a failed argument
                         ("props", _) if val.is_error() => {
-                            return crate::harness::html_escape_text(&format!("error: {}", val.reason()));
+                            return crate::harness::html_escape_text(&crow_web::core::response::failed_in_view(&val.reason()));
                         }
                         ("props", _) => props = crate::builtins::crow_to_json("", val).unwrap_or(serde_json::Value::Null),
                         ("on", Value::Map(evs)) => {
@@ -969,8 +969,9 @@ pub fn render_element(name: &str, vals: &[CrowValue]) -> Result<String, String> 
     let mut confirm: Option<String> = None;
     for v in vals {
         if v.is_error() {
-            // a view renders what it is given: a failed value shows its reason
-            inner.push_str(&format!("error: {}", v.reason()));
+            // a view renders what it is given: a failed value shows an id
+            // the server's log has its reason under
+            inner.push_str(&crow_web::core::response::failed_in_view(&v.reason()));
             continue;
         }
         match &v.value {

@@ -1,5 +1,5 @@
---- A widget handed props that failed shows the reason in its place, as a
---- control shows a failed argument, in both modes. (The interpreter gave
+--- A widget handed props that failed shows an id the log has the reason
+--- under, in its place, as a control shows a failed argument, in both modes. (The interpreter gave
 --- the widget no props; the compiled page did not build — the taskboard's
 --- stars, read from a column that can hold NULL.)
 use web, ui

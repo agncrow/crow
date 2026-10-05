@@ -92,16 +92,18 @@ fn a_collection_keeps_a_clone_of_a_variable() {
 }
 
 /// A control renders what it is given, as an element and a view do: a
-/// failed argument is its reason in place of the control (it was a result
-/// where the page wanted a node, and the program did not build)
+/// failed argument is, in place of the control, the id the log has its
+/// reason under (it was a result where the page wanted a node, and the
+/// program did not build)
 #[test]
-fn a_control_renders_a_failed_argument_as_its_reason() {
+fn a_control_renders_a_failed_argument_as_an_id_the_log_has() {
     let src = "use web, ui\n\npick = 'a'\n\nderive options\n    r = read['missing.txt']\n    return split[r, ',']\n\nview render[]\n    return stack[select[options, pick]]\n\nserve[3996]\npage['/', render]\n";
     let rust = transpile(src);
     let start = rust.find("fn render(state").expect("render");
     let rest = &rust[start..];
     let render = &rest[..rest.find("\n}\n").unwrap()];
-    assert!(render.contains("CrowVNode::text(&format!(\"error: {}\", _va0.reason))"), "{}", render);
+    assert!(render.contains("CrowVNode::failed(&_va0.reason)"), "the failed argument renders as the id the log has its reason under\n{}", render);
+    assert!(!render.contains("error: {}"), "no reason reaches the page\n{}", render);
 }
 
 /// A loop over a list that can fail is refused like a condition: the

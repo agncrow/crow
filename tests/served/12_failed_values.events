@@ -1,5 +1,5 @@
 [
-  {"expect": "error: cannot read "},
+  {"expect": "error: the server's log has why, as "},
   {"event": "look"},
   {"expect": "<p>looked</p>"}
 ]

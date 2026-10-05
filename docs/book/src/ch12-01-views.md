@@ -56,8 +56,9 @@ exactly this way. Two rules make this safe:
   everyone else's, and nothing runs.
 - **A failed argument renders, it does not propagate.** Elements render
   what they are given (chapter 12.5), and so does a view: an error value
-  handed to a view shows as `error: reason` in place of the tree. A page
-  with one unreadable chapter is still a page.
+  handed to a view shows as `error: the server's log has why, as <id>` in
+  place of the tree — the reader is told an id, the server's log has the
+  reason (chapter 13.4). A page with one unreadable chapter is still a page.
 
 ```crow
 use web, ui, doc
@@ -68,7 +69,7 @@ view card[title, body]
 markup = doc.document['Card', card['Hello', 'a paragraph']]
 log[contains[markup, '<div class="stack card"']]
 broken = doc.document['Card', card['Hello', read['/nonexistent/notes.md']]]
-log[contains[broken, 'error: cannot read']]
+log[contains[broken, 'error: the server']]
 ```
 
 ```text

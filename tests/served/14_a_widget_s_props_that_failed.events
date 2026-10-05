@@ -1,5 +1,5 @@
 [
-  {"expect": "error: cannot convert"},
+  {"expect": "error: the server's log has why, as "},
   {"event": "fix"},
   {"expect": "data-crow-widget=\"stars\""},
   {"expect": ":3}"}

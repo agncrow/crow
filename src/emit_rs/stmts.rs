@@ -434,10 +434,10 @@ impl Emitter {
             if self.view_mark {
                 // (through view_exit: the view's level closes, and a value
                 // still being caught up with marks it stale)
-                return format!("return state.view_exit(__view, CrowVNode::text(&format!(\"error: {{}}\", {v}.reason)));", v = v);
+                return format!("return state.view_exit(__view, CrowVNode::failed(&{v}.reason));", v = v);
             }
             if self.in_view() {
-                return format!("return CrowVNode::text(&format!(\"error: {{}}\", {v}.reason));", v = v);
+                return format!("return CrowVNode::failed(&{v}.reason);", v = v);
             }
             let inner_default = match &ret {
                 CrowType::Result(inner) => inner.default_rust_value(),

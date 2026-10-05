@@ -1,5 +1,6 @@
 --- A variable whose first value could not fail holds no error: a view
---- renders the failed value in place of itself, and a handler stops, so
+--- renders an id the log has the failure's reason under, in place of
+--- itself, and a handler stops, so
 --- nothing its click did lands. The interpreter kept the error in the
 --- variable and ran on: the view drew its own text, the handler counted.
 --- CI runs it against the interpreter and against the compiled program
@@ -33,7 +34,8 @@ test a_failed_value_is_refused_where_it_is_assigned[]
     click[a, apply]
     assert[a.count eq 1, 'count `a.count`']
     change[a, 'entry', 'x']
-    assert[contains[html[a], 'error: cannot convert'], 'the page `html[a]`']
+    assert[contains[html[a], 'error: the server\'s log has why'], 'the page `html[a]`']
+    assert[not contains[html[a], 'cannot convert'], 'the reason is the log\'s, not the page\'s: `html[a]`']
     assert[not contains[html[a], 'reading'], 'the view is the error: `html[a]`']
     r = click[a, apply]
     assert[not r.ok]

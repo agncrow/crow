@@ -1,5 +1,5 @@
---- A page drawn from values that failed: a control given one renders its
---- reason in place of the control, and a derivation that loops over a list
+--- A page drawn from values that failed: a control given one renders an
+--- id the log has its reason under, in place of the control, and a derivation that loops over a list
 --- that failed is refused like a condition, so its value is the error.
 use web, ui
 

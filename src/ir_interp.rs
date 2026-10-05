@@ -1008,7 +1008,7 @@ impl IrInterp {
                 // a control renders what it is given: a failed argument is
                 // its reason in place of the control, as for a view
                 if let Some(bad) = vals.iter().find(|v| v.is_error()) {
-                    return Ok(CrowValue::markup(format!("error: {}", crate::harness::html_escape_text(&bad.reason()))));
+                    return Ok(CrowValue::markup(crate::harness::html_escape_text(&crow_web::core::response::failed_in_view(&bad.reason()))));
                 }
                 CrowValue::markup(crate::ops::render_input(name, &key, &vals)?)
             }
@@ -2020,7 +2020,7 @@ impl IrInterp {
                 let Value::Frame(f) = &vals[0].value else {
                     if vals[0].is_error() {
                         // the reason is text, as the compiled chart writes it
-                        return Ok(CrowValue::markup(crate::harness::html_escape_text(&format!("chart error: {}", vals[0].reason()))));
+                        return Ok(CrowValue::markup(crate::harness::html_escape_text(&crow_web::core::response::failed_in_view(&vals[0].reason()))));
                     }
                     return Err("chart[] takes a frame first".into());
                 };
@@ -2337,7 +2337,7 @@ impl IrInterp {
         // a view renders what it is given: a failed argument is its text
         if f.kind == FnKind::View {
             if let Some(bad) = vals.iter().find(|v| v.is_error()) {
-                return Ok(CrowValue::markup(format!("error: {}", crate::harness::html_escape_text(&bad.reason()))));
+                return Ok(CrowValue::markup(crate::harness::html_escape_text(&crow_web::core::response::failed_in_view(&bad.reason()))));
             }
         }
         let mut scope = HashMap::with_capacity_and_hasher(f.params.len(), Names::default());

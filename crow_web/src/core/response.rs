@@ -15,6 +15,48 @@ pub fn failure_id() -> String {
     crow_runtime::signin::random_hex(4).unwrap_or_else(|_| format!("{:08x}", NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)))
 }
 
+/// What a view shows in place of a value that failed: `error: ` and the
+/// words that hand the reader the failure's id, under which the server's
+/// log has the reason — the reason names what the program reaches, a
+/// database's address, a file's path, and a page's reader is told none of
+/// it (Vijay, 2026-10-05, as for a handler that stopped). The id is the
+/// same for the same reason (eight hex digits of a hash of it), so a page
+/// that renders the failure on every tick is stable and the log says it
+/// once per process. A derivation still being computed is `error:
+/// loading`, as it was: no failure, and nothing to log.
+pub fn failed_in_view(reason: &str) -> String {
+    if reason == "loading" {
+        return "error: loading".to_string();
+    }
+    let id = reason_id(reason);
+    if first_time(&id) {
+        eprintln!("crow live: a view showed a failed value as {}: {}", id, reason);
+    }
+    format!("error: {}{}", LOG_HAS_WHY, id)
+}
+
+/// A failure's id from its reason: eight hex digits of its FNV-1a hash.
+pub fn reason_id(reason: &str) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in reason.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{:08x}", (h ^ (h >> 32)) as u32)
+}
+
+/// Whether a failure's id is seen for the first time in this process: the
+/// log has each reason once. (The set is let go when it has grown large.)
+fn first_time(id: &str) -> bool {
+    static SHOWN: Mutex<Option<std::collections::HashSet<String>>> = Mutex::new(None);
+    let mut guard = SHOWN.lock().unwrap_or_else(|p| p.into_inner());
+    let shown = guard.get_or_insert_with(std::collections::HashSet::new);
+    if shown.len() > 4096 {
+        shown.clear();
+    }
+    shown.insert(id.to_string())
+}
+
 /// Text with each failure's id read past, as `<id>`: an id is random, a
 /// line in one run's log, so what compares two runs — the served pages of
 /// both modes, a baseline's scenarios — agrees on everything but it.
@@ -249,6 +291,23 @@ mod tests {
     /// A failure's id is random, so what compares two runs reads past it —
     /// a baseline recording a stopped handler's notice had changed on every
     /// `crow check`; text that is no id after the words is left alone
+    /// A view shows a failed value as an id the log has, the same id for
+    /// the same reason, and a derivation still loading as it was
+    #[test]
+    fn a_failed_value_in_a_view_tells_the_reader_an_id_the_log_has() {
+        let shown = failed_in_view("cannot read 'secrets/db.txt': no such file");
+        assert_eq!(ids_read_past(&shown), "error: the server's log has why, as <id>");
+        assert!(!shown.contains("secrets"));
+        assert_eq!(shown, failed_in_view("cannot read 'secrets/db.txt': no such file"));
+        assert_ne!(shown, failed_in_view("cannot convert 'x' to int"));
+        assert_eq!(reason_id("a").len(), 8);
+        assert!(reason_id("a").bytes().all(|b| b.is_ascii_hexdigit()));
+        assert_eq!(failed_in_view("loading"), "error: loading");
+        // the log says a reason once
+        assert!(first_time("ffffffff"));
+        assert!(!first_time("ffffffff"));
+    }
+
     #[test]
     fn a_failure_id_is_read_past() {
         let told = format!("apply stopped, and nothing changed — {}3f9a1c07 eq saved", LOG_HAS_WHY);

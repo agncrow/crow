@@ -1631,7 +1631,7 @@ impl Emitter {
                         let mut checks: Vec<String> = Vec::new();
                         for (k, &i) in result_idx.iter().enumerate() {
                             pre.push_str(&format!("let _va{} = &({}); ", k, orig[k]));
-                            checks.push(format!("if !_va{k}.ok {{ CrowVNode::text(&format!(\"error: {{}}\", _va{k}.reason)) }} else", k = k));
+                            checks.push(format!("if !_va{k}.ok {{ CrowVNode::failed(&_va{k}.reason) }} else", k = k));
                             bound[i] = format!("_va{}.value.clone()", k);
                         }
                         let call = match &target {

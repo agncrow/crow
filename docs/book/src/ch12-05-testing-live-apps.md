@@ -141,8 +141,11 @@ work the program did before `page[]`.
 ## Failure renders, it doesn't crash
 
 A view renders what it is given, and what it is given may be an error
-value (chapter 7). Feed it one on purpose and check the reason reaches the
-page:
+value (chapter 7). The page shows the failure as `error: the server's log
+has why, as <id>` — a reader is told an id, never the reason, which names
+what the program reaches — and the server's log has the reason beside the
+id. Feed a view one on purpose and check that the failure reaches the
+page; the reason itself is yours to check on the value:
 
 ```crow
 use web, ui
@@ -156,7 +159,8 @@ view quote[]
 
 test feed_down_is_visible[]
     s = app[quote]
-    assert[contains[elements[s, 'p'][0].text, 'price feed is down']]
+    assert[contains[elements[s, 'p'][0].text, 'the server\'s log has why']]
+    assert[latest_price[].reason eq 'price feed is down']
 
 page['/', quote]
 log['quote defined']

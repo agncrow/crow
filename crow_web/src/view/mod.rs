@@ -78,6 +78,12 @@ impl CrowVNode {
         CrowVNode::Text(s.to_string())
     }
 
+    /// What a view shows in place of a value that failed: an id the
+    /// server's log has the reason under (crate::core::response).
+    pub fn failed(reason: &str) -> Self {
+        CrowVNode::text(&crate::core::response::failed_in_view(reason))
+    }
+
     /// Create an element node.
     pub fn el(tag: &str, attrs: HashMap<String, String>, children: Vec<CrowVNode>) -> Self {
         CrowVNode::Element {
