@@ -1414,52 +1414,27 @@ fn test_sparse_import_transpile() {
 
 // ===== Stats sub-module =====
 
+/// A statistic is a Crow row: the compiled program defines and calls the
+/// module's function, and names no Rust statistic
 #[test]
-fn test_stats_median_transpile() {
-    let rust = transpile("use math\nuse math.stats\nx = median[ones[5]]\n");
-    assert!(rust.contains("crow_runtime::stats::median("), "should emit stats::median\n{}", rust);
-}
-
-#[test]
-fn test_stats_std_transpile() {
-    let rust = transpile("use math\nuse math.stats\nx = std[ones[5]]\n");
-    assert!(rust.contains("crow_runtime::stats::std("), "should emit stats::std\n{}", rust);
-}
-
-#[test]
-fn test_stats_var_transpile() {
-    let rust = transpile("use math\nuse math.stats\nx = var[ones[5]]\n");
-    assert!(rust.contains("crow_runtime::stats::var("), "should emit stats::var\n{}", rust);
-}
-
-#[test]
-fn test_stats_percentile_transpile() {
-    let rust = transpile("use math\nuse math.stats\nx = percentile[ones[5], 50]\n");
-    assert!(rust.contains("crow_runtime::stats::percentile("), "should emit stats::percentile\n{}", rust);
-}
-
-#[test]
-fn test_stats_zscore_transpile() {
-    let rust = transpile("use math\nuse math.stats\nz = zscore[ones[5]]\n");
-    assert!(rust.contains("crow_runtime::stats::zscore("), "should emit stats::zscore\n{}", rust);
-}
-
-#[test]
-fn test_stats_corr_transpile() {
-    let rust = transpile("use math\nuse math.stats\nc = corr[ones[5], ones[5]]\n");
-    assert!(rust.contains("crow_runtime::stats::corr("), "should emit stats::corr\n{}", rust);
-}
-
-#[test]
-fn test_stats_cov_transpile() {
-    let rust = transpile("use math\nuse math.stats\nc = cov[ones[5], ones[5]]\n");
-    assert!(rust.contains("crow_runtime::stats::cov("), "should emit stats::cov\n{}", rust);
-}
-
-#[test]
-fn test_stats_ttest_transpile() {
-    let rust = transpile("use math\nuse math.stats\nr = ttest[ones[5], ones[5]]\n");
-    assert!(rust.contains("crow_runtime::stats::ttest("), "should emit stats::ttest\n{}", rust);
+fn test_stats_rows_are_crow_functions() {
+    for (name, call) in [
+        ("median", "median[ones[5]]"),
+        ("std", "std[ones[5]]"),
+        ("var", "var[ones[5]]"),
+        ("percentile", "percentile[ones[5], 50]"),
+        ("zscore", "zscore[ones[5]]"),
+        ("corr", "corr[ones[5], ones[5]]"),
+        ("cov", "cov[ones[5], ones[5]]"),
+        ("ttest", "ttest[ones[5], ones[5]]"),
+        ("anova", "anova[ones[5], ones[5], ones[5]]"),
+    ] {
+        let rust = transpile(&format!("use math\nuse math.stats\nx = {call}\nlog[x]\n"));
+        let f = format!("_math_stats_{name}(");
+        assert!(rust.contains(&format!("fn {f}")), "{name}: the module's function is defined\n{rust}");
+        assert!(rust.matches(&f).count() >= 2, "{name}: the module's function is called\n{rust}");
+        assert!(!rust.contains(&format!("crow_runtime::stats::{name}(")), "{name}: no Rust statistic\n{rust}");
+    }
 }
 
 // ===== File System Builtins =====

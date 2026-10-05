@@ -132,7 +132,7 @@ Negative indices are supported (wrap around from the end). The result tensor has
 
 | Function | Description | Example |
 |---|---|---|
-| `a * b` | Matrix multiplication (use `*` operator) | [JSON](../by-example/json.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Statistics: `use math.stats`](../by-example/stats.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [Defining and Calling Functions](../ch04-01-defining-functions.md) · [Writing Your Own Modules](../ch08-04-writing-modules.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
+| `a * b` | Matrix multiplication (use `*` operator) | [JSON](../by-example/json.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Statistics: `use math.stats`](../by-example/stats.md) · [The standard library's layer: `use sys`](../by-example/sys.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [Defining and Calling Functions](../ch04-01-defining-functions.md) · [Writing Your Own Modules](../ch08-04-writing-modules.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
 | `solve[a, b]` | Solve linear system Ax = b | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: tensors](../by-example/math.md) |
 | `inv[a]` | Matrix inverse | [Math: reductions and linear algebra](../by-example/math-linalg.md) |
 | `det[a]` | Determinant (returns float) | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: tensors](../by-example/math.md) |
@@ -192,7 +192,7 @@ Negative indices are supported (wrap around from the end). The result tensor has
 
 | Function | Description | Example |
 |---|---|---|
-| `gamma[x]` | Gamma function Γ(x), element-wise | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
+| `gamma[x]` | Gamma function Γ(x), element-wise | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [The standard library's layer: `use sys`](../by-example/sys.md) |
 | `erf[x]` | Error function erf(x), element-wise | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `bessel[x, n]` | Bessel function J_n(x), element-wise | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `factorial[x]` | Factorial x! = Γ(x+1), element-wise | [Math: random, signal, special, and sparse](../by-example/math-more.md) |

@@ -1600,7 +1600,7 @@ impl IrInterp {
             if row.id == "web.mail.mail" {
                 return self.mail_effect(vals);
             }
-            let handed: Vec<CrowValue> = row.params.iter().zip(&vals).map(|(k, v)| crate::table::value_as(*k, v)).collect::<Result<_, _>>()?;
+            let handed = crate::table::crow_arguments(row, &vals)?;
             // (a reader's value carries the moment it was read, whichever
             // language the reader is written in)
             return self.call_user(&crate::table::crow_fn_name(row), handed).map(|v| Self::stamp(row.name, v));
@@ -1693,8 +1693,7 @@ impl IrInterp {
     fn crow_row_call(&mut self, module: &str, name: &str, vals: &[CrowValue]) -> Option<Result<CrowValue, String>> {
         let kinds: Vec<crate::table::Arg> = vals.iter().map(crate::table::Arg::of_value).collect();
         let row = crate::table::crow_row(module, name, &kinds)?;
-        let handed: Result<Vec<CrowValue>, String> = row.params.iter().zip(vals).map(|(k, v)| crate::table::value_as(*k, v)).collect();
-        Some(handed.and_then(|handed| self.call_user(&crate::table::crow_fn_name(row), handed)).map(|v| Self::stamp(row.name, v)))
+        Some(crate::table::crow_arguments(row, vals).and_then(|handed| self.call_user(&crate::table::crow_fn_name(row), handed)).map(|v| Self::stamp(row.name, v)))
     }
 
     /// `mail[mailer, to, subject, body]`: held to a handler's commit, or

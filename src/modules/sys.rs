@@ -7,7 +7,7 @@ use crate::modules::CrowModule;
 
 pub struct SysModule;
 
-pub(crate) const SYS_FUNCTIONS: &[&str] = &["open", "send", "recv", "close", "bytes", "text", "slice", "find", "concat", "byte", "gather", "file", "store", "random", "hex", "hash", "hmac", "reply", "answer", "csv_rows", "frame_of_csv", "frame_of_json", "frame_of_parquet", "frame_csv", "frame_json", "frame_parquet", "tensor_of_frame", "exchange", "fetch", "put", "format_of", "format_sniffed", "remote", "with_query", "redirected", "base64", "base64url", "unbase64", "same", "pack", "ieee", "binary", "socket_of", "stream_of", "leftover", "unread", "mask", "digest", "read_head", "upgrade", "mailer_field", "secure", "civil"];
+pub(crate) const SYS_FUNCTIONS: &[&str] = &["open", "send", "recv", "close", "bytes", "text", "slice", "find", "concat", "byte", "gather", "file", "store", "random", "hex", "hash", "hmac", "reply", "answer", "csv_rows", "frame_of_csv", "frame_of_json", "frame_of_parquet", "frame_csv", "frame_json", "frame_parquet", "tensor_of_frame", "exchange", "fetch", "put", "format_of", "format_sniffed", "remote", "with_query", "redirected", "base64", "base64url", "unbase64", "same", "pack", "ieee", "binary", "socket_of", "stream_of", "leftover", "unread", "mask", "digest", "read_head", "upgrade", "mailer_field", "secure", "civil", "betainc", "gammainc", "lgamma"];
 
 impl CrowModule for SysModule {
     fn name(&self) -> &str { "sys" }

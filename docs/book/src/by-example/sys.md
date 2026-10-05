@@ -148,6 +148,9 @@ log[hex[mask[bytes['Hello'], pack[939139389, 4]]]]
 log[civil[1369353600]]
 m = smtp['smtp.example.com', 587, 'ada@example.com', 'secret']
 log[mailer_field[m, 'host']]
+log[fmt[betainc[0.3, 1.0, 1.0], decimals = 3]]
+log[fmt[gammainc[1.0, 2.0], decimals = 3]]
+log[fmt[lgamma[5.0], decimals = 3]]
 ```
 
 ```text
@@ -164,6 +167,9 @@ a9993e364706816aba3e25717850c26c9cd0d89d
 7f9f4d5158
 [2013, 5, 24, 0, 0, 0, 5]
 smtp.example.com
+0.300
+0.865
+3.178
 ```
 
 The protocol itself reaches a host — one exchange, a reader's fetch with its options and redirects, an S3 object put signed with the environment's credentials — so these lines are not run here:

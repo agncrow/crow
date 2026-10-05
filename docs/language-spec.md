@@ -2059,6 +2059,8 @@ Import with `use math.stats`. Functions become top-level after import.
 
 A statistic of no values is `NaN`. The series a function pairs up (`corr`, `cov`, `linreg`, `chisq`) are one length, `percentile`'s `p` is from 0 to 100, `anova` compares two groups or more, and `kstest` and `fit` know the distributions above; anything else stops the program with the reason (see When a Program Stops). They had answered `NaN`, `0.5` or an empty map.
 
+The module is written in Crow (`src/modules/stats.co`, design rule 20): each statistic is a formula over the math builtins — a median the middle of `sort`, a variance the mean of squared distances, a regression its sums of products — and the tests' p-values are the t, F and chi-square distributions written over the `sys` layer's `betainc` and `gammainc`, which stay validated kernels. Its rows keep the contract above in both modes; its tests are the module's own (`crow test src/modules/stats.co`): each statistic at known values, and its laws over a spread of inputs (a median is the 50th percentile, a series' covariance with itself is its variance, a correlation is symmetric and within −1 and 1, a z-score keeps nothing of the scale, a line through its own points has r² 1).
+
 ```
 use math
 use math.stats
@@ -2322,6 +2324,9 @@ Import with `use sys` — **only in a module of the standard library.** `sys` is
 | `mailer_field[mailer, name]` | What a mailer holds: its `host`, `port` (as text), `user` or `pass`; another name stops |
 | `secure[stream, host]` | A plain connection put behind TLS from here on (SMTP's STARTTLS), the certificate checked against the host's name; the same stream for every value that holds it, or an error value of kind `'sys'` |
 | `civil[t]` | A moment's civil date and time, UTC, as a list: the year, month and day, the hour, minute and second, and the day of the week (0 is Sunday); written in Crow |
+| `betainc[x, a, b]` | The regularized incomplete beta function I_x(a, b): the t and F distributions are written over it |
+| `gammainc[a, x]` | The lower regularized incomplete gamma function P(a, x): the chi-square distribution is written over it |
+| `lgamma[x]` | The natural log of the gamma function |
 | `remote[path]` | Whether a path names a remote source: a URL (`http://`, `https://`) or an S3 object (`s3://`) |
 | `exchange[url, method, lines, body, timeout]` | One HTTP exchange, written in Crow: the request sent to the URL's host with its method, the header lines and the body, its answer read whole — an `answer`, or an error value of kind `'sys'` where none came in `timeout` seconds (0 as thirty to connect and ten minutes in all) |
 | `redirected[from, location]` | Where a redirect sends the request: its `location`, made absolute against the URL it came from |

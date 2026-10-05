@@ -386,7 +386,7 @@ impl Kind {
 /// The arguments grouped by parameter: one each, and a rest parameter the
 /// rest (the same grouping both modes use: `groups` for the interpreter's
 /// values, [`print`] for the compiled program's text).
-fn spans(params: &[Kind], argc: usize, name: &str) -> Result<Vec<(usize, usize)>, String> {
+pub fn spans(params: &[Kind], argc: usize, name: &str) -> Result<Vec<(usize, usize)>, String> {
     let fixed = params.iter().filter(|k| !k.is_rest()).count();
     let rest = params.iter().any(|k| k.is_rest());
     if (!rest && argc != fixed) || (rest && argc < fixed) {
@@ -551,10 +551,6 @@ pub fn write_tensor(t: CrowTensor) -> CrowValue {
 
 pub fn write_int_map(m: BTreeMap<String, i64>) -> CrowValue {
     CrowValue::ok(Value::Map(m.into_iter().map(|(k, v)| (k, write_int(v))).collect()))
-}
-
-pub fn write_float_map(m: BTreeMap<String, f64>) -> CrowValue {
-    CrowValue::ok(Value::Map(m.into_iter().map(|(k, v)| (k, write_float(v))).collect()))
 }
 
 pub fn write_frame(f: crow_runtime::frame::CrowFrame) -> CrowValue {
@@ -976,11 +972,6 @@ pub fn read_scalars(group: &[CrowValue]) -> Result<Vec<crow_runtime::mask::Cell<
         .collect()
 }
 
-/// The groups of a group, each a tensor.
-pub fn read_groups(group: &[CrowValue]) -> Result<Vec<Cow<'_, CrowTensor>>, String> {
-    group.iter().map(read_tensor).collect()
-}
-
 /// The reading of a parameter's group by its kind, as the function takes it.
 macro_rules! read {
     (Int, $g:expr) => { read_int(one($g)?)? };
@@ -996,7 +987,6 @@ macro_rules! read {
     (Strs, $g:expr) => { &read_strs(one($g)?)? };
     (Chunks, $g:expr) => { &read_chunks(one($g)?)? };
     (Sizes, $g:expr) => { &read_sizes($g)? };
-    (Groups, $g:expr) => { &read_groups($g)?.iter().map(|t| &**t).collect::<Vec<&CrowTensor>>() };
     (Bools, $g:expr) => { &read_bools(one($g)?)? };
     (Cell, $g:expr) => { &read_cell(one($g)?)? };
     (Cells, $g:expr) => { read_cells(one($g)?)? };
@@ -1032,7 +1022,6 @@ macro_rules! answer {
     (Str, $x:expr) => { write_str($x) };
     (Tensor, $x:expr) => { write_tensor($x) };
     (IntMap, $x:expr) => { write_int_map($x) };
-    (FloatMap, $x:expr) => { write_float_map($x) };
     (Frame, $x:expr) => { write_frame($x) };
     (Column, $x:expr) => { write_column($x) };
     (Bytes, $x:expr) => { write_bytes($x) };
@@ -1156,6 +1145,24 @@ pub fn value_as(kind: Kind, v: &CrowValue) -> Result<CrowValue, String> {
         Kind::Mailer => CrowValue::ok(Value::Mailer(read_mailer(v)?)),
         other => return Err(format!("a bug in Crow: a builtin written in Crow takes {} here, which the runtime cannot hand it", other.words())),
     })
+}
+
+/// A Crow row's arguments as its function takes them, for the interpreter:
+/// each read as the row's parameter takes it (`value_as`), and a parameter
+/// that takes the rest of the arguments (`anova[a, b, c]`) handed them as
+/// one list.
+pub fn crow_arguments(row: &Row, vals: &[CrowValue]) -> Result<Vec<CrowValue>, String> {
+    let spans = spans(row.params, vals.len(), row.name)?;
+    let mut handed = Vec::with_capacity(row.params.len());
+    for (k, (a, b)) in row.params.iter().zip(spans) {
+        if k.is_rest() {
+            let items: Vec<CrowValue> = vals[a..b].iter().map(|v| value_as(k.each(), v)).collect::<Result<_, _>>()?;
+            handed.push(CrowValue::ok(Value::Array(items)));
+        } else {
+            handed.push(value_as(*k, &vals[a])?);
+        }
+    }
+    Ok(handed)
 }
 
 /// The type a parameter of a row written in Crow has, from the row's kind:
@@ -1544,19 +1551,21 @@ pub static ROWS: &[Row] = &[
     // no test knows: the reason, where they were answered NaN, 0.5 or an
     // empty map; anova of one group was NaN compiled and refused
     // interpreted)
-    row!("stats.median", "math.stats", "median", crow_runtime::stats::median, (Tensor) -> Float, never),
-    row!("stats.std", "math.stats", "std", crow_runtime::stats::std, (Tensor) -> Float, never),
-    row!("stats.var", "math.stats", "var", crow_runtime::stats::var, (Tensor) -> Float, never),
-    row!("stats.percentile", "math.stats", "percentile", crow_runtime::stats::percentile, (Tensor, Float) -> Float, stops),
-    row!("stats.zscore", "math.stats", "zscore", crow_runtime::stats::zscore, (Tensor) -> Tensor, never),
-    row!("stats.corr", "math.stats", "corr", crow_runtime::stats::corr, (Tensor, Tensor) -> Float, stops),
-    row!("stats.cov", "math.stats", "cov", crow_runtime::stats::cov, (Tensor, Tensor) -> Float, stops),
-    row!("stats.ttest", "math.stats", "ttest", crow_runtime::stats::ttest, (Tensor, Tensor) -> FloatMap, never),
-    row!("stats.linreg", "math.stats", "linreg", crow_runtime::stats::linreg, (Tensor, Tensor) -> FloatMap, stops),
-    row!("stats.chisq", "math.stats", "chisq", crow_runtime::stats::chisq, (Tensor, Tensor) -> FloatMap, stops),
-    row!("stats.anova", "math.stats", "anova", crow_runtime::stats::anova, (Groups) -> FloatMap, stops),
-    row!("stats.kstest", "math.stats", "kstest", crow_runtime::stats::kstest, (Tensor, Str) -> FloatMap, stops),
-    row!("stats.fit", "math.stats", "fit", crow_runtime::stats::fit, (Tensor, Str) -> FloatMap, stops),
+    // math.stats, written in Crow (src/modules/stats.co): each row the
+    // contract, the statistic a formula over math's builtins
+    crow!("stats.median", "math.stats", "median", (Tensor) -> Float, never),
+    crow!("stats.std", "math.stats", "std", (Tensor) -> Float, never),
+    crow!("stats.var", "math.stats", "var", (Tensor) -> Float, never),
+    crow!("stats.percentile", "math.stats", "percentile", (Tensor, Float) -> Float, stops),
+    crow!("stats.zscore", "math.stats", "zscore", (Tensor) -> Tensor, never),
+    crow!("stats.corr", "math.stats", "corr", (Tensor, Tensor) -> Float, stops),
+    crow!("stats.cov", "math.stats", "cov", (Tensor, Tensor) -> Float, stops),
+    crow!("stats.ttest", "math.stats", "ttest", (Tensor, Tensor) -> FloatMap, never),
+    crow!("stats.linreg", "math.stats", "linreg", (Tensor, Tensor) -> FloatMap, stops),
+    crow!("stats.chisq", "math.stats", "chisq", (Tensor, Tensor) -> FloatMap, stops),
+    crow!("stats.anova", "math.stats", "anova", (Groups) -> FloatMap, stops),
+    crow!("stats.kstest", "math.stats", "kstest", (Tensor, Str) -> FloatMap, stops),
+    crow!("stats.fit", "math.stats", "fit", (Tensor, Str) -> FloatMap, stops),
     // math.nn, written in Crow (src/modules/nn.co): the rows are its contract
     // (shapes that do not meet, a target that is no class: the
     // reason, where a kernel panicked or a loss read a logit of 0)
@@ -1619,6 +1628,10 @@ pub static ROWS: &[Row] = &[
     row!("sys.unread", "sys", "unread", crow_runtime::sys::unread, (Socket, Bytes) -> Unit, never),
     row!("sys.mask", "sys", "mask", crow_runtime::sys::mask, (Bytes, Bytes) -> Bytes, stops),
     row!("sys.digest", "sys", "digest", crow_runtime::sys::digest, (Bytes, Str) -> Bytes, stops),
+    // the special functions the statistics are written over (crow_runtime::stats)
+    row!("sys.betainc", "sys", "betainc", crow_runtime::stats::betainc, (Float, Float, Float) -> Float, never),
+    row!("sys.gammainc", "sys", "gammainc", crow_runtime::stats::gammainc, (Float, Float) -> Float, never),
+    row!("sys.lgamma", "sys", "lgamma", crow_runtime::stats::lgamma, (Float) -> Float, never),
     // a mailer's fields, and a connection secured (SMTP's STARTTLS)
     row!("sys.mailer_field", "sys", "mailer_field", crow_runtime::sys::mailer_field, (Mailer, Str) -> Str, stops),
     row!("sys.secure", "sys", "secure", crow_runtime::sys::secure, (Stream, Str) -> Stream, value "sys"),
@@ -2248,8 +2261,13 @@ mod tests {
         assert_eq!(miscounted("chart", "rsi", 4), None);
         assert_eq!(miscounted("math", "zeros", 0), None);
         assert_eq!(miscounted("math.stats", "median", 2), Some("median[] takes 1 argument, got 2".to_string()));
-        let printed = print(anova, &["a".to_string(), "b".to_string()], "7", None).expect("prints");
-        assert_eq!(printed, "crow_runtime::stats::anova(&[&(a), &(b)]).unwrap_or_else(|e| crow_stop(7, e))");
+        let zeros = by_id("math.zeros").expect("the row");
+        let printed = print(zeros, &["a".to_string(), "b".to_string()], "7", None).expect("prints");
+        assert!(printed.starts_with("crow_runtime::math::zeros(&[") && printed.contains("(a)") && printed.contains("(b)"), "{printed}");
+        assert!(printed.ends_with("]).unwrap_or_else(|e| crow_stop(7, e))"), "{printed}");
+        // a row written in Crow is never printed as a runtime call
+        let refused = print(anova, &["a".to_string(), "b".to_string()], "7", None).expect_err("refused");
+        assert!(refused.starts_with("a bug in Crow: `anova` is written in Crow"), "{refused}");
     }
 
     #[test]

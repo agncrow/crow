@@ -1,0 +1,322 @@
+--- `use math.stats`: the statistics, written in Crow (design rule 20) —
+--- each one a formula over the math builtins; the t, F and chi-square
+--- distributions over the sys layer's special functions (`betainc`,
+--- `gammainc`), which stay validated kernels. Each one's row in the
+--- builtin table (src/table.rs) is its contract: a list of numbers is a
+--- tensor, a statistic of no values is NaN, two series a function pairs
+--- up are one length, and anything else stops with the reason. The tests
+--- are the module's own: `crow test src/modules/stats.co`.
+use math, sys
+
+--- `median[x]`: the middle value, or the mean of the two middle ones
+fn median[x]
+    n = len[x]
+    if n eq 0
+        return nan
+    s = flatten[sort[x]]
+    if n % 2 eq 1
+        return s[n / 2]
+    return (s[n / 2 - 1] + s[n / 2]) / 2.0
+
+--- `var[x]`: the population variance
+fn var[x]
+    if len[x] eq 0
+        return nan
+    d = x - mean[x]
+    return mean[d .* d]
+
+--- `std[x]`: the population standard deviation
+fn std[x]
+    return sqrt[var[x]]
+
+--- `percentile[x, p]`: the p-th percentile, 0 to 100, interpolated
+--- between the two values it falls between
+fn percentile[x, p]
+    if p lt 0.0 or p gt 100.0
+        halt['percentile: p is a percent, from 0 to 100 (got `p`)']
+    n = len[x]
+    if n eq 0
+        return nan
+    s = flatten[sort[x]]
+    if p eq 0.0
+        return s[0]
+    if p eq 100.0
+        return s[n - 1]
+    rank = p / 100.0 * float[n - 1]
+    lo = int[floor[rank]]
+    hi = int[ceil[rank]]
+    if lo eq hi
+        return s[lo]
+    frac = rank - float[lo]
+    return s[lo] * (1.0 - frac) + s[hi] * frac
+
+--- `zscore[x]`: each value as its distance from the mean in standard
+--- deviations; zeros where every value is the same
+fn zscore[x]
+    s = std[x]
+    if s eq 0.0
+        return x * 0.0
+    return (x - mean[x]) / s
+
+--- `cov[x, y]`: the population covariance of two series of one length
+fn cov[x, y]
+    a = len[x]
+    b = len[y]
+    if a ne b
+        halt['cov: x and y must be one length, got `a` and `b`']
+    if a eq 0
+        return nan
+    return mean[(x - mean[x]) .* (y - mean[y])]
+
+--- `corr[x, y]`: Pearson's correlation of two series of one length; NaN
+--- where either does not vary
+fn corr[x, y]
+    a = len[x]
+    b = len[y]
+    if a ne b
+        halt['corr: x and y must be one length, got `a` and `b`']
+    c = cov[x, y]
+    sx = std[x]
+    sy = std[y]
+    if sx eq 0.0 or sy eq 0.0
+        return nan
+    return c / (sx * sy)
+
+--- `linreg[x, y]`: the line y = slope · x + intercept through two series
+--- of one length, with its r²; NaN of fewer than two points
+fn linreg[x, y]
+    a = len[x]
+    b = len[y]
+    if a ne b
+        halt['linreg: x and y must be one length, got `a` and `b`']
+    if a lt 2
+        return map[slope = nan, intercept = nan, r2 = nan]
+    mx = mean[x]
+    my = mean[y]
+    dx = x - mx
+    dy = y - my
+    ss_xy = sum[dx .* dy]
+    ss_xx = sum[dx .* dx]
+    if ss_xx eq 0.0
+        return map[slope = nan, intercept = my, r2 = nan]
+    slope = ss_xy / ss_xx
+    intercept = my - slope * mx
+    residual = y - (x * slope + intercept)
+    ss_res = sum[residual .* residual]
+    ss_tot = sum[dy .* dy]
+    r2 = 1.0
+    if ss_tot ne 0.0
+        r2 = 1.0 - ss_res / ss_tot
+    return map[slope = slope, intercept = intercept, r2 = r2]
+
+--- `ttest[x, y]`: Welch's two-sample t-test — the statistic `t` and the
+--- two-tailed `p` from the t-distribution with Welch–Satterthwaite's
+--- degrees of freedom; NaN of fewer than two values on a side
+fn ttest[x, y]
+    n1 = float[len[x]]
+    n2 = float[len[y]]
+    if n1 lt 2.0 or n2 lt 2.0
+        return map[t = nan, p = nan]
+    m1 = mean[x]
+    m2 = mean[y]
+    d1 = x - m1
+    d2 = y - m2
+    s1 = sum[d1 .* d1] / (n1 - 1.0)
+    s2 = sum[d2 .* d2] / (n2 - 1.0)
+    se = sqrt[s1 / n1 + s2 / n2]
+    if se eq 0.0
+        return map[t = nan, p = nan]
+    t = (m1 - m2) / se
+    v1 = s1 / n1
+    v2 = s2 / n2
+    df = (v1 + v2) * (v1 + v2) / (v1 * v1 / (n1 - 1.0) + v2 * v2 / (n2 - 1.0))
+    p = betainc[df / (df + t * t), df / 2.0, 0.5]
+    return map[t = t, p = p]
+
+--- `chisq[observed, expected]`: the chi-square goodness of fit of two
+--- series of one length — `chi2` and its `p` with n − 1 degrees of freedom
+fn chisq[observed, expected]
+    a = len[observed]
+    b = len[expected]
+    if a ne b
+        halt['chisq: observed and expected must be one length, got `a` and `b`']
+    if a eq 0
+        return map[chi2 = nan, p = nan]
+    o = flatten[observed]
+    e = flatten[expected]
+    chi2 = 0.0
+    for i in range[a]
+        if e[i] ne 0.0
+            chi2 = chi2 + (o[i] - e[i]) * (o[i] - e[i]) / e[i]
+    df = float[a - 1]
+    p = 1.0 - gammainc[df / 2.0, chi2 / 2.0]
+    return map[chi2 = chi2, p = p]
+
+--- `anova[a, b, …]`: one-way ANOVA of two groups or more — `f` and its
+--- `p` from the F-distribution
+fn anova[groups]
+    k = len[groups]
+    if k lt 2
+        halt['anova: compares 2 groups or more, got `k`']
+    total = 0
+    grand = 0.0
+    for g in groups
+        total = total + len[g]
+        grand = grand + sum[g]
+    if total lte k
+        return map[f = nan, p = nan]
+    grand_mean = grand / float[total]
+    between = 0.0
+    within = 0.0
+    for g in groups
+        ni = float[len[g]]
+        gm = mean[g]
+        between = between + ni * (gm - grand_mean) * (gm - grand_mean)
+        dg = g - gm
+        within = within + sum[dg .* dg]
+    df_between = float[k - 1]
+    df_within = float[total - k]
+    if df_within lte 0.0 or within eq 0.0
+        return map[f = inf, p = 0.0]
+    f = (between / df_between) / (within / df_within)
+    z = df_between * f / (df_between * f + df_within)
+    p = 1.0 - betainc[z, df_between / 2.0, df_within / 2.0]
+    return map[f = f, p = p]
+
+--- Kolmogorov's distribution: the asymptotic p of a scaled distance
+fn ks_p[lam]
+    if lam lte 0.0
+        return 1.0
+    total = 0.0
+    for j in range[100]
+        jf = float[j + 1]
+        sign = 1.0
+        if (j + 1) % 2 eq 0
+            sign = -1.0
+        term = sign * exp[-2.0 * jf * jf * lam * lam]
+        total = total + term
+        if abs[term] lt 0.000000000000001
+            break
+    v = 2.0 * total
+    if v lt 0.0
+        v = 0.0
+    if v gt 1.0
+        v = 1.0
+    return v
+
+--- `kstest[data, dist]`: the Kolmogorov–Smirnov test of the data against
+--- `'normal'` (its own mean and spread) or `'uniform'` (0 to 1) — the
+--- distance `d` and its `p`
+fn kstest[data, dist]
+    if dist ne 'normal' and dist ne 'uniform'
+        halt['kstest: no distribution \'`dist`\' — write \'normal\' or \'uniform\'']
+    n = len[data]
+    if n eq 0
+        return map[d = nan, p = nan]
+    s = flatten[sort[data]]
+    cdf = s * 0.0
+    if dist eq 'normal'
+        m = mean[s]
+        sd = std[s]
+        z = s * 0.0
+        if sd gt 0.0
+            z = (s - m) / sd
+        cdf = 0.5 * (1.0 + erf[z / sqrt[2.0]])
+    else
+        cdf = clip[s, 0.0, 1.0]
+    nf = float[n]
+    above = arange[1.0, nf + 1.0, 1.0] / nf
+    below = arange[0.0, nf, 1.0] / nf
+    d = max[abs[above - cdf]]
+    d2 = max[abs[cdf - below]]
+    if d2 gt d
+        d = d2
+    root = sqrt[nf]
+    lam = (root + 0.12 + 0.11 / root) * d
+    return map[d = d, p = ks_p[lam]]
+
+--- `fit[data, dist]`: a distribution's parameters fitted to the data —
+--- `'normal'` (mu, sigma), `'exponential'` (lambda), `'uniform'` (a, b),
+--- `'poisson'` (lambda); NaN of no data
+fn fit[data, dist]
+    n = len[data]
+    m = nan
+    if n gt 0
+        m = mean[data]
+    if dist eq 'normal'
+        sigma = nan
+        if n gt 0
+            sigma = std[data]
+        return map[mu = m, sigma = sigma]
+    if dist eq 'exponential'
+        lam = nan
+        if m gt 0.0
+            lam = 1.0 / m
+        return map[lambda = lam]
+    if dist eq 'uniform'
+        if n eq 0
+            return map[a = nan, b = nan]
+        return map[a = min[data], b = max[data]]
+    if dist eq 'poisson'
+        return map[lambda = m]
+    halt['fit: no distribution \'`dist`\' — write \'normal\', \'exponential\', \'uniform\' or \'poisson\'']
+    return map[lambda = nan]
+
+--- each statistic at known values
+test the_statistics_at_known_values[]
+    xs = [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0]
+    assert[median[xs] eq 4.5 and var[xs] eq 4.0 and std[xs] eq 2.0]
+    assert[median[[3.0, 1.0, 2.0]] eq 2.0 and median[[42.0]] eq 42.0]
+    five = [1.0, 2.0, 3.0, 4.0, 5.0]
+    assert[percentile[five, 0.0] eq 1.0 and percentile[five, 50.0] eq 3.0]
+    assert[percentile[five, 100.0] eq 5.0 and percentile[five, 25.0] eq 2.0]
+    z = zscore[five]
+    assert[abs[mean[z]] lt 0.0000000001 and abs[mean[z .* z] - 1.0] lt 0.0000000001]
+    assert[abs[corr[five, [2.0, 4.0, 6.0, 8.0, 10.0]] - 1.0] lt 0.0000000001]
+    assert[abs[corr[five, [5.0, 4.0, 3.0, 2.0, 1.0]] + 1.0] lt 0.0000000001]
+    assert[abs[cov[five, [2.0, 4.0, 6.0, 8.0, 10.0]] - 4.0] lt 0.0000000001]
+    line = linreg[five, [3.0, 5.0, 7.0, 9.0, 11.0]]
+    assert[abs[line.slope - 2.0] lt 0.0000000001 and abs[line.intercept - 1.0] lt 0.0000000001]
+    assert[abs[line.r2 - 1.0] lt 0.0000000001]
+    down = linreg[[1.0, 2.0, 3.0, 4.0], [7.0, 4.0, 1.0, -2.0]]
+    assert[abs[down.slope + 3.0] lt 0.0000000001 and abs[down.intercept - 10.0] lt 0.0000000001]
+    noisy = linreg[five, [2.1, 3.9, 6.2, 7.8, 10.1]]
+    assert[noisy.slope gt 1.5 and noisy.slope lt 2.5 and noisy.r2 gt 0.95]
+    same = ttest[five, five]
+    assert[abs[same.t] lt 0.0000000001 and abs[same.p - 1.0] lt 0.05]
+    apart = ttest[five, [100.0, 200.0, 300.0, 400.0, 500.0]]
+    assert[abs[apart.t] gt 3.0 and apart.p lt 0.05]
+    fitted = chisq[[10.0, 20.0, 30.0], [10.0, 20.0, 30.0]]
+    assert[fitted.chi2 eq 0.0 and abs[fitted.p - 1.0] lt 0.05]
+    off = chisq[[50.0, 30.0, 20.0], [33.3, 33.3, 33.4]]
+    assert[off.chi2 gt 5.0 and off.p lt 0.1]
+    alike = anova[[five, five]]
+    assert[abs[alike.f] lt 0.0000000001 and alike.p gt 0.9]
+    apart3 = anova[[[1.0, 2.0, 3.0], [10.0, 11.0, 12.0], [20.0, 21.0, 22.0]]]
+    assert[apart3.f gt 10.0 and apart3.p lt 0.01]
+    flat = kstest[[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9], 'uniform']
+    assert[flat.d lt 0.2 and flat.p gt 0.05]
+    bell = kstest[[-1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5], 'normal']
+    assert[bell.d lt 0.2 and bell.p gt 0.5]
+    normal = fit[xs, 'normal']
+    assert[normal.mu eq 5.0 and normal.sigma eq 2.0]
+    assert[fit[[2.0, 4.0], 'exponential'].lambda eq 1.0 / 3.0]
+    box = fit[xs, 'uniform']
+    assert[box.a eq 2.0 and box.b eq 9.0]
+    assert[fit[xs, 'poisson'].lambda eq 5.0]
+
+--- the laws over a spread of inputs: a median is the 50th percentile, a
+--- covariance of a series with itself is its variance, a correlation is
+--- symmetric and within −1 and 1, a z-score keeps nothing of the scale,
+--- and a line through its own points has r² 1
+test the_statistics_keep_their_laws[]
+    for n in [3, 7, 12, 25]
+        xs = linspace[-2.0, 5.0, n] .* linspace[1.0, 3.0, n]
+        ys = linspace[4.0, -1.0, n] + 0.5
+        assert[abs[percentile[xs, 50.0] - median[xs]] lt 0.000000001]
+        assert[abs[cov[xs, xs] - var[xs]] lt 0.000000001]
+        r = corr[xs, ys]
+        assert[abs[r - corr[ys, xs]] lt 0.000000001 and r gte -1.0 and r lte 1.0]
+        z = zscore[xs * 10.0 + 3.0]
+        assert[abs[mean[z]] lt 0.000000001 and abs[std[z] - 1.0] lt 0.000000001]
+        assert[abs[linreg[xs, xs * 2.0 - 1.0].r2 - 1.0] lt 0.000000001]

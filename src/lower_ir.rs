@@ -3161,6 +3161,23 @@ impl<'a> Lowerer<'a> {
     /// floats, and `timeout = 5` did not build compiled).
     fn crow_call_args(row: Option<&'static crate::table::Row>, lowered: Vec<Expr>) -> Vec<Expr> {
         let Some(row) = row.filter(|r| r.is_crow()) else { return lowered };
+        // a parameter that takes the rest of the arguments (`anova[a, b,
+        // c]`) is handed them as one list, as the function takes it
+        if row.params.iter().any(|k| k.is_rest()) {
+            let Ok(spans) = crate::table::spans(row.params, lowered.len(), row.name) else { return lowered };
+            let mut rest: Vec<Option<Expr>> = lowered.into_iter().map(Some).collect();
+            let mut bundled = Vec::with_capacity(row.params.len());
+            for (k, (a, b)) in row.params.iter().zip(spans) {
+                if k.is_rest() {
+                    let items: Vec<Expr> = (a..b).filter_map(|i| rest[i].take()).collect();
+                    let item = ty_of(&k.each().crow_type());
+                    bundled.push(Expr::ListLit(items, Ty::List(Box::new(item))));
+                } else if let Some(x) = rest[a].take() {
+                    bundled.push(x);
+                }
+            }
+            return bundled;
+        }
         lowered
             .into_iter()
             .zip(row.params.iter().copied().map(Some).chain(std::iter::repeat(None)))
