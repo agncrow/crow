@@ -579,7 +579,9 @@ fn infer_and_convert_refs(raw: &[&str], valid: &[bool]) -> Column {
 
 /// Parse ISO 8601 datetime string → (epoch_millis, offset_minutes).
 /// Supports: 2024-01-15, 2024-01-15T10:30:00, 2024-01-15T10:30:00Z,
-///           2024-01-15T10:30:00+05:30, 2024-01-15T10:30:00-08:00
+///           2024-01-15T10:30:00+05:30, 2024-01-15T10:30:00-08:00,
+/// a fraction of a second (`10:30:00.123`, kept to the millisecond) and
+/// an offset of hours alone (`-08`, as Postgres writes one) or `-0800`.
 pub fn parse_datetime(s: &str) -> Option<(i64, i16)> {
     let s = s.trim();
 
@@ -601,23 +603,44 @@ pub fn parse_datetime(s: &str) -> Option<(i64, i16)> {
         let min: u32 = s[14..16].parse().ok()?;
         let sec: u32 = s[17..19].parse().ok()?;
 
-        let rest = &s[19..];
+        let mut rest = &s[19..];
+        // a fraction of a second, kept to the millisecond
+        let mut frac_millis: i64 = 0;
+        if let Some(after_dot) = rest.strip_prefix('.') {
+            let digits = after_dot.len() - after_dot.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+            if digits == 0 {
+                return None;
+            }
+            let frac = &after_dot[..digits];
+            let padded = format!("{:0<3}", frac);
+            frac_millis = padded[..3].parse().ok()?;
+            rest = &after_dot[digits..];
+        }
         let offset_minutes: i16 = if rest.is_empty() {
             0 // No timezone → assume UTC
         } else if rest == "Z" {
             0
-        } else if rest.len() == 6 && (rest.starts_with('+') || rest.starts_with('-')) {
-            // +HH:MM or -HH:MM
+        } else if (rest.starts_with('+') || rest.starts_with('-')) && matches!(rest.len(), 3 | 5 | 6) {
+            // +HH:MM, -HHMM or -HH
             let sign: i16 = if rest.starts_with('-') { -1 } else { 1 };
             let oh: i16 = rest[1..3].parse().ok()?;
-            let om: i16 = rest[4..6].parse().ok()?;
+            let om: i16 = match rest.len() {
+                3 => 0,
+                5 => rest[3..5].parse().ok()?,
+                _ => {
+                    if &rest[3..4] != ":" {
+                        return None;
+                    }
+                    rest[4..6].parse().ok()?
+                }
+            };
             sign * (oh * 60 + om)
         } else {
             return None;
         };
 
         // Convert to UTC epoch millis: subtract offset to get UTC
-        let local_millis = date_to_epoch_millis(year, month, day, hour, min, sec)?;
+        let local_millis = date_to_epoch_millis(year, month, day, hour, min, sec)? + frac_millis;
         let utc_millis = local_millis - (offset_minutes as i64) * 60_000;
         return Some((utc_millis, offset_minutes));
     }
@@ -2492,5 +2515,25 @@ mod numbers_tests {
         assert_eq!(numbers("gap"), Err("row 1 of the column is missing — fill the column first: fill[frame, 'column', value]".to_string()));
         assert_eq!(numbers("name"), Err("a column of text is not numbers".to_string()));
         assert_eq!(numbers("flag"), Err("a column of bools is not numbers".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod datetime_tests {
+    use super::parse_datetime;
+
+    /// A moment as Postgres and ClickHouse write one: a fraction of a
+    /// second kept to the millisecond, an offset of hours alone, or of
+    /// hours and minutes without a colon
+    #[test]
+    fn a_datetime_with_a_fraction_or_a_short_offset_parses() {
+        assert_eq!(parse_datetime("2024-01-02 03:04:05.123"), Some((1_704_164_645_123, 0)));
+        assert_eq!(parse_datetime("2024-01-02T03:04:05.1Z"), Some((1_704_164_645_100, 0)));
+        assert_eq!(parse_datetime("2024-01-02 03:04:05.123456"), Some((1_704_164_645_123, 0)));
+        assert_eq!(parse_datetime("2024-01-01 19:04:05-08"), Some((1_704_164_645_000, -480)));
+        assert_eq!(parse_datetime("2024-01-02 08:34:05+0530"), Some((1_704_164_645_000, 330)));
+        assert_eq!(parse_datetime("2024-01-02 08:34:05+05:30"), Some((1_704_164_645_000, 330)));
+        assert_eq!(parse_datetime("2024-01-02 03:04:05."), None);
+        assert_eq!(parse_datetime("2024-01-02 03:04:05-8"), None);
     }
 }

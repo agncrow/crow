@@ -529,7 +529,7 @@ fn test_crow_result_display_shows_error() {
 fn test_json_builtin_emits_serde() {
     let src = "items = json['[1,2,3]']\nlog[items[0]]\n";
     let rust = transpile(src);
-    assert!(rust.contains("crow_runtime::json::parse(&*("), "json[] is its row, the runtime's parse\n{}", rust);
+    assert!(rust.contains("crow_runtime::json::parse("), "json[] is its row, the runtime's parse\n{}", rust);
     assert!(rust.contains("CrowResult"), "json[] should return CrowResult\n{}", rust);
 }
 
@@ -539,7 +539,7 @@ fn test_json_null_returns_error() {
     let rust = transpile(src);
     // the runtime's parse answers a top-level null as its reason, which the
     // row makes an error value of kind 'parse'
-    assert!(rust.contains("crow_runtime::json::parse(&*("), "json[] is its row\n{}", rust);
+    assert!(rust.contains("crow_runtime::json::parse("), "json[] is its row\n{}", rust);
     assert!(rust.contains("kind: \"parse\".to_string()"), "a failed parse is kind 'parse'\n{}", rust);
 }
 
@@ -1417,6 +1417,17 @@ fn test_sparse_import_transpile() {
 
 // ===== Stats sub-module =====
 
+/// A text literal handed to a builtin is the literal, and an indexed read
+/// of a list of text handed to one is referenced: a parser's loop
+/// allocates nothing for its separator and copies no cell it only reads
+#[test]
+fn a_builtin_reading_text_takes_a_literal_or_an_indexed_read_without_a_copy() {
+    let rust = transpile("rows = split['a b', ' ']\nfor i in range[len[rows]]\n    cells = split[rows[i], ' ']\n    log[len[cells]]\n");
+    assert!(rust.contains("crow_runtime::text::split(\"a b\", \" \")"), "the literals are literals\n{}", rust);
+    assert!(rust.contains("let _v = &rows; &_v["), "the row is referenced\n{}", rust);
+    assert!(!rust.contains("\" \".to_string()"), "no String for the separator\n{}", rust);
+}
+
 /// A statistic is a Crow row: the compiled program defines and calls the
 /// module's function, and names no Rust statistic
 #[test]
@@ -1445,37 +1456,37 @@ fn test_stats_rows_are_crow_functions() {
 #[test]
 fn test_fs_exists_transpile() {
     let rust = transpile("e = exists['foo.txt']\n");
-    assert!(rust.contains("crow_runtime::io::exists(&*"), "exists goes through the runtime\n{}", rust);
+    assert!(rust.contains("crow_runtime::io::exists("), "exists goes through the runtime\n{}", rust);
 }
 
 #[test]
 fn test_fs_mkdir_transpile() {
     let rust = transpile("mkdir['dir']\n");
-    assert!(rust.contains("crow_runtime::io::mkdir(&*"), "mkdir goes through the runtime\n{}", rust);
+    assert!(rust.contains("crow_runtime::io::mkdir("), "mkdir goes through the runtime\n{}", rust);
 }
 
 #[test]
 fn test_fs_ls_transpile() {
     let rust = transpile("f = ls['.']\n");
-    assert!(rust.contains("crow_runtime::io::ls(&*"), "ls goes through the runtime\n{}", rust);
+    assert!(rust.contains("crow_runtime::io::ls("), "ls goes through the runtime\n{}", rust);
 }
 
 #[test]
 fn test_fs_rm_transpile() {
     let rust = transpile("rm['file.txt']\n");
-    assert!(rust.contains("crow_runtime::io::rm(&*"), "rm is its row, which borrows its path\n{}", rust);
+    assert!(rust.contains("crow_runtime::io::rm("), "rm is its row, which borrows its path\n{}", rust);
 }
 
 #[test]
 fn test_fs_mv_transpile() {
     let rust = transpile("mv['a.txt', 'b.txt']\n");
-    assert!(rust.contains("crow_runtime::io::mv(&*"), "mv goes through the runtime\n{}", rust);
+    assert!(rust.contains("crow_runtime::io::mv("), "mv goes through the runtime\n{}", rust);
 }
 
 #[test]
 fn test_fs_cp_transpile() {
     let rust = transpile("cp['a.txt', 'b.txt']\n");
-    assert!(rust.contains("crow_runtime::io::cp(&*"), "cp goes through the runtime\n{}", rust);
+    assert!(rust.contains("crow_runtime::io::cp("), "cp goes through the runtime\n{}", rust);
 }
 
 // ===== env builtin =====
@@ -1483,7 +1494,7 @@ fn test_fs_cp_transpile() {
 #[test]
 fn test_env_one_arg_transpile() {
     let rust = transpile("x = env['PORT']\n");
-    assert!(rust.contains("crow_runtime::core::env(&*("), "env is its row\n{}", rust);
+    assert!(rust.contains("crow_runtime::core::env("), "env is its row\n{}", rust);
     assert!(rust.contains("\"env\".to_string()"), "1-arg env is an error value (kind env) when unset\n{}", rust);
     assert!(rust.contains("captured: crow_runtime::moments::now()"), "env is a reader: its result carries a capture moment\n{}", rust);
 }
@@ -1492,7 +1503,7 @@ fn test_env_one_arg_transpile() {
 fn test_env_two_arg_transpile() {
     let rust = transpile("x = env['PORT', 3000]\n");
     // the default is text, as the variable is (a number shows as it displays)
-    assert!(rust.contains("crow_runtime::core::env_or(&*("), "the 2-arg env is its row\n{}", rust);
+    assert!(rust.contains("crow_runtime::core::env_or("), "the 2-arg env is its row\n{}", rust);
     assert!(rust.contains("crow_runtime::cell::Cell::from("), "the default is read as a cell\n{}", rust);
 }
 

@@ -19,6 +19,8 @@ pub mod layout;
 pub mod cancel;
 pub mod autograd;
 pub mod sys;
+pub mod rowbinary;
+pub mod postgres_rows;
 pub mod cell;
 pub mod chart;
 pub mod core;

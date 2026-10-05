@@ -163,6 +163,19 @@ pub fn frame_of_json(text: &str) -> Result<crate::frame::CrowFrame, String> {
     crate::frame::from_json(text)
 }
 
+/// `sys.frame_of_rowbinary[bytes]`: a frame from ClickHouse's
+/// `RowBinaryWithNamesAndTypes`, each column typed as the header names it
+/// (crate::rowbinary).
+pub fn frame_of_rowbinary(bytes: &Bytes) -> Result<crate::frame::CrowFrame, String> {
+    crate::rowbinary::frame_of_rowbinary(&bytes.0)
+}
+
+/// `sys.frame_of_postgres[bytes]`: a frame from the messages Postgres
+/// answers a query with (crate::postgres_rows).
+pub fn frame_of_postgres(bytes: &Bytes) -> Result<crate::frame::CrowFrame, String> {
+    crate::postgres_rows::frame_of_postgres(&bytes.0)
+}
+
 /// `sys.frame_of_parquet[bytes]`: a frame from a Parquet file's bytes,
 /// where the program was built to read Parquet (the interpreter always
 /// is; a compiled program whose paths may name one).
@@ -424,11 +437,19 @@ pub fn secure(s: &CrowStream, host: &str) -> Result<CrowStream, String> {
             *guard = Some(Conn::Tls(t));
             return Err("the stream is already behind TLS".to_string());
         }
-        Some(Conn::Plain(tcp)) => {
+        Some(Conn::Plain(reader)) => {
+            // (what the server sent before the handshake would be read as
+            // TLS: a protocol secures a connection it has read to the end)
+            if !reader.buffer().is_empty() {
+                let n = reader.buffer().len();
+                *guard = Some(Conn::Plain(reader));
+                return Err(format!("{} bytes arrived before the connection was secured", n));
+            }
+            let tcp = reader.into_inner();
             let client = match rustls::ClientConnection::new(tls_config(), name) {
                 Ok(c) => c,
                 Err(e) => {
-                    *guard = Some(Conn::Plain(tcp));
+                    *guard = Some(Conn::plain(tcp));
                     return Err(format!("TLS to {}: {}", host, e));
                 }
             };
@@ -458,15 +479,25 @@ pub fn hmac(key: &Bytes, message: &Bytes, algo: &str) -> Result<Bytes, String> {
     }))
 }
 
+/// How much a plain connection reads ahead: a protocol's small reads — a
+/// message's five-byte head, a reply line — cost one system call per
+/// buffer filled, not one each (a million Postgres rows read a message at
+/// a time had cost two million; TLS buffers a record on its own).
+const READ_AHEAD: usize = 64 * 1024;
+
 enum Conn {
-    Plain(std::net::TcpStream),
+    Plain(std::io::BufReader<std::net::TcpStream>),
     Tls(Box<rustls::StreamOwned<rustls::ClientConnection, std::net::TcpStream>>),
 }
 
 impl Conn {
+    fn plain(tcp: std::net::TcpStream) -> Conn {
+        Conn::Plain(std::io::BufReader::with_capacity(READ_AHEAD, tcp))
+    }
+
     fn tcp(&self) -> &std::net::TcpStream {
         match self {
-            Conn::Plain(s) => s,
+            Conn::Plain(s) => s.get_ref(),
             Conn::Tls(s) => s.get_ref(),
         }
     }
@@ -552,7 +583,7 @@ pub fn open(host: &str, port: i64, tls: bool, seconds: f64) -> Result<CrowStream
         let client = rustls::ClientConnection::new(tls_config(), name).map_err(|e| format!("TLS to {}: {}", host, e))?;
         Conn::Tls(Box::new(rustls::StreamOwned::new(client, tcp)))
     } else {
-        Conn::Plain(tcp)
+        Conn::plain(tcp)
     };
     Ok(CrowStream(Arc::new(StreamInner { conn: Mutex::new(Some(conn)), name: format!("{}:{}", host, port), wait: timeout })))
 }
@@ -562,7 +593,7 @@ pub fn send(s: &CrowStream, b: &Bytes) -> Result<i64, String> {
     let mut guard = s.0.conn.lock().map_err(|_| "the stream is held by a thread that stopped".to_string())?;
     let Some(conn) = guard.as_mut() else { return Err("the stream is closed".to_string()) };
     let r = match conn {
-        Conn::Plain(t) => t.write_all(&b.0).and_then(|_| t.flush()),
+        Conn::Plain(t) => t.get_mut().write_all(&b.0).and_then(|_| t.get_mut().flush()),
         Conn::Tls(t) => t.write_all(&b.0).and_then(|_| t.flush()),
     };
     r.map_err(|e| format!("cannot send to {}: {}", s.0.name, e))?;
@@ -607,6 +638,37 @@ pub fn close(s: &CrowStream) {
 
 #[cfg(test)]
 mod tests {
+    /// A plain connection reads ahead: small reads are served from the
+    /// buffer, whole and in order, and a read past what arrived waits for
+    /// the socket — the bytes a protocol reads a message at a time are the
+    /// bytes sent
+    #[test]
+    fn small_reads_come_from_the_buffer_whole_and_in_order() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port() as i64;
+        let sent: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        let payload = sent.clone();
+        let server = std::thread::spawn(move || {
+            let (mut c, _) = listener.accept().unwrap();
+            std::io::Write::write_all(&mut c, &payload).unwrap();
+        });
+        let s = super::open("127.0.0.1", port, false, 5.0).unwrap();
+        let mut got = Vec::new();
+        for _ in 0..1000 {
+            let piece = super::recv(&s, 7, 0.0).unwrap();
+            assert_eq!(piece.len(), 7, "a small read is served whole");
+            got.extend_from_slice(&piece.0);
+        }
+        while got.len() < sent.len() {
+            let piece = super::recv(&s, 1 << 20, 0.0).unwrap();
+            assert!(piece.len() > 0);
+            got.extend_from_slice(&piece.0);
+        }
+        assert_eq!(got, sent);
+        assert_eq!(super::recv(&s, 10, 0.0).unwrap().len(), 0, "the other side closed");
+        server.join().unwrap();
+    }
+
     /// A name with several addresses connects to the one that answers:
     /// `localhost` is ::1 before 127.0.0.1 on macOS, and a server listening
     /// on 127.0.0.1 alone was refused as "connection refused" by the first

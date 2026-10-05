@@ -64,6 +64,15 @@ steps on every push and must be green.
 - A debug build checks the IR of every program it lowers
   (`CROW_IR_VERIFY`, strict by default there; the harnesses set it for the
   release binary). A finding is a bug in the lowering, not in the program.
+  Run `cargo test --release --bin crow` with `CROW_IR_VERIFY=strict` set
+  before a gate: three unit tests looked flaky for an hour until the
+  variable, exported in some shells and not others, turned out to be what
+  differed — and the finding was real.
+- Per-cell work written in Crow pays the language's price per operation
+  (a copy, an allocation, a Result) where a kernel pays per byte: a parser
+  of a million rows was 20–45× slower than `frame_of_csv`. The rows a
+  database answers are decoded by a kernel (`frame_of_rowbinary`,
+  `frame_of_postgres`); the protocol around them is Crow's.
 - A standard module written in Crow (`src/modules/*.co`) is read in its own
   scope: inside its inlined functions the program's names are invisible
   (`calls_fn` in lower_ir.rs, lower.rs, checks.rs and type_infer/calls.rs).

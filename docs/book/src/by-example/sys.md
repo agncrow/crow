@@ -152,6 +152,8 @@ log[fmt[betainc[0.3, 1.0, 1.0], decimals = 3]]
 log[fmt[gammainc[1.0, 2.0], decimals = 3]]
 log[fmt[lgamma[5.0], decimals = 3]]
 log[shaped[arange[0, 6, 1], push[push[[], 2], 3]]]
+log[frame_of_rowbinary[unbase64['AgFuAXgGVUludDY0EU51bGxhYmxlKEZsb2F0NjQpAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAE=']]]
+log[frame_of_postgres[unbase64['VAAAAC4AAm4AAAAAAAAAAAAAFwAE/////wAAcwAAAAAAAAAAAAAZ////////AABEAAAAEAACAAAAATEAAAABYUQAAAAPAAIAAAABMv////9DAAAADVNFTEVDVCAyAFoAAAAFSQ==']]]
 ```
 
 ```text
@@ -172,6 +174,20 @@ smtp.example.com
 0.865
 3.178
 [[0, 1, 2], [3, 4, 5]]
+n    x
+int  float
+-  ---
+0    0
+1  nan
+
+[2 rows x 2 cols]
+n    s
+int  str
+-  ---
+1    a
+2  nan
+
+[2 rows x 2 cols]
 ```
 
 The protocol itself reaches a host — one exchange, a reader's fetch with its options and redirects, an S3 object put signed with the environment's credentials — so these lines are not run here:

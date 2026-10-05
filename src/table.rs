@@ -302,7 +302,11 @@ impl Kind {
             Kind::Int | Kind::Whole => format!("({}) as i64", arg),
             Kind::Float => format!("({}) as f64", arg),
             Kind::Bool => format!("({})", arg),
-            Kind::Str => format!("&*({})", arg),
+            Kind::Str => match (literal_text(arg), borrowed_index(arg)) {
+                (Some(lit), _) => lit,
+                (None, Some(item)) => format!("&*({})", item),
+                _ => format!("&*({})", arg),
+            },
             Kind::Unit => format!("({})", arg),
             Kind::Strs | Kind::Bools | Kind::Chunks => format!("&({})[..]", arg),
             Kind::Cell => format!("&crow_runtime::cell::Cell::from(({}).clone())", arg),
@@ -401,6 +405,42 @@ pub fn spans(params: &[Kind], argc: usize, name: &str) -> Result<Vec<(usize, usi
         at += n;
     }
     Ok(out)
+}
+
+/// A text literal as the emitter prints it, `"…".to_string()`, as the
+/// literal itself: a parameter that reads text takes `&str`, and the
+/// String allocated for it on every call (`split[row, '\t']` a million
+/// times) was never kept.
+pub fn literal_text(arg: &str) -> Option<String> {
+    let inner = arg.strip_prefix('"')?.strip_suffix("\".to_string()")?;
+    // one literal, not an expression that begins and ends with one
+    let mut escaped = false;
+    for c in inner.chars() {
+        match c {
+            '\\' if !escaped => escaped = true,
+            '"' if !escaped => return None,
+            _ => escaped = false,
+        }
+    }
+    Some(format!("\"{}\"", inner))
+}
+
+/// An indexed read of a list as the emitter prints it — `{ let _i = …;
+/// let _v = &xs; _v[…].clone() }` — with the item referenced instead of
+/// cloned: a parameter that only reads it needs no copy of it. Only of a
+/// list a name holds (a local, a field of one): a list an expression
+/// makes dies with the block, and a reference into it would not build.
+pub fn borrowed_index(arg: &str) -> Option<String> {
+    if !arg.starts_with("{ let _i = ") {
+        return None;
+    }
+    let body = arg.strip_suffix(".clone() }")?;
+    let at = body.rfind("; _v[")?;
+    let held = body[..at].rfind("; let _v = &").map(|k| &body[k + 12..at])?;
+    if held.is_empty() || !held.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.') {
+        return None;
+    }
+    Some(format!("{}; &_v[{} }}", &body[..at], &body[at + 5..]))
 }
 
 /// The kind each of `argc` arguments is read as by these parameters, or
@@ -1644,6 +1684,8 @@ pub static ROWS: &[Row] = &[
     row!("sys.frame_of_csv", "sys", "frame_of_csv", crow_runtime::sys::frame_of_csv, (Str) -> Frame, value "frame"),
     row!("sys.frame_of_json", "sys", "frame_of_json", crow_runtime::sys::frame_of_json, (Str) -> Frame, value "frame"),
     row!("sys.frame_of_parquet", "sys", "frame_of_parquet", crow_runtime::sys::frame_of_parquet, (Bytes) -> Frame, value "frame"),
+    row!("sys.frame_of_rowbinary", "sys", "frame_of_rowbinary", crow_runtime::sys::frame_of_rowbinary, (Bytes) -> Frame, value "frame"),
+    row!("sys.frame_of_postgres", "sys", "frame_of_postgres", crow_runtime::sys::frame_of_postgres, (Bytes) -> Frame, value "frame"),
     row!("sys.frame_csv", "sys", "frame_csv", crow_runtime::sys::frame_csv, (Frame) -> Str, value "frame"),
     row!("sys.frame_json", "sys", "frame_json", crow_runtime::sys::frame_json, (Frame) -> Str, never),
     row!("sys.frame_parquet", "sys", "frame_parquet", crow_runtime::sys::frame_parquet, (Frame) -> Bytes, value "frame"),
@@ -2269,6 +2311,27 @@ mod tests {
         // a row written in Crow is never printed as a runtime call
         let refused = print(anova, &["a".to_string(), "b".to_string()], "7", None).expect_err("refused");
         assert!(refused.starts_with("a bug in Crow: `anova` is written in Crow"), "{refused}");
+    }
+
+    /// A Rust row's text parameter takes a literal as the literal and an
+    /// indexed read as a reference: neither allocates or copies per call
+    #[test]
+    fn a_text_parameter_takes_a_literal_and_an_indexed_read_without_a_copy() {
+        assert_eq!(literal_text("\"\\t\".to_string()"), Some("\"\\t\"".to_string()));
+        assert_eq!(literal_text("\"a\".to_string() + \"b\".to_string()"), None);
+        assert_eq!(literal_text("name.to_string()"), None);
+        let indexed = "{ let _i = 2_i64; let _v = &rows; _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop(5, e))].clone() }";
+        let borrowed = "{ let _i = 2_i64; let _v = &rows; &_v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop(5, e))] }";
+        assert_eq!(borrowed_index(indexed).as_deref(), Some(borrowed));
+        // an item that is Copy is not cloned, and is not a borrow either
+        assert_eq!(borrowed_index("{ let _i = 0_i64; let _v = &xs; _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop(5, e))] }"), None);
+        // a list an expression makes dies with the block: the item is cloned
+        assert_eq!(borrowed_index("{ let _i = 0_i64; let _v = &crow_runtime::text::split(&*(s), \" \"); _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop(5, e))].clone() }"), None);
+        assert_eq!(borrowed_index("{ let _i = 0_i64; let _v = &(_t4).value.names; _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop(5, e))].clone() }"), None);
+        assert!(borrowed_index("{ let _i = 0_i64; let _v = &r.names; _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop(5, e))].clone() }").is_some());
+        assert_eq!(Kind::Str.print("\"\\t\".to_string()", "3"), "\"\\t\"");
+        assert_eq!(Kind::Str.print(indexed, "3"), format!("&*({})", borrowed));
+        assert_eq!(Kind::Str.print("name", "3"), "&*(name)");
     }
 
     #[test]

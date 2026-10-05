@@ -4,10 +4,16 @@
 //! invalid pattern is an error with the reason the regex crate gives, and
 //! only the caller decides whether that stops the program.
 
-/// `split[text, separator]`: the pieces between each separator.
+/// `split[text, separator]`: the pieces between each separator. A
+/// separator of one character is searched as a character (the byte
+/// search), where the substring search cost a parser four times as much.
 #[inline]
 pub fn split(s: &str, sep: &str) -> Vec<String> {
-    s.split(sep).map(|p| p.to_string()).collect()
+    let mut chars = sep.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) => s.split(c).map(|p| p.to_string()).collect(),
+        _ => s.split(sep).map(|p| p.to_string()).collect(),
+    }
 }
 
 /// `trim[text]`: without the whitespace at either end.
@@ -230,6 +236,17 @@ pub fn decode_as(text: &str, scheme: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A separator of one character, of several, and of none split as the
+    /// substring search does
+    #[test]
+    fn a_separator_of_any_length_splits_the_same() {
+        assert_eq!(split("a\tb\t\tc", "\t"), vec!["a", "b", "", "c"]);
+        assert_eq!(split("a, b, c", ", "), vec!["a", "b", "c"]);
+        assert_eq!(split("ab", ""), "ab".split("").map(str::to_string).collect::<Vec<_>>());
+        assert_eq!(split("", "\n"), vec![""]);
+        assert_eq!(split("é|ü", "|"), vec!["é", "ü"]);
+    }
 
     #[test]
     fn the_string_builtins() {
