@@ -71,8 +71,8 @@ Not in 1.0: CI on every push waits (the local gate is the check), and so does th
 
 ### Native → Crow, still open (design rule 20; the spec's Design Note "what stays native, and why")
 
-- [ ] **ClickHouse over its HTTP interface** — a `request` and a parser of its row format, written in Crow; measured against the native driver (klickhouse) first, since it is the session layer's driver.
-- [ ] **The Postgres wire protocol** — the startup, SCRAM over `hmac`, the rows; the session layer's driver, measured first. The biggest of the moves.
+- [ ] **ClickHouse over its HTTP interface** — MEASURED 2026-10-05 (the spec's Design Note has the numbers): `request` in Crow with the `frame_of_csv` kernel matched klickhouse (77 ms against 87 ms for a million rows of three columns, 1.3 ms against 0.9 ms for five thousand); a parser of the rows written in Crow was 20–45× slower. Not moved: the driver is called from Rust (schema modes, handler transactions, a derivation's cancellation, fixture replay, the rehearsal, `crow db diff`), and Rust cannot call Crow, so a driver in Crow means the `db` module in Crow with its tooling through the interpreter — a design for after 1.0, awaiting Vijay's decision.
+- [ ] **The Postgres wire protocol** — MEASURED 2026-10-05: the startup under trust, a simple query and its rows as text, written in Crow (150 lines over `sys`), work against a scratch server; `SELECT 1` as fast as tokio-postgres, a million rows in 2.9 s compiled and 20 s interpreted against 0.24 s — the row decoding would be a kernel. The same finding as ClickHouse's; not moved.
 - The chart indicators (`sma`, `ema`, `rsi`, `macd`, `vwap`, `rolling_sum`, `cvd`) stay native: Wilder's smoothing, the EMA and the clock-aligned buckets are recurrences — a scalar loop over every row, which rule 20 keeps in Rust while the interpreter cannot afford it, and finch computes them on every tick.
 - What runs inside the Rust server's request handling — multipart uploads, CORS, the signed cookie, session ids, a live page's `fetch[]` sources — stays native while the server is Rust; the sources move if the program polls them itself with `request` (a design change, not taken).
 
