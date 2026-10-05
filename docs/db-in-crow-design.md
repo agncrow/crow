@@ -101,9 +101,23 @@ error words.
 
 ## 6. Milestones
 
-1. ClickHouse (this document's first commit): the driven handle, the
-   calls table, the ClickHouse module, both backends' registration, the
-   tooling, the native driver and klickhouse gone.
-2. Postgres: the module, scopes and transactions, COPY, cancellation,
-   tokio-postgres and deadpool gone; tokio stays for the server.
-3. The spec's db section, the design note's accounting, the book.
+1. ClickHouse (ff0975a, 2026-10-04): the driven handle, the calls table,
+   the ClickHouse module, both backends' registration, the tooling, the
+   native driver and klickhouse gone. The gate found a module local named
+   like a derivation of finch's (`found`) refused as an assignment of it:
+   the lowering's derived-assignment check now stands in the module's own
+   scope like its other guards (parity 166).
+2. Postgres (83e6dad, 2026-10-05): the module, scopes and transactions,
+   COPY, cancellation, tokio-postgres and deadpool gone; tokio stays for
+   the server. Found by its test and fixed with it: `transact` committed
+   a function that failed, in both modes — it answers the function's
+   value now, rolls back on its error, and is a savepoint inside a
+   handler's transaction (parity 167). And a row called from Crow
+   converts its arguments by its signature (JSON text to an `Encoded`
+   parameter arrives as a JSON string), so a module's rows call helpers,
+   never each other.
+3. The spec's db section, the design note's accounting (every crate of
+   the drivers gone from the manifests; the drivers listed among what is
+   written in Crow, with the measurements kept), docs/db-module.md,
+   docs/web-framework.md, the roadmap and the book — folded into the two
+   commits above. Done.
