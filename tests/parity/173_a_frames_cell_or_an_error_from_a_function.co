@@ -1,0 +1,23 @@
+--- A function that answers a frame's cell in one branch and an error in
+--- another answers a value that can fail, and the cell comes through as
+--- it is, in both modes. (The compiled program had not built: the
+--- function's value was typed as JSON, which a cell is, and the cell was
+--- read as text.)
+use frame
+
+f = frame.new[]
+f = with[f, 'complexity', [1, 4]]
+f = with[f, 'equation', ['3.36', 'square(x0) * 2.5']]
+
+fn equation_at[rows, complexity]
+    for i in range[len[rows]]
+        if rows.complexity[i] eq complexity
+            return rows.equation[i]
+    return error['no equation of complexity `complexity`', 'symbolic']
+
+log[equation_at[f, 4]]
+log[equation_at[f, 1]]
+missing = equation_at[f, 9]
+log[missing.ok]
+log[missing.reason]
+log['best: `equation_at[f, 4]`']

@@ -752,6 +752,9 @@ struct Lowerer<'a> {
     /// Lowering a fact's declared value, which nothing can stand in front
     /// of: the facts are computed before the top level's statements run.
     in_fact_default: bool,
+    /// The parameter list of the query or exec being lowered, as written
+    /// (`{:?}` of its items): the one list of several kinds.
+    params_items: Option<String>,
     temp: usize,
     at: Where,
     in_ui: bool,
@@ -808,6 +811,7 @@ impl<'a> Lowerer<'a> {
             at: Where::Top,
             in_ui,
             in_fact_default: false,
+            params_items: None,
             calls: BTreeMap::new(),
             direct_effects: BTreeMap::new(),
             current_fn: String::new(),
@@ -1594,6 +1598,27 @@ impl<'a> Lowerer<'a> {
     /// program's functions are invisible there: a local of the module's
     /// named like one (`lines`) is its local, indexed where it is written
     /// `lines[0]`, and a program is free to name its functions as it likes.
+    /// A list a function is handed empty takes the kind of what the
+    /// function pushes onto it: `collected[t, []]` with `push[acc, t.v]`
+    /// in the body makes `acc` a list of numbers for every caller (the
+    /// compiled program had typed the parameter a list of text, and did
+    /// not build). Noted in the call scan, where a local's assignment
+    /// settles its type too.
+    fn refine_pushed(&mut self, row: &crate::table::Row, lowered: &[Expr]) {
+        if self.pass != Pass::Scan || row.id != "core.push" {
+            return;
+        }
+        let (Some(Expr::Local(holder, _)), Some(item)) = (lowered.first(), lowered.get(1)) else { return };
+        let held = full(&lowered[0]);
+        let open = matches!(held, CrowType::Unknown) || matches!(&held, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Unknown));
+        let item_ty = read(item);
+        if open && !matches!(item_ty, CrowType::Unknown | CrowType::Void) {
+            let refined = CrowType::Array(Box::new(item_ty));
+            self.ctx.note_scanned_assign(holder, refined.clone());
+            self.rebind(holder, &refined);
+        }
+    }
+
     fn calls_fn(&self, name: &str) -> bool {
         self.ctx.functions.contains_key(name) && (crate::modules::is_crow_fn(name) || !crate::modules::is_crow_fn(&self.current_fn))
     }
@@ -2003,7 +2028,10 @@ impl<'a> Lowerer<'a> {
         // was given a tensor, which did not build)
         // an int assigned to a float variable is a float (spec §1): the
         // conversion is explicit in the form
-        let expr = if matches!(self.ctx.vars.get(name), Some(CrowType::Float)) && expr.ty() == Ty::Int {
+        // (a variable holding a float that can fail takes an int as a
+        // float too: `cur = loss[…]`, then `cur = 2`)
+        let holds_float = matches!(self.ctx.vars.get(name), Some(CrowType::Float)) || matches!(self.ctx.vars.get(name), Some(CrowType::Result(inner)) if matches!(inner.as_ref(), CrowType::Float));
+        let expr = if holds_float && expr.ty() == Ty::Int {
             Expr::Convert { how: Convert::IntToFloat, expr: Box::new(expr), ty: Ty::Float }
         } else {
             expr
@@ -2569,6 +2597,17 @@ impl<'a> Lowerer<'a> {
                 for i in items {
                     out.push(self.lower_expr(i)?);
                 }
+                // a list holds one kind (spec, Arrays: `[1, 'hello', true]` is
+                // an error) — refused where two items' kinds are known and
+                // differ, in both modes (the interpreter had made the list,
+                // and the compiled program had not built)
+                let params = self.params_items.as_ref().is_some_and(|p| *p == format!("{:?}", items));
+                let kinds: Vec<(String, String)> = if params { Vec::new() } else { out.iter().filter_map(|e| crate::lower_ir::checks::item_kind(&e.ty())).collect() };
+                if let Some((first_many, first_one)) = kinds.first() {
+                    if let Some((_, other)) = kinds.iter().find(|(many, _)| many != first_many) {
+                        self.refuse(format!("a list holds one kind: this one has {} and {} — a record (struct) holds fields of several kinds", first_one, other));
+                    }
+                }
                 // (a literal whose rows' sizes show only as the program runs
                 // keeps the rank its nesting states)
                 let ty = ty_of(&TypeContext::array_type(out.iter().map(full)));
@@ -2679,7 +2718,23 @@ impl<'a> Lowerer<'a> {
         Expr::Local(name.to_string(), ty)
     }
 
+    /// A call, with the parameter list of a query or an exec noted while
+    /// its arguments are lowered: the one list of several kinds (a list
+    /// of what each `?` takes, sent one by one), exempt from the rule
+    /// that a list holds one kind, whichever path lowers the call
     fn call(&mut self, callee: &A, args: &[A]) -> Result<Expr, String> {
+        let saved = self.params_items.take();
+        if let (A::Ident(name), Some(A::Array(items))) = (callee, args.get(2)) {
+            if matches!(name.as_str(), "query" | "exec") {
+                self.params_items = Some(format!("{:?}", items));
+            }
+        }
+        let out = self.call_inner(callee, args);
+        self.params_items = saved;
+        out
+    }
+
+    fn call_inner(&mut self, callee: &A, args: &[A]) -> Result<Expr, String> {
         // a variable indexed: xs[0], m['k'], r.symbol[0] — except that
         // inside a view an element name is the element (the vocabulary
         // boundary, spec §12): a session named `a` outside does not turn
@@ -3118,6 +3173,7 @@ impl<'a> Lowerer<'a> {
             let target = match row {
                 Some(row) => {
                     self.check_item(row, &lowered);
+                    self.refine_pushed(row, &lowered);
                     Target::Row(row)
                 }
                 None => Target::Runtime(runtime_name(&name)),
@@ -3152,6 +3208,7 @@ impl<'a> Lowerer<'a> {
             Some(row) if row.is_crow() => self.crow_target(row),
             Some(row) => {
                 self.check_item(row, &lowered);
+                self.refine_pushed(row, &lowered);
                 Target::Row(row)
             }
             None => Target::Runtime(name),

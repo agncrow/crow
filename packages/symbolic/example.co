@@ -1,0 +1,19 @@
+--- A search for a known formula, y = 2.5 x0^2 - sin(x1), on forty samples:
+--- the front it finds, and the best equation by score — the same answers
+--- in both modes (CI runs this interpreted and compiled and compares the
+--- two)
+use math
+use search
+
+x = []
+y = []
+for i in range[40]
+    a = float[i] / 10.0 - 2.0
+    b = float[(i * 7) % 40] / 10.0 - 2.0
+    x = push[x, [a, b]]
+    y = push[y, 2.5 * a * a - sin[b]]
+o = search.Options[['+', '-', '*'], ['sin', 'square'], 20, 2, 25, 40, 12, 0.0, 3.17, 10, 0.982, 0.14, 0]
+f = search.fit[x, y, o]
+log[f.equations]
+log['best: `search.equation_at[f, int[f.equations.complexity[f.best]]]`']
+log[len[search.predict[f, x]]]

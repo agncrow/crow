@@ -1,0 +1,25 @@
+--- the search on four known formulas, four seeds each, at the budget PySR
+--- was given for the same (40 iterations, 8 populations of 33, 100
+--- cycles): the lowest loss on the front, its complexity and equation
+use math, frame
+use search
+
+folder = args[][0]
+for name in ['quad_sin', 'nguyen1', 'nguyen5', 'nguyen7']
+    f = frame.load['`folder`/bench_`name`.csv']
+    feats = ['x0']
+    if contains[f.columns, 'x1']
+        feats = ['x0', 'x1']
+    xs = tensor[select[f, feats]]
+    ys = flatten[tensor[select[f, ['y']]]]
+    x = []
+    y = []
+    for i in range[len[f]]
+        x = push[x, xs[i]]
+        y = push[y, ys[i]]
+    for s in range[4]
+        o = search.Options[['+', '-', '*', '/'], ['sin', 'cos', 'exp', 'log', 'square'], 40, 8, 33, 100, 14, 0.0, 3.17, 15, 0.982, 0.14, s]
+        t0 = now[]
+        r = search.fit[x, y, o]
+        n = len[r.equations]
+        log['crow `name` seed `s`: loss `fmt[r.equations.loss[n - 1], decimals = 6]` complexity `r.equations.complexity[n - 1]` in `fmt[now[] - t0, decimals = 1]` s: `r.equations.equation[n - 1]`']

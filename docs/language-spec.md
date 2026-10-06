@@ -4029,6 +4029,8 @@ User['alice', 25]            --- named, mixed-type fields
 [1, 'hello', true]           --- error: mixed types
 ```
 
+A literal of two kinds is refused before the program runs, in both modes: `a list holds one kind: this one has text and a number — a record (struct) holds fields of several kinds`. The one list of several kinds is a query's parameters (`query[conn, sql, ['a', 1.5]]`): a list of what each `?` takes, sent one by one.
+
 **Why:** Python has both `list` and `numpy.array` — the "two type problem." You constantly convert between them. MATLAB, Julia, and R have one array type and it works. For data science, columns are homogeneous arrays. For tabular data, use a **frame** (`use frame`) — the dedicated type with named, per-column-typed columns, missing-value tracking, and relational operations.
 
 **Tensors vs frames:** a tensor is positional numbers (one dtype, axes interchangeable — matmul, transpose, reductions); a frame is named observations (typed columns, filter/sort/group/join). An all-numeric frame and a matrix can hold the same grid, but intent picks the type — convert deliberately with `tensor[df]`. Neither grows the other's features: no named axes on tensors, no linear algebra on frames.

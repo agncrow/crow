@@ -1,0 +1,498 @@
+--- Expression trees for symbolic regression: a tree is a list of nodes in
+--- preorder — the root first, then its first child's subtree, then its
+--- second's — each node a record of its operator, its constant, its
+--- feature and the size of its subtree, so a subtree is a slice of the
+--- list. A tree is evaluated over a dataset with tensor operations,
+--- printed as an equation, measured by its node count, simplified by
+--- folding what is constant, and changed by the mutations and the
+--- crossover of PySR (SymbolicRegression.jl), each a new list. Every
+--- random draw comes from the program's RNG, so a seed makes a search
+--- repeatable in both modes.
+use math
+
+--- a node: `op` is 'c' (a constant, its `value`), 'x' (a feature, its
+--- `feature`), a unary operator's name or a binary one's; `size` counts
+--- the node and its subtree
+struct Node [op, value, feature, size]
+
+fn constant[v]
+    return [Node['c', v, 0, 1]]
+
+fn feature[j]
+    return [Node['x', 0.0, j, 1]]
+
+fn unary[op, a]
+    return concat[[Node[op, 0.0, 0, 1 + len[a]]], a]
+
+fn binary[op, a, b]
+    return concat[[Node[op, 0.0, 0, 1 + len[a] + len[b]]], concat[a, b]]
+
+--- how many children an operator takes
+fn arity[op]
+    if op eq 'c' or op eq 'x'
+        return 0
+    if contains[['+', '-', '*', '/', '^'], op]
+        return 2
+    return 1
+
+--- the number of nodes: the complexity PySR counts
+fn size[t]
+    return len[t]
+
+--- the index of node `i`'s first child, and of its second
+fn child_a[t, i]
+    return i + 1
+
+fn child_b[t, i]
+    return i + 1 + t[i + 1].size
+
+--- the subtree rooted at `k`, as a tree of its own
+fn node_at[t, k]
+    return slice[t, k, k + t[k].size]
+
+--- the tree with the subtree rooted at `k` replaced by `piece`: the nodes
+--- before `k` keep their place, those whose subtree holds `k` grow or
+--- shrink by the difference
+fn replace_at[t, k, piece]
+    delta = len[piece] - t[k].size
+    before = []
+    for j in range[k]
+        n = t[j]
+        if j + n.size gt k
+            before = push[before, Node[n.op, n.value, n.feature, n.size + delta]]
+        else
+            before = push[before, n]
+    return concat[before, concat[piece, slice[t, k + t[k].size, len[t]]]]
+
+--- the value of node `i` over the dataset: `cols` holds a tensor per
+--- feature
+fn evaluate_at[t, i, cols]
+    n = t[i]
+    op = n.op
+    if op eq 'x'
+        return cols[n.feature]
+    if op eq 'c'
+        return ones[len[cols[0]]] * n.value
+    a = evaluate_at[t, i + 1, cols]
+    if arity[op] eq 1
+        return apply_unary[op, a]
+    b = evaluate_at[t, child_b[t, i], cols]
+    return apply_binary[op, a, b]
+
+fn evaluate[t, cols]
+    return evaluate_at[t, 0, cols]
+
+fn apply_unary[op, a]
+    if op eq 'sin'
+        return sin[a]
+    if op eq 'cos'
+        return cos[a]
+    if op eq 'exp'
+        return exp[a]
+    if op eq 'log'
+        return ln[a]
+    if op eq 'sqrt'
+        return sqrt[a]
+    if op eq 'abs'
+        return abs[a]
+    if op eq 'square'
+        return a .* a
+    if op eq 'cube'
+        return a .* a .* a
+    if op eq 'neg'
+        return a * -1.0
+    if op eq 'inv'
+        return ones[len[a]] ./ a
+    if op eq 'tanh'
+        return tanh[a]
+    return error['symbolic: no unary operator named `op`', 'symbolic']
+
+fn apply_binary[op, a, b]
+    if op eq '+'
+        return a + b
+    if op eq '-'
+        return a - b
+    if op eq '*'
+        return a .* b
+    if op eq '/'
+        return a ./ b
+    if op eq '^'
+        return a .^ b
+    return error['symbolic: no binary operator named `op`', 'symbolic']
+
+--- a number as an equation shows it: whole numbers bare, others with five
+--- decimals and no trailing zeros
+fn shown_number[v]
+    if v eq floor[v] and abs[v] lt 1000000.0
+        return '`int[v]`'
+    s = fmt[v, decimals = 5]
+    while ends[s, '0']
+        s = slice[s, 0, len[s] - 1]
+    if ends[s, '.']
+        s = slice[s, 0, len[s] - 1]
+    return s
+
+--- node `i` as an equation: infix, an operator's operands in brackets
+fn shown_at[t, i]
+    n = t[i]
+    op = n.op
+    if op eq 'c'
+        return shown_number[n.value]
+    if op eq 'x'
+        return 'x`n.feature`'
+    if arity[op] eq 1
+        return '`op`(`shown_at[t, i + 1]`)'
+    return '(`shown_at[t, i + 1]` `op` `shown_at[t, child_b[t, i]]`)'
+
+fn shown[t]
+    return shown_at[t, 0]
+
+--- whether node `i` is of a kind: 'any', 'leaf', 'constant', 'feature',
+--- 'operator', 'binary', 'rotatable' (an operator with an operator child)
+fn is_kind[t, i, what]
+    n = t[i]
+    k = arity[n.op]
+    if what eq 'any'
+        return true
+    if what eq 'leaf'
+        return k eq 0
+    if what eq 'constant'
+        return n.op eq 'c'
+    if what eq 'feature'
+        return n.op eq 'x'
+    if what eq 'operator'
+        return k gt 0
+    if what eq 'binary'
+        return k eq 2
+    if what eq 'rotatable'
+        if k eq 0
+            return false
+        if arity[t[i + 1].op] gt 0
+            return true
+        if k eq 2
+            return arity[t[child_b[t, i]].op] gt 0
+        return false
+    return false
+
+--- the indices of the nodes of a kind
+fn indices_of[t, what]
+    out = []
+    for i in range[len[t]]
+        if is_kind[t, i, what]
+            out = push[out, i]
+    return out
+
+--- a random node's index among those of a kind, or -1
+fn random_index[t, what]
+    found = indices_of[t, what]
+    if len[found] eq 0
+        return -1
+    return found[rand[len[found]]]
+
+--- how many nodes of each kind a tree has
+struct Counts [nodes, leaves, constants, features, operators, binaries, rotatables]
+
+fn counts[t]
+    c = Counts[len[t], 0, 0, 0, 0, 0, 0]
+    for i in range[len[t]]
+        n = t[i]
+        k = arity[n.op]
+        leaf = 0
+        con = 0
+        feat = 0
+        oper = 0
+        bin = 0
+        rot = 0
+        if k eq 0
+            leaf = 1
+            if n.op eq 'c'
+                con = 1
+            else
+                feat = 1
+        else
+            oper = 1
+            if k eq 2
+                bin = 1
+            if is_kind[t, i, 'rotatable']
+                rot = 1
+        c = Counts[c.nodes, c.leaves + leaf, c.constants + con, c.features + feat, c.operators + oper, c.binaries + bin, c.rotatables + rot]
+    return c
+
+--- the constants, in preorder
+fn constants_of[t]
+    out = []
+    for n in t
+        if n.op eq 'c'
+            out = push[out, n.value]
+    return out
+
+--- the tree with its constants replaced, in preorder, from `found`
+fn with_constants[t, found]
+    out = []
+    next = 0
+    for n in t
+        if n.op eq 'c'
+            out = push[out, Node['c', found[next], 0, 1]]
+            next = next + 1
+        else
+            out = push[out, n]
+    return out
+
+--- the subtree at `i` with its constants folded: an operator over
+--- constants is a constant
+fn fold_at[t, i]
+    n = t[i]
+    k = arity[n.op]
+    if k eq 0
+        return [n]
+    a = fold_at[t, i + 1]
+    if k eq 1
+        if a[0].op eq 'c'
+            v = apply_unary[n.op, tensor[[a[0].value]]]
+            if v.ok
+                return constant[v[0]]
+        return unary[n.op, a]
+    b = fold_at[t, child_b[t, i]]
+    if a[0].op eq 'c' and b[0].op eq 'c'
+        v = apply_binary[n.op, tensor[[a[0].value]], tensor[[b[0].value]]]
+        if v.ok
+            return constant[v[0]]
+    return binary[n.op, a, b]
+
+--- the subtree at `i` with two constants under one commutative operator
+--- combined: `c1 + (c2 + e)` is `c3 + e`, `c1 * (e * c2)` is `c3 * e`
+fn combine_at[t, i]
+    n = t[i]
+    k = arity[n.op]
+    if k eq 0
+        return [n]
+    a = combine_at[t, i + 1]
+    if k eq 1
+        return unary[n.op, a]
+    b = combine_at[t, child_b[t, i]]
+    op = n.op
+    if (op eq '+' or op eq '*') and (a[0].op eq 'c' or b[0].op eq 'c')
+        outer = a
+        below = b
+        if b[0].op eq 'c'
+            outer = b
+            below = a
+        if below[0].op eq op
+            first = node_at[below, 1]
+            second = node_at[below, child_b[below, 0]]
+            if first[0].op eq 'c'
+                merged = apply_binary[op, tensor[[outer[0].value]], tensor[[first[0].value]]]
+                return binary[op, constant[merged[0]], second]
+            if second[0].op eq 'c'
+                merged = apply_binary[op, tensor[[outer[0].value]], tensor[[second[0].value]]]
+                return binary[op, first, constant[merged[0]]]
+    return binary[op, a, b]
+
+fn simplify[t]
+    return fold_at[combine_at[t, 0], 0]
+
+--- a standard normal draw from two uniform ones (Box–Muller), for a
+--- single number: `randn` makes a tensor
+fn normal_draw[]
+    u = rand[]
+    while u eq 0.0
+        u = rand[]
+    return sqrt[-2.0 * ln[u]] * cos[6.283185307179586 * rand[]]
+
+--- a random leaf: a standard normal constant, or a feature
+fn random_leaf[nfeatures]
+    if rand[] lt 0.5
+        return constant[normal_draw[]]
+    return feature[rand[nfeatures]]
+
+--- a random operator over random leaves: a binary one with probability
+--- binary/(binary + unary)
+fn random_op_node[binary_ops, unary_ops, nfeatures]
+    k = rand[len[binary_ops] + len[unary_ops]]
+    if k lt len[binary_ops]
+        return binary[binary_ops[k], random_leaf[nfeatures], random_leaf[nfeatures]]
+    return unary[unary_ops[k - len[binary_ops]], random_leaf[nfeatures]]
+
+--- a random leaf of the tree replaced by a random operator (PySR's
+--- `append_random_op`)
+fn append_random_op[t, binary_ops, unary_ops, nfeatures]
+    k = random_index[t, 'leaf']
+    return replace_at[t, k, random_op_node[binary_ops, unary_ops, nfeatures]]
+
+--- a random tree of `n` nodes, as PySR grows one: a leaf, then leaves
+--- replaced by operators while nodes remain (a binary operator where two
+--- or more remain, a unary one otherwise)
+fn random_tree[n, binary_ops, unary_ops, nfeatures]
+    t = random_leaf[nfeatures]
+    while len[t] lt n
+        remaining = n - len[t]
+        k = random_index[t, 'leaf']
+        if remaining eq 1 or len[binary_ops] eq 0
+            if len[unary_ops] eq 0
+                return t
+            t = replace_at[t, k, unary[unary_ops[rand[len[unary_ops]]], random_leaf[nfeatures]]]
+        else
+            if len[unary_ops] gt 0 and rand[] lt 0.5
+                t = replace_at[t, k, unary[unary_ops[rand[len[unary_ops]]], random_leaf[nfeatures]]]
+            else
+                t = replace_at[t, k, binary[binary_ops[rand[len[binary_ops]]], random_leaf[nfeatures], random_leaf[nfeatures]]]
+    return t
+
+--- a random constant scaled by a random factor, larger at a higher
+--- temperature, and its sign flipped with probability `p_negate` (PySR's
+--- `mutate_constant`)
+fn mutate_constant[t, temperature, perturbation, p_negate]
+    k = random_index[t, 'constant']
+    if k lt 0
+        return t
+    most = perturbation * temperature + 1.1
+    factor = most ^ rand[]
+    if rand[] lt 0.5
+        factor = 1.0 / factor
+    if rand[] lt p_negate
+        factor = factor * -1.0
+    return replace_at[t, k, constant[t[k].value * factor]]
+
+--- a random operator swapped for another of its arity
+fn mutate_operator[t, binary_ops, unary_ops]
+    k = random_index[t, 'operator']
+    if k lt 0
+        return t
+    n = t[k]
+    op = unary_ops[rand[len[unary_ops]]]
+    if arity[n.op] eq 2
+        op = binary_ops[rand[len[binary_ops]]]
+    return replace_at[t, k, concat[[Node[op, 0.0, 0, n.size]], slice[t, k + 1, k + n.size]]]
+
+--- a random feature node pointed at another feature
+fn mutate_feature[t, nfeatures]
+    if nfeatures lte 1
+        return t
+    k = random_index[t, 'feature']
+    if k lt 0
+        return t
+    j = rand[nfeatures - 1]
+    if j gte t[k].feature
+        j = j + 1
+    return replace_at[t, k, feature[j]]
+
+--- a random binary node's operands swapped
+fn swap_operands[t]
+    k = random_index[t, 'binary']
+    if k lt 0
+        return t
+    return replace_at[t, k, binary[t[k].op, node_at[t, child_b[t, k]], node_at[t, k + 1]]]
+
+--- a random node wrapped in a random operator, with a random leaf as the
+--- other operand of a binary one (PySR's `insert_random_op`)
+fn insert_random_op[t, binary_ops, unary_ops, nfeatures]
+    k = random_index[t, 'any']
+    here = node_at[t, k]
+    i = rand[len[binary_ops] + len[unary_ops]]
+    if i lt len[binary_ops]
+        if rand[] lt 0.5
+            return replace_at[t, k, binary[binary_ops[i], here, random_leaf[nfeatures]]]
+        return replace_at[t, k, binary[binary_ops[i], random_leaf[nfeatures], here]]
+    return replace_at[t, k, unary[unary_ops[i - len[binary_ops]], here]]
+
+--- a random operator replaced by one of its children
+fn delete_random_op[t]
+    k = random_index[t, 'operator']
+    if k lt 0
+        return t
+    if arity[t[k].op] eq 2 and rand[] lt 0.5
+        return replace_at[t, k, node_at[t, child_b[t, k]]]
+    return replace_at[t, k, node_at[t, k + 1]]
+
+--- a rotation at a random node that has an operator child: the child
+--- (the pivot) takes the node's place, and the node takes one of the
+--- pivot's children (PySR's `randomly_rotate_tree`)
+fn rotate[t]
+    k = random_index[t, 'rotatable']
+    if k lt 0
+        return t
+    root = t[k]
+    root_k = arity[root.op]
+    a = node_at[t, k + 1]
+    b = []
+    if root_k eq 2
+        b = node_at[t, child_b[t, k]]
+    pivot_is_a = arity[a[0].op] gt 0
+    if root_k eq 2
+        if arity[b[0].op] gt 0
+            if not pivot_is_a or rand[] lt 0.5
+                pivot_is_a = false
+    pivot = b
+    other = a
+    if pivot_is_a
+        pivot = a
+        other = b
+    pivot_k = arity[pivot[0].op]
+    grand_a = node_at[pivot, 1]
+    grand_b = []
+    if pivot_k eq 2
+        grand_b = node_at[pivot, child_b[pivot, 0]]
+    grand_is_a = pivot_k eq 1 or rand[] lt 0.5
+    grand = grand_b
+    if grand_is_a
+        grand = grand_a
+    --- the root takes the grandchild in the pivot's place
+    lifted = unary[root.op, grand]
+    if root_k eq 2
+        if pivot_is_a
+            lifted = binary[root.op, grand, other]
+        else
+            lifted = binary[root.op, other, grand]
+    --- the pivot takes the root in the grandchild's place
+    turned = unary[pivot[0].op, lifted]
+    if pivot_k eq 2
+        if grand_is_a
+            turned = binary[pivot[0].op, lifted, grand_b]
+        else
+            turned = binary[pivot[0].op, grand_a, lifted]
+    return replace_at[t, k, turned]
+
+struct Pair [first, second]
+
+--- random subtrees of two trees exchanged: two children
+fn crossover[t1, t2]
+    k1 = random_index[t1, 'any']
+    k2 = random_index[t2, 'any']
+    return Pair[replace_at[t1, k1, node_at[t2, k2]], replace_at[t2, k2, node_at[t1, k1]]]
+
+--- a tree is evaluated, printed, counted and indexed in preorder
+test a_tree_is_evaluated_and_shown[]
+    t = binary['+', binary['*', constant[2.5], unary['square', feature[0]]], unary['neg', unary['sin', feature[1]]]]
+    cols = [tensor[[0.0, 1.0, 2.0]], tensor[[0.0, 0.0, 0.0]]]
+    assert[evaluate[t, cols] eq tensor[[0.0, 2.5, 10.0]]]
+    assert[shown[t] eq '((2.5 * square(x0)) + neg(sin(x1)))']
+    assert[size[t] eq 8]
+    assert[node_at[t, 2][0].op eq 'c']
+    assert[node_at[t, 3][0].op eq 'square']
+    assert[shown[replace_at[t, 4, constant[1.0]]] eq '((2.5 * square(1)) + neg(sin(x1)))']
+    assert[shown[replace_at[t, 1, feature[1]]] eq '(x1 + neg(sin(x1)))']
+    assert[indices_of[t, 'constant'] eq [2]]
+    assert[indices_of[t, 'operator'] eq [0, 1, 3, 5, 6]]
+    assert[constants_of[t] eq [2.5]]
+    assert[shown[with_constants[t, [3.0]]] eq '((3 * square(x0)) + neg(sin(x1)))']
+    c = counts[t]
+    assert[c.nodes eq 8 and c.leaves eq 3 and c.constants eq 1 and c.operators eq 5 and c.binaries eq 2]
+
+--- constants fold and combine; a mutation keeps the rest of the tree
+test constants_fold_and_mutations_keep_their_shape[]
+    t = binary['+', constant[1.0], binary['+', constant[2.0], feature[0]]]
+    assert[shown[simplify[t]] eq '(3 + x0)']
+    assert[shown[simplify[binary['*', constant[2.0], constant[4.0]]]] eq '8']
+    seed[3]
+    u = binary['*', feature[0], feature[1]]
+    assert[size[insert_random_op[u, ['+', '-'], ['sin'], 2]] gte 4]
+    assert[size[delete_random_op[u]] eq 1]
+    assert[shown[swap_operands[u]] eq '(x1 * x0)']
+    assert[shown[mutate_feature[feature[0], 2]] eq 'x1']
+    r = random_tree[7, ['+', '*'], ['sin'], 2]
+    assert[size[r] eq 7]
+    p = crossover[t, u]
+    assert[size[p.first] + size[p.second] eq size[t] + size[u]]
+    v = rotate[binary['+', binary['*', feature[0], feature[1]], constant[1.0]]]
+    assert[size[v] eq 5]
+    assert[shown[v] eq '(x0 * (x1 + 1))' or shown[v] eq '((x0 + 1) * x1)']

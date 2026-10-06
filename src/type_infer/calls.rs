@@ -502,11 +502,17 @@ impl TypeContext {
 
         // After scanning body, propagate any updated Fn-typed param types back.
         // This handles `f[result, array[i]]` where `f` is a known function param.
+        // An open parameter the body settled — a list handed empty and
+        // pushed onto, which took its items' kind — is the signature's
+        // too, so every caller's empty list is a list of that kind.
         if let Some(sig) = self.functions.get(name).cloned() {
             let mut new_params = sig.params.clone();
-            for (i, (pname, _pty)) in sig.params.iter().enumerate() {
+            for (i, (pname, pty)) in sig.params.iter().enumerate() {
                 if let Some(updated_type) = self.vars.get(pname) {
-                    if let CrowType::Fn(_, _) = updated_type {
+                    let open = matches!(pty, CrowType::Unknown)
+                        || matches!(pty, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Unknown))
+                        || matches!(pty, CrowType::Map(inner) if matches!(inner.as_ref(), CrowType::Unknown));
+                    if matches!(updated_type, CrowType::Fn(_, _)) || (open && updated_type != pty && !matches!(updated_type, CrowType::Unknown)) {
                         new_params[i].1 = new_params[i].1.unify(updated_type);
                     }
                 }

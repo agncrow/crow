@@ -1304,6 +1304,19 @@ mod tests {
         assert!(err.contains("in band: derivations are not visible inside functions — read 'cfg' in a view or handler"), "{}", err);
     }
 
+    /// A list holds one kind (spec, Arrays): a literal with text beside a
+    /// number is refused before the program runs, in both modes — the
+    /// interpreter had made the list, and the compiled program had not
+    /// built. A query's parameters are the exception: a list of what each
+    /// `?` takes, sent one by one.
+    #[test]
+    fn a_list_literal_holds_one_kind() {
+        let err = check_source("x = ['a', 1, 0.0]\nlog[x]\n").unwrap_err();
+        assert!(err.contains("a list holds one kind: this one has text and a number"), "{}", err);
+        assert!(check_source("x = [1, 2.5]\nlog[x]\n").is_ok());
+        assert!(check_source("use db\nbook = db.connect['sqlite://:memory:']\nexec[book, 'CREATE TABLE t (k TEXT, v REAL)']\nexec[book, 'INSERT INTO t VALUES (?, ?)', ['a', 1.5]]\nlog[query[book, 'SELECT k FROM t WHERE v > ? AND k = ?', [1.0, 'a']]]\n").is_ok());
+    }
+
     /// A list handed to a `?` is sent as (?, ?, …), which only `IN` reads:
     /// finch's `= ANY(?)` handed a list failed at the database every time
     #[test]
@@ -1772,7 +1785,7 @@ fn many_words(item: &str) -> String {
 /// An item's kind, as a collection's items and as one item: numbers and a
 /// number, text, bools and a bool, a struct's records and one of them,
 /// lists, maps — none where it shows only as the program runs.
-fn item_kind(t: &Ty) -> Option<(String, String)> {
+pub(crate) fn item_kind(t: &Ty) -> Option<(String, String)> {
     Some(match t.payload() {
         Ty::Int | Ty::Float => ("numbers".to_string(), "a number".to_string()),
         Ty::Str | Ty::Markup => ("text".to_string(), "text".to_string()),

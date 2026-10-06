@@ -1,0 +1,26 @@
+--- An empty list handed to a function takes the kind of what the function
+--- pushes onto it: `collected[t, []]` gathers numbers, and the caller
+--- builds on what came back, in both modes. (The compiled program had
+--- typed the parameter a list of text, and did not build; found writing
+--- symbolic regression in Crow, whose trees collect their constants so.)
+struct N [v, last, next]
+
+fn collected[t, acc]
+    acc = push[acc, t.v]
+    if t.last
+        return acc
+    return collected[t.next, acc]
+
+fn singles[t, acc]
+    return push[acc, t.v]
+
+t = N[2.5, false, N[1.0, true, 0]]
+found = collected[t, []]
+log[found]
+log[len[found]]
+one = singles[N[3.0, true, 0], []]
+log[one]
+cur = one
+cur = []
+cur = push[cur, 4.0]
+log[cur]

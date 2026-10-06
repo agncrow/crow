@@ -1,0 +1,27 @@
+--- A variable whose first value could fail is given a plain value later,
+--- and goes on holding a value that can fail: `cur = measured[…]`, then
+--- `cur = inf` where the measure was not a number, in both modes. (The
+--- compiled program had refused the reassignment — "variable type cannot
+--- change" — where the interpreter ran it; found writing symbolic
+--- regression's constant optimiser in Crow.)
+use math
+
+fn measured[xs]
+    m = mean[xs]
+    if m ne m
+        return error['not a number', 'measure']
+    return m
+
+cur = measured[tensor[[1.0, 2.0, 3.0]]]
+log[cur]
+log[cur.ok]
+cur = inf
+log[cur]
+log[cur.ok]
+cur = 2
+log[cur + 0.5]
+bad = measured[tensor[[nan]]]
+log[bad.ok]
+bad = 0.0
+log[bad.ok]
+log[bad]

@@ -1,0 +1,490 @@
+--- Symbolic regression as PySR searches (SymbolicRegression.jl):
+--- populations of equations evolve by tournament selection with age
+--- regularisation, the mutations and crossover of expr.co, simulated
+--- annealing on the cost, constant optimisation and simplification each
+--- iteration, and a hall of fame of the best equation at each
+--- complexity; the Pareto front of what was found is a frame of
+--- complexity, loss, score and equation, as PySR's `equations_`. Serial,
+--- from one seed: the same answer every run, in both modes.
+use math, frame
+use expr
+
+--- the search's settings: the binary and unary operators, the
+--- iterations, the populations and their size, the cycles of evolution
+--- per iteration, the largest equation (in nodes), the parsimony per node,
+--- annealing's alpha, the tournament's size and the chance its best wins,
+--- the chance a member's constants are optimised each iteration, and the
+--- seed
+struct Options [binary, unary, iterations, populations, population_size, cycles, maxsize, parsimony, alpha, tournament_n, tournament_p, optimize_probability, seed]
+
+--- PySR's defaults, scaled to Crow's pace: fewer populations, cycles and
+--- iterations (PySR: 31 populations of 27, 380 cycles, 100 iterations)
+fn defaults[]
+    return Options[['+', '-', '*', '/'], ['sin', 'cos', 'exp'], 20, 4, 33, 60, 20, 0.0, 3.17, 15, 0.982, 0.14, 0]
+
+--- a member of a population: its tree, its loss, its cost (the loss
+--- against the baseline, plus parsimony), its complexity and its birth
+struct Member [tree, loss, cost, complexity, birth]
+
+--- the dataset: a tensor per feature, the target, the loss of guessing
+--- the mean (the baseline every loss is measured against), and the rows
+struct Data [cols, y, baseline, n]
+
+--- the best member found at each complexity, and whether one was
+struct Hall [members, present]
+
+--- what a search answers: the Pareto front's equations as a frame
+--- (complexity, loss, score, equation), the front's trees, the index of
+--- the best by score, and the number of features
+struct Fit [equations, trees, best, nfeatures]
+
+fn data_of[x, y]
+    n = len[x]
+    k = len[x[0]]
+    xt = reshape[transpose[tensor[x]], k, n]
+    cols = []
+    for j in range[k]
+        cols = push[cols, xt[j]]
+    yt = tensor[y]
+    m = mean[yt]
+    return Data[cols, yt, mean[(yt - m) .^ 2], len[yt]]
+
+--- the mean squared error of the tree's prediction, NaN where the
+--- prediction is not a number everywhere
+fn loss_of[t, d]
+    pred = expr.evaluate[t, d.cols]
+    if not pred.ok
+        return nan
+    l = mean[(pred - d.y) .^ 2]
+    if l ne l or l eq inf
+        return nan
+    return l
+
+--- the cost: the loss against the baseline (0.01 at the least), plus the
+--- parsimony per node (PySR's `loss_to_cost`)
+fn cost_of[l, complexity, d, o]
+    base = d.baseline
+    if base lt 0.01
+        base = 0.01
+    return l / base + o.parsimony * complexity
+
+fn member_of[t, d, o, birth]
+    l = loss_of[t, d]
+    c = expr.size[t]
+    return Member[t, l, cost_of[l, c, d, o], c, birth]
+
+--- a list with its item at `i` replaced: one helper per kind of list,
+--- since a function's parameter has one type
+fn put_member[items, i, item]
+    return concat[slice[items, 0, i], concat[[item], slice[items, i + 1, len[items]]]]
+
+fn put_flag[items, i, item]
+    return concat[slice[items, 0, i], concat[[item], slice[items, i + 1, len[items]]]]
+
+fn put_number[items, i, item]
+    out = []
+    for j in range[len[items]]
+        if j eq i
+            out = push[out, item]
+        else
+            out = push[out, items[j]]
+    return out
+
+fn put_group[items, i, item]
+    return concat[slice[items, 0, i], concat[[item], slice[items, i + 1, len[items]]]]
+
+--- the index of the oldest member (the first on a tie)
+fn oldest[population]
+    best = 0
+    for i in range[1, len[population]]
+        if population[i].birth lt population[best].birth
+            best = i
+    return best
+
+--- a tournament: `tournament_n` members drawn, and the best wins with
+--- probability `tournament_p`, else the second with the same chance of
+--- the rest, and so on (PySR's `best_of_sample`); a NaN cost never wins
+fn tournament[population, o]
+    n = o.tournament_n
+    if n gt len[population]
+        n = len[population]
+    drawn = []
+    for i in range[n]
+        drawn = push[drawn, rand[len[population]]]
+    place = 0
+    while place lt n - 1 and rand[] gt o.tournament_p
+        place = place + 1
+    taken = []
+    for i in range[n]
+        taken = push[taken, false]
+    winner = drawn[0]
+    for turn in range[place + 1]
+        best = -1
+        best_cost = inf
+        for i in range[n]
+            c = population[drawn[i]].cost
+            if not taken[i] and c eq c and (best lt 0 or c lt best_cost)
+                best = i
+                best_cost = c
+        if best lt 0
+            return winner
+        taken = put_flag[taken, best, true]
+        winner = drawn[best]
+    return winner
+
+fn mutation_names[]
+    return ['add', 'insert', 'delete', 'nothing', 'constant', 'operator', 'feature', 'swap', 'rotate', 'randomize', 'simplify']
+
+--- PySR's weights for the mutations (`MutationWeights`), in the order of
+--- `mutation_names`, each zero where the tree cannot take the mutation
+fn mutation_weights[t, o, nfeatures]
+    c = expr.counts[t]
+    full = c.nodes gte o.maxsize
+    add = 2.47
+    insert = 0.0112
+    if full
+        add = 0.0
+        insert = 0.0
+    delete = 0.870
+    operator = 0.293
+    swap = 0.198
+    rotate = 4.26
+    simplify = 0.00209
+    if c.operators eq 0
+        delete = 0.0
+        operator = 0.0
+        simplify = 0.0
+    if c.binaries eq 0
+        swap = 0.0
+    if c.rotatables eq 0
+        rotate = 0.0
+    constant = 0.0346 * min[8, c.constants] / 8.0
+    feature = 0.1
+    if nfeatures lte 1 or c.features eq 0
+        feature = 0.0
+    return [add, insert, delete, 0.273, constant, operator, feature, swap, rotate, 0.000502, simplify]
+
+--- a mutation drawn by weight (PySR's `_sample_mutation`)
+fn draw_mutation[weights]
+    total = 0.0
+    for w in weights
+        total = total + w
+    threshold = rand[] * total
+    acc = 0.0
+    for i in range[len[weights]]
+        acc = acc + weights[i]
+        if threshold lt acc
+            return i
+    return len[weights] - 1
+
+--- the tree mutated once, as PySR mutates: the mutation drawn by weight
+fn mutate[t, o, nfeatures, temperature]
+    which = mutation_names[][draw_mutation[mutation_weights[t, o, nfeatures]]]
+    if which eq 'add'
+        return expr.append_random_op[t, o.binary, o.unary, nfeatures]
+    if which eq 'insert'
+        return expr.insert_random_op[t, o.binary, o.unary, nfeatures]
+    if which eq 'delete'
+        return expr.delete_random_op[t]
+    if which eq 'constant'
+        return expr.mutate_constant[t, temperature, 0.129, 0.00743]
+    if which eq 'operator'
+        return expr.mutate_operator[t, o.binary, o.unary]
+    if which eq 'feature'
+        return expr.mutate_feature[t, nfeatures]
+    if which eq 'swap'
+        return expr.swap_operands[t]
+    if which eq 'rotate'
+        return expr.rotate[t]
+    if which eq 'randomize'
+        return expr.random_tree[1 + rand[o.maxsize], o.binary, o.unary, nfeatures]
+    if which eq 'simplify'
+        return expr.simplify[t]
+    return t
+
+struct Evolved [population, clock]
+
+--- one cycle of regularised evolution (PySR's `reg_evol_cycle`): for
+--- each of population_size / tournament_n steps, a crossover of two
+--- tournament winners (with probability 0.2) or a mutation of one; a
+--- mutation is kept by simulated annealing on the cost (always when it
+--- improves, with probability exp(-delta / (temperature * alpha))
+--- otherwise), and the child — or the parent again, rejuvenated — takes
+--- the oldest member's place
+fn evolve[population, d, o, nfeatures, temperature, clock]
+    steps = int[ceil[float[len[population]] / float[o.tournament_n]]]
+    for s in range[steps]
+        if rand[] lt 0.2 and len[population] gt 1
+            i = tournament[population, o]
+            j = tournament[population, o]
+            if i ne j
+                kids = expr.crossover[population[i].tree, population[j].tree]
+                for kid in [kids.first, kids.second]
+                    if expr.size[kid] lte o.maxsize
+                        m = member_of[kid, d, o, clock]
+                        clock = clock + 1
+                        if m.loss eq m.loss
+                            population = put_member[population, oldest[population], m]
+        else
+            i = tournament[population, o]
+            parent = population[i]
+            child = mutate[parent.tree, o, nfeatures, temperature]
+            kept = Member[parent.tree, parent.loss, parent.cost, parent.complexity, clock]
+            if expr.size[child] lte o.maxsize
+                m = member_of[child, d, o, clock]
+                if m.loss eq m.loss
+                    delta = m.cost - parent.cost
+                    accept = delta lte 0.0
+                    if not accept and temperature gt 0.0
+                        accept = rand[] lt exp[0.0 - delta / (temperature * o.alpha)]
+                    if accept
+                        kept = m
+            clock = clock + 1
+            population = put_member[population, oldest[population], kept]
+    return Evolved[population, clock]
+
+--- the loss of the tree with other constants
+fn loss_with[t, d, found]
+    return loss_of[expr.with_constants[t, found], d]
+
+--- the constants of a tree fitted: gradient steps with a backtracking
+--- line search, the gradient by central differences; from the constants
+--- as they are, then from two perturbed starts (PySR optimises by BFGS,
+--- eight iterations, two restarts); the best of the three
+fn optimize_constants[t, d]
+    start = expr.constants_of[t]
+    k = len[start]
+    if k eq 0
+        return t
+    best = start
+    best_l = loss_with[t, d, start]
+    if best_l ne best_l
+        return t
+    for restart in range[3]
+        cur = []
+        for i in range[k]
+            if restart eq 0
+                cur = push[cur, start[i]]
+            else
+                cur = push[cur, best[i] * (1.0 + 0.1 * expr.normal_draw[])]
+        cur_l = loss_with[t, d, cur]
+        if cur_l ne cur_l
+            cur_l = inf
+        for it in range[8]
+            g = []
+            for i in range[k]
+                h = 0.000001 * (abs[cur[i]] + 1.0)
+                up = put_number[cur, i, cur[i] + h]
+                down = put_number[cur, i, cur[i] - h]
+                lu = loss_with[t, d, up]
+                ld = loss_with[t, d, down]
+                if lu ne lu or ld ne ld
+                    g = push[g, 0.0]
+                else
+                    g = push[g, (lu - ld) / (2.0 * h)]
+            step = 1.0
+            improved = false
+            while step gt 0.0000001 and not improved
+                trial = []
+                for i in range[k]
+                    trial = push[trial, cur[i] - step * g[i]]
+                tl = loss_with[t, d, trial]
+                if tl eq tl and tl lt cur_l
+                    cur = trial
+                    cur_l = tl
+                    improved = true
+                else
+                    step = step / 2.0
+            if not improved
+                break
+        if cur_l lt best_l
+            best = cur
+            best_l = cur_l
+    return expr.with_constants[t, best]
+
+--- every member simplified, and each one's constants optimised with
+--- probability `optimize_probability` (PySR's
+--- `optimize_and_simplify_population`)
+fn optimize_and_simplify[population, d, o]
+    out = []
+    for m in population
+        t = expr.simplify[m.tree]
+        if rand[] lt o.optimize_probability
+            t = optimize_constants[t, d]
+        out = push[out, member_of[t, d, o, m.birth]]
+    return out
+
+fn empty_hall[o]
+    members = []
+    present = []
+    for i in range[o.maxsize + 1]
+        members = push[members, Member[expr.constant[0.0], inf, inf, 1, 0]]
+        present = push[present, false]
+    return Hall[members, present]
+
+--- the hall of fame: the lowest loss at each complexity
+fn update_hall[hall, population, o]
+    members = hall.members
+    present = hall.present
+    for m in population
+        s = m.complexity
+        if s gte 1 and s lte o.maxsize and m.loss eq m.loss
+            if not present[s] or m.loss lt members[s].loss
+                members = put_member[members, s, m]
+                present = put_flag[present, s, true]
+    return Hall[members, present]
+
+--- each member replaced, with probability 0.0614, by a member of the
+--- hall of fame (PySR's `fraction_replaced_hof`)
+fn migrate[population, hall, o, clock]
+    have = []
+    for s in range[o.maxsize + 1]
+        if hall.present[s]
+            have = push[have, s]
+    if len[have] eq 0
+        return population
+    out = []
+    for m in population
+        if rand[] lt 0.0614
+            from = hall.members[have[rand[len[have]]]]
+            out = push[out, Member[from.tree, from.loss, from.cost, from.complexity, clock]]
+        else
+            out = push[out, m]
+    return out
+
+--- the Pareto front: at each complexity, the hall's member when its loss
+--- beats every simpler one's
+fn pareto[hall, o]
+    front = []
+    for s in range[1, o.maxsize + 1]
+        if hall.present[s]
+            m = hall.members[s]
+            better = true
+            for r in range[1, s]
+                if hall.present[r] and m.loss gte hall.members[r].loss
+                    better = false
+            if better
+                front = push[front, m]
+    return front
+
+--- PySR's scores: the fall of the log loss per added node, against the
+--- previous row of the front (0 for the first)
+fn scores_of[front]
+    score = []
+    last_loss = -1.0
+    last_complexity = 0
+    for m in front
+        s = 0.0
+        if last_loss gte 0.0
+            if m.loss gt 0.0
+                s = 0.0 - ln[m.loss / last_loss] / float[m.complexity - last_complexity]
+            else
+                s = inf
+        score = push[score, s]
+        last_loss = m.loss
+        last_complexity = m.complexity
+    return score
+
+--- the front as PySR's `equations_`: complexity, loss, score and equation
+fn equations_of[front]
+    complexity = []
+    loss = []
+    equation = []
+    for m in front
+        complexity = push[complexity, m.complexity]
+        loss = push[loss, m.loss]
+        equation = push[equation, expr.shown[m.tree]]
+    f = frame.new[]
+    f = with[f, 'complexity', complexity]
+    f = with[f, 'loss', loss]
+    f = with[f, 'score', scores_of[front]]
+    return with[f, 'equation', equation]
+
+--- PySR's `best`: the highest score among the front's equations whose
+--- loss is within 1.5 times the lowest
+fn best_of[front]
+    if len[front] eq 0
+        return -1
+    lowest = inf
+    for m in front
+        if m.loss lt lowest
+            lowest = m.loss
+    scores = scores_of[front]
+    best = 0
+    best_score = -1.0
+    for i in range[len[front]]
+        if front[i].loss lte 1.5 * lowest and scores[i] gt best_score
+            best = i
+            best_score = scores[i]
+    return best
+
+--- the search: `x` holds a row of features per sample, `y` a target for
+--- each; `o` the options (`defaults[]` to start from)
+fn fit[x, y, o]
+    seed[o.seed]
+    d = data_of[x, y]
+    nfeatures = len[d.cols]
+    hall = empty_hall[o]
+    pops = []
+    clock = 0
+    for p in range[o.populations]
+        members = []
+        for i in range[o.population_size]
+            members = push[members, member_of[expr.random_tree[3, o.binary, o.unary, nfeatures], d, o, clock]]
+            clock = clock + 1
+        pops = push[pops, members]
+    for it in range[o.iterations]
+        for p in range[o.populations]
+            population = pops[p]
+            for c in range[o.cycles]
+                temperature = 1.0
+                if o.cycles gt 1
+                    temperature = 1.0 - float[c] / float[o.cycles - 1]
+                ev = evolve[population, d, o, nfeatures, temperature, clock]
+                population = ev.population
+                clock = ev.clock
+            population = optimize_and_simplify[population, d, o]
+            hall = update_hall[hall, population, o]
+            population = migrate[population, hall, o, clock]
+            pops = put_group[pops, p, population]
+    front = pareto[hall, o]
+    trees = []
+    for m in front
+        trees = push[trees, m.tree]
+    return Fit[equations_of[front], trees, best_of[front], nfeatures]
+
+--- the best equation's prediction for rows of features
+fn predict[f, x]
+    if f.best lt 0
+        return error['symbolic: the search found no equation', 'symbolic']
+    d = data_of[x, zeros[len[x]]]
+    return expr.evaluate[f.trees[f.best], d.cols]
+
+--- the equation at a complexity of the front, as text
+fn equation_at[f, complexity]
+    rows = f.equations
+    for i in range[len[rows]]
+        if rows.complexity[i] eq complexity
+            return rows.equation[i]
+    return error['symbolic: no equation of complexity `complexity` on the front', 'symbolic']
+
+--- a known formula is found: y = 2.5 x0^2 - sin(x1) on a small dataset, the
+--- front's best equation predicts it closely, and the frame has PySR's
+--- columns
+test the_search_finds_a_known_formula[]
+    x = []
+    y = []
+    for i in range[40]
+        a = float[i] / 10.0 - 2.0
+        b = float[(i * 7) % 40] / 10.0 - 2.0
+        x = push[x, [a, b]]
+        y = push[y, 2.5 * a * a - sin[b]]
+    o = Options[['+', '-', '*'], ['sin', 'square'], 20, 2, 25, 40, 12, 0.0, 3.17, 10, 0.982, 0.14, 0]
+    f = fit[x, y, o]
+    assert[f.equations.columns eq ['complexity', 'loss', 'score', 'equation']]
+    assert[len[f.equations] gt 0]
+    assert[f.equations.loss[len[f.equations] - 1] lt 0.6, 'the lowest loss was `f.equations.loss[len[f.equations] - 1]`']
+    assert[contains[equation_at[f, 4], 'square(x0)'], 'at complexity 4: `equation_at[f, 4]`']
+    p = predict[f, x]
+    assert[len[p] eq 40]
+    assert[f.best gte 0]

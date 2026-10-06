@@ -676,6 +676,17 @@ impl Emitter {
                 self.line(&format!("{} = ({}) as f64;", var, text));
                 return;
             }
+            // a plain value given to a variable whose first value could
+            // fail: the variable keeps holding a value that can fail, and
+            // this one is a success (`cur = loss[…]`, then `cur = inf`:
+            // the interpreter had run it, and this backend refused it)
+            if let CrowType::Result(inner) = &existing {
+                if !matches!(new_ty, CrowType::Result(_)) && (inner.compatible(&new_ty) || (matches!(inner.as_ref(), CrowType::Float) && matches!(new_ty, CrowType::Int))) {
+                    let cast = if matches!(inner.as_ref(), CrowType::Float) && matches!(new_ty, CrowType::Int) { " as f64" } else { "" };
+                    self.line(&format!("{} = CrowResult {{ ok: true, value: ({}){}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }};", var, text, cast));
+                    return;
+                }
+            }
             if !existing.compatible(&new_ty) {
                 self.fail(format!("cannot reassign '{}' from {} to {} — variable type cannot change", var, existing.crow_name(), new_ty.crow_name()));
             }
@@ -865,11 +876,39 @@ impl Emitter {
         }
         let text = self.owned_expr(e);
         let ety = self.tt(e);
+        // a record returned where the function answers a record or none (a
+        // tree's child, 0 where there is none): wrapped, as a constructor
+        // wraps it into such a field; 0 is none
+        let wrapped = |target: &CrowType, text: String, ety: &CrowType| -> String {
+            if matches!(target, CrowType::OptBoxStruct(_)) {
+                if matches!(Emitter::raw(e), Expr::Const(Const::Int(0), _)) {
+                    return "None".to_string();
+                }
+                if matches!(ety, CrowType::Struct(_)) {
+                    return format!("Some(Box::new({}))", text);
+                }
+            }
+            text
+        };
         if self.returns_unit {
             self.line(&format!("let _ = {};", text));
             self.line("return;");
+        } else if let Some(target @ CrowType::OptBoxStruct(_)) = self.cur_ret.clone() {
+            let text = wrapped(&target, text, &ety);
+            self.line(&format!("return {};", text));
         } else if let Some(CrowType::Result(inner)) = self.cur_ret.clone() {
+            let text = wrapped(&inner, text, &ety);
+            let ety = if matches!(inner.as_ref(), CrowType::OptBoxStruct(_)) && matches!(ety, CrowType::Struct(_)) { inner.as_ref().clone() } else { ety };
             if !matches!(ety, CrowType::Result(_)) {
+                // a function answering a value JSON can hold (a frame's cell
+                // in one branch, an error in another) given text or a
+                // number: held as JSON, as the interpreter holds a cell
+                let text = if matches!(inner.as_ref(), CrowType::Json) && matches!(ety, CrowType::Str | CrowType::Markup | CrowType::Int | CrowType::Float | CrowType::Bool) {
+                    self.needs_serde_json = true;
+                    format!("serde_json::json!(({}))", text)
+                } else {
+                    text
+                };
                 self.line(&format!("return CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }};", text));
             } else if let CrowType::Result(got) = &ety {
                 let known = |t: &CrowType| !matches!(t, CrowType::Unknown);

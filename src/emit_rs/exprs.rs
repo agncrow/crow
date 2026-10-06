@@ -2105,6 +2105,18 @@ impl Emitter {
                     *s = format!("({}).to_html()", s);
                 }
             }
+            // a record handed where the function takes a record or none
+            // (a tree's child, 0 where there is none): wrapped, as a
+            // constructor wraps it into such a field; 0 is none
+            if matches!(params.get(i), Some(Ty::OptRecord(_))) {
+                if let Some(s) = arg_strs.get_mut(i) {
+                    if matches!(Emitter::raw(a), Expr::Const(Const::Int(0), _)) {
+                        *s = "None".to_string();
+                    } else if matches!(a.ty().payload(), Ty::Record(_)) {
+                        *s = format!("Some(Box::new({}))", s);
+                    }
+                }
+            }
             // an empty list where the function takes numbers as a tensor (a
             // numeric literal at another call typed the parameter)
             if matches!(Emitter::raw(a), Expr::ListLit(items, _) if items.is_empty()) && matches!(params.get(i), Some(Ty::Tensor(..))) {

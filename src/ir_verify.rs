@@ -725,7 +725,10 @@ fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
 /// What a `return` hands back fits the body's type; an error of another
 /// shape passes through with the body's default as its value.
 fn returns(v: &Ty, ret: &Ty) -> bool {
-    fits(v, ret) || (v.is_result() && ret.is_result())
+    // (a function whose value is a frame's cell — JSON, which holds any
+    // cell — answers text or a number as that JSON: the emitter wraps it)
+    let cell = matches!(ret.payload(), Ty::Json) && matches!(v.payload(), Ty::Str | Ty::Int | Ty::Float | Ty::Bool);
+    fits(v, ret) || (v.is_result() && ret.is_result()) || cell
 }
 
 /// A read's type and its binding's agree: the same, or one side not known.
