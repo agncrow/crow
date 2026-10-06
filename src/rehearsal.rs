@@ -283,7 +283,7 @@ pub fn keep_fixtures(r: &Rehearsal) -> Result<Vec<(String, usize, usize)>, Strin
                                 Column::Int(v) => serde_json::json!(v[i]),
                                 Column::Float(v) => serde_json::json!(v[i]),
                                 Column::Bool(v) => serde_json::json!(v[i]),
-                                Column::Str(v) => serde_json::json!(v[i]),
+                                Column::Str(v) => serde_json::json!(&v[i]),
                                 Column::DateTime(millis, offsets) => serde_json::json!(crow_runtime::frame::format_datetime(millis[i], offsets[i])),
                             }
                         })
@@ -390,7 +390,7 @@ mod tests {
         let g = connect(&url).query(sql, &[serde_json::json!(["AB"])]).unwrap();
         end();
         assert_eq!(g.nrows(), 2);
-        assert_eq!(*g.validity[1], vec![true, false]);
+        assert_eq!(g.validity[1].to_vec(), vec![true, false]);
         assert!(!reads_only("WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x"));
         assert!(reads_only("SELECT 'insert' AS word FROM t"));
         let _ = std::fs::remove_dir_all(&root);
@@ -435,8 +435,8 @@ mod tests {
         let mut r = Rehearsal::default();
         r.schema.push(("SELECT a, b FROM t".to_string(), vec![("a".to_string(), "int".to_string()), ("b".to_string(), "float?".to_string())]));
         let f = r.generated_rows("SELECT a, b FROM t", 3);
-        assert_eq!(*f.validity[0], vec![true, true, true]);
-        assert_eq!(*f.validity[1], vec![true, false, true]);
+        assert_eq!(f.validity[0].to_vec(), vec![true, true, true]);
+        assert_eq!(f.validity[1].to_vec(), vec![true, false, true]);
     }
 
     /// A list handed to `IN ?` runs as `IN (?, ?, ?)` — or `IN (NULL)`,

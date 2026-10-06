@@ -731,7 +731,7 @@ pub fn read_cells(v: &CrowValue) -> Result<crow_runtime::frames::Cells, String> 
         let other = items.iter().find(|i| !matches!(i.value, Value::Int(_) | Value::Float(_) | Value::Bool(_) | Value::Str(_)));
         return Err(format!("expected a column's values, got a list of {}", other.map(named).unwrap_or("mixed values")));
     };
-    Ok(Cells::Column(column, valid))
+    Ok(Cells::Column(column, crow_runtime::frame::Validity::from(valid)))
 }
 
 /// The lists of text of a group, each a list.
@@ -1708,6 +1708,7 @@ pub static ROWS: &[Row] = &[
     // the parse kernels the readers written in Crow stand on
     row!("sys.csv_rows", "sys", "csv_rows", crow_runtime::sys::csv_rows, (Str) -> TextRows, value "io"),
     row!("sys.frame_of_csv", "sys", "frame_of_csv", crow_runtime::sys::frame_of_csv, (Str) -> Frame, value "frame"),
+    row!("sys.frame_of_csv_bytes", "sys", "frame_of_csv_bytes", crow_runtime::sys::frame_of_csv_bytes, (Bytes) -> Frame, value "frame"),
     row!("sys.frame_of_json", "sys", "frame_of_json", crow_runtime::sys::frame_of_json, (Str) -> Frame, value "frame"),
     row!("sys.frame_of_parquet", "sys", "frame_of_parquet", crow_runtime::sys::frame_of_parquet, (Bytes) -> Frame, value "frame"),
     row!("sys.frame_of_rowbinary", "sys", "frame_of_rowbinary", crow_runtime::sys::frame_of_rowbinary, (Bytes) -> Frame, value "frame"),

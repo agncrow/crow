@@ -91,6 +91,7 @@ use sys, frame
 
 df = frame_of_csv['sym,qty\nAAPL,100\nMSFT,200\n']
 log[df.qty]
+log[frame_of_csv_bytes[bytes['sym,qty\nAAPL,100\n']].sym]
 log[len[frame_csv[df]]]
 log[frame_of_json[frame_json[df]].sym]
 log[len[frame_of_parquet[frame_parquet[df]]]]
@@ -112,6 +113,7 @@ log[text[a.body, '?']]
 
 ```text
 [100, 200]
+['AAPL']
 26
 ['AAPL', 'MSFT']
 2

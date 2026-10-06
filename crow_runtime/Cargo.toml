@@ -21,6 +21,8 @@ pulldown-cmark = { version = "0.13.4", default-features = false, features = ["ht
 rand = "0.10.0"
 rand_distr = "0.6.0"
 rayon = "1.11.0"
+# the byte search the CSV reader splits lines and fields with (SIMD)
+memchr = "2.8.0"
 serde = { version = "1", features = ["derive", "rc"] }
 rustfft = "6.4.1"
 # `sys`: the standard library's own layer — a TCP connection, plain or

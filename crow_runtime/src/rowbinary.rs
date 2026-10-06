@@ -225,7 +225,7 @@ pub fn frame_of_rowbinary(b: &[u8]) -> Result<CrowFrame, String> {
         .map(|c| match c {
             Col::Int(v) => Column::Int(v),
             Col::Float(v) => Column::Float(v),
-            Col::Str(v) => Column::Str(v),
+            Col::Str(v) => Column::strs(v),
             Col::Bool(v) => Column::Bool(v),
             Col::DateTime(v) => {
                 let n = v.len();
@@ -479,26 +479,26 @@ mod tests {
         let blob = unhex("12016101620163016401650166016701680169016a016b016c016d016e016f0170017101720555496e743805496e74363407466c6f6174363406537472696e670f4e756c6c61626c652855496e743829104e756c6c61626c6528537472696e672904446174650f4461746554696d6528275554432729144461746554696d65363428332c202755544327290e446563696d616c2831382c20322904426f6f6c17456e756d3828277827203d20312c20277927203d203229164c6f7743617264696e616c69747928537472696e672904555549440e4669786564537472696e672833290c41727261792855496e74382907466c6f617433320655496e74363401fbffffffffffffff00000000000004400268690003010c4d257d936503d920c88c010000d2040000000000000101026c63e711b35c04c4f061a0dbd36a00a67b906162000201020000c03fffffffffffffffff");
         let f = frame_of_rowbinary(&blob).unwrap();
         assert_eq!(f.columns, ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r"]);
-        let col = |name: &str| -> (&Column, &Vec<bool>) {
+        let col = |name: &str| -> (&Column, Vec<bool>) {
             let i = f.columns.iter().position(|c| c == name).unwrap();
-            (&f.data[i], &f.validity[i])
+            (&f.data[i], f.validity[i].to_vec())
         };
         assert!(matches!(col("a").0, Column::Int(v) if v == &[1]));
         assert!(matches!(col("b").0, Column::Int(v) if v == &[-5]));
         assert!(matches!(col("c").0, Column::Float(v) if v == &[2.5]));
-        assert!(matches!(col("d").0, Column::Str(v) if v == &["hi"]));
-        assert!(matches!(col("e"), (Column::Int(v), valid) if v == &[3] && valid == &[true]));
-        assert!(matches!(col("f"), (Column::Str(v), valid) if v == &[""] && valid == &[false]));
+        assert!(matches!(col("d").0, Column::Str(v) if v.to_vec() == ["hi"]));
+        assert!(matches!(col("e"), (Column::Int(v), valid) if v == &[3] && valid[..] == [true]));
+        assert!(matches!(col("f"), (Column::Str(v), valid) if v.to_vec() == [""] && valid[..] == [false]));
         assert!(matches!(col("g").0, Column::DateTime(v, _) if v == &[1_704_153_600_000]));
         assert!(matches!(col("h").0, Column::DateTime(v, _) if v == &[1_704_164_645_000]));
         assert!(matches!(col("i").0, Column::DateTime(v, _) if v == &[1_704_164_645_123]));
         assert!(matches!(col("j").0, Column::Float(v) if (v[0] - 12.34).abs() < 1e-9));
         assert!(matches!(col("k").0, Column::Bool(v) if v == &[true]));
-        assert!(matches!(col("l").0, Column::Str(v) if v == &["x"]));
-        assert!(matches!(col("m").0, Column::Str(v) if v == &["lc"]));
-        assert!(matches!(col("n").0, Column::Str(v) if v == &["61f0c404-5cb3-11e7-907b-a6006ad3dba0"]));
-        assert!(matches!(col("o").0, Column::Str(v) if v == &["ab"]));
-        assert!(matches!(col("p").0, Column::Str(v) if v == &["[1, 2]"]));
+        assert!(matches!(col("l").0, Column::Str(v) if v.to_vec() == ["x"]));
+        assert!(matches!(col("m").0, Column::Str(v) if v.to_vec() == ["lc"]));
+        assert!(matches!(col("n").0, Column::Str(v) if v.to_vec() == ["61f0c404-5cb3-11e7-907b-a6006ad3dba0"]));
+        assert!(matches!(col("o").0, Column::Str(v) if v.to_vec() == ["ab"]));
+        assert!(matches!(col("p").0, Column::Str(v) if v.to_vec() == ["[1, 2]"]));
         assert!(matches!(col("q").0, Column::Float(v) if v == &[1.5]));
         // a UInt64 past i64's range wraps, as the native driver's did
         assert!(matches!(col("r").0, Column::Int(v) if v == &[-1]));
@@ -514,11 +514,11 @@ mod tests {
             vec![
                 Column::Int(vec![1, -2, 0]),
                 Column::Float(vec![2.5, 0.0, 12.34]),
-                Column::Str(vec!["hi".into(), "".into(), "yo".into()]),
+                Column::strs(vec!["hi".into(), "".into(), "yo".into()]),
                 Column::Bool(vec![true, false, true]),
                 Column::DateTime(vec![1_704_164_645_123, 0, 86_400_000], vec![0, 0, 0]),
-                Column::Str(vec!["x".into(), "y".into(), "x".into()]),
-                Column::Str(vec!["61f0c404-5cb3-11e7-907b-a6006ad3dba0".into(), "".into(), "61f0c404-5cb3-11e7-907b-a6006ad3dba0".into()]),
+                Column::strs(vec!["x".into(), "y".into(), "x".into()]),
+                Column::strs(vec!["61f0c404-5cb3-11e7-907b-a6006ad3dba0".into(), "".into(), "61f0c404-5cb3-11e7-907b-a6006ad3dba0".into()]),
                 Column::Int(vec![7, 8, 9]),
             ],
             vec![vec![true, true, true], vec![true, false, true], vec![true, false, true], vec![true; 3], vec![true, true, true], vec![true; 3], vec![true, false, true], vec![true, true, false]],
@@ -540,16 +540,16 @@ mod tests {
         assert_eq!(back.columns, frame.columns);
         assert_eq!(back.nrows(), 3);
         assert!(matches!(back.data[0].as_ref(), Column::Int(v) if v == &[1, -2, 0]));
-        assert!(matches!((back.data[1].as_ref(), &back.validity[1][..]), (Column::Float(v), [true, false, true]) if v[0] == 2.5 && v[2] == 12.34));
-        assert!(matches!((back.data[2].as_ref(), &back.validity[2][..]), (Column::Str(v), [true, false, true]) if v[0] == "hi" && v[2] == "yo"));
+        assert!(matches!((back.data[1].as_ref(), &back.validity[1].to_vec()[..]), (Column::Float(v), [true, false, true]) if v[0] == 2.5 && v[2] == 12.34));
+        assert!(matches!((back.data[2].as_ref(), &back.validity[2].to_vec()[..]), (Column::Str(v), [true, false, true]) if &v[0] == "hi" && &v[2] == "yo"));
         assert!(matches!(back.data[3].as_ref(), Column::Bool(v) if v == &[true, false, true]));
         assert!(matches!(back.data[4].as_ref(), Column::DateTime(v, _) if v == &[1_704_164_645_123, 0, 86_400_000]));
-        assert!(matches!(back.data[5].as_ref(), Column::Str(v) if v == &["x", "y", "x"]));
-        assert!(matches!(&back.validity[6][..], [true, false, true]));
+        assert!(matches!(back.data[5].as_ref(), Column::Str(v) if v.to_vec() == ["x", "y", "x"]));
+        assert!(matches!(&back.validity[6].to_vec()[..], [true, false, true]));
         // a missing cell where the type holds no NULL is its nothing
         assert!(matches!(back.data[7].as_ref(), Column::Int(v) if v == &[7, 8, 0]));
         // a cell a type cannot hold, and a type count that does not fit
-        let bad = CrowFrame::new(vec!["n".into()], vec![Column::Str(vec!["x".into()])], vec![vec![true]]);
+        let bad = CrowFrame::new(vec!["n".into()], vec![Column::strs(vec!["x".into()])], vec![vec![true]]);
         assert_eq!(rowbinary_of_frame(&bad, &["UInt8".to_string()]).unwrap_err(), "cannot write 'x' as column 'n' (U8)");
         assert_eq!(rowbinary_of_frame(&bad, &[]).unwrap_err(), "0 types for 1 columns");
     }

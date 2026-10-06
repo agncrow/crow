@@ -795,7 +795,7 @@ mod tests {
         assert_eq!(press_attrs("tr", &[]), vec![pair("tabindex", "0")]);
         assert!(press_attrs("button", &[]).is_empty() && press_attrs("a", &[]).is_empty());
         assert!(press_attrs("div", &[pair("role", "tab")]).is_empty());
-        let f = crate::frame::CrowFrame::new(vec!["sym".to_string()], vec![crate::frame::Column::Str(vec!["IMRN".into()])], vec![vec![true]]);
+        let f = crate::frame::CrowFrame::new(vec!["sym".to_string()], vec![crate::frame::Column::strs(vec!["IMRN".into()])], vec![vec![true]]);
         let rows = frame_table_html(&f, Some("focus"), None, None, &[], &[], &[], &[], None, None);
         assert!(rows.contains("data-crow-click=\"focus\" data-crow-args=\"[&quot;IMRN&quot;]\" tabindex=\"0\""), "{}", rows);
     }
@@ -842,7 +842,7 @@ mod tests {
         use crate::frame::{Column, CrowFrame};
         let f = CrowFrame::new(
             vec!["sym".to_string(), "px".to_string()],
-            vec![Column::Str(vec!["b".into(), "A".into(), "c".into(), "a".into()]), Column::Float(vec![2.0, 10.0, 0.0, 2.0])],
+            vec![Column::strs(vec!["b".into(), "A".into(), "c".into(), "a".into()]), Column::Float(vec![2.0, 10.0, 0.0, 2.0])],
             vec![vec![true; 4], vec![true, true, false, true]],
         );
         // the first cell of each body row

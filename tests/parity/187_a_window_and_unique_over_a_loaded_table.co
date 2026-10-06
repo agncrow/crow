@@ -1,0 +1,23 @@
+--- A window, a unique and a group over a table read from a file — a
+--- frame that can fail, whose columns show as it runs — answer the same
+--- in both modes (the compiled program's placeholder for a failed column
+--- had been written with a bool vector after the bitmap change, and did
+--- not build), and a sort with ties keeps the rows' order.
+use frame, math
+
+write['loaded-note.csv', 'sym,day,qty,px\nb,2,10,1.5\na,1,1,2.0\nb,1,20,0.5\na,2,2,4.0\nb,1,30,1.0\n']
+t = frame.load['loaded-note.csv']
+log[t.dtypes]
+log[window[t, 'qty', 'sum', by = 'sym']]
+log[window[t, 'px', 'lag', n = 1, by = 'sym']]
+log[unique[t, 'sym']]
+log[unique[t, 'day']]
+g = group[t, ['sym', 'day'], ['qty', 'sum'], ['px', 'max']]
+log[g]
+s = sort[t, 'day']
+log[s.sym]
+log[sort[t, 'sym', desc = true].qty]
+log[len[filter[t, t.sym eq 'b' and t.qty gt 10]]]
+j = join[t, with[with[frame.new[], 'sym', ['a', 'b']], 'name', ['Ann', 'Bo']], 'sym']
+log[j.name]
+rm['loaded-note.csv']

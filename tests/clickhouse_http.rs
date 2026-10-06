@@ -145,7 +145,7 @@ fn the_clickhouse_driver_written_in_crow_speaks_to_a_server_in_both_modes() {
     std::fs::write(dir.join("main.co"), PROGRAM).unwrap();
     let expected_insert = {
         use crow_runtime::frame::{Column, CrowFrame};
-        let f = CrowFrame::new(vec!["n".into(), "name".into()], vec![Column::Float(vec![1.0, 2.0]), Column::Str(vec!["a".into(), "b".into()])], vec![vec![true, true], vec![true, true]]);
+        let f = CrowFrame::new(vec!["n".into(), "name".into()], vec![Column::Float(vec![1.0, 2.0]), Column::strs(vec!["a".into(), "b".into()])], vec![vec![true, true], vec![true, true]]);
         crow_runtime::rowbinary::rowbinary_of_frame(&f, &["UInt64".to_string(), "Nullable(String)".to_string()]).unwrap()
     };
     let mut said: Vec<String> = Vec::new();

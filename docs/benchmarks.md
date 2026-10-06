@@ -1,38 +1,38 @@
 # Benchmarks
 
-*Measured by `crow test --bench --write` on 2026-09-23, Apple M4 Max (aarch64), commit b5d5008. The interpreter is `crow run -i`; compiled is the release build `crow build` makes of the same program, timed from inside the program so a build is never counted. Sizes: full, 1000000 csv rows. The programs are in `tests/bench/`; `crow test --bench --quick` runs them at small sizes in CI so they cannot rot.*
+*Measured by `crow test --bench --write` on 2026-10-06, Apple M4 Max (aarch64), commit 8cb850b. The interpreter is `crow run -i`; compiled is the release build `crow build` makes of the same program, timed from inside the program so a build is never counted. Sizes: full, 1000000 csv rows. The programs are in `tests/bench/`; `crow test --bench --quick` runs them at small sizes in CI so they cannot rot.*
 
 | Program | Section | Interpreter | Compiled | Compiled is |
 |---|---|---|---|---|
-| collect | push_loop | 5.9ms | 21µs | ×282.6 faster |
-| collect | for_collect | 154.2ms | 2.7ms | ×58.0 faster |
-| collect | for_fn | 238.4ms | 1.9ms | ×127.5 faster |
-| collect | map_set_loop | 10.0ms | 1.3ms | ×7.6 faster |
-| collect | join_split | 43.0ms | 9.5ms | ×4.5 faster |
-| collect | sort | 4.7ms | 570µs | ×8.2 faster |
-| collect | json_roundtrip | 18.6ms | 2.4ms | ×7.7 faster |
-| collect | whole program | 496.0ms | 26.5ms | ×18.7 faster |
-| frames | csv_load | 64.0ms | 60.6ms | ×1.1 faster |
-| frames | filter | 57.4ms | 15.8ms | ×3.6 faster |
-| frames | group | 11.4ms | 9.2ms | ×1.2 faster |
-| frames | sort | 66.0ms | 64.3ms | ×1.0 faster |
-| frames | join | 26.2ms | 29.1ms | ×1.1 slower |
-| frames | select | 6µs | 3µs | ×1.9 faster |
-| frames | column_sum | 24.4ms | 1.5ms | ×16.9 faster |
-| frames | csv_save | 34.9ms | 34.2ms | ×1.0 faster |
-| frames | whole program | 466.7ms | 397.8ms | ×1.2 faster |
-| tensors | matmul | 10.1ms | 8.8ms | ×1.2 faster |
-| tensors | elementwise_chain | 38.8ms | 29.0ms | ×1.3 faster |
-| tensors | dot | 8.0ms | 7.8ms | ×1.0 faster |
-| tensors | sum | 1.5ms | 1.4ms | ×1.0 faster |
-| tensors | argsort | 1.27s | 1.30s | ×1.0 slower |
-| tensors | gram | 8.2ms | 9.1ms | ×1.1 slower |
-| tensors | inverse_300 | 4.9ms | 3.0ms | ×1.7 faster |
-| tensors | whole program | 1.42s | 1.44s | ×1.0 slower |
-| train | linreg_gd | 176.4ms | 164.6ms | ×1.1 faster |
-| train | mlp_forward | 8.8ms | 9.1ms | ×1.0 slower |
-| train | grad_calls | 74.4ms | 36µs | ×2066.0 faster |
-| train | whole program | 269.1ms | 179.9ms | ×1.5 faster |
+| collect | push_loop | 3.6ms | 32µs | ×112.9 faster |
+| collect | for_collect | 43.8ms | 2.0ms | ×21.5 faster |
+| collect | for_fn | 174.6ms | 2.3ms | ×77.4 faster |
+| collect | map_set_loop | 5.8ms | 2.4ms | ×2.4 faster |
+| collect | join_split | 21.6ms | 12.7ms | ×1.7 faster |
+| collect | sort | 1.4ms | 527µs | ×2.7 faster |
+| collect | json_roundtrip | 6.2ms | 2.8ms | ×2.2 faster |
+| collect | whole program | 271.7ms | 32.9ms | ×8.3 faster |
+| frames | csv_load | 46.8ms | 37.7ms | ×1.2 faster |
+| frames | filter | 6.4ms | 6.1ms | ×1.1 faster |
+| frames | group | 3.2ms | 3.6ms | ×1.1 slower |
+| frames | sort | 17.8ms | 18.1ms | ×1.0 slower |
+| frames | join | 9.8ms | 10.6ms | ×1.1 slower |
+| frames | select | 11µs | 3µs | ×3.8 faster |
+| frames | column_sum | 5.9ms | 1.4ms | ×4.1 faster |
+| frames | csv_save | 37.9ms | 35.4ms | ×1.1 faster |
+| frames | whole program | 193.8ms | 130.4ms | ×1.5 faster |
+| tensors | matmul | 9.6ms | 7.1ms | ×1.4 faster |
+| tensors | elementwise_chain | 3.2ms | 3.3ms | ×1.0 slower |
+| tensors | dot | 7.1ms | 7.1ms | ×1.0 slower |
+| tensors | sum | 1.4ms | 1.4ms | ×1.0 faster |
+| tensors | argsort | 1.21s | 1.19s | ×1.0 faster |
+| tensors | gram | 9.2ms | 7.9ms | ×1.2 faster |
+| tensors | inverse_300 | 6.4ms | 3.3ms | ×1.9 faster |
+| tensors | whole program | 1.51s | 1.49s | ×1.0 faster |
+| train | linreg_gd | 168.7ms | 175.3ms | ×1.0 slower |
+| train | mlp_forward | 8.1ms | 8.5ms | ×1.0 slower |
+| train | grad_calls | 34.8ms | 33µs | ×1057.1 faster |
+| train | whole program | 228.8ms | 198.5ms | ×1.2 faster |
 
 ## Notes
 

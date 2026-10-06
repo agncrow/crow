@@ -79,7 +79,7 @@ pub fn chapters_from_frame(f: &CrowFrame) -> Vec<Chapter> {
     let col = |name: &str| f.columns.iter().position(|c| c == name).map(|i| f.data[i].clone());
     let strs = |c: Option<std::sync::Arc<Column>>| -> Vec<String> {
         match c.as_deref() {
-            Some(Column::Str(v)) => v.clone(),
+            Some(Column::Str(v)) => v.to_vec(),
             Some(other) => (0..other.len()).map(|_| String::new()).collect(),
             None => Vec::new(),
         }

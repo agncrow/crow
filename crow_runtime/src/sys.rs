@@ -158,6 +158,14 @@ pub fn frame_of_csv(text: &str) -> Result<crate::frame::CrowFrame, String> {
     crate::frame::csv_frame(text)
 }
 
+/// `sys.frame_of_csv_bytes[bytes]`: a frame from a CSV file's bytes, read
+/// where they are (the text had been copied whole first). Bytes that are
+/// not text are the reason.
+pub fn frame_of_csv_bytes(b: &Bytes) -> Result<crate::frame::CrowFrame, String> {
+    let text = std::str::from_utf8(&b.0).map_err(|_| "it is not text (UTF-8)".to_string())?;
+    crate::frame::csv_frame(text)
+}
+
 /// `sys.frame_of_json[text]`: a frame from JSON records.
 pub fn frame_of_json(text: &str) -> Result<crate::frame::CrowFrame, String> {
     crate::frame::from_json(text)
@@ -721,7 +729,7 @@ pub fn copy_of_frame(f: &crate::frame::CrowFrame) -> Bytes {
                     let x = v[row];
                     if x.is_finite() && x == x.trunc() && x.abs() < 1e15 { format!("{}", x as i64) } else { x.to_string() }
                 }
-                Column::Str(v) => v[row].clone(),
+                Column::Str(v) => v[row].to_string(),
                 Column::Bool(v) => if v[row] { "t".to_string() } else { "f".to_string() },
                 Column::DateTime(v, z) => crate::frame::format_datetime(v[row], z[row]),
             };
@@ -794,7 +802,7 @@ mod tests {
         use crate::frame::{Column, CrowFrame};
         let f = CrowFrame::new(
             vec!["n".into(), "x".into(), "s".into(), "b".into(), "t".into()],
-            vec![Column::Int(vec![1, 2]), Column::Float(vec![2.0, 2.5]), Column::Str(vec!["a\tb".into(), "back\\slash".into()]), Column::Bool(vec![true, false]), Column::DateTime(vec![0, 86_400_000], vec![0, 0])],
+            vec![Column::Int(vec![1, 2]), Column::Float(vec![2.0, 2.5]), Column::strs(vec!["a\tb".into(), "back\\slash".into()]), Column::Bool(vec![true, false]), Column::DateTime(vec![0, 86_400_000], vec![0, 0])],
             vec![vec![true, true], vec![true, false], vec![true, true], vec![true, true], vec![true, true]],
         );
         assert_eq!(String::from_utf8(super::copy_of_frame(&f).0).unwrap(), "1\t2\ta\\tb\tt\t1970-01-01\n2\t\\N\tback\\\\slash\tf\t1970-01-02\n");

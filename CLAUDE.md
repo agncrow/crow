@@ -71,6 +71,9 @@ steps on every push and must be green.
   before a gate: three unit tests looked flaky for an hour until the
   variable, exported in some shells and not others, turned out to be what
   differed — and the finding was real.
+- A `sys` row a standard module may call is listed in `SYS_FUNCTIONS`
+  (`src/modules/sys.rs`) beside its row in the table; without the entry the
+  module's call is "undefined function" in both modes.
 - `push[xs, v]` answers a new list: as a bare statement it does nothing.
   Write `xs = push[xs, v]` (a check's list of results stayed empty, and
   every test passed).

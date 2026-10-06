@@ -39,8 +39,8 @@ pub fn run_migrations(db: &dyn CrowDb, dir: &str) -> Result<i64, String> {
         if let Some(col) = applied_frame.col("name") {
             match col {
                 crow_runtime::frame::Column::Str(names) => {
-                    for name in names {
-                        applied.insert(name.clone());
+                    for name in names.iter() {
+                        applied.insert(name.to_string());
                     }
                 }
                 _ => {}

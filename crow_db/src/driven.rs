@@ -355,7 +355,7 @@ pub fn ch_kind(t: &str) -> &'static str {
 pub fn columns_of(frame: &CrowFrame) -> Result<Vec<(String, String)>, String> {
     let text = |name: &str| -> Option<Vec<String>> {
         frame.columns.iter().position(|c| c == name).and_then(|i| match frame.data[i].as_ref() {
-            Column::Str(v) => Some(v.clone()),
+            Column::Str(v) => Some(v.to_vec()),
             _ => None,
         })
     };

@@ -4,18 +4,27 @@ use std::fmt;
 use std::sync::Arc;
 use rayon::prelude::*;
 
+pub use crate::textcol::Text;
+pub use crate::validity::Validity;
+
 /// Column data types — each column stores a single typed vector.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Column {
     Int(Vec<i64>),
     Float(Vec<f64>),
-    Str(Vec<String>),
+    /// Text in one buffer, or codes into a dictionary (text.rs).
+    Str(Text),
     Bool(Vec<bool>),
     /// DateTime: UTC epoch milliseconds + timezone offset in minutes
     DateTime(Vec<i64>, Vec<i16>),
 }
 
 impl Column {
+    /// A column of text from strings, held in one buffer.
+    pub fn strs(v: Vec<String>) -> Column {
+        Column::Str(Text::from(v))
+    }
+
     /// A cell read as a condition: non-zero numbers, `true`, and the strings
     /// `true`/`1`/`t` are true.
     pub fn truthy(&self, idx: usize) -> bool {
@@ -64,7 +73,7 @@ impl Column {
                     format!("{}", val)
                 }
             }
-            Column::Str(v) => v[row].clone(),
+            Column::Str(v) => v[row].to_string(),
             Column::Bool(v) => format!("{}", v[row]),
             Column::DateTime(millis, offsets) => format_datetime(millis[row], offsets[row]),
         }
@@ -77,7 +86,7 @@ impl Column {
 pub struct CrowFrame {
     pub columns: Vec<String>,              // column names (order preserved)
     pub data: Vec<Arc<Column>>,            // column data (Arc for cheap sharing)
-    pub validity: Vec<Arc<Vec<bool>>>,     // validity bitmap per column (true = valid)
+    pub validity: Vec<Arc<Validity>>,      // which cells are there, a bit per cell
 }
 
 impl CrowFrame {
@@ -92,6 +101,11 @@ impl CrowFrame {
     /// `with_column` with each row's presence given: a column copied from
     /// another frame keeps its missing cells.
     pub fn with_valid(&self, name: &str, data: Column, valid: Vec<bool>) -> Result<CrowFrame, String> {
+        self.with_validity(name, data, Validity::from(valid))
+    }
+
+    /// A column added or replaced, with which of its cells are there.
+    pub fn with_validity(&self, name: &str, data: Column, valid: Validity) -> Result<CrowFrame, String> {
         let n = data.len();
         if !self.columns.is_empty() && n != self.nrows() {
             return Err(format!("with: column '{}' has {} values but the frame has {} rows", name, n, self.nrows()));
@@ -118,7 +132,7 @@ impl CrowFrame {
         let repeated = match data {
             Column::Int(v) => Column::Int(vec![v[0]; n]),
             Column::Float(v) => Column::Float(vec![v[0]; n]),
-            Column::Str(v) => Column::Str(vec![v[0].clone(); n]),
+            Column::Str(v) => Column::Str(Text::repeated(&v[0], n)),
             Column::Bool(v) => Column::Bool(vec![v[0]; n]),
             Column::DateTime(v, z) => Column::DateTime(vec![v[0]; n], vec![z[0]; n]),
         };
@@ -130,8 +144,13 @@ impl CrowFrame {
         CrowFrame {
             columns,
             data: data.into_iter().map(Arc::new).collect(),
-            validity: validity.into_iter().map(Arc::new).collect(),
+            validity: validity.into_iter().map(|v| Arc::new(Validity::from(v))).collect(),
         }
+    }
+
+    /// A frame from columns and their bitmaps.
+    pub fn assembled(columns: Vec<String>, data: Vec<Column>, validity: Vec<Validity>) -> Self {
+        CrowFrame { columns, data: data.into_iter().map(Arc::new).collect(), validity: validity.into_iter().map(Arc::new).collect() }
     }
 
     pub fn nrows(&self) -> usize {
@@ -153,7 +172,7 @@ impl CrowFrame {
     }
 
     /// Get validity bitmap for a column by name
-    pub fn col_validity(&self, name: &str) -> Option<&Vec<bool>> {
+    pub fn col_validity(&self, name: &str) -> Option<&Validity> {
         self.col_index(name).map(|i| self.validity[i].as_ref())
     }
 
@@ -192,7 +211,7 @@ impl CrowFrame {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CrowColumn {
     pub data: Arc<Column>,
-    pub valid: Arc<Vec<bool>>,
+    pub valid: Arc<Validity>,
 }
 
 impl CrowColumn {
@@ -266,7 +285,7 @@ impl CrowColumn {
         match self.data.as_ref() {
             Column::Int(v) => serde_json::json!(v[idx]),
             Column::Float(v) => crate::json::float_to_json(v[idx]),
-            Column::Str(v) => serde_json::Value::String(v[idx].clone()),
+            Column::Str(v) => serde_json::Value::String(v[idx].to_string()),
             Column::Bool(v) => serde_json::Value::Bool(v[idx]),
             // (the interpreter reads the cell as its text; compiled, it had
             // been seconds, so `str` of one differed between the modes)
@@ -378,8 +397,8 @@ impl CrowColumn {
             Column::Str(v) => {
                 for i in 0..n {
                     if !self.valid[i] { continue; }
-                    if seen.insert(v[i].clone()) {
-                        result.push(v[i].clone());
+                    if seen.insert(v[i].to_string()) {
+                        result.push(v[i].to_string());
                     }
                 }
             }
@@ -408,7 +427,7 @@ impl CrowColumn {
 
     /// Validity bitmap — true for each non-missing value.
     pub fn ok(&self) -> Vec<bool> {
-        self.valid.as_ref().clone()
+        self.valid.to_vec()
     }
 }
 
@@ -430,9 +449,7 @@ pub fn load_csv(path: &str) -> Result<CrowFrame, String> {
 /// CSV text as a frame, each column's type read from its cells: a file's,
 /// or what a URL answered.
 pub fn csv_frame(content: &str) -> Result<CrowFrame, String> {
-    let bytes = content.as_bytes();
-
-    // Find header end
+    // the header: the column names
     let newline_pos = content.find('\n').ok_or_else(|| "load: empty file".to_string())?;
     let header = content[..newline_pos].trim();
     let col_names: Vec<String> = if header.contains('"') { split_quoted(header) } else { header.split(',').map(|s| s.trim().to_string()).collect() };
@@ -440,106 +457,340 @@ pub fn csv_frame(content: &str) -> Result<CrowFrame, String> {
     if ncols == 0 {
         return Err("load: no columns found".to_string());
     }
+    let body = &content[newline_pos + 1..];
+    // a file with a quoted cell is split by the quoting rules, line by
+    // line; one without takes the byte search
+    let quoted = memchr::memchr(b'"', body.as_bytes()).is_some();
 
-    let body_start = newline_pos + 1;
-    let body = &bytes[body_start..];
-    let body_len = body.len();
-
-    // Find all line start offsets in parallel chunks
-    // First pass: find newline positions to get line boundaries
-    let chunk_size = 1 << 20; // 1 MB chunks
-    let nchunks = (body_len + chunk_size - 1) / chunk_size;
-
-    // Parallel: find newline offsets within each chunk
-    let chunk_newlines: Vec<Vec<usize>> = (0..nchunks).into_par_iter().map(|ci| {
-        let start = ci * chunk_size;
-        let end = (start + chunk_size).min(body_len);
-        let mut positions = Vec::new();
-        for i in start..end {
-            if body[i] == b'\n' {
-                positions.push(i);
-            }
-        }
-        positions
-    }).collect();
-
-    // Merge: collect all line start/end pairs
-    let mut line_ranges: Vec<(usize, usize)> = Vec::with_capacity(body_len / 80); // estimate
-    let mut line_start = 0usize;
-    for chunk in &chunk_newlines {
-        for &nl_pos in chunk {
-            if nl_pos > line_start {
-                line_ranges.push((line_start, nl_pos));
-            }
-            line_start = nl_pos + 1;
-        }
+    // the kinds, from a sample of the first rows: ints, floats, bools,
+    // moments, or text — held by a dictionary where the sample shows few
+    // distinct values (a symbol, a side)
+    let mut sample: Vec<Vec<String>> = Vec::new();
+    for line in lines_of(body).take(SAMPLE_ROWS) {
+        sample.push(fields_of(line, quoted, ncols));
     }
-    // Last line (no trailing newline)
-    if line_start < body_len {
-        // trim trailing whitespace
-        let mut end = body_len;
-        while end > line_start && (body[end - 1] == b'\r' || body[end - 1] == b' ' || body[end - 1] == b'\n') {
-            end -= 1;
+    let kinds: Vec<Kind> = (0..ncols)
+        .map(|ci| {
+            let present: Vec<&str> = sample.iter().map(|f| f[ci].as_str()).filter(|s| !s.is_empty()).collect();
+            kind_of(&present)
+        })
+        .collect();
+
+    // the body cut into pieces at line ends, one per core and more, each
+    // parsed on its own into parts of the columns
+    let pieces = pieces_of(body);
+    let parts: Vec<Part> = pieces.par_iter().map(|piece| parse_piece(piece, quoted, &kinds)).collect();
+    let nrows: usize = parts.iter().map(|p| p.rows).sum();
+
+    // the parts joined into columns; a column a part could not read in
+    // its sampled kind is read again, whole, as the kind every cell has
+    let mut columns: Vec<Column> = Vec::with_capacity(ncols);
+    let mut validity: Vec<Vec<bool>> = Vec::with_capacity(ncols);
+    for ci in 0..ncols {
+        if parts.iter().any(|p| p.failed[ci]) {
+            let (col, valid) = column_read_whole(body, quoted, ci, nrows);
+            columns.push(col);
+            validity.push(valid);
+            continue;
         }
-        if end > line_start {
-            line_ranges.push((line_start, end));
+        let mut valid = Vec::with_capacity(nrows);
+        for p in &parts {
+            valid.extend_from_slice(&p.valid[ci]);
         }
+        validity.push(valid);
+        columns.push(join_parts(parts.iter().map(|p| &p.cols[ci]).collect(), nrows));
     }
-    let nrows = line_ranges.len();
-
-    // Parallel: each column parses its field from all rows and infers type.
-    // A file with a quoted cell (a comma or a quote inside, RFC 4180) is
-    // split by the quoting rules, line by line, first; one without takes
-    // the fast path. (A quoted cell had been split at its comma.)
-    let body_str = &content[body_start..];
-    let quoted: Option<Vec<Vec<String>>> = if body_str.contains('"') {
-        Some(line_ranges.par_iter().map(|&(ls, le)| split_quoted(&body_str[ls..le])).collect())
-    } else {
-        None
-    };
-    let results: Vec<(Column, Vec<bool>)> = (0..ncols).into_par_iter().map(|ci| {
-        let mut raw: Vec<&str> = Vec::with_capacity(nrows);
-        let mut valid: Vec<bool> = Vec::with_capacity(nrows);
-        for (row, &(ls, le)) in line_ranges.iter().enumerate() {
-            let field = match &quoted {
-                Some(rows) => rows[row].get(ci).map(String::as_str).unwrap_or(""),
-                None => nth_field_fast(&body_str[ls..le], ci),
-            };
-            let is_valid = !field.is_empty();
-            valid.push(is_valid);
-            raw.push(field);
-        }
-        let col = infer_and_convert_refs(&raw, &valid);
-        (col, valid)
-    }).collect();
-
-    let (typed_cols, valid_cols): (Vec<_>, Vec<_>) = results.into_iter().unzip();
-    Ok(CrowFrame::new(col_names, typed_cols, valid_cols))
+    Ok(CrowFrame::new(col_names, columns, validity))
 }
 
-/// Extract the nth comma-separated field from a line (zero-indexed). Fast inline version.
-#[inline(always)]
-fn nth_field_fast(line: &str, n: usize) -> &str {
-    let bytes = line.as_bytes();
-    let len = bytes.len();
-    let mut field_start = 0;
-    let mut field_idx = 0;
-    for i in 0..len {
-        if bytes[i] == b',' {
-            if field_idx == n {
-                // Trim leading/trailing spaces
-                let s = &line[field_start..i];
-                return s.trim();
+/// How many rows decide the columns' kinds.
+const SAMPLE_ROWS: usize = 100;
+
+/// A column's kind, as the sample of its present cells decides it.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Kind {
+    Int,
+    Float,
+    Bool,
+    DateTime,
+    Text,
+    /// Text of few distinct values: a dictionary, a code per cell.
+    Dict,
+}
+
+fn kind_of(present: &[&str]) -> Kind {
+    if present.is_empty() {
+        return Kind::Text;
+    }
+    if present.iter().all(|s| s.parse::<i64>().is_ok()) {
+        return Kind::Int;
+    }
+    if present.iter().all(|s| s.parse::<f64>().is_ok()) {
+        return Kind::Float;
+    }
+    if present.iter().all(|s| bool_text(s).is_some()) {
+        return Kind::Bool;
+    }
+    if present.iter().all(|s| parse_datetime(s).is_some()) {
+        return Kind::DateTime;
+    }
+    let distinct: std::collections::HashSet<&str> = present.iter().copied().collect();
+    if distinct.len() * 2 <= present.len() {
+        Kind::Dict
+    } else {
+        Kind::Text
+    }
+}
+
+/// The body's lines, each without its line break (a `\r` before it too)
+/// and with empty lines left out.
+fn lines_of(body: &str) -> impl Iterator<Item = &str> {
+    let bytes = body.as_bytes();
+    let mut start = 0;
+    memchr::memchr_iter(b'\n', bytes)
+        .map(Some)
+        .chain(std::iter::once(None))
+        .filter_map(move |nl| {
+            let end = nl.unwrap_or(bytes.len());
+            let line = &body[start..end];
+            start = end + 1;
+            let line = line.strip_suffix('\r').unwrap_or(line);
+            if line.trim().is_empty() {
+                None
+            } else {
+                Some(line)
             }
-            field_idx += 1;
-            field_start = i + 1;
+        })
+}
+
+/// A line's fields, `ncols` of them (a short line's rest empty, a long
+/// line's extra fields dropped), each trimmed.
+fn fields_of(line: &str, quoted: bool, ncols: usize) -> Vec<String> {
+    let mut fields: Vec<String> = if quoted && line.contains('"') {
+        split_quoted(line)
+    } else {
+        line.split(',').map(|f| f.trim().to_string()).collect()
+    };
+    fields.resize(ncols, String::new());
+    fields
+}
+
+/// The body in pieces, each ending at a line end, one per core and more
+/// for a large file.
+fn pieces_of(body: &str) -> Vec<&str> {
+    let bytes = body.as_bytes();
+    let want = (rayon::current_num_threads() * 4).max(1);
+    let size = (bytes.len() / want).max(1 << 20);
+    let mut pieces = Vec::new();
+    let mut start = 0;
+    while start < bytes.len() {
+        let nominal = (start + size).min(bytes.len());
+        let end = if nominal >= bytes.len() { bytes.len() } else { memchr::memchr(b'\n', &bytes[nominal..]).map_or(bytes.len(), |p| nominal + p + 1) };
+        pieces.push(&body[start..end]);
+        start = end;
+    }
+    pieces
+}
+
+/// One piece's rows: a part of each column, the presence of each cell,
+/// and which columns held a cell the sampled kind could not read.
+struct Part {
+    rows: usize,
+    cols: Vec<ColPart>,
+    valid: Vec<Vec<bool>>,
+    failed: Vec<bool>,
+}
+
+enum ColPart {
+    Int(Vec<i64>),
+    Float(Vec<f64>),
+    Bool(Vec<bool>),
+    DateTime(Vec<i64>, Vec<i16>),
+    Text(Text),
+    Dict(crate::textcol::DictBuilder),
+}
+
+impl ColPart {
+    fn of(kind: Kind, cells: usize) -> ColPart {
+        match kind {
+            Kind::Int => ColPart::Int(Vec::with_capacity(cells)),
+            Kind::Float => ColPart::Float(Vec::with_capacity(cells)),
+            Kind::Bool => ColPart::Bool(Vec::with_capacity(cells)),
+            Kind::DateTime => ColPart::DateTime(Vec::with_capacity(cells), Vec::with_capacity(cells)),
+            Kind::Text => ColPart::Text(Text::with_capacity(cells, cells * 8)),
+            Kind::Dict => ColPart::Dict(crate::textcol::DictBuilder::with_capacity(cells)),
         }
     }
-    if field_idx == n {
-        line[field_start..len].trim()
-    } else {
-        ""
+
+    /// A cell pushed as the part's kind; whether it could be read as one
+    /// (an empty cell is a missing one, pushed as the kind's placeholder).
+    fn push(&mut self, s: &str) -> bool {
+        match self {
+            ColPart::Int(v) => match s.parse::<i64>() {
+                Ok(n) => v.push(n),
+                Err(_) => {
+                    v.push(0);
+                    return s.is_empty();
+                }
+            },
+            ColPart::Float(v) => match s.parse::<f64>() {
+                Ok(x) => v.push(x),
+                Err(_) => {
+                    v.push(f64::NAN);
+                    return s.is_empty();
+                }
+            },
+            ColPart::Bool(v) => match bool_text(s) {
+                Some(b) => v.push(b),
+                None => {
+                    v.push(false);
+                    return s.is_empty();
+                }
+            },
+            ColPart::DateTime(ms, off) => match parse_datetime(s) {
+                Some((m, o)) => {
+                    ms.push(m);
+                    off.push(o);
+                }
+                None => {
+                    ms.push(0);
+                    off.push(0);
+                    return s.is_empty();
+                }
+            },
+            ColPart::Text(t) => t.push(s),
+            ColPart::Dict(b) => {
+                b.push(s);
+                if b.over() {
+                    // past the dictionary's limit the part is held plain
+                    let plain = std::mem::replace(b, crate::textcol::DictBuilder::with_capacity(0)).finish();
+                    *self = ColPart::Text(plain);
+                }
+            }
+        }
+        true
     }
+}
+
+/// A piece parsed: each line split once, each field pushed into its
+/// column's part.
+fn parse_piece(piece: &str, quoted: bool, kinds: &[Kind]) -> Part {
+    let ncols = kinds.len();
+    // the rows there are, counted first, so each part is allocated once
+    let guess = memchr::memchr_iter(b'\n', piece.as_bytes()).count() + 1;
+    let mut part = Part {
+        rows: 0,
+        cols: kinds.iter().map(|&k| ColPart::of(k, guess)).collect(),
+        valid: (0..ncols).map(|_| Vec::with_capacity(guess)).collect(),
+        failed: vec![false; ncols],
+    };
+    let push = |part: &mut Part, ci: usize, field: &str| {
+        let present = !field.is_empty();
+        part.valid[ci].push(present);
+        if !part.cols[ci].push(field) {
+            part.failed[ci] = true;
+        }
+    };
+    for line in lines_of(piece) {
+        part.rows += 1;
+        if quoted && line.contains('"') {
+            let fields = split_quoted(line);
+            for ci in 0..ncols {
+                push(&mut part, ci, fields.get(ci).map_or("", String::as_str));
+            }
+            continue;
+        }
+        let bytes = line.as_bytes();
+        let mut start = 0;
+        let mut ci = 0;
+        for comma in memchr::memchr_iter(b',', bytes).chain(std::iter::once(bytes.len())) {
+            if ci < ncols {
+                push(&mut part, ci, line[start..comma].trim());
+            }
+            ci += 1;
+            start = comma + 1;
+        }
+        while ci < ncols {
+            push(&mut part, ci, "");
+            ci += 1;
+        }
+    }
+    part
+}
+
+/// A column's parts joined, in order.
+fn join_parts(parts: Vec<&ColPart>, nrows: usize) -> Column {
+    match parts.first() {
+        Some(ColPart::Int(_)) => {
+            let mut v = Vec::with_capacity(nrows);
+            for p in parts {
+                if let ColPart::Int(x) = p {
+                    v.extend_from_slice(x);
+                }
+            }
+            Column::Int(v)
+        }
+        Some(ColPart::Float(_)) => {
+            let mut v = Vec::with_capacity(nrows);
+            for p in parts {
+                if let ColPart::Float(x) = p {
+                    v.extend_from_slice(x);
+                }
+            }
+            Column::Float(v)
+        }
+        Some(ColPart::Bool(_)) => {
+            let mut v = Vec::with_capacity(nrows);
+            for p in parts {
+                if let ColPart::Bool(x) = p {
+                    v.extend_from_slice(x);
+                }
+            }
+            Column::Bool(v)
+        }
+        Some(ColPart::DateTime(..)) => {
+            let (mut ms, mut off) = (Vec::with_capacity(nrows), Vec::with_capacity(nrows));
+            for p in parts {
+                if let ColPart::DateTime(m, o) = p {
+                    ms.extend_from_slice(m);
+                    off.extend_from_slice(o);
+                }
+            }
+            Column::DateTime(ms, off)
+        }
+        Some(ColPart::Text(_)) | Some(ColPart::Dict(_)) => {
+            // every part coded: one dictionary over them all, each part's
+            // codes renumbered; a part held plain makes the column plain
+            let texts: Vec<Text> = parts
+                .iter()
+                .map(|p| match p {
+                    ColPart::Dict(b) => b.snapshot(),
+                    ColPart::Text(t) => t.clone(),
+                    _ => Text::new(),
+                })
+                .collect();
+            Column::Str(Text::joined(&texts))
+        }
+        None => Column::Str(Text::new()),
+    }
+}
+
+/// One column read whole, every cell's text kept until its kind is known
+/// (the slow way, for a column whose sample misled: an int column with
+/// `n/a` far down is text).
+fn column_read_whole(body: &str, quoted: bool, ci: usize, nrows: usize) -> (Column, Vec<bool>) {
+    let mut cells: Vec<String> = Vec::with_capacity(nrows);
+    for line in lines_of(body) {
+        let field = if quoted && line.contains('"') {
+            split_quoted(line).into_iter().nth(ci).unwrap_or_default()
+        } else {
+            line.split(',').nth(ci).map_or(String::new(), |f| f.trim().to_string())
+        };
+        cells.push(field);
+    }
+    let raw: Vec<&str> = cells.iter().map(String::as_str).collect();
+    let valid: Vec<bool> = raw.iter().map(|s| !s.is_empty()).collect();
+    (infer_and_convert_refs(&raw, &valid), valid)
 }
 
 /// A line's fields by the quoting rules (RFC 4180): a field in quotes may
@@ -613,7 +864,7 @@ fn infer_and_convert_refs(raw: &[&str], valid: &[bool]) -> Column {
     }
 
     if sampled.is_empty() {
-        return Column::Str(raw.iter().map(|s| s.to_string()).collect());
+        return Column::Str(raw.iter().copied().collect());
     }
 
     // The sample rules a type out quickly; the whole column decides it. A
@@ -652,8 +903,21 @@ fn infer_and_convert_refs(raw: &[&str], valid: &[bool]) -> Column {
         }
     }
 
-    // Fall back to string
-    Column::Str(raw.iter().map(|s| s.to_string()).collect())
+    // Fall back to text: a column whose sample shows few distinct values
+    // (a symbol, a side) is held by a dictionary, a code a cell; one that
+    // grows past the dictionary's limit is held plain
+    let distinct: std::collections::HashSet<&str> = sampled.iter().copied().collect();
+    if distinct.len() * 2 <= sampled.len() {
+        let mut b = crate::textcol::DictBuilder::with_capacity(raw.len());
+        for s in raw {
+            b.push(s);
+            if b.over() {
+                return Column::Str(raw.iter().copied().collect());
+            }
+        }
+        return Column::Str(b.finish());
+    }
+    Column::Str(raw.iter().copied().collect())
 }
 
 
@@ -877,46 +1141,77 @@ impl CrowFrame {
         if mask.len() != self.nrows() {
             return Err(format!("filter: mask length {} != row count {}", mask.len(), self.nrows()));
         }
-        let results: Vec<(Column, Vec<bool>)> = self.data.par_iter().zip(self.validity.par_iter())
+        let results: Vec<(Column, Validity)> = self.data.par_iter().zip(self.validity.par_iter())
             .map(|(col, valid)| filter_column(col, valid, mask))
             .collect();
         let (new_data, new_valid): (Vec<_>, Vec<_>) = results.into_iter().unzip();
-        Ok(CrowFrame::new(self.columns.clone(), new_data, new_valid))
+        Ok(CrowFrame::assembled(self.columns.clone(), new_data, new_valid))
     }
 
     /// Sort by a column, ascending or descending: stable — rows whose cells
     /// are equal keep their order, so a sort by one column then another
     /// orders by both — with a missing cell (or a float that is not a
-    /// number) last either way, as pandas orders one. (The sort had been
-    /// unstable, and a missing int cell had sorted as 0.)
+    /// number) last either way, as pandas orders one. Each row's cell is
+    /// packed into a key that orders as the cells do, and the (key, row)
+    /// pairs are sorted across the cores: the row breaks every tie, which
+    /// keeps the order. Text held by a dictionary is keyed by its value's
+    /// rank among the dictionary's; plain text is compared as it is.
     pub fn sort(&self, col_name: &str, descending: bool) -> Result<CrowFrame, String> {
         let idx = self.col_index(col_name)
             .ok_or_else(|| format!("sort: column '{}' not found", col_name))?;
         let valid = self.validity[idx].as_ref();
         let column = self.data[idx].as_ref();
-        let mut indices: Vec<usize> = (0..self.nrows()).collect();
-        fn ordered<K: PartialOrd>(indices: &mut [usize], present: &[bool], key: impl Fn(usize) -> K + Sync, descending: bool) {
-            use std::cmp::Ordering;
-            indices.par_sort_by(|&a, &b| match (present[a], present[b]) {
-                (false, false) => Ordering::Equal,
-                (false, true) => Ordering::Greater,
-                (true, false) => Ordering::Less,
-                (true, true) => {
-                    let o = key(a).partial_cmp(&key(b)).unwrap_or(Ordering::Equal);
-                    if descending { o.reverse() } else { o }
+        let n = self.nrows();
+        // (missing last, key, row): a missing cell sorts after every key,
+        // and a descending sort flips the key, never the missing flag
+        let keyed = |key: &(dyn Fn(usize) -> Option<u64> + Sync)| -> Vec<usize> {
+            let mut pairs: Vec<(bool, u64, u32)> = (0..n)
+                .into_par_iter()
+                .map(|i| match key(i) {
+                    Some(k) if valid[i] => (false, if descending { u64::MAX - k } else { k }, i as u32),
+                    _ => (true, 0, i as u32),
+                })
+                .collect();
+            pairs.par_sort_unstable();
+            pairs.iter().map(|p| p.2 as usize).collect()
+        };
+        let indices: Vec<usize> = match column {
+            Column::Int(v) => keyed(&|i| Some((v[i] as u64) ^ (1 << 63))),
+            Column::DateTime(millis, _) => keyed(&|i| Some((millis[i] as u64) ^ (1 << 63))),
+            Column::Bool(v) => keyed(&|i| Some(v[i] as u64)),
+            Column::Float(v) => keyed(&|i| {
+                let x = v[i];
+                if x.is_nan() {
+                    return None;
                 }
-            });
-        }
-        match column {
-            Column::Int(v) => ordered(&mut indices, valid, |i| v[i], descending),
-            Column::Float(v) => {
-                let present: Vec<bool> = (0..v.len()).map(|i| valid[i] && !v[i].is_nan()).collect();
-                ordered(&mut indices, &present, |i| v[i], descending)
-            }
-            Column::Str(v) => ordered(&mut indices, valid, |i| v[i].as_str(), descending),
-            Column::Bool(v) => ordered(&mut indices, valid, |i| v[i], descending),
-            Column::DateTime(millis, _) => ordered(&mut indices, valid, |i| millis[i], descending),
-        }
+                let bits = x.to_bits();
+                Some(if x.is_sign_negative() { !bits } else { bits | (1 << 63) })
+            }),
+            Column::Str(t) => match t.dictionary() {
+                Some((codes, values)) => {
+                    let mut order: Vec<usize> = (0..values.len()).collect();
+                    order.sort_by(|&a, &b| values.get(a).cmp(values.get(b)));
+                    let mut rank = vec![0u64; values.len()];
+                    for (r, &code) in order.iter().enumerate() {
+                        rank[code] = r as u64;
+                    }
+                    keyed(&|i| Some(rank[codes[i] as usize]))
+                }
+                None => {
+                    let mut indices: Vec<usize> = (0..n).collect();
+                    indices.par_sort_by(|&a, &b| match (valid[a], valid[b]) {
+                        (false, false) => std::cmp::Ordering::Equal,
+                        (false, true) => std::cmp::Ordering::Greater,
+                        (true, false) => std::cmp::Ordering::Less,
+                        (true, true) => {
+                            let o = t.get(a).cmp(t.get(b));
+                            if descending { o.reverse() } else { o }
+                        }
+                    });
+                    indices
+                }
+            },
+        };
         Ok(self.reorder_rows(&indices))
     }
 
@@ -956,7 +1251,7 @@ impl CrowFrame {
             .ok_or_else(|| format!("fill: column '{}' not found", col_name))?;
         // Arc::clone is O(1) — only target column will be deep-cloned via make_mut
         let mut new_data: Vec<Arc<Column>> = self.data.iter().map(Arc::clone).collect();
-        let mut new_valid: Vec<Arc<Vec<bool>>> = self.validity.iter().map(Arc::clone).collect();
+        let mut new_valid: Vec<Arc<Validity>> = self.validity.iter().map(Arc::clone).collect();
 
         let col_mut = Arc::make_mut(&mut new_data[idx]);
         let valid_mut = Arc::make_mut(&mut new_valid[idx]);
@@ -965,24 +1260,23 @@ impl CrowFrame {
             Column::Int(v) => {
                 let fv: i64 = fill_val.parse().map_err(|_| format!("fill: cannot parse '{}' as int", fill_val))?;
                 for i in 0..v.len() {
-                    if !valid_mut[i] { v[i] = fv; valid_mut[i] = true; }
+                    if !valid_mut[i] { v[i] = fv; valid_mut.set(i, true); }
                 }
             }
             Column::Float(v) => {
                 let fv: f64 = fill_val.parse().map_err(|_| format!("fill: cannot parse '{}' as float", fill_val))?;
                 for i in 0..v.len() {
-                    if !valid_mut[i] { v[i] = fv; valid_mut[i] = true; }
+                    if !valid_mut[i] { v[i] = fv; valid_mut.set(i, true); }
                 }
             }
             Column::Str(v) => {
-                for i in 0..v.len() {
-                    if !valid_mut[i] { v[i] = fill_val.to_string(); valid_mut[i] = true; }
-                }
+                *v = v.filled(&valid_mut.to_vec(), fill_val);
+                *valid_mut = Validity::all(v.len());
             }
             Column::Bool(v) => {
                 let fv: bool = fill_val.parse().map_err(|_| format!("fill: cannot parse '{}' as bool", fill_val))?;
                 for i in 0..v.len() {
-                    if !valid_mut[i] { v[i] = fv; valid_mut[i] = true; }
+                    if !valid_mut[i] { v[i] = fv; valid_mut.set(i, true); }
                 }
             }
             Column::DateTime(_, _) => {
@@ -998,26 +1292,23 @@ impl CrowFrame {
         if self.columns != other.columns {
             return Err("stack: column names don't match".to_string());
         }
-        let results: Result<Vec<(Column, Vec<bool>)>, String> = (0..self.ncols()).into_par_iter().map(|i| {
+        let results: Result<Vec<(Column, Validity)>, String> = (0..self.ncols()).into_par_iter().map(|i| {
             stack_columns(&self.data[i], &self.validity[i], &other.data[i], &other.validity[i])
         }).collect();
         let results = results?;
         let (new_data, new_valid): (Vec<_>, Vec<_>) = results.into_iter().unzip();
-        Ok(CrowFrame::new(self.columns.clone(), new_data, new_valid))
+        Ok(CrowFrame::assembled(self.columns.clone(), new_data, new_valid))
     }
 }
 
 // ===== Helper functions =====
 
-fn filter_column(col: &Column, valid: &[bool], mask: &[bool]) -> (Column, Vec<bool>) {
-    let new_valid: Vec<bool> = valid.iter().zip(mask.iter())
-        .filter(|&(_, &m)| m)
-        .map(|(&v, _)| v)
-        .collect();
+fn filter_column(col: &Column, valid: &Validity, mask: &[bool]) -> (Column, Validity) {
+    let new_valid = valid.filtered(mask);
     let new_col = match col {
         Column::Int(v) => Column::Int(v.iter().zip(mask).filter(|&(_, &m)| m).map(|(&x, _)| x).collect()),
         Column::Float(v) => Column::Float(v.iter().zip(mask).filter(|&(_, &m)| m).map(|(&x, _)| x).collect()),
-        Column::Str(v) => Column::Str(v.iter().zip(mask).filter(|&(_, &m)| m).map(|(x, _)| x.clone()).collect()),
+        Column::Str(v) => Column::Str(v.filtered(mask)),
         Column::Bool(v) => Column::Bool(v.iter().zip(mask).filter(|&(_, &m)| m).map(|(&x, _)| x).collect()),
         Column::DateTime(millis, offsets) => {
             let new_m: Vec<i64> = millis.iter().zip(mask).filter(|&(_, &m)| m).map(|(&x, _)| x).collect();
@@ -1028,13 +1319,12 @@ fn filter_column(col: &Column, valid: &[bool], mask: &[bool]) -> (Column, Vec<bo
     (new_col, new_valid)
 }
 
-fn stack_columns(a: &Column, av: &[bool], b: &Column, bv: &[bool]) -> Result<(Column, Vec<bool>), String> {
-    let mut new_valid: Vec<bool> = av.to_vec();
-    new_valid.extend_from_slice(bv);
+fn stack_columns(a: &Column, av: &Validity, b: &Column, bv: &Validity) -> Result<(Column, Validity), String> {
+    let new_valid = av.concat(bv);
     let col = match (a, b) {
         (Column::Int(va), Column::Int(vb)) => { let mut v = va.clone(); v.extend_from_slice(vb); Column::Int(v) }
         (Column::Float(va), Column::Float(vb)) => { let mut v = va.clone(); v.extend_from_slice(vb); Column::Float(v) }
-        (Column::Str(va), Column::Str(vb)) => { let mut v = va.clone(); v.extend(vb.iter().cloned()); Column::Str(v) }
+        (Column::Str(va), Column::Str(vb)) => Column::Str(va.concat(vb)),
         (Column::Bool(va), Column::Bool(vb)) => { let mut v = va.clone(); v.extend_from_slice(vb); Column::Bool(v) }
         (Column::DateTime(ma, oa), Column::DateTime(mb, ob)) => {
             let mut m = ma.clone(); m.extend_from_slice(mb);
@@ -1049,13 +1339,13 @@ fn stack_columns(a: &Column, av: &[bool], b: &Column, bv: &[bool]) -> Result<(Co
 impl CrowFrame {
     /// Reorder rows by given indices (columns processed in parallel).
     fn reorder_rows(&self, indices: &[usize]) -> CrowFrame {
-        let results: Vec<(Column, Vec<bool>)> = self.data.par_iter().zip(self.validity.par_iter())
+        let results: Vec<(Column, Validity)> = self.data.par_iter().zip(self.validity.par_iter())
             .map(|(col, valid)| {
-                let nv: Vec<bool> = indices.iter().map(|&i| valid[i]).collect();
+                let nv = valid.gather(indices);
                 let nc = match col.as_ref() {
                     Column::Int(v) => Column::Int(indices.iter().map(|&i| v[i]).collect()),
                     Column::Float(v) => Column::Float(indices.iter().map(|&i| v[i]).collect()),
-                    Column::Str(v) => Column::Str(indices.iter().map(|&i| v[i].clone()).collect()),
+                    Column::Str(v) => Column::Str(v.gather(indices)),
                     Column::Bool(v) => Column::Bool(indices.iter().map(|&i| v[i]).collect()),
                     Column::DateTime(millis, offsets) => Column::DateTime(
                         indices.iter().map(|&i| millis[i]).collect(),
@@ -1066,18 +1356,18 @@ impl CrowFrame {
             })
             .collect();
         let (new_data, new_valid): (Vec<_>, Vec<_>) = results.into_iter().unzip();
-        CrowFrame::new(self.columns.clone(), new_data, new_valid)
+        CrowFrame::assembled(self.columns.clone(), new_data, new_valid)
     }
 
     /// Slice rows [start..end). Parallel across columns.
     fn slice_rows(&self, start: usize, end: usize) -> CrowFrame {
-        let results: Vec<(Column, Vec<bool>)> = self.data.par_iter().zip(self.validity.par_iter())
+        let results: Vec<(Column, Validity)> = self.data.par_iter().zip(self.validity.par_iter())
             .map(|(col, valid)| {
-                let nv = valid[start..end].to_vec();
+                let nv = valid.sliced(start, end);
                 let nc = match col.as_ref() {
                     Column::Int(v) => Column::Int(v[start..end].to_vec()),
                     Column::Float(v) => Column::Float(v[start..end].to_vec()),
-                    Column::Str(v) => Column::Str(v[start..end].to_vec()),
+                    Column::Str(v) => Column::Str(v.slice(start, end)),
                     Column::Bool(v) => Column::Bool(v[start..end].to_vec()),
                     Column::DateTime(millis, offsets) => Column::DateTime(
                         millis[start..end].to_vec(), offsets[start..end].to_vec(),
@@ -1087,7 +1377,7 @@ impl CrowFrame {
             })
             .collect();
         let (new_data, new_valid): (Vec<_>, Vec<_>) = results.into_iter().unzip();
-        CrowFrame::new(self.columns.clone(), new_data, new_valid)
+        CrowFrame::assembled(self.columns.clone(), new_data, new_valid)
     }
 }
 
@@ -1186,6 +1476,29 @@ impl CrowFrame {
         }
         let mut ids = vec![u32::MAX; nrows];
         let mut first_rows = Vec::new();
+        // up to four keys' codes packed into one array (a vector per row
+        // had been allocated); more keys take a vector
+        if per_key.len() <= 4 {
+            let mut seen: std::collections::HashMap<[u32; 4], u32> = std::collections::HashMap::new();
+            for row in 0..nrows {
+                let mut key = [0u32; 4];
+                let mut missing = false;
+                for (k, c) in per_key.iter().enumerate() {
+                    key[k] = c[row];
+                    missing |= c[row] == u32::MAX;
+                }
+                if missing {
+                    continue;
+                }
+                let next = first_rows.len() as u32;
+                let id = *seen.entry(key).or_insert_with(|| {
+                    first_rows.push(row);
+                    next
+                });
+                ids[row] = id;
+            }
+            return (ids, first_rows);
+        }
         let mut seen: std::collections::HashMap<Vec<u32>, u32> = std::collections::HashMap::new();
         for row in 0..nrows {
             let key: Vec<u32> = per_key.iter().map(|c| c[row]).collect();
@@ -1305,7 +1618,7 @@ impl CrowFrame {
         }
         let column = self.data[ci].as_ref();
         let valid = self.validity[ci].as_ref();
-        let out_valid_from = |present: &dyn Fn(usize) -> bool| -> Vec<bool> { (0..nrows).map(|r| ids[r] != u32::MAX && present(r)).collect() };
+        let out_valid_from = |present: &dyn Fn(usize) -> bool| -> Validity { (0..nrows).map(|r| ids[r] != u32::MAX && present(r)).collect() };
         match how {
             Window::Sum | Window::Mean | Window::Min | Window::Max => {
                 let xs = self.col_native(col).ok_or_else(|| format!("window: column '{}' not found", col))?.numbers()?.to_vec();
@@ -1373,7 +1686,7 @@ impl CrowFrame {
                     }
                 }
                 let (data, ok) = take_some_rows(column, &picks);
-                Ok(CrowColumn { data: Arc::new(data), valid: Arc::new(ok) })
+                Ok(CrowColumn { data: Arc::new(data), valid: Arc::new(Validity::from(ok)) })
             }
             Window::Rank => {
                 if matches!(column, Column::Bool(_)) {
@@ -1436,32 +1749,33 @@ impl CrowFrame {
 
         // Gather all columns in parallel; the key column holds each row's
         // key from whichever side has the row (a right or outer join's
-        // row with no match on the left had lost its key)
-        let gathered: Vec<(Column, Vec<bool>)> = col_specs.par_iter().map(|&(frame, ci, is_left)| {
-            let idx_list = if is_left { &left_indices } else { &right_indices };
-            if is_left && ci == li {
-                let (mut keys, mut present) = gather_column(frame.data[ci].as_ref(), frame.validity[ci].as_ref(), idx_list);
-                let (right_keys, right_present) = gather_column(other.data[ri].as_ref(), other.validity[ri].as_ref(), &right_indices);
-                for (row, l) in left_indices.iter().enumerate() {
-                    if l.is_none() && right_present[row] {
-                        keys = fill_cell(keys, row, &right_keys);
-                        present[row] = true;
-                    }
-                }
-                return (keys, present);
+        // row with no match on the left had lost its key). Where every left
+        // row matched once, in order, the left columns are shared, not
+        // gathered.
+        let kept = left_indices.len() == self.nrows() && left_indices.iter().enumerate().all(|(i, l)| *l == Some(i));
+        let gathered: Vec<(Arc<Column>, Arc<Validity>)> = col_specs.par_iter().map(|&(frame, ci, is_left)| {
+            if is_left && kept {
+                return (Arc::clone(&frame.data[ci]), Arc::clone(&frame.validity[ci]));
             }
-            gather_column(frame.data[ci].as_ref(), frame.validity[ci].as_ref(), idx_list)
+            let idx_list = if is_left { &left_indices } else { &right_indices };
+            let (col, valid) = if is_left && ci == li && left_indices.iter().any(Option::is_none) {
+                let (col, valid) = merged_keys(frame.data[ci].as_ref(), frame.validity[ci].as_ref(), other.data[ri].as_ref(), other.validity[ri].as_ref(), &left_indices, &right_indices);
+                (col, Validity::from(valid))
+            } else {
+                gather_column(frame.data[ci].as_ref(), frame.validity[ci].as_ref(), idx_list)
+            };
+            (Arc::new(col), Arc::new(valid))
         }).collect();
 
-        let (result_data, result_valid): (Vec<_>, Vec<_>) = gathered.into_iter().unzip();
-        Ok(CrowFrame::new(result_cols, result_data, result_valid))
+        let (data, validity): (Vec<_>, Vec<_>) = gathered.into_iter().unzip();
+        Ok(CrowFrame { columns: result_cols, data, validity })
     }
 }
 
 /// Build join index pairs using native column types (avoids fmt_cell string allocation).
 fn join_indices_native(
-    left_col: &Column, left_valid: &[bool],
-    right_col: &Column, right_valid: &[bool],
+    left_col: &Column, left_valid: &Validity,
+    right_col: &Column, right_valid: &Validity,
     include_left_only: bool, include_right_only: bool,
 ) -> (Vec<Option<usize>>, Vec<Option<usize>>) {
     // Macro to avoid repeating the join logic for each type
@@ -1508,34 +1822,48 @@ fn join_indices_native(
         (Column::Int(lv), Column::Int(rv)) => join_typed!(lv, rv, |v: &i64| *v),
         (Column::Float(lv), Column::Float(rv)) => join_typed!(lv, rv, |v: &f64| v.to_bits()),
         (Column::Str(lv), Column::Str(rv)) => {
-            // Handle Str separately to manage lifetimes (HashMap borrows from rv/lv)
+            // text keys: the right frame's rows by key; a left column held
+            // by a dictionary is looked up once per distinct value
             let mut right_map: std::collections::HashMap<&str, Vec<usize>> = std::collections::HashMap::new();
             for (row, val) in rv.iter().enumerate() {
-                if !right_valid[row] { continue; }
-                right_map.entry(val.as_str()).or_default().push(row);
+                if right_valid[row] {
+                    right_map.entry(val).or_default().push(row);
+                }
             }
             let mut left_indices = Vec::new();
             let mut right_indices = Vec::new();
-            for (row, val) in lv.iter().enumerate() {
-                if !left_valid[row] { continue; }
-                if let Some(right_rows) = right_map.get(val.as_str()) {
-                    for &rr in right_rows {
+            let mut take = |row: usize, hit: Option<&Vec<usize>>| match hit {
+                Some(rows) => {
+                    for &rr in rows {
                         left_indices.push(Some(row));
                         right_indices.push(Some(rr));
                     }
-                } else if include_left_only {
-                    left_indices.push(Some(row));
-                    right_indices.push(None);
+                }
+                None => {
+                    if include_left_only {
+                        left_indices.push(Some(row));
+                        right_indices.push(None);
+                    }
+                }
+            };
+            if let Some((codes, values)) = lv.dictionary() {
+                let by_code: Vec<Option<&Vec<usize>>> = values.iter().map(|v| right_map.get(v)).collect();
+                for (row, &code) in codes.iter().enumerate() {
+                    if left_valid[row] {
+                        take(row, by_code[code as usize]);
+                    }
+                }
+            } else {
+                for (row, val) in lv.iter().enumerate() {
+                    if left_valid[row] {
+                        take(row, right_map.get(val));
+                    }
                 }
             }
             if include_right_only {
-                let mut left_keys: std::collections::HashSet<&str> = std::collections::HashSet::new();
-                for (row, val) in lv.iter().enumerate() {
-                    if left_valid[row] { left_keys.insert(val.as_str()); }
-                }
+                let left_keys: std::collections::HashSet<&str> = lv.iter().enumerate().filter(|(row, _)| left_valid[*row]).map(|(_, v)| v).collect();
                 for (row, val) in rv.iter().enumerate() {
-                    if !right_valid[row] { continue; }
-                    if !left_keys.contains(val.as_str()) {
+                    if right_valid[row] && !left_keys.contains(val) {
                         left_indices.push(None);
                         right_indices.push(Some(row));
                     }
@@ -1592,8 +1920,8 @@ fn join_indices_native(
 /// Aggregate using group_ids array (avoids building per-group Vec<usize> row lists).
 /// A column's cells as codes: each distinct present cell a number, first
 /// seen first; a missing cell `u32::MAX`.
-fn codes(col: &Column, valid: &[bool]) -> Vec<u32> {
-    fn coded<K: std::hash::Hash + Eq>(keys: impl Iterator<Item = K>, valid: &[bool]) -> Vec<u32> {
+fn codes(col: &Column, valid: &Validity) -> Vec<u32> {
+    fn coded<K: std::hash::Hash + Eq>(keys: impl Iterator<Item = K>, valid: &Validity) -> Vec<u32> {
         let mut seen: std::collections::HashMap<K, u32> = std::collections::HashMap::new();
         keys.enumerate()
             .map(|(row, k)| {
@@ -1608,7 +1936,30 @@ fn codes(col: &Column, valid: &[bool]) -> Vec<u32> {
     match col {
         Column::Int(v) => coded(v.iter().copied(), valid),
         Column::Float(v) => coded(v.iter().map(|x| x.to_bits()), valid),
-        Column::Str(v) => coded(v.iter().map(String::as_str), valid),
+        Column::Str(v) => match v.dictionary() {
+            // a dictionary column's codes, renumbered in the order the rows
+            // first show them, with no hashing
+            Some((codes, values)) => {
+                let mut seen = vec![u32::MAX; values.len()];
+                let mut next = 0u32;
+                codes
+                    .iter()
+                    .enumerate()
+                    .map(|(row, &c)| {
+                        if !valid[row] {
+                            return u32::MAX;
+                        }
+                        let slot = &mut seen[c as usize];
+                        if *slot == u32::MAX {
+                            *slot = next;
+                            next += 1;
+                        }
+                        *slot
+                    })
+                    .collect()
+            }
+            None => coded(v.iter(), valid),
+        },
         Column::Bool(v) => coded(v.iter().copied(), valid),
         Column::DateTime(ms, _) => coded(ms.iter().copied(), valid),
     }
@@ -1619,7 +1970,7 @@ fn take_rows(col: &Column, rows: &[usize]) -> Column {
     match col {
         Column::Int(v) => Column::Int(rows.iter().map(|&r| v[r]).collect()),
         Column::Float(v) => Column::Float(rows.iter().map(|&r| v[r]).collect()),
-        Column::Str(v) => Column::Str(rows.iter().map(|&r| v[r].clone()).collect()),
+        Column::Str(v) => Column::Str(v.gather(rows)),
         Column::Bool(v) => Column::Bool(rows.iter().map(|&r| v[r]).collect()),
         Column::DateTime(ms, off) => Column::DateTime(rows.iter().map(|&r| ms[r]).collect(), rows.iter().map(|&r| off[r]).collect()),
     }
@@ -1631,7 +1982,7 @@ fn take_some_rows(col: &Column, rows: &[Option<usize>]) -> (Column, Vec<bool>) {
     let data = match col {
         Column::Int(v) => Column::Int(rows.iter().map(|r| r.map_or(0, |r| v[r])).collect()),
         Column::Float(v) => Column::Float(rows.iter().map(|r| r.map_or(f64::NAN, |r| v[r])).collect()),
-        Column::Str(v) => Column::Str(rows.iter().map(|r| r.map(|r| v[r].clone()).unwrap_or_default()).collect()),
+        Column::Str(v) => Column::Str(v.gather_some(rows)),
         Column::Bool(v) => Column::Bool(rows.iter().map(|r| r.is_some_and(|r| v[r])).collect()),
         Column::DateTime(ms, off) => Column::DateTime(rows.iter().map(|r| r.map_or(0, |r| ms[r])).collect(), rows.iter().map(|r| r.map_or(0, |r| off[r])).collect()),
     };
@@ -1804,7 +2155,7 @@ impl Roll {
 /// their instant — and a missing cell where a group has none present. A
 /// missing cell is skipped, as SQL's aggregates skip NULL. (Every
 /// aggregate had been a float, and a sum over text had silently been 0.)
-fn aggregate_by_groups(name: &str, col: &Column, valid: &[bool], group_ids: &[u32], ngroups: usize, agg: AggFn) -> Result<(Column, Vec<bool>), String> {
+fn aggregate_by_groups(name: &str, col: &Column, valid: &Validity, group_ids: &[u32], ngroups: usize, agg: AggFn) -> Result<(Column, Vec<bool>), String> {
     use std::cmp::Ordering;
     let rows = group_ids.iter().enumerate().filter_map(|(row, &g)| (g != u32::MAX && valid[row]).then_some((row, g as usize)));
     // a float that is not a number is no cell to aggregate
@@ -1900,32 +2251,32 @@ fn aggregate_by_groups(name: &str, col: &Column, valid: &[bool], group_ids: &[u3
     }
 }
 
-/// `into` with its cell at `row` taken from `from`'s (the columns are of
-/// one kind: a join's two key columns).
-fn fill_cell(mut into: Column, row: usize, from: &Column) -> Column {
-    match (&mut into, from) {
-        (Column::Int(a), Column::Int(b)) => a[row] = b[row],
-        (Column::Float(a), Column::Float(b)) => a[row] = b[row],
-        (Column::Str(a), Column::Str(b)) => a[row] = b[row].clone(),
-        (Column::Bool(a), Column::Bool(b)) => a[row] = b[row],
-        (Column::DateTime(a, ao), Column::DateTime(b, bo)) => {
-            a[row] = b[row];
-            ao[row] = bo[row];
-        }
-        (Column::Str(a), b) => a[row] = b.fmt_cell(row, true),
-        _ => {}
-    }
-    into
+/// A join's key column where rows have no match on the left (a right or
+/// outer join): each row's key from the side that has the row.
+fn merged_keys(left: &Column, lvalid: &Validity, right: &Column, rvalid: &Validity, li: &[Option<usize>], ri: &[Option<usize>]) -> (Column, Vec<bool>) {
+    // (from the left, at this row) for each output row
+    let picks: Vec<(bool, usize)> = li.iter().zip(ri).map(|(l, r)| match (l, r) { (Some(i), _) => (true, *i), (None, Some(j)) => (false, *j), _ => (true, 0) }).collect();
+    let valid: Vec<bool> = li.iter().zip(ri).map(|(l, r)| match (l, r) { (Some(i), _) => lvalid[*i], (None, Some(j)) => rvalid[*j], _ => false }).collect();
+    let data = match (left, right) {
+        (Column::Int(a), Column::Int(b)) => Column::Int(picks.iter().map(|&(l, i)| if l { a[i] } else { b[i] }).collect()),
+        (Column::Float(a), Column::Float(b)) => Column::Float(picks.iter().map(|&(l, i)| if l { a[i] } else { b[i] }).collect()),
+        (Column::Bool(a), Column::Bool(b)) => Column::Bool(picks.iter().map(|&(l, i)| if l { a[i] } else { b[i] }).collect()),
+        (Column::DateTime(am, ao), Column::DateTime(bm, bo)) => Column::DateTime(
+            picks.iter().map(|&(l, i)| if l { am[i] } else { bm[i] }).collect(),
+            picks.iter().map(|&(l, i)| if l { ao[i] } else { bo[i] }).collect(),
+        ),
+        (Column::Str(a), Column::Str(b)) => Column::Str(picks.iter().map(|&(l, i)| if l { &a[i] } else { &b[i] }).collect()),
+        (a, b) => Column::Str(picks.iter().map(|&(l, i)| if l { a.fmt_cell(i, true) } else { b.fmt_cell(i, true) }).collect()),
+    };
+    (data, valid)
 }
 
-fn gather_column(col: &Column, valid: &[bool], indices: &[Option<usize>]) -> (Column, Vec<bool>) {
-    let new_valid: Vec<bool> = indices.iter().map(|opt| {
-        opt.map_or(false, |i| valid[i])
-    }).collect();
+fn gather_column(col: &Column, valid: &Validity, indices: &[Option<usize>]) -> (Column, Validity) {
+    let new_valid = valid.gather_some(indices);
     let nc = match col {
         Column::Int(v) => Column::Int(indices.iter().map(|opt| opt.map_or(0, |i| v[i])).collect()),
         Column::Float(v) => Column::Float(indices.iter().map(|opt| opt.map_or(f64::NAN, |i| v[i])).collect()),
-        Column::Str(v) => Column::Str(indices.iter().map(|opt| opt.map_or(String::new(), |i| v[i].clone())).collect()),
+        Column::Str(v) => Column::Str(v.gather_some(indices)),
         Column::Bool(v) => Column::Bool(indices.iter().map(|opt| opt.map_or(false, |i| v[i])).collect()),
         Column::DateTime(millis, offsets) => Column::DateTime(
             indices.iter().map(|opt| opt.map_or(0, |i| millis[i])).collect(),
@@ -2071,7 +2422,7 @@ impl CrowFrame {
             }
         }
         let n = first_rows.len();
-        Ok(CrowColumn { data: Arc::new(take_rows(&self.data[idx], &first_rows)), valid: Arc::new(vec![true; n]) })
+        Ok(CrowColumn { data: Arc::new(take_rows(&self.data[idx], &first_rows)), valid: Arc::new(Validity::all(n)) })
     }
 
     /// Print summary statistics for all numeric columns.
@@ -2252,7 +2603,7 @@ pub fn record_batch(frame: &CrowFrame) -> Result<arrow::record_batch::RecordBatc
                 let nulls: Vec<bool> = validity.iter().copied().collect();
                 let arr = StringArray::from(
                     vals.iter().zip(nulls.iter())
-                        .map(|(v, &valid)| if valid { Some(v.as_str()) } else { None })
+                        .map(|(v, &valid)| if valid { Some(v) } else { None })
                         .collect::<Vec<Option<&str>>>()
                 );
                 arrays.push(Arc::new(arr));
@@ -2371,7 +2722,7 @@ pub fn to_json(frame: &CrowFrame) -> String {
                         Column::Int(v) => Value::from(v[r]),
                         Column::Float(v) => crate::json::float_to_json(v[r]),
                         Column::Bool(v) => Value::Bool(v[r]),
-                        Column::Str(v) => Value::String(v[r].clone()),
+                        Column::Str(v) => Value::String(v[r].to_string()),
                         Column::DateTime(ms, offsets) => Value::String(format_datetime(ms[r], offsets[r])),
                     }
                 };
@@ -2419,7 +2770,7 @@ pub fn from_parquet(bytes: Vec<u8>) -> Result<CrowFrame, String> {
             "int" => Column::Int(Vec::new()),
             "float" => Column::Float(Vec::new()),
             "bool" => Column::Bool(Vec::new()),
-            "text" => Column::Str(Vec::new()),
+            "text" => Column::Str(Text::new()),
             _ => Column::DateTime(Vec::new(), Vec::new()),
         })
         .collect();
@@ -2440,7 +2791,9 @@ pub fn from_parquet(bytes: Vec<u8>) -> Result<CrowFrame, String> {
                 }
                 Column::Str(v) => {
                     let s = cast.as_string::<i32>();
-                    v.extend((0..s.len()).map(|r| if s.is_valid(r) { s.value(r).to_string() } else { String::new() }));
+                    for r in 0..s.len() {
+                        v.push(if s.is_valid(r) { s.value(r) } else { "" });
+                    }
                 }
                 Column::DateTime(ms, offsets) => {
                     let t = cast.as_primitive::<TimestampMillisecondType>();
@@ -2484,8 +2837,8 @@ mod format_tests {
         assert_eq!(f.columns, vec!["c", "t", "v", "x"]);
         assert!(matches!(f.data[0].as_ref(), Column::Float(v) if v == &vec![10.5, 11.0]));
         assert!(matches!(f.data[1].as_ref(), Column::Int(v) if v == &vec![1, 2]));
-        assert_eq!(f.validity[2].as_ref(), &vec![true, false]);
-        assert!(matches!(f.data[3].as_ref(), Column::Str(v) if v == &vec!["[1]".to_string(), "{\"a\":1}".to_string()]));
+        assert_eq!(f.validity[2].to_vec(), vec![true, false]);
+        assert!(matches!(f.data[3].as_ref(), Column::Str(v) if v.to_vec() == vec!["[1]".to_string(), "{\"a\":1}".to_string()]));
         let two = from_json(r#"{"a": [{"x": 1}], "b": [{"y": 2}]}"#).err().unwrap_or_default();
         assert!(two.contains("more than one list of records ('a', 'b')"), "{}", two);
         assert!(from_json("[1, 2]").err().unwrap_or_default().contains("item 0 of the JSON's list is not a record"));
@@ -2499,7 +2852,7 @@ mod format_tests {
         CrowFrame::new(
             vec!["sym".into(), "price".into(), "shares".into(), "open".into(), "at".into()],
             vec![
-                Column::Str(vec!["AAPL".into(), "".into(), "NVDA".into()]),
+                Column::strs(vec!["AAPL".into(), "".into(), "NVDA".into()]),
                 Column::Float(vec![187.5, 402.25, f64::NAN]),
                 Column::Int(vec![10, 5, 40]),
                 Column::Bool(vec![true, false, true]),
@@ -2516,7 +2869,7 @@ mod format_tests {
         let f = sample();
         let back = from_json(&to_json(&f)).unwrap_or_else(|e| panic!("{}", e));
         assert_eq!(back.columns, vec!["at", "open", "price", "shares", "sym"]);
-        assert_eq!(back.validity[4].as_ref(), &vec![true, false, true]);
+        assert_eq!(back.validity[4].to_vec(), vec![true, false, true]);
         assert!(matches!(back.data[3].as_ref(), Column::Int(v) if v == &vec![10, 5, 40]));
         assert!(matches!(back.data[1].as_ref(), Column::Bool(v) if v == &vec![true, false, true]));
     }
@@ -2534,7 +2887,7 @@ mod format_tests {
         for i in 0..f.ncols() {
             assert_eq!(back.validity[i].as_ref(), f.validity[i].as_ref(), "column {}", f.columns[i]);
         }
-        assert!(matches!(back.data[0].as_ref(), Column::Str(v) if v[0] == "AAPL" && v[2] == "NVDA"));
+        assert!(matches!(back.data[0].as_ref(), Column::Str(v) if &v[0] == "AAPL" && &v[2] == "NVDA"));
         assert!(matches!(back.data[1].as_ref(), Column::Float(v) if v[0] == 187.5 && v[1] == 402.25));
         assert!(matches!(back.data[2].as_ref(), Column::Int(v) if v == &vec![10, 5, 40]));
         assert!(matches!(back.data[3].as_ref(), Column::Bool(v) if v == &vec![true, false, true]));
@@ -2555,7 +2908,7 @@ mod arrow_tests {
             vec![
                 Column::Int(vec![1, 2, 3]),
                 Column::Float(vec![1.1, 2.2, 3.3]),
-                Column::Str(vec!["a".into(), "b".into(), "c".into()]),
+                Column::strs(vec!["a".into(), "b".into(), "c".into()]),
             ],
             vec![
                 vec![true, true, true],
@@ -2600,7 +2953,7 @@ mod inference_tests {
         ints.push("2.5".to_string());
         assert!(matches!(column_of(&ints), Column::Float(ref v) if v[150] == 2.5));
         ints.push("n/a".to_string());
-        assert!(matches!(column_of(&ints), Column::Str(ref v) if v[151] == "n/a"));
+        assert!(matches!(column_of(&ints), Column::Str(v) if &v[151] == "n/a"));
         let mut dates: Vec<String> = (0..150).map(|i| format!("2024-01-{:02}", 1 + i % 28)).collect();
         assert!(matches!(column_of(&dates), Column::DateTime(..)));
         dates.push("soon".to_string());
@@ -2613,7 +2966,7 @@ mod inference_tests {
     fn a_group_by_a_column_the_frame_lacks_is_refused() {
         let frame = CrowFrame::new(
             vec!["sym".into(), "px".into()],
-            vec![Column::Str(vec!["a".into(), "b".into()]), Column::Float(vec![1.0, 2.0])],
+            vec![Column::strs(vec!["a".into(), "b".into()]), Column::Float(vec![1.0, 2.0])],
             vec![vec![true, true], vec![true, true]],
         );
         assert!(frame.group("sym", &[("px", AggFn::Sum)]).is_ok());
@@ -2636,7 +2989,7 @@ mod numbers_tests {
                 Column::Int(vec![1, 2]),
                 Column::Float(vec![0.5, f64::NAN]),
                 Column::Float(vec![1.0, 0.0]),
-                Column::Str(vec!["a".into(), "b".into()]),
+                Column::strs(vec!["a".into(), "b".into()]),
                 Column::Bool(vec![true, false]),
             ],
             vec![vec![true, true], vec![true, true], vec![true, false], vec![true, true], vec![true, true]],
@@ -2677,7 +3030,7 @@ mod datetime_tests {
         use super::{csv_frame, split_quoted, Column, CrowFrame};
         let f = CrowFrame::new(
             vec!["note".into(), "ok".into(), "n".into()],
-            vec![Column::Str(vec!["a, b".into(), "say \"hi\"".into(), "plain".into()]), Column::Bool(vec![true, false, true]), Column::Int(vec![1, 2, 3])],
+            vec![Column::strs(vec!["a, b".into(), "say \"hi\"".into(), "plain".into()]), Column::Bool(vec![true, false, true]), Column::Int(vec![1, 2, 3])],
             vec![vec![true; 3], vec![true, false, true], vec![true; 3]],
         );
         let text = f.to_csv().expect("csv");
@@ -2685,7 +3038,7 @@ mod datetime_tests {
         assert_eq!(csv_frame(&text).expect("read back"), f);
         let spelled = csv_frame("flag,word\nTrue,x\nFALSE,\"y, z\"\n").expect("read");
         assert_eq!(spelled.data[0].as_ref(), &Column::Bool(vec![true, false]));
-        assert_eq!(spelled.data[1].as_ref(), &Column::Str(vec!["x".into(), "y, z".into()]));
+        assert_eq!(spelled.data[1].as_ref(), &Column::strs(vec!["x".into(), "y, z".into()]));
         assert_eq!(split_quoted("\"a,b\", c ,\"\"\"q\"\"\",d"), vec!["a,b", "c", "\"q\"", "d"]);
     }
 }

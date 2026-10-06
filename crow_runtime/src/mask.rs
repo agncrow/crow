@@ -349,36 +349,67 @@ fn check(col: &Column, cmp: Cmp, value: Cell) -> Result<(), String> {
     holds(cmp, kind, false, value).map(|_| ())
 }
 
-/// Rows `start..start + out.len()` of a column compared with a value.
-fn leaf(col: &Column, valid: &[bool], cmp: Cmp, value: Cell, start: usize, out: &mut [bool]) {
+/// Rows `start..start + out.len()` of a column compared with a value:
+/// a block at a time, one loop per kind and operator (each cell had been
+/// read into a `Cell` and decided on its own, which cost the compiled
+/// filter 3.6 times the interpreter's mask); equality with text over a
+/// dictionary column compares codes.
+fn leaf(col: &Column, valid: &crate::frame::Validity, cmp: Cmp, value: Cell, start: usize, out: &mut [bool]) {
     let rows = start..start + out.len();
-    let valid = &valid[rows.clone()];
-    match col {
-        Column::Float(v) => {
+    let valid = &valid.slice(rows.start, rows.end)[..];
+    match (col, value) {
+        (Column::Float(v), Cell::Number(y)) => numbers(&v[rows], valid, cmp, y, out),
+        (Column::Int(v), Cell::Number(y)) => {
+            let xs: Vec<f64> = v[rows].iter().map(|&x| x as f64).collect();
+            numbers(&xs, valid, cmp, y, out)
+        }
+        (Column::Bool(v), Cell::Bool(y)) => {
             for ((o, &x), &ok) in out.iter_mut().zip(&v[rows]).zip(valid) {
-                *o = decide(cmp, Cell::Number(x), ok, value);
+                *o = ok && cmp.of(Some(x.cmp(&y)));
             }
         }
-        Column::Int(v) => {
-            for ((o, &x), &ok) in out.iter_mut().zip(&v[rows]).zip(valid) {
-                *o = decide(cmp, Cell::Number(x as f64), ok, value);
+        (Column::Str(t), Cell::Text(y)) => match (t.dictionary(), cmp) {
+            (Some((codes, values)), Cmp::Eq | Cmp::Ne) => {
+                let code = values.iter().position(|v| v == y).map(|c| c as u32);
+                let wanted = cmp == Cmp::Eq;
+                for ((o, &c), &ok) in out.iter_mut().zip(&codes[rows]).zip(valid) {
+                    *o = ok && ((Some(c) == code) == wanted);
+                }
             }
-        }
-        Column::Str(v) => {
-            for ((o, x), &ok) in out.iter_mut().zip(&v[rows]).zip(valid) {
-                *o = decide(cmp, Cell::Text(x), ok, value);
+            _ => {
+                for (k, (o, &ok)) in out.iter_mut().zip(valid).enumerate() {
+                    *o = ok && cmp.of(Some(t.get(start + k).cmp(y)));
+                }
             }
-        }
-        Column::Bool(v) => {
-            for ((o, &x), &ok) in out.iter_mut().zip(&v[rows]).zip(valid) {
-                *o = decide(cmp, Cell::Bool(x), ok, value);
-            }
-        }
-        Column::DateTime(ms, offsets) => {
+        },
+        (Column::DateTime(ms, offsets), Cell::Text(y)) => {
             for (((o, &m), &off), &ok) in out.iter_mut().zip(&ms[rows.clone()]).zip(&offsets[rows]).zip(valid) {
-                *o = ok && decide(cmp, Cell::Text(&crate::frame::format_datetime(m, off)), true, value);
+                *o = ok && cmp.of(Some(crate::frame::format_datetime(m, off).as_str().cmp(y)));
             }
         }
+        // kinds that do not compare (refused before the rows are read):
+        // nothing holds
+        _ => out.fill(false),
+    }
+}
+
+/// Numbers compared with one, a loop per operator: `partial_cmp`'s
+/// answers, so a NaN holds only `ne`, and -0 equals 0.
+fn numbers(xs: &[f64], valid: &[bool], cmp: Cmp, y: f64, out: &mut [bool]) {
+    macro_rules! each {
+        ($op:tt) => {
+            for ((o, &x), &ok) in out.iter_mut().zip(xs).zip(valid) {
+                *o = ok && (x $op y);
+            }
+        };
+    }
+    match cmp {
+        Cmp::Eq => each!(==),
+        Cmp::Ne => each!(!=),
+        Cmp::Gt => each!(>),
+        Cmp::Lt => each!(<),
+        Cmp::Gte => each!(>=),
+        Cmp::Lte => each!(<=),
     }
 }
 
@@ -469,7 +500,7 @@ pub fn filter_where(f: &CrowFrame, program: &str, columns: &[String], values: &[
 fn eval(node: &Node, f: &CrowFrame, values: &[Cell], start: usize, out: &mut [bool]) {
     match node {
         Node::Cmp(cmp, at, v) => leaf(&f.data[*at], &f.validity[*at], *cmp, values[*v], start, out),
-        Node::Ok(at) => out.copy_from_slice(&f.validity[*at][start..start + out.len()]),
+        Node::Ok(at) => out.copy_from_slice(&f.validity[*at].slice(start, start + out.len())),
         Node::And(l, r) | Node::Or(l, r) => {
             eval(l, f, values, start, out);
             let mut right = vec![false; out.len()];
@@ -730,19 +761,19 @@ mod tests {
     /// column holds in its place (NaN, 0, empty text)
     #[test]
     fn a_column_compared_whole_is_compared_cell_by_cell() {
-        let col = |data: Column, valid: Vec<bool>| CrowColumn { data: std::sync::Arc::new(data), valid: std::sync::Arc::new(valid) };
+        let col = |data: Column, valid: Vec<bool>| CrowColumn { data: std::sync::Arc::new(data), valid: std::sync::Arc::new(crate::frame::Validity::from(valid)) };
         let ints = col(Column::Int(vec![1, 2]), vec![true, true]);
         let floats = col(Column::Float(vec![1.0, 2.0]), vec![true, true]);
         assert_eq!((ints.whole(Cmp::Eq, &floats), floats.whole(Cmp::Ne, &ints)), (Ok(true), Ok(false)));
         assert_eq!((ints.whole_list(Cmp::Eq, &[1.0, 2.0]), ints.whole_list(Cmp::Eq, &[1.0]), ints.whole_list(Cmp::Ne, &[1.0, 3.0])), (Ok(true), Ok(false), Ok(true)));
         assert_eq!(ints.whole_tensor(Cmp::Eq, &crate::tensor::CrowTensor::from_vec(vec![1.0, 2.0], vec![2])), Ok(true));
         assert_eq!(ints.whole_tensor(Cmp::Eq, &crate::tensor::CrowTensor::from_vec(vec![1.0, 2.0], vec![1, 2])), Ok(false));
-        for missing in [col(Column::Int(vec![1, 0]), vec![true, false]), col(Column::Str(vec!["a".to_string(), String::new()]), vec![true, false]), col(Column::Float(vec![1.0, f64::NAN]), vec![true, false])] {
+        for missing in [col(Column::Int(vec![1, 0]), vec![true, false]), col(Column::strs(vec!["a".to_string(), String::new()]), vec![true, false]), col(Column::Float(vec![1.0, f64::NAN]), vec![true, false])] {
             assert_eq!((missing.whole(Cmp::Eq, &missing), missing.whole(Cmp::Ne, &missing)), (Ok(false), Ok(true)), "{:?}", missing);
         }
-        let text = col(Column::Str(vec!["a".to_string(), String::new()]), vec![true, false]);
+        let text = col(Column::strs(vec!["a".to_string(), String::new()]), vec![true, false]);
         assert_eq!(text.whole_list(Cmp::Eq, &["a".to_string(), String::new()]), Ok(false));
-        let strs = col(Column::Str(vec!["p".to_string(), "q".to_string()]), vec![true, true]);
+        let strs = col(Column::strs(vec!["p".to_string(), "q".to_string()]), vec![true, true]);
         assert_eq!(strs.whole_list(Cmp::Eq, &["p".to_string(), "q".to_string()]), Ok(true));
         assert_eq!(strs.whole(Cmp::Eq, &ints), Err("eq compares values of one kind, not text with a number".to_string()));
         assert_eq!(strs.whole_list(Cmp::Ne, &[1.0, 2.0]), Err("ne compares values of one kind, not text with a number".to_string()));

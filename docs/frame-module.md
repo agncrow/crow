@@ -1,17 +1,53 @@
 # Frame Module Design
 
-## Benchmark Context
+## Performance and memory
 
-1GB mixed CSV (12.7M rows × 10 columns, 4 string + 6 numeric):
+Measured 2026-10-06 on a 16-core Apple M4 Max: the same ten operations
+over a 10-million-row, 659 MiB CSV (ten columns, four of text), in Crow
+compiled (best of three), pandas 3.0 (single-threaded) and polars 2.0
+(every core); wall seconds, and the peak memory of the whole run.
 
-| Tool | Time | Memory |
-|------|------|--------|
-| Polars | 0.18s | ~1GB |
-| Pandas | 4.1s | ~3GB |
-| Crow csv[] (transpiled) | 31.6s | 36GB |
-| Crow csv[] (interpreter) | 144.5s | 32GB |
+| Operation | Crow | pandas | polars |
+|---|---|---|---|
+| load CSV | 0.41 | 4.67 | 1.04 |
+| filter | 0.07 | 0.24 | 0.05 |
+| group, 3 aggregates | 0.04 | 0.34 | 0.03 |
+| sort by a float | 0.35 | 2.04 | 0.53 |
+| join, 8-row table | 0.13 | 0.49 | 0.22 |
+| window, running sum | 0.07 | 0.31 | 0.16 |
+| unique | 0.01 | 0.14 | 0.05 |
+| save CSV, 3 columns | 0.40 | 4.96 | 0.12 |
+| peak memory | 4.7 GB | 3.5 GB | 5.2 GB |
 
-Current `csv[]` creates one BTreeMap per row — 12.7M maps × 10 entries = ~254M string allocations. Column-oriented storage is essential.
+The table itself takes about 90 bytes a row here (polars: 74; pandas: 320
+with its Python-object strings). Before the storage work of the same day
+it took 220 bytes a row and the run peaked at 8.0 GB; load took 1.11 s,
+filter 0.69, sort 1.56, join 0.81. What changed, in order of payoff:
+
+1. Text is held as Arrow holds it, every cell's bytes in one buffer with
+   an offset per cell, or — for a column of few distinct values, which a
+   file's sample shows — as a code per cell into a dictionary. A group, a
+   join, a sort, a filter for equality and `unique` work on the codes.
+2. The compiled filter's one-pass predicate compares a block at a time,
+   one loop per kind and operator (it had read every cell into a generic
+   value: 3.6 times the interpreter's mask).
+3. The CSV reader splits each line once (it had scanned every line once
+   per column), parses pieces of the file across the cores straight into
+   typed parts, decides each column's kind from a sample and reads a
+   column whole again only where the sample misled, and reads the file's
+   bytes in place rather than through a copy of the text.
+4. Which cells are there is a bit per cell (`validity.rs`), as this
+   document always said; it had been a byte.
+5. A sort packs each cell into a key and sorts (key, row) pairs across
+   the cores, which keeps equal cells in their order; a group by several
+   keys packs their codes instead of allocating a vector per row.
+6. A join looks a dictionary key up once per distinct value, and shares
+   the left columns by reference where every left row matched once, in
+   order.
+
+Still slower than polars: saving CSV (3×), and filter and group by a
+third. `tests/bench/frames.co` holds the repository's own numbers at a
+million rows in both modes (docs/benchmarks.md).
 
 ---
 
@@ -31,7 +67,7 @@ df.columns  --- ['name', 'age', 'city', 'salary', 'score']
 - Clean separation — frame is its own thing
 - Properties (.shape, .columns, .dtypes) without conflicting with column names
 - Column order preserved (not alphabetically sorted like BTreeMap)
-- Optimized internal storage (typed vectors: Vec<i64>, Vec<f64>, Vec<String>, Vec<bool>, plus Vec<i64> + Vec<i16> for DateTime)
+- Optimized internal storage: typed vectors (Vec<i64>, Vec<f64>, Vec<bool>, Vec<i64> + Vec<i16> for DateTime); text in one buffer with an offset per cell, or a code per cell into a dictionary (`textcol.rs`); a bit per cell for which are there (`validity.rs`)
 - Display shows a nice table format
 
 ---

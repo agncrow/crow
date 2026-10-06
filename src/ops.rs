@@ -667,7 +667,7 @@ pub fn column_cell(column: &crow_runtime::frame::Column, valid: bool, row: usize
     CrowValue::ok(match column {
         Column::Int(v) => Value::Int(v[row]),
         Column::Float(v) => Value::Float(v[row]),
-        Column::Str(v) => Value::Str(v[row].clone()),
+        Column::Str(v) => Value::Str(v[row].to_string()),
         Column::Bool(v) => Value::Bool(v[row]),
         Column::DateTime(millis, offsets) => Value::Str(crow_runtime::frame::format_datetime(millis[row], offsets[row])),
     })

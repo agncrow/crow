@@ -591,7 +591,7 @@ mod tests {
     #[test]
     fn a_frame_is_a_table_its_text_escaped() {
         use crow_runtime::frame::{Column, CrowFrame};
-        let f = CrowFrame::new(vec!["a<b".into()], vec![Column::Str(vec!["<x>".into(), "y".into()])], vec![vec![true, false]]);
+        let f = CrowFrame::new(vec!["a<b".into()], vec![Column::strs(vec!["<x>".into(), "y".into()])], vec![vec![true, false]]);
         let html = frame_html(&f);
         assert!(html.starts_with("<table><thead><tr><th>a&lt;b</th></tr></thead><tbody><tr><td>&lt;x&gt;</td></tr>"), "{}", html);
     }

@@ -212,7 +212,7 @@ impl Words for crate::frame::CrowColumn {
                 Ok(match self.data.as_ref() {
                     Column::Int(v) => v[i].to_string(),
                     Column::Float(v) => v[i].to_string(),
-                    Column::Str(v) => v[i].clone(),
+                    Column::Str(v) => v[i].to_string(),
                     Column::Bool(v) => v[i].to_string(),
                     Column::DateTime(..) => self.data.fmt_cell(i, true),
                 })

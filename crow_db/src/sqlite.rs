@@ -89,7 +89,7 @@ fn query_on(conn: &rusqlite::Connection, sql: &str, params: &[serde_json::Value]
         raw_rows.push(raw_row);
     }
     if raw_rows.is_empty() {
-        let data: Vec<Column> = (0..ncols).map(|_| Column::Str(Vec::new())).collect();
+        let data: Vec<Column> = (0..ncols).map(|_| Column::strs(Vec::new())).collect();
         let validity: Vec<Vec<bool>> = (0..ncols).map(|_| Vec::new()).collect();
         return Ok(CrowFrame::new(col_names, data, validity));
     }
@@ -259,7 +259,7 @@ impl CrowDb for CrowSqliteDb {
                 match frame.data[col_idx].as_ref() {
                     Column::Int(v) => params.push(Box::new(v[row_idx])),
                     Column::Float(v) => params.push(Box::new(v[row_idx])),
-                    Column::Str(v) => params.push(Box::new(v[row_idx].clone())),
+                    Column::Str(v) => params.push(Box::new(v[row_idx].to_string())),
                     Column::Bool(v) => params.push(Box::new(v[row_idx])),
                     Column::DateTime(v, _) => params.push(Box::new(v[row_idx])),
                 }
@@ -324,7 +324,7 @@ impl DbTx for SqliteTransactWrapper<'_> {
 
         let nrows = raw_rows.len();
         if nrows == 0 {
-            let data: Vec<Column> = (0..ncols).map(|_| Column::Str(Vec::new())).collect();
+            let data: Vec<Column> = (0..ncols).map(|_| Column::strs(Vec::new())).collect();
             let validity: Vec<Vec<bool>> = (0..ncols).map(|_| Vec::new()).collect();
             return Ok(CrowFrame::new(col_names, data, validity));
         }
@@ -401,7 +401,7 @@ fn build_frame_from_rows(
                         rusqlite::types::Value::Null => { vals.push(String::new()); valid[row_idx] = false; }
                     }
                 }
-                columns.push(Column::Str(vals));
+                columns.push(Column::strs(vals));
             }
         }
         validities.push(valid);
@@ -565,7 +565,7 @@ mod tests {
         }
         // name column should be Str
         match frame.data[1].as_ref() {
-            Column::Str(v) => assert_eq!(v, &["alice", "bob"]),
+            Column::Str(v) => assert_eq!(v.to_vec(), ["alice", "bob"]),
             other => panic!("expected Str column, got {:?}", other),
         }
     }
@@ -597,7 +597,7 @@ mod tests {
         let frame = CrowFrame::new(
             vec!["name".into(), "age".into()],
             vec![
-                Column::Str(vec!["alice".into(), "bob".into()]),
+                Column::strs(vec!["alice".into(), "bob".into()]),
                 Column::Int(vec![30, 25]),
             ],
             vec![vec![true, true], vec![true, true]],
@@ -609,7 +609,7 @@ mod tests {
         let result = db.query("SELECT * FROM t ORDER BY age", &[]).unwrap();
         assert_eq!(result.nrows(), 2);
         match result.data[0].as_ref() {
-            Column::Str(v) => assert_eq!(v, &["bob", "alice"]),
+            Column::Str(v) => assert_eq!(v.to_vec(), ["bob", "alice"]),
             other => panic!("expected Str column, got {:?}", other),
         }
     }

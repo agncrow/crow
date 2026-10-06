@@ -379,7 +379,7 @@ mod tests {
         let db = Replay::open("postgres://u@h/db", &dir);
         let f = db.query("SELECT sym, px FROM marks WHERE sym IN (?, ?) ORDER BY sym", &[]).unwrap();
         assert_eq!(f.nrows(), 2);
-        assert_eq!(*f.validity[1], vec![true, false]);
+        assert_eq!(f.validity[1].to_vec(), vec![true, false]);
         let missing = db.query("SELECT 1 AS one", &[]).unwrap_err();
         assert!(missing.starts_with("no fixture holds `SELECT 1 AS one` — `crow check --record-fixtures` records it"), "{}", missing);
         assert_eq!(db.exec("DELETE FROM marks", &[]).unwrap(), 1);

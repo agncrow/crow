@@ -189,7 +189,7 @@ impl CrowType {
             CrowType::NumArray(..) => "crow_runtime::tensor::CrowTensor::zeros(vec![0])".into(),
             CrowType::Sparse => "CrowSparse::from_coo(&[], &[], &[], 0, 0)".into(),
             CrowType::Frame(_) => "crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![])".into(),
-            CrowType::FrameCol => "crow_runtime::frame::CrowColumn { data: std::sync::Arc::new(crow_runtime::frame::Column::Int(vec![])), valid: std::sync::Arc::new(vec![]) }".into(),
+            CrowType::FrameCol => "crow_runtime::frame::CrowColumn { data: std::sync::Arc::new(crow_runtime::frame::Column::Int(vec![])), valid: std::sync::Arc::new(crow_runtime::frame::Validity::none(0)) }".into(),
             CrowType::WebApp => "crow_web::server::CrowApp::new()".into(),
             CrowType::WebResponse => "crow_web::core::CrowResponse::default()".into(),
             CrowType::WebRequest => "crow_web::core::CrowRequest::new()".into(),

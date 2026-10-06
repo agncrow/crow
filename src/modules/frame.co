@@ -19,12 +19,17 @@ fn as_text[path, data]
 fn framed[path, format, data]
     if format eq 'parquet'
         return frame_of_parquet[data]
-    t = as_text[path, data]
-    if not t.ok
-        return error[t.reason, 'frame']
     if format eq 'json'
+        t = as_text[path, data]
+        if not t.ok
+            return error[t.reason, 'frame']
         return frame_of_json[t]
-    return frame_of_csv[t]
+    f = frame_of_csv_bytes[data]
+    if not f.ok
+        if f.reason eq 'it is not text (UTF-8)'
+            return error['cannot read \'`path`\': it is not text (UTF-8)', 'frame']
+        return error[f.reason, 'frame']
+    return f
 
 --- `load[path]`: a table as a frame — a file, a URL or an S3 object
 fn load[path]

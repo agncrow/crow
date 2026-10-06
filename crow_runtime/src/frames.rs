@@ -8,7 +8,7 @@
 //! value, where the type, a frame, said none could happen, and the
 //! compiled program stopped or panicked.)
 
-use crate::frame::{format_datetime, parse_datetime, AggFn, Column, CrowColumn, CrowFrame};
+use crate::frame::{format_datetime, parse_datetime, AggFn, Column, CrowColumn, CrowFrame, Validity};
 use crate::tensor::CrowTensor;
 
 pub use crate::cell::Cell;
@@ -47,7 +47,7 @@ fn one_row(cell: Cell) -> Result<Column, String> {
         Cell::Int(n) => Ok(Column::Int(vec![n])),
         Cell::Float(x) => Ok(Column::Float(vec![x])),
         Cell::Bool(b) => Ok(Column::Bool(vec![b])),
-        Cell::Text(s) => Ok(Column::Str(vec![s])),
+        Cell::Text(s) => Ok(Column::strs(vec![s])),
         other => Err(format!("with: a column cannot hold {}", other.kind())),
     }
 }
@@ -58,14 +58,14 @@ fn one_row(cell: Cell) -> Result<Column, String> {
 #[derive(Debug, Clone)]
 pub enum Cells {
     /// The column's values and, row by row, whether each is present.
-    Column(Column, Vec<bool>),
+    Column(Column, Validity),
     One(Cell),
 }
 
 impl Cells {
     fn all(c: Column) -> Cells {
         let n = c.len();
-        Cells::Column(c, vec![true; n])
+        Cells::Column(c, Validity::all(n))
     }
 }
 
@@ -86,7 +86,7 @@ impl From<Vec<bool>> for Cells {
 }
 impl From<Vec<String>> for Cells {
     fn from(v: Vec<String>) -> Self {
-        Cells::all(Column::Str(v))
+        Cells::all(Column::strs(v))
     }
 }
 impl From<CrowTensor> for Cells {
@@ -129,7 +129,7 @@ pub fn new() -> CrowFrame {
 /// replaced; values of another length than the rows are an error value.
 pub fn with(f: &CrowFrame, name: &str, values: Cells) -> Result<CrowFrame, String> {
     match values {
-        Cells::Column(data, valid) => f.with_valid(name, data, valid),
+        Cells::Column(data, valid) => f.with_validity(name, data, valid),
         Cells::One(cell) => f.with_scalar(name, one_row(cell)?),
     }
 }
@@ -338,7 +338,7 @@ mod tests {
 
     fn column(f: &CrowFrame, name: &str) -> (Column, Vec<bool>) {
         let c = f.col_native(name).expect("the column");
-        ((*c.data).clone(), (*c.valid).clone())
+        ((*c.data).clone(), c.valid.to_vec())
     }
 
     /// A group's keys keep their kinds and come in the order first seen,
@@ -356,7 +356,7 @@ mod tests {
         assert_eq!(column(&g, "qty_sum").0, Column::Int(vec![12, 51]));
         let g = group_keys(&f, &["sym".to_string(), "day".to_string()], &[&sum]).expect("a group");
         assert_eq!(g.columns, vec!["sym", "day", "qty_sum"]);
-        assert_eq!(column(&g, "sym").0, Column::Str(vec!["b".into(), "a".into(), "b".into(), "a".into()]));
+        assert_eq!(column(&g, "sym").0, Column::strs(vec!["b".into(), "a".into(), "b".into(), "a".into()]));
         assert_eq!(column(&g, "day").0, Column::Int(vec![2, 1, 1, 2]));
         assert_eq!(column(&g, "qty_sum").0, Column::Int(vec![10, 1, 50, 2]));
         let pair = |c: &str, how: &str| [c.to_string(), how.to_string()];
@@ -366,11 +366,11 @@ mod tests {
         assert_eq!(column(&g, "qty_count"), (Column::Int(vec![3, 2]), vec![true, true]));
         assert_eq!(column(&g, "px_mean"), (Column::Float(vec![1.0, 3.0]), vec![true, true]));
         assert_eq!(column(&g, "px_min"), (Column::Float(vec![0.5, 2.0]), vec![true, true]));
-        assert_eq!(column(&g, "sym_max"), (Column::Str(vec!["b".into(), "a".into()]), vec![true, true]));
+        assert_eq!(column(&g, "sym_max"), (Column::strs(vec!["b".into(), "a".into()]), vec![true, true]));
         assert_eq!(column(&g, "day_max"), (Column::Int(vec![2, 2]), vec![true, true]));
         // a group with no present cell: its min, max and mean are missing,
         // its sum 0 and its count 0
-        let holes = CrowFrame::new(vec!["k".into(), "x".into()], vec![Column::Str(vec!["a".into(), "b".into(), "b".into()]), Column::Int(vec![0, 4, 6])], vec![vec![true; 3], vec![false, true, true]]);
+        let holes = CrowFrame::new(vec!["k".into(), "x".into()], vec![Column::strs(vec!["a".into(), "b".into(), "b".into()]), Column::Int(vec![0, 4, 6])], vec![vec![true; 3], vec![false, true, true]]);
         let g = group(&holes, "k", &[&pair("x", "min"), &pair("x", "mean"), &pair("x", "sum"), &pair("x", "count")]).expect("a group");
         assert_eq!(column(&g, "x_min"), (Column::Int(vec![0, 4]), vec![false, true]));
         let (means, present) = column(&g, "x_mean");
@@ -393,7 +393,7 @@ mod tests {
         let one_per_pair = filter(&f, &[true, true, false, true, true]).expect("four rows");
         let p = pivot(&one_per_pair, "sym", "day", "qty").expect("a pivot");
         assert_eq!(p.columns, vec!["sym", "1", "2"]);
-        assert_eq!(column(&p, "sym").0, Column::Str(vec!["a".into(), "b".into()]));
+        assert_eq!(column(&p, "sym").0, Column::strs(vec!["a".into(), "b".into()]));
         assert_eq!(column(&p, "1"), (Column::Int(vec![1, 30]), vec![true, true]));
         assert_eq!(column(&p, "2"), (Column::Int(vec![2, 10]), vec![true, true]));
         let sparse = filter(&f, &[true, true, false, false, true]).expect("three rows");
@@ -419,7 +419,7 @@ mod tests {
     fn a_window_is_computed_over_each_rows_partition() {
         let f = trades();
         let by = ["sym".to_string()];
-        let c = |r: Result<CrowColumn, String>| r.map(|c| ((*c.data).clone(), (*c.valid).clone()));
+        let c = |r: Result<CrowColumn, String>| r.map(|c| ((*c.data).clone(), c.valid.to_vec()));
         assert_eq!(c(window(&f, "qty", "sum", 0, &by)), Ok((Column::Int(vec![10, 1, 30, 3, 60]), vec![true; 5])));
         assert_eq!(c(window(&f, "qty", "max", 2, &[])), Ok((Column::Int(vec![10, 10, 20, 20, 30]), vec![true; 5])));
         assert_eq!(c(window(&f, "qty", "mean", 2, &by)), Ok((Column::Float(vec![10.0, 1.0, 15.0, 1.5, 25.0]), vec![true; 5])));
@@ -450,7 +450,7 @@ mod tests {
     fn a_copied_column_keeps_its_missing_cells() {
         let f = CrowFrame::new(vec!["n".into()], vec![Column::Int(vec![1, 0])], vec![vec![true, false]]);
         let copied = with(&f, "m", Cells::from(f.col_native("n").expect("the column"))).expect("two rows");
-        assert_eq!(copied.col_native("m").map(|c| (*c.valid).clone()), Some(vec![true, false]));
+        assert_eq!(copied.col_native("m").map(|c| c.valid.to_vec()), Some(vec![true, false]));
     }
 
     /// A sort is stable — equal cells keep their order — with a missing
@@ -460,7 +460,7 @@ mod tests {
     fn a_sort_is_stable_with_missing_cells_last() {
         let f = CrowFrame::new(
             vec!["k".into(), "x".into(), "s".into()],
-            vec![Column::Int(vec![2, 1, 2, 1, 3]), Column::Float(vec![1.0, f64::NAN, 2.0, 3.0, 0.5]), Column::Str(vec!["b".into(), "a".into(), "B".into(), String::new(), "c".into()])],
+            vec![Column::Int(vec![2, 1, 2, 1, 3]), Column::Float(vec![1.0, f64::NAN, 2.0, 3.0, 0.5]), Column::strs(vec!["b".into(), "a".into(), "B".into(), String::new(), "c".into()])],
             vec![vec![true, true, true, false, true], vec![true; 5], vec![true, true, true, false, true]],
         );
         let s = |g: &CrowFrame| column(g, "s");
@@ -477,9 +477,9 @@ mod tests {
     #[test]
     fn unique_keeps_the_columns_kind() {
         let f = trades();
-        let cells = |c: CrowColumn| ((*c.data).clone(), (*c.valid).clone());
+        let cells = |c: CrowColumn| ((*c.data).clone(), c.valid.to_vec());
         assert_eq!(unique(&f, "day").map(cells), Ok((Column::Int(vec![2, 1]), vec![true, true])));
-        assert_eq!(unique(&f, "sym").map(cells), Ok((Column::Str(vec!["b".into(), "a".into()]), vec![true, true])));
+        assert_eq!(unique(&f, "sym").map(cells), Ok((Column::strs(vec!["b".into(), "a".into()]), vec![true, true])));
         let holes = CrowFrame::new(vec!["x".into()], vec![Column::Float(vec![1.5, 0.0, 1.5, 2.5])], vec![vec![true, false, true, true]]);
         assert_eq!(unique(&holes, "x").map(cells), Ok((Column::Float(vec![1.5, 2.5]), vec![true, true])));
         assert_eq!(unique(&f, "nope").map(|_| ()), Err("unique: column 'nope' not found".to_string()));

@@ -174,7 +174,7 @@ pub fn frame_of_postgres(b: &[u8]) -> Result<CrowFrame, String> {
                     .map(|c| match c {
                         Col::Int(v) => Column::Int(v),
                         Col::Float(v) => Column::Float(v),
-                        Col::Str(v) => Column::Str(v),
+                        Col::Str(v) => Column::strs(v),
                         Col::Bool(v) => Column::Bool(v),
                         Col::DateTime(v, z) => Column::DateTime(v, z),
                     })
@@ -211,9 +211,9 @@ mod tests {
         let f = frame_of_postgres(&unhex(SAMPLE)).unwrap();
         assert_eq!(f.columns, ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m"]);
         assert_eq!(f.nrows(), 2);
-        let col = |name: &str| -> (&Column, &Vec<bool>) {
+        let col = |name: &str| -> (&Column, Vec<bool>) {
             let i = f.columns.iter().position(|c| c == name).unwrap();
-            (&f.data[i], &f.validity[i])
+            (&f.data[i], f.validity[i].to_vec())
         };
         assert!(matches!(col("a").0, Column::Int(v) if v == &[7, 1]));
         assert!(matches!(col("b").0, Column::Int(v) if v == &[-5, 2]));
@@ -222,12 +222,12 @@ mod tests {
         assert!(matches!(col("e").0, Column::Float(v) if v == &[1.25, 0.25]));
         assert!(matches!(col("f").0, Column::Float(v) if v == &[12.34, 0.0]));
         assert!(matches!(col("g").0, Column::Bool(v) if v == &[true, false]));
-        assert!(matches!(col("h").0, Column::Str(v) if v == &["hi", "yo"]));
-        assert!(matches!(col("i"), (Column::Str(v), valid) if v == &["", "x"] && valid == &[false, true]));
+        assert!(matches!(col("h").0, Column::Str(v) if v.to_vec() == ["hi", "yo"]));
+        assert!(matches!(col("i"), (Column::Str(v), valid) if v.to_vec() == ["", "x"] && valid[..] == [false, true]));
         assert!(matches!(col("j").0, Column::DateTime(v, _) if v == &[1_704_164_645_123, 946_684_800_000]));
         assert!(matches!(col("k").0, Column::DateTime(v, _) if v == &[1_704_164_645_000, 946_684_800_000]));
         assert!(matches!(col("l").0, Column::DateTime(v, _) if v == &[1_704_153_600_000, 946_684_800_000]));
-        assert!(matches!(col("m").0, Column::Str(v) if v == &["{1,2}", "{3}"]));
+        assert!(matches!(col("m").0, Column::Str(v) if v.to_vec() == ["{1,2}", "{3}"]));
     }
 
     /// The server's error is the reason in its words; bytes that end before

@@ -261,7 +261,7 @@ pub(super) fn describe_asking(key: &str, url: &str, ddl: &[String], sql: &str) -
                         };
                         let text = |name: &str| -> Vec<String> {
                             frame.columns.iter().position(|c| c == name)
-                                .and_then(|i| match frame.data[i].as_ref() { crow_runtime::frame::Column::Str(v) => Some(v.clone()), _ => None })
+                                .and_then(|i| match frame.data[i].as_ref() { crow_runtime::frame::Column::Str(v) => Some(v.to_vec()), _ => None })
                                 .unwrap_or_default()
                         };
                         text("name").into_iter().zip(text("type")).collect()
@@ -300,7 +300,7 @@ pub(crate) fn mark_nullable(db: &crow_db::DbHandle, url: &str, sql: &str, cols: 
     }
     let read = |frame: &crow_runtime::frame::CrowFrame, name: &str| -> Vec<String> {
         frame.columns.iter().position(|c| c == name).map(|i| match frame.data[i].as_ref() {
-            Column::Str(v) => v.clone(),
+            Column::Str(v) => v.to_vec(),
             Column::Int(v) => v.iter().map(|x| x.to_string()).collect(),
             Column::Bool(v) => v.iter().map(|x| x.to_string()).collect(),
             _ => Vec::new(),
