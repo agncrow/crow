@@ -180,6 +180,27 @@ impl Words for crate::tensor::CrowTensor {
         Ok(self.to_vec().iter().map(|x| x.to_string()).collect())
     }
 }
+/// A list of cells whose kinds show as the program runs (a loaded file's,
+/// read one at a time): each as the interpreter's `join` writes it, a
+/// missing cell its reason, as a column's is. (The compiled program had
+/// not built such a join.)
+impl Words for Vec<serde_json::Value> {
+    fn words(&self) -> Result<Vec<String>, String> {
+        self.iter()
+            .enumerate()
+            .map(|(i, v)| match v {
+                serde_json::Value::String(s) => Ok(s.clone()),
+                serde_json::Value::Number(n) => Ok(match n.as_i64() {
+                    Some(k) => k.to_string(),
+                    None => n.as_f64().unwrap_or(f64::NAN).to_string(),
+                }),
+                serde_json::Value::Bool(b) => Ok(b.to_string()),
+                serde_json::Value::Null => Err(crate::stops::missing_cell(i)),
+                other => Err(format!("join[] takes a list of text, and item {} is {}", i, if other.is_array() { "a list" } else { "a map" })),
+            })
+            .collect()
+    }
+}
 impl Words for crate::frame::CrowColumn {
     fn words(&self) -> Result<Vec<String>, String> {
         use crate::frame::Column;

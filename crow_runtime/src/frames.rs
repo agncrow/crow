@@ -248,7 +248,7 @@ pub fn fill(f: &CrowFrame, name: &str, value: &Cell) -> Result<CrowFrame, String
 }
 
 /// `unique[frame, name]`: the column's distinct values, as text.
-pub fn unique(f: &CrowFrame, name: &str) -> Result<Vec<String>, String> {
+pub fn unique(f: &CrowFrame, name: &str) -> Result<CrowColumn, String> {
     f.unique_col(name)
 }
 
@@ -342,7 +342,10 @@ mod tests {
     }
 
     /// A group's keys keep their kinds and come in the order first seen,
-    /// one key or several; an aggregate is a float named column_how.
+    /// one key or several; an aggregate named column_how is in the kind it
+    /// has: a sum over ints an int, a count an int, a mean a float, a min
+    /// or max a cell of the column's kind — missing where a group has no
+    /// present cell — and a sum over text is refused.
     #[test]
     fn a_group_keeps_its_keys_kinds() {
         let f = trades();
@@ -350,12 +353,32 @@ mod tests {
         let g = group(&f, "day", &[&sum]).expect("a group");
         assert_eq!(g.columns, vec!["day", "qty_sum"]);
         assert_eq!(column(&g, "day").0, Column::Int(vec![2, 1]));
-        assert_eq!(column(&g, "qty_sum").0, Column::Float(vec![12.0, 51.0]));
+        assert_eq!(column(&g, "qty_sum").0, Column::Int(vec![12, 51]));
         let g = group_keys(&f, &["sym".to_string(), "day".to_string()], &[&sum]).expect("a group");
         assert_eq!(g.columns, vec!["sym", "day", "qty_sum"]);
         assert_eq!(column(&g, "sym").0, Column::Str(vec!["b".into(), "a".into(), "b".into(), "a".into()]));
         assert_eq!(column(&g, "day").0, Column::Int(vec![2, 1, 1, 2]));
-        assert_eq!(column(&g, "qty_sum").0, Column::Float(vec![10.0, 1.0, 50.0, 2.0]));
+        assert_eq!(column(&g, "qty_sum").0, Column::Int(vec![10, 1, 50, 2]));
+        let pair = |c: &str, how: &str| [c.to_string(), how.to_string()];
+        let (count, mean, lo, hi, best) = (pair("qty", "count"), pair("px", "mean"), pair("px", "min"), pair("sym", "max"), pair("day", "max"));
+        let g = group(&f, "sym", &[&count, &mean, &lo, &hi, &best]).expect("a group");
+        assert_eq!(g.columns, vec!["sym", "qty_count", "px_mean", "px_min", "sym_max", "day_max"]);
+        assert_eq!(column(&g, "qty_count"), (Column::Int(vec![3, 2]), vec![true, true]));
+        assert_eq!(column(&g, "px_mean"), (Column::Float(vec![1.0, 3.0]), vec![true, true]));
+        assert_eq!(column(&g, "px_min"), (Column::Float(vec![0.5, 2.0]), vec![true, true]));
+        assert_eq!(column(&g, "sym_max"), (Column::Str(vec!["b".into(), "a".into()]), vec![true, true]));
+        assert_eq!(column(&g, "day_max"), (Column::Int(vec![2, 2]), vec![true, true]));
+        // a group with no present cell: its min, max and mean are missing,
+        // its sum 0 and its count 0
+        let holes = CrowFrame::new(vec!["k".into(), "x".into()], vec![Column::Str(vec!["a".into(), "b".into(), "b".into()]), Column::Int(vec![0, 4, 6])], vec![vec![true; 3], vec![false, true, true]]);
+        let g = group(&holes, "k", &[&pair("x", "min"), &pair("x", "mean"), &pair("x", "sum"), &pair("x", "count")]).expect("a group");
+        assert_eq!(column(&g, "x_min"), (Column::Int(vec![0, 4]), vec![false, true]));
+        let (means, present) = column(&g, "x_mean");
+        assert!(matches!(means, Column::Float(v) if v[0].is_nan() && v[1] == 5.0) && present == vec![false, true]);
+        assert_eq!(column(&g, "x_sum"), (Column::Int(vec![0, 10]), vec![true, true]));
+        assert_eq!(column(&g, "x_count"), (Column::Int(vec![0, 2]), vec![true, true]));
+        assert_eq!(group(&f, "day", &[&pair("sym", "sum")]).map(|_| ()), Err("group: sum of column 'sym', which holds text".to_string()));
+        assert_eq!(group(&f, "day", &[&pair("sym", "mean")]).map(|_| ()), Err("group: mean of column 'sym', which holds text".to_string()));
         assert_eq!(group_keys(&f, &[], &[&sum]).map(|_| ()), Err("group: a key is needed — group[frame, 'col', …] or group[frame, ['a', 'b'], …]".to_string()));
         assert_eq!(group_keys(&f, &["sym".to_string(), "sym".to_string()], &[&sum]).map(|_| ()), Err("group: key 'sym' is named twice".to_string()));
         assert_eq!(group_keys(&f, &["sym".to_string(), "nope".to_string()], &[&sum]).map(|_| ()), Err("group: column 'nope' not found".to_string()));
@@ -397,7 +420,8 @@ mod tests {
         let f = trades();
         let by = ["sym".to_string()];
         let c = |r: Result<CrowColumn, String>| r.map(|c| ((*c.data).clone(), (*c.valid).clone()));
-        assert_eq!(c(window(&f, "qty", "sum", 0, &by)), Ok((Column::Float(vec![10.0, 1.0, 30.0, 3.0, 60.0]), vec![true; 5])));
+        assert_eq!(c(window(&f, "qty", "sum", 0, &by)), Ok((Column::Int(vec![10, 1, 30, 3, 60]), vec![true; 5])));
+        assert_eq!(c(window(&f, "qty", "max", 2, &[])), Ok((Column::Int(vec![10, 10, 20, 20, 30]), vec![true; 5])));
         assert_eq!(c(window(&f, "qty", "mean", 2, &by)), Ok((Column::Float(vec![10.0, 1.0, 15.0, 1.5, 25.0]), vec![true; 5])));
         assert_eq!(c(window(&f, "px", "max", 0, &[])), Ok((Column::Float(vec![1.5, 2.0, 2.0, 4.0, 4.0]), vec![true; 5])));
         assert_eq!(c(window(&f, "px", "min", 2, &[])), Ok((Column::Float(vec![1.5, 1.5, 0.5, 0.5, 1.0]), vec![true; 5])));
@@ -427,5 +451,37 @@ mod tests {
         let f = CrowFrame::new(vec!["n".into()], vec![Column::Int(vec![1, 0])], vec![vec![true, false]]);
         let copied = with(&f, "m", Cells::from(f.col_native("n").expect("the column"))).expect("two rows");
         assert_eq!(copied.col_native("m").map(|c| (*c.valid).clone()), Some(vec![true, false]));
+    }
+
+    /// A sort is stable — equal cells keep their order — with a missing
+    /// cell, or a float that is not a number, last whichever way it goes;
+    /// text orders by character code.
+    #[test]
+    fn a_sort_is_stable_with_missing_cells_last() {
+        let f = CrowFrame::new(
+            vec!["k".into(), "x".into(), "s".into()],
+            vec![Column::Int(vec![2, 1, 2, 1, 3]), Column::Float(vec![1.0, f64::NAN, 2.0, 3.0, 0.5]), Column::Str(vec!["b".into(), "a".into(), "B".into(), String::new(), "c".into()])],
+            vec![vec![true, true, true, false, true], vec![true; 5], vec![true, true, true, false, true]],
+        );
+        let s = |g: &CrowFrame| column(g, "s");
+        let text = |cells: &[&str]| Column::Str(cells.iter().map(|c| c.to_string()).collect());
+        assert_eq!(s(&sort(&f, "k").expect("sorted")), (text(&["a", "b", "B", "c", ""]), vec![true, true, true, true, false]));
+        assert_eq!(s(&sort_by(&f, "k", true).expect("sorted")), (text(&["c", "b", "B", "a", ""]), vec![true, true, true, true, false]));
+        assert_eq!(s(&sort(&f, "x").expect("sorted")), (text(&["c", "b", "B", "", "a"]), vec![true, true, true, false, true]));
+        assert_eq!(s(&sort_by(&f, "x", true).expect("sorted")), (text(&["", "B", "b", "c", "a"]), vec![false, true, true, true, true]));
+        assert_eq!(column(&sort(&f, "s").expect("sorted"), "k"), (Column::Int(vec![2, 1, 2, 3, 1]), vec![true, true, true, true, false]));
+    }
+
+    /// `unique` answers a column's distinct present cells, first seen
+    /// first, in the column's own kind.
+    #[test]
+    fn unique_keeps_the_columns_kind() {
+        let f = trades();
+        let cells = |c: CrowColumn| ((*c.data).clone(), (*c.valid).clone());
+        assert_eq!(unique(&f, "day").map(cells), Ok((Column::Int(vec![2, 1]), vec![true, true])));
+        assert_eq!(unique(&f, "sym").map(cells), Ok((Column::Str(vec!["b".into(), "a".into()]), vec![true, true])));
+        let holes = CrowFrame::new(vec!["x".into()], vec![Column::Float(vec![1.5, 0.0, 1.5, 2.5])], vec![vec![true, false, true, true]]);
+        assert_eq!(unique(&holes, "x").map(cells), Ok((Column::Float(vec![1.5, 2.5]), vec![true, true])));
+        assert_eq!(unique(&f, "nope").map(|_| ()), Err("unique: column 'nope' not found".to_string()));
     }
 }

@@ -1,0 +1,10 @@
+column,dtype
+id,int
+symbol,str
+day,int
+side,str
+qty,int
+price,float
+filled,bool
+at,datetime
+note,str

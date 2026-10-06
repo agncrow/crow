@@ -268,7 +268,9 @@ impl CrowColumn {
             Column::Float(v) => crate::json::float_to_json(v[idx]),
             Column::Str(v) => serde_json::Value::String(v[idx].clone()),
             Column::Bool(v) => serde_json::Value::Bool(v[idx]),
-            Column::DateTime(ms, _) => crate::json::float_to_json(ms[idx] as f64 / 1000.0),
+            // (the interpreter reads the cell as its text; compiled, it had
+            // been seconds, so `str` of one differed between the modes)
+            Column::DateTime(ms, offsets) => serde_json::Value::String(format_datetime(ms[idx], offsets[idx])),
         }
     }
 
@@ -433,7 +435,7 @@ pub fn csv_frame(content: &str) -> Result<CrowFrame, String> {
     // Find header end
     let newline_pos = content.find('\n').ok_or_else(|| "load: empty file".to_string())?;
     let header = content[..newline_pos].trim();
-    let col_names: Vec<String> = header.split(',').map(|s| s.trim().to_string()).collect();
+    let col_names: Vec<String> = if header.contains('"') { split_quoted(header) } else { header.split(',').map(|s| s.trim().to_string()).collect() };
     let ncols = col_names.len();
     if ncols == 0 {
         return Err("load: no columns found".to_string());
@@ -485,14 +487,24 @@ pub fn csv_frame(content: &str) -> Result<CrowFrame, String> {
     }
     let nrows = line_ranges.len();
 
-    // Parallel: each column parses its field from all rows and infers type
+    // Parallel: each column parses its field from all rows and infers type.
+    // A file with a quoted cell (a comma or a quote inside, RFC 4180) is
+    // split by the quoting rules, line by line, first; one without takes
+    // the fast path. (A quoted cell had been split at its comma.)
     let body_str = &content[body_start..];
+    let quoted: Option<Vec<Vec<String>>> = if body_str.contains('"') {
+        Some(line_ranges.par_iter().map(|&(ls, le)| split_quoted(&body_str[ls..le])).collect())
+    } else {
+        None
+    };
     let results: Vec<(Column, Vec<bool>)> = (0..ncols).into_par_iter().map(|ci| {
         let mut raw: Vec<&str> = Vec::with_capacity(nrows);
         let mut valid: Vec<bool> = Vec::with_capacity(nrows);
-        for &(ls, le) in &line_ranges {
-            let line = &body_str[ls..le];
-            let field = nth_field_fast(line, ci);
+        for (row, &(ls, le)) in line_ranges.iter().enumerate() {
+            let field = match &quoted {
+                Some(rows) => rows[row].get(ci).map(String::as_str).unwrap_or(""),
+                None => nth_field_fast(&body_str[ls..le], ci),
+            };
             let is_valid = !field.is_empty();
             valid.push(is_valid);
             raw.push(field);
@@ -530,6 +542,64 @@ fn nth_field_fast(line: &str, n: usize) -> &str {
     }
 }
 
+/// A line's fields by the quoting rules (RFC 4180): a field in quotes may
+/// hold commas and quotes, a quote inside it written twice; a field not in
+/// quotes is trimmed, as the fast path trims one. A line break inside
+/// quotes is not read: the file is split into lines first.
+fn split_quoted(line: &str) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut field = String::new();
+    let mut chars = line.chars().peekable();
+    let mut in_quotes = false;
+    let mut was_quoted = false;
+    while let Some(c) = chars.next() {
+        if in_quotes {
+            if c == '"' {
+                if chars.peek() == Some(&'"') {
+                    field.push('"');
+                    chars.next();
+                } else {
+                    in_quotes = false;
+                }
+            } else {
+                field.push(c);
+            }
+        } else if c == '"' && field.trim().is_empty() {
+            field.clear();
+            in_quotes = true;
+            was_quoted = true;
+        } else if c == ',' {
+            fields.push(if was_quoted { std::mem::take(&mut field) } else { field.trim().to_string() });
+            field.clear();
+            was_quoted = false;
+        } else {
+            field.push(c);
+        }
+    }
+    fields.push(if was_quoted { field } else { field.trim().to_string() });
+    fields
+}
+
+/// The bool a cell's text writes, as `save` writes one (`true`, `false`)
+/// and as pandas does (`True`, `False`, and in capitals).
+fn bool_text(s: &str) -> Option<bool> {
+    match s {
+        "true" | "True" | "TRUE" => Some(true),
+        "false" | "False" | "FALSE" => Some(false),
+        _ => None,
+    }
+}
+
+/// The text of a cell as a CSV field: quoted where it holds a comma, a
+/// quote (written twice inside) or a line break, as it is read back.
+fn csv_field(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.contains([',', '"', '\n', '\r']) {
+        std::borrow::Cow::Owned(format!("\"{}\"", text.replace('"', "\"\"")))
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    }
+}
+
 /// Infer column type from &str slices (avoids String allocation during parsing).
 fn infer_and_convert_refs(raw: &[&str], valid: &[bool]) -> Column {
     // Sample first few valid values for type inference (avoid scanning all values)
@@ -561,6 +631,16 @@ fn infer_and_convert_refs(raw: &[&str], valid: &[bool]) -> Column {
         let data: Option<Vec<f64>> = raw.iter().zip(valid.iter()).map(|(s, &v)| if v { s.parse().ok() } else { Some(f64::NAN) }).collect();
         if let Some(data) = data {
             return Column::Float(data);
+        }
+    }
+
+    // true and false make a column of bools, as `save` writes one and as
+    // pandas reads one (it had loaded as text, so `save` then `load` lost
+    // the kind)
+    if sampled.iter().all(|s| bool_text(s).is_some()) {
+        let data: Option<Vec<bool>> = raw.iter().zip(valid.iter()).map(|(s, &v)| if v { bool_text(s) } else { Some(false) }).collect();
+        if let Some(data) = data {
+            return Column::Bool(data);
         }
     }
 
@@ -804,72 +884,39 @@ impl CrowFrame {
         Ok(CrowFrame::new(self.columns.clone(), new_data, new_valid))
     }
 
-    /// Sort by a column. `descending` = true for desc.
-    /// Uses key-extraction sort for numeric types (cache-friendly) and
-    /// parallel sort + parallel column reordering.
+    /// Sort by a column, ascending or descending: stable — rows whose cells
+    /// are equal keep their order, so a sort by one column then another
+    /// orders by both — with a missing cell (or a float that is not a
+    /// number) last either way, as pandas orders one. (The sort had been
+    /// unstable, and a missing int cell had sorted as 0.)
     pub fn sort(&self, col_name: &str, descending: bool) -> Result<CrowFrame, String> {
         let idx = self.col_index(col_name)
             .ok_or_else(|| format!("sort: column '{}' not found", col_name))?;
-        let nrows = self.nrows();
-
-        // For numeric types: sort (key, index) pairs for cache locality
-        let indices: Vec<usize> = match self.data[idx].as_ref() {
-            Column::Int(v) => {
-                let mut pairs: Vec<(i64, u32)> = v.iter().copied()
-                    .enumerate().map(|(i, val)| (val, i as u32)).collect();
-                if descending {
-                    pairs.par_sort_unstable_by(|a, b| b.0.cmp(&a.0));
-                } else {
-                    pairs.par_sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        let valid = self.validity[idx].as_ref();
+        let column = self.data[idx].as_ref();
+        let mut indices: Vec<usize> = (0..self.nrows()).collect();
+        fn ordered<K: PartialOrd>(indices: &mut [usize], present: &[bool], key: impl Fn(usize) -> K + Sync, descending: bool) {
+            use std::cmp::Ordering;
+            indices.par_sort_by(|&a, &b| match (present[a], present[b]) {
+                (false, false) => Ordering::Equal,
+                (false, true) => Ordering::Greater,
+                (true, false) => Ordering::Less,
+                (true, true) => {
+                    let o = key(a).partial_cmp(&key(b)).unwrap_or(Ordering::Equal);
+                    if descending { o.reverse() } else { o }
                 }
-                pairs.iter().map(|p| p.1 as usize).collect()
-            }
+            });
+        }
+        match column {
+            Column::Int(v) => ordered(&mut indices, valid, |i| v[i], descending),
             Column::Float(v) => {
-                // Convert to bits for total ordering (handles NaN)
-                let mut pairs: Vec<(u64, u32)> = v.iter()
-                    .enumerate().map(|(i, &val)| {
-                        let bits = val.to_bits();
-                        // Flip to get proper ordering: positive floats ascending, negatives descending
-                        let sortable = if val.is_sign_negative() { !bits } else { bits | (1u64 << 63) };
-                        (sortable, i as u32)
-                    }).collect();
-                if descending {
-                    pairs.par_sort_unstable_by(|a, b| b.0.cmp(&a.0));
-                } else {
-                    pairs.par_sort_unstable_by(|a, b| a.0.cmp(&b.0));
-                }
-                pairs.iter().map(|p| p.1 as usize).collect()
+                let present: Vec<bool> = (0..v.len()).map(|i| valid[i] && !v[i].is_nan()).collect();
+                ordered(&mut indices, &present, |i| v[i], descending)
             }
-            Column::Str(v) => {
-                let mut idxs: Vec<usize> = (0..nrows).collect();
-                idxs.par_sort_unstable_by(|&a, &b| {
-                    let cmp = v[a].cmp(&v[b]);
-                    if descending { cmp.reverse() } else { cmp }
-                });
-                idxs
-            }
-            Column::Bool(v) => {
-                let mut pairs: Vec<(u8, u32)> = v.iter()
-                    .enumerate().map(|(i, &val)| (val as u8, i as u32)).collect();
-                if descending {
-                    pairs.par_sort_unstable_by(|a, b| b.0.cmp(&a.0));
-                } else {
-                    pairs.par_sort_unstable_by(|a, b| a.0.cmp(&b.0));
-                }
-                pairs.iter().map(|p| p.1 as usize).collect()
-            }
-            Column::DateTime(millis, _) => {
-                let mut pairs: Vec<(i64, u32)> = millis.iter().copied()
-                    .enumerate().map(|(i, val)| (val, i as u32)).collect();
-                if descending {
-                    pairs.par_sort_unstable_by(|a, b| b.0.cmp(&a.0));
-                } else {
-                    pairs.par_sort_unstable_by(|a, b| a.0.cmp(&b.0));
-                }
-                pairs.iter().map(|p| p.1 as usize).collect()
-            }
-        };
-
+            Column::Str(v) => ordered(&mut indices, valid, |i| v[i].as_str(), descending),
+            Column::Bool(v) => ordered(&mut indices, valid, |i| v[i], descending),
+            Column::DateTime(millis, _) => ordered(&mut indices, valid, |i| millis[i], descending),
+        }
         Ok(self.reorder_rows(&indices))
     }
 
@@ -1105,17 +1152,17 @@ impl CrowFrame {
         let mut result_valid: Vec<Vec<bool>> = vec![vec![true; ngroups]; keys.len()];
 
         // Aggregate columns — process each agg column in parallel
-        let agg_results: Vec<(String, Vec<f64>)> = aggs.par_iter().zip(agg_cols.par_iter()).map(|((col_name, agg_fn), &ci)| {
+        let agg_results: Result<Vec<(String, Column, Vec<bool>)>, String> = aggs.par_iter().zip(agg_cols.par_iter()).map(|((col_name, agg_fn), &ci)| {
             let agg_name = format!("{}_{:?}", col_name, agg_fn).to_lowercase();
             let col_valid = self.validity[ci].as_ref();
-            let vals = aggregate_by_groups(self.data[ci].as_ref(), col_valid, &group_ids, ngroups, *agg_fn);
-            (agg_name, vals)
+            let (data, valid) = aggregate_by_groups(col_name, self.data[ci].as_ref(), col_valid, &group_ids, ngroups, *agg_fn)?;
+            Ok((agg_name, data, valid))
         }).collect();
 
-        for (agg_name, vals) in agg_results {
+        for (agg_name, data, valid) in agg_results? {
             result_cols.push(agg_name);
-            result_valid.push(vec![true; ngroups]);
-            result_data.push(Column::Float(vals));
+            result_valid.push(valid);
+            result_data.push(data);
         }
 
         Ok(CrowFrame::new(result_cols, result_data, result_valid))
@@ -1263,29 +1310,26 @@ impl CrowFrame {
             Window::Sum | Window::Mean | Window::Min | Window::Max => {
                 let xs = self.col_native(col).ok_or_else(|| format!("window: column '{}' not found", col))?.numbers()?.to_vec();
                 let mut out = vec![0.0; nrows];
+                // a sum or a mean is a compensated running total, each
+                // cell added as its row comes and, in a trailing window,
+                // taken off as it leaves — pandas's `roll_sum` and
+                // `roll_mean`, to the last digit
                 let parts: Vec<Vec<(usize, f64)>> = members
                     .par_iter()
                     .map(|rows| {
                         let mut acc = Vec::with_capacity(rows.len());
-                        let mut running = 0.0;
+                        let mut running = Roll::default();
                         for (k, &row) in rows.iter().enumerate() {
-                            let value = if n == 0 {
-                                running += xs[row];
-                                match how {
-                                    Window::Sum => running,
-                                    Window::Mean => running / (k + 1) as f64,
-                                    Window::Min => rows[..=k].iter().map(|&r| xs[r]).fold(f64::INFINITY, f64::min),
-                                    _ => rows[..=k].iter().map(|&r| xs[r]).fold(f64::NEG_INFINITY, f64::max),
-                                }
-                            } else {
-                                let from = k.saturating_sub(n - 1);
-                                let window = rows[from..=k].iter().map(|&r| xs[r]);
-                                match how {
-                                    Window::Sum => window.sum(),
-                                    Window::Mean => window.sum::<f64>() / (k + 1 - from) as f64,
-                                    Window::Min => window.fold(f64::INFINITY, f64::min),
-                                    _ => window.fold(f64::NEG_INFINITY, f64::max),
-                                }
+                            let from = if n == 0 { 0 } else { k.saturating_sub(n - 1) };
+                            if n > 0 && k >= n {
+                                running.remove(xs[rows[k - n]]);
+                            }
+                            running.add(xs[row]);
+                            let value = match how {
+                                Window::Sum => running.sum(),
+                                Window::Mean => running.mean(),
+                                Window::Min => rows[from..=k].iter().map(|&r| xs[r]).fold(f64::INFINITY, f64::min),
+                                _ => rows[from..=k].iter().map(|&r| xs[r]).fold(f64::NEG_INFINITY, f64::max),
                             };
                             acc.push((row, value));
                         }
@@ -1295,7 +1339,14 @@ impl CrowFrame {
                 for (row, value) in parts.into_iter().flatten() {
                     out[row] = value;
                 }
-                Ok(CrowColumn { data: Arc::new(Column::Float(out)), valid: Arc::new(out_valid_from(&|_| true)) })
+                // a sum, a min or a max over an int column is an int, as the
+                // column's own cells are (it had been a float)
+                let data = if matches!(column, Column::Int(_)) && !matches!(how, Window::Mean) {
+                    Column::Int(out.iter().map(|x| *x as i64).collect())
+                } else {
+                    Column::Float(out)
+                };
+                Ok(CrowColumn { data: Arc::new(data), valid: Arc::new(out_valid_from(&|_| true)) })
             }
             Window::Count => {
                 let mut out = vec![0i64; nrows];
@@ -1383,9 +1434,22 @@ impl CrowFrame {
             col_specs.push((other, ci, false));
         }
 
-        // Gather all columns in parallel
+        // Gather all columns in parallel; the key column holds each row's
+        // key from whichever side has the row (a right or outer join's
+        // row with no match on the left had lost its key)
         let gathered: Vec<(Column, Vec<bool>)> = col_specs.par_iter().map(|&(frame, ci, is_left)| {
             let idx_list = if is_left { &left_indices } else { &right_indices };
+            if is_left && ci == li {
+                let (mut keys, mut present) = gather_column(frame.data[ci].as_ref(), frame.validity[ci].as_ref(), idx_list);
+                let (right_keys, right_present) = gather_column(other.data[ri].as_ref(), other.validity[ri].as_ref(), &right_indices);
+                for (row, l) in left_indices.iter().enumerate() {
+                    if l.is_none() && right_present[row] {
+                        keys = fill_cell(keys, row, &right_keys);
+                        present[row] = true;
+                    }
+                }
+                return (keys, present);
+            }
             gather_column(frame.data[ci].as_ref(), frame.validity[ci].as_ref(), idx_list)
         }).collect();
 
@@ -1642,75 +1706,217 @@ impl Window {
     }
 }
 
-fn aggregate_by_groups(col: &Column, valid: &[bool], group_ids: &[u32], ngroups: usize, agg: AggFn) -> Vec<f64> {
-    let nrows = group_ids.len();
-    match agg {
-        AggFn::Count => {
-            let mut counts = vec![0.0f64; ngroups];
-            for row in 0..nrows {
-                let gid = group_ids[row];
-                if gid != u32::MAX && valid[row] {
-                    counts[gid as usize] += 1.0;
-                }
-            }
-            counts
+/// A running total with Kahan compensation, added to as pandas adds a
+/// group's cells (its `group_sum` and `group_mean`), so a sum or a mean
+/// over floats is pandas's to the last digit — and nearer the true sum
+/// than a plain running total.
+#[derive(Clone, Copy, Default)]
+struct Kahan {
+    total: f64,
+    compensation: f64,
+}
+
+impl Kahan {
+    fn add(&mut self, x: f64) {
+        let y = x - self.compensation;
+        let t = self.total + y;
+        self.compensation = t - self.total - y;
+        self.total = t;
+    }
+}
+
+/// A window's running total as pandas keeps one (`roll_sum`, `roll_mean`):
+/// a compensated total with one compensation for the cells added and
+/// another for those taken off; a count of the negatives, so a sum of
+/// nothing negative is never below 0; and a count of the equal cells in a
+/// row, so a window whose cells are all one value answers that value
+/// exactly (the compensated total could be off by a bit).
+#[derive(Clone, Copy, Default)]
+struct Roll {
+    total: f64,
+    added: f64,
+    removed: f64,
+    count: usize,
+    negatives: usize,
+    same: usize,
+    last: f64,
+}
+
+impl Roll {
+    fn add(&mut self, x: f64) {
+        self.count += 1;
+        let y = x - self.added;
+        let t = self.total + y;
+        self.added = t - self.total - y;
+        self.total = t;
+        if x < 0.0 {
+            self.negatives += 1;
         }
-        AggFn::Sum | AggFn::Mean => {
-            let mut sums = vec![0.0f64; ngroups];
-            let mut counts = vec![0u64; ngroups];
-            for row in 0..nrows {
-                let gid = group_ids[row];
-                if gid == u32::MAX || !valid[row] { continue; }
-                let v = match col {
-                    Column::Int(d) => d[row] as f64,
-                    Column::Float(d) => d[row],
-                    Column::Bool(d) => if d[row] { 1.0 } else { 0.0 },
-                    _ => continue,
-                };
-                if v.is_nan() { continue; }
-                sums[gid as usize] += v;
-                counts[gid as usize] += 1;
-            }
-            if matches!(agg, AggFn::Mean) {
-                for i in 0..ngroups {
-                    sums[i] = if counts[i] > 0 { sums[i] / counts[i] as f64 } else { f64::NAN };
-                }
-            }
-            sums
+        if self.count > 1 && x == self.last {
+            self.same += 1;
+        } else {
+            self.same = 1;
         }
-        AggFn::Min => {
-            let mut mins = vec![f64::INFINITY; ngroups];
-            for row in 0..nrows {
-                let gid = group_ids[row];
-                if gid == u32::MAX || !valid[row] { continue; }
-                let v = match col {
-                    Column::Int(d) => d[row] as f64,
-                    Column::Float(d) => d[row],
-                    Column::Bool(d) => if d[row] { 1.0 } else { 0.0 },
-                    _ => continue,
-                };
-                if !v.is_nan() && v < mins[gid as usize] { mins[gid as usize] = v; }
-            }
-            mins
+        self.last = x;
+    }
+
+    fn remove(&mut self, x: f64) {
+        self.count -= 1;
+        let y = -x - self.removed;
+        let t = self.total + y;
+        self.removed = t - self.total - y;
+        self.total = t;
+        if x < 0.0 {
+            self.negatives -= 1;
         }
-        AggFn::Max => {
-            let mut maxs = vec![f64::NEG_INFINITY; ngroups];
-            for row in 0..nrows {
-                let gid = group_ids[row];
-                if gid == u32::MAX || !valid[row] { continue; }
-                let v = match col {
-                    Column::Int(d) => d[row] as f64,
-                    Column::Float(d) => d[row],
-                    Column::Bool(d) => if d[row] { 1.0 } else { 0.0 },
-                    _ => continue,
-                };
-                if !v.is_nan() && v > maxs[gid as usize] { maxs[gid as usize] = v; }
-            }
-            maxs
+    }
+
+    fn sum(&self) -> f64 {
+        if self.same >= self.count {
+            return self.last * self.count as f64;
+        }
+        let total = self.total;
+        if (self.negatives == 0 && total < 0.0) || (self.negatives == self.count && total > 0.0) {
+            0.0
+        } else {
+            total
+        }
+    }
+
+    fn mean(&self) -> f64 {
+        if self.same >= self.count {
+            return self.last;
+        }
+        let mean = self.total / self.count as f64;
+        if (self.negatives == 0 && mean < 0.0) || (self.negatives == self.count && mean > 0.0) {
+            0.0
+        } else {
+            mean
         }
     }
 }
 
+/// A column aggregated by group, each aggregate in the kind it has: a
+/// `count` the present cells, an int; a `sum` an int over ints or bools
+/// and a float over floats, 0 where a group has no present cell; a `mean`
+/// a float; a `min` or `max` a cell of the column's own kind — numbers by
+/// value, text by character code, bools false before true, moments by
+/// their instant — and a missing cell where a group has none present. A
+/// missing cell is skipped, as SQL's aggregates skip NULL. (Every
+/// aggregate had been a float, and a sum over text had silently been 0.)
+fn aggregate_by_groups(name: &str, col: &Column, valid: &[bool], group_ids: &[u32], ngroups: usize, agg: AggFn) -> Result<(Column, Vec<bool>), String> {
+    use std::cmp::Ordering;
+    let rows = group_ids.iter().enumerate().filter_map(|(row, &g)| (g != u32::MAX && valid[row]).then_some((row, g as usize)));
+    // a float that is not a number is no cell to aggregate
+    let present = |row: usize| match col {
+        Column::Float(d) => !d[row].is_nan(),
+        _ => true,
+    };
+    let holds = match col {
+        Column::Str(_) => Some("text"),
+        Column::DateTime(..) => Some("moments"),
+        _ => None,
+    };
+    match agg {
+        AggFn::Count => {
+            let mut counts = vec![0i64; ngroups];
+            for (_, g) in rows {
+                counts[g] += 1;
+            }
+            Ok((Column::Int(counts), vec![true; ngroups]))
+        }
+        AggFn::Sum => match col {
+            Column::Int(d) => {
+                let mut sums = vec![0i64; ngroups];
+                for (row, g) in rows {
+                    sums[g] = sums[g].wrapping_add(d[row]);
+                }
+                Ok((Column::Int(sums), vec![true; ngroups]))
+            }
+            Column::Bool(d) => {
+                let mut sums = vec![0i64; ngroups];
+                for (row, g) in rows {
+                    sums[g] += d[row] as i64;
+                }
+                Ok((Column::Int(sums), vec![true; ngroups]))
+            }
+            Column::Float(d) => {
+                let mut sums = vec![Kahan::default(); ngroups];
+                for (row, g) in rows {
+                    if !d[row].is_nan() {
+                        sums[g].add(d[row]);
+                    }
+                }
+                Ok((Column::Float(sums.iter().map(|k| k.total).collect()), vec![true; ngroups]))
+            }
+            Column::Str(_) | Column::DateTime(..) => Err(format!("group: sum of column '{}', which holds {}", name, holds.unwrap_or("no numbers"))),
+        },
+        AggFn::Mean => {
+            if let Some(what) = holds {
+                return Err(format!("group: mean of column '{}', which holds {}", name, what));
+            }
+            let value = |row: usize| match col {
+                Column::Int(d) => d[row] as f64,
+                Column::Float(d) => d[row],
+                Column::Bool(d) => d[row] as u8 as f64,
+                _ => f64::NAN,
+            };
+            let mut sums = vec![Kahan::default(); ngroups];
+            let mut counts = vec![0u64; ngroups];
+            for (row, g) in rows {
+                if present(row) {
+                    sums[g].add(value(row));
+                    counts[g] += 1;
+                }
+            }
+            let valid: Vec<bool> = counts.iter().map(|&c| c > 0).collect();
+            let means: Vec<f64> = sums.iter().zip(&counts).map(|(s, &c)| if c > 0 { s.total / c as f64 } else { f64::NAN }).collect();
+            Ok((Column::Float(means), valid))
+        }
+        AggFn::Min | AggFn::Max => {
+            // the row holding each group's least, or greatest, cell so far
+            let better = |candidate: usize, held: usize| -> bool {
+                let o = match col {
+                    Column::Int(d) => d[candidate].cmp(&d[held]),
+                    Column::Float(d) => d[candidate].partial_cmp(&d[held]).unwrap_or(Ordering::Equal),
+                    Column::Str(d) => d[candidate].cmp(&d[held]),
+                    Column::Bool(d) => d[candidate].cmp(&d[held]),
+                    Column::DateTime(ms, _) => ms[candidate].cmp(&ms[held]),
+                };
+                matches!((agg, o), (AggFn::Min, Ordering::Less) | (AggFn::Max, Ordering::Greater))
+            };
+            let mut best: Vec<Option<usize>> = vec![None; ngroups];
+            for (row, g) in rows {
+                if !present(row) {
+                    continue;
+                }
+                match best[g] {
+                    Some(held) if !better(row, held) => {}
+                    _ => best[g] = Some(row),
+                }
+            }
+            Ok(take_some_rows(col, &best))
+        }
+    }
+}
+
+/// `into` with its cell at `row` taken from `from`'s (the columns are of
+/// one kind: a join's two key columns).
+fn fill_cell(mut into: Column, row: usize, from: &Column) -> Column {
+    match (&mut into, from) {
+        (Column::Int(a), Column::Int(b)) => a[row] = b[row],
+        (Column::Float(a), Column::Float(b)) => a[row] = b[row],
+        (Column::Str(a), Column::Str(b)) => a[row] = b[row].clone(),
+        (Column::Bool(a), Column::Bool(b)) => a[row] = b[row],
+        (Column::DateTime(a, ao), Column::DateTime(b, bo)) => {
+            a[row] = b[row];
+            ao[row] = bo[row];
+        }
+        (Column::Str(a), b) => a[row] = b.fmt_cell(row, true),
+        _ => {}
+    }
+    into
+}
 
 fn gather_column(col: &Column, valid: &[bool], indices: &[Option<usize>]) -> (Column, Vec<bool>) {
     let new_valid: Vec<bool> = indices.iter().map(|opt| {
@@ -1751,7 +1957,8 @@ impl CrowFrame {
         use std::io::{Write, BufWriter};
         let mut w = BufWriter::with_capacity(8 * 1024 * 1024, out);
         // Header
-        writeln!(w, "{}", self.columns.join(",")).map_err(|e| format!("save: {}", e))?;
+        let header: Vec<String> = self.columns.iter().map(|c| csv_field(c).into_owned()).collect();
+        writeln!(w, "{}", header.join(",")).map_err(|e| format!("save: {}", e))?;
 
         let nrows = self.nrows();
         let ncols = self.ncols();
@@ -1793,7 +2000,7 @@ impl CrowFrame {
                     for row in 0..nrows {
                         offsets.push(buf.len() as u32);
                         if valid[row] {
-                            buf.extend_from_slice(v[row].as_bytes());
+                            buf.extend_from_slice(csv_field(&v[row]).as_bytes());
                         }
                     }
                 }
@@ -1849,97 +2056,22 @@ impl CrowFrame {
         Ok(())
     }
 
-    /// Get unique values in a column as strings.
-    /// Uses early termination: stops scanning if no new values found after a long stretch.
-    pub fn unique_col(&self, col_name: &str) -> Result<Vec<String>, String> {
+    /// The column's distinct present cells, first seen first, in the
+    /// column's own kind. (They had come out as text, so an int column's
+    /// could not be added to; and a scan that gave up after a long stretch
+    /// without a new cell could miss one further on.)
+    pub fn unique_col(&self, col_name: &str) -> Result<CrowColumn, String> {
         let idx = self.col_index(col_name)
             .ok_or_else(|| format!("unique: column '{}' not found", col_name))?;
-        let valid = self.validity[idx].as_ref();
-        let nrows = self.nrows();
-        // Early exit threshold: if no new value found in this many rows, assume done
-        let patience = 100_000.max(nrows / 10);
-
-        match self.data[idx].as_ref() {
-            Column::Int(v) => {
-                let mut seen = std::collections::HashSet::new();
-                let mut result = Vec::new();
-                let mut since_last_new = 0usize;
-                for (i, &val) in v.iter().enumerate() {
-                    if valid[i] {
-                        if seen.insert(val) {
-                            result.push(val.to_string());
-                            since_last_new = 0;
-                        } else {
-                            since_last_new += 1;
-                            if since_last_new >= patience { break; }
-                        }
-                    }
-                }
-                Ok(result)
-            }
-            Column::Float(v) => {
-                let mut seen = std::collections::HashSet::new();
-                let mut result = Vec::new();
-                let mut since_last_new = 0usize;
-                for (i, &val) in v.iter().enumerate() {
-                    if valid[i] {
-                        if seen.insert(val.to_bits()) {
-                            result.push(format!("{}", val));
-                            since_last_new = 0;
-                        } else {
-                            since_last_new += 1;
-                            if since_last_new >= patience { break; }
-                        }
-                    }
-                }
-                Ok(result)
-            }
-            Column::Str(v) => {
-                let mut seen = std::collections::HashSet::new();
-                let mut result = Vec::new();
-                let mut since_last_new = 0usize;
-                for (i, val) in v.iter().enumerate() {
-                    if valid[i] {
-                        if seen.insert(val.as_str()) {
-                            result.push(val.clone());
-                            since_last_new = 0;
-                        } else {
-                            since_last_new += 1;
-                            if since_last_new >= patience { break; }
-                        }
-                    }
-                }
-                Ok(result)
-            }
-            Column::Bool(v) => {
-                let mut seen = std::collections::HashSet::new();
-                let mut result = Vec::new();
-                for (i, &val) in v.iter().enumerate() {
-                    if valid[i] && seen.insert(val) {
-                        result.push(val.to_string());
-                    }
-                    if seen.len() == 2 { break; } // Bool: max 2 values
-                }
-                Ok(result)
-            }
-            Column::DateTime(millis, _) => {
-                let mut seen = std::collections::HashSet::new();
-                let mut result = Vec::new();
-                let mut since_last_new = 0usize;
-                for (i, &val) in millis.iter().enumerate() {
-                    if valid[i] {
-                        if seen.insert(val) {
-                            result.push(self.data[idx].fmt_cell(i, true));
-                            since_last_new = 0;
-                        } else {
-                            since_last_new += 1;
-                            if since_last_new >= patience { break; }
-                        }
-                    }
-                }
-                Ok(result)
+        let codes = codes(&self.data[idx], &self.validity[idx]);
+        let mut first_rows = Vec::new();
+        for (row, &code) in codes.iter().enumerate() {
+            if code != u32::MAX && code as usize == first_rows.len() {
+                first_rows.push(row);
             }
         }
+        let n = first_rows.len();
+        Ok(CrowColumn { data: Arc::new(take_rows(&self.data[idx], &first_rows)), valid: Arc::new(vec![true; n]) })
     }
 
     /// Print summary statistics for all numeric columns.
@@ -2535,5 +2667,25 @@ mod datetime_tests {
         assert_eq!(parse_datetime("2024-01-02 08:34:05+05:30"), Some((1_704_164_645_000, 330)));
         assert_eq!(parse_datetime("2024-01-02 03:04:05."), None);
         assert_eq!(parse_datetime("2024-01-02 03:04:05-8"), None);
+    }
+
+    /// A table written and read back keeps a cell with a comma or a quote
+    /// in it (quoted, a quote inside written twice) and a column of bools;
+    /// `True` and `FALSE`, as other writers spell them, read as bools too.
+    #[test]
+    fn a_table_with_quoted_cells_and_bools_is_read_back() {
+        use super::{csv_frame, split_quoted, Column, CrowFrame};
+        let f = CrowFrame::new(
+            vec!["note".into(), "ok".into(), "n".into()],
+            vec![Column::Str(vec!["a, b".into(), "say \"hi\"".into(), "plain".into()]), Column::Bool(vec![true, false, true]), Column::Int(vec![1, 2, 3])],
+            vec![vec![true; 3], vec![true, false, true], vec![true; 3]],
+        );
+        let text = f.to_csv().expect("csv");
+        assert_eq!(text, "note,ok,n\n\"a, b\",true,1\n\"say \"\"hi\"\"\",,2\nplain,true,3\n");
+        assert_eq!(csv_frame(&text).expect("read back"), f);
+        let spelled = csv_frame("flag,word\nTrue,x\nFALSE,\"y, z\"\n").expect("read");
+        assert_eq!(spelled.data[0].as_ref(), &Column::Bool(vec![true, false]));
+        assert_eq!(spelled.data[1].as_ref(), &Column::Str(vec!["x".into(), "y, z".into()]));
+        assert_eq!(split_quoted("\"a,b\", c ,\"\"\"q\"\"\",d"), vec!["a,b", "c", "\"q\"", "d"]);
     }
 }

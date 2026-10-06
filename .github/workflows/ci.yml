@@ -58,6 +58,8 @@ jobs:
           ./target/release/crow run -i docs/book/site.co
       - name: Layout engine agrees with the browser (fixtures measured once, checked without one)
         run: ./target/release/crow test tests/layout/conformance.co
+      - name: Frames agree with pandas (its answers written once, checked without Python)
+        run: ./target/release/crow test tests/parity/185_frames_held_to_pandas.co
       - name: Layout engine's own example (the one place Crow builds its nodes, which types them)
         run: ./target/release/crow test src/modules/layout.co
       - name: The standard modules written in Crow, tested on their own (math.nn, the HTTP client, the protocol and the readers, tokens, msgpack, the WebSocket client, mail, math.stats, the ClickHouse driver, the Postgres driver)

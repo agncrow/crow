@@ -2972,24 +2972,28 @@ fn cmd_test_blocks(filename: &str) {
         .unwrap_or(std::path::Path::new("."));
     let mut visited = std::collections::HashSet::new();
     let stmts = expand_module_imports(&stmts, source_dir, &mut visited);
-    let stmts = match lower::lower_program(&stmts) {
+    let lowered = match lower::lower_program(&stmts) {
         Ok(s) => s,
         Err(e) => { eprintln!("{}", e); process::exit(1); }
     };
     // The validator gates the harness as it gates run and build: a part
     // whose tests pass is a part the program accepts
-    if let Err(e) = infer_and_validate(&stmts, describing()) {
+    if let Err(e) = infer_and_validate(&lowered, describing()) {
         eprintln!("{}", refine_error_lines(&source, &e));
         process::exit(1);
     }
     // `crow test --compiled`: the apps the blocks open are the compiled
     // program (compiled_harness.rs); the blocks themselves run here
     let compiled = std::env::args().any(|a| a == "--compiled");
-    if compiled && compiled_harness::opens_an_app(&stmts) {
+    if compiled && compiled_harness::opens_an_app(&lowered) {
         TEST_CONTROL.store(true, std::sync::atomic::Ordering::SeqCst);
         let binary = transpile_and_compile(filename, true, None, false);
         compiled_harness::use_binary(std::fs::canonicalize(&binary).unwrap_or(binary));
     }
+    // the blocks are prepared from the statements as written: the shared
+    // pipeline lowers them itself, and lowered twice, `window[…, by = …]`
+    // and `request[…, timeout = …]` — their options filled in once — were
+    // refused as too many arguments in every test block
     let (issues, counts) = checker::run_test_blocks(&stmts);
     if counts.blocks == 0 {
         println!("  no test blocks in {} — add `test` after a fn, or `test name[]` anywhere", filename);

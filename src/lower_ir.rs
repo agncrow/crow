@@ -1603,9 +1603,12 @@ impl<'a> Lowerer<'a> {
     /// in the body makes `acc` a list of numbers for every caller (the
     /// compiled program had typed the parameter a list of text, and did
     /// not build). Noted in the call scan, where a local's assignment
-    /// settles its type too.
+    /// settles its type too, and in the settling pass, which types a
+    /// function's locals (a list a function started empty and pushed onto
+    /// had stayed a list of nothing there, and the compiled program did
+    /// not build; the program's top level was refined in the scan).
     fn refine_pushed(&mut self, row: &crate::table::Row, lowered: &[Expr]) {
-        if self.pass != Pass::Scan || row.id != "core.push" {
+        if self.pass == Pass::Final || row.id != "core.push" {
             return;
         }
         let (Some(Expr::Local(holder, _)), Some(item)) = (lowered.first(), lowered.get(1)) else { return };
@@ -1614,7 +1617,11 @@ impl<'a> Lowerer<'a> {
         let item_ty = read(item);
         if open && !matches!(item_ty, CrowType::Unknown | CrowType::Void) {
             let refined = CrowType::Array(Box::new(item_ty));
-            self.ctx.note_scanned_assign(holder, refined.clone());
+            if self.pass == Pass::Scan {
+                self.ctx.note_scanned_assign(holder, refined.clone());
+            } else {
+                self.ctx.vars.insert(holder.clone(), refined.clone());
+            }
             self.rebind(holder, &refined);
         }
     }
@@ -1898,7 +1905,7 @@ impl<'a> Lowerer<'a> {
                 // (an int that can fail returned from a function of floats
                 // that can fail converts as its payload: a function handed as
                 // a value beside one answering floats answers floats)
-                let mut x = if floats && x.ty().payload() == &Ty::Int && !matches!(x, Expr::Convert { how: Convert::Unwrap, .. }) {
+                let x = if floats && x.ty().payload() == &Ty::Int && !matches!(x, Expr::Convert { how: Convert::Unwrap, .. }) {
                     let ty = if x.ty().is_result() { Ty::Result(Box::new(Ty::Float)) } else { Ty::Float };
                     Expr::Convert { how: Convert::IntToFloat, expr: Box::new(x), ty }
                 } else {
@@ -3671,6 +3678,15 @@ impl<'a> Lowerer<'a> {
                 if k == Kind::Tensor && numbers {
                     let ty = Ty::Tensor(Box::new(Ty::Float), shapes::stacked_dims(&x.ty()));
                     Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty }
+                } else if k == Kind::Cells && matches!(x.ty().payload(), Ty::Tensor(e, dims) if **e == Ty::Int && dims.as_ref().map_or(true, |d| d.len() == 1)) {
+                    // ints held as a tensor (`[1, 2]`) handed as a column's
+                    // values are the column's ints (a tensor's numbers had
+                    // made a column of floats)
+                    let ty = match x.ty() {
+                        Ty::Result(_) => Ty::Result(Box::new(Ty::List(Box::new(Ty::Int)))),
+                        _ => Ty::List(Box::new(Ty::Int)),
+                    };
+                    Expr::Convert { how: Convert::ToList, expr: Box::new(x), ty }
                 } else {
                     x
                 }
@@ -4840,7 +4856,8 @@ mod tests {
     fn a_group_by_keys_a_pivot_and_a_window_are_typed() {
         let t = "use frame\nt = with[with[with[frame.new[], 'sym', ['b', 'a']], 'day', [2, 1]], 'px', [1.5, 2.0]]\n";
         let ir = ir_of(&format!("{}g = group[t, ['sym', 'day'], ['px', 'max']]\nlog[g.day[0]]\np = pivot[t, 'sym', 'day', 'px']\nlog[p.sym[0]]\nw = with[t, 'prev', window[t, 'px', 'lag', n = 1, by = 'sym']]\nlog[w.prev[0].ok]\nr = with[t, 'r', window[t, 'px', 'rank']]\nlog[r.r[0]]\nm = with[t, 'm', window[t, 'px', 'mean', n = 2]]\nlog[m.m[0]]\n", t));
-        assert!(ir.contains("let g: Result(Frame{day: Float, px_max: Float, sym: Str}) = frame.group_keys("), "{}", ir);
+        // (`[2, 1]` is a column of ints, so the key is one; the max over floats a float)
+        assert!(ir.contains("let g: Result(Frame{day: Int, px_max: Float, sym: Str}) = frame.group_keys("), "{}", ir);
         assert!(ir.contains("let p: Result(Frame{sym: Str, …}) = frame.pivot("), "{}", ir);
         assert!(ir.contains("prev: Result(Float)") && ir.contains("frame.window_one(unwrap t, \"px\", \"lag\", 1, \"sym\")"), "{}", ir);
         assert!(ir.contains("r: Int") && ir.contains("frame.window(unwrap t, \"px\", \"rank\", 0, [])"), "{}", ir);

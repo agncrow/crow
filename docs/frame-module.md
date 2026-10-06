@@ -129,14 +129,14 @@ sorted = sort[df, col]             --- dynamic column names just work
 | head | First N rows | `top = head[df, 5]` |
 | tail | Last N rows | `bottom = tail[df, 5]` |
 | fill | Fill missing values | `clean = fill[df, 'age', 0]` |
-| unique | Unique values in column | `vals = unique[df.age]` |
+| unique | The column's distinct present cells, in its kind | `vals = unique[df, 'age']` |
 | rename | Rename column | `df2 = rename[df, 'salary', 'pay']` |
 | stats | Summary statistics | `stats[df]` |
 | datetime | Construct datetime | `d = datetime['2024-01-15']` |
 | tz | Convert timezone | `utc = tz[d, '+09:00']` |
 
-- `sort` defaults ascending. `sort[df, 'age', desc = true]` for descending.
-- `group` takes pairs of `['column', 'agg']` — single scan, multiple aggregations; a list of keys groups by their combinations, each key column kept as it was.
+- `sort` defaults ascending. `sort[df, 'age', desc = true]` for descending. Stable, missing cells last either way (2026-10-06, held to pandas).
+- `group` takes pairs of `['column', 'agg']` — single scan, multiple aggregations; a list of keys groups by their combinations, each key column kept as it was. Each aggregate is in the kind it has: a count or a sum over ints an int, a mean a float, a min or max a cell of the column's kind, missing where a group has none present (2026-10-06).
 - `pivot` reshapes only: a pair two rows share stops the program, naming the `group` that aggregates it first (spec, Design Note "pivot reshapes, group aggregates").
 - `window` is `sum`, `mean`, `min`, `max`, `count`, `lag`, `lead` or `rank` over the trailing `n` rows (0: every row so far) within the partitions `by` names (2026-10-02).
 - `join` defaults inner. `join[df1, df2, 'id', 'left']` for left/right/outer.
@@ -202,6 +202,19 @@ tokyo = tz[d, '+09:00']
 ```
 
 ---
+
+## Held to pandas
+
+`tests/parity/185_frames_held_to_pandas.co` holds the module to pandas 3.0
+on 38 cases — every operation above over two tables, each compared column
+by column, kind by kind and cell by cell with what pandas answered — in
+both modes. `tests/frames/reference.py` wrote the tables
+(`tests/frames/data/`) and pandas's answers (`tests/frames/expected/`)
+once; the check needs no Python. The spec's Design Note "the frame module
+is held to pandas" records what the comparison found (fourteen bugs across
+the kernel, the compiler and the test runner, fixed) and where pandas has a choice, which
+of its options the spec's rule matches. Re-run the script after adding a
+case.
 
 ## Resolved Open Questions
 

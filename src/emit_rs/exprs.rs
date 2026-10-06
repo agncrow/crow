@@ -999,8 +999,13 @@ impl Emitter {
             let o = if matches!(oty, CrowType::Result(_)) { format!("{}.value", obj) } else { obj.clone() };
             return format!("{}.get(\"{}\").cloned().unwrap_or(serde_json::Value::Null)", o, field);
         }
-        if matches!(field, "year" | "month" | "day" | "hour" | "minute" | "second" | "offset") && matches!(oty, CrowType::Str) {
-            return format!("crow_runtime::frame::datetime_field(&{}, \"{}\").unwrap_or(0)", obj, field);
+        if matches!(field, "year" | "month" | "day" | "hour" | "minute" | "second" | "offset") && matches!(oinner, CrowType::Str) {
+            // a moment that can fail (`tz`'s answer) arrives read once it is
+            // known to have come, as the interpreter reads it: a failed one
+            // stopped with its reason above (the field of the result had
+            // not built)
+            let text = if matches!(oty, CrowType::Result(_)) { format!("({}).value", obj) } else { obj.clone() };
+            return format!("crow_runtime::frame::datetime_field(&{}, \"{}\").unwrap_or(0)", text, field);
         }
         if matches!(oinner, CrowType::NumArray(..)) {
             let t = if matches!(oty, CrowType::Result(_)) { format!("{}.value.clone()", obj) } else { obj.clone() };

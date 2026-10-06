@@ -1,0 +1,257 @@
+--- The frame module held to pandas.
+---
+--- tests/frames/reference.py drew two tables (tests/frames/data/) and
+--- wrote, for each case below, what pandas 3.0 answers over them
+--- (tests/frames/expected/<case>.csv). Each case computes the same with
+--- the frame module and compares the two frames — their columns, their
+--- kinds, and every cell, a missing cell included — printing a line per
+--- case: `the same`, or the first row that differs and what pandas has
+--- there. In the parity corpus, the report is printed by both modes and
+--- compared; its test blocks hold every case to pandas (CI runs them:
+--- crow test tests/parity/185_frames_held_to_pandas.co). Both run from
+--- the repository's root, where the fixtures are.
+---
+--- Where pandas has a choice the spec's is taken (the script says which):
+--- groups first seen first, a stable sort with missing cells last, a
+--- trailing window over the rows there are, `rank` sharing a rank between
+--- equal cells, the population deviation, `_right` on a duplicate column,
+--- and a right or outer join compared sorted, since the two order its
+--- rows differently.
+use frame, math, math.stats
+
+fn trades[]
+    return frame.load['tests/frames/data/trades.csv']
+
+fn symbols[]
+    return frame.load['tests/frames/data/symbols.csv']
+
+fn expected[name]
+    return frame.load['tests/frames/expected/`name`.csv']
+
+--- a frame as its file holds it: the columns, then a row per line, a
+--- missing cell empty — written and read back, since a program reads a
+--- frame's cells by their column's name
+fn csv_of[f]
+    stamp = int[now[] * 1000.0]
+    path = 'tests/frames/got_`stamp`.csv'
+    save[f, path]
+    text = read[path]
+    rm[path]
+    return text
+
+--- whether two frames are the same — columns, kinds, every cell — and
+--- the first difference where not
+fn same[name, got, want]
+    gc = join[got.columns, ',']
+    wc = join[want.columns, ',']
+    if gc ne wc
+        log['`name`: DIFFERENT columns — got `gc`, pandas `wc`']
+        return false
+    gd = join[got.dtypes, ',']
+    wd = join[want.dtypes, ',']
+    if gd ne wd
+        log['`name`: DIFFERENT kinds — got `gd`, pandas `wd`']
+        return false
+    gl = split[csv_of[got], '\n']
+    wl = split[csv_of[want], '\n']
+    if len[gl] ne len[wl]
+        log['`name`: DIFFERENT — `len[gl] - 1` rows, pandas `len[wl] - 1`']
+        return false
+    for i in range[len[gl]]
+        if gl[i] ne wl[i]
+            log['`name`: DIFFERENT at row `i` — got `gl[i]`, pandas `wl[i]`']
+            return false
+    log['`name`: the same']
+    return true
+
+--- a case held to what pandas wrote for it
+fn held[name, got]
+    return same[name, got, expected[name]]
+
+fn all_of[oks]
+    for ok in oks
+        if not ok
+            return false
+    return true
+
+--- what the file holds: columns, kinds, rows
+fn loading[t]
+    oks = []
+    oks = push[oks, held['meta', with[with[frame.new[], 'column', t.columns], 'dtype', t.dtypes]]]
+    if len[t] eq 240
+        log['rows: the same']
+        oks = push[oks, true]
+    else
+        log['rows: DIFFERENT — `len[t]`, pandas 240']
+        oks = push[oks, false]
+    return all_of[oks]
+
+fn selecting_and_filtering[t]
+    oks = []
+    oks = push[oks, held['select_symbol_qty', select[t, ['symbol', 'qty']]]]
+    oks = push[oks, held['filter_big', filter[t, t.qty gt 300]]]
+    oks = push[oks, held['filter_aapl_sell', filter[t, t.symbol eq 'AAPL' and t.side eq 'sell']]]
+    oks = push[oks, held['filter_or_not', filter[t, t.price lt 100 or not (t.qty gte 50)]]]
+    oks = push[oks, held['filter_ok', filter[t, t.qty.ok and t.price.ok]]]
+    oks = push[oks, held['filter_filled', filter[t, t.filled eq true]]]
+    oks = push[oks, held['filter_day', filter[t, t.day eq 3]]]
+    return all_of[oks]
+
+fn sorting[t]
+    oks = []
+    oks = push[oks, held['sort_qty', sort[t, 'qty']]]
+    oks = push[oks, held['sort_price_desc', sort[t, 'price', desc = true]]]
+    oks = push[oks, held['sort_symbol', sort[t, 'symbol']]]
+    oks = push[oks, held['sort_at_desc', sort[t, 'at', desc = true]]]
+    oks = push[oks, held['sort_filled', sort[t, 'filled']]]
+    oks = push[oks, held['head_5', head[t, 5]]]
+    oks = push[oks, held['tail_7', tail[t, 7]]]
+    return all_of[oks]
+
+fn grouping[t]
+    oks = []
+    oks = push[oks, held['group_symbol', group[t, 'symbol', ['qty', 'sum'], ['qty', 'mean'], ['price', 'min'], ['price', 'max'], ['price', 'count'], ['filled', 'sum']]]]
+    oks = push[oks, held['group_symbol_side', group[t, ['symbol', 'side'], ['qty', 'sum'], ['price', 'mean'], ['id', 'count']]]]
+    oks = push[oks, held['group_day', group[t, 'day', ['price', 'mean'], ['qty', 'max'], ['qty', 'min'], ['filled', 'max']]]]
+    oks = push[oks, held['group_symbol_day', group[t, ['symbol', 'day'], ['price', 'min'], ['price', 'max'], ['price', 'mean'], ['price', 'sum'], ['price', 'count']]]]
+    long = group[t, ['symbol', 'day'], ['qty', 'sum']]
+    oks = push[oks, held['pivot_qty', pivot[long, 'symbol', 'day', 'qty_sum']]]
+    return all_of[oks]
+
+fn windowing[t]
+    oks = []
+    tf = fill[fill[t, 'qty', 0], 'price', 0.0]
+    base = select[t, ['id', 'symbol']]
+    cumulative = with[base, 'run_sum', window[tf, 'qty', 'sum', by = 'symbol']]
+    cumulative = with[cumulative, 'run_mean', window[tf, 'price', 'mean', by = 'symbol']]
+    cumulative = with[cumulative, 'run_min', window[tf, 'price', 'min', by = 'symbol']]
+    cumulative = with[cumulative, 'run_max', window[tf, 'price', 'max', by = 'symbol']]
+    cumulative = with[cumulative, 'run_count', window[t, 'note', 'count', by = 'symbol']]
+    cumulative = with[cumulative, 'run_sum_all', window[tf, 'qty', 'sum']]
+    oks = push[oks, held['window_running', cumulative]]
+    trailing = with[base, 'tr_sum', window[tf, 'qty', 'sum', n = 3, by = 'symbol']]
+    trailing = with[trailing, 'tr_mean', window[tf, 'price', 'mean', n = 3, by = 'symbol']]
+    trailing = with[trailing, 'tr_min', window[tf, 'price', 'min', n = 3, by = 'symbol']]
+    trailing = with[trailing, 'tr_max', window[tf, 'price', 'max', n = 3, by = 'symbol']]
+    trailing = with[trailing, 'tr_count', window[t, 'note', 'count', n = 3, by = 'symbol']]
+    oks = push[oks, held['window_trailing', trailing]]
+    shifted = with[base, 'lag1', window[t, 'price', 'lag', n = 1, by = 'symbol']]
+    shifted = with[shifted, 'lead2', window[t, 'price', 'lead', n = 2, by = 'symbol']]
+    shifted = with[shifted, 'lag_note', window[t, 'note', 'lag', n = 1, by = 'symbol']]
+    shifted = with[shifted, 'lag_qty', window[t, 'qty', 'lag', n = 1, by = 'symbol']]
+    oks = push[oks, held['window_shift', shifted]]
+    ranked = with[base, 'rank_sym', window[t, 'price', 'rank', by = 'symbol']]
+    ranked = with[ranked, 'rank_all', window[t, 'price', 'rank']]
+    ranked = with[ranked, 'rank_text', window[t, 'symbol', 'rank']]
+    ranked = with[ranked, 'rank_day', window[t, 'day', 'rank', by = 'symbol']]
+    oks = push[oks, held['window_rank', ranked]]
+    return all_of[oks]
+
+fn joining[t, sym]
+    oks = []
+    oks = push[oks, held['join_inner', join[t, sym, 'symbol']]]
+    oks = push[oks, held['join_left', join[t, sym, 'symbol', 'left']]]
+    oks = push[oks, held['join_right', sort[join[t, sym, 'symbol', 'right'], 'id']]]
+    oks = push[oks, held['join_outer', sort[sort[join[t, sym, 'symbol', 'outer'], 'id'], 'symbol']]]
+    oks = push[oks, held['stack_two', stack[head[t, 3], tail[t, 3]]]]
+    return all_of[oks]
+
+fn filling_and_naming[t]
+    oks = []
+    oks = push[oks, held['fill_qty0', fill[t, 'qty', 0]]]
+    oks = push[oks, held['fill_note', fill[t, 'note', '-']]]
+    oks = push[oks, held['fill_price', fill[t, 'price', 0.0]]]
+    oks = push[oks, held['unique_symbol', with[frame.new[], 'value', unique[t, 'symbol']]]]
+    oks = push[oks, held['unique_day', with[frame.new[], 'value', unique[t, 'day']]]]
+    oks = push[oks, held['rename_qty', rename[t, 'qty', 'shares']]]
+    return all_of[oks]
+
+fn computing[t]
+    oks = []
+    tf = fill[fill[t, 'qty', 0], 'price', 0.0]
+    oks = push[oks, held['with_notional', with[tf, 'notional', tf.qty .* tf.price]]]
+    r = with[frame.new[], 'rows', [len[t]]]
+    r = with[r, 'notional_sum', [sum[tf.qty .* tf.price]]]
+    r = with[r, 'price_mean', [mean[tf.price]]]
+    r = with[r, 'price_std', [std[tf.price]]]
+    r = with[r, 'qty_max', [int[max[tf.qty]]]]
+    r = with[r, 'price_min', [min[tf.price]]]
+    oks = push[oks, held['reduce', r]]
+    return all_of[oks]
+
+--- moments parsed and moved to an offset, each field read
+fn moments[]
+    want = expected['datetime_tz']
+    inputs = ['2026-07-14T13:30:00Z', '2026-01-05', '2026-03-29T01:30:00+01:00', '2026-12-31T23:59:59-08:00', '2026-06-30T12:00:00+05:30']
+    offsets = ['+09:00', 'UTC', '-05:00', '+05:30', '-09:30']
+    for i in range[len[inputs]]
+        moved = tz[datetime[inputs[i]], offsets[i]]
+        pandas = str[want.output[i]]
+        if moved ne pandas
+            log['datetime_tz: DIFFERENT at row `i` — got `moved`, pandas `pandas`']
+            return false
+        fields = '`moved.year` `moved.month` `moved.day` `moved.hour`'
+        theirs = '`want.year[i]` `want.month[i]` `want.day[i]` `want.hour[i]`'
+        if fields ne theirs
+            log['datetime_tz: DIFFERENT fields at row `i` — got `fields`, pandas `theirs`']
+            return false
+    log['datetime_tz: the same']
+    return true
+
+--- a file with quoted cells (a comma, a quote inside), read and written back
+fn quoting[]
+    n = frame.load['tests/frames/data/notes.csv']
+    want = ['a, b', 'say "hi"', 'plain', 'quoted, with "both"']
+    if len[n] ne 4
+        log['notes: DIFFERENT — `len[n]` rows, pandas 4']
+        return false
+    for i in range[4]
+        if n.note[i] ne want[i]
+            log['notes: DIFFERENT at row `i` — got `n.note[i]`, pandas `want[i]`']
+            return false
+    log['notes: the same']
+    stamp = int[now[] * 1000.0]
+    path = 'tests/frames/got_`stamp`.csv'
+    save[n, path]
+    back = frame.load[path]
+    rm[path]
+    return same['notes_roundtrip', back, n]
+
+t = trades[]
+sym = symbols[]
+report = [loading[t], selecting_and_filtering[t], sorting[t], grouping[t], windowing[t], joining[t, sym], filling_and_naming[t], computing[t], moments[], quoting[]]
+agreed = 0
+for ok in report
+    if ok
+        agreed = agreed + 1
+log['`agreed` of `len[report]` groups the same as pandas']
+
+test the_file_loads_as_pandas_reads_it[]
+    assert[loading[trades[]]]
+
+test select_and_filter_as_pandas[]
+    assert[selecting_and_filtering[trades[]]]
+
+test sort_head_and_tail_as_pandas[]
+    assert[sorting[trades[]]]
+
+test group_and_pivot_as_pandas[]
+    assert[grouping[trades[]]]
+
+test windows_as_pandas[]
+    assert[windowing[trades[]]]
+
+test joins_and_stack_as_pandas[]
+    assert[joining[trades[], symbols[]]]
+
+test fill_unique_and_rename_as_pandas[]
+    assert[filling_and_naming[trades[]]]
+
+test columns_computed_as_pandas[]
+    assert[computing[trades[]]]
+
+test moments_as_pandas[]
+    assert[moments[]]
+
+test quoted_cells_as_pandas[]
+    assert[quoting[]]

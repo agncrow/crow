@@ -162,7 +162,7 @@ rm['trades.csv']
 total shares: 235
 avg price: 417.34
 symbol  qty_sum
-   str    float
+   str      int
 ------  -------
   AAPL      140
   MSFT       75
@@ -209,7 +209,7 @@ rm['trades.csv']
 
 ```text
 symbol  day  qty_sum
-   str  int    float
+   str  int      int
 ------  ---  -------
   AAPL    1      100
   MSFT    1       50
@@ -227,7 +227,7 @@ symbol    1    2
 
 [3 rows x 3 cols]
 symbol  day  qty  price  so_far   prev
-   str  int  int  float   float  float
+   str  int  int  float     int  float
 ------  ---  ---  -----  ------  -----
   AAPL    1  100  191.5     100    nan
   MSFT    1   50  415.2      50    nan

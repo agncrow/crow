@@ -720,8 +720,11 @@ impl TypeContext {
         if field == "ok" && matches!(&obj_type, CrowType::FrameCol) {
             return CrowType::Array(Box::new(CrowType::Bool));
         }
-        // DateTime properties on strings → Int
-        if matches!(&obj_type, CrowType::Str) {
+        // DateTime properties on strings → Int (of a moment that can fail
+        // too — `tz`'s answer — read once it is known to have come: the
+        // field had been typed as the text's own, and `[m.year]` compiled
+        // as a list of text)
+        if matches!(&obj_type, CrowType::Str) || matches!(&obj_type, CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::Str)) {
             match field {
                 "year" | "month" | "day" | "hour" | "minute" | "second" | "offset" => return CrowType::Int,
                 _ => {}

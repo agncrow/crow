@@ -8,21 +8,39 @@ use crate::rng;
 
 /// Chunked sum with 4 accumulators for SIMD auto-vectorization.
 #[inline]
+/// The sum as numpy adds it (`pairwise_sum` in its reduction loops): a
+/// run of fewer than 8 added in order, a block of up to 128 in 8 lanes
+/// then folded as a tree, a longer run halved (at a multiple of 8) and
+/// each half summed the same way. The error grows as log n where a
+/// running total's grows as n, and `sum[x]` is `numpy.sum(x)` to the last
+/// digit (the four-lane total it replaced differed in the last bits).
 fn chunked_sum(data: &[f64]) -> f64 {
-    let chunks = data.chunks_exact(4);
-    let remainder = chunks.remainder();
-    let mut acc = [0.0f64; 4];
-    for chunk in chunks {
-        acc[0] += chunk[0];
-        acc[1] += chunk[1];
-        acc[2] += chunk[2];
-        acc[3] += chunk[3];
+    const BLOCK: usize = 128;
+    let n = data.len();
+    if n < 8 {
+        let mut total = 0.0;
+        for &v in data {
+            total += v;
+        }
+        total
+    } else if n <= BLOCK {
+        let mut r = [data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7]];
+        let mut i = 8;
+        while i + 8 <= n {
+            for (lane, acc) in r.iter_mut().enumerate() {
+                *acc += data[i + lane];
+            }
+            i += 8;
+        }
+        let mut total = ((r[0] + r[1]) + (r[2] + r[3])) + ((r[4] + r[5]) + (r[6] + r[7]));
+        for &v in &data[i..] {
+            total += v;
+        }
+        total
+    } else {
+        let half = (n / 2) - (n / 2) % 8;
+        chunked_sum(&data[..half]) + chunked_sum(&data[half..])
     }
-    let mut total = acc[0] + acc[1] + acc[2] + acc[3];
-    for &v in remainder {
-        total += v;
-    }
-    total
 }
 
 /// Chunked reduction with 4 accumulators for SIMD auto-vectorization.

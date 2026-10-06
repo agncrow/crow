@@ -1769,7 +1769,7 @@ pub static ROWS: &[Row] = &[
     row!("frame.head", "frame", "head", crow_runtime::frames::head, (Frame, Int) -> Frame, stops),
     row!("frame.tail", "frame", "tail", crow_runtime::frames::tail, (Frame, Int) -> Frame, stops),
     row!("frame.fill", "frame", "fill", crow_runtime::frames::fill, (Frame, Str, Cell) -> Frame, stops),
-    row!("frame.unique", "frame", "unique", crow_runtime::frames::unique, (Frame, Str) -> Strs, stops),
+    row!("frame.unique", "frame", "unique", crow_runtime::frames::unique, (Frame, Str) -> Column, stops),
     row!("frame.rename", "frame", "rename", crow_runtime::frames::rename, (Frame, Str, Str) -> Frame, stops),
     row!("frame.stats", "frame", "stats", crow_runtime::frames::stats, (Frame) -> Str, never),
     row!("frame.datetime", "frame", "datetime", crow_runtime::frames::datetime, (Str) -> Str, value "time"),

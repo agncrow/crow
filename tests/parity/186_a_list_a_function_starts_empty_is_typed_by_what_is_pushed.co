@@ -1,0 +1,35 @@
+--- A list a function starts empty is typed by what is pushed onto it,
+--- whether the push is kept (`xs = push[xs, v]`) or dropped (`push[xs, v]`
+--- answers a new list and, as a bare statement, changes nothing) — the
+--- compiled program had not built with the bare push, its items unknown.
+--- A list of cells read from a loaded file, whose kinds show as the
+--- program runs, joins as text in both modes (compiled, it had not built).
+use frame
+
+fn kept[]
+    xs = []
+    xs = push[xs, 2.5]
+    xs = push[xs, 1.5]
+    return xs
+
+fn dropped[]
+    flags = []
+    push[flags, true]
+    return flags
+
+fn named[]
+    names = []
+    push[names, 'a']
+    names = push[names, 'b']
+    return names
+
+log[kept[]]
+log[dropped[]]
+log[named[]]
+
+write['cells-note.csv', 'sym,day,px\nAAPL,3,191.5\nMSFT,4,415.2\n']
+t = frame.load['cells-note.csv']
+cells = [t.sym[0], t.day[0], t.px[0]]
+log[join[cells, ' ']]
+log[join[[t.day[1], t.day[0]], '-']]
+rm['cells-note.csv']

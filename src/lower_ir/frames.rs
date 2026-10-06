@@ -55,7 +55,12 @@ fn cell_of(t: &CrowType) -> CrowType {
     };
     match t {
         CrowType::Array(inner) => *inner,
-        CrowType::NumArray(..) => CrowType::Float,
+        // (`[1, 2]`, numbers held as a tensor of ints, had made a column of
+        // floats)
+        CrowType::NumArray(elem, _) => match elem.as_ref() {
+            CrowType::Int => CrowType::Int,
+            _ => CrowType::Float,
+        },
         CrowType::Int => CrowType::Int,
         CrowType::Float => CrowType::Float,
         CrowType::Bool => CrowType::Bool,
@@ -143,17 +148,20 @@ impl<'a> Lowerer<'a> {
     }
 
     /// `window[df, col, how, n = …, by = …]`'s column, typed by what it
-    /// computes: a float for `sum`, `mean`, `min` and `max`, an int for
-    /// `count` and `rank`, the column's own cells for `lag` and `lead`,
-    /// which can be missing at a partition's edge — as can every cell when
-    /// a `by` column can have missing cells (a row in no partition). A
-    /// column nothing typed gives dynamic cells, as a loaded file's are.
+    /// computes: a `sum`, `min` or `max` in the column's kind (an int over
+    /// ints, a float over floats), a float for `mean`, an int for `count`
+    /// and `rank`, the column's own cells for `lag` and `lead`, which can
+    /// be missing at a partition's edge — as can every cell when a `by`
+    /// column can have missing cells (a row in no partition). A column
+    /// nothing typed gives dynamic cells, as a loaded file's are. And
+    /// `unique[df, col]`'s column: the column's distinct present cells, in
+    /// its kind.
     pub(super) fn column_typed(&mut self, callee: &A, args: &[A], arg_types: &[CrowType], ty: Ty) -> Ty {
         if !matches!(ty.payload(), Ty::Column(_)) {
             return ty;
         }
         let Some((module, name)) = self.builtin_named(callee) else { return ty };
-        if name != "window" || !matches!(module.as_deref(), None | Some("frame")) {
+        if !matches!(name.as_str(), "window" | "unique") || !matches!(module.as_deref(), None | Some("frame")) {
             return ty;
         }
         let base = arg_types.first().and_then(|t| t.frame_cols()).cloned().flatten();
@@ -163,7 +171,7 @@ impl<'a> Lowerer<'a> {
         };
         if let Some(b) = &base {
             if let Some(col) = lit(1) {
-                self.refuse_missing("window", &Some(b.clone()), &col);
+                self.refuse_missing(&name, &Some(b.clone()), &col);
             }
             for key in Self::names_in(args.get(4)) {
                 self.refuse_missing("window", &Some(b.clone()), &key);
@@ -173,8 +181,30 @@ impl<'a> Lowerer<'a> {
         let fallible = |t: &CrowType| matches!(t, CrowType::Result(_));
         let keys_fallible = Self::names_in(args.get(4)).iter().any(|k| column(k).is_some_and(|t| fallible(&t)));
         let source = lit(1).and_then(|c| column(&c));
+        let plain = |t: &CrowType| match t {
+            CrowType::Result(inner) => inner.as_ref().clone(),
+            t => t.clone(),
+        };
+        if name == "unique" {
+            let cell = match &source {
+                Some(t) => plain(t),
+                None => CrowType::Json,
+            };
+            let column = Ty::Column(Box::new(ty_of(&cell)));
+            return match ty {
+                Ty::Result(_) => Ty::Result(Box::new(column)),
+                _ => column,
+            };
+        }
         let cell = match lit(2).as_deref() {
-            Some("sum" | "mean" | "min" | "max") => CrowType::Float,
+            // (every window had been a float; a sum over ints is an int,
+            // and over a column nothing typed its kind shows as it runs)
+            Some("sum" | "min" | "max") => match source.as_ref().map(plain) {
+                Some(CrowType::Int) => CrowType::Int,
+                Some(_) => CrowType::Float,
+                None => CrowType::Json,
+            },
+            Some("mean") => CrowType::Float,
             Some("count") => CrowType::Int,
             Some("rank") => match source {
                 Some(t) if fallible(&t) => CrowType::Result(Box::new(CrowType::Int)),
@@ -540,8 +570,14 @@ impl<'a> Lowerer<'a> {
                     Arc::new(c)
                 }),
                 // group[f, 'key', ['col', 'agg'], …] or group[f, ['a', 'b'],
-                // …]: each key as it was, and each aggregate a float named
-                // col_agg
+                // …]: each key as it was, and each aggregate named col_agg in
+                // the kind it has — a count an int; a sum an int over ints or
+                // bools and a float over floats; a mean a float; a min or max
+                // a cell of the column's kind — where a mean, a min or a max
+                // of a column whose cells can be missing can be missing too
+                // (a group with no present cell). A column nothing typed
+                // gives dynamic cells, as a loaded file's are. (Every
+                // aggregate had been a float.)
                 "group" => base(0).map(|b| {
                     let mut cols = BTreeMap::new();
                     let mut open = false;
@@ -550,14 +586,29 @@ impl<'a> Lowerer<'a> {
                         open = true;
                     }
                     for key in keys {
-                        let t = b.cols.get(&key).cloned().unwrap_or(CrowType::Str);
+                        let t = b.cols.get(&key).cloned().unwrap_or(CrowType::Json);
                         cols.insert(key, t);
                     }
                     for a in args.iter().skip(2) {
                         match a {
                             A::Array(pair) => match (pair.first(), pair.get(1)) {
                                 (Some(A::Str(col)), Some(A::Str(agg))) => {
-                                    cols.insert(format!("{}_{}", col, agg), CrowType::Float);
+                                    let (plain, fallible) = match b.cols.get(col) {
+                                        Some(CrowType::Result(t)) => (Some(t.as_ref().clone()), true),
+                                        Some(t) => (Some(t.clone()), false),
+                                        None => (None, false),
+                                    };
+                                    let t = match (agg.as_str(), plain) {
+                                        ("count", _) => CrowType::Int,
+                                        (_, None) => CrowType::Json,
+                                        ("sum", Some(CrowType::Int | CrowType::Bool)) => CrowType::Int,
+                                        ("sum", Some(_)) => CrowType::Float,
+                                        ("mean", Some(_)) => CrowType::Float,
+                                        ("min" | "max", Some(t)) => t,
+                                        (_, Some(_)) => CrowType::Float,
+                                    };
+                                    let t = if fallible && matches!(agg.as_str(), "mean" | "min" | "max") { CrowType::Result(Box::new(t)) } else { t };
+                                    cols.insert(format!("{}_{}", col, agg), t);
                                 }
                                 _ => open = true,
                             },

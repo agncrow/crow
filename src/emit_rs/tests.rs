@@ -2097,10 +2097,12 @@ fn test_fallible_condition_guarded_and_return_widened() {
 }
 
 /// int/float rule across the program: a fact a handler assigns a float
-/// (a table's float key column) is a float from its declaration
+/// (a table's float key column) is a float from its declaration (`[3, 4]`
+/// is a column of ints since the frame work of 2026-10-06, so the key
+/// column here is written as floats)
 #[test]
 fn a_fact_a_handler_assigns_a_float_is_a_float_from_its_declaration() {
-    let rust = transpile("use web, ui, frame\ndeleted = 0\nfn delete_row[id]\n    deleted = id\nview records[]\n    rows = frame.new[]\n    rows = with[rows, 'id', [3, 4]]\n    return table[rows, click = delete_row, key = 'id']\npage['/', records]\n");
+    let rust = transpile("use web, ui, frame\ndeleted = 0\nfn delete_row[id]\n    deleted = id\nview records[]\n    rows = frame.new[]\n    rows = with[rows, 'id', [3.0, 4.0]]\n    return table[rows, click = delete_row, key = 'id']\npage['/', records]\n");
     assert!(rust.contains("    deleted: f64,") && rust.contains("__crow_state.set(\"deleted\", serde_json::json!((((0_i64) as f64))));"), "the key column is float, so the fact is\n{}", rust);
 }
 

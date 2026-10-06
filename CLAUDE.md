@@ -29,6 +29,7 @@ cargo clippy --workspace --all-features
 ./target/release/crow test --docs
 ./target/release/crow test --book
 ./target/release/crow test tests/layout/conformance.co
+./target/release/crow test tests/parity/185_frames_held_to_pandas.co
 ./target/release/crow test src/modules/nn.co
 ./target/release/crow test src/modules/core.co
 ./target/release/crow test src/modules/sys.co
@@ -70,6 +71,9 @@ steps on every push and must be green.
   before a gate: three unit tests looked flaky for an hour until the
   variable, exported in some shells and not others, turned out to be what
   differed — and the finding was real.
+- `push[xs, v]` answers a new list: as a bare statement it does nothing.
+  Write `xs = push[xs, v]` (a check's list of results stayed empty, and
+  every test passed).
 - Crow has no `pass`, `continue` or `lambda` (the parser names each) and
   no `chars[]`: characters are `split[text, '']` with its empty ends
   skipped. A module written in Crow sees another module's ROWS, never its
