@@ -371,50 +371,10 @@ impl TypeContext {
             "today" => CrowType::Str,
             // Autograd
             "grad" => {
-                // grad[f] is a function of f's parameters: of numbers, each
-                // a float, answering a float (one parameter) or a list of
-                // floats; of tensors, answering a tensor or a list of them
+                // grad[f] is a function of f's parameters (`gradient_type`)
                 if let Some(Expr::Ident(fn_name)) = args.first() {
-                    if let Some(sig) = self.functions.get(fn_name) {
-                        let n = sig.params.len();
-                        // (parameters the seek only guessed floats: not known
-                        // until a call of the gradient says, numbers or tensors)
-                        if self.grad_forced.contains(fn_name) {
-                            return CrowType::Fn(vec![CrowType::Unknown; n], Box::new(CrowType::Unknown));
-                        }
-                        let tensors = sig.params.iter().any(|(_, t)| matches!(t, CrowType::NumArray(..)));
-                        if tensors {
-                            let param_types: Vec<CrowType> = sig.params.iter().map(|(_, t)| t.clone()).collect();
-                            // (each gradient is shaped like its parameter: the
-                            // list's items have what the parameters' shapes
-                            // share — a rank only when every parameter's is
-                            // that rank; parameters of two ranks, or one of
-                            // no known rank, leave the items' rank unknown,
-                            // where a join had let a later vector set it)
-                            let shapes: Vec<&Option<super::Dims>> = param_types
-                                .iter()
-                                .filter_map(|t| match t {
-                                    CrowType::NumArray(_, d) => Some(d),
-                                    _ => None,
-                                })
-                                .collect();
-                            let dims = match shapes.first() {
-                                Some(Some(first)) if shapes.iter().all(|d| d.as_ref().is_some_and(|d| d.len() == first.len())) => {
-                                    shapes.iter().skip(1).fold(Some(first.clone()), |acc, d| super::join_dims(&acc, d))
-                                }
-                                _ => None,
-                            };
-                            let one = CrowType::NumArray(Box::new(CrowType::Float), dims);
-                            let ret = if n == 1 { one } else { CrowType::Array(Box::new(one)) };
-                            return CrowType::Fn(param_types, Box::new(ret));
-                        }
-                        let param_types = vec![CrowType::Float; n];
-                        let ret = if n == 1 {
-                            CrowType::Float
-                        } else {
-                            CrowType::Array(Box::new(CrowType::Float))
-                        };
-                        return CrowType::Fn(param_types, Box::new(ret));
+                    if let Some(t) = self.gradient_type(fn_name) {
+                        return t;
                     }
                 }
                 CrowType::Fn(vec![CrowType::Float], Box::new(CrowType::Float))
@@ -587,6 +547,49 @@ impl TypeContext {
     /// A call by name's type from its arguments' types, an argument's
     /// failure made the call's (auto-propagation) unless the callee renders
     /// what it is given.
+    /// `grad[f]`'s type: a function of f's parameters — of numbers, each
+    /// a float, answering a float (one parameter) or a list of floats; of
+    /// tensors, answering a tensor or a list of them, each shaped like its
+    /// parameter (the list's items have what the parameters' shapes share:
+    /// a rank only when every parameter's is that rank). None where `f` is
+    /// no function of the program's; parameters the seek only guessed
+    /// floats are not known until a call of the gradient says.
+    pub(crate) fn gradient_type(&self, fn_name: &str) -> Option<CrowType> {
+        let sig = self.functions.get(fn_name)?;
+        let n = sig.params.len();
+        // (parameters not known yet — a function only a test hands to
+        // `grad`, typed by the test's call later — are not floats either:
+        // a guess of floats had stuck to the parameter the gradient was
+        // handed to, and the tensors it was applied with never reached it)
+        let unknown = sig.params.iter().any(|(_, t)| matches!(t, CrowType::Unknown));
+        if self.grad_forced.contains(fn_name) || unknown {
+            return Some(CrowType::Fn(vec![CrowType::Unknown; n], Box::new(CrowType::Unknown)));
+        }
+        let tensors = sig.params.iter().any(|(_, t)| matches!(t, CrowType::NumArray(..)));
+        if tensors {
+            let param_types: Vec<CrowType> = sig.params.iter().map(|(_, t)| t.clone()).collect();
+            let shapes: Vec<&Option<super::Dims>> = param_types
+                .iter()
+                .filter_map(|t| match t {
+                    CrowType::NumArray(_, d) => Some(d),
+                    _ => None,
+                })
+                .collect();
+            let dims = match shapes.first() {
+                Some(Some(first)) if shapes.iter().all(|d| d.as_ref().is_some_and(|d| d.len() == first.len())) => {
+                    shapes.iter().skip(1).fold(Some(first.clone()), |acc, d| super::join_dims(&acc, d))
+                }
+                _ => None,
+            };
+            let one = CrowType::NumArray(Box::new(CrowType::Float), dims);
+            let ret = if n == 1 { one } else { CrowType::Array(Box::new(one)) };
+            return Some(CrowType::Fn(param_types, Box::new(ret)));
+        }
+        let param_types = vec![CrowType::Float; n];
+        let ret = if n == 1 { CrowType::Float } else { CrowType::Array(Box::new(CrowType::Float)) };
+        Some(CrowType::Fn(param_types, Box::new(ret)))
+    }
+
     pub(crate) fn named_call_type(&self, name: &str, args: &[Expr], callee: &Expr, arg_types: &[CrowType], full: &[CrowType]) -> CrowType {
         // db's transact[conn, f]: what `f` answers, as a value that can
         // fail — `f`'s error when it failed (the transaction rolled back),

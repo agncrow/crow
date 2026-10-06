@@ -1,0 +1,390 @@
+--- Minimisers of a function of one number, as scipy.optimize has them:
+--- `bracket` finds three points around a minimum from two; `brent` and
+--- `golden` narrow a bracket to the minimum — Brent's parabolic steps
+--- with golden-section steps between them, or the golden section alone;
+--- `bounded` finds the minimum between two bounds. `f` is a function of
+--- one number. Each stops where scipy stops and answers what scipy
+--- answers: the point, the value there, the iterations and the calls of
+--- `f` — to the last digit (the README says how).
+use math
+
+--- three points around a minimum: `b` between `a` and `c`, lower than
+--- both, and the calls it took to find them
+struct Bracket [a, b, c, fa, fb, fc, calls]
+--- a minimum found: where, the value there, the iterations and the calls
+struct Found [x, value, iterations, calls]
+
+--- a bracket from two points, as scipy's `bracket`: steps of the golden
+--- ratio past the lower point, a parabolic guess where it helps, until
+--- the middle point is the lowest; an error of kind 'optimize' when no
+--- bracket is found
+fn bracket[f, xa0, xb0]
+    gold = 1.618034
+    verysmall = 10.0 ^ (0 - 21)
+    grow_limit = 110.0
+    maxiter = 1000
+    xa = xa0
+    xb = xb0
+    fa = f[xa]
+    fb = f[xb]
+    if fa lt fb
+        xa, xb = xb, xa
+        fa, fb = fb, fa
+    xc = xb + gold * (xb - xa)
+    fc = f[xc]
+    calls = 3
+    rounds = 0
+    w = 0.0
+    fw = 0.0
+    while fc lt fb
+        tmp1 = (xb - xa) * (fb - fc)
+        tmp2 = (xb - xc) * (fb - fa)
+        val = tmp2 - tmp1
+        denom = 2.0 * val
+        if abs[val] lt verysmall
+            denom = 2.0 * verysmall
+        w = xb - ((xb - xc) * tmp2 - (xb - xa) * tmp1) / denom
+        wlim = xb + grow_limit * (xc - xb)
+        if rounds gt maxiter
+            return error['bracket: no bracket was found within the iteration limit — try other points', 'optimize']
+        rounds = rounds + 1
+        if (w - xc) * (xb - w) gt 0.0
+            fw = f[w]
+            calls = calls + 1
+            if fw lt fc
+                xa = xb
+                xb = w
+                fa = fb
+                fb = fw
+                break
+            else
+                if fw gt fb
+                    xc = w
+                    fc = fw
+                    break
+            w = xc + gold * (xc - xb)
+            fw = f[w]
+            calls = calls + 1
+        else
+            if (w - wlim) * (wlim - xc) gte 0.0
+                w = wlim
+                fw = f[w]
+                calls = calls + 1
+            else
+                if (w - wlim) * (xc - w) gt 0.0
+                    fw = f[w]
+                    calls = calls + 1
+                    if fw lt fc
+                        xb = xc
+                        xc = w
+                        w = xc + gold * (xc - xb)
+                        fb = fc
+                        fc = fw
+                        fw = f[w]
+                        calls = calls + 1
+                else
+                    w = xc + gold * (xc - xb)
+                    fw = f[w]
+                    calls = calls + 1
+        xa = xb
+        xb = xc
+        xc = w
+        fa = fb
+        fb = fc
+        fc = fw
+    lowest = (fb lt fc and fb lte fa) or (fb lt fa and fb lte fc)
+    ordered = (xa lt xb and xb lt xc) or (xc lt xb and xb lt xa)
+    if not (lowest and ordered)
+        return error['bracket: the search ended without a bracket — try other points', 'optimize']
+    return Bracket[xa, xb, xc, fa, fb, fc, calls]
+
+--- a bracket as given: `a` and `c` either way round, `b` between them
+--- and lowest, or an error of kind 'optimize'
+fn checked[br]
+    xa = br.a
+    xc = br.c
+    fa = br.fa
+    fc = br.fc
+    if xa gt xc
+        xa, xc = xc, xa
+        fa, fc = fc, fa
+    if not (xa lt br.b and br.b lt xc)
+        return error['optimize: a bracket has its middle point between the others', 'optimize']
+    if not (br.fb lt fa and br.fb lt fc)
+        return error['optimize: a bracket has its middle point lowest', 'optimize']
+    return Bracket[xa, br.b, xc, fa, br.fb, fc, br.calls]
+
+--- Brent's method within a bracket: a parabolic step through the three
+--- lowest points where it stays inside and shrinks the interval, a
+--- golden-section step otherwise, until the interval is within `xtol`
+--- of the minimum (scipy's `minimize_scalar`, method 'brent')
+fn brent_in[f, bracket_in, xtol = 0.0000000148]
+    br = checked[bracket_in]
+    mintol = 0.00000000001
+    cg = 0.3819660
+    maxiter = 500
+    x = br.b
+    w = br.b
+    v = br.b
+    fw = br.fb
+    fv = br.fb
+    fx = br.fb
+    a = br.a
+    b = br.c
+    deltax = 0.0
+    rounds = 0
+    calls = br.calls
+    rat = 0.0
+    u = 0.0
+    while rounds lt maxiter
+        tol1 = xtol * abs[x] + mintol
+        tol2 = 2.0 * tol1
+        xmid = 0.5 * (a + b)
+        if abs[x - xmid] lt tol2 - 0.5 * (b - a)
+            break
+        if abs[deltax] lte tol1
+            if x gte xmid
+                deltax = a - x
+            else
+                deltax = b - x
+            rat = cg * deltax
+        else
+            tmp1 = (x - w) * (fx - fv)
+            tmp2 = (x - v) * (fx - fw)
+            p = (x - v) * tmp2 - (x - w) * tmp1
+            tmp2 = 2.0 * (tmp2 - tmp1)
+            if tmp2 gt 0.0
+                p = 0.0 - p
+            tmp2 = abs[tmp2]
+            dx_temp = deltax
+            deltax = rat
+            if p gt tmp2 * (a - x) and p lt tmp2 * (b - x) and abs[p] lt abs[0.5 * tmp2 * dx_temp]
+                rat = p * 1.0 / tmp2
+                u = x + rat
+                if u - a lt tol2 or b - u lt tol2
+                    if xmid - x gte 0.0
+                        rat = tol1
+                    else
+                        rat = 0.0 - tol1
+            else
+                if x gte xmid
+                    deltax = a - x
+                else
+                    deltax = b - x
+                rat = cg * deltax
+        if abs[rat] lt tol1
+            if rat gte 0.0
+                u = x + tol1
+            else
+                u = x - tol1
+        else
+            u = x + rat
+        fu = f[u]
+        calls = calls + 1
+        if fu gt fx
+            if u lt x
+                a = u
+            else
+                b = u
+            if fu lte fw or w eq x
+                v = w
+                w = u
+                fv = fw
+                fw = fu
+            else
+                if fu lte fv or v eq x or v eq w
+                    v = u
+                    fv = fu
+        else
+            if u gte x
+                a = x
+            else
+                b = x
+            v = w
+            w = x
+            x = u
+            fv = fw
+            fw = fx
+            fx = fu
+        rounds = rounds + 1
+    return Found[x, fx, rounds, calls]
+
+--- Brent's method from two points: the bracket found first
+fn brent[f, a, b, xtol = 0.0000000148]
+    return brent_in[f, bracket[f, a, b], xtol = xtol]
+
+--- the golden section within a bracket: the interval cut at the golden
+--- ratio, the higher end dropped, until it is within `xtol` of the
+--- points (scipy's method 'golden')
+fn golden_in[f, bracket_in, xtol = 0.000000014901161193847656]
+    br = checked[bracket_in]
+    maxiter = 5000
+    g_r = 0.61803399
+    g_c = 1.0 - g_r
+    x3 = br.c
+    x0 = br.a
+    x1 = 0.0
+    x2 = 0.0
+    if abs[br.c - br.b] gt abs[br.b - br.a]
+        x1 = br.b
+        x2 = br.b + g_c * (br.c - br.b)
+    else
+        x2 = br.b
+        x1 = br.b - g_c * (br.b - br.a)
+    f1 = f[x1]
+    f2 = f[x2]
+    calls = br.calls + 2
+    rounds = 0
+    for i in range[maxiter]
+        if abs[x3 - x0] lte xtol * (abs[x1] + abs[x2])
+            break
+        if f2 lt f1
+            x0 = x1
+            x1 = x2
+            x2 = g_r * x1 + g_c * x3
+            f1 = f2
+            f2 = f[x2]
+        else
+            x3 = x2
+            x2 = x1
+            x1 = g_r * x2 + g_c * x0
+            f2 = f1
+            f1 = f[x1]
+        calls = calls + 1
+        rounds = rounds + 1
+    if f1 lt f2
+        return Found[x1, f1, rounds, calls]
+    return Found[x2, f2, rounds, calls]
+
+--- the golden section from two points: the bracket found first
+fn golden[f, a, b, xtol = 0.000000014901161193847656]
+    return golden_in[f, bracket[f, a, b], xtol = xtol]
+
+--- the minimum between two bounds: Brent's method with the bounds as
+--- the interval, a golden-section step where a parabolic one would not
+--- do (scipy's method 'bounded'); `iterations` and `calls` are the same
+--- count, as scipy reports them
+fn bounded[f, lo, hi, xatol = 0.00001]
+    if lo gt hi
+        return error['bounded: the lower bound is above the upper', 'optimize']
+    maxfun = 500
+    sqrt_eps = sqrt[0.00000000000000022]
+    golden_mean = 0.5 * (3.0 - sqrt[5.0])
+    a = lo
+    b = hi
+    fulc = a + golden_mean * (b - a)
+    nfc = fulc
+    xf = fulc
+    rat = 0.0
+    ee = 0.0
+    x = xf
+    fx = f[x]
+    num = 1
+    fu = inf
+    ffulc = fx
+    fnfc = fx
+    xm = 0.5 * (a + b)
+    tol1 = sqrt_eps * abs[xf] + xatol / 3.0
+    tol2 = 2.0 * tol1
+    while abs[xf - xm] gt tol2 - 0.5 * (b - a)
+        golden_step = true
+        if abs[ee] gt tol1
+            golden_step = false
+            r = (xf - nfc) * (fx - ffulc)
+            q = (xf - fulc) * (fx - fnfc)
+            p = (xf - fulc) * q - (xf - nfc) * r
+            q = 2.0 * (q - r)
+            if q gt 0.0
+                p = 0.0 - p
+            q = abs[q]
+            r = ee
+            ee = rat
+            if abs[p] lt abs[0.5 * q * r] and p gt q * (a - xf) and p lt q * (b - xf)
+                rat = (p + 0.0) / q
+                x = xf + rat
+                if (x - a) lt tol2 or (b - x) lt tol2
+                    si = sign[xm - xf]
+                    if xm - xf eq 0.0
+                        si = si + 1.0
+                    rat = tol1 * si
+            else
+                golden_step = true
+        if golden_step
+            if xf gte xm
+                ee = a - xf
+            else
+                ee = b - xf
+            rat = golden_mean * ee
+        si = sign[rat]
+        if rat eq 0.0
+            si = si + 1.0
+        x = xf + si * max[abs[rat], tol1]
+        fu = f[x]
+        num = num + 1
+        if fu lte fx
+            if x gte xf
+                a = xf
+            else
+                b = xf
+            fulc = nfc
+            ffulc = fnfc
+            nfc = xf
+            fnfc = fx
+            xf = x
+            fx = fu
+        else
+            if x lt xf
+                a = x
+            else
+                b = x
+            if fu lte fnfc or nfc eq xf
+                fulc = nfc
+                ffulc = fnfc
+                nfc = x
+                fnfc = fu
+            else
+                if fu lte ffulc or fulc eq xf or fulc eq nfc
+                    fulc = x
+                    ffulc = fu
+        xm = 0.5 * (a + b)
+        tol1 = sqrt_eps * abs[xf] + xatol / 3.0
+        tol2 = 2.0 * tol1
+        if num gte maxfun
+            break
+    return Found[xf, fx, num, num]
+
+fn wavy[x]
+    return (x - 1.3) ^ 2 + 0.7 * sin[3.0 * x]
+
+fn cup[x]
+    return exp[x] - 3.0 * x
+
+--- scipy's `bracket` from (0, 1) on a wavy parabola, then Brent's method
+--- and the golden section from the same two points: scipy's point, value,
+--- iterations and calls to the last digit
+test narrows_a_bracket_as_scipy_does[]
+    br = bracket[wavy, 0.0, 1.0]
+    assert[br.a eq 0.0 and br.b eq 1.0]
+    assert[abs[br.c - 2.6180339999999998] lt 0.000000000001]
+    assert[br.calls eq 3]
+    turned = bracket[wavy, 2.0, 3.0]
+    assert[turned.a eq 3.0 and turned.b eq 2.0]
+    assert[abs[turned.c - 0.38196600000000003] lt 0.000000000001]
+    b = brent[wavy, 0.0, 1.0]
+    assert[abs[b.x - 1.5052238096679165] lt 0.000000000001]
+    assert[abs[b.value + 0.64438258103329149] lt 0.000000000001]
+    assert[b.iterations eq 10 and b.calls eq 13]
+    g = golden[wavy, 0.0, 1.0]
+    assert[abs[g.x - 1.5052238148156705] lt 0.000000000001]
+    assert[g.iterations eq 38 and g.calls eq 43]
+
+--- the minimum of exp[x] − 3x is at ln 3, found between bounds, and a
+--- bracket handed the wrong way round is an error
+test finds_a_bounded_minimum[]
+    b = bounded[cup, -2.0, 4.0]
+    assert[abs[b.x - 1.0986123395128284] lt 0.000000000001]
+    assert[abs[b.value + 0.29583686600432513] lt 0.000000000001]
+    assert[b.iterations eq 12 and b.calls eq 12]
+    assert[abs[brent[cup, 0.0, 2.0].x - ln[3.0]] lt 0.000001]
+    assert[not brent_in[cup, Bracket[0.0, 5.0, 2.0, cup[0.0], cup[5.0], cup[2.0], 3]].ok]
+    assert[not bounded[cup, 4.0, -2.0].ok]

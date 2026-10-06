@@ -1731,11 +1731,13 @@ impl<'a> Lowerer<'a> {
                 // (noted as the call scan and the settling pass note an
                 // assignment: the settling pass is what the final lowering
                 // declares the local from)
+                // (a list whose items are not known yet — never a variable
+                // whose kind is not known at all: a tensor takes an item too,
+                // and a guess of a list stuck to a function it was handed to)
                 if self.pass != Pass::Final && path.is_empty() {
                     let held = self.ctx.vars.get(&var).cloned().unwrap_or(CrowType::Unknown);
                     let item = read(&expr);
                     let open = match &held {
-                        CrowType::Unknown => true,
                         CrowType::Array(inner) => format!("{:?}", inner).contains("Unknown"),
                         _ => false,
                     };
@@ -2987,7 +2989,7 @@ impl<'a> Lowerer<'a> {
                 if self.pass != Pass::Final {
                     let field_ty = self.ctx.structs.get(&name).and_then(|s| s.fields.get(i)).map(|(_, t)| t.clone());
                     if let (Expr::Local(v, _), Some(field_ty)) = (&value, field_ty) {
-                        let open = format!("{:?}", full(&value)).contains("Unknown");
+                        let open = matches!(full(&value), CrowType::Array(_)) && format!("{:?}", full(&value)).contains("Unknown");
                         let known = matches!(field_ty, CrowType::Array(_)) && !format!("{:?}", field_ty).contains("Unknown");
                         if open && known {
                             let v = v.clone();

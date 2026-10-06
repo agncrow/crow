@@ -512,7 +512,9 @@ impl TypeContext {
                             if let Some(eb) = else_body { seek_stmts(eb, out, widgets); }
                         }
                         Stmt::For { body, .. } | Stmt::While { body, .. } => seek_stmts(body, out, widgets),
-                        Stmt::FnDecl { body, .. } => seek_stmts(body, out, widgets),
+                        // (a test's body too: a function only a test hands
+                        // to `grad` is one `grad` differentiates)
+                        Stmt::FnDecl { body, .. } | Stmt::TestBlock { body, .. } => seek_stmts(body, out, widgets),
                         _ => {}
                     }
                 }

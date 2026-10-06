@@ -1,0 +1,471 @@
+--- Minimisers of a function of a vector, as scipy.optimize has them:
+--- `nelder_mead` moves a simplex of n + 1 points — reflecting, expanding,
+--- contracting and shrinking it as scipy does — until its points and
+--- values are within the tolerances; `bfgs` steps along a direction the
+--- running inverse Hessian gives, each step's length chosen by the
+--- More–Thuente line search scipy uses (MINPACK's dcsrch), until the
+--- gradient is within `gtol`. `f` is a function of a tensor answering a
+--- number, `df` its gradient — `grad[f]` gives it. Each stops where scipy
+--- stops and answers what scipy answers: the point, the value there, the
+--- iterations and the calls of `f`.
+use math
+
+--- a minimum found: where, the value there, the iterations, the calls of
+--- `f`, and of its gradient
+struct Best [x, value, iterations, calls, gradient_calls]
+
+--- the line search's state, as dcsrch keeps it between evaluations
+struct Search [stage, brackt, ginit, gtest, gx, gy, finit, fx, fy, stx, sty, stmin, stmax, width, width1]
+--- one safeguarded step of the search: the interval and the step after it
+struct Step [stx, fx, dx, sty, fy, dy, stp, brackt]
+--- what an iteration of the search decides: the step to evaluate at (or
+--- the one converged to), the values it was given, its task and state
+struct Probe [stp, f, g, task, state]
+--- a line search's outcome: the step length (meaningful when `found`),
+--- the value and gradient at it, the value before, and the calls made
+struct Line [alpha, found, value, old_value, gradient, calls, gradient_calls]
+
+--- a matrix times a vector, as a vector
+fn matvec[h, g]
+    n = len[g]
+    return flatten[h * reshape[g, n, 1]]
+
+--- the outer product of two vectors
+fn outer[a, b]
+    n = len[a]
+    m = len[b]
+    return reshape[a, n, 1] * reshape[b, 1, m]
+
+--- the points of a simplex in an order (a parameter has one type: the
+--- values have a helper of their own)
+fn reordered_points[xs, order]
+    out = []
+    for i in order
+        out = push[out, xs[i]]
+    return out
+
+fn reordered_values[xs, order]
+    out = []
+    for i in order
+        out = push[out, xs[i]]
+    return out
+
+--- Nelder–Mead from `x0`: the first simplex steps 5% along each axis
+--- (0.00025 where the coordinate is 0); each round reflects the worst
+--- point through the others' centroid, expanding, contracting or
+--- shrinking as scipy decides; done when every point is within `xatol`
+--- of the best and every value within `fatol`
+fn nelder_mead[f, x0, xatol = 0.0001, fatol = 0.0001]
+    n = len[x0]
+    rho = 1.0
+    chi = 2.0
+    psi = 0.5
+    sigma = 0.5
+    nonzdelt = 0.05
+    zdelt = 0.00025
+    sim = []
+    sim = push[sim, x0]
+    for k in range[n]
+        y = x0
+        if y[k] ne 0.0
+            y[k] = (1.0 + nonzdelt) * y[k]
+        else
+            y[k] = zdelt
+        sim = push[sim, y]
+    maxiter = n * 200
+    maxfun = n * 200
+    fsim = []
+    for s in sim
+        fsim = push[fsim, f[s]]
+    calls = n + 1
+    order = argsort[fsim]
+    sim = reordered_points[sim, order]
+    fsim = reordered_values[fsim, order]
+    iterations = 1
+    while calls lt maxfun and iterations lt maxiter
+        spread_x = 0.0
+        spread_f = 0.0
+        for j in range[1, n + 1]
+            d = max[abs[sim[j] - sim[0]]]
+            if d gt spread_x
+                spread_x = d
+            e_f = abs[fsim[0] - fsim[j]]
+            if e_f gt spread_f
+                spread_f = e_f
+        if spread_x lte xatol and spread_f lte fatol
+            break
+        xbar = sim[0]
+        for j in range[1, n]
+            xbar = xbar + sim[j]
+        xbar = xbar / n
+        xr = (1.0 + rho) * xbar - rho * sim[n]
+        fxr = f[xr]
+        calls = calls + 1
+        doshrink = false
+        if fxr lt fsim[0]
+            xe = (1.0 + rho * chi) * xbar - rho * chi * sim[n]
+            fxe = f[xe]
+            calls = calls + 1
+            if fxe lt fxr
+                sim[n] = xe
+                fsim[n] = fxe
+            else
+                sim[n] = xr
+                fsim[n] = fxr
+        else
+            if fxr lt fsim[n - 1]
+                sim[n] = xr
+                fsim[n] = fxr
+            else
+                if fxr lt fsim[n]
+                    xc = (1.0 + psi * rho) * xbar - psi * rho * sim[n]
+                    fxc = f[xc]
+                    calls = calls + 1
+                    if fxc lte fxr
+                        sim[n] = xc
+                        fsim[n] = fxc
+                    else
+                        doshrink = true
+                else
+                    xcc = (1.0 - psi) * xbar + psi * sim[n]
+                    fxcc = f[xcc]
+                    calls = calls + 1
+                    if fxcc lt fsim[n]
+                        sim[n] = xcc
+                        fsim[n] = fxcc
+                    else
+                        doshrink = true
+                if doshrink
+                    for j in range[1, n + 1]
+                        sim[j] = sim[0] + sigma * (sim[j] - sim[0])
+                        fsim[j] = f[sim[j]]
+                        calls = calls + 1
+        iterations = iterations + 1
+        order = argsort[fsim]
+        sim = reordered_points[sim, order]
+        fsim = reordered_values[fsim, order]
+    return Best[sim[0], fsim[0], iterations, calls, 0]
+
+--- one safeguarded step of the More–Thuente search (MINPACK's dcstep):
+--- a cubic or quadratic step from the interval's best point, the
+--- interval updated with the point just evaluated
+fn dcstep[stx, fx, dx, sty, fy, dy, stp, fp, dp, brackt, stpmin, stpmax]
+    sgnd = sign[dp] * sign[dx]
+    stpf = 0.0
+    bracketed = brackt
+    if fp gt fx
+        theta = 3.0 * (fx - fp) / (stp - stx) + dx + dp
+        s = max[max[abs[theta], abs[dx]], abs[dp]]
+        gam = s * sqrt[(theta / s) ^ 2 - (dx / s) * (dp / s)]
+        if stp lt stx
+            gam = 0.0 - gam
+        p = (gam - dx) + theta
+        q = ((gam - dx) + gam) + dp
+        r = p / q
+        stpc = stx + r * (stp - stx)
+        stpq = stx + ((dx / ((fx - fp) / (stp - stx) + dx)) / 2.0) * (stp - stx)
+        if abs[stpc - stx] lte abs[stpq - stx]
+            stpf = stpc
+        else
+            stpf = stpc + (stpq - stpc) / 2.0
+        bracketed = true
+    else
+        if sgnd lt 0.0
+            theta = 3.0 * (fx - fp) / (stp - stx) + dx + dp
+            s = max[max[abs[theta], abs[dx]], abs[dp]]
+            gam = s * sqrt[(theta / s) ^ 2 - (dx / s) * (dp / s)]
+            if stp gt stx
+                gam = 0.0 - gam
+            p = (gam - dp) + theta
+            q = ((gam - dp) + gam) + dx
+            r = p / q
+            stpc = stp + r * (stx - stp)
+            stpq = stp + (dp / (dp - dx)) * (stx - stp)
+            if abs[stpc - stp] gt abs[stpq - stp]
+                stpf = stpc
+            else
+                stpf = stpq
+            bracketed = true
+        else
+            if abs[dp] lt abs[dx]
+                theta = 3.0 * (fx - fp) / (stp - stx) + dx + dp
+                s = max[max[abs[theta], abs[dx]], abs[dp]]
+                gam = s * sqrt[max[0.0, (theta / s) ^ 2 - (dx / s) * (dp / s)]]
+                if stp gt stx
+                    gam = 0.0 - gam
+                p = (gam - dp) + theta
+                q = (gam + (dx - dp)) + gam
+                r = p / q
+                stpc = 0.0
+                if r lt 0.0 and gam ne 0.0
+                    stpc = stp + r * (stx - stp)
+                else
+                    if stp gt stx
+                        stpc = stpmax
+                    else
+                        stpc = stpmin
+                stpq = stp + (dp / (dp - dx)) * (stx - stp)
+                if bracketed
+                    if abs[stpc - stp] lt abs[stpq - stp]
+                        stpf = stpc
+                    else
+                        stpf = stpq
+                    if stp gt stx
+                        stpf = min[stp + 0.66 * (sty - stp), stpf]
+                    else
+                        stpf = max[stp + 0.66 * (sty - stp), stpf]
+                else
+                    if abs[stpc - stp] gt abs[stpq - stp]
+                        stpf = stpc
+                    else
+                        stpf = stpq
+                    stpf = min[max[stpf, stpmin], stpmax]
+            else
+                if bracketed
+                    theta = 3.0 * (fp - fy) / (sty - stp) + dy + dp
+                    s = max[max[abs[theta], abs[dy]], abs[dp]]
+                    gam = s * sqrt[(theta / s) ^ 2 - (dy / s) * (dp / s)]
+                    if stp gt sty
+                        gam = 0.0 - gam
+                    p = (gam - dp) + theta
+                    q = ((gam - dp) + gam) + dy
+                    r = p / q
+                    stpc = stp + r * (sty - stp)
+                    stpf = stpc
+                else
+                    if stp gt stx
+                        stpf = stpmax
+                    else
+                        stpf = stpmin
+    nstx = stx
+    nfx = fx
+    ndx = dx
+    nsty = sty
+    nfy = fy
+    ndy = dy
+    if fp gt fx
+        nsty = stp
+        nfy = fp
+        ndy = dp
+    else
+        if sgnd lt 0.0
+            nsty = stx
+            nfy = fx
+            ndy = dx
+        nstx = stp
+        nfx = fp
+        ndx = dp
+    return Step[nstx, nfx, ndx, nsty, nfy, ndy, stpf, bracketed]
+
+--- one iteration of the search (dcsrch): given the value and derivative
+--- at the step, the tests for convergence or a warning, then the next
+--- step to evaluate at, within the interval the search keeps
+fn iterate[st, stp0, f, g, task, ftol, gtol, xtol, stpmin, stpmax]
+    p5 = 0.5
+    p66 = 0.66
+    xtrapl = 1.1
+    xtrapu = 4.0
+    stp = stp0
+    if task eq 'START'
+        if stp lt stpmin or stp gt stpmax or g gte 0.0
+            return Probe[stp, f, g, 'ERROR', st]
+        width = stpmax - stpmin
+        started = Search[1, false, g, ftol * g, g, g, f, f, f, 0.0, 0.0, 0.0, stp + xtrapu * stp, width, width / p5]
+        return Probe[stp, f, g, 'FG', started]
+    ftest = st.finit + stp * st.gtest
+    stage = st.stage
+    if stage eq 1 and f lte ftest and g gte 0.0
+        stage = 2
+    verdict = task
+    if st.brackt and (stp lte st.stmin or stp gte st.stmax)
+        verdict = 'WARNING'
+    if st.brackt and st.stmax - st.stmin lte xtol * st.stmax
+        verdict = 'WARNING'
+    if stp eq stpmax and f lte ftest and g lte st.gtest
+        verdict = 'WARNING'
+    if stp eq stpmin and (f gt ftest or g gte st.gtest)
+        verdict = 'WARNING'
+    if f lte ftest and abs[g] lte gtol * (0.0 - st.ginit)
+        verdict = 'CONVERGENCE'
+    if verdict eq 'WARNING' or verdict eq 'CONVERGENCE'
+        kept = Search[stage, st.brackt, st.ginit, st.gtest, st.gx, st.gy, st.finit, st.fx, st.fy, st.stx, st.sty, st.stmin, st.stmax, st.width, st.width1]
+        return Probe[stp, f, g, verdict, kept]
+    stx = st.stx
+    fx = st.fx
+    gx = st.gx
+    sty = st.sty
+    fy = st.fy
+    gy = st.gy
+    brackt = st.brackt
+    if stage eq 1 and f lte st.fx and f gt ftest
+        fm = f - stp * st.gtest
+        fxm = st.fx - st.stx * st.gtest
+        fym = st.fy - st.sty * st.gtest
+        gm = g - st.gtest
+        gxm = st.gx - st.gtest
+        gym = st.gy - st.gtest
+        step = dcstep[st.stx, fxm, gxm, st.sty, fym, gym, stp, fm, gm, st.brackt, st.stmin, st.stmax]
+        stx = step.stx
+        sty = step.sty
+        stp = step.stp
+        brackt = step.brackt
+        fx = step.fx + stx * st.gtest
+        fy = step.fy + sty * st.gtest
+        gx = step.dx + st.gtest
+        gy = step.dy + st.gtest
+    else
+        step = dcstep[st.stx, st.fx, st.gx, st.sty, st.fy, st.gy, stp, f, g, st.brackt, st.stmin, st.stmax]
+        stx = step.stx
+        fx = step.fx
+        gx = step.dx
+        sty = step.sty
+        fy = step.fy
+        gy = step.dy
+        stp = step.stp
+        brackt = step.brackt
+    width = st.width
+    width1 = st.width1
+    if brackt
+        if abs[sty - stx] gte p66 * width1
+            stp = stx + p5 * (sty - stx)
+        width1 = width
+        width = abs[sty - stx]
+    stmin = 0.0
+    stmax = 0.0
+    if brackt
+        stmin = min[stx, sty]
+        stmax = max[stx, sty]
+    else
+        stmin = stp + xtrapl * (stp - stx)
+        stmax = stp + xtrapu * (stp - stx)
+    stp = min[max[stp, stpmin], stpmax]
+    if (brackt and (stp lte stmin or stp gte stmax)) or (brackt and stmax - stmin lte xtol * stmax)
+        stp = stx
+    moved = Search[stage, brackt, st.ginit, st.gtest, gx, gy, st.finit, fx, fy, stx, sty, stmin, stmax, width, width1]
+    return Probe[stp, f, g, 'FG', moved]
+
+--- the step length along `pk` from `xk`, by scipy's first Wolfe search:
+--- a first guess from the value's fall last time, then dcsrch until the
+--- sufficient-decrease and curvature conditions hold (c1 = 1e-4,
+--- c2 = 0.9), a hundred evaluations at most
+fn line_search[f, df, xk, pk, gfk, phi0, old_phi0]
+    c1 = 0.0001
+    c2 = 0.9
+    xtol = 10.0 ^ (0 - 14)
+    amin = 10.0 ^ (0 - 100)
+    amax = 10.0 ^ 100
+    derphi0 = dot[gfk, pk]
+    alpha1 = 1.0
+    if derphi0 ne 0.0
+        alpha1 = min[1.0, 1.01 * 2.0 * (phi0 - old_phi0) / derphi0]
+        if alpha1 lt 0.0
+            alpha1 = 1.0
+    st = Search[0, false, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    phi1 = phi0
+    derphi1 = derphi0
+    task = 'START'
+    stp = alpha1
+    gval = gfk
+    calls = 0
+    gcalls = 0
+    for i in range[100]
+        pr = iterate[st, stp, phi1, derphi1, task, c1, c2, xtol, amin, amax]
+        st = pr.state
+        stp = pr.stp
+        task = pr.task
+        if not (stp eq stp) or abs[stp] gte inf
+            task = 'WARNING'
+            break
+        if task eq 'FG'
+            at = xk + stp * pk
+            phi1 = f[at]
+            calls = calls + 1
+            gval = df[at]
+            gcalls = gcalls + 1
+            derphi1 = dot[gval, pk]
+        else
+            break
+    return Line[stp, task eq 'CONVERGENCE', phi1, phi0, gval, calls, gcalls]
+
+--- BFGS from `x0`: the direction −H·g with H the running inverse Hessian
+--- (the identity at first, updated by each step and the gradient's
+--- change), the step's length by `line_search`, until the gradient's
+--- largest component is within `gtol` — or the line search fails, where
+--- scipy would try its second search, and this answers what it has
+fn bfgs[f, df, x0, gtol = 0.00001]
+    n = len[x0]
+    maxiter = n * 200
+    old_fval = f[x0]
+    gfk = df[x0]
+    calls = 1
+    gcalls = 1
+    k = 0
+    identity = eye[n]
+    hk = eye[n]
+    old_old_fval = old_fval + norm[gfk] / 2.0
+    xk = x0
+    gnorm = max[abs[gfk]]
+    while gnorm gt gtol and k lt maxiter
+        pk = 0.0 - matvec[hk, gfk]
+        line = line_search[f, df, xk, pk, gfk, old_fval, old_old_fval]
+        calls = calls + line.calls
+        gcalls = gcalls + line.gradient_calls
+        if not line.found
+            break
+        old_old_fval = line.old_value
+        old_fval = line.value
+        sk = line.alpha * pk
+        xk = xk + sk
+        gfkp1 = line.gradient
+        yk = gfkp1 - gfk
+        gfk = gfkp1
+        k = k + 1
+        gnorm = max[abs[gfk]]
+        if gnorm lte gtol
+            break
+        if line.alpha * norm[pk] lte 0.0
+            break
+        rhok_inv = dot[yk, sk]
+        rhok = 1000.0
+        if rhok_inv ne 0.0
+            rhok = 1.0 / rhok_inv
+        a1 = identity - outer[sk, yk] * rhok
+        a2 = identity - outer[yk, sk] * rhok
+        hk = a1 * (hk * a2) + rhok * outer[sk, sk]
+    return Best[xk, old_fval, k, calls, gcalls]
+
+--- Booth's function of a vector of two, written over whole tensors so
+--- that `grad` differentiates it
+fn booth[x]
+    e0 = tensor[[1.0, 0.0]]
+    e1 = tensor[[0.0, 1.0]]
+    a = sum[e0 .* x]
+    b = sum[e1 .* x]
+    return (a + 2.0 * b - 7.0) ^ 2 + (2.0 * a + b - 5.0) ^ 2
+
+fn sphere[x]
+    return sum[x .^ 2]
+
+--- scipy's Nelder–Mead on Booth's function from the origin: the same
+--- point, value, iterations and calls; and on a sphere from (3, −4, 5)
+test moves_the_simplex_as_scipy_does[]
+    b = nelder_mead[booth, tensor[[0.0, 0.0]]]
+    assert[abs[b.x[0] - 1.000018462214465] lt 0.000000000001]
+    assert[abs[b.x[1] - 2.9999657858162263] lt 0.000000000001]
+    assert[abs[b.value - 0.0000000025039618826825238] lt 0.000000000000001]
+    assert[b.iterations eq 67 and b.calls eq 132]
+    s = nelder_mead[sphere, tensor[[3.0, -4.0, 5.0]]]
+    assert[s.iterations eq 73 and s.calls eq 138]
+    assert[abs[s.value - 0.0000000037557974625804036] lt 0.000000000000001]
+
+--- scipy's BFGS on Booth's function from the origin, the gradient by
+--- `grad`: the same point, value, iterations and calls; a sphere takes
+--- three steps
+test steps_by_the_inverse_hessian_as_scipy_does[]
+    b = bfgs[booth, grad[booth], tensor[[0.0, 0.0]]]
+    assert[abs[b.x[0] - 1.0000000000954752] lt 0.000000001]
+    assert[abs[b.x[1] - 2.999999999931513] lt 0.000000001]
+    assert[b.iterations eq 7 and b.calls eq 8]
+    s = bfgs[sphere, grad[sphere], tensor[[3.0, -4.0, 5.0]]]
+    assert[s.iterations eq 3 and s.calls eq 4]
+    assert[abs[s.value] lt 0.000000000000000000001]

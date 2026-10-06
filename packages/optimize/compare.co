@@ -1,0 +1,141 @@
+--- The package held against scipy.optimize: a folder holding
+--- reference.csv (written by opt_bench.py beside the README) with scipy's
+--- answer for each case and method — the point, its value, the
+--- iterations and the calls — and, for each, how far this package's
+--- answer is from it. Run it in both modes; the two print the same.
+use math, frame
+use scalar, roots, multi
+
+--- scipy's answers, a row per case and method
+struct Reference [cases, methods, nits, nfevs, funs, xs]
+
+folder = args[][0]
+loaded = frame.load['`folder`/reference.csv']
+ref = Reference[loaded.case, loaded.method, flatten[tensor[select[loaded, ['nit']]]], flatten[tensor[select[loaded, ['nfev']]]], flatten[tensor[select[loaded, ['fun']]]], tensor[select[loaded, ['x0', 'x1', 'x2', 'x3']]]]
+
+--- the row of a case and method
+fn row_of[ref, case, method]
+    for i in range[len[ref.cases]]
+        if ref.cases[i] eq case and ref.methods[i] eq method
+            return i
+    return -1
+
+--- the report of one answer: how far its point and value are from
+--- scipy's, and whether its iterations and calls are scipy's
+fn report[ref, case, method, x, value, nit, nfev]
+    i = row_of[ref, case, method]
+    if i lt 0
+        log['`case` `method`: no reference row']
+        return 0
+    dx = 0.0
+    for j in range[len[x]]
+        d = abs[x[j] - ref.xs[i][j]]
+        if d gt dx
+            dx = d
+    dv = abs[value - ref.funs[i]]
+    counts = 'the same'
+    if int[ref.nits[i]] ne nit or int[ref.nfevs[i]] ne nfev
+        counts = 'DIFFERENT (scipy `int[ref.nits[i]]` iterations, `int[ref.nfevs[i]]` calls)'
+    log['`case` `method`: x within `fmt[dx, decimals = 15]`, value within `fmt[dv, decimals = 15]`, `nit` iterations and `nfev` calls — `counts`']
+    return 0
+
+--- the functions of one number
+fn f1[x]
+    return (x - 1.3) ^ 2 + 0.7 * sin[3.0 * x]
+
+fn f2[x]
+    return x ^ 3 - 2.0 * x - 5.0
+
+fn f3[x]
+    return cos[x] - x
+
+fn f3_slope[x]
+    return 0.0 - sin[x] - 1.0
+
+fn f4[x]
+    return exp[x] - 3.0 * x
+
+fn f4_slope[x]
+    return exp[x] - 3.0
+
+fn scalar_cases[ref, name, f, a, b]
+    br = scalar.bracket[f, a, b]
+    report[ref, name, 'bracket', [br.a, br.b, br.c, float[br.calls]], br.fb, 0, br.calls]
+    r = scalar.brent[f, a, b]
+    report[ref, name, 'brent', [r.x], r.value, r.iterations, r.calls]
+    g = scalar.golden[f, a, b]
+    report[ref, name, 'golden', [g.x], g.value, g.iterations, g.calls]
+    return 0
+
+fn root_cases[ref, name, f, df, a, b, x0]
+    r = roots.bisect[f, a, b]
+    report[ref, name, 'bisect', [r.x], f[r.x], r.iterations, r.calls]
+    q = roots.brentq[f, a, b]
+    report[ref, name, 'brentq', [q.x], f[q.x], q.iterations, q.calls]
+    n = roots.newton[f, df, x0]
+    report[ref, name, 'newton', [n.x], f[n.x], n.iterations, n.calls]
+    s = roots.secant[f, x0]
+    report[ref, name, 'secant', [s.x], f[s.x], s.iterations, s.calls]
+    return 0
+
+scalar_cases[ref, 'f1', f1, 0.0, 1.0]
+scalar_cases[ref, 'f4', f4, 0.0, 2.0]
+scalar_cases[ref, 'f1b', f1, 2.0, 3.0]
+b1 = scalar.bounded[f1, -1.0, 3.0]
+report[ref, 'f1', 'bounded', [b1.x], b1.value, b1.iterations, b1.calls]
+b4 = scalar.bounded[f4, -2.0, 4.0]
+report[ref, 'f4', 'bounded', [b4.x], b4.value, b4.iterations, b4.calls]
+root_cases[ref, 'f2', f2, grad[f2], 2.0, 3.0, 2.5]
+root_cases[ref, 'f3', f3, f3_slope, 0.0, 1.0, 1.0]
+root_cases[ref, 'f4', f4, f4_slope, 1.0, 2.0, 1.8]
+root_cases[ref, 'f4a', f4, f4_slope, 0.0, 1.0, 0.3]
+
+--- the functions of a vector, written over whole tensors so that `grad`
+--- differentiates them: selector matrices stand in for x[1:] and x[:-1]
+fn rosen2[x]
+    lo = flatten[tensor[[[1.0, 0.0]]] * reshape[x, 2, 1]]
+    hi = flatten[tensor[[[0.0, 1.0]]] * reshape[x, 2, 1]]
+    return sum[100.0 * (hi - lo .^ 2) .^ 2 + (1.0 - lo) .^ 2]
+
+fn rosen4[x]
+    lo = flatten[tensor[[[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]]] * reshape[x, 4, 1]]
+    hi = flatten[tensor[[[0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]] * reshape[x, 4, 1]]
+    return sum[100.0 * (hi - lo .^ 2) .^ 2 + (1.0 - lo) .^ 2]
+
+fn sphere[x]
+    return sum[x .^ 2]
+
+fn first_of[x]
+    return sum[tensor[[1.0, 0.0]] .* x]
+
+fn second_of[x]
+    return sum[tensor[[0.0, 1.0]] .* x]
+
+fn beale[x]
+    a = first_of[x]
+    b = second_of[x]
+    return (1.5 - a + a * b) ^ 2 + (2.25 - a + a * b ^ 2) ^ 2 + (2.625 - a + a * b ^ 3) ^ 2
+
+fn booth[x]
+    a = first_of[x]
+    b = second_of[x]
+    return (a + 2.0 * b - 7.0) ^ 2 + (2.0 * a + b - 5.0) ^ 2
+
+fn himmelblau[x]
+    a = first_of[x]
+    b = second_of[x]
+    return (a ^ 2 + b - 11.0) ^ 2 + (a + b ^ 2 - 7.0) ^ 2
+
+fn vector_cases[ref, name, f, df, x0]
+    n = multi.nelder_mead[f, x0]
+    report[ref, name, 'nelder_mead', n.x, n.value, n.iterations, n.calls]
+    b = multi.bfgs[f, df, x0]
+    report[ref, name, 'bfgs', b.x, b.value, b.iterations, b.calls]
+    return 0
+
+vector_cases[ref, 'rosen2', rosen2, grad[rosen2], tensor[[-1.2, 1.0]]]
+vector_cases[ref, 'rosen4', rosen4, grad[rosen4], tensor[[-1.2, 1.0, -1.2, 1.0]]]
+vector_cases[ref, 'sphere3', sphere, grad[sphere], tensor[[3.0, -4.0, 5.0]]]
+vector_cases[ref, 'beale', beale, grad[beale], tensor[[1.0, 1.0]]]
+vector_cases[ref, 'booth', booth, grad[booth], tensor[[0.0, 0.0]]]
+vector_cases[ref, 'himmelblau', himmelblau, grad[himmelblau], tensor[[0.0, 0.0]]]

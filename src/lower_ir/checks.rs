@@ -1379,6 +1379,31 @@ mod tests {
         }
     }
 
+    /// A tensor's item assigned in both branches of an `if` inside a loop,
+    /// then pushed onto a list, reordered through a helper and read back as
+    /// a tensor: the variable stays the tensor it was given (an element
+    /// assignment types a list's unknown items, never a wholly unknown
+    /// variable — a guess of a list had stuck to the helper the list was
+    /// handed to, and a simplex's points read as lists of floats)
+    #[test]
+    fn a_tensor_takes_an_item() {
+        let src = "use math\nfn reordered[xs, order]\n    out = []\n    for i in order\n        out = push[out, xs[i]]\n    return out\nfn simplex[x0]\n    n = len[x0]\n    sim = []\n    sim = push[sim, x0]\n    for k in range[n]\n        y = x0\n        if y[k] ne 0.0\n            y[k] = 1.05 * y[k]\n        else\n            y[k] = 0.00025\n        sim = push[sim, y]\n    order = argsort[[2.0, 1.0, 3.0]]\n    sim = reordered[sim, order]\n    rounds = 0\n    while rounds lt 2\n        xr = 2.0 * sim[0] - sim[n]\n        sim[n] = xr\n        rounds = rounds + 1\n    return sim[n] * 2.0\nlog[simplex[tensor[[1.0, 2.0]]]]\n";
+        let checked = check_source(src);
+        assert!(checked.is_ok(), "{:?}", checked);
+    }
+
+    /// A gradient handed as a value and handed on, with the function it is
+    /// of called only through those hands, and only from a test: the
+    /// parameters take the gradient's tensor type (a function only a test
+    /// hands to `grad` is one `grad` differentiates, and a gradient of a
+    /// function not typed yet is not a function of floats)
+    #[test]
+    fn a_gradient_handed_from_a_test_types_its_function() {
+        let src = "use math\nfn booth[x]\n    e0 = tensor[[1.0, 0.0]]\n    e1 = tensor[[0.0, 1.0]]\n    a = sum[e0 .* x]\n    b = sum[e1 .* x]\n    return (a + 2.0 * b - 7.0) ^ 2 + (2.0 * a + b - 5.0) ^ 2\nfn probe[f, df, xk, pk, gfk]\n    derphi0 = dot[gfk, pk]\n    at = xk + 0.5 * pk\n    gval = df[at]\n    return dot[gval, pk] + derphi0 + f[at]\nfn steps[f, df, x0]\n    gfk = df[x0]\n    pk = 0.0 - gfk\n    d = probe[f, df, x0, pk, gfk]\n    gfk = df[x0 + 0.01 * pk]\n    return d + max[abs[gfk]]\ntest relays_a_gradient[]\n    assert[steps[booth, grad[booth], tensor[[0.0, 0.0]]] gt 0.0]\n";
+        let checked = check_source(src);
+        assert!(checked.is_ok(), "{:?}", checked);
+    }
+
     /// A list handed to a `?` is sent as (?, ?, …), which only `IN` reads:
     /// finch's `= ANY(?)` handed a list failed at the database every time
     #[test]

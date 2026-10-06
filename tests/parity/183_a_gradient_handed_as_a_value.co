@@ -1,0 +1,37 @@
+--- a gradient handed to a function as a value, applied there and handed
+--- on to another that applies it too, with the function it is of typed
+--- by those applications alone: the same in both modes (compiled, the
+--- parameter's answers had been read as text, and a function only handed
+--- to `grad` had its parameters guessed floats — a tensor's gradient was
+--- a float, and the program did not build)
+use math
+
+fn booth[x]
+    e0 = tensor[[1.0, 0.0]]
+    e1 = tensor[[0.0, 1.0]]
+    a = sum[e0 .* x]
+    b = sum[e1 .* x]
+    return (a + 2.0 * b - 7.0) ^ 2 + (2.0 * a + b - 5.0) ^ 2
+
+fn slope_along[f, df, at, direction]
+    g = df[at]
+    return dot[g, direction] + f[at] * 0.0
+
+fn descend[f, df, x0, rate, steps]
+    x = x0
+    for i in range[steps]
+        g = df[x]
+        x = x - rate * g
+    return x
+
+fn cubic[t]
+    return t ^ 3 - 2.0 * t
+
+fn root_step[f, df, t]
+    return t - f[t] / df[t]
+
+x = descend[booth, grad[booth], tensor[[0.0, 0.0]], 0.02, 200]
+log[fmt[x[0], decimals = 4]]
+log[fmt[x[1], decimals = 4]]
+log[slope_along[booth, grad[booth], tensor[[1.0, 3.0]], tensor[[1.0, 0.0]]]]
+log[fmt[root_step[cubic, grad[cubic], 2.0], decimals = 6]]

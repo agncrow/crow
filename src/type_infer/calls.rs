@@ -377,9 +377,53 @@ impl TypeContext {
     /// the compiled program left it out; one handed on had been read as
     /// text.)
     pub(crate) fn hand_functions(&mut self, callee: &str, args: &[Expr]) {
+        let handed_to = callee;
         let Some(sig) = self.functions.get(callee).cloned() else { return };
         for (i, arg) in args.iter().enumerate() {
             let Some((_, CrowType::Fn(param_types, ret_type))) = sig.params.get(i) else { continue };
+            // a gradient handed as a value (`descend[f, grad[f], x0]`): the
+            // parameter takes the gradient's type — its answer above all, a
+            // tensor or a float, which the parameter's application reads —
+            // and the function the gradient is of takes the types the
+            // parameter is applied with (compiled, the parameter's answer
+            // had been read as text, and the program did not build)
+            if let Expr::Call { callee, args: inner } = arg {
+                if let (Expr::Ident(g), [Expr::Ident(f)]) = (callee.as_ref(), inner.as_slice()) {
+                    if g == "grad" {
+                        if let Some(target) = self.functions.get(f).cloned() {
+                            let mut params = target.params.clone();
+                            // (a parameter the seek only guessed a float takes
+                            // the applied type outright, as a direct call of
+                            // the gradient gives it)
+                            let guessed = self.grad_forced.contains(f);
+                            for (j, pt) in param_types.iter().enumerate() {
+                                if j < params.len() && !matches!(pt, CrowType::Unknown) {
+                                    params[j].1 = if guessed { pt.clone() } else { params[j].1.unify(pt) };
+                                }
+                            }
+                            if let Some(t) = self.functions.get_mut(f) {
+                                t.params = params;
+                            }
+                            // (the application says what the function is
+                            // of — numbers or tensors — as a direct call of
+                            // the gradient would)
+                            if !param_types.is_empty() && param_types.iter().all(|t| !matches!(t, CrowType::Unknown)) {
+                                self.grad_forced.remove(f);
+                            }
+                        }
+                        if let Some(handed) = self.gradient_type(f) {
+                            let (param_types, ret_type) = (param_types.clone(), ret_type.clone());
+                            let merged = CrowType::Fn(param_types, ret_type).unify(&handed);
+                            if let Some(c) = self.functions.get_mut(handed_to)
+                                && let Some(p) = c.params.get_mut(i)
+                            {
+                                p.1 = p.1.unify(&merged);
+                            }
+                        }
+                        continue;
+                    }
+                }
+            }
             let Expr::Ident(n) = arg else { continue };
             // what the function knows of itself flows into the parameter
             // too — its answer above all, so a model a handed `fit` answers
