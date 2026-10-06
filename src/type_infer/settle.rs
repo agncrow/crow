@@ -21,21 +21,17 @@ pub(crate) fn consumed(existing: &CrowType, value: CrowType, in_body: bool) -> C
 }
 
 /// The type a variable settles on after a later assignment: what it held,
-/// unified with what the value lands as.
+/// unified with what the value lands as — in the form it was declared in.
+/// Numbers held as a list and numbers held as a tensor join either way
+/// (`unify`), but a variable's form is its declaration's, as the compiled
+/// program declares it (a fact's as the state keeps it): numbers assigned
+/// as a list to a variable holding a tensor land as the tensor, and the
+/// other way, converted where they are assigned. The join alone had turned
+/// a variable into a later value's form while its declaration kept the
+/// first (finch's `ep_start = [0.0]`, given a record's list in a handler,
+/// did not build; nor did `t = map[a = [1.5]]` given a list).
 pub(crate) fn settle(existing: &CrowType, value: CrowType, in_body: bool) -> CrowType {
-    existing.unify(&consumed(existing, value, in_body))
-}
-
-/// The type a fact settles on after a handler's assignment: what it held,
-/// unified with the value — in the form it was declared in. A fact's form
-/// is the state's (the compiled program keeps it as declared), so numbers
-/// assigned as a list to a fact holding a tensor land as the tensor, and
-/// the other way, converted where they are assigned; the join of the two
-/// forms would have turned the fact into the value's form while its state
-/// kept the declared one (finch's `ep_start = [0.0]`, given a record's
-/// list, did not build).
-pub(crate) fn settle_fact(existing: &CrowType, value: CrowType, in_body: bool) -> CrowType {
-    let joined = settle(existing, value, in_body);
+    let joined = existing.unify(&consumed(existing, value, in_body));
     match (existing, joined) {
         (CrowType::NumArray(_, dims), CrowType::Array(item)) => {
             let elem = match *item {
@@ -51,6 +47,8 @@ pub(crate) fn settle_fact(existing: &CrowType, value: CrowType, in_body: bool) -
             };
             CrowType::Array(Box::new(item))
         }
+        // (a map's values, held either way, keep the map's form too)
+        (CrowType::Map(held), CrowType::Map(joined)) => CrowType::Map(Box::new(settle(held, *joined, false))),
         (_, joined) => joined,
     }
 }

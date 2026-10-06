@@ -2271,11 +2271,7 @@ impl<'a> Lowerer<'a> {
             ty.clone()
         } else {
             let existing = self.ctx.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
-            if self.is_fact(name) {
-                crate::type_infer::settle::settle_fact(&existing, ty.clone(), self.ctx.body_assigned.is_some())
-            } else {
-                crate::type_infer::settle::settle(&existing, ty.clone(), self.ctx.body_assigned.is_some())
-            }
+            crate::type_infer::settle::settle(&existing, ty.clone(), self.ctx.body_assigned.is_some())
         };
         self.ctx.vars.insert(name.to_string(), settled);
         self.rebind(name, &ty);
@@ -2323,8 +2319,7 @@ impl<'a> Lowerer<'a> {
         let in_body = self.ctx.body_assigned.is_some();
         for (n, t) in names.iter().zip(types) {
             let existing = self.ctx.vars.get(n).cloned().unwrap_or(CrowType::Unknown);
-            let settled = if self.is_fact(n) { crate::type_infer::settle::settle_fact(&existing, t, in_body) } else { crate::type_infer::settle::settle(&existing, t, in_body) };
-            self.ctx.vars.insert(n.clone(), settled);
+            self.ctx.vars.insert(n.clone(), crate::type_infer::settle::settle(&existing, t, in_body));
         }
         for n in names {
             let store = self.is_fact(n) && self.sees_facts();
@@ -2358,8 +2353,7 @@ impl<'a> Lowerer<'a> {
         let in_body = self.ctx.body_assigned.is_some();
         for (n, t) in names.iter().zip(types) {
             let existing = self.ctx.vars.get(n).cloned().unwrap_or(CrowType::Unknown);
-            let settled = if self.is_fact(n) { crate::type_infer::settle::settle_fact(&existing, t, in_body) } else { crate::type_infer::settle::settle(&existing, t, in_body) };
-            self.ctx.vars.insert(n.clone(), settled);
+            self.ctx.vars.insert(n.clone(), crate::type_infer::settle::settle(&existing, t, in_body));
         }
         for n in names {
             let store = self.is_fact(n) && self.sees_facts();
@@ -2742,6 +2736,12 @@ impl<'a> Lowerer<'a> {
                     out.push((key, self.lower_expr(v)?));
                 }
                 let ty = ty_of(&TypeContext::map_type(out.iter().map(|(_, v)| read(v))));
+                // (each value in the form the map holds its values: a tensor
+                // literal beside an empty list, or a list, is the list)
+                let out = match &ty {
+                    Ty::Map(item) => out.into_iter().map(|(k, v)| (k, held_as(v, item))).collect(),
+                    _ => out,
+                };
                 Expr::MapLit(out, ty)
             }
             A::Named { name, .. } => return Err(format!("lowering: a named argument ('{}') survived the lowering of named arguments", name)),
@@ -3302,6 +3302,12 @@ impl<'a> Lowerer<'a> {
                 }
             }
             let lowered = self.core_row_arguments(&name, lowered);
+            // the collection's form is the answer's (`held_as` converted the
+            // item or the value to it): a tensor set into a map of lists
+            // answers a map of lists, a list pushed onto a list of rows a
+            // list of rows (the answer had been in the join's form, which
+            // the variable's declaration then disagreed with)
+            let ty = in_holders_form(&name, &lowered, ty);
             let row = self.builtin_row(None, &name, &lowered);
             let (lowered, ty) = match row {
                 Some(row) => Self::widen_items(row, lowered, ty),
@@ -3564,7 +3570,24 @@ impl<'a> Lowerer<'a> {
         let Some(kinds) = crate::table::core_row(name, &args).and_then(|row| crate::table::kinds_of(row.params, lowered.len())) else {
             return lowered;
         };
-        let lowered = Self::typed_empties(&kinds, lowered);
+        let mut lowered = Self::typed_empties(&kinds, lowered);
+        // the item a list is pushed, and the value a map is set, in the form
+        // the collection holds its items (`held_as`)
+        let (slot, item) = match (name, lowered.len()) {
+            ("push", 2) => (1, match lowered[0].ty().payload() {
+                Ty::List(item) => Some(item.as_ref().clone()),
+                _ => None,
+            }),
+            ("set", 3) => (2, match lowered[0].ty().payload() {
+                Ty::Map(item) => Some(item.as_ref().clone()),
+                _ => None,
+            }),
+            _ => (0, None),
+        };
+        if let Some(item) = item {
+            let value = lowered.remove(slot);
+            lowered.insert(slot, held_as(value, &item));
+        }
         let floats = kinds.iter().zip(&lowered).any(|(k, x)| match (k, x.ty().payload()) {
             (Kind::List | Kind::Seq, Ty::List(e)) | (Kind::MapOf | Kind::MapRef, Ty::Map(e)) => **e == Ty::Float,
             _ => false,
@@ -4043,6 +4066,58 @@ fn settled_yield(expr: Expr, declared: &Ty) -> Expr {
             Expr::ForExpr { var, iter, body, ty: declared.clone(), parallel }
         }
         other => other,
+    }
+}
+
+/// A value in the form a collection holds its items: numbers held as a
+/// tensor set into a map of lists, or pushed onto a list of lists, are the
+/// list; numbers held as a list, or an empty list, where the items are
+/// tensors are the tensor — converted where they meet, as they are where a
+/// variable or a record's field takes them (`map[a = [1, 2], c = []]` had
+/// stopped the interpreter at the tensor — `expected a list, got array` —
+/// and the compiled program had not built).
+fn held_as(value: Expr, item: &Ty) -> Expr {
+    let failing = value.ty().is_result();
+    let wrap = |t: Ty| if failing { Ty::Result(Box::new(t)) } else { t };
+    match (item.payload(), value.ty().payload().clone()) {
+        (Ty::List(e), Ty::Tensor(..)) if matches!(e.payload(), Ty::Int | Ty::Float) => {
+            let ty = wrap(Ty::List(Box::new(e.payload().clone())));
+            Expr::Convert { how: Convert::ToList, expr: Box::new(value), ty }
+        }
+        (Ty::Tensor(..), Ty::List(e)) if matches!(e.payload(), Ty::Int | Ty::Float | Ty::Unknown) => {
+            let ty = wrap(Ty::Tensor(Box::new(Ty::Float), shapes::stacked_dims(&value.ty())));
+            Expr::Convert { how: Convert::ToTensor, expr: Box::new(value), ty }
+        }
+        _ => value,
+    }
+}
+
+/// A `set` or `push` answer in the form its collection holds its items:
+/// the holder's form where the answer's items differ only in form (see
+/// `held_as`).
+fn in_holders_form(name: &str, lowered: &[Expr], ty: Ty) -> Ty {
+    let holder = match (name, lowered.first()) {
+        ("set" | "push", Some(h)) => h.ty().payload().clone(),
+        _ => return ty,
+    };
+    let failing = ty.is_result();
+    let (held, answered) = match (&holder, ty.payload()) {
+        (Ty::Map(h), Ty::Map(a)) | (Ty::List(h), Ty::List(a)) => (h.as_ref().clone(), a.as_ref().clone()),
+        _ => return ty,
+    };
+    let item = match (held.payload(), answered.payload()) {
+        (Ty::Tensor(e, d), Ty::List(a)) if matches!(a.payload(), Ty::Int | Ty::Float | Ty::Unknown) => Ty::Tensor(e.clone(), d.clone()),
+        (Ty::List(h), Ty::Tensor(..)) if matches!(h.payload(), Ty::Int | Ty::Float) => Ty::List(h.clone()),
+        _ => return ty,
+    };
+    let inner = match holder {
+        Ty::Map(_) => Ty::Map(Box::new(item)),
+        _ => Ty::List(Box::new(item)),
+    };
+    if failing {
+        Ty::Result(Box::new(inner))
+    } else {
+        inner
     }
 }
 

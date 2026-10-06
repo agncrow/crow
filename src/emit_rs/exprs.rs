@@ -149,6 +149,13 @@ impl Emitter {
                     format!("({}){}", inner, as_list)
                 }
                 Convert::ToTensor => {
+                    // (an empty list literal where a tensor is held — a map's
+                    // value, a list's item — is the empty tensor: `vec![]`
+                    // names no item type to map over)
+                    if matches!(Emitter::raw(expr), Expr::ListLit(items, _) if items.is_empty()) {
+                        self.needs_crow_runtime = true;
+                        return "crow_runtime::tensor::CrowTensor::from_vec(vec![], vec![0])".to_string();
+                    }
                     let inner = self.expr(expr);
                     match self.tt(expr) {
                         // numbers that can fail: a failed one stops where

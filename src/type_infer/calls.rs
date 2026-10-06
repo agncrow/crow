@@ -444,12 +444,7 @@ impl TypeContext {
             self.vars.insert(name.to_string(), ty);
         } else {
             let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
-            let settled = if self.is_ui && self.facts.contains(name) {
-                settle::settle_fact(&existing, ty, self.body_assigned.is_some())
-            } else {
-                settle::settle(&existing, ty, self.body_assigned.is_some())
-            };
-            self.vars.insert(name.to_string(), settled);
+            self.vars.insert(name.to_string(), settle::settle(&existing, ty, self.body_assigned.is_some()));
         }
     }
 

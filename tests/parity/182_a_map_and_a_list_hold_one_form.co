@@ -1,0 +1,28 @@
+--- numbers held as a tensor beside an empty list in a map literal, a list
+--- set into a map of tensors, an empty list set into one, and a list
+--- pushed onto a list of rows: each in the form the collection holds its
+--- items, in both modes (the map literal had stopped the interpreter —
+--- `expected a list, got array` — and none of the three built compiled)
+m = map[a = [1, 2], b = [3], c = []]
+log[len[m['a']]]
+log[m['c']]
+log[m['b'][0] + 1]
+t = map[a = [1.5, 2.5]]
+xs = []
+xs = push[xs, 1.0]
+t = set[t, 'b', xs]
+log[t['b']]
+t = set[t, 'c', []]
+log[len[t['c']]]
+n = map[]
+n = set[n, 'a', [1, 2]]
+n = set[n, 'b', []]
+log[n['a']]
+log[len[n['b']]]
+rows = []
+rows = push[rows, [1.0, 2.0]]
+ys = []
+ys = push[ys, 3.0]
+rows = push[rows, ys]
+log[rows]
+log[len[rows[1]]]

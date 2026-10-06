@@ -802,7 +802,12 @@ m = set[m, key_var, value]
 ```
 
 **Maps are homogeneous: every value must have the same type.** Int and float
-unify (like arrays). Mixed named data belongs in a struct — and since the value
+unify (like arrays), and numbers held as a list unify with numbers held as a
+tensor: the map holds one form, and a value in the other is converted where
+it is set — `map[a = [1, 2], c = []]` holds lists, as a list pushed onto a
+list of rows is a row (it had stopped the interpreter at the tensor,
+`expected a list, got array`, and the compiled program had not built).
+Mixed named data belongs in a struct — and since the value
 type can be *any* type, including structs, the two compose:
 
 ```
