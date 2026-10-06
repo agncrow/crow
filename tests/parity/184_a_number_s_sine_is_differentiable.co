@@ -1,0 +1,25 @@
+--- the derivatives of a function of numbers through sin, cos, tan, exp,
+--- ln, tanh, erf and the others, and of a function of tensors through
+--- the same, in both modes (the dual numbers had carried arithmetic,
+--- sqrt, abs and the roundings only, and the tape no trigonometry: a
+--- function with `cos` in it stopped as it ran)
+use math
+
+fn waves[x]
+    return sin[x] * exp[x] + cos[x] / 2.0 + tan[x / 4.0] + ln[x + 2.0] + tanh[x] + erf[x] + log2[x + 1.0] + log10[x + 9.0] + sinh[x] - cosh[x] + atan[x] + asin[x / 4.0] - acos[x / 4.0] + sign[x]
+
+fn field[t]
+    return sum[sin[t] .* cos[t] + exp[t] - ln[t + 3.0] + tanh[t] + atan[t] + sinh[t] - cosh[t] + log2[t + 2.0] + log10[t + 10.0] + tan[t / 3.0] + asin[t / 5.0] + acos[t / 5.0] + sign[t]]
+
+dw = grad[waves]
+log[fmt[dw[0.5], decimals = 12]]
+log[fmt[dw[1.0], decimals = 12]]
+--- a check against the sum of each term's slope at 0.5
+x = 0.5
+by_hand = cos[x] * exp[x] + sin[x] * exp[x] - sin[x] / 2.0 + (1.0 + tan[x / 4.0] ^ 2) / 4.0 + 1.0 / (x + 2.0) + 1.0 - tanh[x] ^ 2 + 2.0 / sqrt[pi] * exp[0.0 - x * x] + 1.0 / ((x + 1.0) * ln[2.0]) + 1.0 / ((x + 9.0) * ln[10.0]) + cosh[x] - sinh[x] + 1.0 / (1.0 + x * x) + 0.25 / sqrt[1.0 - (x / 4.0) ^ 2] + 0.25 / sqrt[1.0 - (x / 4.0) ^ 2]
+log[abs[dw[0.5] - by_hand] lt 0.000000000001]
+df = grad[field]
+g = df[tensor[[0.5, -0.25, 1.5]]]
+log[fmt[g[0], decimals = 12]]
+log[fmt[g[1], decimals = 12]]
+log[fmt[g[2], decimals = 12]]

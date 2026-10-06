@@ -1762,6 +1762,15 @@ impl IrInterp {
         if name != "log" && crate::autograd_bridge::any_traced(&vals) {
             return crate::autograd_bridge::call(name, &vals);
         }
+        // a dual number a function grad differentiates carries takes the
+        // derivative's own form — before a module's row would take a
+        // number (math's `cos` of a dual had reached its row, which takes
+        // no dual: `expected a number, got float`)
+        if vals.iter().any(|v| matches!(v.value, Value::Dual(..))) {
+            if let Some(r) = crate::builtins::call(name, &vals, &self.trace_entry()) {
+                return r.map(|v| Self::stamp(name, v));
+            }
+        }
         // in a rehearsal what reaches past the program is recorded, not run
         if let Some(v) = crate::rehearsal::outside(name, &vals) {
             return Ok(v);

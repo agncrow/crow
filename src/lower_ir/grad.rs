@@ -17,6 +17,7 @@ use crate::ir::*;
 /// The builtins a traced function may call with a traced value.
 pub(crate) const DIFFERENTIABLE: &[&str] = &[
     "sum", "mean", "max", "min", "exp", "ln", "sqrt", "tanh", "abs", "erf", "clip", "transpose", "reshape", "flatten",
+    "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "log2", "log10", "sign",
     // piecewise constant: a constant of the tape (derivative 0)
     "floor", "ceil", "round",
     // read, never differentiated: a length, a conversion of a number, the

@@ -1552,6 +1552,7 @@ pub static ROWS: &[Row] = &[
     row!("math.highpass", "math", "highpass", crow_runtime::math::highpass, (Tensor, Float, Float) -> Tensor, stops),
     row!("math.bandpass", "math", "bandpass", crow_runtime::math::bandpass, (Tensor, Float, Float, Float) -> Tensor, stops),
     row!("math.gamma", "math", "gamma", crow_runtime::math::gamma, (Tensor) -> Tensor, never),
+    row!("math.erf_n", "math", "erf", crow_runtime::math::erf_n, (Float) -> Float, never),
     row!("math.erf", "math", "erf", crow_runtime::math::erf, (Tensor) -> Tensor, never),
     row!("math.factorial", "math", "factorial", crow_runtime::math::factorial, (Tensor) -> Tensor, never),
     row!("math.bessel", "math", "bessel", crow_runtime::math::bessel, (Tensor, Int) -> Tensor, never),

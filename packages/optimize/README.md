@@ -24,9 +24,9 @@ use optimize.scalar, optimize.roots, optimize.multi
 `f` is a function handed as a value: of one number for `scalar` and
 `roots`, of a tensor answering a number for `multi`. `df` is its
 derivative or gradient — `grad[f]` gives it where `f` is written over
-what `grad` differentiates (arithmetic, `sqrt`, `abs` and the tensor
-operations the spec lists; `sin`, `cos` and `exp` of a number are not
-among them, so a derivative with those is written by hand).
+what `grad` differentiates: arithmetic, `^`, the elementary functions
+(`sqrt`, `exp`, `ln`, `sin`, `cos`, `tan`, `tanh`, `erf` and their kin)
+and the tensor operations the spec lists.
 
 | File | Function | Answer |
 |------|----------|--------|
@@ -73,8 +73,9 @@ iterations and calls are scipy's (2026-10-06):
 | `bfgs` | the same, gradients by `grad` | 0 to 7e-15 | 0 | the same |
 
 Newton's and BFGS's derivatives come from `grad` here where scipy was
-given them written out, and the points still agree, which also holds
-Crow's automatic differentiation to scipy's formulas. The one visible
+given them written out — `cos x − x` and `exp(x) − 3x` included — and
+the points still agree, which also holds Crow's automatic
+differentiation to scipy's formulas. The one visible
 difference, the golden section's point on `exp(x) − 3x`, is one
 golden-section step: the two last points' values differ in the last bit
 of `exp` between Rust and Python, and each side keeps the one it finds

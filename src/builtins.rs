@@ -13,7 +13,25 @@ use std::collections::BTreeMap;
 /// answered by its row, before this).
 /// (`abs`, `sqrt`, `floor`, `ceil` and `round` here are the dual numbers'
 /// form, which a function `grad` differentiates; a plain number's is its row)
-pub const HANDLED: &[&str] = &["type", "abs", "sqrt", "floor", "ceil", "round", "pad", "append", "assert", "error"];
+pub const HANDLED: &[&str] = &[
+    "type", "abs", "sqrt", "floor", "ceil", "round", "pad", "append", "assert", "error",
+    "sign", "exp", "ln", "log2", "log10", "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "erf",
+];
+
+/// Math on the dual number a function `grad` differentiates carries: the
+/// value and its derivative, by each function's rule.
+fn dual_math(name: &str, args: &[CrowValue], rule: fn(f64) -> (f64, f64)) -> Result<CrowValue, String> {
+    if args.len() != 1 {
+        return Err(format!("{}[] takes exactly 1 argument", name));
+    }
+    match args[0].unwrap_or_propagate()? {
+        Value::Dual(a, da) => {
+            let (value, slope) = rule(*a);
+            Ok(CrowValue::ok(Value::Dual(value, da * slope)))
+        }
+        _ => Err(format!("{}[] requires a number", name)),
+    }
+}
 
 /// A state-free builtin by name, or `None` when the name is one the
 /// walker itself must handle.
@@ -110,6 +128,21 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
                 _ => Err("round[] requires a number".into()),
             }
         }
+        "sign" => dual_math(name, args, |a| (if a > 0.0 { 1.0 } else if a < 0.0 { -1.0 } else { 0.0 }, 0.0)),
+        "exp" => dual_math(name, args, |a| (a.exp(), a.exp())),
+        "ln" => dual_math(name, args, |a| (a.ln(), 1.0 / a)),
+        "log2" => dual_math(name, args, |a| (a.log2(), 1.0 / (a * std::f64::consts::LN_2))),
+        "log10" => dual_math(name, args, |a| (a.log10(), 1.0 / (a * std::f64::consts::LN_10))),
+        "sin" => dual_math(name, args, |a| (a.sin(), a.cos())),
+        "cos" => dual_math(name, args, |a| (a.cos(), -a.sin())),
+        "tan" => dual_math(name, args, |a| (a.tan(), 1.0 + a.tan() * a.tan())),
+        "asin" => dual_math(name, args, |a| (a.asin(), 1.0 / (1.0 - a * a).sqrt())),
+        "acos" => dual_math(name, args, |a| (a.acos(), -1.0 / (1.0 - a * a).sqrt())),
+        "atan" => dual_math(name, args, |a| (a.atan(), 1.0 / (1.0 + a * a))),
+        "sinh" => dual_math(name, args, |a| (a.sinh(), a.cosh())),
+        "cosh" => dual_math(name, args, |a| (a.cosh(), a.sinh())),
+        "tanh" => dual_math(name, args, |a| (a.tanh(), 1.0 - a.tanh() * a.tanh())),
+        "erf" => dual_math(name, args, |a| (crow_runtime::special::erf_scalar(a), std::f64::consts::FRAC_2_SQRT_PI * (-a * a).exp())),
         // pow removed — use ^ operator instead
         // --- String builtins ---
         "pad" => {

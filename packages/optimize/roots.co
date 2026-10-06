@@ -178,11 +178,6 @@ fn cubic[x]
 fn cosine_gap[x]
     return cos[x] - x
 
---- its derivative by hand: `grad` differentiates arithmetic and `sqrt`,
---- `abs`, `floor`, `ceil`, `round` of a number, not `cos`
-fn cosine_gap_slope[x]
-    return 0.0 - sin[x] - 1.0
-
 --- the root of x³ − 2x − 5 between 2 and 3 by each method: scipy's
 --- root, iterations and calls to the last digit, Newton's derivative by
 --- `grad`
@@ -206,6 +201,6 @@ test refuses_an_interval_without_a_sign_change[]
     assert[abs[r.x - 0.7390851332151559] lt 0.000000000001]
     assert[not bisect[cosine_gap, 1.0, 2.0].ok]
     assert[not brentq[cosine_gap, 1.0, 2.0].ok]
-    n = newton[cosine_gap, cosine_gap_slope, 1.0]
+    n = newton[cosine_gap, grad[cosine_gap], 1.0]
     assert[abs[n.x - 0.73908513321516067] lt 0.000000000001]
     assert[n.iterations eq 4]

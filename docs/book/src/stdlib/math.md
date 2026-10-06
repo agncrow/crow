@@ -24,7 +24,7 @@ The `math` module is built in — no file needed. It provides tensor creation, e
 
 | Function | Description | Example |
 |---|---|---|
-| `exp[t]` | Element-wise exponential | [Math: tensors](../by-example/math.md) |
+| `exp[t]` | Element-wise exponential | [Automatic differentiation](../by-example/grad.md) · [Math: tensors](../by-example/math.md) |
 | `ln[t]` | Element-wise natural log | [Math: tensors](../by-example/math.md) |
 | `log2[t]` | Element-wise base-2 logarithm | [Math: tensors](../by-example/math.md) |
 | `log10[t]` | Element-wise base-10 logarithm | [Math: tensors](../by-example/math.md) |
@@ -36,7 +36,7 @@ The `math` module is built in — no file needed. It provides tensor creation, e
 | `round[t]` | Element-wise round to nearest | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) · [Numbers and conversion](../by-example/numbers.md) |
 | `clip[t, lo, hi]` | Clamp values to [lo, hi] | [Math: tensors](../by-example/math.md) |
 | `mod[t, divisor]` | Element-wise modulo | [Math: tensors](../by-example/math.md) |
-| `sin[t]` | Element-wise sine | [Math: tensors](../by-example/math.md) |
+| `sin[t]` | Element-wise sine | [Automatic differentiation](../by-example/grad.md) · [Math: tensors](../by-example/math.md) |
 | `cos[t]` | Element-wise cosine | [Math: tensors](../by-example/math.md) |
 | `tan[t]` | Element-wise tangent | [Math: tensors](../by-example/math.md) |
 | `asin[t]` | Element-wise arcsine | [Math: tensors](../by-example/math.md) |
@@ -193,7 +193,7 @@ Negative indices are supported (wrap around from the end). The result tensor has
 | Function | Description | Example |
 |---|---|---|
 | `gamma[x]` | Gamma function Γ(x), element-wise | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [The standard library's layer: `use sys`](../by-example/sys.md) |
-| `erf[x]` | Error function erf(x), element-wise | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
+| `erf[x]` | Error function erf(x), of a number or element-wise over a tensor (it had taken a tensor only) | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `bessel[x, n]` | Bessel function J_n(x), element-wise | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `factorial[x]` | Factorial x! = Γ(x+1), element-wise | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `choose[n, k]` | Binomial coefficient C(n,k), element-wise | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |

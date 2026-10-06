@@ -19,6 +19,22 @@ log[dg[3.0, 4.0]]
 [4, 3]
 ```
 
+A function of numbers may use arithmetic and `^`, and `abs`, `sign`, `sqrt`, `exp`, `ln`, `log2`, `log10`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `sinh`, `cosh`, `tanh`, `erf`, `floor`, `ceil` and `round`:
+
+```crow
+use math
+
+fn h[x]
+    return sin[x] * exp[x]
+
+dh = grad[h]
+log[dh[0.0]]
+```
+
+```text
+1
+```
+
 A function of tensors is differentiated backward: it runs once on traced tensors, and every parameter's gradient comes from that one run. The gradient of several parameters is a list, one tensor per parameter in order.
 
 ```crow

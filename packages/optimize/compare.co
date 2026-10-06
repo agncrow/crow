@@ -49,14 +49,8 @@ fn f2[x]
 fn f3[x]
     return cos[x] - x
 
-fn f3_slope[x]
-    return 0.0 - sin[x] - 1.0
-
 fn f4[x]
     return exp[x] - 3.0 * x
-
-fn f4_slope[x]
-    return exp[x] - 3.0
 
 fn scalar_cases[ref, name, f, a, b]
     br = scalar.bracket[f, a, b]
@@ -86,9 +80,9 @@ report[ref, 'f1', 'bounded', [b1.x], b1.value, b1.iterations, b1.calls]
 b4 = scalar.bounded[f4, -2.0, 4.0]
 report[ref, 'f4', 'bounded', [b4.x], b4.value, b4.iterations, b4.calls]
 root_cases[ref, 'f2', f2, grad[f2], 2.0, 3.0, 2.5]
-root_cases[ref, 'f3', f3, f3_slope, 0.0, 1.0, 1.0]
-root_cases[ref, 'f4', f4, f4_slope, 1.0, 2.0, 1.8]
-root_cases[ref, 'f4a', f4, f4_slope, 0.0, 1.0, 0.3]
+root_cases[ref, 'f3', f3, grad[f3], 0.0, 1.0, 1.0]
+root_cases[ref, 'f4', f4, grad[f4], 1.0, 2.0, 1.8]
+root_cases[ref, 'f4a', f4, grad[f4], 0.0, 1.0, 0.3]
 
 --- the functions of a vector, written over whole tensors so that `grad`
 --- differentiates them: selector matrices stand in for x[1:] and x[:-1]

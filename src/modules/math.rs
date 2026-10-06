@@ -64,7 +64,7 @@ impl CrowModule for MathModule {
 
 /// Element-wise functions that also take a plain number.
 pub(crate) const SCALAR_UNARY: &[&str] = &[
-    "exp", "ln", "log2", "log10", "sign", "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh",
+    "exp", "ln", "log2", "log10", "sign", "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "erf",
 ];
 
 #[cfg(test)]

@@ -396,6 +396,65 @@ pub fn abs(a: &Traced) -> Traced {
     unary(a, a.value.map(f64::abs), move || av.map(|x| if x > 0.0 { 1.0 } else if x < 0.0 { -1.0 } else { 0.0 }))
 }
 
+/// `sin[t]`, `cos[t]`, `tan[t]` and the inverse and hyperbolic ones, each
+/// by its derivative: cos, −sin, 1 + tan², 1/√(1−x²), −1/√(1−x²),
+/// 1/(1+x²), cosh, sinh; `log2` and `log10` by 1/(x ln 2), 1/(x ln 10).
+pub fn sin(a: &Traced) -> Traced {
+    let av = a.value.clone();
+    unary(a, a.value.map(f64::sin), move || av.map(f64::cos))
+}
+
+pub fn cos(a: &Traced) -> Traced {
+    let av = a.value.clone();
+    unary(a, a.value.map(f64::cos), move || av.map(|x| -x.sin()))
+}
+
+pub fn tan(a: &Traced) -> Traced {
+    let value = a.value.map(f64::tan);
+    let out = value.clone();
+    unary(a, value, move || out.map(|t| 1.0 + t * t))
+}
+
+pub fn asin(a: &Traced) -> Traced {
+    let av = a.value.clone();
+    unary(a, a.value.map(f64::asin), move || av.map(|x| 1.0 / (1.0 - x * x).sqrt()))
+}
+
+pub fn acos(a: &Traced) -> Traced {
+    let av = a.value.clone();
+    unary(a, a.value.map(f64::acos), move || av.map(|x| -1.0 / (1.0 - x * x).sqrt()))
+}
+
+pub fn atan(a: &Traced) -> Traced {
+    let av = a.value.clone();
+    unary(a, a.value.map(f64::atan), move || av.map(|x| 1.0 / (1.0 + x * x)))
+}
+
+pub fn sinh(a: &Traced) -> Traced {
+    let av = a.value.clone();
+    unary(a, a.value.map(f64::sinh), move || av.map(f64::cosh))
+}
+
+pub fn cosh(a: &Traced) -> Traced {
+    let av = a.value.clone();
+    unary(a, a.value.map(f64::cosh), move || av.map(f64::sinh))
+}
+
+pub fn log2(a: &Traced) -> Traced {
+    let av = a.value.clone();
+    unary(a, a.value.map(f64::log2), move || av.map(|x| 1.0 / (x * std::f64::consts::LN_2)))
+}
+
+pub fn log10(a: &Traced) -> Traced {
+    let av = a.value.clone();
+    unary(a, a.value.map(f64::log10), move || av.map(|x| 1.0 / (x * std::f64::consts::LN_10)))
+}
+
+/// `sign[t]`: piecewise constant, a constant of the tape (derivative 0).
+pub fn sign(a: &Traced) -> Traced {
+    Traced::constant(a.value.map(|x| if x > 0.0 { 1.0 } else if x < 0.0 { -1.0 } else { 0.0 }))
+}
+
 /// `clip[t, lo, hi]`: each element held within the bounds; the gradient
 /// passes where the element lies strictly inside them and is 0 at and
 /// beyond a bound (so `clip[x, 0.0, inf]` is relu, its gradient 0 at 0).

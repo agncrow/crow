@@ -570,6 +570,11 @@ pub fn gamma(t: &CrowTensor) -> CrowTensor {
 }
 
 /// `erf[t]`.
+/// `erf[x]` of a number.
+pub fn erf_n(x: f64) -> f64 {
+    crate::special::erf_scalar(x)
+}
+
 pub fn erf(t: &CrowTensor) -> CrowTensor {
     t.erf()
 }

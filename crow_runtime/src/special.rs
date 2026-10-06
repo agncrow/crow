@@ -40,7 +40,7 @@ fn lgamma_scalar(x: f64) -> f64 {
 
 /// The error function, to the last bit (libm's; an approximation good
 /// to 1.5e-7 had served, and `gelu`, written over `erf` in Crow, showed it).
-fn erf_scalar(x: f64) -> f64 {
+pub fn erf_scalar(x: f64) -> f64 {
     libm::erf(x)
 }
 

@@ -43,6 +43,11 @@ const FALLIBLE_BUILTINS: &[&str] = &[
     "exec", "sign", "verify", "socket", "send", "recv",
 ];
 
+/// The math functions a dual number answers with its derivative (the
+/// generated `CrowDual`'s methods), beside the core's `abs`, `sqrt`,
+/// `floor`, `ceil` and `round`.
+pub(crate) const DUAL_MATH: &[&str] = &["exp", "ln", "log2", "log10", "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "erf", "sign"];
+
 impl Emitter {
     pub(crate) fn expr(&mut self, e: &Expr) -> String {
         match e {
@@ -1894,6 +1899,9 @@ impl Emitter {
             Target::Row(row) if row.module.is_empty() && self.emitting_dual && matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round") => {
                 self.builtin(name, args, arg_strs, whole).unwrap_or_else(|| format!("{}({})", name, arg_strs.join(", ")))
             }
+            // (math's functions of a dual number are the dual's own methods,
+            // each carrying its derivative: `sin`, `exp`, `ln`, …)
+            Target::Row(_) | Target::Runtime(_) if self.emitting_dual && arg_strs.len() == 1 && DUAL_MATH.contains(&name) => format!("({}).{}()", arg_strs[0], name),
             // a builtin written in Crow: the program's function its body is
             // inlined as (an effect's row reaches here too); a reader's
             // value carries the moment it was read, as a Rust reader's does
@@ -2028,7 +2036,8 @@ impl Emitter {
         let stop = self.or_stop();
         let n = args.len();
         Some(match (name, n) {
-            ("sum", 1) | ("mean", 1) | ("max", 1) | ("min", 1) | ("exp", 1) | ("ln", 1) | ("sqrt", 1) | ("tanh", 1) | ("abs", 1) | ("erf", 1) | ("floor", 1) | ("ceil", 1) | ("round", 1) | ("transpose", 1) | ("flatten", 1) => {
+            ("sum", 1) | ("mean", 1) | ("max", 1) | ("min", 1) | ("exp", 1) | ("ln", 1) | ("sqrt", 1) | ("tanh", 1) | ("abs", 1) | ("erf", 1) | ("floor", 1) | ("ceil", 1) | ("round", 1) | ("transpose", 1) | ("flatten", 1)
+            | ("sin", 1) | ("cos", 1) | ("tan", 1) | ("asin", 1) | ("acos", 1) | ("atan", 1) | ("sinh", 1) | ("cosh", 1) | ("log2", 1) | ("log10", 1) | ("sign", 1) => {
                 format!("crow_runtime::autograd::{}({})", name, a(0))
             }
             ("sum", 2) | ("mean", 2) | ("max", 2) | ("min", 2) => format!("crow_runtime::autograd::{}_axis({}, ({}) as usize){}", name, a(0), plain(1), stop),
