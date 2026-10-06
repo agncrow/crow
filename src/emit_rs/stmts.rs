@@ -635,6 +635,17 @@ impl Emitter {
             t = CrowType::Float;
             text = format!("({}) as f64", text);
         }
+        // a variable holding a record or none (a tree's child, 0 where
+        // there is none): 0 is none, a record is wrapped
+        if let CrowType::OptBoxStruct(_) = crow_type(ty) {
+            if matches!(Emitter::raw(expr), Expr::Const(Const::Int(0), _)) {
+                t = crow_type(ty);
+                text = "None".to_string();
+            } else if matches!(t, CrowType::Struct(_)) {
+                t = crow_type(ty);
+                text = format!("Some(Box::new({}))", text);
+            }
+        }
         let kw = if self.mutated.contains(var) { "let mut" } else { "let" };
         let in_live_callback = self.live_render_fns.contains(&self.cur_fn) || self.live_handle_fns.contains(&self.cur_fn) || self.views.contains(&self.cur_fn);
         if self.emitting_dual || self.emitting_traced || in_live_callback || matches!(t, CrowType::Unknown) {
@@ -675,6 +686,17 @@ impl Emitter {
             if matches!(existing, CrowType::Float) && matches!(new_ty, CrowType::Int) {
                 self.line(&format!("{} = ({}) as f64;", var, text));
                 return;
+            }
+            // a variable holding a record or none given 0, or a record
+            if let CrowType::OptBoxStruct(_) = &existing {
+                if matches!(Emitter::raw(expr), Expr::Const(Const::Int(0), _)) {
+                    self.line(&format!("{} = None;", var));
+                    return;
+                }
+                if matches!(new_ty, CrowType::Struct(_)) {
+                    self.line(&format!("{} = Some(Box::new({}));", var, text));
+                    return;
+                }
             }
             // a plain value given to a variable whose first value could
             // fail: the variable keeps holding a value that can fail, and

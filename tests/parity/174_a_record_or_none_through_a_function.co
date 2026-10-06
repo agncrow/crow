@@ -1,0 +1,36 @@
+--- A record or none — a tree's child, 0 where there is none — through a
+--- function: answered by one, handed to another, held in a variable and
+--- read, in both modes. (The compiled program had not built: the backend
+--- wrapped a record or none in constructors and read it from fields, but
+--- not through parameters, returns and locals — found writing symbolic
+--- regression's trees in Crow.)
+struct N [op, a, b]
+
+fn child[n, side]
+    if side eq 'a'
+        return n.a
+    return n.b
+
+fn deepest[n]
+    if n.op eq 'leaf'
+        return n
+    return deepest[child[n, 'a']]
+
+fn count[n]
+    if n.op eq 'leaf'
+        return 1
+    return 1 + count[n.a] + count[n.b]
+
+t = N['+', N['*', N['leaf', 0, 0], N['leaf', 0, 0]], N['leaf', 0, 0]]
+x = child[t, 'a']
+log[x.op]
+log[deepest[t].op]
+y = child[child[t, 'a'], 'b']
+log[y.op]
+log[count[t]]
+held = 0
+held = child[t, 'b']
+log[held.op]
+grown = N['-', held, N['leaf', 0, 0]]
+log[count[grown]]
+log[child[grown, 'a'].op]

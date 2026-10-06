@@ -288,7 +288,7 @@ impl Emitter {
             if Emitter::place_read(base) {
                 let t = self.tt(e);
                 let non_copy = matches!(t, CrowType::Result(_))
-                    || matches!(Self::inner(&t), CrowType::NumArray(..) | CrowType::Array(_) | CrowType::Map(_) | CrowType::Str | CrowType::Markup | CrowType::Frame(_) | CrowType::Struct(_) | CrowType::Json);
+                    || matches!(Self::inner(&t), CrowType::NumArray(..) | CrowType::Array(_) | CrowType::Map(_) | CrowType::Str | CrowType::Markup | CrowType::Frame(_) | CrowType::Struct(_) | CrowType::OptBoxStruct(_) | CrowType::Json);
                 if non_copy && !s.ends_with(".clone()") {
                     return format!("{}.clone()", s);
                 }
@@ -954,13 +954,20 @@ impl Emitter {
         } else {
             obj
         };
-        // a recursive link: unwrap the box
+        // a recursive link: unwrap the box — the program stops where
+        // there is none, as the interpreter stops reading a field of 0
+        let stop = format!("crow_stop({}, \"cannot access field '{}' on this value\".to_string())", self.line_now(), field);
         if let CrowType::OptBoxStruct(sname) = &oty {
             let is_copy = self.structs.get(sname).and_then(|s| s.fields.iter().find(|(f, _)| f == field).map(|(_, t)| matches!(t, Ty::Int | Ty::Float | Ty::Bool))).unwrap_or(false);
             let suffix = if is_copy { "" } else { ".clone()" };
-            return format!("{}.as_ref().expect(\"field access on an empty (0) node\").{}{}", obj, field, suffix);
+            return format!("{}.as_ref().unwrap_or_else(|| {}).{}{}", obj, stop, Self::rust_field(field), suffix);
         }
         if let CrowType::Result(inner) = &oty {
+            if let CrowType::OptBoxStruct(sname) = inner.as_ref() {
+                let is_copy = self.structs.get(sname).and_then(|s| s.fields.iter().find(|(f, _)| f == field).map(|(_, t)| matches!(t, Ty::Int | Ty::Float | Ty::Bool))).unwrap_or(false);
+                let suffix = if is_copy { "" } else { ".clone()" };
+                return format!("{}.value.as_ref().unwrap_or_else(|| {}).{}{}", obj, stop, Self::rust_field(field), suffix);
+            }
             if let CrowType::Struct(sname) = inner.as_ref() {
                 let is_copy = self.structs.get(sname).and_then(|s| s.fields.iter().find(|(f, _)| f == field).map(|(_, t)| matches!(t, Ty::Int | Ty::Float | Ty::Bool))).unwrap_or(false);
                 let suffix = if is_copy { "" } else { ".clone()" };
@@ -1263,6 +1270,9 @@ impl Emitter {
             if let Ty::OptRecord(_) = fty {
                 if matches!(Emitter::raw(e), Expr::Const(Const::Int(0), _)) {
                     inits.push(format!("{}: None", Self::rust_field(fname)));
+                } else if matches!(Self::inner(&self.tt(e)), CrowType::OptBoxStruct(_)) {
+                    // (a record or none already: a child handed on)
+                    inits.push(format!("{}: {}", Self::rust_field(fname), owned));
                 } else {
                     inits.push(format!("{}: Some(Box::new({}))", Self::rust_field(fname), owned));
                 }
@@ -1602,9 +1612,43 @@ impl Emitter {
             },
             None => vec![false; raw_args.len()],
         };
+        let param_tys: Vec<Ty> = callee_fn.and_then(|n| self.fns.get(n)).map(|f| f.params.iter().map(|(_, t)| t.clone()).collect()).unwrap_or_default();
         let mut arg_strs: Vec<String> = Vec::with_capacity(raw_args.len());
         for (i, a) in raw_args.iter().enumerate() {
-            if ref_flags.get(i).copied().unwrap_or(false) {
+            let by_ref = ref_flags.get(i).copied().unwrap_or(false);
+            // a record or none (a tree's child, 0 where there is none)
+            // handed to a function: where it takes a record, the record it
+            // holds — the program stops where it holds none, as the
+            // interpreter stops reading a field of 0; where it takes a
+            // record or none, a record is wrapped, 0 is none, and one of
+            // its own kind passes as it is
+            let takes = param_tys.get(i).map(|t| t.payload().clone());
+            let given = self.tt(a);
+            let none_literal = matches!(a, Expr::Const(Const::Int(0), _));
+            let stop = format!("crow_stop({}, \"a record is needed here, and this value is 0 (none)\".to_string())", self.line_now());
+            match (takes, &given) {
+                (Some(Ty::Record(_)), CrowType::OptBoxStruct(_)) => {
+                    let s = self.expr(a);
+                    arg_strs.push(if by_ref { format!("({}).as_deref().unwrap_or_else(|| {})", s, stop) } else { format!("(*({}).clone().unwrap_or_else(|| {}))", s, stop) });
+                    continue;
+                }
+                (Some(Ty::OptRecord(_)), CrowType::Struct(_)) => {
+                    let s = self.owned_expr(a);
+                    arg_strs.push(if by_ref { format!("&Some(Box::new({}))", s) } else { format!("Some(Box::new({}))", s) });
+                    continue;
+                }
+                (Some(Ty::OptRecord(_)), _) if none_literal => {
+                    arg_strs.push(if by_ref { "&None".to_string() } else { "None".to_string() });
+                    continue;
+                }
+                (Some(Ty::OptRecord(_)), CrowType::OptBoxStruct(_)) => {
+                    let s = if by_ref { format!("&{}", self.expr(a)) } else { format!("{}.clone()", self.expr(a)) };
+                    arg_strs.push(s);
+                    continue;
+                }
+                _ => {}
+            }
+            if by_ref {
                 if let Some(s) = self.optbox_ref(a) {
                     arg_strs.push(s);
                 } else if let Expr::Local(v, _) | Expr::Move(v, _) = a {
@@ -2103,18 +2147,6 @@ impl Emitter {
             if self.makes_node(a) {
                 if let Some(s) = arg_strs.get_mut(i) {
                     *s = format!("({}).to_html()", s);
-                }
-            }
-            // a record handed where the function takes a record or none
-            // (a tree's child, 0 where there is none): wrapped, as a
-            // constructor wraps it into such a field; 0 is none
-            if matches!(params.get(i), Some(Ty::OptRecord(_))) {
-                if let Some(s) = arg_strs.get_mut(i) {
-                    if matches!(Emitter::raw(a), Expr::Const(Const::Int(0), _)) {
-                        *s = "None".to_string();
-                    } else if matches!(a.ty().payload(), Ty::Record(_)) {
-                        *s = format!("Some(Box::new({}))", s);
-                    }
                 }
             }
             // an empty list where the function takes numbers as a tensor (a

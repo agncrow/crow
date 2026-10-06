@@ -3877,6 +3877,14 @@ fn declared_as(first: &Ty, settled: Option<&CrowType>) -> Ty {
     if *first == Ty::Int && matches!(settled, Some(CrowType::Float)) {
         return Ty::Float;
     }
+    // a variable that settles on a record or none — first 0, the empty
+    // sentinel, or a record, and the other later — holds a record or none
+    // from its declaration (the Rust backend declares it so)
+    if let Some(CrowType::OptBoxStruct(n)) = settled {
+        if *first == Ty::Int || matches!(first, Ty::Record(_)) {
+            return Ty::OptRecord(n.clone());
+        }
+    }
     if !format!("{:?}", first).contains("Unknown") {
         return first.clone();
     }

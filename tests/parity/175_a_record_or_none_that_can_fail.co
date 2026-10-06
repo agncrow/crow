@@ -1,0 +1,21 @@
+--- A record or none answered by a function that can fail — a child by a
+--- side that may be no side — is read through its value, and a missing
+--- child read as a record stops the program with the interpreter's words,
+--- in both modes.
+struct N [op, a, b]
+
+fn child[n, side]
+    if side eq 'a'
+        return n.a
+    if side eq 'b'
+        return n.b
+    return error['no side `side`', 'tree']
+
+t = N['+', N['leaf', 0, 0], N['leaf', 0, 0]]
+left = child[t, 'a']
+log[left.op]
+none = child[t, 'c']
+log[none.ok]
+log[none.reason]
+empty = child[child[t, 'a'], 'a']
+log[empty.op]

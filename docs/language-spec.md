@@ -922,6 +922,28 @@ b.speed                  --- 50
 ```
 
 
+### A Record or None
+
+A field may hold a record of its own kind, or `0` where there is none — a
+tree's children, a chain's next link:
+
+```
+struct Node [op, a, b]
+leaf = Node['leaf', 0, 0]
+t = Node['+', Node['*', leaf, leaf], leaf]
+```
+
+What holds a record or `0` is *a record or none*: such a field, a variable
+first given `0` and later a record (or the other way), a function's
+parameter handed either, and a function's value answering either
+(`fn child[n, side]` answering `n.a` or `n.b`). It passes through all of
+them as it is, in both modes. Reading a field of none, or handing none to
+a function that takes a record and reads it, stops the program:
+`cannot access field 'op' on this value`. A program tells a leaf from a
+branch by a field of its own (`op eq 'leaf'`, a `leaf` flag), not by
+comparing the record with `0`: two values of two kinds are not compared.
+
+
 ### Structs with Functions
 
 Structs have no methods. Pass structs to regular functions.
