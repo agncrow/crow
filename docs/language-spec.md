@@ -527,7 +527,7 @@ result = for x in [1, 2, 3, 4, 5]
 --- result eq [30, 40, 50]
 ```
 
-An item that fails is kept, not dropped: `nums = for s in ['1', 'b', '3'] / int[s]` is a list of three whose second item is the error, shown by its reason — `[1, error: cannot convert 'b' to int, 3]` — as a list literal holding a failed value is. The list itself did not fail (`nums.ok` is `true`, see Error Handling); each item's own `.ok` says which did. Handing a failed value to a function is another matter: `push[xs, int['b']]` is that error, by auto-propagation. A list whose items can fail, handed whole to a function that takes numbers (`sum[nums]`, `mean[nums]`), is its numbers, as a column's cells are: a failed item stops the program (`item 1 of the list failed: cannot convert 'b' to int`), in both modes. (Compiled, it did not build.)
+An item that fails is kept, not dropped: `nums = for s in ['1', 'b', '3'] / int[s]` is a list of three whose second item is the error, shown by its reason — `[1, error: cannot convert 'b' to int, 3]` — as a list literal holding a failed value is. The list itself did not fail (`nums.ok` is `true`, see Error Handling); each item's own `.ok` says which did. Handing a failed value to a function is another matter: `push[xs, int['b']]` is that error, by auto-propagation. A list whose items can fail, handed whole to a function that takes numbers (`sum[nums]`, `mean[nums]`), is its numbers, as a column's cells are: a failed item stops the program (`item 1 of the list failed: cannot convert 'b' to int`), in both modes. (Compiled, it did not build.) Compared whole with a tensor or a list of numbers (`nums eq [1, 2]`, each item a map's read or a function's answer that can fail) it is its numbers the same way, and the comparison is one truth (the interpreter had compared the items; the compiled program had not built).
 
 
 ### while
@@ -1859,7 +1859,7 @@ All reductions except `argmax`/`argmin` accept an optional axis parameter: `sum[
 
 | Function | Returns |
 |---|---|
-| `argsort[t]` | Indices that would sort the tensor (NumArray) |
+| `argsort[t]` | The indices that would sort the numbers, ascending: a list of ints, as `range` answers one, so `xs[order[0]]` reads the smallest (it had answered a tensor, whose items read as floats and indexed nothing) |
 | `topk[t, k]` | Top k largest values, sorted descending (NumArray) |
 | `unique[t]` | Unique values, sorted (NumArray) |
 | `where[cond, a, b]` | Element-wise: a where cond≠0, else b (NumArray) |

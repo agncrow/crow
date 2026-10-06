@@ -1,0 +1,21 @@
+--- a list whose items can fail — each a function's answer that reads a
+--- map, which can fail — compared whole with a tensor and with a list of
+--- numbers: its numbers, one truth, in both modes (the interpreter had
+--- compared the items; the compiled program had not built); and a failed
+--- item stops the comparison with its reason, as it stops a function
+--- that takes numbers
+use math
+
+fn degree_of[arcs, name]
+    return len[arcs[name]]
+
+arcs = map[a = 'xy', b = 'x', c = '']
+degrees = for n in ['a', 'b', 'c']
+    degree_of[arcs, n]
+log[degrees eq flatten[tensor[[[2.0, 1.0, 0.0]]]]]
+log[degrees eq [2, 1, 0]]
+log[degrees ne [2, 1, 1]]
+log[[2, 1, 0] eq degrees]
+missing = for n in ['a', 'x']
+    degree_of[arcs, n]
+log[missing eq [2, 0]]

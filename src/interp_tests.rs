@@ -1660,10 +1660,13 @@ mod tests {
 
     #[test]
     fn test_math_argsort() {
+        // (the order is a list of ints, as `range` answers one: an index
+        // into it reads an int, where a tensor's item had read as a float)
         let val = get_var("use math\nx = argsort[tensor[[3, 1, 4, 1, 5]]]\n", "x");
-        if let Value::NumArray(t) = &val.value {
-            assert_eq!(t.to_vec(), vec![1.0, 3.0, 0.0, 2.0, 4.0]);
-        } else { panic!("expected NumArray"); }
+        if let Value::Array(items) = &val.value {
+            let got: Vec<i64> = items.iter().map(|v| if let Value::Int(n) = v.value { n } else { panic!("expected ints, got {:?}", v.value) }).collect();
+            assert_eq!(got, vec![1, 3, 0, 2, 4]);
+        } else { panic!("expected a list of ints, got {:?}", val.value); }
     }
 
     #[test]

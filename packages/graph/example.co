@@ -1,0 +1,46 @@
+--- A small graph walked, measured and ranked, with the same answers in
+--- both modes (CI runs this interpreted and compiled and compares the two).
+use math
+use graph, paths, rank
+
+edges = [graph.Edge['a', 'b', 1.0], graph.Edge['a', 'c', 4.0], graph.Edge['b', 'c', 2.0], graph.Edge['c', 'd', 1.0], graph.Edge['e', 'f', 1.0]]
+g = graph.of_edges[edges, false]
+names = join[g.names, ' ']
+degree_c = graph.degree[g, 'c']
+log['nodes: `names`, degree of c: `degree_c`']
+breadth = join[graph.bfs[g, 'a'], ' ']
+log['breadth first from a: `breadth`']
+depth = join[graph.dfs[g, 'a'], ' ']
+log['depth first from a: `depth`']
+log['components: `len[graph.components[g]]`']
+h = graph.hops[g, 'a']
+hops_d = h['d']
+log['hops to d: `hops_d`']
+
+r = paths.dijkstra[g, 'a']
+d = paths.distance[r, 'd']
+way = join[paths.path[r, 'd'], ' ']
+log['a to d: `d` along `way`']
+reached = paths.distance[r, 'e'].ok
+log['e is reached: `reached`']
+t = paths.spanning[g]
+log['spanning tree: `len[t.edges]` edges of weight `t.weight`']
+
+pr = rank.pagerank[g]
+pr_c = fmt[pr['c'], decimals = 6]
+pr_e = fmt[pr['e'], decimals = 6]
+log['pagerank of c: `pr_c`, of e: `pr_e`']
+cl_a = fmt[rank.clustering[g, 'a'], decimals = 6]
+log['clustering of a: `cl_a`']
+b = rank.betweenness[g]
+b_c = fmt[b['c'], decimals = 6]
+log['betweenness of c: `b_c`']
+c = rank.closeness[g]
+c_c = fmt[c['c'], decimals = 6]
+log['closeness of c: `c_c`']
+
+dag = graph.of_edges[[graph.Edge['x', 'y', 1.0], graph.Edge['x', 'z', 1.0], graph.Edge['y', 'z', 1.0], graph.Edge['z', 'w', 1.0]], true]
+order = join[graph.topological[dag], ' ']
+log['topological order: `order`']
+log['longest path: `paths.longest[dag]` arcs']
+log['strongly connected pieces: `len[graph.strongly_connected[dag]]`']

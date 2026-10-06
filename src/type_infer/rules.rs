@@ -89,7 +89,10 @@ impl TypeContext {
         let is_overlapping = matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round" | "min" | "max");
         if is_overlapping && self.registry.has_function(name) {
             let arg_types: Vec<CrowType> = args.iter().map(|a| arg_ty(a)).collect();
-            let has_numarray = arg_types.iter().any(|t| matches!(t, CrowType::NumArray(..)));
+            // (a list of numbers is taken where a tensor is: `max` of a list
+            // a function computed is math's, of the whole list — as the
+            // lowering picks it)
+            let has_numarray = arg_types.iter().any(|t| matches!(t, CrowType::NumArray(..)) || matches!(t, CrowType::Array(i) if matches!(i.as_ref(), CrowType::Int | CrowType::Float)));
             if has_numarray {
                 if let Some(t) = self.registry.type_of(name, &arg_types) {
                     return t;

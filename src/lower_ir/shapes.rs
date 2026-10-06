@@ -158,7 +158,16 @@ pub(super) fn binary_dims(op: &BinOp, l: &Expr, r: &Expr) -> Option<Dims> {
 /// the rank depends on a value (`transpose` of a tensor of unknown rank,
 /// `svd`'s pieces, whose ranks differ).
 pub(super) fn row_dims(name: &str, args: &[Expr]) -> Option<Dims> {
-    let dims = |i: usize| -> Option<Dims> { args.get(i).and_then(|a| a.ty().tensor_dims().cloned()) };
+    // (a list of numbers handed where a tensor is taken is a vector: the
+    // order of a list computed in a function — `argsort[vals]` — is one,
+    // and an index into it reads a number; it had no rank there, and the
+    // index was refused before the program ran)
+    let dims = |i: usize| -> Option<Dims> {
+        args.get(i).and_then(|a| match a.ty().payload() {
+            Ty::List(item) if matches!(item.payload(), Ty::Int | Ty::Float) => Some(vec![None]),
+            _ => a.ty().tensor_dims().cloned(),
+        })
+    };
     let items = |i: usize| -> Option<Dims> {
         args.get(i).and_then(|a| match a.ty().payload() {
             Ty::List(item) => item.payload().tensor_dims().cloned(),
@@ -191,7 +200,7 @@ pub(super) fn row_dims(name: &str, args: &[Expr]) -> Option<Dims> {
     let n = args.len();
     match name {
         // element-wise maps, and the transforms that keep a shape
-        "exp" | "ln" | "log2" | "log10" | "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "sinh" | "cosh" | "tanh" | "sign" | "abs" | "sqrt" | "floor" | "ceil" | "round" | "gamma" | "erf" | "factorial" | "bessel" | "clip" | "zscore" | "relu" | "sigmoid" | "softmax" | "gelu" | "cumsum" | "cumprod" | "sort" | "reverse" | "shuffle" | "argsort" | "triu" | "tril" | "inv" | "pinv" | "cholesky" | "ifft" | "lowpass" | "highpass" | "bandpass" => dims(0),
+        "exp" | "ln" | "log2" | "log10" | "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "sinh" | "cosh" | "tanh" | "sign" | "abs" | "sqrt" | "floor" | "ceil" | "round" | "gamma" | "erf" | "factorial" | "bessel" | "clip" | "zscore" | "relu" | "sigmoid" | "softmax" | "gelu" | "cumsum" | "cumprod" | "sort" | "reverse" | "shuffle" | "triu" | "tril" | "inv" | "pinv" | "cholesky" | "ifft" | "lowpass" | "highpass" | "bandpass" => dims(0),
         // an indicator of a series is a series, whatever held the prices
         "sma" | "ema" | "rsi" => unknown(1),
         "atan2" | "choose" => broadcast_of(&[0, 1]),

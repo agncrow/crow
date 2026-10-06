@@ -65,7 +65,7 @@ All reductions except `argmax`/`argmin` accept an optional axis parameter: `sum[
 
 | Function | Returns | Example |
 |---|---|---|
-| `argsort[t]` | Indices that would sort the tensor (NumArray) | [Math: reductions and linear algebra](../by-example/math-linalg.md) |
+| `argsort[t]` | The indices that would sort the numbers, ascending: a list of ints, as `range` answers one, so `xs[order[0]]` reads the smallest (it had answered a tensor, whose items read as floats and indexed nothing) | [Math: reductions and linear algebra](../by-example/math-linalg.md) |
 | `topk[t, k]` | Top k largest values, sorted descending (NumArray) | [Math: reductions and linear algebra](../by-example/math-linalg.md) |
 | `unique[t]` | Unique values, sorted (NumArray) | [Frames: `use frame`](../by-example/frames.md) · [Math: reductions and linear algebra](../by-example/math-linalg.md) |
 | `where[cond, a, b]` | Element-wise: a where cond≠0, else b (NumArray) | [Math: reductions and linear algebra](../by-example/math-linalg.md) |

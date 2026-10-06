@@ -1,0 +1,162 @@
+--- The package held against networkx: a folder of graphs networkx
+--- measured (written by graph_bench.py beside the README) — for each, the
+--- largest difference between networkx's numbers and this package's, and
+--- whether the walks and orders are the same. Run it in both modes; the
+--- two print the same.
+use math, frame
+use graph, paths, rank
+
+folder = args[][0]
+
+--- an undirected graph from an edge-list frame (columns a, b, w, the
+--- nodes numbered)
+fn graph_of[f, directed]
+    a = flatten[tensor[select[f, ['a']]]]
+    b = flatten[tensor[select[f, ['b']]]]
+    w = flatten[tensor[select[f, ['w']]]]
+    edges = []
+    for i in range[len[f]]
+        edges = push[edges, graph.Edge[str[int[a[i]]], str[int[b[i]]], w[i]]]
+    return graph.of_edges[edges, directed]
+
+--- the graph with every node the reference frame names, in its order
+--- (a node no edge touches is still a node)
+fn with_all_nodes[g, listed]
+    for n in listed
+        g = graph.add_node[g, n]
+    return g
+
+fn names_of[f]
+    ids = flatten[tensor[select[f, ['node']]]]
+    out = for v in ids
+        str[int[v]]
+    return out
+
+--- the largest difference between a map's values and a column's
+fn apart[m, names, col]
+    worst = 0.0
+    for i in range[len[names]]
+        d = abs[m[names[i]] - col[i]]
+        if d gt worst
+            worst = d
+    return worst
+
+--- a scalar of the reference, as text (a cell read from a file is a
+--- number where it looks like one)
+fn value_named[f, name]
+    names = f.name
+    vals = f.value
+    for i in range[len[f]]
+        if names[i] eq name
+            return str[vals[i]]
+    return ''
+
+for s in [1, 2]
+    f = frame.load['`folder`/edges_`s`.csv']
+    table = frame.load['`folder`/nodes_`s`.csv']
+    names = names_of[table]
+    g = with_all_nodes[graph_of[f, false], names]
+    scalars = frame.load['`folder`/scalars_`s`.csv']
+    pr = apart[rank.pagerank[g], names, flatten[tensor[select[table, ['pagerank']]]]]
+    cl = map[]
+    for n in names
+        cl = set[cl, n, rank.clustering[g, n]]
+    clu = apart[cl, names, flatten[tensor[select[table, ['clustering']]]]]
+    bet = apart[rank.betweenness[g], names, flatten[tensor[select[table, ['betweenness']]]]]
+    clo = apart[rank.closeness[g], names, flatten[tensor[select[table, ['closeness']]]]]
+    --- hops and distances from node 0: −1 where networkx reached nothing
+    h = graph.hops[g, '0']
+    hops = []
+    for n in names
+        if has[h, n]
+            hops = push[hops, h[n]]
+        else
+            hops = push[hops, -1]
+    hops_ok = hops eq flatten[tensor[select[table, ['hops']]]]
+    r = paths.dijkstra[g, '0']
+    dist = for n in names
+        r.distance[r.index[n]]
+    dij = 0.0
+    want = flatten[tensor[select[table, ['dist']]]]
+    for i in range[len[names]]
+        d = abs[dist[i] - want[i]]
+        if d gt dij
+            dij = d
+    --- components, each labelled by its smallest node
+    label = map[]
+    for c in graph.components[g]
+        least = int[c[0]]
+        for n in c
+            if int[n] lt least
+                least = int[n]
+        for n in c
+            label = set[label, n, least]
+    comp = []
+    for n in names
+        comp = push[comp, label[n]]
+    comp_ok = comp eq flatten[tensor[select[table, ['component']]]]
+    bfs_ok = join[graph.bfs[g, '0'], '-'] eq value_named[scalars, 'bfs']
+    dfs_ok = join[graph.dfs[g, '0'], '-'] eq value_named[scalars, 'dfs']
+    t = paths.spanning[g]
+    mst_ok = fmt[t.weight, decimals = 3] eq value_named[scalars, 'mst'] and str[len[t.edges]] eq value_named[scalars, 'mst_edges']
+    parts_ok = str[len[graph.components[g]]] eq value_named[scalars, 'components']
+    log['graph `s`: pagerank within `fmt[pr, decimals = 15]`, clustering within `fmt[clu, decimals = 15]`, betweenness within `fmt[bet, decimals = 15]`, closeness within `fmt[clo, decimals = 15]`, dijkstra within `fmt[dij, decimals = 15]`']
+    log['graph `s`: hops `hops_ok`, components `comp_ok` (`parts_ok`), bfs `bfs_ok`, dfs `dfs_ok`, spanning tree `mst_ok`']
+
+    --- the directed graph: pagerank, degrees, strongly connected pieces,
+    --- betweenness and closeness along the arcs
+    df = frame.load['`folder`/dedges_`s`.csv']
+    dn = frame.load['`folder`/dnodes_`s`.csv']
+    dnames = names_of[dn]
+    dg = with_all_nodes[graph_of[df, true], dnames]
+    ds = frame.load['`folder`/dscalars_`s`.csv']
+    dpr = apart[rank.pagerank[dg], dnames, flatten[tensor[select[dn, ['pagerank']]]]]
+    dbet = apart[rank.betweenness[dg], dnames, flatten[tensor[select[dn, ['betweenness']]]]]
+    dclo = apart[rank.closeness[dg], dnames, flatten[tensor[select[dn, ['closeness']]]]]
+    indeg = for n in dnames
+        graph.in_degree[dg, n]
+    outdeg = for n in dnames
+        graph.degree[dg, n]
+    deg_ok = indeg eq flatten[tensor[select[dn, ['indeg']]]] and outdeg eq flatten[tensor[select[dn, ['outdeg']]]]
+    slabel = map[]
+    for c in graph.strongly_connected[dg]
+        least = int[c[0]]
+        for n in c
+            if int[n] lt least
+                least = int[n]
+        for n in c
+            slabel = set[slabel, n, least]
+    scc = []
+    for n in dnames
+        scc = push[scc, slabel[n]]
+    scc_ok = scc eq flatten[tensor[select[dn, ['scc']]]] and str[len[graph.strongly_connected[dg]]] eq value_named[ds, 'sccs']
+    dh = graph.hops[dg, '0']
+    dhops = []
+    for n in dnames
+        if has[dh, n]
+            dhops = push[dhops, dh[n]]
+        else
+            dhops = push[dhops, -1]
+    dhops_ok = dhops eq flatten[tensor[select[dn, ['hops']]]]
+    dr = paths.dijkstra[dg, '0']
+    ddist = for n in dnames
+        dr.distance[dr.index[n]]
+    ddij = 0.0
+    dwant = flatten[tensor[select[dn, ['dist']]]]
+    for i in range[len[dnames]]
+        d = abs[ddist[i] - dwant[i]]
+        if d gt ddij
+            ddij = d
+    dbfs_ok = join[graph.bfs[dg, '0'], '-'] eq value_named[ds, 'bfs']
+    ddfs_ok = join[graph.dfs[dg, '0'], '-'] eq value_named[ds, 'dfs']
+    log['directed `s`: pagerank within `fmt[dpr, decimals = 15]`, betweenness within `fmt[dbet, decimals = 15]`, closeness within `fmt[dclo, decimals = 15]`, dijkstra within `fmt[ddij, decimals = 15]`']
+    log['directed `s`: degrees `deg_ok`, strongly connected `scc_ok`, hops `dhops_ok`, bfs `dbfs_ok`, dfs `ddfs_ok`']
+
+    --- the acyclic graph: its lexicographic topological order and its
+    --- longest path
+    ag = frame.load['`folder`/dag_`s`.csv']
+    as_ = frame.load['`folder`/dagscalars_`s`.csv']
+    dag = graph_of[ag, true]
+    topo_ok = join[graph.topological[dag], '-'] eq value_named[as_, 'topo']
+    long_ok = str[paths.longest[dag]] eq value_named[as_, 'longest']
+    log['dag `s`: topological order `topo_ok`, longest path `long_ok`']

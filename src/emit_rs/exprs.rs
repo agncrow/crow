@@ -1356,7 +1356,7 @@ impl Emitter {
             self.declare(var, elem.clone());
             let c = self.expr(cond);
             let c = self.guard_condition(cond, c);
-            let mut v = self.expr(val);
+            let mut v = self.owned_expr(val);
             let mut vt = self.tt(val);
             if self.makes_node(val) {
                 v = format!("({}).to_html()", v);
@@ -1422,7 +1422,10 @@ impl Emitter {
         self.closure_depth -= 1;
         let mut last_type = CrowType::Unknown;
         if let Some(Stmt::Do(e)) = last_expr {
-            let mut s = self.expr(e);
+            // (a list or record the function holds, yielded as each item —
+            // a row of bases per sample — is the item's own copy: the
+            // closure had moved it out of the function)
+            let mut s = self.owned_expr(e);
             last_type = self.tt(e);
             if self.makes_node(e) {
                 s = format!("({}).to_html()", s);

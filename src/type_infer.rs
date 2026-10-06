@@ -7,24 +7,6 @@ use crate::ast::*;
 /// or unknown where the program computes it.
 pub type Dims = Vec<Option<usize>>;
 
-/// Two tensors' shapes where ways through meet, or a function's calls hand
-/// it tensors: the dimensions they agree on; any other rank, or no shape,
-/// is no shape. What is not known stays not known: a join never invents a
-/// dimension.
-/// A list's shape as a tensor: a vector of numbers, a matrix of rows (one
-/// dimension more than its rows have), unknown for anything else.
-fn list_dims(item: &CrowType) -> Option<Dims> {
-    match item {
-        CrowType::Int | CrowType::Float => Some(vec![None]),
-        CrowType::NumArray(_, d) => {
-            let mut out = vec![None];
-            out.extend(d.clone().unwrap_or_else(|| vec![None]));
-            Some(out)
-        }
-        _ => None,
-    }
-}
-
 /// What two shapes agree on: each dimension both state, unknown where
 /// they differ; the rank, where one side knows it and the other knows
 /// nothing (a function handed a matrix literal by one call and a record's
@@ -337,18 +319,30 @@ impl CrowType {
             (CrowType::Markup, CrowType::Str) | (CrowType::Str, CrowType::Markup) => CrowType::Str,
             (CrowType::NumArray(a, da), CrowType::NumArray(b, db)) => CrowType::NumArray(Box::new(a.unify(b)), join_dims(da, db)),
             (CrowType::Array(a), CrowType::Array(b)) => CrowType::Array(Box::new(a.unify(b))),
-            // numbers held as a list meet numbers held as a tensor: the
-            // first form stays (the lowering converts the other where they
-            // meet), and what either knows of the items is kept (an empty
-            // list and a tensor of floats are floats)
-            (CrowType::Array(a), CrowType::NumArray(b, _)) => CrowType::Array(Box::new(a.unify(b))),
-            (CrowType::NumArray(a, da), CrowType::Array(b)) => {
-                let elem = match a.unify(b) {
-                    CrowType::NumArray(e, _) => *e,
-                    e => e,
-                };
-                CrowType::NumArray(Box::new(elem), join_dims(da, &list_dims(b)))
-            }
+            // numbers held as a list meet numbers held as a tensor,
+            // whichever came first: a list of numbers beside a vector is the
+            // list, a list of rows beside a matrix the matrix (the lowering
+            // converts the other where they meet), and what either knows of
+            // the items is kept (an empty list and a tensor of floats are
+            // floats). The first form had stayed, which made the join depend
+            // on the order the inference met the two: a function's rows
+            // were a tensor at one site and a list at another, and the
+            // compiled program did not build.
+            (CrowType::Array(a), CrowType::NumArray(b, d)) | (CrowType::NumArray(b, d), CrowType::Array(a)) => match d {
+                Some(dims) if dims.len() >= 2 => {
+                    // (the list's length is not stated, so the matrix's rows
+                    // are not either; its rows' own shape is joined)
+                    let row = CrowType::NumArray(b.clone(), Some(dims[1..].to_vec()));
+                    let (elem, row_dims) = match a.unify(&row) {
+                        CrowType::NumArray(e, d) => (*e, d),
+                        e => (e, Some(dims[1..].to_vec())),
+                    };
+                    let mut joined = vec![None];
+                    joined.extend(row_dims.unwrap_or_else(|| vec![None; dims.len() - 1]));
+                    CrowType::NumArray(Box::new(elem), Some(joined))
+                }
+                _ => CrowType::Array(Box::new(a.unify(b))),
+            },
             (CrowType::Map(a), CrowType::Map(b)) => CrowType::Map(Box::new(a.unify(b))),
             // two ways a frame could have come: the columns both give (a
             // frame whose columns are not worked out yet adds nothing — one

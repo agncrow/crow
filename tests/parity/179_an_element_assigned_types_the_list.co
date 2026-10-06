@@ -1,0 +1,28 @@
+--- a list of empty lists, one of them given a list of records (a graph's
+--- arcs, grown an edge at a time): the list's items are records in both
+--- modes (compiled, the items had stayed unknown and the record's field
+--- was a list of text, so the program did not build)
+struct Arc [to, weight]
+struct Graph [names, arcs]
+
+fn fresh[names]
+    arcs = []
+    for n in names
+        arcs = push[arcs, []]
+    return Graph[names, arcs]
+
+fn joined[g, i, j, weight]
+    arcs = g.arcs
+    row = arcs[i]
+    row = push[row, Arc[j, weight]]
+    arcs[i] = row
+    return Graph[g.names, arcs]
+
+g = fresh[['a', 'b', 'c']]
+g = joined[g, 0, 1, 2.5]
+g = joined[g, 0, 2, 1.5]
+g = joined[g, 2, 0, 4.0]
+log[len[g.arcs[0]]]
+log[g.arcs[0][1].to]
+log[g.arcs[2][0].weight]
+log[len[g.arcs[1]]]

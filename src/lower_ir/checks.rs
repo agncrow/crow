@@ -1317,6 +1317,68 @@ mod tests {
         assert!(check_source("use db\nbook = db.connect['sqlite://:memory:']\nexec[book, 'CREATE TABLE t (k TEXT, v REAL)']\nexec[book, 'INSERT INTO t VALUES (?, ?)', ['a', 1.5]]\nlog[query[book, 'SELECT k FROM t WHERE v > ? AND k = ?', [1.0, 'a']]]\n").is_ok());
     }
 
+    /// A frame is not indexed: `f['a']` and `f[0]` are refused before the
+    /// program runs, naming the column read (the interpreter had stopped
+    /// as it ran — `not indexable` — and the compiled program did not build)
+    #[test]
+    fn a_frame_is_not_indexed() {
+        let err = check_source("use frame\nf = with[frame.new[], 'a', [1.0, 2.0]]\nx = f['a']\nlog[x]\n").unwrap_err();
+        assert!(err.contains("a frame is not indexed: read a column as `f.name`, its cell as `f.name[i]`"), "{}", err);
+        let err = check_source("use frame\nf = with[frame.new[], 'a', [1.0, 2.0]]\nlog[f[0]]\n").unwrap_err();
+        assert!(err.contains("a frame is not indexed"), "{}", err);
+        assert!(check_source("use frame\nf = with[frame.new[], 'a', [1.0, 2.0]]\nlog[f.a[0]]\n").is_ok());
+    }
+
+    /// The order of a list of numbers is a list of ints, and its running
+    /// sum a vector, each indexed as one: inside a function, where the
+    /// list is a parameter or a loop's items, the order's items had read
+    /// as floats (indexing nothing) and the sum had no rank, so the index
+    /// was refused before the program ran
+    #[test]
+    fn an_order_of_a_list_is_a_vector() {
+        for src in [
+            "use math\nfn first[vals]\n    order = argsort[vals]\n    return vals[order[0]]\nlog[first[[3.0, 1.0, 2.0]]]\n",
+            "use math\nfn by_column[rows, f]\n    col = for r in rows\n        r[f]\n    order = argsort[col]\n    return col[order[0]]\nlog[by_column[[[1.0, 9.0], [2.0, 1.0]], 1]]\n",
+            "use math\nfn total_of[vals]\n    c = cumsum[vals]\n    return c[len[vals] - 1]\nlog[total_of[[3.0, 1.0, 2.0]]]\n",
+        ] {
+            let checked = check_source(src);
+            assert!(checked.is_ok(), "{:?}", checked);
+        }
+    }
+
+    /// The greatest of a list of numbers computed inside a function is
+    /// math's `max` of the whole list: the list had been left to the core's
+    /// two-number `max`, and the call refused for its count (a literal
+    /// list at the top level, a tensor, had always been math's)
+    #[test]
+    fn the_greatest_of_a_list_is_maths() {
+        for src in [
+            "use math\nfn top[xs]\n    best = for v in xs\n        v * 1.0\n    return max[best]\nlog[top[[4.0, 2.0, 9.0]]]\n",
+            "use math\nfn widest[rows]\n    widths = for r in rows\n        len[r]\n    return max[widths]\nlog[widest[['ab', 'a']]]\n",
+            "use math\nfn bottom[xs]\n    return min[xs]\nlog[bottom[[4, 2, 9]]]\n",
+        ] {
+            let checked = check_source(src);
+            assert!(checked.is_ok(), "{:?}", checked);
+        }
+        assert!(check_source("use math\nx = min[1]\n").unwrap_err().contains("min[] takes"));
+    }
+
+    /// A nested literal of numbers is a matrix: a ragged one is refused
+    /// before the program runs, in both modes — one with an empty row among
+    /// rows of numbers had run interpreted as a list of lists and failed the
+    /// compiled build; rows of two lengths had stopped as the program ran
+    #[test]
+    fn a_ragged_literal_of_numbers_is_refused() {
+        for src in ["x = [[1, 2], [3]]\nlog[x]\n", "x = [[1, 2], [2], []]\nlog[x]\n", "x = [[1.5, 2.5], []]\nlog[x]\n"] {
+            let err = check_source(src).unwrap_err();
+            assert!(err.contains("all inner arrays must be the same length"), "{}", err);
+        }
+        for src in ["x = [[1, 2], [3, 4]]\nlog[x]\n", "x = [['a'], ['b', 'c']]\nlog[x]\n", "x = [[], []]\nlog[len[x]]\n"] {
+            let checked = check_source(src);
+            assert!(checked.is_ok(), "{:?}", checked);
+        }
+    }
+
     /// A list handed to a `?` is sent as (?, ?, …), which only `IN` reads:
     /// finch's `= ANY(?)` handed a list failed at the database every time
     #[test]

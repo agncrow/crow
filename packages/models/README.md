@@ -45,7 +45,7 @@ holds a target (or a class) for each.
 | `forest` | `fit[x, y, trees, depth, seed]` → `Forest[trees]`, `y` of int classes | `classify[f, r]` — the class most trees give |
 | `metrics` | — | `accuracy`, `precision`, `recall`, `f1` (the class 1 against 0), `rmse`, `mae`, `r2`, each `[truth, guess]` |
 | `prepare` | `divide[x, y, share, seed]` → `Split[x_train, y_train, x_test, y_test]`; `fit_scale[x]` → `Scale[means, spreads]`; `labels[names]` → `Labels[names]` | `scale[s, x]` — the rows standardised; `polynomial[x, degree]` — the rows with their products of features (classes as columns of ones and zeros are math's `onehot[y, classes]`); `code[l, name]`, `codes[l, names]` — names as ints |
-| `boost` | `fit[x, y, trees, depth, rate]` → `Boost[base, rate, trees]`, gradient-boosted regression trees | `predict[m, x]` — a number per row; `classify[m, x]` — a 0 or 1 per row, for targets of 0 and 1 |
+| `boost` | `fit[x, y, trees, depth, rate, min_leaf = 1]` → `Boost[base, rate, trees, losses, importances, ties]`, gradient-boosted regression trees; `fit_classes[x, y, trees, depth, rate, min_leaf = 1]` → `Classes[bases, rate, stages, losses, importances, ties, labels]`, `y` of int classes | `predict[m, x]` — a number per row; `probability[c, x]` — a probability per class per row, in the order of `c.labels`; `classify[c, x]` — the likeliest class per row |
 | `lasso` | `fit[x, y, penalty, ratio, steps]` → `Lasso[coef, intercept]`, `ratio` 1 the lasso, 0 ridge, between them the elastic net | `predict[m, x]` — a number per row |
 | `kernel_svm` | `fit[x, y, width, c, steps, rate]` → `KernelSvm[x, y, alpha, width]`, a radial kernel, `y` of −1s and 1s | `classify[m, x]` — −1 or 1 per row; `score[m, r]` — a sample's signed distance |
 | `svr` | `fit[x, y, width, epsilon, penalty, steps, rate]` → `Svr[x, beta, width]`, by `grad` | `predict[m, x]` — a number per row |
@@ -76,6 +76,19 @@ holds a target (or a class) for each.
 - `pca` takes the first `k` rows of Vᵀ from the SVD of the centred matrix;
   `explained` is each component's share of the variance.
 - `forest` grows each tree on a bootstrap sample drawn from `seed`.
+- `boost` fits as scikit-learn's `GradientBoostingRegressor` and
+  `GradientBoostingClassifier` do: each stage's tree is fitted to the
+  negative gradient of the loss at the sum so far — the squared error for
+  numbers, the logistic loss for two classes, the multinomial for more,
+  with a leaf's value a Newton step for classes — and added at `rate` of
+  its say; a tree splits on the feature and the midpoint that reduce the
+  squared error most, down to `depth` levels, each side at least
+  `min_leaf` samples, as scikit-learn's splitter does. `losses` is the
+  training loss after each stage (the mean squared error, or the mean log
+  loss), `importances` each feature's share of the gain, and `ties` how
+  many nodes another feature split just as well (the first is taken;
+  scikit-learn takes one by its own random order). See Against
+  scikit-learn.
 - `prepare.divide` shuffles the rows from `seed` and holds `share` of them
   out; `fit_scale`/`scale` standardise by the training rows' means and
   spreads (a spread of zero read as one).
@@ -86,6 +99,37 @@ use models.regression
 m = regression.fit[[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], [1.0, 3.0, -2.0, 0.0]]
 log[regression.predict[m, [[2.0, 1.0]]]]
 ```
+
+## Against scikit-learn
+
+`compare.co` takes a folder of data sets scikit-learn fitted — a number
+per sample on 150 rows of five features (30 trees of depth 3; 25 of depth
+4 with five samples a leaf), two classes on the same (30 of depth 3; 25
+of depth 2 with three a leaf), three classes on four features (20 of
+depth 3; 15 of depth 2 with four a leaf) — and prints the largest
+difference between scikit-learn's answers and this package's, fitted the
+same way (2026-10-05, scikit-learn 1.9.1):
+
+| Answer | Difference |
+|---|---|
+| the predictions, on the training rows | 1e-15 |
+| the probabilities of two and of three classes | 0 |
+| the training loss after each stage | 2e-15 |
+| the feature importances, where no node split on a tie | 2e-15 |
+| the feature importances, where nodes did (20, 1, 14 and 12 of them) | up to 0.018 |
+
+Where two features split a node's samples the same way — common at the
+small nodes a deep tree ends in — the improvement ties exactly, and
+scikit-learn breaks the tie by the random order it visits features in,
+where this package takes the first: the trees then differ in which
+feature a tied node names, so their importances differ, though every
+training row lands in the same leaf and is predicted alike. `ties`
+counts such nodes. A larger `min_leaf` leaves fewer. The package's own
+tests hold three small, tie-free fits to scikit-learn's numbers to 1e-12.
+`crow run -i packages/models/compare.co <folder>` and `crow run` print
+the same lines; the folder is written by a script kept with the PySR one
+(`boost_bench.py`: `scikit-learn` in a Python environment), out of the
+repository with the data.
 
 ## Tests
 

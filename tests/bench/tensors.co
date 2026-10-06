@@ -38,7 +38,7 @@ log[s.ok]
 t0 = now[]
 order = argsort[x]
 log['bench: argsort `now[] - t0`']
-log[order.shape]
+log[len[order]]
 
 t0 = now[]
 gram = transpose[a] * a

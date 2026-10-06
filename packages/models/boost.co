@@ -1,63 +1,122 @@
---- Gradient boosting: a sum of small regression trees, each one fitted
---- to what the ones before it still got wrong (the residuals) and added
---- at `rate` of its say — for a number per sample, or a class of 0 or 1
---- read at a half. Each tree splits on the feature and threshold that
---- leave the least spread around each side's mean, down to `depth`
---- levels. `x` holds a row of features per sample, `y` a number for
---- each.
+--- Gradient boosting, as scikit-learn fits it: a sum of small regression
+--- trees, each fitted to the negative gradient of the loss at the sum so
+--- far and added at `rate` of its say. `fit` boosts a number per sample
+--- (the squared error); `fit_classes` boosts classes — two by the
+--- logistic loss, more by the multinomial — each leaf's value a Newton
+--- step. A tree splits as scikit-learn's does: on the feature and the
+--- midpoint that reduce the squared error most, a leaf at `depth` levels,
+--- where a side would hold fewer than `min_leaf` samples, or where the
+--- targets are all one value. `x` holds a row of features per sample, `y`
+--- a number (or an int class) for each. The predictions, probabilities,
+--- the loss after each stage and the feature importances agree with
+--- scikit-learn's to 1e-12 (the README says how).
 use math
 
-struct Tree [leaf, value, feature, threshold, left, right]
-struct Boost [base, rate, trees]
+--- a tree's node: a leaf's value, or a split and its sides; `members` the
+--- training samples it holds, `n` how many, `impurity` their variance,
+--- `tied` whether another feature split them just as well (the first
+--- feature is taken; scikit-learn takes one by its own random order)
+struct Node [leaf, value, feature, threshold, left, right, members, n, impurity, tied]
+--- a number per sample: the base, a tree per stage, the mean squared
+--- error after each stage, the feature importances, and how many nodes
+--- split on a tie
+struct Boost [base, rate, trees, losses, importances, ties]
+--- a class per sample: a base per class, a tree per class per stage, the
+--- log loss after each stage, the importances, the tied nodes, and the
+--- classes in the order the probabilities come
+struct Classes [bases, rate, stages, losses, importances, ties, labels]
 
---- the mean of the targets at the indices
-fn mean_of[y, idx]
+--- the smallest difference a split tells apart, and the spread below
+--- which a node is pure (scikit-learn's thresholds)
+fn feature_threshold[]
+    return 0.0000001
+
+fn epsilon[]
+    return 0.5 ^ 52
+
+fn mean_of[g, idx]
     total = 0.0
     for i in idx
-        total = total + y[i]
+        total = total + g[i]
     return total / len[idx]
 
---- the sum of squared deviations from the mean, at the indices
-fn spread[y, idx]
-    m = mean_of[y, idx]
-    out = 0.0
+--- a node's variance: the mean square less the squared mean, as
+--- scikit-learn computes it
+fn impurity_of[g, idx]
+    total = 0.0
+    squares = 0.0
     for i in idx
-        d = y[i] - m
-        out = out + d * d
-    return out
+        total = total + g[i]
+        squares = squares + g[i] * g[i]
+    n = len[idx]
+    m = total / n
+    return squares / n - m * m
 
---- the samples' indices on each side of a split
-fn side[x, idx, feature, threshold, want_left]
+--- the sample indices whose feature is at most the threshold, or above it
+fn side[col, idx, threshold, want_left]
     out = []
     for i in idx
-        goes_left = x[i][feature] lte threshold
+        goes_left = col[i] lte threshold
         if goes_left eq want_left
             out = push[out, i]
     return out
 
-fn grow[x, y, idx, depth]
-    leaf = Tree[true, mean_of[y, idx], 0, 0.0, 0, 0]
-    if depth eq 0 or len[idx] lt 2
+--- the split of this node: the feature and threshold that reduce the
+--- squared error most (the sides' squared sums over their sizes, as
+--- scikit-learn's criterion compares them), scanned as scikit-learn
+--- scans — the sorted values, a candidate between two that differ, each
+--- side at least `min_leaf` samples — or no feature when no split is
+--- allowed
+struct Split [feature, threshold, found, tied]
+
+fn best_split[cols, g, idx, min_leaf]
+    n = len[idx]
+    total = 0.0
+    for i in idx
+        total = total + g[i]
+    best = Split[-1, 0.0, false, false]
+    best_proxy = 0.0
+    for f in range[len[cols]]
+        col = cols[f]
+        vals = for i in idx
+            col[i]
+        order = argsort[vals]
+        left_sum = 0.0
+        for q in range[n]
+            if q gt 0
+                prev = vals[order[q - 1]]
+                cur = vals[order[q]]
+                if cur gt prev + feature_threshold[] and q gte min_leaf and n - q gte min_leaf
+                    wl = float[q]
+                    wr = float[n - q]
+                    right_sum = total - left_sum
+                    proxy = left_sum * left_sum / wl + right_sum * right_sum / wr
+                    if not best.found or proxy gt best_proxy
+                        t = prev / 2.0 + cur / 2.0
+                        if t eq cur
+                            t = prev
+                        best = Split[f, t, true, false]
+                        best_proxy = proxy
+                    else
+                        if proxy eq best_proxy and f ne best.feature
+                            best = Split[best.feature, best.threshold, true, true]
+            left_sum = left_sum + g[idx[order[q]]]
+    return best
+
+--- a tree fitted to the targets `g` at the samples `idx`, by columns
+fn grow[cols, g, idx, depth, min_leaf]
+    n = len[idx]
+    impurity = impurity_of[g, idx]
+    leaf = Node[true, mean_of[g, idx], -1, 0.0, 0, 0, idx, n, impurity, false]
+    if depth eq 0 or n lt 2 or n lt 2 * min_leaf or impurity lte epsilon[]
         return leaf
-    best = spread[y, idx]
-    best_feature = -1
-    best_threshold = 0.0
-    for f in range[len[x[0]]]
-        for i in idx
-            t = x[i][f]
-            left = side[x, idx, f, t, true]
-            right = side[x, idx, f, t, false]
-            if len[left] gt 0 and len[right] gt 0
-                score = spread[y, left] + spread[y, right]
-                if score lt best
-                    best = score
-                    best_feature = f
-                    best_threshold = t
-    if best_feature lt 0
+    s = best_split[cols, g, idx, min_leaf]
+    if not s.found
         return leaf
-    l = grow[x, y, side[x, idx, best_feature, best_threshold, true], depth - 1]
-    r = grow[x, y, side[x, idx, best_feature, best_threshold, false], depth - 1]
-    return Tree[false, 0.0, best_feature, best_threshold, l, r]
+    col = cols[s.feature]
+    l = grow[cols, g, side[col, idx, s.threshold, true], depth - 1, min_leaf]
+    r = grow[cols, g, side[col, idx, s.threshold, false], depth - 1, min_leaf]
+    return Node[false, 0.0, s.feature, s.threshold, l, r, idx, n, impurity, s.tied]
 
 --- one tree's say for a sample
 fn value_of_tree[node, r]
@@ -67,21 +126,89 @@ fn value_of_tree[node, r]
         return value_of_tree[node.left, r]
     return value_of_tree[node.right, r]
 
-fn fit[x, y, trees, depth, rate]
+--- the rows as columns
+fn columns_of[x]
+    out = []
+    for f in range[len[x[0]]]
+        col = for r in x
+            r[f]
+        out = push[out, col]
+    return out
+
+--- the gain each feature's splits bring, summed over the tree: a node's
+--- weighted impurity less its sides'
+fn gains_into[node, acc]
+    if node.leaf
+        return acc
+    acc[node.feature] = acc[node.feature] + node.n * node.impurity - node.left.n * node.left.impurity - node.right.n * node.right.impurity
+    acc = gains_into[node.left, acc]
+    acc = gains_into[node.right, acc]
+    return acc
+
+--- how many of a tree's nodes split on a tie
+fn ties_in[node]
+    if node.leaf
+        return 0
+    n = 0
+    if node.tied
+        n = 1
+    return n + ties_in[node.left] + ties_in[node.right]
+
+fn ties_of[trees]
+    n = 0
+    for t in trees
+        n = n + ties_in[t]
+    return n
+
+--- the feature importances of a set of trees, as scikit-learn reports
+--- them: each tree's gains over its root's samples, averaged over the
+--- trees that split at all, summing to one
+fn importances_of[trees, features]
+    total = for f in range[features]
+        0.0
+    counted = 0
+    for t in trees
+        if not t.leaf
+            gains = for f in range[features]
+                0.0
+            gains = gains_into[t, gains]
+            for f in range[features]
+                total[f] = total[f] + gains[f] / t.n
+            counted = counted + 1
+    if counted eq 0
+        return total
+    whole = 0.0
+    for f in range[features]
+        total[f] = total[f] / counted
+        whole = whole + total[f]
+    if whole gt 0.0
+        for f in range[features]
+            total[f] = total[f] / whole
+    return total
+
+--- a number per sample: `trees` stages of depth `depth`, each at `rate`
+fn fit[x, y, trees, depth, rate, min_leaf = 1]
     n = len[y]
     every = range[n]
+    cols = columns_of[x]
     base = mean_of[y, every]
     current = for i in every
         base
     grown = []
+    losses = []
     for t in range[trees]
         residual = for i in every
             y[i] - current[i]
-        tree = grow[x, residual, every, depth]
+        tree = grow[cols, residual, every, depth, min_leaf]
         grown = push[grown, tree]
         current = for i in every
             current[i] + rate * value_of_tree[tree, x[i]]
-    return Boost[base, rate, grown]
+        loss = 0.0
+        for i in every
+            d = y[i] - current[i]
+            loss = loss + d * d
+        losses = push[losses, loss / n]
+    return Boost[base, rate, grown, losses, importances_of[grown, len[cols]], ties_of[grown]]
 
 --- the model's number for one sample: the base and every tree's say
 fn value_of[m, r]
@@ -96,22 +223,235 @@ fn predict[m, x]
         value_of[m, r]
     return out
 
---- a 0 or 1 per row, for targets of 0 and 1
-fn classify[m, x]
-    out = for r in x
-        int[value_of[m, r] gte 0.5]
+--- the Newton step at each leaf: the mean negative gradient over the
+--- mean curvature of its members (`share` is (K−1)/K for K classes)
+fn stepped[node, neg_g, prob, share]
+    if node.leaf
+        num = 0.0
+        den = 0.0
+        for i in node.members
+            num = num + neg_g[i]
+            den = den + prob[i] * (1.0 - prob[i])
+        num = num / node.n * share
+        den = den / node.n
+        v = 0.0
+        if den gt 0.0
+            v = num / den
+        return Node[true, v, -1, 0.0, 0, 0, node.members, node.n, node.impurity, false]
+    l = stepped[node.left, neg_g, prob, share]
+    r = stepped[node.right, neg_g, prob, share]
+    return Node[false, 0.0, node.feature, node.threshold, l, r, node.members, node.n, node.impurity, node.tied]
+
+--- the distinct classes, ascending
+fn labels_of[y]
+    seen = []
+    for c in y
+        if not contains[seen, c]
+            seen = push[seen, c]
+    return sort[seen]
+
+fn position_of[labels, c]
+    for k in range[len[labels]]
+        if labels[k] eq c
+            return k
+    return -1
+
+--- each sample's probabilities from its raw scores: the sigmoid of one
+--- score for two classes, the softmax of a score per class for more
+fn probabilities_of[raw, k]
+    if k eq 1
+        p = 1.0 / (1.0 + exp[0.0 - raw[0]])
+        return [1.0 - p, p]
+    top = raw[0]
+    for v in raw
+        if v gt top
+            top = v
+    total = 0.0
+    out = for v in raw
+        exp[v - top]
+    for v in out
+        total = total + v
+    out = for v in out
+        v / total
     return out
 
---- a curve no line fits, and a band in the middle of one feature, which
---- no single split tells: the trees add up to both
-test fits_a_curve_and_a_band[]
-    x = [[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]]
-    y = [0.0, 1.0, 4.0, 9.0, 16.0, 25.0]
-    m = fit[x, y, 40, 2, 0.5]
-    guesses = predict[m, x]
+--- a class per sample: `trees` stages, a tree per class in each (one
+--- tree for two classes), each leaf a Newton step on the logistic or
+--- multinomial loss; `y` holds int classes
+fn fit_classes[x, y, trees, depth, rate, min_leaf = 1]
+    n = len[y]
+    every = range[n]
+    cols = columns_of[x]
+    labels = labels_of[y]
+    classes = len[labels]
+    k = classes
+    if classes eq 2
+        k = 1
+    share = 1.0
+    if k gt 1
+        share = float[k - 1] / k
+    --- the prior of each class, as raw scores: the logit for two
+    --- classes, the centred log for more
+    counts = for c in labels
+        0
+    for c in y
+        p = position_of[labels, c]
+        counts[p] = counts[p] + 1
+    bases = []
+    if k eq 1
+        prior = float[counts[1]] / n
+        bases = [ln[prior / (1.0 - prior)]]
+    else
+        logs = for c in counts
+            ln[float[c] / n]
+        centre = mean_of[logs, range[k]]
+        bases = for v in logs
+            v - centre
+    --- each sample's raw score per class, and its one-hot classes
+    raw = for i in every
+        bases
+    hot = for i in every
+        row = for j in range[k]
+            0.0
+        p = position_of[labels, y[i]]
+        if k eq 1
+            row[0] = float[p]
+        else
+            row[p] = 1.0
+        row
+    stages = []
+    losses = []
+    for t in range[trees]
+        probs = for i in every
+            probabilities_of[raw[i], k]
+        stage = []
+        for j in range[k]
+            pj = j
+            if k eq 1
+                pj = 1
+            neg_g = for i in every
+                hot[i][j] - probs[i][pj]
+            prob = for i in every
+                probs[i][pj]
+            tree = grow[cols, neg_g, every, depth, min_leaf]
+            tree = stepped[tree, neg_g, prob, share]
+            stage = push[stage, tree]
+            raw = for i in every
+                row = raw[i]
+                row[j] = row[j] + rate * value_of_tree[tree, x[i]]
+                row
+        stages = push[stages, stage]
+        loss = 0.0
+        for i in every
+            if k eq 1
+                v = raw[i][0]
+                top = 0.0
+                if v gt 0.0
+                    top = v
+                loss = loss + top + ln[exp[0.0 - top] + exp[v - top]] - hot[i][0] * v
+            else
+                top = raw[i][0]
+                for v in raw[i]
+                    if v gt top
+                        top = v
+                total = 0.0
+                for v in raw[i]
+                    total = total + exp[v - top]
+                p = position_of[labels, y[i]]
+                loss = loss + top + ln[total] - raw[i][p]
+        losses = push[losses, loss / n]
+    all_trees = []
+    for stage in stages
+        for tree in stage
+            all_trees = push[all_trees, tree]
+    return Classes[bases, rate, stages, losses, importances_of[all_trees, len[cols]], ties_of[all_trees], labels]
+
+--- a sample's raw score per class
+fn raw_of[m, r]
+    scores = for b in m.bases
+        b
+    for stage in m.stages
+        for j in range[len[stage]]
+            scores[j] = scores[j] + m.rate * value_of_tree[stage[j], r]
+    return scores
+
+--- a probability per class for each row, in the order of `m.labels`
+fn probability[m, x]
+    out = for r in x
+        probabilities_of[raw_of[m, r], len[m.bases]]
+    return out
+
+--- the likeliest class per row
+fn classify[m, x]
+    out = for r in x
+        p = probabilities_of[raw_of[m, r], len[m.bases]]
+        best = 0
+        for j in range[len[p]]
+            if p[j] gt p[best]
+                best = j
+        m.labels[best]
+    return out
+
+--- scikit-learn's GradientBoostingRegressor on eight points near a
+--- parabola, 3 trees of depth 2 at a rate of 0.5: the same predictions,
+--- and the mean squared error after each stage
+test fits_as_scikit_learn_does[]
+    x = [[5.0], [7.18], [6.21], [1.8], [2.4], [6.99], [0.04], [6.57]]
+    y = [25.59, 51.49, 38.17, 2.8, 5.27, 48.75, 0.01, 43.27]
+    m = fit[x, y, 3, 2, 0.5]
+    want = [27.291510416666668, 47.317343750000006, 37.206510416666667, 5.915885416666665, 7.3452604166666653, 45.969635416666669, 3.9033854166666662, 40.400468750000002]
+    got = predict[m, x]
     for i in range[len[y]]
-        assert[abs[guesses[i] - y[i]] lt 0.5]
-    band = [0.0, 0.0, 1.0, 1.0, 0.0, 0.0]
-    c = fit[x, band, 30, 2, 0.5]
-    assert[classify[c, x] eq [0, 0, 1, 1, 0, 0]]
-    assert[classify[c, [[2.5], [4.5]]] eq [1, 0]]
+        assert[abs[got[i] - want[i]] lt 0.000000000001]
+    assert[abs[predict[m, [[2.5]]][0] - 7.3452604166666653] lt 0.000000000001]
+    assert[abs[predict[m, [[6.5]]][0] - 40.400468750000002] lt 0.000000000001]
+    mse = [111.72001367187499, 31.229241210937495, 8.2966305745442632]
+    for i in range[3]
+        assert[abs[m.losses[i] - mse[i]] lt 0.000000000001]
+
+--- two classes by the logistic loss, as GradientBoostingClassifier fits
+--- them: the probabilities, the log loss per stage (half of
+--- scikit-learn's deviance) and the importances
+test fits_two_classes_as_scikit_learn_does[]
+    x = [[7.96, 6.34], [4.98, 7.91], [1.72, 1.28], [4.9, 0.35], [0.29, 4.12], [3.73, 7.34], [5.03, 4.11], [3.97, 1.98], [0.09, 1.54], [5.54, 1.6]]
+    y = [1, 0, 0, 1, 0, 0, 0, 1, 0, 1]
+    m = fit_classes[x, y, 4, 2, 0.5]
+    want = [0.80960376862110162, 0.12027190041585362, 0.15703349017647644, 0.84991567548177316, 0.041657182026804442, 0.041657182026804442, 0.12027190041585362, 0.84991567548177316, 0.15703349017647644, 0.91293821509264517]
+    got = probability[m, x]
+    for i in range[len[y]]
+        assert[abs[got[i][1] - want[i]] lt 0.000000000001]
+        assert[abs[got[i][0] + got[i][1] - 1.0] lt 0.000000000001]
+    assert[classify[m, x] eq y]
+    loss = [0.40072916748917875, 0.25251652488433579, 0.17713960026146824, 0.13105740052843282]
+    for i in range[4]
+        assert[abs[m.losses[i] - loss[i]] lt 0.000000000001]
+    assert[abs[m.importances[0] - 0.64840689069192525] lt 0.000000000001]
+    assert[abs[m.importances[1] - 0.3515931093080748] lt 0.000000000001]
+
+--- three classes by the multinomial loss, a tree per class per stage
+test fits_three_classes_as_scikit_learn_does[]
+    x = [[0.73, 4.33], [4.06, 6.97], [2.89, 4.79], [0.47, 3.1], [2.58, 1.2], [6.53, 3.04], [7.83, 4.72], [4.84, 5.1], [5.41, 1.21], [3.52, 1.92], [3.22, 0.77], [7.74, 1.72]]
+    y = [2, 2, 2, 0, 0, 1, 1, 2, 1, 1, 0, 1]
+    m = fit_classes[x, y, 3, 1, 0.5]
+    got = probability[m, x]
+    want0 = [0.13546321562615687, 0.063606572676872114, 0.068951868722371065, 0.67142458110838199, 0.84290523738636391, 0.054076454901531609, 0.043451377610407002, 0.063606572676872114, 0.054076454901531609, 0.24516054310532376, 0.84290523738636391, 0.054076454901531609]
+    want1 = [0.14674503959722301, 0.14642607267661559, 0.074694408066399806, 0.1913467774505892, 0.091484556823770879, 0.90391149514313218, 0.7263087007713479, 0.14642607267661559, 0.90391149514313218, 0.56437399456410997, 0.091484556823770879, 0.90391149514313218]
+    want2 = [0.71779174477662011, 0.78996735464651224, 0.85635372321122905, 0.13722864144102895, 0.065610205789865206, 0.042012049955336292, 0.23023992161824522, 0.78996735464651224, 0.042012049955336292, 0.19046546233056635, 0.065610205789865206, 0.042012049955336292]
+    for i in range[12]
+        assert[abs[got[i][0] - want0[i]] lt 0.000000000001]
+        assert[abs[got[i][1] - want1[i]] lt 0.000000000001]
+        assert[abs[got[i][2] - want2[i]] lt 0.000000000001]
+    assert[classify[m, x] eq y]
+    loss = [0.5668589406750023, 0.36788423654775366, 0.24110164173938806]
+    for i in range[3]
+        assert[abs[m.losses[i] - loss[i]] lt 0.000000000001]
+
+--- a band in the middle of one feature, which no single split tells:
+--- the trees add up to it, and the classes come back as given
+test tells_a_band_and_keeps_the_labels[]
+    x = [[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]]
+    band = [3, 3, 7, 7, 3, 3]
+    c = fit_classes[x, band, 30, 2, 0.5]
+    assert[c.labels eq [3, 7]]
+    assert[classify[c, x] eq band]
+    assert[classify[c, [[2.5], [4.5]]] eq [7, 3]]

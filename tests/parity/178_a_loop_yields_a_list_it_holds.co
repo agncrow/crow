@@ -1,0 +1,33 @@
+--- a loop as an expression yielding a list the function holds (a row of
+--- bases per sample), and a function answering a literal list of numbers
+--- in one branch and a loop's list in another: the same in both modes
+--- (compiled, the yielded list had been moved into the loop's closure,
+--- and the loop's list had been answered where a tensor was stated, so
+--- neither built)
+use math
+
+fn rows_of[bases, n]
+    raw = for i in range[n]
+        bases
+    return raw
+
+fn shares[raw, k]
+    if k eq 1
+        p = 1.0 / (1.0 + exp[0.0 - raw[0]])
+        return [1.0 - p, p]
+    total = 0.0
+    out = for v in raw
+        exp[v]
+    for v in out
+        total = total + v
+    out = for v in out
+        v / total
+    return out
+
+r = rows_of[[0.5, 1.5], 3]
+log[r]
+log[len[r[2]]]
+log[shares[[0.0], 1]]
+s = shares[[0.0, 0.0], 2]
+log[s]
+log[s[1]]

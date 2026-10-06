@@ -1,0 +1,265 @@
+--- A graph as its nodes' names and each node's arcs. `of_edges` builds
+--- one from `Edge` records, directed or not, and `add` grows it; the
+--- walks — breadth first, depth first — the components, the strongly
+--- connected ones and the topological order read it. A node is named by
+--- text and has an index, the order it was added in; its arcs keep the
+--- order they were added in, so a walk visits neighbours as networkx does
+--- given the same edges. The answers agree with networkx's (the README
+--- says how).
+
+--- an arc to the node at `to`, by index
+struct Arc [to, weight]
+--- an edge between two named nodes
+struct Edge [a, b, weight]
+--- the names, each name's index, each index's arcs, and whether an edge
+--- runs one way
+struct Graph [names, index, arcs, directed]
+--- a walk's state: which indices it has seen, and the order it took
+struct Walk [seen, order]
+
+fn new[directed]
+    return Graph[[], map[], [], directed]
+
+--- the graph with the node, as it was when it has it already
+fn add_node[g, name]
+    if has[g.index, name]
+        return g
+    names = push[g.names, name]
+    index = set[g.index, name, len[g.names]]
+    arcs = push[g.arcs, []]
+    return Graph[names, index, arcs, g.directed]
+
+--- the graph with an edge from `a` to `b` — and back, unless directed
+fn add[g, a, b, weight]
+    g = add_node[g, a]
+    g = add_node[g, b]
+    ia = g.index[a]
+    ib = g.index[b]
+    arcs = g.arcs
+    row = arcs[ia]
+    row = push[row, Arc[ib, weight]]
+    arcs[ia] = row
+    if not g.directed and ia ne ib
+        back = arcs[ib]
+        back = push[back, Arc[ia, weight]]
+        arcs[ib] = back
+    return Graph[g.names, g.index, arcs, g.directed]
+
+fn of_edges[edges, directed]
+    g = new[directed]
+    for edge in edges
+        g = add[g, edge.a, edge.b, edge.weight]
+    return g
+
+--- the graph with every arc turned around
+fn reversed[g]
+    r = new[true]
+    for name in g.names
+        r = add_node[r, name]
+    for i in range[len[g.names]]
+        for arc in g.arcs[i]
+            r = add[r, g.names[arc.to], g.names[i], arc.weight]
+    return r
+
+--- the names a node's arcs lead to, in order
+fn neighbors[g, name]
+    out = []
+    for arc in g.arcs[g.index[name]]
+        out = push[out, g.names[arc.to]]
+    return out
+
+--- how many arcs leave a node (its degree, undirected)
+fn degree[g, name]
+    return len[g.arcs[g.index[name]]]
+
+--- how many arcs reach a node
+fn in_degree[g, name]
+    i = g.index[name]
+    n = 0
+    for row in g.arcs
+        for arc in row
+            if arc.to eq i
+                n = n + 1
+    return n
+
+--- the names reached from `start`, breadth first, in the order found
+fn bfs[g, start]
+    n = len[g.names]
+    seen = for i in range[n]
+        false
+    s = g.index[start]
+    seen[s] = true
+    queue = [s]
+    head = 0
+    out = []
+    while head lt len[queue]
+        i = queue[head]
+        head = head + 1
+        out = push[out, g.names[i]]
+        for arc in g.arcs[i]
+            if not seen[arc.to]
+                seen[arc.to] = true
+                queue = push[queue, arc.to]
+    return out
+
+fn visit[g, i, walk]
+    seen = walk.seen
+    seen[i] = true
+    walk = Walk[seen, push[walk.order, i]]
+    for arc in g.arcs[i]
+        if not walk.seen[arc.to]
+            walk = visit[g, arc.to, walk]
+    return walk
+
+--- the names reached from `start`, depth first, in the order entered
+fn dfs[g, start]
+    n = len[g.names]
+    seen = for i in range[n]
+        false
+    w = visit[g, g.index[start], Walk[seen, []]]
+    out = for i in w.order
+        g.names[i]
+    return out
+
+--- how many arcs each reached node is from `start`: a map from the name
+fn hops[g, start]
+    n = len[g.names]
+    dist = for i in range[n]
+        -1
+    s = g.index[start]
+    dist[s] = 0
+    queue = [s]
+    head = 0
+    while head lt len[queue]
+        i = queue[head]
+        head = head + 1
+        for arc in g.arcs[i]
+            if dist[arc.to] lt 0
+                dist[arc.to] = dist[i] + 1
+                queue = push[queue, arc.to]
+    out = map[]
+    for i in range[n]
+        if dist[i] gte 0
+            out = set[out, g.names[i], dist[i]]
+    return out
+
+--- the nodes reachable from each other along the arcs, as lists of names,
+--- each in the order found from its first node
+fn components[g]
+    n = len[g.names]
+    label = for i in range[n]
+        -1
+    out = []
+    for s in range[n]
+        if label[s] lt 0
+            members = []
+            label[s] = s
+            queue = [s]
+            head = 0
+            while head lt len[queue]
+                i = queue[head]
+                head = head + 1
+                members = push[members, g.names[i]]
+                for arc in g.arcs[i]
+                    if label[arc.to] lt 0
+                        label[arc.to] = s
+                        queue = push[queue, arc.to]
+            out = push[out, members]
+    return out
+
+fn finish[g, i, walk]
+    seen = walk.seen
+    seen[i] = true
+    walk = Walk[seen, walk.order]
+    for arc in g.arcs[i]
+        if not walk.seen[arc.to]
+            walk = finish[g, arc.to, walk]
+    return Walk[walk.seen, push[walk.order, i]]
+
+--- the strongly connected components of a directed graph: the nodes that
+--- reach each other both ways (Kosaraju's two walks)
+fn strongly_connected[g]
+    n = len[g.names]
+    seen = for i in range[n]
+        false
+    w = Walk[seen, []]
+    for i in range[n]
+        if not w.seen[i]
+            w = finish[g, i, w]
+    r = reversed[g]
+    label = for i in range[n]
+        -1
+    out = []
+    for s in reverse[w.order]
+        if label[s] lt 0
+            members = []
+            label[s] = s
+            queue = [s]
+            head = 0
+            while head lt len[queue]
+                i = queue[head]
+                head = head + 1
+                members = push[members, g.names[i]]
+                for arc in r.arcs[i]
+                    if label[arc.to] lt 0
+                        label[arc.to] = s
+                        queue = push[queue, arc.to]
+            out = push[out, members]
+    return out
+
+--- the names in an order every arc runs forward in, the smallest name
+--- first among those ready; a cycle is an error of kind 'graph'
+fn topological[g]
+    n = len[g.names]
+    indeg = for i in range[n]
+        0
+    for row in g.arcs
+        for arc in row
+            indeg[arc.to] = indeg[arc.to] + 1
+    ready = []
+    for i in range[n]
+        if indeg[i] eq 0
+            ready = push[ready, g.names[i]]
+    out = []
+    while len[ready] gt 0
+        ready = sort[ready]
+        name = ready[0]
+        ready = slice[ready, 1, len[ready]]
+        out = push[out, name]
+        for arc in g.arcs[g.index[name]]
+            indeg[arc.to] = indeg[arc.to] - 1
+            if indeg[arc.to] eq 0
+                ready = push[ready, g.names[arc.to]]
+    if len[out] lt n
+        return error['graph: a cycle leaves no order', 'graph']
+    return out
+
+--- a square with a tail: the walks in networkx's order, the degrees, the
+--- hops, and a second piece apart
+test walks_a_graph_as_networkx_does[]
+    g = of_edges[[Edge['a', 'b', 1.0], Edge['a', 'c', 1.0], Edge['b', 'd', 1.0], Edge['c', 'd', 1.0], Edge['d', 'e', 1.0], Edge['x', 'y', 1.0]], false]
+    assert[g.names eq ['a', 'b', 'c', 'd', 'e', 'x', 'y']]
+    assert[neighbors[g, 'd'] eq ['b', 'c', 'e']]
+    assert[degree[g, 'd'] eq 3]
+    assert[bfs[g, 'a'] eq ['a', 'b', 'c', 'd', 'e']]
+    assert[dfs[g, 'a'] eq ['a', 'b', 'd', 'c', 'e']]
+    h = hops[g, 'a']
+    assert[h['e'] eq 3]
+    assert[not has[h, 'x']]
+    c = components[g]
+    assert[len[c] eq 2]
+    assert[c[1] eq ['x', 'y']]
+
+--- arcs one way: the in-degrees, the strongly connected pieces, the
+--- reversed graph, and a topological order — none where there is a cycle
+test orders_a_directed_graph[]
+    g = of_edges[[Edge['a', 'b', 1.0], Edge['b', 'c', 1.0], Edge['c', 'a', 1.0], Edge['c', 'd', 1.0], Edge['d', 'e', 1.0]], true]
+    assert[in_degree[g, 'a'] eq 1]
+    assert[in_degree[g, 'd'] eq 1]
+    assert[neighbors[reversed[g], 'a'] eq ['c']]
+    s = strongly_connected[g]
+    assert[len[s] eq 3]
+    assert[sort[s[0]] eq ['a', 'b', 'c']]
+    assert[not topological[g].ok]
+    dag = of_edges[[Edge['b', 'd', 1.0], Edge['a', 'd', 1.0], Edge['d', 'c', 1.0], Edge['a', 'b', 1.0]], true]
+    assert[topological[dag] eq ['a', 'b', 'd', 'c']]

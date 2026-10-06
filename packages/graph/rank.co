@@ -1,0 +1,189 @@
+--- What a node's place in the graph says. `pagerank` as networkx computes
+--- it: the power iteration over the arcs' weights, a dangling node's
+--- share spread evenly, until the ranks move less than the tolerance per
+--- node; `clustering` how many of a node's neighbours are neighbours
+--- themselves; `betweenness` the share of shortest paths through each
+--- node (Brandes' count over unweighted paths, normalised); `closeness`
+--- the inverse mean distance to a node — along incoming arcs where the
+--- graph is directed — scaled by the share of nodes that reach it.
+use math
+use graph
+
+--- each node's rank, as a map from its name
+fn pagerank[g, damping = 0.85, rounds = 100, tolerance = 0.000001]
+    n = len[g.names]
+    out_weight = for i in range[n]
+        total = 0.0
+        for arc in g.arcs[i]
+            total = total + arc.weight
+        total
+    x = for i in range[n]
+        1.0 / n
+    for step in range[rounds]
+        last = x
+        x = for i in range[n]
+            0.0
+        dangle = 0.0
+        for i in range[n]
+            if out_weight[i] eq 0.0
+                dangle = dangle + last[i]
+        dangle = damping * dangle
+        for i in range[n]
+            for arc in g.arcs[i]
+                x[arc.to] = x[arc.to] + damping * last[i] * arc.weight / out_weight[i]
+        for i in range[n]
+            x[i] = x[i] + dangle / n + (1.0 - damping) / n
+        err = 0.0
+        for i in range[n]
+            err = err + abs[x[i] - last[i]]
+        if err lt n * tolerance
+            break
+    out = map[]
+    for i in range[n]
+        out = set[out, g.names[i], x[i]]
+    return out
+
+--- the share of a node's pairs of neighbours that are joined: 0 for a
+--- node with fewer than two
+fn clustering[g, name]
+    i = g.index[name]
+    nb = []
+    for arc in g.arcs[i]
+        if arc.to ne i and not contains[nb, arc.to]
+            nb = push[nb, arc.to]
+    k = len[nb]
+    if k lt 2
+        return 0.0
+    joined = 0
+    for a in nb
+        for arc in g.arcs[a]
+            if arc.to gt a and contains[nb, arc.to]
+                joined = joined + 1
+    return 2.0 * joined / (k * (k - 1))
+
+--- each node's betweenness, as a map from its name
+fn betweenness[g]
+    n = len[g.names]
+    cb = for i in range[n]
+        0.0
+    for s in range[n]
+        trail = []
+        preds = for i in range[n]
+            []
+        sigma = for i in range[n]
+            0.0
+        dist = for i in range[n]
+            -1
+        sigma[s] = 1.0
+        dist[s] = 0
+        queue = [s]
+        head = 0
+        while head lt len[queue]
+            v = queue[head]
+            head = head + 1
+            trail = push[trail, v]
+            for arc in g.arcs[v]
+                w = arc.to
+                if dist[w] lt 0
+                    dist[w] = dist[v] + 1
+                    queue = push[queue, w]
+                if dist[w] eq dist[v] + 1
+                    sigma[w] = sigma[w] + sigma[v]
+                    row = preds[w]
+                    row = push[row, v]
+                    preds[w] = row
+        delta = for i in range[n]
+            0.0
+        while len[trail] gt 0
+            w = trail[len[trail] - 1]
+            trail = pop[trail]
+            coeff = (1.0 + delta[w]) / sigma[w]
+            for v in preds[w]
+                delta[v] = delta[v] + sigma[v] * coeff
+            if w ne s
+                cb[w] = cb[w] + delta[w]
+    out = map[]
+    for i in range[n]
+        v = cb[i]
+        if n gt 2
+            v = v / ((n - 1) * (n - 2))
+        out = set[out, g.names[i], v]
+    return out
+
+--- each index's hops from `s` along the arcs of `g`, −1 where not reached
+fn hops_from[g, s]
+    n = len[g.names]
+    dist = for i in range[n]
+        -1
+    dist[s] = 0
+    queue = [s]
+    head = 0
+    while head lt len[queue]
+        i = queue[head]
+        head = head + 1
+        for arc in g.arcs[i]
+            if dist[arc.to] lt 0
+                dist[arc.to] = dist[i] + 1
+                queue = push[queue, arc.to]
+    return dist
+
+--- each node's closeness, as a map from its name
+fn closeness[g]
+    n = len[g.names]
+    r = g
+    if g.directed
+        r = graph.reversed[g]
+    out = map[]
+    for s in range[n]
+        dist = hops_from[r, s]
+        total = 0
+        reached = 0
+        for d in dist
+            if d gte 0
+                total = total + d
+                reached = reached + 1
+        c = 0.0
+        if total gt 0 and n gt 1
+            c = float[reached - 1] / total
+            c = c * (float[reached - 1] / (n - 1))
+        out = set[out, g.names[s], c]
+    return out
+
+--- a square's ranks sum to one and are equal; a star's centre ranks
+--- highest; a dangling node's share is spread
+test ranks_as_networkx_does[]
+    square = graph.of_edges[[graph.Edge['a', 'b', 1.0], graph.Edge['b', 'c', 1.0], graph.Edge['c', 'd', 1.0], graph.Edge['d', 'a', 1.0]], false]
+    pr = pagerank[square]
+    total = 0.0
+    for name in keys[pr]
+        total = total + pr[name]
+    assert[abs[total - 1.0] lt 0.000000001]
+    assert[abs[pr['a'] - 0.25] lt 0.000000001]
+    star = graph.of_edges[[graph.Edge['c', 'x', 1.0], graph.Edge['c', 'y', 1.0], graph.Edge['c', 'z', 1.0]], false]
+    ps = pagerank[star]
+    assert[ps['c'] gt ps['x']]
+    assert[abs[ps['x'] - ps['y']] lt 0.000000000001]
+    chain = graph.of_edges[[graph.Edge['a', 'b', 1.0], graph.Edge['b', 'c', 1.0]], true]
+    pc = pagerank[chain]
+    assert[pc['c'] gt pc['b'] and pc['b'] gt pc['a']]
+
+--- a triangle's nodes are fully clustered, a star's centre not at all; the
+--- middle of a path carries every shortest path; a star's centre is
+--- closest to all
+test measures_a_node_by_its_paths[]
+    tri = graph.of_edges[[graph.Edge['a', 'b', 1.0], graph.Edge['b', 'c', 1.0], graph.Edge['c', 'a', 1.0], graph.Edge['c', 'd', 1.0]], false]
+    assert[clustering[tri, 'a'] eq 1.0]
+    assert[abs[clustering[tri, 'c'] - 1.0 / 3.0] lt 0.000000000001]
+    assert[clustering[tri, 'd'] eq 0.0]
+    line = graph.of_edges[[graph.Edge['a', 'b', 1.0], graph.Edge['b', 'c', 1.0], graph.Edge['c', 'd', 1.0]], false]
+    b = betweenness[line]
+    assert[abs[b['b'] - 2.0 / 3.0] lt 0.000000000001]
+    assert[b['a'] eq 0.0]
+    star = graph.of_edges[[graph.Edge['c', 'x', 1.0], graph.Edge['c', 'y', 1.0], graph.Edge['c', 'z', 1.0]], false]
+    cl = closeness[star]
+    assert[cl['c'] eq 1.0]
+    assert[abs[cl['x'] - 0.6] lt 0.000000000001]
+    arrows = graph.of_edges[[graph.Edge['a', 'b', 1.0], graph.Edge['b', 'c', 1.0]], true]
+    ca = closeness[arrows]
+    assert[ca['a'] eq 0.0]
+    assert[abs[ca['c'] - 2.0 / 3.0] lt 0.000000000001]

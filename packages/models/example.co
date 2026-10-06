@@ -70,7 +70,9 @@ log['prepare: polynomial `prepare.polynomial[[[2.0, 3.0]], 2][0]`, onehot `oneho
 
 x1d = [[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]]
 bt = boost.fit[x1d, [0.0, 1.0, 4.0, 9.0, 16.0, 25.0], 40, 2, 0.5]
-log['boost: 2.5² is about `round[boost.predict[bt, [[2.5]]][0] * 10.0] / 10.0`']
+log['boost: 2.5² is about `round[boost.predict[bt, [[2.5]]][0] * 10.0] / 10.0`, the error after 40 stages `fmt[bt.losses[39], decimals = 6]`']
+bc = boost.fit_classes[[[7.96, 6.34], [4.98, 7.91], [1.72, 1.28], [4.9, 0.35], [0.29, 4.12], [3.73, 7.34], [5.03, 4.11], [3.97, 1.98], [0.09, 1.54], [5.54, 1.6]], [1, 0, 0, 1, 0, 0, 0, 1, 0, 1], 4, 2, 0.5]
+log['boost classes: `boost.classify[bc, [[7.0, 6.0], [1.0, 2.0]]]`, the first with probability `fmt[boost.probability[bc, [[7.0, 6.0]]][0][1], decimals = 6]`']
 
 la = lasso.fit[[[1.0, 1.0], [2.0, 0.0], [3.0, 1.0], [4.0, 0.0], [5.0, 1.0], [6.0, 0.0]], [3.0, 6.0, 9.0, 12.0, 15.0, 18.0], 0.5, 1.0, 100]
 log['lasso: coef `round[la.coef[0] * 100.0] / 100.0` `la.coef[1]`']

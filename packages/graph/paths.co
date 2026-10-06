@@ -1,0 +1,134 @@
+--- Shortest paths and spanning trees. `dijkstra` reaches every node from
+--- one by the arcs' weights; `distance` and `path` read what it found;
+--- `spanning` is Kruskal's minimum spanning tree of an undirected graph;
+--- `longest` the most arcs any path of an acyclic graph has.
+use math
+use graph
+
+--- what a search from a node found: each index's distance (−1 where not
+--- reached) and the index it was reached from (−1 at the start)
+struct Reach [names, index, distance, previous]
+--- a spanning tree: its edges and their weight
+struct Tree [edges, weight]
+--- an edge by indices, for the sort
+struct Link [a, b, weight]
+
+--- the shortest distance to every node from `start`, by the weights
+fn dijkstra[g, start]
+    n = len[g.names]
+    dist = for i in range[n]
+        -1.0
+    prev = for i in range[n]
+        -1
+    done = for i in range[n]
+        false
+    dist[g.index[start]] = 0.0
+    for step in range[n]
+        best = -1
+        for i in range[n]
+            if not done[i] and dist[i] gte 0.0
+                if best lt 0
+                    best = i
+                else
+                    if dist[i] lt dist[best]
+                        best = i
+        if best lt 0
+            break
+        done[best] = true
+        for arc in g.arcs[best]
+            d = dist[best] + arc.weight
+            if dist[arc.to] lt 0.0 or d lt dist[arc.to]
+                dist[arc.to] = d
+                prev[arc.to] = best
+    return Reach[g.names, g.index, dist, prev]
+
+--- the distance a search found to a node; an error of kind 'graph' where
+--- it was not reached
+fn distance[r, name]
+    d = r.distance[r.index[name]]
+    if d lt 0.0
+        return error['graph: `name` is not reached', 'graph']
+    return d
+
+--- the names along the shortest path to a node, from the start; empty
+--- where it was not reached
+fn path[r, name]
+    i = r.index[name]
+    if r.distance[i] lt 0.0
+        return []
+    out = [r.names[i]]
+    while r.previous[i] gte 0
+        i = r.previous[i]
+        out = push[out, r.names[i]]
+    return reverse[out]
+
+fn root_of[parent, i]
+    while parent[i] ne i
+        i = parent[i]
+    return i
+
+--- Kruskal's minimum spanning tree (a forest where the graph is in
+--- pieces): the lightest edges that join what is not yet joined
+fn spanning[g]
+    n = len[g.names]
+    links = []
+    for i in range[n]
+        for arc in g.arcs[i]
+            if i lt arc.to
+                links = push[links, Link[i, arc.to, arc.weight]]
+    weights = for l in links
+        l.weight
+    order = argsort[weights]
+    parent = range[n]
+    chosen = []
+    total = 0.0
+    for q in order
+        l = links[q]
+        ra = root_of[parent, l.a]
+        rb = root_of[parent, l.b]
+        if ra ne rb
+            parent[ra] = rb
+            chosen = push[chosen, graph.Edge[g.names[l.a], g.names[l.b], l.weight]]
+            total = total + l.weight
+    return Tree[chosen, total]
+
+--- the most arcs on any path of an acyclic graph (an error where there
+--- is a cycle)
+fn longest[g]
+    order = graph.topological[g]
+    n = len[g.names]
+    best = for i in range[n]
+        0
+    for name in order
+        i = g.index[name]
+        for arc in g.arcs[i]
+            if best[i] + 1 gt best[arc.to]
+                best[arc.to] = best[i] + 1
+    return max[best]
+
+--- the distances along weighted arcs, the path back, and a node apart
+test reaches_by_the_weights[]
+    g = graph.of_edges[[graph.Edge['a', 'b', 1.0], graph.Edge['a', 'c', 4.0], graph.Edge['b', 'c', 2.0], graph.Edge['c', 'd', 1.0], graph.Edge['e', 'f', 1.0]], false]
+    r = dijkstra[g, 'a']
+    assert[distance[r, 'c'] eq 3.0]
+    assert[distance[r, 'd'] eq 4.0]
+    assert[path[r, 'd'] eq ['a', 'b', 'c', 'd']]
+    assert[not distance[r, 'e'].ok]
+    assert[path[r, 'e'] eq []]
+
+--- the tree keeps the two lightest edges of a triangle, and a forest
+--- where the graph is in pieces
+test spans_with_the_lightest_edges[]
+    g = graph.of_edges[[graph.Edge['a', 'b', 1.0], graph.Edge['b', 'c', 2.0], graph.Edge['a', 'c', 3.0], graph.Edge['x', 'y', 5.0]], false]
+    t = spanning[g]
+    assert[t.weight eq 8.0]
+    assert[len[t.edges] eq 3]
+    assert[t.edges[0].weight eq 1.0]
+
+--- the longest path of an acyclic graph counts arcs, and a cycle is an
+--- error
+test counts_the_longest_path[]
+    dag = graph.of_edges[[graph.Edge['a', 'b', 1.0], graph.Edge['b', 'c', 1.0], graph.Edge['a', 'c', 1.0], graph.Edge['c', 'd', 1.0]], true]
+    assert[longest[dag] eq 3]
+    cyc = graph.of_edges[[graph.Edge['a', 'b', 1.0], graph.Edge['b', 'a', 1.0]], true]
+    assert[not longest[cyc].ok]

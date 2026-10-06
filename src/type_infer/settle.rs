@@ -26,6 +26,35 @@ pub(crate) fn settle(existing: &CrowType, value: CrowType, in_body: bool) -> Cro
     existing.unify(&consumed(existing, value, in_body))
 }
 
+/// The type a fact settles on after a handler's assignment: what it held,
+/// unified with the value — in the form it was declared in. A fact's form
+/// is the state's (the compiled program keeps it as declared), so numbers
+/// assigned as a list to a fact holding a tensor land as the tensor, and
+/// the other way, converted where they are assigned; the join of the two
+/// forms would have turned the fact into the value's form while its state
+/// kept the declared one (finch's `ep_start = [0.0]`, given a record's
+/// list, did not build).
+pub(crate) fn settle_fact(existing: &CrowType, value: CrowType, in_body: bool) -> CrowType {
+    let joined = settle(existing, value, in_body);
+    match (existing, joined) {
+        (CrowType::NumArray(_, dims), CrowType::Array(item)) => {
+            let elem = match *item {
+                CrowType::NumArray(e, _) => *e,
+                e => e,
+            };
+            CrowType::NumArray(Box::new(elem), dims.clone())
+        }
+        (CrowType::Array(_), CrowType::NumArray(elem, dims)) => {
+            let item = match dims {
+                Some(d) if d.len() >= 2 => CrowType::NumArray(elem, Some(d[1..].to_vec())),
+                _ => *elem,
+            };
+            CrowType::Array(Box::new(item))
+        }
+        (_, joined) => joined,
+    }
+}
+
 /// Whether a variable holding `held` refuses a failed value whose payload
 /// is `payload`: it holds a plain value the payload fits, so its first
 /// value could not fail, and the failure is refused where it is assigned.

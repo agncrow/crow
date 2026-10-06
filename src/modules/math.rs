@@ -424,8 +424,15 @@ mod tests {
 
     #[test]
     fn test_argsort() {
-        let t = unwrap_tensor(call_math("argsort", &[tensor_1d(vec![3.0, 1.0, 2.0])]));
-        assert_tensor_eq(&t, &[1.0, 2.0, 0.0]);
+        // (a list of ints, as `range` answers one)
+        let cv = call_math("argsort", &[tensor_1d(vec![3.0, 1.0, 2.0])]).expect("call_math failed");
+        match cv.value {
+            Value::Array(items) => {
+                let got: Vec<i64> = items.iter().map(|v| if let Value::Int(n) = v.value { n } else { panic!("expected ints, got {:?}", v.value) }).collect();
+                assert_eq!(got, vec![1, 2, 0]);
+            }
+            other => panic!("expected a list of ints, got {:?}", other),
+        }
     }
 
     #[test]

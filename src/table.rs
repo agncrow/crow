@@ -1493,7 +1493,7 @@ pub static ROWS: &[Row] = &[
     row!("math.argmin", "math", "argmin", crow_runtime::math::argmin, (Tensor) -> Int, never),
     row!("math.cumsum", "math", "cumsum", crow_runtime::math::cumsum, (Tensor) -> Tensor, never),
     row!("math.cumprod", "math", "cumprod", crow_runtime::math::cumprod, (Tensor) -> Tensor, never),
-    row!("math.argsort", "math", "argsort", crow_runtime::math::argsort, (Tensor) -> Tensor, never),
+    row!("math.argsort", "math", "argsort", crow_runtime::math::argsort, (Tensor) -> Ints, never),
     row!("math.topk", "math", "topk", crow_runtime::math::topk, (Tensor, Int) -> Tensor, stops),
     row!("math.unique", "math", "unique", crow_runtime::math::unique, (Tensor) -> Tensor, never),
     row!("math.where", "math", "where", crow_runtime::math::where_, (Tensor, Tensor, Tensor) -> Tensor, stops),

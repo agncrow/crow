@@ -317,9 +317,12 @@ pub fn cumprod(t: &CrowTensor) -> CrowTensor {
     t.cumprod()
 }
 
-/// `argsort[t]`.
-pub fn argsort(t: &CrowTensor) -> CrowTensor {
-    t.argsort()
+/// `argsort[t]`: the indices that would sort the numbers, ascending — a
+/// list of ints, as `range` answers one, so an index into it reads an int
+/// (it had answered a tensor, whose items read as floats and could index
+/// nothing).
+pub fn argsort(t: &CrowTensor) -> Vec<i64> {
+    t.argsort().to_vec().into_iter().map(|v| v as i64).collect()
 }
 
 /// `topk[t, k]`: the k largest values, largest first; all of them when k

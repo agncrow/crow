@@ -1,0 +1,106 @@
+--- Gradient boosting held against scikit-learn: a folder of data sets
+--- scikit-learn fitted (written by boost_bench.py beside the README),
+--- each with its predictions or probabilities, its training loss per
+--- stage and its feature importances — and the largest difference between
+--- those and this package's, fitted the same way. Run it in both modes;
+--- the two print the same.
+use math, frame
+use boost
+
+folder = args[][0]
+
+--- the one row of a wide frame, by column
+fn cell[f, name]
+    return flatten[tensor[select[f, [name]]]][0]
+
+--- the feature columns: every column named x0, x1, …
+fn features_of[f]
+    out = []
+    for c in f.columns
+        if slice[c, 0, 1] eq 'x'
+            out = push[out, c]
+    return out
+
+--- the rows of the features as a list, and a numeric column as a list
+fn rows_of[f, feats]
+    xs = tensor[select[f, feats]]
+    out = []
+    for i in range[len[f]]
+        out = push[out, xs[i]]
+    return out
+
+fn column_of[f, name]
+    v = flatten[tensor[select[f, [name]]]]
+    out = []
+    for i in range[len[f]]
+        out = push[out, v[i]]
+    return out
+
+fn worst[a, b]
+    out = 0.0
+    for i in range[len[a]]
+        d = abs[a[i] - b[i]]
+        if d gt out
+            out = d
+    return out
+
+--- the losses per stage and the importances, read from the extra frame
+fn losses_of[extra, trees]
+    out = for t in range[trees]
+        cell[extra, 'loss_`t`']
+    return out
+
+fn importances_of[extra, features]
+    out = for j in range[features]
+        cell[extra, 'imp_`j`']
+    return out
+
+for name in ['reg_1', 'reg_2']
+    f = frame.load['`folder`/`name`.csv']
+    extra = frame.load['`folder`/`name`_extra.csv']
+    feats = features_of[f]
+    x = rows_of[f, feats]
+    y = column_of[f, 'y']
+    trees = int[cell[extra, 'trees']]
+    m = boost.fit[x, y, trees, int[cell[extra, 'depth']], cell[extra, 'rate'], min_leaf = int[cell[extra, 'min_leaf']]]
+    dp = worst[boost.predict[m, x], column_of[f, 'sk']]
+    dl = worst[m.losses, losses_of[extra, trees]]
+    di = worst[m.importances, importances_of[extra, len[feats]]]
+    log['`name`: `trees` trees — predictions within `fmt[dp, decimals = 15]`, losses within `fmt[dl, decimals = 15]`, importances within `fmt[di, decimals = 15]` (`m.ties` tied splits)']
+
+for name in ['bin_1', 'bin_2']
+    f = frame.load['`folder`/`name`.csv']
+    extra = frame.load['`folder`/`name`_extra.csv']
+    feats = features_of[f]
+    x = rows_of[f, feats]
+    y = for v in column_of[f, 'y']
+        int[v]
+    trees = int[cell[extra, 'trees']]
+    m = boost.fit_classes[x, y, trees, int[cell[extra, 'depth']], cell[extra, 'rate'], min_leaf = int[cell[extra, 'min_leaf']]]
+    p = for row in boost.probability[m, x]
+        row[1]
+    dp = worst[p, column_of[f, 'sk']]
+    dl = worst[m.losses, losses_of[extra, trees]]
+    di = worst[m.importances, importances_of[extra, len[feats]]]
+    log['`name`: `trees` trees — probabilities within `fmt[dp, decimals = 15]`, losses within `fmt[dl, decimals = 15]`, importances within `fmt[di, decimals = 15]` (`m.ties` tied splits)']
+
+for name in ['multi_1', 'multi_2']
+    f = frame.load['`folder`/`name`.csv']
+    extra = frame.load['`folder`/`name`_extra.csv']
+    feats = features_of[f]
+    x = rows_of[f, feats]
+    y = for v in column_of[f, 'y']
+        int[v]
+    trees = int[cell[extra, 'trees']]
+    m = boost.fit_classes[x, y, trees, int[cell[extra, 'depth']], cell[extra, 'rate'], min_leaf = int[cell[extra, 'min_leaf']]]
+    probs = boost.probability[m, x]
+    dp = 0.0
+    for c in range[3]
+        pc = for row in probs
+            row[c]
+        d = worst[pc, column_of[f, 'sk`c`']]
+        if d gt dp
+            dp = d
+    dl = worst[m.losses, losses_of[extra, trees]]
+    di = worst[m.importances, importances_of[extra, len[feats]]]
+    log['`name`: `trees` trees — probabilities within `fmt[dp, decimals = 15]`, losses within `fmt[dl, decimals = 15]`, importances within `fmt[di, decimals = 15]` (`m.ties` tied splits)']

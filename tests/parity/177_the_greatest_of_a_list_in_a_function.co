@@ -1,0 +1,25 @@
+--- the greatest and the least of a list of numbers computed inside a
+--- function — a loop's items, a parameter — in both modes (the list had
+--- been read as the two-number `max`'s argument, and the call refused for
+--- its count: `max[] takes 2 arguments, got 1`; a literal list at the top
+--- level had always worked)
+use math
+
+fn top[xs]
+    best = for v in xs
+        v * 1.0
+    return max[best]
+
+fn bottom[xs]
+    return min[xs]
+
+fn widest[rows]
+    widths = for r in rows
+        len[r]
+    return max[widths]
+
+log[top[[4.0, 2.0, 9.0]]]
+log[bottom[[4, 2, 9]]]
+log[widest[['ab', 'abcd', 'a']]]
+log[max[[4.0, 2.0, 9.0]]]
+log[max[3, 8]]

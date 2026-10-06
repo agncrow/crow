@@ -1723,6 +1723,28 @@ impl<'a> Lowerer<'a> {
                 }
                 let idx = self.lower_expr(index)?;
                 let (var, mut path) = self.muted_target(object)?;
+                // an item assigned a value of a known kind types the list's
+                // items where they were not known (a list of empty lists,
+                // one of them given a list of records — a graph's arcs —
+                // had kept its items unknown, and the compiled record's
+                // field was a list of text)
+                // (noted as the call scan and the settling pass note an
+                // assignment: the settling pass is what the final lowering
+                // declares the local from)
+                if self.pass != Pass::Final && path.is_empty() {
+                    let held = self.ctx.vars.get(&var).cloned().unwrap_or(CrowType::Unknown);
+                    let item = read(&expr);
+                    let open = match &held {
+                        CrowType::Unknown => true,
+                        CrowType::Array(inner) => format!("{:?}", inner).contains("Unknown"),
+                        _ => false,
+                    };
+                    if open && !format!("{:?}", item).contains("Unknown") && !matches!(item, CrowType::Void) {
+                        let refined = CrowType::Array(Box::new(item));
+                        self.ctx.note_scanned_assign(&var, refined.clone());
+                        self.rebind(&var, &refined);
+                    }
+                }
                 // a tensor's item assigned is a number: a row cannot be (the
                 // interpreter had stopped there, and the compiled program
                 // had not built)
@@ -1877,6 +1899,32 @@ impl<'a> Lowerer<'a> {
                 let mut x = if floats && x.ty().payload() == &Ty::Int && !matches!(x, Expr::Convert { how: Convert::Unwrap, .. }) {
                     let ty = if x.ty().is_result() { Ty::Result(Box::new(Ty::Float)) } else { Ty::Float };
                     Expr::Convert { how: Convert::IntToFloat, expr: Box::new(x), ty }
+                } else {
+                    x
+                };
+                // a list of numbers returned by a function whose value is a
+                // tensor — a literal list in one branch, a loop's list in
+                // another — is that tensor, in both modes (the compiled
+                // function had answered a Vec where it stated a tensor, and
+                // did not build)
+                let tensor = self.pass == Pass::Final
+                    && self.ctx.functions.get(&self.current_fn).is_some_and(|sig| match &sig.return_type {
+                        CrowType::Result(inner) => matches!(inner.as_ref(), CrowType::NumArray(..)),
+                        t => matches!(t, CrowType::NumArray(..)),
+                    });
+                let list = self.pass == Pass::Final
+                    && self.ctx.functions.get(&self.current_fn).is_some_and(|sig| match &sig.return_type {
+                        CrowType::Result(inner) => matches!(inner.as_ref(), CrowType::Array(i) if matches!(i.as_ref(), CrowType::Int | CrowType::Float)),
+                        t => matches!(t, CrowType::Array(i) if matches!(i.as_ref(), CrowType::Int | CrowType::Float)),
+                    });
+                let mut x = if tensor && !x.ty().is_result() && matches!(x.ty(), Ty::List(item) if matches!(item.payload(), Ty::Int | Ty::Float)) {
+                    let ty = Ty::Tensor(Box::new(Ty::Float), shapes::stacked_dims(&x.ty()));
+                    Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty }
+                } else if list && !x.ty().is_result() && matches!(x.ty(), Ty::Tensor(..)) {
+                    // (and the other way: a literal list of numbers, a tensor,
+                    // returned where the function answers a list)
+                    let ty = Ty::List(Box::new(Ty::Float));
+                    Expr::Convert { how: Convert::ToList, expr: Box::new(x), ty }
                 } else {
                     x
                 };
@@ -2059,6 +2107,13 @@ impl<'a> Lowerer<'a> {
                 let ty = as_held(var, failing);
                 Expr::Convert { how: Convert::ToTensor, expr: Box::new(expr), ty }
             }
+            // (ints held as a list assigned to a variable holding a list of
+            // floats — `t = [1.0, 2.0]`, then `t = range[3]` — are floats,
+            // as one int assigned to a float variable is)
+            (Some(var @ CrowType::Array(item)), Ty::List(e)) if matches!(item.as_ref(), CrowType::Float) && *e == Ty::Int => {
+                let ty = as_held(var, failing);
+                Expr::Convert { how: Convert::IntsToFloats, expr: Box::new(expr), ty }
+            }
             _ => expr,
         };
         // a frame given other columns in the block it was bound in is bound
@@ -2082,6 +2137,11 @@ impl<'a> Lowerer<'a> {
             return Stmt::Store { fact: name.to_string(), expr };
         }
         if self.declared(name) {
+            let held = self.ctx.vars.get(name).map(ty_of);
+            let expr = match held {
+                Some(held) => settled_yield(expr, &held),
+                None => expr,
+            };
             return Stmt::Set { var: name.to_string(), expr };
         }
         self.scopes.last_mut().unwrap().insert(name.to_string());
@@ -2091,6 +2151,7 @@ impl<'a> Lowerer<'a> {
         if !matches!(ty, Ty::Unknown) {
             self.ctx.vars.insert(name.to_string(), crow_type(&ty));
         }
+        let expr = settled_yield(expr, &ty);
         Stmt::Let { var: name.to_string(), ty, expr }
     }
 
@@ -2210,7 +2271,11 @@ impl<'a> Lowerer<'a> {
             ty.clone()
         } else {
             let existing = self.ctx.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
-            crate::type_infer::settle::settle(&existing, ty.clone(), self.ctx.body_assigned.is_some())
+            if self.is_fact(name) {
+                crate::type_infer::settle::settle_fact(&existing, ty.clone(), self.ctx.body_assigned.is_some())
+            } else {
+                crate::type_infer::settle::settle(&existing, ty.clone(), self.ctx.body_assigned.is_some())
+            }
         };
         self.ctx.vars.insert(name.to_string(), settled);
         self.rebind(name, &ty);
@@ -2258,7 +2323,8 @@ impl<'a> Lowerer<'a> {
         let in_body = self.ctx.body_assigned.is_some();
         for (n, t) in names.iter().zip(types) {
             let existing = self.ctx.vars.get(n).cloned().unwrap_or(CrowType::Unknown);
-            self.ctx.vars.insert(n.clone(), crate::type_infer::settle::settle(&existing, t, in_body));
+            let settled = if self.is_fact(n) { crate::type_infer::settle::settle_fact(&existing, t, in_body) } else { crate::type_infer::settle::settle(&existing, t, in_body) };
+            self.ctx.vars.insert(n.clone(), settled);
         }
         for n in names {
             let store = self.is_fact(n) && self.sees_facts();
@@ -2292,7 +2358,8 @@ impl<'a> Lowerer<'a> {
         let in_body = self.ctx.body_assigned.is_some();
         for (n, t) in names.iter().zip(types) {
             let existing = self.ctx.vars.get(n).cloned().unwrap_or(CrowType::Unknown);
-            self.ctx.vars.insert(n.clone(), crate::type_infer::settle::settle(&existing, t, in_body));
+            let settled = if self.is_fact(n) { crate::type_infer::settle::settle_fact(&existing, t, in_body) } else { crate::type_infer::settle::settle(&existing, t, in_body) };
+            self.ctx.vars.insert(n.clone(), settled);
         }
         for n in names {
             let store = self.is_fact(n) && self.sees_facts();
@@ -2483,6 +2550,26 @@ impl<'a> Lowerer<'a> {
                     l = numbers(l);
                     r = numbers(r);
                 }
+                // a list of numbers that can fail — each a map's read, a
+                // function's answer that can — compared whole with a tensor
+                // or a list of numbers is its numbers, as it is handed to a
+                // function that takes them: a failed item stops the program
+                // with its reason, in both modes (the interpreter had
+                // compared the items, and the compiled program had not built)
+                if matches!(op, BinOp::Eq | BinOp::Ne) {
+                    let fallible_numbers = |x: &Expr| matches!(x.ty(), Ty::List(item) if item.is_result() && matches!(item.payload(), Ty::Int | Ty::Float));
+                    // (the other side decided first where it can fail: a
+                    // loaded column's numbers)
+                    let numbers_whole = |x: &Expr| matches!(x.ty().payload(), Ty::Tensor(..)) || matches!(x.ty().payload(), Ty::List(item) if matches!(item.payload(), Ty::Int | Ty::Float));
+                    if (fallible_numbers(&l) && numbers_whole(&r)) || (fallible_numbers(&r) && numbers_whole(&l)) {
+                        let to_tensor = |x: Expr| match x.ty() {
+                            Ty::List(_) => Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty: Ty::vector(Ty::Float) },
+                            _ => x,
+                        };
+                        l = to_tensor(l);
+                        r = to_tensor(r);
+                    }
+                }
                 self.check_shapes(op, &l, &r);
                 // `%` is the ints' remainder (spec, Operators): a float on
                 // either side is refused before the program runs (the
@@ -2606,6 +2693,31 @@ impl<'a> Lowerer<'a> {
                 if let Some((first_many, first_one)) = kinds.first() {
                     if let Some((_, other)) = kinds.iter().find(|(many, _)| many != first_many) {
                         self.refuse(format!("a list holds one kind: this one has {} and {} — a record (struct) holds fields of several kinds", first_one, other));
+                    }
+                }
+                // a nested literal of numbers is a matrix, and a matrix's rows
+                // are of one length: a ragged one is refused before the
+                // program runs, in both modes, with the runtime's words (one
+                // with an empty row among rows of numbers had run interpreted
+                // as a list of lists, and the compiled program had not built;
+                // one with rows of two lengths had stopped as it ran)
+                if self.pass == Pass::Final {
+                    let numeric_row = |e: &Expr| match e {
+                        Expr::ListLit(inner, _) => inner.is_empty() || inner.iter().all(|x| matches!(x.ty().payload(), Ty::Int | Ty::Float)),
+                        _ => matches!(e.ty().payload(), Ty::Tensor(..)),
+                    };
+                    let row_len = |e: &Expr| match e {
+                        Expr::ListLit(inner, _) => Some(inner.len()),
+                        _ => match e.ty().payload() {
+                            Ty::Tensor(_, Some(dims)) => dims.first().copied().flatten(),
+                            _ => None,
+                        },
+                    };
+                    if out.len() >= 2 && out.iter().all(numeric_row) {
+                        let lens: Vec<usize> = out.iter().filter_map(row_len).collect();
+                        if lens.windows(2).any(|w| w[0] != w[1]) {
+                            self.refuse("all inner arrays must be the same length: a nested literal of numbers is a matrix — a list of lists of other lengths is built with push[…]".to_string());
+                        }
                     }
                 }
                 // (a literal whose rows' sizes show only as the program runs
@@ -2772,6 +2884,14 @@ impl<'a> Lowerer<'a> {
             // the facts are set, takes the error the read carries.
             let refused = !self.in_fact_default && base.ty().is_result() && !matches!(base.ty().payload(), Ty::Fn(..) | Ty::Unknown);
             let base = if refused { self.decided(base, Decision::Item) } else { base };
+            // a frame has no items to index: a column is read by its name,
+            // a cell by the column's index (`f['a']` had stopped the
+            // interpreter as it ran — `not indexable` — and the compiled
+            // program had not built)
+            if self.pass == Pass::Final && matches!(base.ty().payload(), Ty::Frame(_)) {
+                let name = local_named(&base).unwrap_or_else(|| "frame".to_string());
+                self.refuse(format!("a frame is not indexed: read a column as `{0}.name`, its cell as `{0}.name[i]`, and columns with select[{0}, ['name']]", name));
+            }
             let mut idx = Vec::new();
             for a in args {
                 idx.push(self.lower_expr(a)?);
@@ -2859,6 +2979,23 @@ impl<'a> Lowerer<'a> {
             let mut checks = Vec::new();
             for (i, a) in args.iter().enumerate() {
                 let value = self.lower_expr(a)?;
+                // a list whose items are not known yet, handed to a field
+                // whose are (a list of empty lists, a graph's arcs, grown a
+                // record at a time elsewhere): the local takes the field's
+                // type (compiled, it had been a list of text, and the
+                // record did not build)
+                if self.pass != Pass::Final {
+                    let field_ty = self.ctx.structs.get(&name).and_then(|s| s.fields.get(i)).map(|(_, t)| t.clone());
+                    if let (Expr::Local(v, _), Some(field_ty)) = (&value, field_ty) {
+                        let open = format!("{:?}", full(&value)).contains("Unknown");
+                        let known = matches!(field_ty, CrowType::Array(_)) && !format!("{:?}", field_ty).contains("Unknown");
+                        if open && known {
+                            let v = v.clone();
+                            self.ctx.note_scanned_assign(&v, field_ty.clone());
+                            self.rebind(&v, &field_ty);
+                        }
+                    }
+                }
                 types.push(full(&value));
                 checks.push(self.checked(&value));
                 // a list of numbers is held as a list or as a tensor: a
@@ -3333,7 +3470,10 @@ impl<'a> Lowerer<'a> {
             return None;
         }
         let overlapping = matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round" | "min" | "max");
-        let tensor_among = types.iter().any(|t| matches!(t, CrowType::NumArray(..)));
+        // (a list of numbers is taken where a tensor is: `max` of a list a
+        // function computed is math's, of the whole list — it had been left
+        // to the core's two-number `max`, and refused for its count)
+        let tensor_among = types.iter().any(|t| matches!(t, CrowType::NumArray(..)) || matches!(t, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Int | CrowType::Float)));
         let frame_fn = registry.module_name_for(name) == Some("frame");
         let control = name == "select" && self.in_ui && lowered.len() == 2 && frame_fn;
         let frame_core = frame_fn && crate::checker::BUILTINS.contains(&name) && !types.first().is_some_and(|t| matches!(t, CrowType::Frame(_) | CrowType::FrameCol));
@@ -3496,7 +3636,10 @@ impl<'a> Lowerer<'a> {
                     // numbers that can fail are numbers too, a failed one
                     // stopping where they are read (as a column's missing
                     // cell does)
-                    Ty::List(e) => !core && *e != Ty::Unknown && (!e.is_result() || matches!(e.payload(), Ty::Int | Ty::Float)),
+                    // (a list of numbers handed to a core name's module row
+                    // — `max` of a list a function computed, math's — is
+                    // converted as the row takes it)
+                    Ty::List(e) => (!core || k == Kind::Tensor) && *e != Ty::Unknown && (!e.is_result() || matches!(e.payload(), Ty::Int | Ty::Float)),
                     Ty::Column(_) => true,
                     _ => false,
                 };
@@ -3870,6 +4013,39 @@ pub(crate) fn words_before_placeholders(sql: &str) -> Vec<String> {
 /// variable that holds no error (spec, Reassignment), as the Rust backend
 /// declares it (`xs = []`, then a push of a value that can fail, refused
 /// where it is assigned).
+/// The variable an expression reads, through the conversions a read is
+/// wrapped in (a value that can fail is decided before it is indexed).
+fn local_named(e: &Expr) -> Option<String> {
+    match e {
+        Expr::Local(v, _) | Expr::Move(v, _) | Expr::Load(v, _) => Some(v.clone()),
+        Expr::Convert { expr, .. } => local_named(expr),
+        _ => None,
+    }
+}
+
+/// A collecting loop whose yield says nothing of its items — an empty list
+/// each round (`preds = for i in range[n]` yielding `[]`, a graph's arcs)
+/// — is typed by the local it is assigned to, as the local settled (an
+/// item assigned later typed the items): the loop had kept its unknown
+/// items, which the compiled program read as text.
+fn settled_yield(expr: Expr, declared: &Ty) -> Expr {
+    let open = |t: &Ty| format!("{:?}", t).contains("Unknown");
+    if !open(&expr.ty()) || open(declared) {
+        return expr;
+    }
+    match expr {
+        Expr::ForExpr { var, iter, mut body, ty: _, parallel } if matches!(declared, Ty::List(_)) => {
+            if let (Ty::List(item), Some(Stmt::Do(Expr::ListLit(items, lt)))) = (declared, body.iter_mut().rev().find(|s| !matches!(s, Stmt::Line(_)))) {
+                if items.is_empty() && open(lt) {
+                    *lt = (**item).clone();
+                }
+            }
+            Expr::ForExpr { var, iter, body, ty: declared.clone(), parallel }
+        }
+        other => other,
+    }
+}
+
 fn declared_as(first: &Ty, settled: Option<&CrowType>) -> Ty {
     if matches!(first, Ty::Node) {
         return Ty::Markup;
@@ -4830,6 +5006,20 @@ mod tests {
         assert!(ir.contains("first(x: Tensor(Float, [?, 2])) -> Int") || ir.contains("first(x: Tensor(Float, [?, ?])) -> Int"), "{}", ir);
     }
 
+    /// A fact keeps the form it was declared in — a tensor, `ep_start =
+    /// [0.0]` — through a handler's assignments of a list: the list is
+    /// converted where it is stored, and the fact is a list where a record's
+    /// list field takes it (the join had turned the fact into the value's
+    /// form while the compiled state kept the declared one: finch's clock
+    /// did not build)
+    #[test]
+    fn a_fact_keeps_its_declared_form() {
+        let ir = ir_of("use web, ui\nstruct Episodes [symbol, start, end]\nfn grown[e]\n    s = []\n    s = push[s, 1.5]\n    return Episodes[e.symbol, s, s]\nsym = 'a'\nep_start = [0.0]\nep_end = [0.0]\nfn step[]\n    act = Episodes[sym, ep_start, ep_end]\n    act = grown[act]\n    sym, ep_start, ep_end = act.symbol, act.start, act.end\nview home[]\n    return stack[p['`sym` `len[ep_start]`'], button['step', click = step]]\nserve[3402]\npage['/', home]\n");
+        assert!(ir.contains("fact ep_start: Tensor(Float, [1])"), "{}", ir);
+        assert!(ir.contains("Episodes{load sym, list(load ep_start), list(load ep_end)}"), "{}", ir);
+        assert!(ir.contains("store ep_start ← tensor(act.start)"), "{}", ir);
+    }
+
     /// A tensor that can fail pushed to is a tensor (that can fail): its
     /// holder is read by what it holds (it had been typed a list)
     #[test]
@@ -5145,10 +5335,10 @@ mod tests {
     /// holds as a value; handing one to a builtin is a call of it too
     #[test]
     fn a_function_value_counts_by_what_it_could_be() {
-        let pure = ir_of("fn keep[items, f]\n    out = for x in items\n        if f[x]\n            x\n    return out\nfn even[x]\n    return x % 2 eq 0\nlog[keep[[1, 2, 3], even]]\nrows = for r in [[1, 2], [3]]\n    any[r, even]\nlog[rows]\n");
+        let pure = ir_of("fn keep[items, f]\n    out = for x in items\n        if f[x]\n            x\n    return out\nfn even[x]\n    return x % 2 eq 0\nlog[keep[[1, 2, 3], even]]\nrows = for r in [[1, 2], [3, 4]]\n    any[r, even]\nlog[rows]\n");
         assert!(loop_line(&pure, "f[").ends_with("parallel"), "{}", pure);
         assert!(loop_line(&pure, "any(").ends_with("parallel"), "{}", pure);
-        let loud = ir_of("fn keep[items, f]\n    out = for x in items\n        if f[x]\n            x\n    return out\nfn loud[x]\n    log[x]\n    return true\nlog[keep[[1, 2, 3], loud]]\nrows = for r in [[1, 2], [3]]\n    any[r, loud]\nlog[rows]\n");
+        let loud = ir_of("fn keep[items, f]\n    out = for x in items\n        if f[x]\n            x\n    return out\nfn loud[x]\n    log[x]\n    return true\nlog[keep[[1, 2, 3], loud]]\nrows = for r in [[1, 2], [3, 4]]\n    any[r, loud]\nlog[rows]\n");
         assert!(!loop_line(&loud, "f[").ends_with("parallel"), "{}", loud);
         assert!(!loop_line(&loud, "any(").ends_with("parallel"), "{}", loud);
     }

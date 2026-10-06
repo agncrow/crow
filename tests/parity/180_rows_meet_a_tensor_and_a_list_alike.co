@@ -1,0 +1,28 @@
+--- a variable given an empty list, then a literal list of numbers in one
+--- branch and a loop's list in another, held as rows and changed row by
+--- row, in a function called twice: the same in both modes (compiled,
+--- what the rows were — a tensor or a list — had depended on the order
+--- the inference met the two, a tensor at one site and a list at another,
+--- and the program did not build)
+use math
+
+fn scores[k, n]
+    bases = []
+    if k eq 1
+        bases = [ln[2.0]]
+    else
+        bases = for j in range[k]
+            0.5 * j
+    raw = for i in range[n]
+        bases
+    for step in range[2]
+        raw = for i in range[n]
+            row = raw[i]
+            row[0] = row[0] + 1.0 * i
+            row
+    return raw
+
+log[scores[1, 2]]
+log[scores[3, 2]]
+one = scores[1, 3]
+log[one[2][0]]

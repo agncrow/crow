@@ -1,0 +1,27 @@
+--- the order of a list computed inside a function, read by index, and the
+--- list's running sum, read by index: the order is a list of ints and the
+--- sum a vector, in both modes (the list a parameter, or a loop's items:
+--- the order's items had read as floats, which index nothing, and the
+--- sum's rank had not been known, so the index was refused before the
+--- program ran)
+use math
+
+fn ranked[vals]
+    order = argsort[vals]
+    out = for q in range[len[vals]]
+        vals[order[q]]
+    return out
+
+fn by_column[rows, f]
+    col = for r in rows
+        r[f]
+    return ranked[col]
+
+fn total_of[vals]
+    c = cumsum[vals]
+    return c[len[vals] - 1]
+
+log[ranked[[3.5, 1.25, 2.0]]]
+log[by_column[[[1.0, 9.0], [2.0, 1.0], [0.5, 3.0]], 1]]
+log[total_of[[3.0, 1.0, 2.0]]]
+log[type[argsort[[3.0, 1.0, 2.0]][0]]]
