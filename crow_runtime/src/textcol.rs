@@ -384,9 +384,91 @@ impl DictBuilder {
     }
 }
 
+/// How many cells a column is read before its holding is decided.
+pub const DECIDE_AT: usize = 256;
+
+/// A text column built cell by cell by a reader that sees rows, not a
+/// sample: coded while its values stay few, and held plain from its first
+/// `DECIDE_AT` cells on when more than half of them are distinct, or once
+/// it passes the dictionary's limit (a database's decoders had collected a
+/// `String` per cell and copied the column once more).
+pub enum TextBuilder {
+    Dict(DictBuilder),
+    Plain(Text),
+}
+
+impl TextBuilder {
+    pub fn with_capacity(cells: usize) -> TextBuilder {
+        TextBuilder::Dict(DictBuilder::with_capacity(cells))
+    }
+
+    pub fn push(&mut self, s: &str) {
+        match self {
+            TextBuilder::Plain(t) => t.push(s),
+            TextBuilder::Dict(b) => {
+                b.push(s);
+                let n = b.len();
+                if b.over() || (n == DECIDE_AT && b.distinct() * 2 > n) {
+                    let plain = std::mem::replace(b, DictBuilder::with_capacity(0)).finish().plain();
+                    *self = TextBuilder::Plain(plain);
+                }
+            }
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            TextBuilder::Plain(t) => t.len(),
+            TextBuilder::Dict(b) => b.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The first cell, where there is one.
+    pub fn first(&self) -> Option<String> {
+        match self {
+            TextBuilder::Plain(t) => (!t.is_empty()).then(|| t.get(0).to_string()),
+            TextBuilder::Dict(b) => (!b.is_empty()).then(|| b.snapshot().get(0).to_string()),
+        }
+    }
+
+    pub fn finish(self) -> Text {
+        match self {
+            TextBuilder::Plain(t) => t,
+            TextBuilder::Dict(b) => b.finish(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A builder codes a column of few values and holds one of many plain,
+    /// deciding at its first cells.
+    #[test]
+    fn a_builder_decides_how_a_column_is_held() {
+        let mut few = TextBuilder::with_capacity(0);
+        for i in 0..1000 {
+            few.push(["AAPL", "MSFT", "NVDA"][i % 3]);
+        }
+        let few = few.finish();
+        assert!(few.dictionary().is_some_and(|(codes, values)| codes.len() == 1000 && values.len() == 3));
+        let mut many = TextBuilder::with_capacity(0);
+        for i in 0..1000 {
+            many.push(&format!("note {}", i));
+        }
+        assert!(matches!(many, TextBuilder::Plain(_)));
+        let many = many.finish();
+        assert!(many.dictionary().is_none() && many.get(999) == "note 999");
+        let mut empty = TextBuilder::with_capacity(0);
+        assert_eq!(empty.first(), None);
+        empty.push("x");
+        assert_eq!(empty.first().as_deref(), Some("x"));
+    }
 
     #[test]
     fn a_column_reads_the_same_however_it_is_held() {

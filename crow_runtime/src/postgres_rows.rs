@@ -17,7 +17,7 @@ use crate::frame::{Column, CrowFrame};
 enum Col {
     Int(Vec<i64>),
     Float(Vec<f64>),
-    Str(Vec<String>),
+    Str(crate::textcol::TextBuilder),
     Bool(Vec<bool>),
     /// UTC milliseconds and the offset each was written in
     DateTime(Vec<i64>, Vec<i16>),
@@ -41,7 +41,7 @@ fn col_of(oid: i64, n: usize) -> Col {
         16 => Col::Bool(Vec::with_capacity(n)),
         // date, timestamp, timestamptz
         1082 | 1114 | 1184 => Col::DateTime(Vec::with_capacity(n), Vec::with_capacity(n)),
-        _ => Col::Str(Vec::with_capacity(n)),
+        _ => Col::Str(crate::textcol::TextBuilder::with_capacity(n)),
     }
 }
 
@@ -123,7 +123,7 @@ pub fn frame_of_postgres(b: &[u8]) -> Result<CrowFrame, String> {
                         match &mut cols[c] {
                             Col::Int(v) => v.push(0),
                             Col::Float(v) => v.push(0.0),
-                            Col::Str(v) => v.push(String::new()),
+                            Col::Str(v) => v.push(""),
                             Col::Bool(v) => v.push(false),
                             Col::DateTime(v, z) => {
                                 v.push(0);
@@ -148,7 +148,7 @@ pub fn frame_of_postgres(b: &[u8]) -> Result<CrowFrame, String> {
                             v.push(ms);
                             z.push(offset);
                         }
-                        Col::Str(v) => v.push(cell.to_string()),
+                        Col::Str(v) => v.push(cell),
                     }
                 }
             }
@@ -174,7 +174,7 @@ pub fn frame_of_postgres(b: &[u8]) -> Result<CrowFrame, String> {
                     .map(|c| match c {
                         Col::Int(v) => Column::Int(v),
                         Col::Float(v) => Column::Float(v),
-                        Col::Str(v) => Column::strs(v),
+                        Col::Str(v) => Column::Str(v.finish()),
                         Col::Bool(v) => Column::Bool(v),
                         Col::DateTime(v, z) => Column::DateTime(v, z),
                     })

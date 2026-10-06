@@ -16,7 +16,7 @@ use crate::frame::{Column, CrowFrame};
 enum Col {
     Int(Vec<i64>),
     Float(Vec<f64>),
-    Str(Vec<String>),
+    Str(crate::textcol::TextBuilder),
     Bool(Vec<bool>),
     DateTime(Vec<i64>),
 }
@@ -93,7 +93,7 @@ fn col_of(t: &Ty, n: usize) -> Col {
         Ty::F32 | Ty::F64 | Ty::Decimal(..) => Col::Float(Vec::with_capacity(n)),
         Ty::Bool => Col::Bool(Vec::with_capacity(n)),
         Ty::Date | Ty::Date32 | Ty::DateTime | Ty::DateTime64(_) => Col::DateTime(Vec::with_capacity(n)),
-        _ => Col::Str(Vec::with_capacity(n)),
+        _ => Col::Str(crate::textcol::TextBuilder::with_capacity(n)),
     }
 }
 
@@ -135,7 +135,7 @@ fn push_cell(r: &mut Reader, t: &Ty, col: &mut Col, valid: &mut Vec<bool>) -> Re
     };
     valid.push(present);
     if !present {
-        match col { Col::Int(v) => v.push(0), Col::Float(v) => v.push(0.0), Col::Str(v) => v.push(String::new()), Col::Bool(v) => v.push(false), Col::DateTime(v) => v.push(0) }
+        match col { Col::Int(v) => v.push(0), Col::Float(v) => v.push(0.0), Col::Str(v) => v.push(""), Col::Bool(v) => v.push(false), Col::DateTime(v) => v.push(0) }
         return Ok(());
     }
     match (t, col) {
@@ -147,7 +147,7 @@ fn push_cell(r: &mut Reader, t: &Ty, col: &mut Col, valid: &mut Vec<bool>) -> Re
         (Ty::I32, Col::Int(v)) => v.push(i32::from_le_bytes(r.le()?) as i64),
         (Ty::U64, Col::Int(v)) => v.push(u64::from_le_bytes(r.le()?) as i64),
         (Ty::I64, Col::Int(v)) => v.push(i64::from_le_bytes(r.le()?)),
-        (Ty::Wide(n), Col::Str(v)) => { let bytes = r.take(*n)?; v.push(wide_text(bytes)) }
+        (Ty::Wide(n), Col::Str(v)) => { let bytes = r.take(*n)?; v.push(&wide_text(bytes)) }
         (Ty::F32, Col::Float(v)) => v.push(f32::from_le_bytes(r.le()?) as f64),
         (Ty::F64, Col::Float(v)) => v.push(f64::from_le_bytes(r.le()?)),
         (Ty::Decimal(width, scale), Col::Float(v)) => {
@@ -164,8 +164,8 @@ fn push_cell(r: &mut Reader, t: &Ty, col: &mut Col, valid: &mut Vec<bool>) -> Re
             };
             v.push(raw as f64 / 10f64.powi(*scale as i32))
         }
-        (Ty::Str, Col::Str(v)) => v.push(r.str()?.to_string()),
-        (Ty::Fixed(n), Col::Str(v)) => { let b = r.take(*n)?; let end = b.iter().rposition(|&c| c != 0).map_or(0, |p| p + 1); v.push(String::from_utf8_lossy(&b[..end]).into_owned()) }
+        (Ty::Str, Col::Str(v)) => v.push(r.str()?),
+        (Ty::Fixed(n), Col::Str(v)) => { let b = r.take(*n)?; let end = b.iter().rposition(|&c| c != 0).map_or(0, |p| p + 1); v.push(&String::from_utf8_lossy(&b[..end])) }
         (Ty::Date, Col::DateTime(v)) => v.push(u16::from_le_bytes(r.le()?) as i64 * 86_400_000),
         (Ty::Date32, Col::DateTime(v)) => v.push(i32::from_le_bytes(r.le()?) as i64 * 86_400_000),
         (Ty::DateTime, Col::DateTime(v)) => v.push(u32::from_le_bytes(r.le()?) as i64 * 1000),
@@ -175,21 +175,21 @@ fn push_cell(r: &mut Reader, t: &Ty, col: &mut Col, valid: &mut Vec<bool>) -> Re
             v.push(ms)
         }
         (Ty::Bool, Col::Bool(v)) => v.push(r.take(1)?[0] != 0),
-        (Ty::Enum8(names), Col::Str(v)) => { let k = r.take(1)?[0] as i8 as i64; v.push(names.iter().find(|(n, _)| *n == k).map(|(_, s)| s.clone()).unwrap_or_else(|| k.to_string())) }
-        (Ty::Enum16(names), Col::Str(v)) => { let k = i16::from_le_bytes(r.le()?) as i64; v.push(names.iter().find(|(n, _)| *n == k).map(|(_, s)| s.clone()).unwrap_or_else(|| k.to_string())) }
+        (Ty::Enum8(names), Col::Str(v)) => { let k = r.take(1)?[0] as i8 as i64; v.push(&names.iter().find(|(n, _)| *n == k).map(|(_, s)| s.clone()).unwrap_or_else(|| k.to_string())) }
+        (Ty::Enum16(names), Col::Str(v)) => { let k = i16::from_le_bytes(r.le()?) as i64; v.push(&names.iter().find(|(n, _)| *n == k).map(|(_, s)| s.clone()).unwrap_or_else(|| k.to_string())) }
         (Ty::Uuid, Col::Str(v)) => {
             let hi = u64::from_le_bytes(r.le()?);
             let lo = u64::from_le_bytes(r.le()?);
             let h = format!("{:032x}", ((hi as u128) << 64) | lo as u128);
-            v.push(format!("{}-{}-{}-{}-{}", &h[..8], &h[8..12], &h[12..16], &h[16..20], &h[20..]))
+            v.push(&format!("{}-{}-{}-{}-{}", &h[..8], &h[8..12], &h[12..16], &h[16..20], &h[20..]))
         }
-        (Ty::Ipv4, Col::Str(v)) => { let n = u32::from_le_bytes(r.le()?); v.push(std::net::Ipv4Addr::from(n).to_string()) }
-        (Ty::Ipv6, Col::Str(v)) => { let b: [u8; 16] = r.le()?; v.push(std::net::Ipv6Addr::from(b).to_string()) }
+        (Ty::Ipv4, Col::Str(v)) => { let n = u32::from_le_bytes(r.le()?); v.push(&std::net::Ipv4Addr::from(n).to_string()) }
+        (Ty::Ipv6, Col::Str(v)) => { let b: [u8; 16] = r.le()?; v.push(&std::net::Ipv6Addr::from(b).to_string()) }
         (Ty::Array(inner), Col::Str(v)) => {
             let n = r.leb()?;
             let mut items = Vec::with_capacity(n);
             for _ in 0..n { items.push(scalar_text(r, inner)?); }
-            v.push(format!("[{}]", items.join(", ")))
+            v.push(&format!("[{}]", items.join(", ")))
         }
         (t, _) => return Err(format!("a column of type {:?} is not a frame cell", t)),
     }
@@ -211,7 +211,7 @@ fn scalar_text(r: &mut Reader, t: &Ty) -> Result<String, String> {
     Ok(match col {
         Col::Int(v) => v[0].to_string(),
         Col::Float(v) => v[0].to_string(),
-        Col::Str(v) => format!("'{}'", v[0]),
+        Col::Str(v) => format!("'{}'", v.first().unwrap_or_default()),
         Col::Bool(v) => v[0].to_string(),
         Col::DateTime(v) => v[0].to_string(),
     })
@@ -225,7 +225,7 @@ pub fn frame_of_rowbinary(b: &[u8]) -> Result<CrowFrame, String> {
         .map(|c| match c {
             Col::Int(v) => Column::Int(v),
             Col::Float(v) => Column::Float(v),
-            Col::Str(v) => Column::strs(v),
+            Col::Str(v) => Column::Str(v.finish()),
             Col::Bool(v) => Column::Bool(v),
             Col::DateTime(v) => {
                 let n = v.len();
@@ -569,5 +569,31 @@ mod tests {
         let empty = [&[1u8, 1, b'n', 5][..], b"UInt8"].concat();
         let f = frame_of_rowbinary(&empty).unwrap();
         assert_eq!((f.columns.clone(), f.nrows()), (vec!["n".to_string()], 0));
+    }
+
+    /// A decoded column of few distinct values is held by a dictionary,
+    /// one of many plain; both read back as they were written.
+    #[test]
+    fn a_decoded_text_column_is_coded_where_its_values_are_few() {
+        let symbols: Vec<String> = (0..600).map(|i| ["AAPL", "MSFT", "NVDA"][i % 3].to_string()).collect();
+        let notes: Vec<String> = (0..600).map(|i| format!("note {}", i)).collect();
+        let f = CrowFrame::new(vec!["sym".into(), "note".into()], vec![Column::strs(symbols.clone()), Column::strs(notes.clone())], vec![vec![true; 600], vec![true; 600]]);
+        let types: Vec<String> = ["String", "String"].iter().map(|s| s.to_string()).collect();
+        let rows = rowbinary_of_frame(&f, &types).expect("encodes");
+        // the header the decoder reads: the names and the types, then the rows
+        let mut blob = vec![2u8];
+        for name in &f.columns {
+            blob.push(name.len() as u8);
+            blob.extend_from_slice(name.as_bytes());
+        }
+        for t in &types {
+            blob.push(t.len() as u8);
+            blob.extend_from_slice(t.as_bytes());
+        }
+        blob.extend_from_slice(&rows);
+        let back = frame_of_rowbinary(&blob).expect("decodes");
+        assert_eq!(back, f);
+        assert!(matches!(back.data[0].as_ref(), Column::Str(t) if t.dictionary().is_some_and(|(_, v)| v.len() == 3)));
+        assert!(matches!(back.data[1].as_ref(), Column::Str(t) if t.dictionary().is_none()));
     }
 }

@@ -45,6 +45,16 @@ filter 0.69, sort 1.56, join 0.81. What changed, in order of payoff:
    the left columns by reference where every left row matched once, in
    order.
 
+A frame a database answers takes the same storage: the decoders of
+ClickHouse's RowBinary and of Postgres's rows build text straight into it,
+coded while a column's values stay few (decided at its first 256 cells),
+where they had collected a string per cell and copied the column once
+more. A read-only selection of 2.5 million bars over 510 symbols from
+the local ClickHouse, decoded and worked on in the interpreter, same rows
+each run, warm: the query 0.75 → 0.64 s with the transfer included,
+group by symbol 0.051 → 0.020, sort by symbol 0.023 → 0.016, filter on a
+symbol 0.005 → 0.003, unique 0.035 → 0.003, peak memory 725 → 605 MB.
+
 Still slower than polars: saving CSV (3×), and filter and group by a
 third. `tests/bench/frames.co` holds the repository's own numbers at a
 million rows in both modes (docs/benchmarks.md).
