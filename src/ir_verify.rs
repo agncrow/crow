@@ -688,12 +688,13 @@ fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
     // parsed values — is any list, as the table reads it: its items are
     // read as the parameter takes them)
     let items = |t: &Ty, ok: &dyn std::ops::Fn(&Ty) -> bool| matches!(t, Ty::List(e) if matches!(**e, Ty::Unknown | Ty::Json) || ok(e));
-    let cell = |t: &Ty| matches!(t, Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup);
+    let cell = |t: &Ty| matches!(t, Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Moment);
     *t == Ty::Unknown
         || match k.each() {
             Kind::Int | Kind::Float => matches!(t, Ty::Int | Ty::Float),
+            Kind::Moment => *t == Ty::Moment,
             Kind::Whole => *t == Ty::Int,
-            Kind::Words => matches!(t, Ty::Tensor(..) | Ty::Column(_)) || items(t, &|e| matches!(e, Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup)),
+            Kind::Words => matches!(t, Ty::Tensor(..) | Ty::Column(_)) || items(t, &|e| matches!(e, Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Moment)),
             Kind::Bool => *t == Ty::Bool,
             Kind::Bytes => *t == Ty::Bytes,
             Kind::Stream => matches!(t, Ty::Handle(h) if h == "stream"),

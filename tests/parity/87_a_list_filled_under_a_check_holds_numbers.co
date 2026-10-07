@@ -11,7 +11,7 @@ fn heard[texts]
     syms = []
     ms = []
     for s in texts
-        m = parse_time[s, tz = 'America/New_York']
+        m = moment[s, tz = 'America/New_York']
         if m.ok
             syms = push[syms, 'X']
             ms = push[ms, m]

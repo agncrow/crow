@@ -1296,7 +1296,7 @@ impl Emitter {
             let params: Vec<(String, Ty)> = self.fns.get(&target).map(|f| f.params.clone()).unwrap_or_default();
             // a list, a tensor, a frame or a record arrives as JSON its own
             // serde reads (a test clicks a handler with one as it clicks any)
-            let by_serde = |t: &Ty| matches!(t, Ty::List(_) | Ty::Map(_) | Ty::Tensor(..) | Ty::Frame(_) | Ty::Record(_) | Ty::OptRecord(_));
+            let by_serde = |t: &Ty| matches!(t, Ty::List(_) | Ty::Map(_) | Ty::Tensor(..) | Ty::Frame(_) | Ty::Record(_) | Ty::OptRecord(_) | Ty::Moment);
             let callable = params.iter().all(|(_, t)| matches!(t, Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Unknown) || by_serde(t));
             if params.is_empty() {
                 self.line(&format!("\"{}\" => {}(state),", h, rust));

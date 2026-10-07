@@ -42,6 +42,11 @@ pub fn binop(
             (Value::Int(a), Value::Dual(b, db)) => Ok(CrowValue::ok(Value::Dual(*a as f64 + b, *db))),
             (Value::Int(a), Value::Int(b)) => stops::add(*a, *b).map(|n| CrowValue::ok(Value::Int(n))),
             (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a + b))),
+            // a moment and seconds: the moment on
+            (Value::Moment(t), Value::Int(s)) => Ok(CrowValue::ok(Value::Moment(*t + *s))),
+            (Value::Moment(t), Value::Float(s)) => Ok(CrowValue::ok(Value::Moment(*t + *s))),
+            (Value::Int(s), Value::Moment(t)) => Ok(CrowValue::ok(Value::Moment(*t + *s))),
+            (Value::Float(s), Value::Moment(t)) => Ok(CrowValue::ok(Value::Moment(*t + *s))),
             (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(*a as f64 + b))),
             (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a + *b as f64))),
             (Value::NumArray(a), Value::NumArray(b)) => a.try_elementwise(b, "+").map(|t| CrowValue::ok(Value::NumArray(Box::new(t)))),
@@ -68,6 +73,10 @@ pub fn binop(
             (Value::Int(a), Value::Dual(b, db)) => Ok(CrowValue::ok(Value::Dual(*a as f64 - b, -db))),
             (Value::Int(a), Value::Int(b)) => stops::sub(*a, *b).map(|n| CrowValue::ok(Value::Int(n))),
             (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a - b))),
+            // a moment back by seconds, and the seconds between two moments
+            (Value::Moment(t), Value::Int(s)) => Ok(CrowValue::ok(Value::Moment(*t - *s))),
+            (Value::Moment(t), Value::Float(s)) => Ok(CrowValue::ok(Value::Moment(*t - *s))),
+            (Value::Moment(a), Value::Moment(b)) => Ok(CrowValue::ok(Value::Float(*a - *b))),
             (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(*a as f64 - b))),
             (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a - *b as f64))),
             (Value::NumArray(a), Value::NumArray(b)) => a.try_elementwise(b, "-").map(|t| CrowValue::ok(Value::NumArray(Box::new(t)))),
@@ -276,7 +285,7 @@ fn whole_kinds(a: &Value, b: &Value, cmp: Cmp) -> Result<(), String> {
 
 /// A value a mask compares with: a number, text or a bool.
 fn is_scalar(v: &Value) -> bool {
-    matches!(v, Value::Int(_) | Value::Float(_) | Value::Str(_) | Value::Bool(_) | Value::Dual(..))
+    matches!(v, Value::Int(_) | Value::Float(_) | Value::Str(_) | Value::Bool(_) | Value::Moment(_) | Value::Dual(..))
 }
 
 /// A value as a comparison reads it (crow_runtime::mask): a number, text
@@ -288,6 +297,7 @@ fn mask_cell(v: &Value) -> crow_runtime::mask::Cell<'_> {
         Value::Float(x) | Value::Dual(x, _) => Cell::Number(*x),
         Value::Str(s) => Cell::Text(s),
         Value::Bool(b) => Cell::Bool(*b),
+        Value::Moment(m) => Cell::Moment(m.ms),
         Value::Array(_) | Value::NumArray(_) => Cell::Other("a list"),
         Value::Map(_) => Cell::Other("a map"),
         Value::StructInstance(_) => Cell::Other("a record"),
@@ -660,7 +670,8 @@ pub fn column_cell(column: &crow_runtime::frame::Column, valid: bool, row: usize
             Column::Int(_) => Value::Int(0),
             Column::Float(_) => Value::Float(f64::NAN),
             Column::Bool(_) => Value::Bool(false),
-            Column::Str(_) | Column::DateTime(..) => Value::Str(String::new()),
+            Column::Str(_) => Value::Str(String::new()),
+            Column::DateTime(..) => Value::Moment(crow_runtime::moments::Moment::default()),
         };
         return missing;
     }
@@ -669,7 +680,7 @@ pub fn column_cell(column: &crow_runtime::frame::Column, valid: bool, row: usize
         Column::Float(v) => Value::Float(v[row]),
         Column::Str(v) => Value::Str(v[row].to_string()),
         Column::Bool(v) => Value::Bool(v[row]),
-        Column::DateTime(millis, offsets) => Value::Str(crow_runtime::frame::format_datetime(millis[row], offsets[row])),
+        Column::DateTime(millis, offsets) => Value::Moment(crow_runtime::moments::Moment { ms: millis[row], offset: offsets[row] }),
     })
 }
 
@@ -735,16 +746,10 @@ pub fn field(obj: CrowValue, field: &str) -> Result<CrowValue, String> {
         }
     }
 
-    // DateTime properties on strings: .year, .month, .day, .hour, .minute, .second, .offset
-    if let Value::Str(s) = &obj.value {
-        match field {
-            "year" | "month" | "day" | "hour" | "minute" | "second" | "offset" => {
-                if let Some(val) = crow_runtime::frame::datetime_field(s, field) {
-                    return Ok(CrowValue::ok(Value::Int(val)));
-                }
-                return Err(format!("'{}' is not a valid datetime string", s));
-            }
-            _ => {}
+    // a moment's fields, read in its own zone
+    if let Value::Moment(m) = &obj.value {
+        if let Some(val) = m.field(field) {
+            return Ok(CrowValue::ok(Value::Int(val)));
         }
     }
 

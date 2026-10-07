@@ -174,12 +174,13 @@ quote defined
 
 Inside a test the clock is yours: it starts when the first `app[…]` opens
 and moves only when you move it, the way a field changes when you type in
-it. A handler that stamps `now[]` stamps the moment you set:
+it. A handler that stamps `now[]` stamps the moment you set, and the fact
+holds a moment — `moment[0.0]`, the epoch, until a handler moves it:
 
 ```crow
 use web, ui
 
-stamped = 0.0
+stamped = moment[0.0]
 
 fn stamp[]
     stamped = now[]
@@ -191,10 +192,10 @@ test the_test_sets_the_clock[]
     a = app[clock]
     change[a, 'now', 1000.0]
     click[a, stamp]
-    assert[a.stamped eq 1000.0]
-    change[a, 'now', 1060.0]
+    assert[a.stamped eq moment[1000.0]]
+    change[a, 'now', moment['2026-07-14T09:30:00Z']]
     click[a, stamp]
-    assert[a.stamped eq 1060.0]
+    assert[str[a.stamped] eq '2026-07-14T09:30:00Z']
 
 page['/', clock]
 log['clock defined']

@@ -619,6 +619,7 @@ pub fn ty_of(t: &CrowType) -> Ty {
     match t {
         CrowType::Int => Ty::Int,
         CrowType::Float => Ty::Float,
+        CrowType::Moment => Ty::Moment,
         CrowType::Str => Ty::Str,
         CrowType::Markup => Ty::Markup,
         CrowType::Bool => Ty::Bool,
@@ -654,6 +655,7 @@ pub fn crow_type(t: &Ty) -> CrowType {
     match t {
         Ty::Int => CrowType::Int,
         Ty::Float => CrowType::Float,
+        Ty::Moment => CrowType::Moment,
         Ty::Bool => CrowType::Bool,
         Ty::Bytes => CrowType::Bytes,
         Ty::Str => CrowType::Str,
@@ -4828,6 +4830,11 @@ mod tests {
         refused("log['a' eq 1]\n", "eq compares values of one kind, not text with a number");
         refused("log[1 ne 'a']\n", "ne compares values of one kind, not a number with text");
         refused("log[true eq 1]\n", "eq compares values of one kind, not a bool with a number");
+        // a moment compares with a moment, adds or subtracts seconds, and subtracts a moment
+        refused("log[now[] gt 5.0]\n", "gt compares numbers with numbers or text with text, not a moment with a number");
+        refused("log[now[] eq 'x']\n", "eq compares values of one kind, not a moment with text");
+        refused("log[now[] * 2]\n", "a moment adds or subtracts seconds (t + 60), subtracts a moment (t2 - t1, the seconds between), and compares with a moment");
+        assert_eq!(refusal_of("t = now[]\nlog[t gt t - 5]\nlog[(t - 60) - t]\nlog[t + 1.5]\nlog[min[t, t + 1] eq t]\n"), "");
         refused("log[true gt false]\n", "gt compares numbers with numbers or text with text, not a bool with a bool");
         refused("log['a' lte 1]\n", "lte compares numbers with numbers or text with text, not text with a number");
         let df = "use frame\ndf = with[frame.new[], 'name', ['ada', 'bob']]\n";
@@ -5380,7 +5387,7 @@ mod tests {
 
     #[test]
     fn a_derivation_lists_what_it_reads() {
-        let ir = ir_of("use web, ui\nbase = 0.0\nspeed = 1.0\nderive head\n    return base + (now[] - 0.0) * speed\nview v[]\n    return p['`head`']\n");
+        let ir = ir_of("use web, ui\nbase = 0.0\nspeed = 1.0\nderive head\n    return base + (float[now[]] - 0.0) * speed\nview v[]\n    return p['`head`']\n");
         assert!(ir.contains("derive head: Float  reads {facts: base speed, clock}"), "{}", ir);
     }
 

@@ -459,10 +459,6 @@ pub fn sleep_secs(s: f64) -> Result<(), String> {
     Ok(())
 }
 
-/// `time[]`: seconds since the Unix epoch.
-pub fn time() -> f64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
-}
 
 /// `rand[]`: a float in [0, 1) from the program's RNG, the one `seed[n]`
 /// seeds, so a seeded program draws the same numbers in both modes.

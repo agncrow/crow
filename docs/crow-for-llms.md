@@ -126,7 +126,7 @@ all_big = all[nums, is_big]
 --- b = moment[2026, 7, 14, hour = 9, minute = 30, tz = 'America/New_York']
 --- b - t                                        (elapsed SECONDS — just subtraction)
 --- c = calendar[b, tz = 'UTC']                     (c.year c.month c.day c.hour c.weekday)
---- fmt[b, time = 'iso']                         ('iso' 'date' 'time' 'datetime'; tz = ...)
+--- fmt[b, style = 'iso']                        ('iso' 'date' 'time' 'datetime'; tz = ...)
 --- parse_time['2026-07-14T04:09:00-04:00']      (or 'YYYY-MM-DD HH:MM' + tz)
 --- Data read from outside remembers when it arrived:
 --- px = query[conn, '...']

@@ -340,7 +340,8 @@ pub(crate) fn cell_type_of_kind(kind: &str) -> CrowType {
     };
     let t = match base {
         "int" => CrowType::Int,
-        "float" | "datetime" => CrowType::Float,
+        "float" => CrowType::Float,
+        "datetime" => CrowType::Moment,
         "bool" => CrowType::Bool,
         _ => CrowType::Str,
     };

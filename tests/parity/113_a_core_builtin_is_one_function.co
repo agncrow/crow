@@ -5,10 +5,10 @@
 --- did not build compiled, a failed parse indexed read null there, and a
 --- JSON bool was 1 interpreted and refused compiled.
 t = moment[2026, 7, 14, hour = 13]
-s = fmt[t, time = 'weekly']
+s = fmt[t, style = 'weekly']
 log[s.ok]
 log[s.kind]
-log[fmt[t, time = 'date', tz = 'UTC']]
+log[fmt[t, style = 'date', tz = 'UTC']]
 log[fmt[1234567.891, decimals = 2, commas = true]]
 j = json['{"a": [1, 2.5, "x"], "b": null, "t": true}']
 log[int[j['a'][0]] + 1]

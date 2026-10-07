@@ -9,17 +9,17 @@ note = ''
 
 fn clock_at[b, a, s, moving]
     if moving
-        return b + (now[] - a) * s
+        return b + (float[now[]] - a) * s
     return b
 
 derive head
     return clock_at[base, anchor, speed, playing]
 
 fn play[]
-    anchor, playing = now[], true
+    anchor, playing = float[now[]], true
 
 fn faster[]
-    base, anchor, speed = head, now[], 10.0
+    base, anchor, speed = head, float[now[]], 10.0
 
 view transport[]
     return row[button['Play', click = play], button['10x', click = faster], gap = 's']

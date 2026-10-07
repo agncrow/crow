@@ -24,8 +24,12 @@
 --- `parse_time` made: the compiled handler's parameter had been made a
 --- result, the click's number never fit it, and the head never moved. A
 --- handler's loop reads a fact and a derivation in each item, in parallel,
---- from the session's facts the compiled loop's threads share. CI runs it
---- in the interpreter and compiled.
+--- from the session's facts the compiled loop's threads share. A fact
+--- holds a moment as it holds a number — declared from `moment[0.0]` as
+--- a number's is from `0.0`, stamped by a handler from the clock the test
+--- sets, read back as a moment: the harness had carried only literals to
+--- a test, and a moment's fact was undefined in every one. CI runs it in
+--- the interpreter and compiled.
 use web, ui, frame
 struct Order [symbol, qty]
 struct Tag [order, note]
@@ -37,10 +41,14 @@ said = ''
 given_qty = 0
 given_symbols = ['']
 play_head = 0.0
+stamped = moment[0.0]
 
 fn place[]
     orders = push[orders, Order[sym, 100]]
     said = 'placed `sym`'
+
+fn stamp_now[]
+    stamped = now[]
 
 derive symbols
     out = []
@@ -186,8 +194,8 @@ test a_click_hands_on_what_a_value_that_can_fail_holds[]
     a = app[shown]
     click[a, jump_to[5.0]]
     assert[play_head eq 5.0, 'head `play_head`']
-    sig = parse_time['2026-05-26 07:05:00']
-    click[a, jump_to[sig - 120.0]]
+    sig = moment['2026-05-26 07:05:00']
+    click[a, jump_to[float[sig - 120.0]]]
     assert[play_head eq 1779778980.0, 'head `play_head`']
 
 test a_loop_reads_the_sessions_facts_in_each_item[]
@@ -195,3 +203,12 @@ test a_loop_reads_the_sessions_facts_in_each_item[]
     click[a, jump_to[2.0]]
     click[a, tally]
     assert[said eq 'tally 3 14.0' or said eq 'tally 3 14', 'said `said`']
+
+test a_fact_holds_a_moment[]
+    a = app[shown]
+    assert[stamped eq moment[0.0], 'stamped `stamped`']
+    change[a, 'now', 1000.5]
+    click[a, stamp_now]
+    assert[stamped eq moment[1000.5], 'stamped `stamped`']
+    assert[str[stamped] eq '1970-01-01T00:16:40.500Z', 'stamped `stamped`']
+    assert[stamped - moment[0.0] eq 1000.5, 'stamped `stamped`']

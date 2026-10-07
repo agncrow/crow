@@ -11,7 +11,7 @@ use crate::value::{CrowValue, Value};
 
 // --- Impure builtins ---
 const IMPURE_BUILTINS: &[&str] = &[
-    "read", "write", "log", "input", "rand", "time", "now", "sleep", "env", "exit",
+    "read", "write", "log", "input", "rand", "now", "sleep", "env", "exit",
     "args", "exists", "mkdir", "ls", "rm", "mv", "cp",
     "later", "running", "shell", "request",
     "captured",
@@ -30,7 +30,7 @@ pub(crate) const BUILTINS: &[&str] = &[
     "args", "input",
     "read", "write",
     "exists", "mkdir", "ls", "rm", "mv", "cp",
-    "rand", "time", "sleep", "env", "exit", "halt",
+    "rand", "sleep", "env", "exit", "halt",
     "json", "encode", "decode",
     "error",
     "cpu", "gpu",
@@ -40,7 +40,7 @@ pub(crate) const BUILTINS: &[&str] = &[
     "later", "running",
     "app", "html", "click", "elements", "change", "box", "fits", "style", "downloads", "mails",
     "fmt",
-    "now", "moment", "calendar", "parse_time", "captured", "chart",
+    "now", "moment", "captured", "chart",
 ];
 
 // --- Issue types ---
@@ -1467,14 +1467,16 @@ pub(crate) fn declarations(stmts: &[Stmt]) -> Vec<Stmt> {
             Expr::UnaryOp { op: UnaryOp::Neg, expr } => matches!(expr.as_ref(), Expr::Int(_) | Expr::Float(_)),
             Expr::Array(items) => items.iter().all(is_literal),
             // a default built from literals by a constructor — map[...] (a
-            // set[] chain after lowering), frame.new[], with[...] — is a literal too
+            // set[] chain after lowering), frame.new[], with[...], and a
+            // moment of literals (`moment[0.0]`, `moment['2026-01-01']`,
+            // `moment[2026, 7, 14, tz = …]`) — is a literal too
             Expr::Call { callee, args } => {
                 let name = match callee.as_ref() {
                     Expr::Ident(n) => n.as_str(),
                     Expr::FieldAccess { object, field } if matches!(object.as_ref(), Expr::Ident(m) if m == "frame") => field.as_str(),
                     _ => return false,
                 };
-                matches!(name, "map" | "set" | "new" | "with") && args.iter().all(is_literal)
+                matches!(name, "map" | "set" | "new" | "with" | "moment") && args.iter().all(is_literal)
             }
             // `map[launch = 'VWAP Launch']` as it is written, before its
             // named arguments become a set[] chain
@@ -2739,7 +2741,7 @@ mod tests {
     /// and the pure function is probed.
     #[test]
     fn the_probes_lower_a_ui_app_and_leave_its_views_alone() {
-        let src = "use web, ui\nn = 0\nderive stamp\n    return fmt[now[], time = 'iso']\nfn half[x]\n    return x / 2.0\nlog[half[4.0]]\nview v[]\n    return p['`stamp` `n`']\npage['/', v]\n";
+        let src = "use web, ui\nn = 0\nderive stamp\n    return fmt[now[], style = 'iso']\nfn half[x]\n    return x / 2.0\nlog[half[4.0]]\nview v[]\n    return p['`stamp` `n`']\npage['/', v]\n";
         let (stmts, ctx) = parse_and_infer(src);
         let result = run_check(&stmts, &ctx, false);
         assert!(!result.issues.iter().any(|i| matches!(i, Issue::Nondeterministic { .. })), "{:?}", result.issues);

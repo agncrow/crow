@@ -133,7 +133,7 @@ Purity classification is silent in normal mode — it only matters internally (d
 | File I/O | `read[]`, `write[]` |
 | Network | `fetch[]` |
 | Randomness | `rand[]` |
-| Time | `time[]` |
+| Time | `now[]` |
 | Process control | `exit[]`, `sleep[]` |
 | Console output | `log[]`, `input[]` |
 | Environment | `env[]` |

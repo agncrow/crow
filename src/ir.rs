@@ -18,6 +18,8 @@ pub enum Ty {
     Float,
     Bool,
     Str,
+    /// A moment (crow_runtime::moments::Moment).
+    Moment,
     /// Bytes: what a connection reads and writes (`use sys`).
     Bytes,
     Unit,
@@ -120,6 +122,7 @@ impl std::fmt::Display for Ty {
         match self {
             Ty::Int => write!(f, "Int"),
             Ty::Float => write!(f, "Float"),
+            Ty::Moment => write!(f, "Moment"),
             Ty::Bool => write!(f, "Bool"),
             Ty::Str => write!(f, "Str"),
             Ty::Bytes => write!(f, "Bytes"),

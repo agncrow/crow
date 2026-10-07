@@ -34,6 +34,12 @@ impl CrowDisplay for f64 {
     }
 }
 
+impl CrowDisplay for crate::moments::Moment {
+    fn crow_repr(&self) -> String {
+        self.to_string()
+    }
+}
+
 impl CrowDisplay for bool {
     fn crow_repr(&self) -> String {
         self.to_string()
@@ -251,14 +257,17 @@ pub fn crow_fmt_f64(
 /// `fmt[x, decimals =, commas =, width =, align =, fill =, percent =]`:
 /// a number by [`crow_fmt_f64`], text by [`crow_fmt_str`] — the one
 /// function both modes call, so a value of either kind is written alike;
-/// any other value is the misuse the program stops on. (A moment's `time =`
-/// is `moments::fmt_time`, which answers an error value of kind `'time'`.)
+/// a moment as its ISO 8601 text; any other value is the misuse the program
+/// stops on. (A moment's `style =` is `moments::fmt_time_of`, which answers
+/// an error value of kind `'time'`.)
 pub fn fmt_value(value: &crate::cell::Cell, decimals: i64, commas: bool, width: i64, align: &str, fill: &str, percent: bool) -> Result<String, String> {
     use crate::cell::Cell;
     match value {
         Cell::Int(n) => crow_fmt_f64(*n as f64, decimals, commas, width, align, fill, percent),
         Cell::Float(x) => crow_fmt_f64(*x, decimals, commas, width, align, fill, percent),
         Cell::Text(s) => crow_fmt_str(s, decimals, width, align, fill, percent),
+        // a moment with no style: its ISO 8601 text, laid out as text is
+        Cell::Moment(m) => crow_fmt_str(&m.to_string(), decimals, width, align, fill, percent),
         other => Err(format!("fmt: cannot format {}", other.kind())),
     }
 }

@@ -1,17 +1,17 @@
 --- A builtin with a row in the table is one runtime function that both
 --- modes call, failing as the row says (docs/bug-classes.md §4). A
---- calendar of a zone that does not exist is an error value of kind
---- 'time', as the spec lists it: the compiled program printed to stderr
---- and answered an empty map. An invalid pattern is an error value of kind
+--- moment moved to a zone that does not exist is an error value of kind
+--- 'time', as the spec lists it: the compiled program had printed to
+--- stderr and answered an empty map. An invalid pattern is an error value of kind
 --- 'regex', as find[]'s is: the interpreter answered one where the compiled
 --- program stopped, and both typed matches[] a bool. A negative count is
 --- the misuse that stops.
-c = calendar[0.0, tz = 'UTC']
-log[c['year']]
-bad = calendar[0.0, tz = 'Nowhere/Nothing']
+c = moment['1970-01-01']
+log[c.year]
+bad = moment[c, tz = 'Nowhere/Nothing']
 log[bad.ok]
 log[bad.kind]
-log[parse_time['2026-01-02 03:04:05', tz = 'UTC']]
+log[moment['2026-01-02 03:04:05', tz = 'UTC']]
 m = moment[2026, 1, 2, tz = 'Nowhere/Nothing']
 log[m.ok]
 log[m.kind]

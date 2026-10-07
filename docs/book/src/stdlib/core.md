@@ -100,9 +100,9 @@ log['P&L: `money[pnl]`']
 | Function | Description | Example |
 |----------|-------------|---|
 | `int[value]` | Convert to int: a float is cut toward zero (the largest int past its range), a bool is 1 or 0, text is parsed as written — no spaces around it — and text or a JSON value that names no int is an error value of kind `'parse'` | [JSON](../by-example/json.md) · [Numbers and conversion](../by-example/numbers.md) · [Web: responses and submodules](../by-example/web-more.md) · [Programming a Guessing Game](../ch02-00-guessing-game.md) · [Data Types](../ch03-02-data-types.md) · [Every Value Has Status](../ch07-01-every-value-has-status.md) · [Propagation](../ch07-02-propagation.md) · [Errors Have No Truth Value](../ch07-03-no-truth-value.md) · [Handling Errors Explicitly](../ch07-04-explicit-handling.md) |
-| `float[value]` | Convert to float, as `int` reads its value | [Numbers and conversion](../by-example/numbers.md) · [Data Types](../ch03-02-data-types.md) · [Errors Have No Truth Value](../ch07-03-no-truth-value.md) · [Reactive State and Events](../ch12-02-reactive-state.md) |
-| `str[value]` | The text a value shows as, as `log` shows it (`str[[1, 2]]` is `'[1, 2]'`). (Compiled, a record holding a list, a list of records and a map of them had shown in Rust's debug form, and a JSON list as its JSON text.) | [Numbers and conversion](../by-example/numbers.md) · [Web: responses and submodules](../by-example/web-more.md) · [Data Types](../ch03-02-data-types.md) |
-| `type[value]` | Type name as string: `'int'`, `'float'`, `'str'`, `'bool'`, `'array'`, `'map'`, `'fn'`, `'none'`, `'error'`, `'frame'`, `'sparse'`, `'db'`, or struct name — the same in both modes: a frame's column is an `'array'`, a parsed JSON value what it maps to, and `shell`'s and `find`'s records `'map'` | [Numbers and conversion](../by-example/numbers.md) · [The standard library's layer: `use sys`](../by-example/sys.md) |
+| `float[value]` | Convert to float, as `int` reads its value | [Numbers and conversion](../by-example/numbers.md) · [The system: shell, environment, time, arguments](../by-example/system.md) · [Data Types](../ch03-02-data-types.md) · [Errors Have No Truth Value](../ch07-03-no-truth-value.md) · [Reactive State and Events](../ch12-02-reactive-state.md) |
+| `str[value]` | The text a value shows as, as `log` shows it (`str[[1, 2]]` is `'[1, 2]'`). (Compiled, a record holding a list, a list of records and a map of them had shown in Rust's debug form, and a JSON list as its JSON text.) | [Numbers and conversion](../by-example/numbers.md) · [Web: responses and submodules](../by-example/web-more.md) · [Data Types](../ch03-02-data-types.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) |
+| `type[value]` | Type name as string: `'int'`, `'float'`, `'str'`, `'bool'`, `'array'`, `'map'`, `'fn'`, `'none'`, `'error'`, `'frame'`, `'sparse'`, `'db'`, or struct name — the same in both modes: a frame's column is an `'array'`, a parsed JSON value what it maps to, and `shell`'s and `find`'s records `'map'` | [Moments and freshness](../by-example/moments.md) · [Numbers and conversion](../by-example/numbers.md) · [The standard library's layer: `use sys`](../by-example/sys.md) |
 
 ```
 type[42]          --- 'int'
@@ -215,7 +215,6 @@ log[s]                     --- [1,2,3]
 | `rand[]` | Random float in [0, 1) from the program's RNG; `seed[n]` (math) makes every draw repeatable, in both modes | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Programming a Guessing Game](../ch02-00-guessing-game.md) |
 | `rand[n]` | Random int between 0 and n-1 (n must be positive) | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Programming a Guessing Game](../ch02-00-guessing-game.md) |
 | `rand[min, max]` | Random int between min and max (inclusive) | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Programming a Guessing Game](../ch02-00-guessing-game.md) |
-| `time[]` | Current unix timestamp as float (seconds) | [Frames: `use frame`](../by-example/frames.md) · [Moments and freshness](../by-example/moments.md) · [The system: shell, environment, time, arguments](../by-example/system.md) |
 | `sleep[ms]` | Sleep for ms milliseconds (int) or seconds (float); a negative time stops the program (in both modes it had wrapped to a sleep without end, or panicked) | [The system: shell, environment, time, arguments](../by-example/system.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) |
 | `env[name]` | Get environment variable (error-value if not set) | [The system: shell, environment, time, arguments](../by-example/system.md) · [Web: responses and submodules](../by-example/web-more.md) |
 | `env[name, default]` | Get environment variable, return default if not set — as text, as the variable is (`env['PORT', 3000]` is `'3000'` when `PORT` is unset; the interpreter had answered the int) | [The system: shell, environment, time, arguments](../by-example/system.md) · [Web: responses and submodules](../by-example/web-more.md) |
@@ -329,38 +328,58 @@ sub['hello world', 'world', 'crow']  --- 'hello crow'
 
 ## Moments
 
-A moment is a number: seconds since the Unix epoch, as a float. Comparison
-and arithmetic therefore come free — `end - start` *is* elapsed seconds,
-`t lt open - 10.0` *is* a staleness check — and no separate duration or
-date type exists.
+A moment is a kind of its own: an instant, and the offset it was written
+in. It is the same kind in both modes and from every source — `now[]`,
+`moment[…]`, a frame's moment column, a database's — so one vocabulary
+reads it, moves it, renders it and computes with it, and no program meets
+a time as a float here and as text there.
 
 | Function | Description | Example |
 |----------|-------------|---|
-| `now[]` | The current moment (epoch seconds) — in a live program, the moment the current event began | [Moments and freshness](../by-example/moments.md) · [The standard library's layer: `use sys`](../by-example/sys.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) |
-| `moment[y, m, d, hour = 0, minute = 0, second = 0, tz = 'UTC']` | Build a moment from calendar components in a named timezone | [Moments and freshness](../by-example/moments.md) |
-| `calendar[t, tz = 'UTC']` | Calendar components of a moment: `year month day hour minute second weekday` (weekday 1 = Monday) | [Moments and freshness](../by-example/moments.md) |
-| `parse_time[text, tz = 'UTC']` | Parse RFC3339, or `'YYYY-MM-DD[ HH:MM[:SS]]'` read in the named zone | [Moments and freshness](../by-example/moments.md) |
-| `fmt[t, time = 'iso' \| 'date' \| 'time' \| 'datetime', tz = 'UTC']` | Render a moment; a style or a zone it does not know is an error value of kind `'time'` (compiled, it had been the text `[fmt: …]`), so the call can fail as any moment builtin can | [Formatting](../by-example/formatting.md) · [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) · [Moments and freshness](../by-example/moments.md) · [Neural-network building blocks: `use math.nn`](../by-example/nn.md) · [Statistics: `use math.stats`](../by-example/stats.md) · [The standard library's layer: `use sys`](../by-example/sys.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
+| `now[]` | The current moment, in UTC — in a live program, the moment the current event began | [Moments and freshness](../by-example/moments.md) · [The standard library's layer: `use sys`](../by-example/sys.md) · [The system: shell, environment, time, arguments](../by-example/system.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) |
+| `moment[text]`, `moment[text, tz = zone]` | A moment read from ISO 8601 text — a date, a date and time, with `Z`, an offset or neither, a fraction kept to the millisecond; a space may part the date and the time, and seconds may be left out. Text without an offset is UTC's, or the named zone's; an offset in the text wins. Text that is no time is an error value of kind `'time'` | [Frames: `use frame`](../by-example/frames.md) · [Moments and freshness](../by-example/moments.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) |
+| `moment[year, month, day, hour = 0, minute = 0, second = 0, tz = 'UTC']` | A moment from its parts in a zone, the zone's offset at that instant kept; a date that does not exist, a time in a DST gap, or a zone it does not know is an error value of kind `'time'` | [Frames: `use frame`](../by-example/frames.md) · [Moments and freshness](../by-example/moments.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) |
+| `moment[t, tz = zone]` | The same instant in another zone — an IANA name (`'America/New_York'`), an offset (`'+09:00'`) or `'UTC'`; a zone it does not know is an error value of kind `'time'` | [Frames: `use frame`](../by-example/frames.md) · [Moments and freshness](../by-example/moments.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) |
+| `moment[seconds]`, `moment[t]` | The moment `seconds` after the epoch, in UTC (the reverse of `float[t]`); a moment is itself, so `moment[x]` is the moment of a number, of text or of a moment alike | [Frames: `use frame`](../by-example/frames.md) · [Moments and freshness](../by-example/moments.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) |
+| `t.year`, `.month`, `.day`, `.hour`, `.minute`, `.second`, `.weekday`, `.offset` | Its fields, read in its own zone, as ints; `weekday` 1 is Monday and 7 Sunday; `offset` the minutes east of UTC it was written in | [Arrays](../by-example/arrays.md) · [Databases: `use db`](../by-example/db.md) · [Documentation: `use doc`](../by-example/doc.md) · [Formatting](../by-example/formatting.md) · [Frames: `use frame`](../by-example/frames.md) · [JSON](../by-example/json.md) · [Maps](../by-example/maps.md) · [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) · [Moments and freshness](../by-example/moments.md) · [Neural-network building blocks: `use math.nn`](../by-example/nn.md) · [Numbers and conversion](../by-example/numbers.md) · [Statistics: `use math.stats`](../by-example/stats.md) · [Strings](../by-example/strings.md) · [The standard library's layer: `use sys`](../by-example/sys.md) · [The system: shell, environment, time, arguments](../by-example/system.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [Web: responses and submodules](../by-example/web-more.md) · [Programming a Guessing Game](../ch02-00-guessing-game.md) · [Data Types](../ch03-02-data-types.md) · [Strings and Interpolation](../ch03-03-strings.md) · [Named Arguments](../ch04-02-named-arguments.md) · [Arrays and Tensors](../ch05-01-arrays-and-tensors.md) · [Maps Are Dictionaries](../ch05-02-maps.md) · [Every Value Has Status](../ch07-01-every-value-has-status.md) · [Propagation](../ch07-02-propagation.md) · [Errors Have No Truth Value](../ch07-03-no-truth-value.md) · [Handling Errors Explicitly](../ch07-04-explicit-handling.md) · [Testing](../ch09-00-testing.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) · [Working with Databases](../ch11-00-databases.md) · [View Blocks](../ch12-01-views.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) · [Derivations](../ch12-08-derive.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
+| `str[t]` | Its ISO 8601 text — `2026-07-14T13:30:00Z`, `2026-07-14T09:30:00-04:00`, a bare date at midnight UTC, a fraction where there is one — which interpolation, `log`, a CSV and JSON write | [Numbers and conversion](../by-example/numbers.md) · [Web: responses and submodules](../by-example/web-more.md) · [Data Types](../ch03-02-data-types.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) |
+| `fmt[t, style = 'iso' \| 'date' \| 'time' \| 'datetime', tz = zone]` | The moment rendered in a style, in its own zone or in `tz`; a style or a zone it does not know is an error value of kind `'time'` (`fmt[t]` is `str[t]`) | [Formatting](../by-example/formatting.md) · [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) · [Moments and freshness](../by-example/moments.md) · [Neural-network building blocks: `use math.nn`](../by-example/nn.md) · [Statistics: `use math.stats`](../by-example/stats.md) · [The standard library's layer: `use sys`](../by-example/sys.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
+| `float[t]`, `int[t]` | Seconds since the epoch, as a number — whole for `int` | [Numbers and conversion](../by-example/numbers.md) · [The system: shell, environment, time, arguments](../by-example/system.md) · [Data Types](../ch03-02-data-types.md) · [Errors Have No Truth Value](../ch07-03-no-truth-value.md) · [Reactive State and Events](../ch12-02-reactive-state.md) |
+| `t + s`, `t - s` | The moment `s` seconds on or back, in its zone (`s` an int or a float) | [Arrays](../by-example/arrays.md) · [Databases: `use db`](../by-example/db.md) · [Documentation: `use doc`](../by-example/doc.md) · [Formatting](../by-example/formatting.md) · [Frames: `use frame`](../by-example/frames.md) · [JSON](../by-example/json.md) · [Maps](../by-example/maps.md) · [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) · [Moments and freshness](../by-example/moments.md) · [Neural-network building blocks: `use math.nn`](../by-example/nn.md) · [Numbers and conversion](../by-example/numbers.md) · [Statistics: `use math.stats`](../by-example/stats.md) · [Strings](../by-example/strings.md) · [The standard library's layer: `use sys`](../by-example/sys.md) · [The system: shell, environment, time, arguments](../by-example/system.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [Web: responses and submodules](../by-example/web-more.md) · [Programming a Guessing Game](../ch02-00-guessing-game.md) · [Data Types](../ch03-02-data-types.md) · [Strings and Interpolation](../ch03-03-strings.md) · [Named Arguments](../ch04-02-named-arguments.md) · [Arrays and Tensors](../ch05-01-arrays-and-tensors.md) · [Maps Are Dictionaries](../ch05-02-maps.md) · [Every Value Has Status](../ch07-01-every-value-has-status.md) · [Propagation](../ch07-02-propagation.md) · [Errors Have No Truth Value](../ch07-03-no-truth-value.md) · [Handling Errors Explicitly](../ch07-04-explicit-handling.md) · [Testing](../ch09-00-testing.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) · [Working with Databases](../ch11-00-databases.md) · [View Blocks](../ch12-01-views.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) · [Derivations](../ch12-08-derive.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
+| `t2 - t1` | The seconds between two moments, a float | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
+| `t1 lt t2`, `eq`, `ne`, `gt`, `gte`, `lte` | Compared by instant: two moments of one instant are equal whatever zone each was written in |  |
+| `min[a, b]`, `max[a, b]` | The earlier of two moments, the later | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Numbers and conversion](../by-example/numbers.md) |
 
 ```
 open_bell = moment[2026, 7, 14, hour = 9, minute = 30, tz = 'America/New_York']
-log[fmt[open_bell, time = 'datetime', tz = 'America/New_York']]   --- 2026-07-14 09:30:00
-log[fmt[open_bell, time = 'iso']]                                 --- 2026-07-14T13:30:00Z
+log[open_bell]                                   --- 2026-07-14T09:30:00-04:00
+log[fmt[open_bell, style = 'datetime']]          --- 2026-07-14 09:30:00
+log[moment[open_bell, tz = 'UTC'].hour]          --- 13
+log[open_bell - moment['2026-07-14T13:00:00Z']]  --- 1800
 
---- subtraction is elapsed seconds; comparison is comparison
+--- subtraction is the seconds between; comparison is comparison
 if print_time lt open_bell - 10.0
     log['stale print — not driving price']
-
-c = calendar[open_bell, tz = 'UTC']
-log[c.hour]                                                       --- 13
 ```
+
+A moment multiplied, divided or taken a remainder of, added to a moment,
+or compared with a number or text is refused before the program runs: a
+moment adds or subtracts seconds, subtracts a moment, and compares with a
+moment. A duration is a number of seconds, as `sleep`, `later` and every
+timeout take one; there is no duration kind. A list of moments is a list.
+A moment handed to `with` makes a moment column (`datetime`, as `.dtypes`
+names it), `fill` fills one with a moment, a moment column's cell read one
+at a time is a moment — from a file, a query or `with` alike — and a moment
+column compares with a moment: `filter[df, df.at gt open_bell]`.
 
 **One moment per event.** In a script `now[]` is the clock at the call. In a live program it is the moment the current event began — a click or a change from the page, a render, a `refresh` tick, a `later` schedule — everywhere inside it: a handler and every helper it calls, a render and every view and derivation in it. Time advances between events, never inside one, so `base, anchor = head, now[]` reads one clock twice and gets one answer, and two rows a handler stamps with `now[]` share a stamp. In the test harness the clock is the test's: it starts at the moment the first `app[…]` opened and moves only when the test moves it with `change[a, 'now', t]`.
 
-Timezones are IANA names (`'America/New_York'`, `'Europe/London'`, `'UTC'`)
-and are **always explicit** — the default everywhere is UTC. Invalid dates,
-unknown zones, DST gaps, and unparseable strings return error values with
-`kind = 'time'`.
+Zones are IANA names (`'America/New_York'`, `'Europe/London'`) or offsets
+(`'+09:00'`, `'UTC'`) and are **always explicit** — the default everywhere
+is UTC. Invalid dates, unknown zones, DST gaps and text that is no time are
+error values of kind `'time'`.
+
+**Design Note: a moment is one kind.** Considered: the three moments Crow had grown — the core's, a float of epoch seconds with `calendar`, `parse_time` and `fmt[t, time = …]`; the frame module's, ISO text with `datetime`, `tz` and fields read from the text; and a database column's, a float again — so that `df.at[0]` was text from a file and a float from a query, and the functions of one refused the other. Decided (Vijay, 2026-10-06): one kind, carrying its instant and the offset it was written in, so `t.year` is the year it was written in and `moment[t, tz = …]` moves it; one name for each thing a program does with a moment — `now`, `moment`, the fields, `str`, `fmt` and the operators — and the rest parameters. So `calendar`, `parse_time`, `datetime`, `tz` and the duplicate `time[]` are gone, outright, and `fmt`'s `time =` option is `style =`: the one renderer's option for one more kind, not a renderer per kind. Rejected: a float everywhere, which loses the zone a text was written in; text everywhere, on which nothing computes; a duration kind, where seconds already serve. `float[t]` and `moment[seconds]` are the bridges for a program that keeps a time as a number, as finch's simulated clock does.
 
 ## Freshness: captured
 
@@ -449,7 +468,7 @@ where the real complexity lives, so they are named-argument functions
 absent by design: "correct on my laptop, wrong on the UTC server" is the
 classic deploy-day bug, and a language that makes the timezone explicit
 never has it. **Deleted in exchange:** `elapsed` (subtraction), `date`
-(subsumed by `moment`), `today` (`fmt[now[], time = 'date']`) — all three
+(subsumed by `moment`), `today` (`fmt[now[], style = 'date']`) — all three
 now raise teaching errors naming their replacement.
 
 

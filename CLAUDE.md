@@ -71,6 +71,12 @@ steps on every push and must be green.
   before a gate: three unit tests looked flaky for an hour until the
   variable, exported in some shells and not others, turned out to be what
   differed — and the finding was real.
+- A moment is a kind (`crow_runtime::moments::Moment`, `CrowType::Moment`,
+  `Ty::Moment`, `Value::Moment`, `Kind::Moment`/`Arg::Moment`): a new kind
+  threads through type_infer, ir, value, table (kind, conversions, rows),
+  rules (binop_type, fields), lower_ir/checks (arithmetic), the emitter
+  (field reads, cell reads, placeholders, `mask` cells), ir_verify (kinds),
+  the interpreter's ops and the runtime's Cell/mask::Cell/CrowDisplay/ToJson.
 - A `sys` row a standard module may call is listed in `SYS_FUNCTIONS`
   (`src/modules/sys.rs`) beside its row in the table; without the entry the
   module's call is "undefined function" in both modes.

@@ -21,7 +21,7 @@ derive book
     return query[conn, 'SELECT sym, qty FROM trades ORDER BY {order}']
 
 view home[]
-    day = fmt[now[], time = 'date']
+    day = fmt[now[], style = 'date']
     return p['`len[book]` trades, first `book.sym[0]`, day `day`']
 
 page['/', home]

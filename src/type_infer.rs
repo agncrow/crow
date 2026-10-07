@@ -25,6 +25,8 @@ pub enum CrowType {
     Float,
     Bool,
     Str,
+    /// A moment: an instant and the offset it was written in (moments.rs).
+    Moment,
     /// Markup a view, an element or `doc` made: a string everywhere a
     /// string is read, and the one kind of string a view places as markup.
     /// Every other string is text (`infer_expr` reads it as `Str`; only
@@ -138,6 +140,7 @@ impl CrowType {
             CrowType::Int => "i64".into(),
             CrowType::Float => "f64".into(),
             CrowType::Bool => "bool".into(),
+            CrowType::Moment => "crow_runtime::moments::Moment".into(),
             CrowType::Str | CrowType::Markup => "String".into(),
             CrowType::Array(inner) => format!("Vec<{}>", inner.to_rust_type()),
             CrowType::Map(inner) => format!("std::collections::BTreeMap<String, {}>", inner.to_rust_type()),
@@ -175,6 +178,7 @@ impl CrowType {
         match self {
             CrowType::Int => "0_i64".into(),
             CrowType::Float => "0.0_f64".into(),
+            CrowType::Moment => "crow_runtime::moments::Moment::default()".into(),
             CrowType::Bool => "false".into(),
             CrowType::Str | CrowType::Markup => "String::new()".into(),
             CrowType::Array(inner) => format!("Vec::<{}>::new()", inner.to_rust_type()),
@@ -245,6 +249,7 @@ impl CrowType {
         match self {
             CrowType::Int => "int".into(),
             CrowType::Float => "float".into(),
+            CrowType::Moment => "moment".into(),
             CrowType::Bool => "bool".into(),
             CrowType::Str => "str".into(),
             CrowType::Markup => "markup".into(),
@@ -1354,7 +1359,7 @@ mod tests {
     /// parameter compiled, and the harness's number never reached it
     #[test]
     fn a_click_handed_a_value_that_can_fail_types_what_it_holds() {
-        let src = "use web, ui\nhead = 0.0\nfn jump[t]\n    head = t\nview v[]\n    return p['`head`']\npage['/', v]\ntest t[]\n    a = app[v]\n    click[a, jump[5.0]]\n    sig = parse_time['2026-05-26 07:05:00']\n    click[a, jump[sig - 120.0]]\n";
+        let src = "use web, ui\nhead = 0.0\nfn jump[t]\n    head = t\nview v[]\n    return p['`head`']\npage['/', v]\ntest t[]\n    a = app[v]\n    click[a, jump[5.0]]\n    sig = moment['2026-05-26 07:05:00']\n    click[a, jump[sig - 120.0]]\n";
         let stmts = crate::lower::lower_program(&crate::build(src).unwrap()).unwrap();
         let mut ctx = TypeContext::new();
         ctx.infer_program(&stmts);

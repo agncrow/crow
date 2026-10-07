@@ -11,145 +11,145 @@ fn bench[label, n]
 --- Tensor Creation
 log['=== Tensor Creation ===']
 
-t0 = time[]
+t0 = now[]
 i = 0
 while i lt 100
   x = zeros[1000, 1000]
   i = i + 1
-t1 = time[]
+t1 = now[]
 log['zeros[1000,1000] x100: `t1 - t0`s']
 
-t0 = time[]
+t0 = now[]
 i = 0
 while i lt 100
   x = ones[1000, 1000]
   i = i + 1
-t1 = time[]
+t1 = now[]
 log['ones[1000,1000] x100: `t1 - t0`s']
 
-t0 = time[]
+t0 = now[]
 i = 0
 while i lt 100
   x = eye[1000]
   i = i + 1
-t1 = time[]
+t1 = now[]
 log['eye[1000] x100: `t1 - t0`s']
 
-t0 = time[]
+t0 = now[]
 i = 0
 while i lt 100
   x = randn[1000, 1000]
   i = i + 1
-t1 = time[]
+t1 = now[]
 log['randn[1000,1000] x100: `t1 - t0`s']
 
 --- Element-wise Operations
 log['=== Element-wise Ops (1M elements) ===']
 a = randn[1000, 1000]
 
-t0 = time[]
+t0 = now[]
 i = 0
 while i lt 10
   x = exp[a]
   i = i + 1
-t1 = time[]
+t1 = now[]
 log['exp x10: `t1 - t0`s']
 
-t0 = time[]
+t0 = now[]
 i = 0
 while i lt 10
   x = sin[a]
   i = i + 1
-t1 = time[]
+t1 = now[]
 log['sin x10: `t1 - t0`s']
 
-t0 = time[]
+t0 = now[]
 i = 0
 while i lt 10
   x = sqrt[abs[a]]
   i = i + 1
-t1 = time[]
+t1 = now[]
 log['sqrt x10: `t1 - t0`s']
 
-t0 = time[]
+t0 = now[]
 i = 0
 while i lt 10
   x = a + a
   i = i + 1
-t1 = time[]
+t1 = now[]
 log['add x10: `t1 - t0`s']
 
-t0 = time[]
+t0 = now[]
 i = 0
 while i lt 10
   x = a .* a
   i = i + 1
-t1 = time[]
+t1 = now[]
 log['mul x10: `t1 - t0`s']
 
 --- Reductions
 log['=== Reductions (1M elements) ===']
 
-t0 = time[]
+t0 = now[]
 i = 0
 while i lt 100
   s = sum[a]
   i = i + 1
-t1 = time[]
+t1 = now[]
 log['sum x100: `t1 - t0`s']
 
-t0 = time[]
+t0 = now[]
 i = 0
 while i lt 100
   m = mean[a]
   i = i + 1
-t1 = time[]
+t1 = now[]
 log['mean x100: `t1 - t0`s']
 
-t0 = time[]
+t0 = now[]
 i = 0
 while i lt 100
   mn = min[a]
   i = i + 1
-t1 = time[]
+t1 = now[]
 log['min x100: `t1 - t0`s']
 
-t0 = time[]
+t0 = now[]
 i = 0
 while i lt 100
   mx = max[a]
   i = i + 1
-t1 = time[]
+t1 = now[]
 log['max x100: `t1 - t0`s']
 
 --- Matrix Multiply
 log['=== Matmul ===']
 
 m100 = randn[100, 100]
-t0 = time[]
+t0 = now[]
 i = 0
 while i lt 100
   x = m100 * m100
   i = i + 1
-t1 = time[]
+t1 = now[]
 log['matmul 100x100 x100: `t1 - t0`s']
 
 m500 = randn[500, 500]
-t0 = time[]
+t0 = now[]
 i = 0
 while i lt 10
   x = m500 * m500
   i = i + 1
-t1 = time[]
+t1 = now[]
 log['matmul 500x500 x10: `t1 - t0`s']
 
 m1000 = randn[1000, 1000]
-t0 = time[]
+t0 = now[]
 i = 0
 while i lt 3
   x = m1000 * m1000
   i = i + 1
-t1 = time[]
+t1 = now[]
 log['matmul 1000x1000 x3: `t1 - t0`s']
 
 --- Linear Algebra
@@ -158,44 +158,44 @@ log['=== Linalg ===']
 m200 = randn[200, 200]
 b200 = randn[200, 1]
 
-t0 = time[]
+t0 = now[]
 i = 0
 while i lt 10
   sol = solve[m200, b200]
   i = i + 1
-t1 = time[]
+t1 = now[]
 log['solve 200x200 x10: `t1 - t0`s']
 
-t0 = time[]
+t0 = now[]
 i = 0
 while i lt 10
   iv = inv[m200]
   i = i + 1
-t1 = time[]
+t1 = now[]
 log['inv 200x200 x10: `t1 - t0`s']
 
-t0 = time[]
+t0 = now[]
 i = 0
 while i lt 10
   d = det[m200]
   i = i + 1
-t1 = time[]
+t1 = now[]
 log['det 200x200 x10: `t1 - t0`s']
 
-t0 = time[]
+t0 = now[]
 i = 0
 while i lt 10
   q = qr[m200]
   i = i + 1
-t1 = time[]
+t1 = now[]
 log['qr 200x200 x10: `t1 - t0`s']
 
-t0 = time[]
+t0 = now[]
 i = 0
 while i lt 3
   sv = svd[m200]
   i = i + 1
-t1 = time[]
+t1 = now[]
 log['svd 200x200 x3: `t1 - t0`s']
 
 log['=== done ===']

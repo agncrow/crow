@@ -307,10 +307,9 @@ impl TypeContext {
             "args" => CrowType::Array(Box::new(CrowType::Str)),
             "input" => CrowType::Result(Box::new(CrowType::Str)),
             // System builtins
-            "time" => CrowType::Float,
             // Moments are numbers (epoch seconds); constructors are fallible
-            "now" => CrowType::Float,
-            "captured" => CrowType::Result(Box::new(CrowType::Float)),
+            "now" => CrowType::Moment,
+            "captured" => CrowType::Result(Box::new(CrowType::Moment)),
             "chart" => CrowType::Str,
             "sleep" => CrowType::Int,
             // Background work: later[] is fire-and-forget (Void — ask
@@ -430,6 +429,23 @@ impl TypeContext {
         let arithmetic = !matches!(op, BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte | BinOp::And | BinOp::Or);
         if arithmetic && (matches!(lt_inner, CrowType::Unknown) || matches!(rt_inner, CrowType::Unknown)) {
             return if has_result { CrowType::Result(Box::new(CrowType::Unknown)) } else { CrowType::Unknown };
+        }
+        // a moment: on or back by seconds (a moment), the seconds between
+        // two (a number), and compared with a moment (a bool); anything
+        // else the lowering refuses
+        // (a column or a list compared with a moment is a mask, typed below)
+        let moment = |t: &CrowType| matches!(t, CrowType::Moment);
+        let scalar = |t: &CrowType| matches!(t, CrowType::Moment | CrowType::Int | CrowType::Float | CrowType::Unknown | CrowType::Json);
+        if (moment(&lt_inner) || moment(&rt_inner)) && scalar(&lt_inner) && scalar(&rt_inner) {
+            let number = |t: &CrowType| matches!(t, CrowType::Int | CrowType::Float);
+            let t = match op {
+                BinOp::Sub if moment(&lt_inner) && moment(&rt_inner) => CrowType::Float,
+                BinOp::Add | BinOp::Sub if moment(&lt_inner) && number(&rt_inner) => CrowType::Moment,
+                BinOp::Add if number(&lt_inner) && moment(&rt_inner) => CrowType::Moment,
+                BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte if moment(&lt_inner) && moment(&rt_inner) => CrowType::Bool,
+                _ => CrowType::Unknown,
+            };
+            return if has_result { CrowType::Result(Box::new(t)) } else { t };
         }
         // Check if either side is a frame column (FrameCol or legacy Array(Str))
         let is_frame_col = |t: &CrowType| matches!(t, CrowType::FrameCol) || matches!(t, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Str));
@@ -720,13 +736,11 @@ impl TypeContext {
         if field == "ok" && matches!(&obj_type, CrowType::FrameCol) {
             return CrowType::Array(Box::new(CrowType::Bool));
         }
-        // DateTime properties on strings → Int (of a moment that can fail
-        // too — `tz`'s answer — read once it is known to have come: the
-        // field had been typed as the text's own, and `[m.year]` compiled
-        // as a list of text)
-        if matches!(&obj_type, CrowType::Str) || matches!(&obj_type, CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::Str)) {
+        // a moment's fields, read in its own zone (of a moment that can fail
+        // too, read once it is known to have come)
+        if matches!(&obj_type, CrowType::Moment) || matches!(&obj_type, CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::Moment)) {
             match field {
-                "year" | "month" | "day" | "hour" | "minute" | "second" | "offset" => return CrowType::Int,
+                "year" | "month" | "day" | "hour" | "minute" | "second" | "weekday" | "offset" => return CrowType::Int,
                 _ => {}
             }
         }

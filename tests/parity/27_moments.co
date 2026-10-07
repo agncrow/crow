@@ -1,23 +1,32 @@
---- A moment is a number: epoch seconds. Arithmetic and comparison come
---- free; timezones are named and explicit; UTC is the default everywhere.
+--- A moment is a kind of its own: an instant and the offset it was
+--- written in, the same in both modes. Its fields read in its own zone;
+--- subtraction is the seconds between; comparison is by instant; zones
+--- are named or written as offsets, and explicit — UTC is the default.
 open_bell = moment[2026, 7, 14, hour = 9, minute = 30, tz = 'America/New_York']
 print_ts = moment[2026, 7, 14, hour = 0, minute = 20, tz = 'America/New_York']
 
-log[fmt[open_bell, time = 'datetime', tz = 'America/New_York']]
-log[fmt[open_bell, time = 'iso']]
+log[open_bell]
+log[fmt[open_bell, style = 'datetime']]
+log[fmt[open_bell, style = 'iso', tz = 'UTC']]
+log[type[open_bell]]
 
---- subtraction IS elapsed seconds
+--- subtraction IS the seconds between
 log[open_bell - print_ts]
 
 --- the finch stale-print question, as arithmetic
 if print_ts lt open_bell - 10.0
     log['stale print — not driving price']
 
-c = calendar[open_bell, tz = 'UTC']
-log['utc hour: `c.hour` weekday: `c.weekday`']
+utc = moment[open_bell, tz = 'UTC']
+log['utc hour: `utc.hour` weekday: `utc.weekday` offset: `open_bell.offset`']
 
-t = parse_time['2026-07-14T04:09:00-04:00']
-log[fmt[t, time = 'iso']]
+t = moment['2026-07-14T04:09:00-04:00']
+log[t]
+log[open_bell - t]
+log[t + 60]
+log[moment['2026-07-14 09:30', tz = 'America/New_York'] eq open_bell]
 
 bad = moment[2026, 2, 30]
 log[bad.kind]
+log[moment['garbage'].kind]
+log[moment[open_bell, tz = 'Nowhere/Nothing'].kind]

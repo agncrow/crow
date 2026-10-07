@@ -256,7 +256,7 @@ view render[]
 | `lines` | `[]` | Column names drawn as line series | [Structured files: `use io`](../by-example/io.md) |
 | `bars_y` | `''` | Column drawn as a volume pane under the chart |  |
 | `marker` | `0` | A moment marked with a vertical play-head |  |
-| `tz` | `'UTC'` | Timezone for the axis ticks | [Frames: `use frame`](../by-example/frames.md) |
+| `tz` | `'UTC'` | Timezone for the axis ticks |  |
 | `height` | `320` | Height in pixels |  |
 | `panes` | `[]` | Lists of column names, each list drawn as its own strip under the volume with its own scale: `[['rsi'], ['cvd']]` |  |
 | `levels` | `0` | Reference lines keyed by column, drawn dashed in the pane that holds the column: `map[rsi = [30, 70], cvd = [0]]` |  |

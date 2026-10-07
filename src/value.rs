@@ -164,6 +164,8 @@ pub enum Value {
     Float(f64),
     Str(String),
     Bool(bool),
+    /// A moment (crow_runtime::moments::Moment).
+    Moment(crow_runtime::moments::Moment),
     Array(Vec<CrowValue>),
     // the large ones are held apart, so a value is as big as the small
     // ones (typed-values-design.md §5, B)
@@ -241,6 +243,7 @@ impl Value {
             Value::App(..) => "app",
             Value::Int(_) => "int",
             Value::Float(_) => "float",
+            Value::Moment(_) => "moment",
             Value::Str(_) => "string",
             Value::Bool(_) => "bool",
             Value::Array(_) => "array",
@@ -272,6 +275,7 @@ impl fmt::Display for Value {
             Value::App(a) => write!(f, "app[{}]", a.view.name),
             Value::Int(n) => write!(f, "{}", n),
             Value::Float(n) => write!(f, "{}", n),
+            Value::Moment(m) => write!(f, "{}", m),
             Value::Str(s) => write!(f, "{}", s),
             Value::Bool(b) => write!(f, "{}", b),
             // a list, a map and a record as the one display writes them

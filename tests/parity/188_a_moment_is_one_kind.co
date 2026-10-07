@@ -1,0 +1,71 @@
+--- A moment is a kind of its own in both modes: the instant and the
+--- offset it was written in. `moment[…]` makes one from text (read in a
+--- zone where one is named), from its parts, from seconds, or from a
+--- moment in another zone; its fields read in its own zone; `str[t]` is
+--- its ISO 8601 text and `fmt[t, style = …]` any other; `t + s` is a
+--- moment, `t2 - t1` the seconds between, and two compare by instant.
+--- A frame's moment column is made of moments, read back as moments, and
+--- compared with one; `float[t]` is the bridge to seconds. (The core had
+--- held a moment as float seconds, the frame module as ISO text, and a
+--- database's column as a float again.)
+use frame
+
+m = moment['2026-07-14T13:30:00Z']
+log[m]
+log[type[m]]
+log['`m.year`-`m.month`-`m.day` `m.hour`:`m.minute`:`m.second` weekday `m.weekday` offset `m.offset`']
+tokyo = moment[m, tz = '+09:00']
+log[tokyo]
+log[tokyo.hour]
+log[tokyo eq m]
+log[moment[m, tz = 'America/New_York']]
+log[str[m]]
+log[fmt[m, style = 'date']]
+log[fmt[m, style = 'time', tz = 'Asia/Tokyo']]
+log[fmt[m, style = 'datetime', tz = '-05:00']]
+log[fmt[m]]
+after = m + 90
+log[after]
+log[after - m]
+log[m - 3600.5]
+log[after gt m]
+log[m lte after]
+log[float[m]]
+log[int[m]]
+log[moment[1784035800.25]]
+built = moment[2026, 7, 14, hour = 9, minute = 30, tz = 'America/New_York']
+log[built]
+log[built eq m]
+log[moment['2026-07-14 09:30', tz = 'America/New_York'] eq built]
+log[moment['2026-07-14T09:30'] eq built]
+log[min[built, after] eq built]
+log[max[built, after] eq after]
+bad = moment['garbage']
+log[bad.ok]
+log[bad.kind]
+log[moment[2026, 2, 30].kind]
+log[moment[m, tz = 'Nowhere/Nothing'].kind]
+log[fmt[m, style = 'weekly'].kind]
+anchor = moment[1767225600.0]
+ms = [anchor, anchor + 1, anchor + 60]
+log[len[ms]]
+log[join[ms, ' ']]
+f = with[with[frame.new[], 'at', ms], 'n', [1, 2, 3]]
+log[f.dtypes]
+log[f.at[2]]
+log[f.at[2].minute]
+log[len[filter[f, f.at gt anchor]]]
+log[sort[f, 'at', desc = true].n]
+log[unique[f, 'at']]
+log[fill[with[f, 'seen', anchor], 'seen', anchor].seen[0]]
+log[encode[m]]
+write['moments-note.csv', 'sym,at\nA,2026-07-14T13:30:00Z\nB,2026-07-15\nC,2026-07-15T00:00:00.250+05:30\n']
+t = frame.load['moments-note.csv']
+log[t.dtypes]
+log[t.at[0]]
+log[str[t.at[2]]]
+log[moment[str[t.at[0]]] eq m]
+save[t, 'moments-copy.csv']
+log[read['moments-copy.csv']]
+rm['moments-note.csv']
+rm['moments-copy.csv']

@@ -244,6 +244,19 @@ impl CrowColumn {
             .collect()
     }
 
+    /// A cell as a moment: a moment column's instant and offset; a
+    /// missing cell, or another column's, the epoch.
+    pub fn get_moment(&self, idx: usize) -> crate::moments::Moment {
+        if !self.valid.get(idx).copied().unwrap_or(false) { return crate::moments::Moment::default(); }
+        match self.data.as_ref() {
+            Column::DateTime(ms, offsets) => crate::moments::Moment { ms: ms[idx], offset: offsets[idx] },
+            Column::Int(v) => crate::moments::Moment::of_seconds(v[idx] as f64),
+            Column::Float(v) => crate::moments::Moment::of_seconds(v[idx]),
+            Column::Str(v) => crate::moments::Moment::parse(&v[idx]).unwrap_or_default(),
+            Column::Bool(_) => crate::moments::Moment::default(),
+        }
+    }
+
     /// Get a single cell as a formatted string.
     pub fn get_str(&self, idx: usize) -> String {
         self.data.fmt_cell(idx, self.valid[idx])
@@ -1013,11 +1026,16 @@ fn date_to_epoch_millis(year: i32, month: u32, day: u32, hour: u32, min: u32, se
 
 /// Format epoch millis + offset to ISO 8601 string.
 pub fn format_datetime(epoch_millis: i64, offset_minutes: i16) -> String {
-    // Convert to local time by adding offset
+    // the instant in its zone: the offset added
     let local_millis = epoch_millis + (offset_minutes as i64) * 60_000;
-    let total_secs = local_millis / 1000;
-    let days = if total_secs >= 0 { total_secs / 86400 } else { (total_secs - 86399) / 86400 };
-    let day_secs = (total_secs - days * 86400) as u32;
+    let total_secs = local_millis.div_euclid(1000);
+    // a fraction of a second, to the millisecond, where there is one
+    let fraction = match local_millis.rem_euclid(1000) {
+        0 => String::new(),
+        ms => format!(".{:03}", ms),
+    };
+    let days = total_secs.div_euclid(86400);
+    let day_secs = total_secs.rem_euclid(86400) as u32;
 
     let hour = day_secs / 3600;
     let min = (day_secs % 3600) / 60;
@@ -1027,18 +1045,18 @@ pub fn format_datetime(epoch_millis: i64, offset_minutes: i16) -> String {
     let (year, month, day) = civil_from_days(days);
 
     if offset_minutes == 0 {
-        if hour == 0 && min == 0 && sec == 0 {
+        if hour == 0 && min == 0 && sec == 0 && fraction.is_empty() {
             format!("{:04}-{:02}-{:02}", year, month, day)
         } else {
-            format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", year, month, day, hour, min, sec)
+            format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{}Z", year, month, day, hour, min, sec, fraction)
         }
     } else {
         let sign = if offset_minutes >= 0 { '+' } else { '-' };
         let abs_off = offset_minutes.unsigned_abs();
         let oh = abs_off / 60;
         let om = abs_off % 60;
-        format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{}{:02}:{:02}",
-            year, month, day, hour, min, sec, sign, oh, om)
+        format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{}{}{:02}:{:02}",
+            year, month, day, hour, min, sec, fraction, sign, oh, om)
     }
 }
 
@@ -1055,26 +1073,6 @@ fn civil_from_days(days: i64) -> (i32, u32, u32) {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let year = if m <= 2 { y + 1 } else { y };
     (year as i32, m, d)
-}
-
-/// Extract a datetime component from an ISO 8601 datetime string.
-/// Returns the numeric value of year, month, day, hour, minute, second, or offset (in minutes).
-pub fn datetime_field(s: &str, field: &str) -> Option<i64> {
-    let (epoch_millis, offset_minutes) = parse_datetime(s)?;
-    let local_millis = epoch_millis + (offset_minutes as i64) * 60_000;
-    let total_secs = local_millis / 1000;
-    let days = if total_secs >= 0 { total_secs / 86400 } else { (total_secs - 86399) / 86400 };
-    let day_secs = (total_secs - days * 86400) as u32;
-    match field {
-        "year" => { let (y, _, _) = civil_from_days(days); Some(y as i64) }
-        "month" => { let (_, m, _) = civil_from_days(days); Some(m as i64) }
-        "day" => { let (_, _, d) = civil_from_days(days); Some(d as i64) }
-        "hour" => Some((day_secs / 3600) as i64),
-        "minute" => Some(((day_secs % 3600) / 60) as i64),
-        "second" => Some((day_secs % 60) as i64),
-        "offset" => Some(offset_minutes as i64),
-        _ => None,
-    }
 }
 
 /// Convert frame columns to a flat f64 vector in row-major order.
@@ -1279,8 +1277,11 @@ impl CrowFrame {
                     if !valid_mut[i] { v[i] = fv; valid_mut.set(i, true); }
                 }
             }
-            Column::DateTime(_, _) => {
-                return Err("fill: cannot fill datetime columns yet".to_string());
+            Column::DateTime(ms, offsets) => {
+                let (fm, fo) = parse_datetime(fill_val).ok_or_else(|| format!("fill: cannot read '{}' as a moment", fill_val))?;
+                for i in 0..ms.len() {
+                    if !valid_mut[i] { ms[i] = fm; offsets[i] = fo; valid_mut.set(i, true); }
+                }
             }
         }
 

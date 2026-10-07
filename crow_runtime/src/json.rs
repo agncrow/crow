@@ -167,6 +167,11 @@ impl ToJson for i64 {
 impl ToJson for f64 {
     fn to_json(&self) -> serde_json::Value { float_to_json(*self) }
 }
+impl ToJson for crate::moments::Moment {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::Value::String(self.to_string())
+    }
+}
 impl ToJson for bool {
     fn to_json(&self) -> serde_json::Value { serde_json::json!(*self) }
 }

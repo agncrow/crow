@@ -37,6 +37,8 @@ pub enum Kind {
     Whole,
     /// `f64`: a float, or an int.
     Float,
+    /// `Moment` taken and given (crow_runtime::moments).
+    Moment,
     Bool,
     /// `&str` taken, `String` given.
     Str,
@@ -242,6 +244,7 @@ impl Kind {
         match self {
             Kind::Int | Kind::Whole => CrowType::Int,
             Kind::Float => CrowType::Float,
+            Kind::Moment => CrowType::Moment,
             Kind::Bool => CrowType::Bool,
             Kind::Str => CrowType::Str,
             Kind::Tensor => CrowType::tensor(CrowType::Float),
@@ -301,6 +304,7 @@ impl Kind {
         match self.each() {
             Kind::Int | Kind::Whole => format!("({}) as i64", arg),
             Kind::Float => format!("({}) as f64", arg),
+            Kind::Moment => format!("({})", arg),
             Kind::Bool => format!("({})", arg),
             Kind::Str => match (literal_text(arg), borrowed_index(arg)) {
                 (Some(lit), _) => lit,
@@ -347,6 +351,7 @@ impl Kind {
         match self {
             Kind::Int | Kind::Whole => "0_i64",
             Kind::Float => "0.0_f64",
+            Kind::Moment => "crow_runtime::moments::Moment::default()",
             Kind::Bool => "false",
             Kind::Str => "String::new()",
             Kind::Tensor => "crow_runtime::tensor::CrowTensor::from_vec(vec![], vec![0])",
@@ -531,6 +536,17 @@ pub fn read_float(v: &CrowValue) -> Result<f64, String> {
     }
 }
 
+pub fn read_moment(v: &CrowValue) -> Result<crow_runtime::moments::Moment, String> {
+    match &v.value {
+        Value::Moment(m) => Ok(*m),
+        _ => Err(format!("expected a moment, got {}", named(v))),
+    }
+}
+
+pub fn write_moment(m: crow_runtime::moments::Moment) -> CrowValue {
+    CrowValue::ok(Value::Moment(m))
+}
+
 pub fn read_bool(v: &CrowValue) -> Result<bool, String> {
     match &v.value {
         Value::Bool(b) => Ok(*b),
@@ -655,6 +671,7 @@ pub fn read_bools(v: &CrowValue) -> Result<Vec<bool>, String> {
 pub fn read_cell(v: &CrowValue) -> Result<crow_runtime::cell::Cell, String> {
     use crow_runtime::cell::Cell;
     match &v.value {
+        Value::Moment(m) => Ok(crow_runtime::cell::Cell::Moment(*m)),
         Value::Int(n) => Ok(Cell::Int(*n)),
         Value::Float(x) => Ok(Cell::Float(*x)),
         Value::Bool(b) => Ok(Cell::Bool(*b)),
@@ -686,7 +703,8 @@ pub fn read_words(v: &CrowValue) -> Result<Vec<String>, String> {
                 Value::Int(n) => Ok(n.to_string()),
                 Value::Float(x) => Ok(x.to_string()),
                 Value::Bool(b) => Ok(b.to_string()),
-                _ => Err(format!("expected a list of numbers, text or bools, got a list of {}", named(i))),
+                Value::Moment(m) => Ok(m.to_string()),
+                _ => Err(format!("expected a list of numbers, text, bools or moments, got a list of {}", named(i))),
             })
             .collect(),
         Value::NumArray(t) => Ok(t.to_vec().iter().map(|x| x.to_string()).collect()),
@@ -719,7 +737,10 @@ pub fn read_cells(v: &CrowValue) -> Result<crow_runtime::frames::Cells, String> 
     // keeps its kind, as the compiled program's column does
     let valid: Vec<bool> = items.iter().map(|i| !i.is_error()).collect();
     let all = |f: fn(&Value) -> bool| !items.is_empty() && items.iter().all(|i| f(&i.value));
-    let column = if all(|v| matches!(v, Value::Int(_))) {
+    let column = if all(|v| matches!(v, Value::Moment(_))) {
+        let moments: Vec<crow_runtime::moments::Moment> = items.iter().map(|i| if let Value::Moment(m) = i.value { m } else { crow_runtime::moments::Moment::default() }).collect();
+        Column::DateTime(moments.iter().map(|m| m.ms).collect(), moments.iter().map(|m| m.offset).collect())
+    } else if all(|v| matches!(v, Value::Int(_))) {
         Column::Int(items.iter().map(|i| if let Value::Int(n) = i.value { n } else { 0 }).collect())
     } else if all(|v| matches!(v, Value::Int(_) | Value::Float(_))) {
         Column::Float(items.iter().map(|i| match i.value { Value::Int(n) => n as f64, Value::Float(x) => x, _ => f64::NAN }).collect())
@@ -728,7 +749,7 @@ pub fn read_cells(v: &CrowValue) -> Result<crow_runtime::frames::Cells, String> 
     } else if items.iter().all(|i| matches!(i.value, Value::Str(_))) {
         Column::Str(items.iter().map(|i| if let Value::Str(s) = &i.value { s.clone() } else { String::new() }).collect())
     } else {
-        let other = items.iter().find(|i| !matches!(i.value, Value::Int(_) | Value::Float(_) | Value::Bool(_) | Value::Str(_)));
+        let other = items.iter().find(|i| !matches!(i.value, Value::Int(_) | Value::Float(_) | Value::Bool(_) | Value::Str(_) | Value::Moment(_)));
         return Err(format!("expected a column's values, got a list of {}", other.map(named).unwrap_or("mixed values")));
     };
     Ok(Cells::Column(column, crow_runtime::frame::Validity::from(valid)))
@@ -1018,6 +1039,7 @@ macro_rules! read {
     (Whole, $g:expr) => { read_whole(one($g)?)? };
     (Words, $g:expr) => { &read_words(one($g)?)? };
     (Float, $g:expr) => { read_float(one($g)?)? };
+    (Moment, $g:expr) => { read_moment(one($g)?)? };
     (Bool, $g:expr) => { read_bool(one($g)?)? };
     (Str, $g:expr) => { read_str(one($g)?)? };
     (Tensor, $g:expr) => { &*read_tensor(one($g)?)? };
@@ -1058,6 +1080,7 @@ macro_rules! read {
 macro_rules! answer {
     (Int, $x:expr) => { write_int($x) };
     (Float, $x:expr) => { write_float($x) };
+    (Moment, $x:expr) => { write_moment($x) };
     (Bool, $x:expr) => { write_bool($x) };
     (Str, $x:expr) => { write_str($x) };
     (Tensor, $x:expr) => { write_tensor($x) };
@@ -1169,6 +1192,7 @@ pub fn value_as(kind: Kind, v: &CrowValue) -> Result<CrowValue, String> {
     Ok(match kind {
         Kind::Tensor => CrowValue::ok(Value::NumArray(Box::new(read_tensor(v)?.into_owned()))),
         Kind::Float => CrowValue::ok(Value::Float(read_float(v)?)),
+        Kind::Moment => CrowValue::ok(Value::Moment(read_moment(v)?)),
         Kind::Int | Kind::Whole => CrowValue::ok(Value::Int(read_int(v)?)),
         Kind::Str => CrowValue::ok(Value::Str(read_str(v)?.to_string())),
         Kind::Bool => CrowValue::ok(Value::Bool(read_bool(v)?)),
@@ -1380,8 +1404,7 @@ pub static ROWS: &[Row] = &[
     row!("core.halt", "", "halt", crow_runtime::core::halt, (Str) -> Unit, stops),
     row!("core.sleep_ms", "", "sleep", crow_runtime::core::sleep_ms, (Whole) -> Unit, stops),
     row!("core.sleep", "", "sleep", crow_runtime::core::sleep_secs, (Float) -> Unit, stops),
-    row!("core.time", "", "time", crow_runtime::core::time, () -> Float, never),
-    row!("moments.now", "", "now", crow_runtime::moments::now, () -> Float, never),
+    row!("moments.now", "", "now", crow_runtime::moments::now_moment, () -> Moment, never),
     // the file system: an effect, which the session layer performs (held to
     // a handler's commit, recorded in a rehearsal) and whose call inside is
     // the row; a failure is an error value of kind 'io', a success of a
@@ -1415,25 +1438,32 @@ pub static ROWS: &[Row] = &[
     // fmt: a number's or a text's options, or a moment's time style, which
     // can fail (kind 'time'; compiled, the failure was the text "[fmt: …]")
     row!("display.fmt", "", "fmt", crow_runtime::display::fmt_value, (Cell, Int, Bool, Int, Str, Str, Bool) -> Str, stops),
-    row!("display.fmt_time", "", "__fmt_time", crow_runtime::moments::fmt_moment, (Float, Str, Str) -> Str, value "time"),
+    row!("display.fmt_time", "", "__fmt_time", crow_runtime::moments::fmt_time_of, (Moment, Str, Str) -> Str, value "time"),
     // conversions: of a number or a bool, plain; of text or a JSON value,
     // fallible (kind 'parse'), read by one rule (compiled, JSON text was
     // trimmed and a JSON bool refused)
     row!("core.int", "", "int", crow_runtime::cell::int_of_int, (Whole) -> Int, never),
     row!("core.int_of_float", "", "int", crow_runtime::cell::int_of_float, (Float) -> Int, never),
     row!("core.int_of_bool", "", "int", crow_runtime::cell::int_of_bool, (Bool) -> Int, never),
+    row!("core.int_of_moment", "", "int", crow_runtime::cell::int_of_moment, (Moment) -> Int, never),
     row!("core.int_of", "", "int", crow_runtime::cell::int_of, (Cell) -> Int, value "parse"),
     row!("core.float_of_int", "", "float", crow_runtime::cell::float_of_int, (Whole) -> Float, never),
     row!("core.float", "", "float", crow_runtime::cell::float_of_float, (Float) -> Float, never),
     row!("core.float_of_bool", "", "float", crow_runtime::cell::float_of_bool, (Bool) -> Float, never),
+    row!("core.float_of_moment", "", "float", crow_runtime::cell::float_of_moment, (Moment) -> Float, never),
     row!("core.float_of", "", "float", crow_runtime::cell::float_of, (Cell) -> Float, value "parse"),
     // draws from the program's generator
     row!("core.rand", "", "rand", crow_runtime::core::rand_float, () -> Float, never),
     row!("core.rand_int", "", "rand", crow_runtime::core::rand_int, (Int) -> Int, stops),
     row!("core.rand_between", "", "rand", crow_runtime::core::rand_between, (Int, Int) -> Int, stops),
-    row!("moments.moment", "", "moment", crow_runtime::moments::moment, (Int, Int, Int, Int, Int, Float, Str) -> Float, value "time"),
-    row!("moments.calendar", "", "calendar", crow_runtime::moments::calendar_map, (Float, Str) -> IntMap, value "time"),
-    row!("moments.parse_time", "", "parse_time", crow_runtime::moments::parse_time, (Str, Str) -> Float, value "time"),
+    row!("moments.moment_text", "", "moment", crow_runtime::moments::moment_text, (Str) -> Moment, value "time"),
+    row!("moments.moment_in", "", "moment", crow_runtime::moments::moment_in, (Moment, Str) -> Moment, value "time"),
+    row!("moments.moment_text_in", "", "moment", crow_runtime::moments::moment_text_in, (Str, Str) -> Moment, value "time"),
+    row!("moments.moment_of_seconds", "", "moment", crow_runtime::moments::moment_of_seconds, (Float) -> Moment, never),
+    row!("moments.moment_self", "", "moment", crow_runtime::moments::moment_self, (Moment) -> Moment, never),
+    row!("moments.min", "", "min", crow_runtime::moments::min_of, (Moment, Moment) -> Moment, never),
+    row!("moments.max", "", "max", crow_runtime::moments::max_of, (Moment, Moment) -> Moment, never),
+    row!("moments.moment", "", "moment", crow_runtime::moments::moment_parts, (Int, Int, Int, Int, Int, Float, Str) -> Moment, value "time"),
     row!("text.repeat", "", "repeat", crow_runtime::text::repeat, (Str, Int) -> Str, stops),
     // an invalid pattern is an error value of kind 'regex', as find[]'s is
     // (the interpreter answered one while the compiled program stopped)
@@ -1721,7 +1751,7 @@ pub static ROWS: &[Row] = &[
     // and answered; a remote source read with a reader's options, or an S3
     // object; bytes written to an S3 object
     crow!("sys.exchange", "sys", "exchange", (Str, Str, Strs, Bytes, Float) -> Answer, value "sys"),
-    crow!("sys.exchange_on", "sys", "exchange_on", (Stream, Str, Str, Str, Strs, Bytes, Float, Bool) -> Answer, value "sys"),
+    crow!("sys.exchange_on", "sys", "exchange_on", (Stream, Str, Str, Str, Strs, Bytes, Moment, Bool) -> Answer, value "sys"),
     crow!("sys.fetch", "sys", "fetch", (Str, TextMap, TextMap, Float) -> Answer, value "sys"),
     crow!("sys.put", "sys", "put", (Str, Bytes) -> Str, value "sys"),
     crow!("sys.format_of", "sys", "format_of", (Str) -> Str, never),
@@ -1729,7 +1759,7 @@ pub static ROWS: &[Row] = &[
     crow!("sys.with_query", "sys", "with_query", (Str, TextMap) -> Str, never),
     crow!("sys.redirected", "sys", "redirected", (Str, Str) -> Str, never),
     crow!("sys.format_sniffed", "sys", "format_sniffed", (Str, Bytes) -> Str, never),
-    crow!("sys.read_head", "sys", "read_head", (Stream, Float) -> Answer, value "sys"),
+    crow!("sys.read_head", "sys", "read_head", (Stream, Moment) -> Answer, value "sys"),
     crow!("sys.upgrade", "sys", "upgrade", (Str, Float) -> Socket, value "sys"),
     crow!("sys.civil", "sys", "civil", (Int) -> Ints, never),
     // web's rows written in Crow: a token signed and read (src/modules/auth.co),
@@ -1773,8 +1803,6 @@ pub static ROWS: &[Row] = &[
     row!("frame.unique", "frame", "unique", crow_runtime::frames::unique, (Frame, Str) -> Column, stops),
     row!("frame.rename", "frame", "rename", crow_runtime::frames::rename, (Frame, Str, Str) -> Frame, stops),
     row!("frame.stats", "frame", "stats", crow_runtime::frames::stats, (Frame) -> Str, never),
-    row!("frame.datetime", "frame", "datetime", crow_runtime::frames::datetime, (Str) -> Str, value "time"),
-    row!("frame.tz", "frame", "tz", crow_runtime::frames::tz, (Str, Str) -> Str, value "time"),
     // the modules' files: effects, as the file system's are. `save`'s
     // failure is an error value of kind 'frame', as `load`'s is (compiled,
     // it stopped the program)
@@ -1892,6 +1920,9 @@ fn listed(items: &[String], last: &str) -> String {
 pub enum Arg {
     Int,
     Float,
+    /// A moment, and a list of them.
+    Moment,
+    Moments,
     Bytes,
     Stream,
     Socket,
@@ -1949,6 +1980,8 @@ impl Arg {
         match self {
             Arg::Int => "an int",
             Arg::Float => "a number",
+            Arg::Moment => "a moment",
+            Arg::Moments => "a list of moments",
             Arg::Json => "a JSON value",
             Arg::Tensor => "numbers",
             Arg::Ints => "a list of ints",
@@ -1986,6 +2019,7 @@ impl Arg {
             CrowType::Result(inner) => Arg::of_type(inner),
             CrowType::Int => Arg::Int,
             CrowType::Float => Arg::Float,
+            CrowType::Moment => Arg::Moment,
             CrowType::Json => Arg::Json,
             CrowType::Array(inner) => match inner.as_ref() {
                 CrowType::Unknown => Arg::AnyList,
@@ -2015,6 +2049,7 @@ impl Arg {
         match item {
             Arg::Int => Arg::Ints,
             Arg::Float => Arg::Floats,
+            Arg::Moment => Arg::Moments,
             Arg::Tensor | Arg::Ints | Arg::Floats => Arg::Tensors,
             Arg::Text => Arg::Texts,
             Arg::Bytes => Arg::Chunks,
@@ -2063,6 +2098,7 @@ impl Kind {
         match self {
             Kind::Int | Kind::Whole => "an int",
             Kind::Float => "a number",
+            Kind::Moment => "a moment",
             Kind::Bool => "a bool",
             Kind::Str => "text",
             Kind::Tensor => "numbers",
@@ -2114,6 +2150,7 @@ impl Kind {
         a == Arg::Unknown
             || match self.each() {
                 Kind::Int | Kind::Float => matches!(a, Arg::Int | Arg::Float),
+                Kind::Moment => a == Arg::Moment,
                 Kind::Whole => a == Arg::Int,
                 // numbers held as a list or a column are converted where
                 // they meet the parameter (the lowering's row arguments)
@@ -2130,10 +2167,10 @@ impl Kind {
                 Kind::Socket => a == Arg::Socket,
                 Kind::Mailer => a == Arg::Mailer,
                 Kind::Frame => a == Arg::Frame,
-                Kind::Cell => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Json),
-                Kind::Cells => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Column),
-                Kind::Words => matches!(a, Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Column),
-                Kind::List | Kind::Seq => matches!(a, Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Tensors | Arg::Records | Arg::Maps | Arg::Items | Arg::Chunks | Arg::Fallible | Arg::FallibleNumbers),
+                Kind::Cell => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Json | Arg::Moment),
+                Kind::Cells => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Column | Arg::Moment | Arg::Moments),
+                Kind::Words => matches!(a, Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Column | Arg::Moments),
+                Kind::List | Kind::Seq => matches!(a, Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Tensors | Arg::Records | Arg::Maps | Arg::Items | Arg::Chunks | Arg::Fallible | Arg::FallibleNumbers | Arg::Moments),
                 Kind::Item | Kind::ItemRef => true,
                 Kind::MapOf | Kind::MapRef | Kind::TextMap => a == Arg::Map,
                 Kind::Ints => a == Arg::Ints,
@@ -2266,7 +2303,8 @@ mod tests {
         assert_eq!(r.rust_path(), "crow_runtime::text::repeat");
         assert_eq!(r.params, &[Kind::Str, Kind::Int]);
         assert_eq!(r.crow_type(), CrowType::Str);
-        assert_eq!(by_id("moments.calendar").expect("the row").crow_type(), CrowType::Result(Box::new(CrowType::Map(Box::new(CrowType::Int)))));
+        assert_eq!(by_id("moments.moment_text").expect("the row").crow_type(), CrowType::Result(Box::new(CrowType::Moment)));
+        assert_eq!(by_id("moments.now").expect("the row").crow_type(), CrowType::Moment);
     }
 
     #[test]
@@ -2274,7 +2312,7 @@ mod tests {
         let repeat = by_id("text.repeat").expect("the row");
         assert_eq!((repeat.call)(&[text("ab"), int(2)], "t:1").map(|v| format!("{}", v.value)), Ok("abab".to_string()));
         assert_eq!((repeat.call)(&[text("ab"), int(-1)], "t:1").map(|_| ()), Err("repeat[] count cannot be negative (got -1)".to_string()));
-        let parse = by_id("moments.parse_time").expect("the row");
+        let parse = by_id("moments.moment_text_in").expect("the row");
         let bad = (parse.call)(&[text("not a time"), text("UTC")], "t:3").expect("an error value, not a stop");
         assert!(bad.is_error());
         assert_eq!(bad.kind(), "time");

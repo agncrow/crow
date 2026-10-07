@@ -178,7 +178,7 @@ fn mail[mailer, to, subject, body]
         close[s]
         return error['mail to `to` failed: `go.reason`', 'mail']
     heading = subject_line[subject]
-    date = dated[int[time[]]]
+    date = dated[int[now[]]]
     head = 'From: <`user`>\r\nTo: <`to`>\r\nSubject: `heading`\r\nDate: `date`\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n'
     content = ''
     if len[bytes[body]] eq len[body]

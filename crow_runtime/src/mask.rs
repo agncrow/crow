@@ -86,6 +86,8 @@ pub enum Cell<'a> {
     Number(f64),
     Text(&'a str),
     Bool(bool),
+    /// A moment, by its instant in milliseconds.
+    Moment(i64),
     /// A value no cell is — a list, a map — named for the reason.
     Other(&'static str),
 }
@@ -97,6 +99,7 @@ impl Cell<'_> {
             Cell::Number(_) => "a number",
             Cell::Text(_) => "text",
             Cell::Bool(_) => "a bool",
+            Cell::Moment(_) => "a moment",
             Cell::Other(k) => k,
         }
     }
@@ -105,10 +108,16 @@ impl Cell<'_> {
     /// numbers, text, bools — and an order only of numbers or of text.
     fn compares_with(&self, other: &Cell, cmp: Cmp) -> bool {
         match (self, other) {
-            (Cell::Number(_), Cell::Number(_)) | (Cell::Text(_), Cell::Text(_)) => true,
+            (Cell::Number(_), Cell::Number(_)) | (Cell::Text(_), Cell::Text(_)) | (Cell::Moment(_), Cell::Moment(_)) => true,
             (Cell::Bool(_), Cell::Bool(_)) => !cmp.orders(),
             _ => false,
         }
+    }
+}
+
+impl<'a> From<&'a crate::moments::Moment> for Cell<'a> {
+    fn from(m: &'a crate::moments::Moment) -> Self {
+        Cell::Moment(m.ms)
     }
 }
 
@@ -145,6 +154,12 @@ impl<'a> From<&'a str> for Cell<'a> {
 /// An item a list's mask compares: the compiled program's typed items.
 pub trait AsCell {
     fn as_cell(&self) -> Cell<'_>;
+}
+
+impl AsCell for crate::moments::Moment {
+    fn as_cell(&self) -> Cell<'_> {
+        Cell::Moment(self.ms)
+    }
 }
 
 impl AsCell for i64 {
@@ -194,6 +209,7 @@ fn decide(cmp: Cmp, cell: Cell, present: bool, value: Cell) -> bool {
             (Cell::Number(a), Cell::Number(b)) => a.partial_cmp(&b),
             (Cell::Text(a), Cell::Text(b)) => Some(a.cmp(b)),
             (Cell::Bool(a), Cell::Bool(b)) => Some(a.cmp(&b)),
+            (Cell::Moment(a), Cell::Moment(b)) => Some(a.cmp(&b)),
             _ => None,
         })
 }
@@ -285,7 +301,7 @@ impl CrowColumn {
             (Column::Int(v), _) => Cell::Number(v[i] as f64),
             (Column::Str(v), _) => Cell::Text(&v[i]),
             (Column::Bool(v), _) => Cell::Bool(v[i]),
-            (Column::DateTime(..), None) => Cell::Other("a moment"),
+            (Column::DateTime(ms, _), None) => Cell::Moment(ms[i]),
         }
     }
 
@@ -343,7 +359,8 @@ impl CrowColumn {
 fn check(col: &Column, cmp: Cmp, value: Cell) -> Result<(), String> {
     let kind = match col {
         Column::Int(_) | Column::Float(_) => Cell::Number(0.0),
-        Column::Str(_) | Column::DateTime(..) => Cell::Text(""),
+        Column::Str(_) => Cell::Text(""),
+        Column::DateTime(..) => Cell::Moment(0),
         Column::Bool(_) => Cell::Bool(false),
     };
     holds(cmp, kind, false, value).map(|_| ())
@@ -382,9 +399,9 @@ fn leaf(col: &Column, valid: &crate::frame::Validity, cmp: Cmp, value: Cell, sta
                 }
             }
         },
-        (Column::DateTime(ms, offsets), Cell::Text(y)) => {
-            for (((o, &m), &off), &ok) in out.iter_mut().zip(&ms[rows.clone()]).zip(&offsets[rows]).zip(valid) {
-                *o = ok && cmp.of(Some(crate::frame::format_datetime(m, off).as_str().cmp(y)));
+        (Column::DateTime(ms, _), Cell::Moment(y)) => {
+            for ((o, &m), &ok) in out.iter_mut().zip(&ms[rows]).zip(valid) {
+                *o = ok && cmp.of(Some(m.cmp(&y)));
             }
         }
         // kinds that do not compare (refused before the rows are read):
@@ -575,32 +592,35 @@ mod tests {
             ["", "a", "B", "ab", "é", "2", "a "][self.below(7) as usize].to_string()
         }
         fn value(&mut self) -> Drawn {
-            let kind = self.below(3);
+            let kind = self.below(4);
             self.of_kind(kind)
         }
         /// A value of a kind: 0 a number, 1 text, 2 a bool.
         fn of_kind(&mut self, kind: u64) -> Drawn {
             match kind {
-                0 => (Some(self.number()), None, None),
-                1 => (None, Some(self.text()), None),
-                _ => (None, None, Some(self.below(2) == 0)),
+                0 => (Some(self.number()), None, None, None),
+                1 => (None, Some(self.text()), None, None),
+                2 => (None, None, Some(self.below(2) == 0), None),
+                _ => (None, None, None, Some(self.below(3) as i64 * 86_400_000)),
             }
         }
         /// A value for a comparison with the frame's column `c` (f, i, s, b,
         /// d, then one it lacks): of the column's kind nine times in ten.
         fn value_for(&mut self, c: usize) -> Drawn {
-            let kind = [0, 0, 1, 2, 1].get(c).copied().unwrap_or(3);
-            if kind == 3 || self.below(10) == 0 { self.value() } else { self.of_kind(kind) }
+            let kind = [0, 0, 1, 2, 3].get(c).copied().unwrap_or(4);
+            if kind == 4 || self.below(10) == 0 { self.value() } else { self.of_kind(kind) }
         }
     }
 
-    type Drawn = (Option<f64>, Option<String>, Option<bool>);
+    /// A number, text, a bool or a moment (milliseconds).
+    type Drawn = (Option<f64>, Option<String>, Option<bool>, Option<i64>);
 
     fn cell_of(v: &Drawn) -> Cell<'_> {
         match v {
-            (Some(x), _, _) => Cell::Number(*x),
-            (_, Some(s), _) => Cell::Text(s),
-            (_, _, Some(b)) => Cell::Bool(*b),
+            (Some(x), _, _, _) => Cell::Number(*x),
+            (_, Some(s), _, _) => Cell::Text(s),
+            (_, _, Some(b), _) => Cell::Bool(*b),
+            (_, _, _, Some(ms)) => Cell::Moment(*ms),
             _ => Cell::Other("nothing"),
         }
     }
@@ -696,16 +716,12 @@ mod tests {
                 for cmp in [Cmp::Eq, Cmp::Ne, Cmp::Gt, Cmp::Lt, Cmp::Gte, Cmp::Lte] {
                     let cells: Result<Vec<bool>, String> = (0..col.len())
                         .map(|i| {
-                            let text;
                             let cell = match col.data.as_ref() {
                                 Column::Float(v) => Cell::Number(v[i]),
                                 Column::Int(v) => Cell::Number(v[i] as f64),
                                 Column::Str(v) => Cell::Text(&v[i]),
                                 Column::Bool(v) => Cell::Bool(v[i]),
-                                Column::DateTime(ms, off) => {
-                                    text = crate::frame::format_datetime(ms[i], off[i]);
-                                    Cell::Text(&text)
-                                }
+                                Column::DateTime(ms, _) => Cell::Moment(ms[i]),
                             };
                             holds(cmp, cell, col.valid[i], value)
                         })

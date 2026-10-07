@@ -8,7 +8,7 @@
 //! value, where the type, a frame, said none could happen, and the
 //! compiled program stopped or panicked.)
 
-use crate::frame::{format_datetime, parse_datetime, AggFn, Column, CrowColumn, CrowFrame, Validity};
+use crate::frame::{AggFn, Column, CrowColumn, CrowFrame, Validity};
 use crate::tensor::CrowTensor;
 
 pub use crate::cell::Cell;
@@ -48,6 +48,7 @@ fn one_row(cell: Cell) -> Result<Column, String> {
         Cell::Float(x) => Ok(Column::Float(vec![x])),
         Cell::Bool(b) => Ok(Column::Bool(vec![b])),
         Cell::Text(s) => Ok(Column::strs(vec![s])),
+        Cell::Moment(m) => Ok(Column::DateTime(vec![m.ms], vec![m.offset])),
         other => Err(format!("with: a column cannot hold {}", other.kind())),
     }
 }
@@ -87,6 +88,16 @@ impl From<Vec<bool>> for Cells {
 impl From<Vec<String>> for Cells {
     fn from(v: Vec<String>) -> Self {
         Cells::all(Column::strs(v))
+    }
+}
+impl From<Vec<crate::moments::Moment>> for Cells {
+    fn from(v: Vec<crate::moments::Moment>) -> Self {
+        Cells::all(Column::DateTime(v.iter().map(|m| m.ms).collect(), v.iter().map(|m| m.offset).collect()))
+    }
+}
+impl From<crate::moments::Moment> for Cells {
+    fn from(m: crate::moments::Moment) -> Self {
+        Cells::One(Cell::Moment(m))
     }
 }
 impl From<CrowTensor> for Cells {
@@ -241,7 +252,7 @@ pub fn fill(f: &CrowFrame, name: &str, value: &Cell) -> Result<CrowFrame, String
         (Column::Float(_), Cell::Int(n)) => n.to_string(),
         (Column::Bool(_), Cell::Bool(b)) => b.to_string(),
         (Column::Str(_), Cell::Text(s)) => s.clone(),
-        (Column::DateTime(..), _) => return Err(format!("fill: column '{}' holds moments, which fill does not give yet", name)),
+        (Column::DateTime(..), Cell::Moment(m)) => m.to_string(),
         (c, v) => return Err(format!("fill: column '{}' is {}, and {} is not", name, c.dtype_name(), v.shown())),
     };
     f.fill_column(name, &text)
@@ -262,42 +273,6 @@ pub fn stats(f: &CrowFrame) -> String {
     f.stats_summary()
 }
 
-/// `datetime[s]`: ISO 8601 text as the moment it names, written back in
-/// its own offset; text that is no time is an error value.
-pub fn datetime(s: &str) -> Result<String, String> {
-    let (millis, offset) = parse_datetime(s).ok_or_else(|| format!("datetime: cannot parse '{}'", s))?;
-    Ok(format_datetime(millis, offset))
-}
-
-/// `tz[s, offset]`: the moment `s` names, written in `offset` — `'UTC'`
-/// or `'+HH:MM'` / `'-HH:MM'`.
-pub fn tz(s: &str, offset: &str) -> Result<String, String> {
-    let (millis, _) = parse_datetime(s).ok_or_else(|| format!("tz: cannot parse '{}'", s))?;
-    let minutes = offset_minutes(offset).ok_or_else(|| format!("tz: invalid offset '{}', use 'UTC' or '+HH:MM'/'-HH:MM'", offset))?;
-    Ok(format_datetime(millis, minutes))
-}
-
-/// `'UTC'` → 0, `'+05:30'` → 330, `'-08:00'` → -480.
-fn offset_minutes(offset: &str) -> Option<i16> {
-    if offset == "UTC" {
-        return Some(0);
-    }
-    let bytes = offset.as_bytes();
-    let sign: i16 = match bytes.first() {
-        Some(b'+') => 1,
-        Some(b'-') => -1,
-        _ => return None,
-    };
-    if bytes.len() != 6 || bytes.get(3) != Some(&b':') {
-        return None;
-    }
-    let h: i16 = offset.get(1..3)?.parse().ok()?;
-    let m: i16 = offset.get(4..6)?.parse().ok()?;
-    if h > 23 || m > 59 {
-        return None;
-    }
-    Some(sign * (h * 60 + m))
-}
 
 #[cfg(test)]
 mod tests {
@@ -320,12 +295,6 @@ mod tests {
         assert_eq!(with(&f, "x", Cells::from(vec![1_i64])).map(|_| ()), Err("with: column 'x' has 1 values but the frame has 3 rows".to_string()));
     }
 
-    #[test]
-    fn a_time_is_parsed_once() {
-        assert_eq!(tz("2026-07-14T13:30:00Z", "+09:00"), Ok("2026-07-14T22:30:00+09:00".to_string()));
-        assert_eq!(tz("2026-07-14T13:30:00Z", "+5:30"), Err("tz: invalid offset '+5:30', use 'UTC' or '+HH:MM'/'-HH:MM'".to_string()));
-        assert_eq!(datetime("not a time"), Err("datetime: cannot parse 'not a time'".to_string()));
-    }
 
     /// Trades over two days and symbols: the frame the groups, pivots and
     /// windows below are read from.

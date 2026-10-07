@@ -64,6 +64,7 @@ fn cell_of(t: &CrowType) -> CrowType {
         CrowType::Int => CrowType::Int,
         CrowType::Float => CrowType::Float,
         CrowType::Bool => CrowType::Bool,
+        CrowType::Moment => CrowType::Moment,
         _ => CrowType::Str,
     }
 }

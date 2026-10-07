@@ -927,7 +927,7 @@ impl Lowerer {
                     // modes receive the 7 of a number's or a text's options,
                     // or the 3 of a moment's time style
                     Some("fmt") if !self.fns.contains_key("fmt") => {
-                        let params: Vec<String> = ["value", "decimals", "commas", "width", "align", "fill", "percent", "time", "tz"]
+                        let params: Vec<String> = ["value", "decimals", "commas", "width", "align", "fill", "percent", "style", "tz"]
                             .iter().map(|s| s.to_string()).collect();
                         let defaults: Vec<Option<Expr>> = vec![
                             None,
@@ -938,7 +938,7 @@ impl Lowerer {
                             Some(Expr::Str(" ".to_string())),
                             Some(Expr::Bool(false)),
                             Some(Expr::Str(String::new())),
-                            Some(Expr::Str("UTC".to_string())),
+                            Some(Expr::Str(String::new())),
                         ];
                         let resolved = self.resolve_args("fmt", &params, &defaults, args)?;
                         // a moment's time style is a row of its own, which
@@ -953,9 +953,22 @@ impl Lowerer {
                             Expr::Call { callee: Box::new(callee), args: resolved[..7].to_vec() }
                         }
                     }
-                    // moment[year, month, day, hour = 0, minute = 0,
-                    // second = 0, tz = 'UTC'] — the tz-aware constructor.
-                    // A moment is a number (epoch seconds).
+                    // moment[text], moment[t, tz = zone], and moment[year,
+                    // month, day, hour = 0, minute = 0, second = 0, tz = 'UTC']:
+                    // one name, three forms, told apart by their arguments
+                    Some("moment") if !self.fns.contains_key("moment") && args.iter().filter(|a| !matches!(a, Expr::Named { .. })).count() == 1 => {
+                        let (positional, options) = self.options("moment", args, &[("tz", Expr::Str(String::new()))])?;
+                        let mut args = positional;
+                        if !matches!(options.first(), Some(Expr::Str(s)) if s.is_empty()) {
+                            args.extend(options);
+                        }
+                        Expr::Call { callee: Box::new(callee), args }
+                    }
+                    // moment[t, zone] is the lowered form of moment[t, tz = zone]:
+                    // lowering it again changes nothing
+                    Some("moment") if !self.fns.contains_key("moment") && args.len() == 2 && !args.iter().any(|a| matches!(a, Expr::Named { .. })) => {
+                        Expr::Call { callee: Box::new(callee), args }
+                    }
                     Some("moment") if !self.fns.contains_key("moment") => {
                         let params: Vec<String> =
                             ["year", "month", "day", "hour", "minute", "second", "tz"]
@@ -968,24 +981,6 @@ impl Lowerer {
                             Some(Expr::Str("UTC".to_string())),
                         ];
                         let resolved = self.resolve_args("moment", &params, &defaults, args)?;
-                        Expr::Call { callee: Box::new(callee), args: resolved }
-                    }
-                    // parts[t, tz = 'UTC'] — calendar components + weekday.
-                    Some("calendar") if !self.fns.contains_key("calendar") => {
-                        let params: Vec<String> =
-                            ["t", "tz"].iter().map(|s| s.to_string()).collect();
-                        let defaults: Vec<Option<Expr>> =
-                            vec![None, Some(Expr::Str("UTC".to_string()))];
-                        let resolved = self.resolve_args("calendar", &params, &defaults, args)?;
-                        Expr::Call { callee: Box::new(callee), args: resolved }
-                    }
-                    // parse_time[text, tz = 'UTC'] — string → moment.
-                    Some("parse_time") if !self.fns.contains_key("parse_time") => {
-                        let params: Vec<String> =
-                            ["text", "tz"].iter().map(|s| s.to_string()).collect();
-                        let defaults: Vec<Option<Expr>> =
-                            vec![None, Some(Expr::Str("UTC".to_string()))];
-                        let resolved = self.resolve_args("parse_time", &params, &defaults, args)?;
                         Expr::Call { callee: Box::new(callee), args: resolved }
                     }
                     // chart[frame, x = 'ts', candles = [], lines = [],
@@ -1639,7 +1634,7 @@ mod tests {
     /// was read the second time as a number's decimals and commas.
     #[test]
     fn lowering_twice_is_lowering_once() {
-        let src = "t = now[]\na = fmt[t, time = 'time', tz = 'America/New_York']\nb = fmt[2.5, decimals = 1]\n";
+        let src = "t = now[]\na = fmt[t, style = 'time', tz = 'America/New_York']\nb = fmt[2.5, decimals = 1]\nc = moment[t, tz = 'UTC']\nd = moment[2026, 7, 14, hour = 9]\ne = moment['2026-07-14']\nf = moment[t]\n";
         let once = lower_src(src).unwrap();
         let twice = lower_program(&once).unwrap();
         assert_eq!(format!("{:?}", once), format!("{:?}", twice));

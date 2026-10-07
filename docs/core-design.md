@@ -272,7 +272,7 @@ fn next_gate_any[]
         return
     session.focus[r.symbol[0]]
     clock.jump[float[r.at[0]]]
-    when = fmt[clock.head, time = 'time', tz = 'America/New_York']
+    when = fmt[clock.head, style = 'time', tz = 'America/New_York']
     session.say['`r.symbol[0]` enters the gate at `when`']
 
 fn skip_symbol[]

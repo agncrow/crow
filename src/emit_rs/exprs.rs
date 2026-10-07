@@ -39,7 +39,7 @@ fn fmt_piece(s: &str) -> String {
 
 /// The builtins whose own value is a result, whatever their arguments.
 const FALLIBLE_BUILTINS: &[&str] = &[
-    "error", "hash", "shell", "request", "find", "input", "read", "write", "mkdir", "ls", "rm", "mv", "cp", "captured", "moment", "parse_time", "env", "json", "encode", "mail", "query",
+    "error", "hash", "shell", "request", "find", "input", "read", "write", "mkdir", "ls", "rm", "mv", "cp", "captured", "moment", "env", "json", "encode", "mail", "query",
     "exec", "sign", "verify", "socket", "send", "recv",
 ];
 
@@ -446,6 +446,9 @@ impl Emitter {
                 _ if mask.is_some() => CrowType::Array(Box::new(CrowType::Bool)),
                 "eq" | "ne" | "gt" | "lt" | "gte" | "lte" | "and" | "or" => CrowType::Bool,
                 "mod" => CrowType::Int,
+                // the seconds between two moments; a moment on or back
+                "sub" if matches!((&lti, &rti), (CrowType::Moment, CrowType::Moment)) => CrowType::Float,
+                "add" | "sub" if matches!(lti, CrowType::Moment) || matches!(rti, CrowType::Moment) => CrowType::Moment,
                 _ => lti.unify(&rti),
             };
             let default_val = result_type.default_rust_value();
@@ -621,7 +624,7 @@ impl Emitter {
     /// is one.
     fn mask(&self, op: &str, l: &str, lt: &CrowType, r: &str, rt: &CrowType) -> Option<String> {
         let cmp = crow_runtime::mask::Cmp::named(op)?;
-        let cell = |t: &CrowType| matches!(t, CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Markup | CrowType::Bool);
+        let cell = |t: &CrowType| matches!(t, CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Markup | CrowType::Bool | CrowType::Moment);
         // a column (true) or a list of cells (false)
         let many = |t: &CrowType| match t {
             CrowType::FrameCol => Some(true),
@@ -786,6 +789,7 @@ impl Emitter {
                 match self.tt(&indices[1]) {
                     CrowType::Int => return format!("{}.get_i64(&{}, {})", o, k, v),
                     CrowType::Float => return format!("{}.get_f64(&{}, {})", o, k, v),
+                    CrowType::Moment => return format!("{}.get_moment(&{}, {})", o, k, v),
                     CrowType::Str => return format!("{}.get_str(&{}, &{})", o, k, v),
                     CrowType::Bool => return format!("{}.get_bool(&{}, {})", o, k, v),
                     _ => {}
@@ -944,6 +948,7 @@ impl Emitter {
         match t {
             CrowType::Int => "get_i64",
             CrowType::Float => "get_f64",
+            CrowType::Moment => "get_moment",
             CrowType::Bool => "get_bool",
             // a column nothing typed: the cell as the value it is
             CrowType::Json => "get_json",
@@ -999,13 +1004,13 @@ impl Emitter {
             let o = if matches!(oty, CrowType::Result(_)) { format!("{}.value", obj) } else { obj.clone() };
             return format!("{}.get(\"{}\").cloned().unwrap_or(serde_json::Value::Null)", o, field);
         }
-        if matches!(field, "year" | "month" | "day" | "hour" | "minute" | "second" | "offset") && matches!(oinner, CrowType::Str) {
-            // a moment that can fail (`tz`'s answer) arrives read once it is
-            // known to have come, as the interpreter reads it: a failed one
-            // stopped with its reason above (the field of the result had
-            // not built)
-            let text = if matches!(oty, CrowType::Result(_)) { format!("({}).value", obj) } else { obj.clone() };
-            return format!("crow_runtime::frame::datetime_field(&{}, \"{}\").unwrap_or(0)", text, field);
+        if matches!(field, "year" | "month" | "day" | "hour" | "minute" | "second" | "weekday" | "offset") && matches!(oinner, CrowType::Moment) {
+            // a moment's field, read in its own zone; a moment that can fail
+            // (`moment[…]`'s answer) arrives read once it is known to have
+            // come, as the interpreter reads it
+            let t = if matches!(oty, CrowType::Result(_)) { format!("({}).value", obj) } else { obj.clone() };
+            let method = if field == "offset" { "offset_minutes" } else { field };
+            return format!("({}).{}()", t, method);
         }
         if matches!(oinner, CrowType::NumArray(..)) {
             let t = if matches!(oty, CrowType::Result(_)) { format!("{}.value.clone()", obj) } else { obj.clone() };

@@ -2100,6 +2100,11 @@ impl CrowLiveState {
         self.get(key).and_then(|v| v.as_f64()).unwrap_or(default)
     }
 
+    /// A moment from state, with default (stored as its instant and offset).
+    pub fn get_moment(&self, key: &str, default: crow_runtime::moments::Moment) -> crow_runtime::moments::Moment {
+        self.get(key).and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or(default)
+    }
+
     /// Get a bool from state, with default.
     pub fn get_bool(&self, key: &str, default: bool) -> bool {
         self.get(key).and_then(|v| v.as_bool()).unwrap_or(default)

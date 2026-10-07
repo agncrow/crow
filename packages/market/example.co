@@ -6,7 +6,7 @@ use sessions, bars
 d = sessions.Day[2026, 11, 25]
 log['`d.year`-`d.month`-`d.day` trades: `sessions.trading[d]`, early close: `sessions.early[d]`']
 n = sessions.next[d]
-closing = fmt[sessions.closes[n], time = 'time', tz = 'America/New_York']
+closing = fmt[sessions.closes[n], style = 'time', tz = 'America/New_York']
 log['next trading day: `n.month`/`n.day`, early close: `sessions.early[n]`, closes at `closing`']
 year = sessions.between[sessions.Day[2026, 1, 1], sessions.Day[2026, 12, 31]]
 log['trading days in 2026: `len[year]`']

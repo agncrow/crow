@@ -10,7 +10,7 @@ unset = env['CROW_NO_SUCH_VAR']
 log[unset.ok]
 log[unset.kind]
 log[env['CROW_NO_SUCH_VAR', 'fallback']]
-log[time[] gt 0.0]
+log[float[now[]] gt 0.0]
 log[len[args[]]]
 log[hash['crow', 'sha256']]
 ```

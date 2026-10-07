@@ -47,6 +47,11 @@ pub(crate) fn json_to_fact(j: &serde_json::Value, declared: &CrowValue) -> CrowV
             Some(x) => CrowValue::ok(Value::Float(x)),
             None => crate::builtins::json_to_crow("", j),
         },
+        // a moment comes back as the text it shows as (its serde form)
+        Value::Moment(_) => match serde_json::from_value::<crow_runtime::moments::Moment>(j.clone()) {
+            Ok(m) => CrowValue::ok(Value::Moment(m)),
+            Err(_) => crate::builtins::json_to_crow("", j),
+        },
         // a parsed value comes back JSON, as it was held
         Value::Json(_) => CrowValue::ok(Value::Json(Box::new(j.clone()))),
         _ => crate::builtins::json_to_crow("", j),
@@ -82,6 +87,10 @@ pub(crate) fn json_to_typed(j: &serde_json::Value, ty: &crate::ir::Ty, template:
             CrowValue::ok(Value::NumArray(Box::new(crow_runtime::tensor::CrowTensor::from_vec(data, vec![n]))))
         }
         (Ty::Float, serde_json::Value::Number(n)) => CrowValue::ok(Value::Float(n.as_f64().unwrap_or(0.0))),
+        (Ty::Moment, serde_json::Value::String(_)) => match serde_json::from_value::<crow_runtime::moments::Moment>(j.clone()) {
+            Ok(m) => CrowValue::ok(Value::Moment(m)),
+            Err(_) => json_to_fact(j, declared),
+        },
         (Ty::Json, _) => CrowValue::ok(Value::Json(Box::new(j.clone()))),
         _ => json_to_fact(j, declared),
     }

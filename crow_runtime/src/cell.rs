@@ -12,6 +12,8 @@ pub enum Cell {
     Float(f64),
     Bool(bool),
     Text(String),
+    /// A moment (moments.rs).
+    Moment(crate::moments::Moment),
     /// JSON's `null`.
     Null,
     /// A JSON list or object: what it is, as a refusal names it.
@@ -43,6 +45,11 @@ impl From<&str> for Cell {
         Cell::Text(s.to_string())
     }
 }
+impl From<crate::moments::Moment> for Cell {
+    fn from(m: crate::moments::Moment) -> Self {
+        Cell::Moment(m)
+    }
+}
 impl From<serde_json::Value> for Cell {
     fn from(v: serde_json::Value) -> Self {
         match v {
@@ -67,6 +74,7 @@ impl Cell {
             Cell::Float(x) => x.to_string(),
             Cell::Bool(b) => b.to_string(),
             Cell::Text(s) => format!("'{}'", s),
+            Cell::Moment(m) => m.to_string(),
             Cell::Null => "null".to_string(),
             Cell::Other(what) => what.to_string(),
         }
@@ -77,6 +85,7 @@ impl Cell {
     pub fn text(&self) -> String {
         match self {
             Cell::Text(s) => s.clone(),
+            Cell::Moment(m) => m.to_string(),
             other => other.shown(),
         }
     }
@@ -88,6 +97,7 @@ impl Cell {
             Cell::Float(_) => "a number",
             Cell::Bool(_) => "a bool",
             Cell::Text(_) => "text",
+            Cell::Moment(_) => "a moment",
             Cell::Null => "null",
             Cell::Other(what) => what,
         }
@@ -103,6 +113,8 @@ pub fn int_of(c: &Cell) -> Result<i64, String> {
         Cell::Float(x) => Ok(*x as i64),
         Cell::Bool(b) => Ok(i64::from(*b)),
         Cell::Text(s) => s.parse::<i64>().map_err(|_| format!("cannot convert '{}' to int", s)),
+        // a moment as a number: whole seconds since the epoch
+        Cell::Moment(m) => Ok(m.whole_seconds()),
         other => Err(format!("cannot convert {} to int", other.shown())),
     }
 }
@@ -110,6 +122,8 @@ pub fn int_of(c: &Cell) -> Result<i64, String> {
 /// `float[x]` of text or a JSON value, as `int_of` reads it.
 pub fn float_of(c: &Cell) -> Result<f64, String> {
     match c {
+        // a moment as a number: seconds since the epoch
+        Cell::Moment(m) => Ok(m.seconds()),
         Cell::Int(n) => Ok(*n as f64),
         Cell::Float(x) => Ok(*x),
         Cell::Bool(b) => Ok(if *b { 1.0 } else { 0.0 }),
@@ -129,6 +143,17 @@ pub fn int_of_bool(b: bool) -> i64 {
 }
 
 /// `int[n]` of an int: itself.
+/// `int[t]` of a moment: its whole epoch seconds (`float[t]` keeps the
+/// fraction); neither can fail, where `int[text]` can.
+pub fn int_of_moment(m: crate::moments::Moment) -> i64 {
+    m.whole_seconds()
+}
+
+/// `float[t]` of a moment: its epoch seconds, fraction and all.
+pub fn float_of_moment(m: crate::moments::Moment) -> f64 {
+    m.seconds()
+}
+
 pub fn int_of_int(n: i64) -> i64 {
     n
 }
@@ -199,6 +224,11 @@ impl Words for Vec<serde_json::Value> {
                 other => Err(format!("join[] takes a list of text, and item {} is {}", i, if other.is_array() { "a list" } else { "a map" })),
             })
             .collect()
+    }
+}
+impl Words for Vec<crate::moments::Moment> {
+    fn words(&self) -> Result<Vec<String>, String> {
+        Ok(self.iter().map(|m| m.to_string()).collect())
     }
 }
 impl Words for crate::frame::CrowColumn {

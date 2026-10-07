@@ -18,7 +18,7 @@ fn sign[claims, secret]
         return error['a token\'s claims are a map or a record of them', 'auth']
     if type[j] ne 'map'
         return error['a token\'s claims are a map or a record of them', 'auth']
-    issued = int[time[]]
+    issued = int[now[]]
     added = ''
     if not has[j, 'iat']
         added = '"iat":`issued`'
@@ -78,7 +78,7 @@ fn verify[token, secret]
     if not claims.ok
         return error[claims.reason, 'auth']
     if has[claims, 'exp']
-        if float[claims.exp] lt time[]
+        if float[claims.exp] lt float[now[]]
             return error['the token has expired', 'auth']
     return claims
 

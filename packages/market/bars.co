@@ -98,12 +98,12 @@ fn table[times, o, hi, lo, c, vol, n, pv]
     return out
 
 --- the bars that start in a part of the trading day: 'early', 'regular'
---- or 'late' (sessions.phase); a start no calendar reads (not a finite
---- moment) is in none
+--- or 'late' (sessions.phase); a bar's start is epoch seconds, read as
+--- a moment; a start no calendar reads is in none
 fn during[bars, part]
     keep = []
     for t in bars.ts
-        p = sessions.phase[t]
+        p = sessions.phase[moment[t]]
         if p.ok
             keep = push[keep, p eq part]
         else

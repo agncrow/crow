@@ -8,7 +8,7 @@ pub struct FrameModule;
 
 pub(crate) const FRAME_FUNCTIONS: &[&str] = &[
     "load", "save", "select", "filter", "sort", "group", "join", "stack",
-    "head", "tail", "fill", "unique", "rename", "stats", "datetime", "tz",
+    "head", "tail", "fill", "unique", "rename", "stats",
     "new", "with", "pivot", "window",
 ];
 

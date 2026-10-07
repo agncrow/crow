@@ -1448,7 +1448,6 @@ log[s]                     --- [1,2,3]
 | `rand[]` | Random float in [0, 1) from the program's RNG; `seed[n]` (math) makes every draw repeatable, in both modes |
 | `rand[n]` | Random int between 0 and n-1 (n must be positive) |
 | `rand[min, max]` | Random int between min and max (inclusive) |
-| `time[]` | Current unix timestamp as float (seconds) |
 | `sleep[ms]` | Sleep for ms milliseconds (int) or seconds (float); a negative time stops the program (in both modes it had wrapped to a sleep without end, or panicked) |
 | `env[name]` | Get environment variable (error-value if not set) |
 | `env[name, default]` | Get environment variable, return default if not set — as text, as the variable is (`env['PORT', 3000]` is `'3000'` when `PORT` is unset; the interpreter had answered the int) |
@@ -1562,38 +1561,58 @@ sub['hello world', 'world', 'crow']  --- 'hello crow'
 
 ### Moments
 
-A moment is a number: seconds since the Unix epoch, as a float. Comparison
-and arithmetic therefore come free — `end - start` *is* elapsed seconds,
-`t lt open - 10.0` *is* a staleness check — and no separate duration or
-date type exists.
+A moment is a kind of its own: an instant, and the offset it was written
+in. It is the same kind in both modes and from every source — `now[]`,
+`moment[…]`, a frame's moment column, a database's — so one vocabulary
+reads it, moves it, renders it and computes with it, and no program meets
+a time as a float here and as text there.
 
 | Function | Description |
 |----------|-------------|
-| `now[]` | The current moment (epoch seconds) — in a live program, the moment the current event began |
-| `moment[y, m, d, hour = 0, minute = 0, second = 0, tz = 'UTC']` | Build a moment from calendar components in a named timezone |
-| `calendar[t, tz = 'UTC']` | Calendar components of a moment: `year month day hour minute second weekday` (weekday 1 = Monday) |
-| `parse_time[text, tz = 'UTC']` | Parse RFC3339, or `'YYYY-MM-DD[ HH:MM[:SS]]'` read in the named zone |
-| `fmt[t, time = 'iso' \| 'date' \| 'time' \| 'datetime', tz = 'UTC']` | Render a moment; a style or a zone it does not know is an error value of kind `'time'` (compiled, it had been the text `[fmt: …]`), so the call can fail as any moment builtin can |
+| `now[]` | The current moment, in UTC — in a live program, the moment the current event began |
+| `moment[text]`, `moment[text, tz = zone]` | A moment read from ISO 8601 text — a date, a date and time, with `Z`, an offset or neither, a fraction kept to the millisecond; a space may part the date and the time, and seconds may be left out. Text without an offset is UTC's, or the named zone's; an offset in the text wins. Text that is no time is an error value of kind `'time'` |
+| `moment[year, month, day, hour = 0, minute = 0, second = 0, tz = 'UTC']` | A moment from its parts in a zone, the zone's offset at that instant kept; a date that does not exist, a time in a DST gap, or a zone it does not know is an error value of kind `'time'` |
+| `moment[t, tz = zone]` | The same instant in another zone — an IANA name (`'America/New_York'`), an offset (`'+09:00'`) or `'UTC'`; a zone it does not know is an error value of kind `'time'` |
+| `moment[seconds]`, `moment[t]` | The moment `seconds` after the epoch, in UTC (the reverse of `float[t]`); a moment is itself, so `moment[x]` is the moment of a number, of text or of a moment alike |
+| `t.year`, `.month`, `.day`, `.hour`, `.minute`, `.second`, `.weekday`, `.offset` | Its fields, read in its own zone, as ints; `weekday` 1 is Monday and 7 Sunday; `offset` the minutes east of UTC it was written in |
+| `str[t]` | Its ISO 8601 text — `2026-07-14T13:30:00Z`, `2026-07-14T09:30:00-04:00`, a bare date at midnight UTC, a fraction where there is one — which interpolation, `log`, a CSV and JSON write |
+| `fmt[t, style = 'iso' \| 'date' \| 'time' \| 'datetime', tz = zone]` | The moment rendered in a style, in its own zone or in `tz`; a style or a zone it does not know is an error value of kind `'time'` (`fmt[t]` is `str[t]`) |
+| `float[t]`, `int[t]` | Seconds since the epoch, as a number — whole for `int` |
+| `t + s`, `t - s` | The moment `s` seconds on or back, in its zone (`s` an int or a float) |
+| `t2 - t1` | The seconds between two moments, a float |
+| `t1 lt t2`, `eq`, `ne`, `gt`, `gte`, `lte` | Compared by instant: two moments of one instant are equal whatever zone each was written in |
+| `min[a, b]`, `max[a, b]` | The earlier of two moments, the later |
 
 ```
 open_bell = moment[2026, 7, 14, hour = 9, minute = 30, tz = 'America/New_York']
-log[fmt[open_bell, time = 'datetime', tz = 'America/New_York']]   --- 2026-07-14 09:30:00
-log[fmt[open_bell, time = 'iso']]                                 --- 2026-07-14T13:30:00Z
+log[open_bell]                                   --- 2026-07-14T09:30:00-04:00
+log[fmt[open_bell, style = 'datetime']]          --- 2026-07-14 09:30:00
+log[moment[open_bell, tz = 'UTC'].hour]          --- 13
+log[open_bell - moment['2026-07-14T13:00:00Z']]  --- 1800
 
---- subtraction is elapsed seconds; comparison is comparison
+--- subtraction is the seconds between; comparison is comparison
 if print_time lt open_bell - 10.0
     log['stale print — not driving price']
-
-c = calendar[open_bell, tz = 'UTC']
-log[c.hour]                                                       --- 13
 ```
+
+A moment multiplied, divided or taken a remainder of, added to a moment,
+or compared with a number or text is refused before the program runs: a
+moment adds or subtracts seconds, subtracts a moment, and compares with a
+moment. A duration is a number of seconds, as `sleep`, `later` and every
+timeout take one; there is no duration kind. A list of moments is a list.
+A moment handed to `with` makes a moment column (`datetime`, as `.dtypes`
+names it), `fill` fills one with a moment, a moment column's cell read one
+at a time is a moment — from a file, a query or `with` alike — and a moment
+column compares with a moment: `filter[df, df.at gt open_bell]`.
 
 **One moment per event.** In a script `now[]` is the clock at the call. In a live program it is the moment the current event began — a click or a change from the page, a render, a `refresh` tick, a `later` schedule — everywhere inside it: a handler and every helper it calls, a render and every view and derivation in it. Time advances between events, never inside one, so `base, anchor = head, now[]` reads one clock twice and gets one answer, and two rows a handler stamps with `now[]` share a stamp. In the test harness the clock is the test's: it starts at the moment the first `app[…]` opened and moves only when the test moves it with `change[a, 'now', t]`.
 
-Timezones are IANA names (`'America/New_York'`, `'Europe/London'`, `'UTC'`)
-and are **always explicit** — the default everywhere is UTC. Invalid dates,
-unknown zones, DST gaps, and unparseable strings return error values with
-`kind = 'time'`.
+Zones are IANA names (`'America/New_York'`, `'Europe/London'`) or offsets
+(`'+09:00'`, `'UTC'`) and are **always explicit** — the default everywhere
+is UTC. Invalid dates, unknown zones, DST gaps and text that is no time are
+error values of kind `'time'`.
+
+**Design Note: a moment is one kind.** Considered: the three moments Crow had grown — the core's, a float of epoch seconds with `calendar`, `parse_time` and `fmt[t, time = …]`; the frame module's, ISO text with `datetime`, `tz` and fields read from the text; and a database column's, a float again — so that `df.at[0]` was text from a file and a float from a query, and the functions of one refused the other. Decided (Vijay, 2026-10-06): one kind, carrying its instant and the offset it was written in, so `t.year` is the year it was written in and `moment[t, tz = …]` moves it; one name for each thing a program does with a moment — `now`, `moment`, the fields, `str`, `fmt` and the operators — and the rest parameters. So `calendar`, `parse_time`, `datetime`, `tz` and the duplicate `time[]` are gone, outright, and `fmt`'s `time =` option is `style =`: the one renderer's option for one more kind, not a renderer per kind. Rejected: a float everywhere, which loses the zone a text was written in; text everywhere, on which nothing computes; a duration kind, where seconds already serve. `float[t]` and `moment[seconds]` are the bridges for a program that keeps a time as a number, as finch's simulated clock does.
 
 ### Freshness: captured
 
@@ -1682,7 +1701,7 @@ where the real complexity lives, so they are named-argument functions
 absent by design: "correct on my laptop, wrong on the UTC server" is the
 classic deploy-day bug, and a language that makes the timezone explicit
 never has it. **Deleted in exchange:** `elapsed` (subtraction), `date`
-(subsumed by `moment`), `today` (`fmt[now[], time = 'date']`) — all three
+(subsumed by `moment`), `today` (`fmt[now[], style = 'date']`) — all three
 now raise teaching errors naming their replacement.
 
 
@@ -2412,8 +2431,8 @@ Import with `use frame`. Column-oriented DataFrames for tabular data. See `docs/
 | `unique[frame, col]` | The column's distinct present cells, first seen first, in the column's own kind (an int column's are ints): `unique[df, 'symbol']` |
 | `rename[frame, old, new]` | Rename a column: `rename[df, 'salary', 'pay']` |
 | `stats[frame]` | Summary statistics |
-| `datetime[s]` | Parse ISO 8601 datetime; text that is no time is an error value of kind `'time'` |
-| `tz[d, offset]` | Convert timezone: `tz[d, '+09:00']`; the offset is `'UTC'` or `'+HH:MM'` / `'-HH:MM'`, and text or an offset that is no time is an error value of kind `'time'`. A moment's fields read from the text: `d.year`, `.month`, `.day`, `.hour`, `.minute`, `.second`, `.offset` (of `tz`'s answer too, once it is known to have come). A cell of a moment column read one at a time (`df.at[0]`) is its ISO 8601 text, in both modes (compiled, it had been seconds) |
+
+A `datetime` column holds moments (see Moments): `with` makes one from a list of moments or one repeated, `fill` fills one with a moment, a cell read one at a time is a moment, a mask compares the column with a moment, and `load` reads one from ISO 8601 text and `save` writes it back as such.
 
 Properties: `.shape`, `.columns`, `.dtypes`. Column access: `df.age`. `len[df]` returns the row count. Aggregation names for `group`: `'sum'`, `'mean'`, `'min'`, `'max'`, `'count'`. Join types: `'inner'` (the default), `'left'`, `'right'`, `'outer'`.
 
@@ -2451,7 +2470,7 @@ rich_old = filter[df, df.age gt 50 and df.salary gt 100000]
 others = filter[df, not (df.name eq 'alice')]
 ```
 
-Each cell is compared with the value as two values compare (see Comparison): numbers by value, exactly — NaN holds only `ne` — text by its characters and ordered by character code, bools equal or not. A value of another kind than the cells — `df.name eq 2` of a column of text — and an order between kinds with none — `gt` on a column of bools — are refused where the column's type is known, and stop the program where it shows only as it runs (a file `load` reads). Missing values compare as `false` for every operator, `ne` included — they are excluded by any filter, and `not (df.age gt 50)` is what keeps them. A list compared with one value is a mask the same way. (Compiled, a missing or NaN cell had been `false` for `ne`, `eq` had been nearness within 2⁻⁵², a column of text had been parsed as numbers and a column of bools had compared as nothing; the interpreter had counted a missing cell as `ne` and stopped on an order of text; a list of values that can fail, compared with one value, had not built.)
+Each cell is compared with the value as two values compare (see Comparison): numbers by value, exactly — NaN holds only `ne` — text by its characters and ordered by character code, bools equal or not, moments by instant. A value of another kind than the cells — `df.name eq 2` of a column of text — and an order between kinds with none — `gt` on a column of bools — are refused where the column's type is known, and stop the program where it shows only as it runs (a file `load` reads). Missing values compare as `false` for every operator, `ne` included — they are excluded by any filter, and `not (df.age gt 50)` is what keeps them. A list compared with one value is a mask the same way. (Compiled, a missing or NaN cell had been `false` for `ne`, `eq` had been nearness within 2⁻⁵², a column of text had been parsed as numbers and a column of bools had compared as nothing; the interpreter had counted a missing cell as `ne` and stopped on an order of text; a list of values that can fail, compared with one value, had not built.)
 
 **A filter's predicate is computed in one pass.** `filter[df, df.age gt 50 and df.name ne 'bob']` — a predicate that compares the frame's own columns with values that only read, asks a column's `.ok`, and combines those with `and`, `or` and `not` — reads no column into a list and makes no mask per comparison: the rows are decided block by block, across the cores for a large frame, each cell as its comparison decides it. The rows kept are the mask's, and a column the frame lacks or an order between kinds with none stops with the operator's words at the first comparison that meets it. The same in both modes.
 
@@ -3584,7 +3603,7 @@ A bare boolean line is a truth to check. `assert` is for steps inside
 scenarios, and reports both operands on failure. Preconditions are plain
 `if`s. Bindings are plain assignments. A test body is ordinary Crow.
 
-A test block sees declarations (functions, views, structs, imports) and two kinds of top-level assignment: literal values, which are reactive-state defaults, and connections (`db.connect[...]`), which are resources a render-time view needs. Computed top-level values are invisible, as inside any function.
+A test block sees declarations (functions, views, structs, imports) and two kinds of top-level assignment: literal values — a number, text, a bool, a list or a map of them, a frame built from them, a moment of them (`moment[0.0]`, `moment['2026-01-01']`) — which are reactive-state defaults, and connections (`db.connect[...]`), which are resources a render-time view needs. Computed top-level values are invisible, as inside any function.
 
 Live apps are tested through a headless session — `app[view]` opens one,
 `click[a, handler]` runs a handler on it, `a.name` reads reactive state,

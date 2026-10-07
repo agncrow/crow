@@ -269,8 +269,8 @@ mod tests {
     #[test]
     fn time_ticks_align_to_ny_half_hours() {
         // The practice window: 06:55 → 09:30 ET on 2026-07-14
-        let t0 = crate::moments::moment(2026, 7, 14, 6, 55, 0.0, "America/New_York").unwrap();
-        let t1 = crate::moments::moment(2026, 7, 14, 9, 30, 0.0, "America/New_York").unwrap();
+        let t0 = crate::moments::Moment::from_parts(2026, 7, 14, 6, 55, 0.0, "America/New_York").unwrap().seconds();
+        let t1 = crate::moments::Moment::from_parts(2026, 7, 14, 9, 30, 0.0, "America/New_York").unwrap().seconds();
         let ticks = time_ticks(t0, t1, "America/New_York", 6).unwrap();
         let labels: Vec<&str> = ticks.iter().map(|(_, l)| l.as_str()).collect();
         assert_eq!(labels, vec!["07:00", "07:30", "08:00", "08:30", "09:00", "09:30"]);
@@ -279,8 +279,8 @@ mod tests {
     #[test]
     fn time_ticks_survive_a_dst_gap() {
         // Spring forward 2026-03-08 in New York: 02:00–03:00 does not exist.
-        let t0 = crate::moments::moment(2026, 3, 8, 1, 0, 0.0, "America/New_York").unwrap();
-        let t1 = crate::moments::moment(2026, 3, 8, 4, 0, 0.0, "America/New_York").unwrap();
+        let t0 = crate::moments::Moment::from_parts(2026, 3, 8, 1, 0, 0.0, "America/New_York").unwrap().seconds();
+        let t1 = crate::moments::Moment::from_parts(2026, 3, 8, 4, 0, 0.0, "America/New_York").unwrap().seconds();
         let ticks = time_ticks(t0, t1, "America/New_York", 6).unwrap();
         assert!(!ticks.is_empty());
         // No tick may claim a wall-clock label inside the gap

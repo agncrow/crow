@@ -24,7 +24,7 @@ pub(crate) const CORE_RESERVED: &[&str] = &[
     "args", "input",
     "read", "write",
     "exists", "mkdir", "ls", "rm", "mv", "cp",
-    "rand", "time", "sleep", "env", "exit", "halt",
+    "rand", "sleep", "env", "exit", "halt",
     "json", "encode", "decode",
     "error",
     "shell",
@@ -33,7 +33,7 @@ pub(crate) const CORE_RESERVED: &[&str] = &[
     "find", "matches", "sub", "any", "all",
     "later", "running", "notice",
     "test",
-    "now", "moment", "calendar", "parse_time", "captured", "chart",
+    "now", "moment", "captured", "chart",
     "cpu", "gpu", "nodes",
     "grad",
 ];
@@ -87,7 +87,7 @@ pub(crate) const BUILTINS: &[&str] = &[
     // File system
     "exists", "mkdir", "ls", "rm", "mv", "cp",
     // System
-    "rand", "time", "sleep", "env", "exit", "halt",
+    "rand", "sleep", "env", "exit", "halt",
     // JSON
     "json", "encode", "decode",
     // Error
@@ -103,7 +103,7 @@ pub(crate) const BUILTINS: &[&str] = &[
     "sign_in", "sign_out", "__reader", "__known", "__fmt_time", "download",
     "test",
     // Date/time
-    "now", "moment", "calendar", "parse_time", "captured", "chart",
+    "now", "moment", "captured", "chart",
     // Resource
     "cpu", "gpu", "nodes",
     // Autograd
@@ -576,6 +576,25 @@ impl<'a> Lowerer<'a> {
         // compiled program had parsed it, where the interpreter made each
         // item an error)
         let is_num_like = |t: &CrowType| matches!(t, CrowType::Int | CrowType::Float | CrowType::NumArray(..) | CrowType::Sparse | CrowType::FrameCol);
+        // a moment: on or back by seconds, and the seconds between two
+        let moment = |t: &CrowType| matches!(t, CrowType::Moment);
+        if moment(&lt) || moment(&rt) {
+            // (a side nothing has typed yet — a parameter typed by its
+            // callers — is judged where it is known)
+            if matches!(lt, CrowType::Unknown) || matches!(rt, CrowType::Unknown) {
+                return;
+            }
+            let number = |t: &CrowType| matches!(t, CrowType::Int | CrowType::Float);
+            let allowed = match op {
+                BinOp::Add => (moment(&lt) && number(&rt)) || (number(&lt) && moment(&rt)),
+                BinOp::Sub => moment(&lt) && (number(&rt) || moment(&rt)),
+                _ => false,
+            };
+            if !allowed {
+                self.refuse("a moment adds or subtracts seconds (t + 60), subtracts a moment (t2 - t1, the seconds between), and compares with a moment — nothing else".to_string());
+            }
+            return;
+        }
         if !is_num_like(&lt) || !is_num_like(&rt) {
             let op_str = match op {
                 BinOp::Add => "+",
@@ -636,7 +655,7 @@ impl<'a> Lowerer<'a> {
             return;
         }
         let (Some(a), Some(b)) = (order_side(l), order_side(r)) else { return };
-        let scalar = |k: &str| matches!(k, "a number" | "text" | "a bool");
+        let scalar = |k: &str| matches!(k, "a number" | "text" | "a bool" | "a moment");
         let (x, y) = match (&a, &b) {
             // two lists: an order has none, and equality is whole, by the
             // items each holds (a matrix's are its rows)
@@ -656,7 +675,7 @@ impl<'a> Lowerer<'a> {
             (OrderSide::One(x), OrderSide::Many(y)) => (x.to_string(), many_words(y)),
             (OrderSide::One(x), OrderSide::One(y)) => (x.to_string(), y.to_string()),
         };
-        let compares = x == y && if cmp.orders() { matches!(x.as_str(), "a number" | "text") } else { true };
+        let compares = x == y && if cmp.orders() { matches!(x.as_str(), "a number" | "text" | "a moment") } else { true };
         if !compares {
             self.refuse(crow_runtime::mask::incomparable(cmp, &x, &y));
         }
@@ -1028,7 +1047,7 @@ impl<'a> Lowerer<'a> {
             // the time builtins the moment replaced (spec, Design Note on moments)
             "date" => Some("date[] was removed - a moment is a number: moment[y, m, d] (hour/minute/second/tz are named args)"),
             "elapsed" => Some("elapsed[] was removed - subtract moments: end - start is seconds"),
-            "today" => Some("today[] was removed - use fmt[now[], time = 'date'] (tz = ... for a zone)"),
+            "today" => Some("today[] was removed - use fmt[now[], style = 'date'] (tz = ... for a zone)"),
             _ => None,
         };
         if let Some(msg) = removed {
@@ -1219,7 +1238,6 @@ fn builtin_arity_ok(name: &str, argc: usize) -> bool {
         "map" => argc == 0,
         "args" => argc == 0,
         "input" => argc <= 1,
-        "time" => argc == 0,
         "sleep" => argc == 1,
         "env" => argc == 1 || argc == 2,
         "exit" => argc <= 1,
@@ -1630,7 +1648,7 @@ mod tests {
     fn test_wrong_arg_count_builtin() {
         assert!(check_source("x = min[1]\n").unwrap_err().contains("min[] takes 2 arguments, got 1"));
         // a kind no row takes is refused before either mode runs
-        assert!(check_source("x = min['a', 'b']\n").unwrap_err().contains("min[] takes an int and an int or a number and a number, got text and text"));
+        assert!(check_source("x = min['a', 'b']\n").unwrap_err().contains("min[] takes an int and an int, a number and a number or a moment and a moment, got text and text"));
         assert!(check_source("x = trim[3]\n").unwrap_err().contains("trim[] takes text, got an int"));
     }
 
@@ -1890,6 +1908,7 @@ fn order_side(t: &Ty) -> Option<OrderSide> {
         Ty::Int | Ty::Float => OrderSide::One("a number"),
         Ty::Str | Ty::Markup => OrderSide::One("text"),
         Ty::Bool => OrderSide::One("a bool"),
+        Ty::Moment => OrderSide::One("a moment"),
         Ty::Result(x) => return order_side(x),
         Ty::Tensor(..) => OrderSide::Many("a number"),
         Ty::List(item) | Ty::Column(item) => match order_side(item)? {

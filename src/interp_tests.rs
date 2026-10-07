@@ -3119,19 +3119,22 @@ mod tests {
         assert!(result.is_err(), "bare column name should be an undefined variable");
     }
     #[test]
-    fn test_now_is_a_number() {
+    fn test_now_is_a_moment() {
         let val = get_var("t = now[]", "t");
         match &val.value {
-            Value::Float(f) => assert!(*f > 1_700_000_000.0, "epoch seconds, got {}", f),
-            other => panic!("now[] must be a number, got {:?}", other),
+            Value::Moment(m) => assert!(m.seconds() > 1_700_000_000.0, "epoch seconds, got {}", m),
+            other => panic!("now[] must be a moment, got {:?}", other),
         }
+        // the seconds of a moment are a number; the moment itself is not
+        let val = get_var("t = float[now[]]", "t");
+        assert!(matches!(val.value, Value::Float(f) if f > 1_700_000_000.0), "{:?}", val.value);
     }
 
     #[test]
     fn test_moment_calendar_and_arithmetic() {
         // 09:30 New York on 2026-07-14 reads as 13:30 UTC — same instant.
         let val = get_var(
-            "t = moment[2026, 7, 14, hour = 9, minute = 30, tz = 'America/New_York']\nc = calendar[t, tz = 'UTC']\nh = c.hour",
+            "t = moment[2026, 7, 14, hour = 9, minute = 30, tz = 'America/New_York']\nc = moment[t, tz = 'UTC']\nh = c.hour",
             "h",
         );
         assert_eq!(format!("{}", val.value), "13");
@@ -3145,9 +3148,9 @@ mod tests {
 
     #[test]
     fn test_parse_time_and_fmt_time() {
-        let val = get_var("t = parse_time['2026-07-14T04:09:00-04:00']\ns = fmt[t, time = 'iso']", "s");
+        let val = get_var("t = moment['2026-07-14T04:09:00-04:00']\ns = fmt[t, style = 'iso', tz = 'UTC']", "s");
         assert_eq!(format!("{}", val.value), "2026-07-14T08:09:00Z");
-        let ny = get_var("t = parse_time['2026-07-14 12:00:00']\ns = fmt[t, time = 'datetime', tz = 'America/New_York']", "s");
+        let ny = get_var("t = moment['2026-07-14 12:00:00']\ns = fmt[t, style = 'datetime', tz = 'America/New_York']", "s");
         assert_eq!(format!("{}", ny.value), "2026-07-14 08:00:00");
     }
 
@@ -3391,11 +3394,22 @@ mod tests {
         assert!(issues.is_empty(), "harness issues: {:?}", issues);
     }
 
-    const STAMPS: &str = "use web, ui\nstamp = 0.0\nfn mark[]\n    stamp = now[]\nview v[]\n    return stack[p['`stamp`'], button['Mark', click = mark]]\n";
+    const STAMPS: &str = "use web, ui\nstamp = 0.0\nfn mark[]\n    stamp = float[now[]]\nview v[]\n    return stack[p['`stamp`'], button['Mark', click = mark]]\n";
+
+    /// A fact holds a moment as it holds a number: declared from a
+    /// moment of literals (the harness carries it as it carries `0.0`),
+    /// stamped by a handler from the clock the test sets, read back as a
+    /// moment (a moment is one kind, spec §11)
+    #[test]
+    fn a_fact_holds_a_moment() {
+        let src = "use web, ui\nstamp = moment[0.0]\nfn mark[]\n    stamp = now[]\nview v[]\n    return stack[p['at `stamp`'], button['Mark', click = mark]]\n";
+        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    assert[contains[html[a], 'at 1970-01-01']]\n    change[a, 'now', 1000.5]\n    click[a, mark]\n    assert[a.stamp eq moment[1000.5]]\n    assert[str[a.stamp] eq '1970-01-01T00:16:40.500Z']\n    assert[a.stamp - moment[0.0] eq 1000.5]\n    assert[contains[html[a], 'at 1970-01-01T00:16:40.500Z']]\n", src));
+        assert!(issues.is_empty(), "harness issues: {:?}", issues);
+    }
 
     #[test]
     fn the_test_sets_the_moment_a_handler_reads() {
-        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    change[a, 'now', 1000.5]\n    click[a, mark]\n    assert[a.stamp eq 1000.5]\n    assert[now[] eq 1000.5]\n", STAMPS));
+        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    change[a, 'now', 1000.5]\n    click[a, mark]\n    assert[a.stamp eq 1000.5]\n    assert[float[now[]] eq 1000.5]\n", STAMPS));
         assert!(issues.is_empty(), "harness issues: {:?}", issues);
     }
 

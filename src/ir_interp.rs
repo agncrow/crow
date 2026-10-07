@@ -1867,7 +1867,7 @@ impl IrInterp {
                     return Ok(err);
                 }
                 Ok(match vals[0].captured() {
-                    Some(t) => CrowValue::ok(Value::Float(t)),
+                    Some(t) => CrowValue::ok(Value::Moment(crow_runtime::moments::Moment::of_seconds(t))),
                     None => CrowValue::error_with_kind(
                         "this value was computed here, not read from outside - it has no capture moment",
                         "no_capture",
@@ -2916,7 +2916,8 @@ impl IrInterp {
                     let t = match &value.value {
                         Value::Float(f) => *f,
                         Value::Int(n) => *n as f64,
-                        other => return Err(format!("change[a, 'now', t] takes a moment — a number of seconds — not {}", other.type_name())),
+                        Value::Moment(m) => m.seconds(),
+                        other => return Err(format!("change[a, 'now', t] takes a moment, not {}", other.type_name())),
                     };
                     self.session_clock.insert(id, t);
                     crow_runtime::moments::hold(Some(t));

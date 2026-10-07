@@ -2083,8 +2083,8 @@ fn test_fmt_emits_kernel_call() {
     let rust = transpile("x = fmt['hi', width = 4]\nlog[x]\n");
     assert!(rust.contains("crow_runtime::display::fmt_value("), "string fmt should call the same kernel\n{}", rust);
     // a moment's time style is its own row, able to fail (kind 'time')
-    let rust = transpile("t = now[]\nx = fmt[t, time = 'iso']\nlog[x]\n");
-    assert!(rust.contains("crow_runtime::moments::fmt_moment("), "{}", rust);
+    let rust = transpile("t = now[]\nx = fmt[t, style = 'iso']\nlog[x]\n");
+    assert!(rust.contains("crow_runtime::moments::fmt_time_of("), "{}", rust);
     assert!(rust.contains("kind: \"time\""), "{}", rust);
 }
 

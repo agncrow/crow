@@ -342,12 +342,12 @@ impl Emitter {
                 self.needs_crow_runtime = true;
                 if matches!(ty0, CrowType::Result(_)) {
                     format!(
-                        "{{ let _v = &({}); if !_v.ok {{ CrowResult {{ ok: false, value: 0.0, reason: _v.reason.clone(), kind: _v.kind.clone(), trace: _v.trace.clone(), captured: 0.0 }} }} else if _v.captured > 0.0 {{ CrowResult {{ ok: true, value: _v.captured, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }} }} else {{ CrowResult {{ ok: false, value: 0.0, reason: \"this value was computed here, not read from outside - it has no capture moment\".to_string(), kind: \"no_capture\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
+                        "{{ let _v = &({}); if !_v.ok {{ CrowResult {{ ok: false, value: crow_runtime::moments::Moment::default(), reason: _v.reason.clone(), kind: _v.kind.clone(), trace: _v.trace.clone(), captured: 0.0 }} }} else if _v.captured > 0.0 {{ CrowResult {{ ok: true, value: crow_runtime::moments::Moment::of_seconds(_v.captured), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }} }} else {{ CrowResult {{ ok: false, value: crow_runtime::moments::Moment::default(), reason: \"this value was computed here, not read from outside - it has no capture moment\".to_string(), kind: \"no_capture\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
                         a[0]
                     )
                 } else {
                     format!(
-                        "{{ let _ = {}; CrowResult {{ ok: false, value: 0.0, reason: \"this value was computed here, not read from outside - it has no capture moment\".to_string(), kind: \"no_capture\".to_string(), trace: vec![], captured: 0.0 }} }}",
+                        "{{ let _ = {}; CrowResult {{ ok: false, value: crow_runtime::moments::Moment::default(), reason: \"this value was computed here, not read from outside - it has no capture moment\".to_string(), kind: \"no_capture\".to_string(), trace: vec![], captured: 0.0 }} }}",
                         a[0]
                     )
                 }
@@ -514,6 +514,7 @@ impl Emitter {
                     match t {
                         CrowType::Int => "\"int\"".to_string(),
                         CrowType::Float => "\"float\"".to_string(),
+                        CrowType::Moment => "\"moment\"".to_string(),
                         CrowType::Str | CrowType::Markup => "\"str\"".to_string(),
                         CrowType::Bool => "\"bool\"".to_string(),
                         // a frame's column is the list of its cells there
