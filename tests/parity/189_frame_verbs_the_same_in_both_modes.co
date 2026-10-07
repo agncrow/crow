@@ -1,0 +1,100 @@
+--- The frame verbs pandas cannot hold (tests/parity/185 holds the rest):
+--- a sample drawn by the seeded generator, kept in the frame's order; a
+--- column cast to text and text read back as moments; buckets of moments
+--- in a zone, aligned to the local midnight; a span window on numbers;
+--- an as-of join on an unsorted left frame; distinct rows with a missing
+--- key; where over text and moments — each the same in both modes (what
+--- a misuse stops with is held by the runtime's own tests).
+use frame, math
+
+seed[11]
+write['verbs_189.csv', 'sym,day,qty,px,at,note\nAAPL,1,100,191.5,2026-07-14T09:30:00-04:00,ok\nMSFT,1,50,415.2,2026-07-14T09:31:00-04:00,late\nAAPL,2,,193.1,2026-07-14T23:35:00-04:00,Partial\nAAPL,1,40,190.0,2026-07-15T00:36:30-04:00,\nMSFT,2,70,410.0,2026-07-15T10:40:00-04:00,ok\nNVDA,1,10,900.0,2026-07-16T01:00:00-04:00,review\n']
+t = frame.load['verbs_189.csv']
+rm['verbs_189.csv']
+
+--- a sample is n rows of the frame, in its order, the same draw in both modes
+s = sample[t, 3]
+log[len[s]]
+log[s.sym]
+log[sample[t, 0].columns]
+log[len[sample[t, 6]]]
+
+--- casts: a column's cells as text, and text read back as moments
+texts = str[t.at]
+log[texts]
+log[str[t.qty]]
+back = moment[texts]
+log[back]
+log[back[2] eq t.at[2]]
+log[back eq t.at]
+log[int[t.note].ok]
+log[float[str[t.px]]]
+
+--- buckets in the moment's own zone: a day starts at the local midnight
+log[bucket[t.at, 86400]]
+log[bucket[t.at, 3600]]
+log[bucket[moment['2026-07-14T23:35:00-04:00'], 86400]]
+log[bucket[moment['2026-07-14T23:35:00Z'], 86400]]
+days = group[with[t, 'day_at', bucket[t.at, 86400]], 'day_at', ['px', 'first'], ['px', 'last'], ['qty', 'count']]
+log[days.day_at]
+log[days.px_first]
+log[days.qty_count]
+
+--- a span measured on numbers, on the whole frame and by symbol
+by_day = sort[t, 'day']
+log[window[by_day, 'px', 'sum', span = 1, on = 'day']]
+log[window[by_day, 'px', 'count', span = 1.5, on = 'day', by = 'sym']]
+
+--- an as-of join takes the latest signal at or before, however the left is ordered
+sig = with[with[with[frame.new[], 'sym', ['AAPL', 'AAPL', 'MSFT']], 'at', [moment[1784035800.0], moment[1784086500.0], moment[1784040000.0]]], 'sig', [1, 2, 3]]
+a = join[t, sig, ['sym', 'at'], 'asof']
+log[a.columns]
+log[a.sig]
+log[a.sig.ok]
+log[join[t, sig, ['sym', 'at'], 'asof'].px]
+
+--- distinct rows count a missing cell as a value of its own
+u = unique[t, ['sym', 'qty']]
+log[len[u]]
+log[u.px]
+log[len[unique[with[t, 'blank', t.qty], ['blank']]]]
+
+--- where over text and moments, and with a list for a side
+log[where[t.day eq 1, t.note, 'other']]
+log[where[t.qty.ok, t.at, moment[0.0]]]
+log[where[t.px gt 300.0, [1, 2, 3, 4, 5, 6], 0]]
+
+--- complete rows, by one column and by two
+log[complete[t, 'note'].sym]
+log[complete[t, ['qty', 'note']].sym]
+log[len[complete[t]]]
+
+--- the other aggregates over a column with missing cells, and distinct
+--- over text
+g = group[t, 'sym', ['qty', 'median'], ['qty', 'p25'], ['qty', 'std'], ['note', 'distinct'], ['note', 'first'], ['at', 'last']]
+log[g.qty_median]
+log[g.qty_p25]
+log[g.note_distinct]
+log[g.note_first]
+log[g.at_last]
+log[window[t, 'note', 'distinct', n = 3]]
+log[window[t, 'qty', 'first', n = 2]]
+
+--- text functions keep a missing cell missing, and a mask reads it as false
+log[upper[t.note].ok]
+log[contains[t.note, 'e']]
+log[sub[t.note, '^(.)', '[$1]']]
+
+--- a moment's fields over a column keep its zone
+log[t.at.hour]
+log[t.at.offset]
+log[t.at.weekday]
+
+--- a sort on several keys with a direction each, and missing cells last
+log[sort[t, ['sym', 'qty'], desc = [true, false]].qty]
+log[sort[t, ['day', 'px'], desc = true].px]
+
+--- unpivot of text columns, and of a moment column alone
+log[unpivot[t, 'day', ['sym', 'note']].value]
+log[unpivot[t, [], ['at']].columns]
+log[len[unpivot[t, [], ['at']]]]

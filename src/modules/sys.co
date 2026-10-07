@@ -524,9 +524,9 @@ fn s3[path, method, payload]
     if method eq 'PUT'
         verb = 'write'
     rest = slice[path, 5, len[path]]
-    bucket = split[rest, '/'][0]
-    key = slice[rest, len[bucket] + 1, len[rest]]
-    if len[bucket] eq 0 or len[key] eq 0 or len[split[rest, '/']] lt 2
+    bucket_name = split[rest, '/'][0]
+    key = slice[rest, len[bucket_name] + 1, len[rest]]
+    if len[bucket_name] eq 0 or len[key] eq 0 or len[split[rest, '/']] lt 2
         return error['cannot `verb` \'`path`\': an S3 path is s3://bucket/key', 'sys']
     region = setting['AWS_REGION']
     if len[region] eq 0
@@ -544,12 +544,12 @@ fn s3[path, method, payload]
             endpoint = slice[endpoint, 0, len[endpoint] - 1]
         after = split[endpoint, '://']
         host = split[after[len[after] - 1], '/'][0]
-        eb = uri_encode[bucket]
+        eb = uri_encode[bucket_name]
         ek = uri_encode[key]
         uri = '/`eb`/`ek`'
         url = '`endpoint``uri`'
     else
-        host = '`bucket`.s3.`region`.amazonaws.com'
+        host = '`bucket_name`.s3.`region`.amazonaws.com'
         ek = uri_encode[key]
         uri = '/`ek`'
         url = 'https://`host``uri`'

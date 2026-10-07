@@ -42,7 +42,7 @@ pub fn parquet_bytes(f: &CrowFrame) -> Result<Vec<u8>, String> {
 }
 
 /// A cell as a column of one row, for `with` to repeat.
-fn one_row(cell: Cell) -> Result<Column, String> {
+pub(crate) fn one_row(cell: Cell) -> Result<Column, String> {
     match cell {
         Cell::Int(n) => Ok(Column::Int(vec![n])),
         Cell::Float(x) => Ok(Column::Float(vec![x])),
@@ -166,6 +166,24 @@ pub fn sort_by(f: &CrowFrame, name: &str, desc: bool) -> Result<CrowFrame, Strin
     f.sort(name, desc)
 }
 
+/// `sort[frame, ['a', 'b']]`: by the first key, ties by the next.
+pub fn sort_keys(f: &CrowFrame, keys: &[String]) -> Result<CrowFrame, String> {
+    let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+    f.sort_keys(&keys, &vec![false; keys.len()])
+}
+
+/// `sort[frame, ['a', 'b'], desc = true]`: every key descending.
+pub fn sort_keys_by(f: &CrowFrame, keys: &[String], desc: bool) -> Result<CrowFrame, String> {
+    let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+    f.sort_keys(&keys, &vec![desc; keys.len()])
+}
+
+/// `sort[frame, ['a', 'b'], desc = [false, true]]`: a direction per key.
+pub fn sort_keys_each(f: &CrowFrame, keys: &[String], desc: &[bool]) -> Result<CrowFrame, String> {
+    let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+    f.sort_keys(&keys, desc)
+}
+
 /// The aggregations a `group` is given, each `[column, how]`.
 fn aggregations<'a>(aggs: &'a [&'a [String]]) -> Result<Vec<(&'a str, AggFn)>, String> {
     let mut pairs = Vec::with_capacity(aggs.len());
@@ -173,7 +191,7 @@ fn aggregations<'a>(aggs: &'a [&'a [String]]) -> Result<Vec<(&'a str, AggFn)>, S
         let [column, how] = a else {
             return Err(format!("group: an aggregation is [column, how], got {} values", a.len()));
         };
-        let how = AggFn::from_str(how).ok_or_else(|| format!("group: no aggregation '{}' — write 'sum', 'mean', 'min', 'max' or 'count'", how))?;
+        let how = AggFn::from_str(how).ok_or_else(|| format!("group: no aggregation '{}' — write {}", how, AggFn::WORDS))?;
         pairs.push((column.as_str(), how));
     }
     Ok(pairs)
@@ -199,18 +217,19 @@ pub fn pivot(f: &CrowFrame, rows: &str, cols: &str, values: &str) -> Result<Crow
     f.pivot(rows, cols, values)
 }
 
-/// `window[frame, col, how, n = rows, by = [keys]]`: a column computed over
-/// each row's partition (`CrowFrame::window`).
-pub fn window(f: &CrowFrame, col: &str, how: &str, n: i64, by: &[String]) -> Result<CrowColumn, String> {
+/// `window[frame, col, how, n = rows, by = [keys], span = seconds, on =
+/// column]`: a column computed over each row's partition
+/// (`CrowFrame::window_over`).
+pub fn window(f: &CrowFrame, col: &str, how: &str, n: i64, by: &[String], span: f64, on: &str) -> Result<CrowColumn, String> {
     let by: Vec<&str> = by.iter().map(String::as_str).collect();
-    f.window(col, how, n, &by)
+    f.window_over(col, how, n, &by, span, on)
 }
 
-/// `window[frame, col, how, n = rows, by = 'key']`: one key names the
+/// `window[frame, col, how, n = rows, by = 'key', …]`: one key names the
 /// partitions.
-pub fn window_one(f: &CrowFrame, col: &str, how: &str, n: i64, by: &str) -> Result<CrowColumn, String> {
+pub fn window_one(f: &CrowFrame, col: &str, how: &str, n: i64, by: &str, span: f64, on: &str) -> Result<CrowColumn, String> {
     let by: Vec<&str> = if by.is_empty() { Vec::new() } else { vec![by] };
-    f.window(col, how, n, &by)
+    f.window_over(col, how, n, &by, span, on)
 }
 
 /// `join[left, right, key]`: the rows whose keys match.
@@ -218,13 +237,93 @@ pub fn join(left: &CrowFrame, right: &CrowFrame, key: &str) -> Result<CrowFrame,
     left.join(right, key, "inner")
 }
 
-/// `join[left, right, key, how]`: `'inner'`, `'left'`, `'right'` or
-/// `'outer'`. (Another word was an inner join.)
+/// `join[left, right, key, how]`: `'inner'`, `'left'`, `'right'`,
+/// `'outer'`, `'semi'`, `'anti'` or `'asof'`. (Another word was an inner
+/// join.)
 pub fn join_how(left: &CrowFrame, right: &CrowFrame, key: &str, how: &str) -> Result<CrowFrame, String> {
-    if !matches!(how, "inner" | "left" | "right" | "outer") {
-        return Err(format!("join: no join '{}' — write 'inner', 'left', 'right' or 'outer'", how));
-    }
-    left.join(right, key, how)
+    left.join_keys(right, &[key], how)
+}
+
+/// `join[left, right, ['a', 'b']]`: the rows whose every key matches.
+pub fn join_keys(left: &CrowFrame, right: &CrowFrame, keys: &[String]) -> Result<CrowFrame, String> {
+    let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+    left.join_keys(right, &keys, "inner")
+}
+
+/// `join[left, right, ['a', 'b'], how]`.
+pub fn join_keys_how(left: &CrowFrame, right: &CrowFrame, keys: &[String], how: &str) -> Result<CrowFrame, String> {
+    let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+    left.join_keys(right, &keys, how)
+}
+
+/// `unique[frame, ['a', 'b']]`: the first row of each distinct combination.
+pub fn unique_rows(f: &CrowFrame, keys: &[String]) -> Result<CrowFrame, String> {
+    let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+    f.unique_rows(&keys)
+}
+
+/// `unpivot[frame, ['id'], ['a', 'b']]`: the wide frame made long.
+pub fn unpivot(f: &CrowFrame, keys: &[String], cols: &[String]) -> Result<CrowFrame, String> {
+    let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+    let cols: Vec<&str> = cols.iter().map(String::as_str).collect();
+    f.unpivot(&keys, &cols)
+}
+
+/// `unpivot[frame, 'id', ['a', 'b']]`: one key.
+pub fn unpivot_one(f: &CrowFrame, key: &str, cols: &[String]) -> Result<CrowFrame, String> {
+    let cols: Vec<&str> = cols.iter().map(String::as_str).collect();
+    f.unpivot(&[key], &cols)
+}
+
+/// `complete[frame]`: the rows with every cell present.
+pub fn complete(f: &CrowFrame) -> Result<CrowFrame, String> {
+    f.complete_rows(&[])
+}
+
+/// `complete[frame, 'col']`: the rows present in that column.
+pub fn complete_one(f: &CrowFrame, col: &str) -> Result<CrowFrame, String> {
+    f.complete_rows(&[col])
+}
+
+/// `complete[frame, ['a', 'b']]`: the rows present in those columns.
+pub fn complete_in(f: &CrowFrame, cols: &[String]) -> Result<CrowFrame, String> {
+    let cols: Vec<&str> = cols.iter().map(String::as_str).collect();
+    f.complete_rows(&cols)
+}
+
+/// `sample[frame, n]`: `n` rows drawn by the seeded generator.
+pub fn sample(f: &CrowFrame, n: i64) -> Result<CrowFrame, String> {
+    f.sample_rows(n)
+}
+
+/// `bucket[column, seconds]`: each moment's bucket start.
+pub fn bucket(c: &CrowColumn, span: f64) -> Result<CrowColumn, String> {
+    crate::verbs::bucket_column(c, span)
+}
+
+/// `where[mask, a, b]`: `a`'s cell where the mask is true, `b`'s elsewhere.
+pub fn choose(mask: &[bool], a: Cells, b: Cells) -> Result<CrowColumn, String> {
+    crate::verbs::choose(mask, a, b)
+}
+
+/// `int[column]`: every cell as an int, one that cannot be missing.
+pub fn int_column(c: &CrowColumn) -> Result<CrowColumn, String> {
+    crate::verbs::cast_column(c, "int")
+}
+
+/// `float[column]`.
+pub fn float_column(c: &CrowColumn) -> Result<CrowColumn, String> {
+    crate::verbs::cast_column(c, "float")
+}
+
+/// `str[column]`: each cell as it shows.
+pub fn str_column(c: &CrowColumn) -> Result<CrowColumn, String> {
+    crate::verbs::cast_column(c, "str")
+}
+
+/// `moment[column]`: text read as moments, numbers as seconds.
+pub fn moment_column(c: &CrowColumn) -> Result<CrowColumn, String> {
+    crate::verbs::cast_column(c, "moment")
 }
 
 /// `stack[top, bottom]`: the rows of both, the columns alike.
@@ -243,8 +342,12 @@ pub fn tail(f: &CrowFrame, n: i64) -> Result<CrowFrame, String> {
 }
 
 /// `fill[frame, name, value]`: the column's missing cells given `value`,
-/// of the column's kind (an int fills a float column).
-pub fn fill(f: &CrowFrame, name: &str, value: &Cell) -> Result<CrowFrame, String> {
+/// of the column's kind (an int fills a float column); `fill[frame, name,
+/// how = 'forward']` or `'backward'` gives each the nearest present cell.
+pub fn fill(f: &CrowFrame, name: &str, value: &Cell, how: &str) -> Result<CrowFrame, String> {
+    if !how.is_empty() {
+        return f.fill_direction(name, how);
+    }
     let column = f.col(name).ok_or_else(|| format!("fill: column '{}' not found", name))?;
     let text = match (column, value) {
         (Column::Int(_), Cell::Int(n)) => n.to_string(),
@@ -289,9 +392,11 @@ mod tests {
         assert_eq!(select(&f, &["nope".to_string()]).map(|_| ()), Err("select: column 'nope' not found".to_string()));
         assert_eq!(head(&f, -1).map(|_| ()), Err("head: a size cannot be negative (got -1)".to_string()));
         let median = ["age".to_string(), "median".to_string()];
-        assert_eq!(group(&f, "name", &[&median]).map(|_| ()), Err("group: no aggregation 'median' — write 'sum', 'mean', 'min', 'max' or 'count'".to_string()));
-        assert_eq!(join_how(&f, &f, "name", "lefty").map(|_| ()), Err("join: no join 'lefty' — write 'inner', 'left', 'right' or 'outer'".to_string()));
-        assert_eq!(fill(&f, "age", &Cell::Float(2.5)).map(|_| ()), Err("fill: column 'age' is int, and 2.5 is not".to_string()));
+        let median = ["age".to_string(), "mediam".to_string()];
+        assert_eq!(group(&f, "name", &[&median]).map(|_| ()), Err(format!("group: no aggregation 'mediam' — write {}", AggFn::WORDS)));
+        assert_eq!(join_how(&f, &f, "name", "lefty").map(|_| ()), Err("join: no join 'lefty' — write 'inner', 'left', 'right', 'outer', 'semi', 'anti' or 'asof'".to_string()));
+        assert_eq!(fill(&f, "age", &Cell::Float(2.5), "").map(|_| ()), Err("fill: column 'age' is int, and 2.5 is not".to_string()));
+        assert_eq!(fill(&f, "age", &Cell::Int(0), "sideways").map(|_| ()), Err("fill: no direction 'sideways' — how = 'forward' or 'backward'".to_string()));
         assert_eq!(with(&f, "x", Cells::from(vec![1_i64])).map(|_| ()), Err("with: column 'x' has 1 values but the frame has 3 rows".to_string()));
     }
 
@@ -389,28 +494,28 @@ mod tests {
         let f = trades();
         let by = ["sym".to_string()];
         let c = |r: Result<CrowColumn, String>| r.map(|c| ((*c.data).clone(), c.valid.to_vec()));
-        assert_eq!(c(window(&f, "qty", "sum", 0, &by)), Ok((Column::Int(vec![10, 1, 30, 3, 60]), vec![true; 5])));
-        assert_eq!(c(window(&f, "qty", "max", 2, &[])), Ok((Column::Int(vec![10, 10, 20, 20, 30]), vec![true; 5])));
-        assert_eq!(c(window(&f, "qty", "mean", 2, &by)), Ok((Column::Float(vec![10.0, 1.0, 15.0, 1.5, 25.0]), vec![true; 5])));
-        assert_eq!(c(window(&f, "px", "max", 0, &[])), Ok((Column::Float(vec![1.5, 2.0, 2.0, 4.0, 4.0]), vec![true; 5])));
-        assert_eq!(c(window(&f, "px", "min", 2, &[])), Ok((Column::Float(vec![1.5, 1.5, 0.5, 0.5, 1.0]), vec![true; 5])));
-        assert_eq!(c(window(&f, "qty", "count", 0, &by)), Ok((Column::Int(vec![1, 1, 2, 2, 3]), vec![true; 5])));
-        assert_eq!(c(window(&f, "qty", "lag", 1, &by)), Ok((Column::Int(vec![0, 0, 10, 1, 20]), vec![false, false, true, true, true])));
-        let (lead, present) = c(window(&f, "px", "lead", 1, &by)).expect("a column");
+        assert_eq!(c(window(&f, "qty", "sum", 0, &by, 0.0, "")), Ok((Column::Int(vec![10, 1, 30, 3, 60]), vec![true; 5])));
+        assert_eq!(c(window(&f, "qty", "max", 2, &[], 0.0, "")), Ok((Column::Int(vec![10, 10, 20, 20, 30]), vec![true; 5])));
+        assert_eq!(c(window(&f, "qty", "mean", 2, &by, 0.0, "")), Ok((Column::Float(vec![10.0, 1.0, 15.0, 1.5, 25.0]), vec![true; 5])));
+        assert_eq!(c(window(&f, "px", "max", 0, &[], 0.0, "")), Ok((Column::Float(vec![1.5, 2.0, 2.0, 4.0, 4.0]), vec![true; 5])));
+        assert_eq!(c(window(&f, "px", "min", 2, &[], 0.0, "")), Ok((Column::Float(vec![1.5, 1.5, 0.5, 0.5, 1.0]), vec![true; 5])));
+        assert_eq!(c(window(&f, "qty", "count", 0, &by, 0.0, "")), Ok((Column::Int(vec![1, 1, 2, 2, 3]), vec![true; 5])));
+        assert_eq!(c(window(&f, "qty", "lag", 1, &by, 0.0, "")), Ok((Column::Int(vec![0, 0, 10, 1, 20]), vec![false, false, true, true, true])));
+        let (lead, present) = c(window(&f, "px", "lead", 1, &by, 0.0, "")).expect("a column");
         assert_eq!(present, vec![true, true, true, false, false]);
         assert!(matches!(lead, Column::Float(v) if v[..3] == [0.5, 4.0, 1.0] && v[3].is_nan() && v[4].is_nan()));
-        assert_eq!(c(window(&f, "px", "rank", 0, &[])), Ok((Column::Int(vec![3, 4, 1, 5, 2]), vec![true; 5])));
+        assert_eq!(c(window(&f, "px", "rank", 0, &[], 0.0, "")), Ok((Column::Int(vec![3, 4, 1, 5, 2]), vec![true; 5])));
         let tied = with(&f, "t", Cells::from(vec![1_i64, 1, 2, 2, 3])).expect("five rows");
-        assert_eq!(c(window(&tied, "t", "rank", 0, &[])), Ok((Column::Int(vec![1, 1, 3, 3, 5]), vec![true; 5])));
-        assert_eq!(c(window(&f, "sym", "rank", 0, &by)), Ok((Column::Int(vec![1, 1, 1, 1, 1]), vec![true; 5])));
-        assert_eq!(window(&f, "qty", "median", 0, &[]).map(|_| ()), Err("window: no window 'median' — write 'sum', 'mean', 'min', 'max', 'count', 'lag', 'lead' or 'rank'".to_string()));
-        assert_eq!(window(&f, "qty", "lag", 0, &[]).map(|_| ()), Err("window: lag needs n of 1 or more, the rows between (got 0)".to_string()));
-        assert_eq!(window(&f, "qty", "sum", -1, &[]).map(|_| ()), Err("window: n is 0 or more (got -1)".to_string()));
-        assert!(window(&f, "sym", "sum", 0, &[]).is_err(), "a column of text has no sum");
-        assert_eq!(window(&f, "qty", "sum", 0, &["nope".to_string()]).map(|_| ()), Err("window: column 'nope' not found".to_string()));
+        assert_eq!(c(window(&tied, "t", "rank", 0, &[], 0.0, "")), Ok((Column::Int(vec![1, 1, 3, 3, 5]), vec![true; 5])));
+        assert_eq!(c(window(&f, "sym", "rank", 0, &by, 0.0, "")), Ok((Column::Int(vec![1, 1, 1, 1, 1]), vec![true; 5])));
+        assert_eq!(window(&f, "qty", "mediam", 0, &[], 0.0, "").map(|_| ()), Err(format!("window: no window 'mediam' — write {}, 'lag', 'lead' or 'rank'", AggFn::WORDS)));
+        assert_eq!(window(&f, "qty", "lag", 0, &[], 0.0, "").map(|_| ()), Err("window: lag needs n of 1 or more, the rows between (got 0)".to_string()));
+        assert_eq!(window(&f, "qty", "sum", -1, &[], 0.0, "").map(|_| ()), Err("window: n is 0 or more (got -1)".to_string()));
+        assert!(window(&f, "sym", "sum", 0, &[], 0.0, "").is_err(), "a column of text has no sum");
+        assert_eq!(window(&f, "qty", "sum", 0, &["nope".to_string()], 0.0, "").map(|_| ()), Err("window: column 'nope' not found".to_string()));
         // a missing key cell: a cell in no partition, missing
         let keyed = CrowFrame::new(vec!["k".into(), "x".into()], vec![Column::Int(vec![1, 1, 1]), Column::Float(vec![1.0, 2.0, 3.0])], vec![vec![true, false, true], vec![true; 3]]);
-        assert_eq!(c(window(&keyed, "x", "sum", 0, &["k".to_string()])), Ok((Column::Float(vec![1.0, 0.0, 4.0]), vec![true, false, true])));
+        assert_eq!(c(window(&keyed, "x", "sum", 0, &["k".to_string()], 0.0, "")), Ok((Column::Float(vec![1.0, 0.0, 4.0]), vec![true, false, true])));
     }
 
     /// A column copied with `with` keeps its missing cells (both modes had

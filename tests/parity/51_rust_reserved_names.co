@@ -21,9 +21,9 @@ total = 0
 for final in const
     total = total + final
 log[total]
-where = for mut in const
+dyn = for mut in const
     mut * 2
-log[where]
+log[dyn]
 o = Order['limit', 3]
 log[o.type]
 log[o.move]

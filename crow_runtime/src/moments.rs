@@ -419,6 +419,14 @@ pub fn moment_self(t: Moment) -> Moment {
 }
 
 /// `min[a, b]` of two moments: the earlier.
+/// `bucket[t, seconds]`: the start of the bucket `t` falls in, `seconds`
+/// wide, the buckets aligned to midnight in the moment's own offset (a
+/// day's bucket starts at the local midnight; from UTC, at the epoch's).
+pub fn bucket(t: Moment, span: f64) -> Result<Moment, String> {
+    let span_ms = crate::verbs::span_ms("bucket", span)?;
+    Ok(Moment { ms: crate::verbs::bucket_ms(t.ms, t.offset, span_ms), offset: t.offset })
+}
+
 pub fn min_of(a: Moment, b: Moment) -> Moment {
     if b < a { b } else { a }
 }

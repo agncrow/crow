@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 mod fuse;
 pub(crate) mod grad;
 mod checks;
+pub(crate) use checks::moment_field_name;
 mod frames;
 pub(crate) mod schema;
 mod shapes;
@@ -2680,6 +2681,16 @@ impl<'a> Lowerer<'a> {
                             (Ty::Column(_), Some(None)) => Ty::Column(Box::new(Ty::Json)),
                             _ => ty,
                         };
+                        // a moment's field read over a column of moments
+                        // (`df.at.hour`) is a column of ints, missing where
+                        // the moment is
+                        let ty = match base.ty().payload() {
+                            Ty::Column(cell) if crate::lower_ir::checks::moment_field_name(field) && matches!(cell.payload(), Ty::Moment | Ty::Json) => {
+                                let int = if cell.is_result() { Ty::Result(Box::new(Ty::Int)) } else { Ty::Int };
+                                Ty::Column(Box::new(int))
+                            }
+                            _ => ty,
+                        };
                         Expr::Field { base: Box::new(base), name: field.clone(), ty }
                     }
                 }
@@ -3131,7 +3142,7 @@ impl<'a> Lowerer<'a> {
             let x = self.lower_expr(a)?;
             arg_types.push(read(&x));
             full_types.push(full(&x));
-            checks.push(self.checked(&x));
+            checks.push(if Self::guessed_truth(&x) { CrowType::Unknown } else { self.checked(&x) });
             if propagates && x.ty().is_result() {
                 let rty = x.ty();
                 lowered.push(Expr::Convert { how: Convert::Unwrap, expr: Box::new(x), ty: rty.payload().clone() });
@@ -3182,7 +3193,7 @@ impl<'a> Lowerer<'a> {
         }
         let ty = self.call_type(callee, args, &arg_types, &full_types, None);
         let ty = self.frame_typed(callee, args, &arg_types, &lowered, ty);
-        let ty = self.column_typed(callee, args, &arg_types, ty);
+        let ty = self.column_typed(callee, args, &arg_types, &lowered, ty);
         // a builtin's tensor has the shape the program states for it, and
         // the rank every builtin's answer has
         let ty = match shapes::call_dims(&name, &lowered).or_else(|| shapes::row_dims(&name, &lowered)) {
@@ -3456,10 +3467,16 @@ impl<'a> Lowerer<'a> {
     /// module's rows; none where they tell nothing apart.
     fn module_for(&self, name: &str, lowered: &[Expr]) -> Option<String> {
         let providers = self.ctx.registry.providers_of(name);
+        let kinds: Vec<crate::table::Arg> = lowered.iter().map(Self::arg_kind).collect();
+        // the core's row the kinds pick comes first: `where` of a mask and
+        // two columns is the core's beside math's of three tensors (math's,
+        // picked by its count, had the column converted to a tensor)
+        if !providers.is_empty() && !kinds.contains(&crate::table::Arg::Unknown) && crate::table::core_row(name, &kinds).is_some() {
+            return None;
+        }
         if providers.len() <= 1 {
             return self.ctx.registry.module_name_for(name).map(str::to_string);
         }
-        let kinds: Vec<crate::table::Arg> = lowered.iter().map(|x| crate::table::Arg::of_type(&read(x))).collect();
         let mut taking = providers.iter().filter(|m| crate::table::row_taking(m, name, &kinds).is_some());
         let first = taking.next()?;
         taking.next().is_none().then(|| first.to_string())
@@ -3475,7 +3492,7 @@ impl<'a> Lowerer<'a> {
             None => None,
         };
         let types: Vec<CrowType> = lowered.iter().map(read).collect();
-        let kinds: Vec<Arg> = types.iter().map(Arg::of_type).collect();
+        let kinds: Vec<Arg> = lowered.iter().map(Self::arg_kind).collect();
         if kinds.contains(&Arg::Unknown) {
             return None;
         }
@@ -3512,7 +3529,25 @@ impl<'a> Lowerer<'a> {
         crate::table::module(m, name, &kinds)
     }
 
-    /// A builtin row's arguments as its parameters take them (docs/
+    /// Whether a bool was guessed: a comparison, or a conjunction of them,
+/// with a side nothing has typed yet — `t.filled eq true` of a frame a
+/// function is not yet called with, which may be a mask — is no kind for
+/// a call to be refused on (`where` of it had been refused in every test
+/// that did not call the function).
+fn arg_kind(x: &Expr) -> crate::table::Arg {
+    if Self::guessed_truth(x) { crate::table::Arg::Unknown } else { crate::table::Arg::of_type(&read(x)) }
+}
+
+fn guessed_truth(x: &Expr) -> bool {
+    match x {
+        Expr::Binary { op, l, r, .. } if matches!(op.as_str(), "eq" | "ne" | "gt" | "lt" | "gte" | "lte") => l.ty() == Ty::Unknown || r.ty() == Ty::Unknown,
+        Expr::Binary { op, l, r, .. } if matches!(op.as_str(), "and" | "or") => Self::guessed_truth(l) || Self::guessed_truth(r),
+        Expr::Unary { op, expr, .. } if op == "not" => Self::guessed_truth(expr),
+        _ => false,
+    }
+}
+
+/// A builtin row's arguments as its parameters take them (docs/
     /// bug-classes.md §4): numbers held as a list, or a frame's column,
     /// handed to a parameter that takes a tensor are converted where they
     /// meet, the same way in both modes — compiled, a list did not build
@@ -3646,7 +3681,7 @@ impl<'a> Lowerer<'a> {
         if core_too && !crate::table::has_core_rows(name) {
             return;
         }
-        let kinds: Vec<crate::table::Arg> = lowered.iter().map(|x| crate::table::Arg::of_type(&read(x))).collect();
+        let kinds: Vec<crate::table::Arg> = lowered.iter().map(Self::arg_kind).collect();
         let modules: Vec<&str> = if core_too { vec!["", m] } else { vec![m] };
         if let Some(e) = crate::table::refusal(&modules, name, &kinds) {
             self.refuse(e);
@@ -3654,9 +3689,9 @@ impl<'a> Lowerer<'a> {
     }
 
     fn row_arguments(&self, module: &str, name: &str, lowered: Vec<Expr>) -> Vec<Expr> {
-        use crate::table::{self, Arg, Kind};
+        use crate::table::{self, Kind};
         let core = CORE_RESERVED.contains(&name);
-        let args: Vec<Arg> = lowered.iter().map(|x| Arg::of_type(&read(x))).collect();
+        let args: Vec<crate::table::Arg> = lowered.iter().map(Self::arg_kind).collect();
         let Some(kinds) = table::module(module, name, &args).and_then(|row| table::kinds_of(row.params, lowered.len())) else {
             return lowered;
         };
@@ -3762,7 +3797,7 @@ impl<'a> Lowerer<'a> {
                     for a in args {
                         lowered.push(self.lower_expr(a)?);
                     }
-                    let checks: Vec<CrowType> = lowered.iter().map(|x| self.checked(x)).collect();
+                    let checks: Vec<CrowType> = lowered.iter().map(|x| if Self::guessed_truth(x) { CrowType::Unknown } else { self.checked(x) }).collect();
                     self.check_call(f, args, &checks);
                     let types: Vec<CrowType> = lowered.iter().map(full).collect();
                     self.scan_call(callee, args, &types);
@@ -4866,8 +4901,8 @@ mod tests {
         // (`[2, 1]` is a column of ints, so the key is one; the max over floats a float)
         assert!(ir.contains("let g: Result(Frame{day: Int, px_max: Float, sym: Str}) = frame.group_keys("), "{}", ir);
         assert!(ir.contains("let p: Result(Frame{sym: Str, …}) = frame.pivot("), "{}", ir);
-        assert!(ir.contains("prev: Result(Float)") && ir.contains("frame.window_one(unwrap t, \"px\", \"lag\", 1, \"sym\")"), "{}", ir);
-        assert!(ir.contains("r: Int") && ir.contains("frame.window(unwrap t, \"px\", \"rank\", 0, [])"), "{}", ir);
+        assert!(ir.contains("prev: Result(Float)") && ir.contains("frame.window_one(unwrap t, \"px\", \"lag\", 1, \"sym\", 0.0, \"\")"), "{}", ir);
+        assert!(ir.contains("r: Int") && ir.contains("frame.window(unwrap t, \"px\", \"rank\", 0, [], 0.0, \"\")"), "{}", ir);
         assert!(ir.contains("m: Float"), "{}", ir);
         assert!(refusal_of(&format!("{}log[len[group[t, ['sym', 'nope'], ['px', 'max']]]]\n", t)).contains("group: column 'nope' not found — the frame's columns are 'day', 'px', 'sym'"));
         assert!(refusal_of(&format!("{}log[len[pivot[t, 'sym', 'nope', 'px']]]\n", t)).contains("pivot: column 'nope' not found"));
@@ -4876,7 +4911,7 @@ mod tests {
         // (an option it does not have, and a count it does not take, are
         // refused as the call is read, before the lowering)
         let front = |src: &str| crate::lower::lower_program(&crate::build(src).expect("parses")).err().map(|e| format!("{}", e)).unwrap_or_default();
-        assert!(front(&format!("{}log[window[t, 'px', 'sum', rows = 2]]\n", t)).contains("window[] has no option 'rows' — its options are n, by"));
+        assert!(front(&format!("{}log[window[t, 'px', 'sum', rows = 2]]\n", t)).contains("window[] has no option 'rows' — its options are n, by, span, on"));
         assert!(front(&format!("{}log[window[t, 'px']]\n", t)).contains("window[] takes a frame, a column and what to compute"));
     }
 

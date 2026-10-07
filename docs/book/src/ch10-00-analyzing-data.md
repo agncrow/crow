@@ -243,3 +243,84 @@ a pair two rows share stops the program, naming the `group` that would
 aggregate it first. A window's `n` is the trailing rows (`n = 3` for a
 three-row mean; 0, the default, for every row so far), and `how` is one
 of `sum`, `mean`, `min`, `max`, `count`, `lag`, `lead` and `rank`.
+
+## Keys, Time and Text
+
+The same verbs reach further: `bucket` floors each moment to a span, so
+a `group` over the bucket makes bars; `group` and `window` take `median`,
+a percentile, `std`, `first`, `last` and `distinct` beside `sum` and
+`mean`; `sort` and `join` take several keys; `where` picks a cell by a
+mask; `complete` keeps the rows with no missing cell; `unpivot` makes a
+wide frame long; `contains` tests a text column, and `.hour` reads a
+moment column's field — each over the whole column at once:
+
+```crow
+use frame
+
+csv = 'symbol,at,qty,price
+AAPL,2026-07-14T09:30:00-04:00,100,191.5
+MSFT,2026-07-14T09:31:00-04:00,50,415.2
+AAPL,2026-07-14T09:35:00-04:00,,193.1
+AAPL,2026-07-14T10:36:30-04:00,40,190.0
+MSFT,2026-07-14T10:40:00-04:00,70,410.0'
+write['ticks.csv', csv]
+ticks = frame.load['ticks.csv']
+
+hourly = with[ticks, 'hour', bucket[ticks.at, 3600]]
+log[group[hourly, ['symbol', 'hour'], ['price', 'first'], ['price', 'max'], ['price', 'min'], ['price', 'last'], ['qty', 'sum']]]
+log[group[ticks, 'symbol', ['price', 'median'], ['price', 'p90'], ['qty', 'distinct']]]
+log[sort[ticks, ['symbol', 'qty'], desc = [false, true]].price]
+log[where[ticks.qty.ok, ticks.qty, 0]]
+log[complete[ticks].price]
+log[unpivot[select[ticks, ['symbol', 'qty', 'price']], 'symbol', ['qty', 'price']]]
+log[filter[ticks, contains[ticks.symbol, 'AA'] and ticks.at.hour eq 9].price]
+log[window[ticks, 'price', 'mean', span = 3600, on = 'at', by = 'symbol']]
+rm['ticks.csv']
+```
+
+```text
+symbol                  hour  price_first  price_max  price_min  price_last  qty_sum
+   str              datetime        float      float      float       float      int
+------  --------------------  -----------  ---------  ---------  ----------  -------
+  AAPL  2026-07-14T09:00:...        191.5      193.1      191.5       193.1      100
+  MSFT  2026-07-14T09:00:...        415.2      415.2      415.2       415.2       50
+  AAPL  2026-07-14T10:00:...          190        190        190         190       40
+  MSFT  2026-07-14T10:00:...          410        410        410         410       70
+
+[4 rows x 7 cols]
+symbol  price_median  price_p90  qty_distinct
+   str         float      float           int
+------  ------------  ---------  ------------
+  AAPL         191.5     192.78             2
+  MSFT         412.6     414.68             2
+
+[2 rows x 4 cols]
+[191.5, 190, 193.1, 410, 415.2]
+[100, 50, 0, 40, 70]
+[191.5, 415.2, 190, 410]
+symbol  variable  value
+   str       str  float
+------  --------  -----
+  AAPL       qty    100
+  MSFT       qty     50
+  AAPL       qty    nan
+  AAPL       qty     40
+  MSFT       qty     70
+  AAPL     price  191.5
+  MSFT     price  415.2
+  AAPL     price  193.1
+  AAPL     price    190
+  MSFT     price    410
+
+[10 rows x 3 cols]
+[191.5, 193.1]
+[191.5, 415.2, 192.3, 190, 410]
+```
+
+A time window takes the rows within `span` seconds before each row's own
+moment, on the column `on` names, so a five-minute average is `span =
+300` and never a guess at how many rows five minutes hold; the frame is
+sorted by that column within each partition first. A bucket's edge is
+midnight in the moment's own offset, so a day in New York starts at the
+exchange's midnight. Every one of these is held to pandas, to the last
+digit, by `tests/parity/185_frames_held_to_pandas.co`.

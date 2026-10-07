@@ -16,8 +16,12 @@ the order first seen (sort=False), a stable sort with missing cells last,
 a trailing window over the rows there are (min_periods=1), a rank that
 shares a rank between equal cells and skips the next (method='min'), the
 population standard deviation (ddof=0), a right frame's duplicate column
-named `_right`, and a right or outer join compared in a sorted order,
-since pandas and Crow order its rows differently (the spec says which).
+named `_right`, a right or outer join compared in a sorted order,
+since pandas and Crow order its rows differently (the spec says which),
+groupby's own `std(ddof=0)` and `quantile` (Welford and a linear
+interpolation, as Crow computes them), a rolling `first`, `last` and
+`nunique` through `apply`, a time window of `(t - span, t]`, and a
+moment's buckets floored in UTC.
 """
 import csv
 from datetime import timedelta, timezone
@@ -75,6 +79,29 @@ def symbols():
     })
 
 
+def lots():
+    """The lots table for joins on two keys: a lot per symbol and day for
+    some of trades' pairs, one pair twice (a join repeats the row), and a
+    pair trades lack."""
+    return pd.DataFrame({
+        "symbol": ["AAPL", "AAPL", "MSFT", "NVDA", "NVDA", "META"],
+        "day": [1, 3, 2, 5, 5, 1],
+        "lot": [100, 110, 50, 25, 26, 10],
+    })
+
+
+def signals():
+    """The signals table for an as-of join: a signal per symbol at a moment,
+    which each trade takes the latest of at or before its own."""
+    at = pd.to_datetime(["2026-09-01T06:00:00", "2026-09-03T12:00:00", "2026-09-07T00:00:00", "2026-09-02T09:30:00",
+                         "2026-09-10T15:00:00", "2026-09-05T05:00:00", "2026-09-12T15:00:00"], utc=True)
+    return pd.DataFrame({
+        "symbol": ["AAPL", "AAPL", "AAPL", "MSFT", "MSFT", "NVDA", "TSLA"],
+        "at": at,
+        "signal": [1, 2, 3, 4, 5, 6, 7],
+    })
+
+
 def write(name, df, ints=(), folder=EXPECTED):
     """One CSV as Crow reads it: an int column of whole numbers (`ints`
     names those pandas made float for their missing cells), a bool as
@@ -102,6 +129,10 @@ def main():
     sym = symbols()
     write("trades", t, ints=["qty"], folder=DATA)
     write("symbols", sym, folder=DATA)
+    lot = lots()
+    sig = signals()
+    write("lots", lot, folder=DATA)
+    write("signals", sig, folder=DATA)
     with open(DATA / "notes.csv", "w", newline="") as f:
         w = csv.writer(f, lineterminator="\n")
         w.writerow(["id", "note"])
@@ -231,6 +262,106 @@ def main():
         rows.append({"input": text, "offset": offset, "output": moved.isoformat(),
                      "year": moved.year, "month": moved.month, "day": moved.day, "hour": moved.hour})
     write("datetime_tz", pd.DataFrame(rows))
+
+    # --- the other aggregates: a median and a percentile interpolated,
+    # the population deviation (groupby's Welford), the first and last
+    # present cell in the column's kind, and a count of distinct cells
+    more = g.agg(price_median=("price", "median"), qty_first=("qty", "first"), note_last=("note", "last"),
+                 note_distinct=("note", "nunique"), at_first=("at", "first"), at_last=("at", "last")).reset_index()
+    more["price_std"] = g.price.std(ddof=0).values
+    more["price_var"] = g.price.var(ddof=0).values
+    more["price_p90"] = g.price.quantile(0.9).values
+    more["qty_p25"] = g.qty.quantile(0.25).values
+    more = more[["symbol", "price_median", "price_std", "price_var", "price_p90", "qty_p25", "qty_first", "note_last", "note_distinct", "at_first", "at_last"]]
+    write("group_more", more, ints=["qty_first", "note_distinct"])
+
+    # --- windows of the other aggregates, trailing and running, and
+    # over a span of time
+    first_present = lambda w: w.dropna().iloc[0] if w.notna().any() else np.nan
+    last_present = lambda w: w.dropna().iloc[-1] if w.notna().any() else np.nan
+    write("window_more", base.assign(
+        tr_median=gs.price.transform(lambda s: s.rolling(3, min_periods=1).median()),
+        tr_std=gs.price.transform(lambda s: s.rolling(3, min_periods=1).std(ddof=0)),
+        tr_var=gs.price.transform(lambda s: s.rolling(3, min_periods=1).var(ddof=0)),
+        tr_p90=gs.price.transform(lambda s: s.rolling(3, min_periods=1).quantile(0.9, interpolation="linear")),
+        run_median=gs.price.transform(lambda s: s.expanding().median()),
+        run_std=gs.price.transform(lambda s: s.expanding().std(ddof=0)),
+        run_p10=gs.price.transform(lambda s: s.expanding().quantile(0.1, interpolation="linear")),
+        tr_first=gt.price.transform(lambda s: s.rolling(3, min_periods=1).apply(first_present, raw=False)),
+        tr_last=gt.price.transform(lambda s: s.rolling(3, min_periods=1).apply(last_present, raw=False)),
+        tr_distinct=gt.day.transform(lambda s: s.rolling(3, min_periods=1).apply(lambda w: w.nunique(), raw=False)),
+        run_distinct=gt.day.transform(lambda s: s.expanding().apply(lambda w: w.nunique(), raw=False)),
+    ), ints=["tr_distinct", "run_distinct"])
+    ts = tf.sort_values("at", kind="stable").reset_index(drop=True)
+    span_mean = np.empty(len(ts))
+    span_sum = np.empty(len(ts))
+    span_max = np.empty(len(ts))
+    span_count = np.empty(len(ts))
+    for _, idx in ts.groupby("symbol", sort=False).groups.items():
+        sub = ts.loc[idx]
+        r = sub.rolling("6h", on="at", min_periods=1)
+        span_mean[idx] = r.price.mean().values
+        span_sum[idx] = r.qty.sum().values
+        span_max[idx] = r.price.max().values
+        span_count[idx] = r.price.count().values
+    whole = ts.rolling("6h", on="at", min_periods=1)
+    write("window_span", ts[["id", "symbol", "at"]].assign(
+        span_mean=span_mean, span_sum=span_sum, span_max=span_max, span_count=span_count,
+        all_mean=whole.price.mean().values,
+    ), ints=["span_sum", "span_count"])
+
+    # --- several keys: a sort by two, a join on two (left, inner, semi,
+    # anti), distinct rows by two, and an as-of join on a symbol and a moment
+    write("sort_keys", t.sort_values(["symbol", "qty"], ascending=[True, False], kind="stable", na_position="last"), ints=["qty"])
+    write("sort_keys_three", t.sort_values(["day", "side", "price"], kind="stable", na_position="last"), ints=["qty"])
+    write("join_keys_left", t.merge(lot, on=["symbol", "day"], how="left", suffixes=("", "_right")), ints=["qty", "lot"])
+    write("join_keys_inner", t.merge(lot, on=["symbol", "day"], how="inner", suffixes=("", "_right")), ints=["qty"])
+    pairs = t.set_index(["symbol", "day"]).index.isin(lot.set_index(["symbol", "day"]).index)
+    write("join_semi", t[pairs], ints=["qty"])
+    write("join_anti", t[~pairs], ints=["qty"])
+    write("unique_rows", t.drop_duplicates(subset=["symbol", "side"]), ints=["qty"])
+    left = t.sort_values("at", kind="stable")
+    write("join_asof", pd.merge_asof(left, sig.sort_values("at", kind="stable"), on="at", by="symbol", suffixes=("", "_right")), ints=["qty", "signal"])
+
+    # --- buckets of moments, and bars from them
+    bucketed = t.assign(bucket=t["at"].dt.floor("6h"))
+    write("bucket_6h", bucketed, ints=["qty"])
+    bars = bucketed.groupby(["symbol", "bucket"], sort=False).agg(
+        price_first=("price", "first"), price_max=("price", "max"), price_min=("price", "min"), price_last=("price", "last"), qty_sum=("qty", "sum")).reset_index()
+    write("bars_6h", bars, ints=["qty_sum"])
+
+    # --- text over a column, and a moment's fields over one
+    write("text_columns", pd.DataFrame({
+        "id": t.id,
+        "lower": t.note.str.lower(),
+        "upper": t.symbol.str.lower().str.upper(),
+        "replaced": t.note.str.replace("a", "A", regex=False),
+        "subbed": t.note.str.replace(r"[aeiou]", "_", regex=True),
+        "has_a": t.note.str.contains("a", regex=False, na=False),
+        "starts_r": t.note.str.startswith("r", na=False),
+        "ends_k": t.note.str.endswith("k", na=False),
+        "hour": t["at"].dt.hour, "weekday": t["at"].dt.weekday + 1, "day": t["at"].dt.day, "month": t["at"].dt.month,
+        "year": t["at"].dt.year, "minute": t["at"].dt.minute, "second": t["at"].dt.second,
+    }))
+
+    # --- unpivot, fills by direction, complete rows, a conditional
+    # column and casts
+    write("unpivot_qty_price", t[["id", "symbol", "qty", "price"]].melt(id_vars=["id", "symbol"], value_vars=["qty", "price"]))
+    write("fill_forward", t.assign(qty=t.qty.ffill()), ints=["qty"])
+    write("fill_backward", t.assign(note=t.note.bfill()), ints=["qty"])
+    write("complete_all", t.dropna(), ints=["qty"])
+    write("complete_qty_price", t.dropna(subset=["qty", "price"]), ints=["qty"])
+    write("where_columns", base.assign(
+        picked=np.where(t.filled, tf.qty, 0),
+        label=np.where(t.day == 1, "one", t.symbol),
+        px=np.where(t.price > 500, t.price, tf.qty * 1.0),
+    ), ints=["picked"])
+    write("casts", pd.DataFrame({
+        "id": t.id,
+        "price_int": t.price.apply(lambda x: np.nan if pd.isna(x) else float(int(x))),
+        "qty_float": t.qty.astype(float),
+        "filled_int": t.filled.astype(int),
+    }), ints=["price_int"])
 
     print(f"wrote {len(list(EXPECTED.glob('*.csv')))} expected files and {len(list(DATA.glob('*.csv')))} tables")
 

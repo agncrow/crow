@@ -67,7 +67,7 @@ Top-level variables in a ui program are reactive state (see Function Scope). Thr
 | `toggle[label, var]` | A switch bound to a bool — the same binding as `checkbox`, drawn as a toggle | [The Element Vocabulary](../ch12-07-vocabulary.md) |
 | `radio[options, var]` | One of several strings, as radio buttons: `radio[['buy', 'sell'], side]` | [The Element Vocabulary](../ch12-07-vocabulary.md) |
 | `tabs[options, var]` | One of several strings, as a tab strip; the view shows the selected tab's content with `if mode eq 'Practice'` | [The Element Vocabulary](../ch12-07-vocabulary.md) |
-| `select[options, var]` | One of several strings, as a dropdown list | [Frames: `use frame`](../by-example/frames.md) |
+| `select[options, var]` | One of several strings, as a dropdown list | [Frames: `use frame`](../by-example/frames.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) |
 | `progress[value, max = 1.0]` | A progress bar | [The Element Vocabulary](../ch12-07-vocabulary.md) |
 | `icon[name, size = 'm', color = '']` | An icon from the closed set (below), sized by the type scale, colored by a token | [The Element Vocabulary](../ch12-07-vocabulary.md) |
 

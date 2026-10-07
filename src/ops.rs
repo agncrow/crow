@@ -516,6 +516,9 @@ pub fn values_equal(a: &CrowValue, b: &CrowValue) -> bool {
         (Value::Int(x), Value::Dual(y, _)) => (*x as f64) == *y,
         (Value::Str(x), Value::Str(y)) => x == y,
         (Value::Bool(x), Value::Bool(y)) => x == y,
+        // (two moments are equal by instant; a list of them had compared
+        // false item by item, where the compiled column compared true)
+        (Value::Moment(x), Value::Moment(y)) => x == y,
         (Value::NumArray(x), Value::NumArray(y)) => x == y,
         (Value::Array(x), Value::Array(y)) => {
             x.len() == y.len()
@@ -750,6 +753,21 @@ pub fn field(obj: CrowValue, field: &str) -> Result<CrowValue, String> {
     if let Value::Moment(m) = &obj.value {
         if let Some(val) = m.field(field) {
             return Ok(CrowValue::ok(Value::Int(val)));
+        }
+    }
+    // the same field over a column of moments (the interpreter holds a
+    // column as the list of its cells, a missing one an error value): a
+    // list of ints, a missing cell staying missing
+    if let Value::Array(items) = &obj.value {
+        if crate::lower_ir::moment_field_name(field) && items.iter().all(|i| i.is_error() || matches!(i.value, Value::Moment(_))) {
+            let out: Vec<CrowValue> = items
+                .iter()
+                .map(|i| match &i.value {
+                    Value::Moment(m) if i.is_ok() => CrowValue::ok(Value::Int(m.field(field).unwrap_or(0))),
+                    _ => i.clone(),
+                })
+                .collect();
+            return Ok(CrowValue::ok(Value::Array(out)));
         }
     }
 

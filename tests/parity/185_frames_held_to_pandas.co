@@ -1,6 +1,6 @@
 --- The frame module held to pandas.
 ---
---- tests/frames/reference.py drew two tables (tests/frames/data/) and
+--- tests/frames/reference.py drew four tables (tests/frames/data/) and
 --- wrote, for each case below, what pandas 3.0 answers over them
 --- (tests/frames/expected/<case>.csv). Each case computes the same with
 --- the frame module and compares the two frames — their columns, their
@@ -15,8 +15,9 @@
 --- groups first seen first, a stable sort with missing cells last, a
 --- trailing window over the rows there are, `rank` sharing a rank between
 --- equal cells, the population deviation, `_right` on a duplicate column,
---- and a right or outer join compared sorted, since the two order its
---- rows differently.
+--- a right or outer join compared sorted, since the two order its rows
+--- differently, a percentile interpolated, a time window of the rows
+--- within the span before each row's own, and buckets floored in UTC.
 use frame, math, math.stats
 
 fn trades[]
@@ -24,6 +25,12 @@ fn trades[]
 
 fn symbols[]
     return frame.load['tests/frames/data/symbols.csv']
+
+fn lots[]
+    return frame.load['tests/frames/data/lots.csv']
+
+fn signals[]
+    return frame.load['tests/frames/data/signals.csv']
 
 fn expected[name]
     return frame.load['tests/frames/expected/`name`.csv']
@@ -179,6 +186,106 @@ fn computing[t]
     oks = push[oks, held['reduce', r]]
     return all_of[oks]
 
+--- the other aggregates: a median and a percentile, the population
+--- deviation, the first and last present cell, a count of distinct cells
+fn aggregating_more[t]
+    oks = []
+    oks = push[oks, held['group_more', group[t, 'symbol', ['price', 'median'], ['price', 'std'], ['price', 'var'], ['price', 'p90'], ['qty', 'p25'], ['qty', 'first'], ['note', 'last'], ['note', 'distinct'], ['at', 'first'], ['at', 'last']]]]
+    return all_of[oks]
+
+--- windows of those aggregates, trailing and running, and over a span
+--- of six hours measured on the moment column
+fn windowing_more[t]
+    oks = []
+    tf = fill[fill[t, 'qty', 0], 'price', 0.0]
+    base = select[t, ['id', 'symbol']]
+    more = with[base, 'tr_median', window[tf, 'price', 'median', n = 3, by = 'symbol']]
+    more = with[more, 'tr_std', window[tf, 'price', 'std', n = 3, by = 'symbol']]
+    more = with[more, 'tr_var', window[tf, 'price', 'var', n = 3, by = 'symbol']]
+    more = with[more, 'tr_p90', window[tf, 'price', 'p90', n = 3, by = 'symbol']]
+    more = with[more, 'run_median', window[tf, 'price', 'median', by = 'symbol']]
+    more = with[more, 'run_std', window[tf, 'price', 'std', by = 'symbol']]
+    more = with[more, 'run_p10', window[tf, 'price', 'p10', by = 'symbol']]
+    more = with[more, 'tr_first', window[t, 'price', 'first', n = 3, by = 'symbol']]
+    more = with[more, 'tr_last', window[t, 'price', 'last', n = 3, by = 'symbol']]
+    more = with[more, 'tr_distinct', window[t, 'day', 'distinct', n = 3, by = 'symbol']]
+    more = with[more, 'run_distinct', window[t, 'day', 'distinct', by = 'symbol']]
+    oks = push[oks, held['window_more', more]]
+    ts = sort[tf, 'at']
+    spanned = select[ts, ['id', 'symbol', 'at']]
+    spanned = with[spanned, 'span_mean', window[ts, 'price', 'mean', span = 21600, on = 'at', by = 'symbol']]
+    spanned = with[spanned, 'span_sum', window[ts, 'qty', 'sum', span = 21600, on = 'at', by = 'symbol']]
+    spanned = with[spanned, 'span_max', window[ts, 'price', 'max', span = 21600, on = 'at', by = 'symbol']]
+    spanned = with[spanned, 'span_count', window[ts, 'price', 'count', span = 21600, on = 'at', by = 'symbol']]
+    spanned = with[spanned, 'all_mean', window[ts, 'price', 'mean', span = 21600, on = 'at']]
+    oks = push[oks, held['window_span', spanned]]
+    return all_of[oks]
+
+--- several keys: a sort by two and three, a join on two of every kind,
+--- distinct rows by two, and an as-of join on a symbol and a moment
+fn keying[t, lot, sig]
+    oks = []
+    oks = push[oks, held['sort_keys', sort[t, ['symbol', 'qty'], desc = [false, true]]]]
+    oks = push[oks, held['sort_keys_three', sort[t, ['day', 'side', 'price']]]]
+    oks = push[oks, held['join_keys_left', join[t, lot, ['symbol', 'day'], 'left']]]
+    oks = push[oks, held['join_keys_inner', join[t, lot, ['symbol', 'day']]]]
+    oks = push[oks, held['join_semi', join[t, lot, ['symbol', 'day'], 'semi']]]
+    oks = push[oks, held['join_anti', join[t, lot, ['symbol', 'day'], 'anti']]]
+    oks = push[oks, held['unique_rows', unique[t, ['symbol', 'side']]]]
+    oks = push[oks, held['join_asof', join[sort[t, 'at'], sig, ['symbol', 'at'], 'asof']]]
+    return all_of[oks]
+
+--- buckets of six hours, and the bars a group over them makes
+fn bucketing[t]
+    oks = []
+    b = with[t, 'bucket', bucket[t.at, 21600]]
+    oks = push[oks, held['bucket_6h', b]]
+    oks = push[oks, held['bars_6h', group[b, ['symbol', 'bucket'], ['price', 'first'], ['price', 'max'], ['price', 'min'], ['price', 'last'], ['qty', 'sum']]]]
+    return all_of[oks]
+
+--- text over a column, and a moment's fields over one
+fn texting[t]
+    oks = []
+    r = with[frame.new[], 'id', t.id]
+    r = with[r, 'lower', lower[t.note]]
+    r = with[r, 'upper', upper[lower[t.symbol]]]
+    r = with[r, 'replaced', replace[t.note, 'a', 'A']]
+    r = with[r, 'subbed', sub[t.note, '[aeiou]', '_']]
+    r = with[r, 'has_a', contains[t.note, 'a']]
+    r = with[r, 'starts_r', starts[t.note, 'r']]
+    r = with[r, 'ends_k', ends[t.note, 'k']]
+    r = with[r, 'hour', t.at.hour]
+    r = with[r, 'weekday', t.at.weekday]
+    r = with[r, 'day', t.at.day]
+    r = with[r, 'month', t.at.month]
+    r = with[r, 'year', t.at.year]
+    r = with[r, 'minute', t.at.minute]
+    r = with[r, 'second', t.at.second]
+    oks = push[oks, held['text_columns', r]]
+    return all_of[oks]
+
+--- unpivot, fills by direction, complete rows, a conditional column
+--- and casts
+fn reshaping[t]
+    oks = []
+    tf = fill[fill[t, 'qty', 0], 'price', 0.0]
+    base = select[t, ['id', 'symbol']]
+    oks = push[oks, held['unpivot_qty_price', unpivot[select[t, ['id', 'symbol', 'qty', 'price']], ['id', 'symbol'], ['qty', 'price']]]]
+    oks = push[oks, held['fill_forward', fill[t, 'qty', how = 'forward']]]
+    oks = push[oks, held['fill_backward', fill[t, 'note', how = 'backward']]]
+    oks = push[oks, held['complete_all', complete[t]]]
+    oks = push[oks, held['complete_qty_price', complete[t, ['qty', 'price']]]]
+    w = with[base, 'picked', where[t.filled eq true, tf.qty, 0]]
+    w = with[w, 'label', where[t.day eq 1, 'one', t.symbol]]
+    w = with[w, 'px', where[t.price gt 500.0, t.price, float[tf.qty]]]
+    oks = push[oks, held['where_columns', w]]
+    c = with[frame.new[], 'id', t.id]
+    c = with[c, 'price_int', int[t.price]]
+    c = with[c, 'qty_float', float[t.qty]]
+    c = with[c, 'filled_int', int[t.filled]]
+    oks = push[oks, held['casts', c]]
+    return all_of[oks]
+
 --- moments parsed and moved to an offset, each field read
 fn moments[]
     want = expected['datetime_tz']
@@ -219,7 +326,9 @@ fn quoting[]
 
 t = trades[]
 sym = symbols[]
-report = [loading[t], selecting_and_filtering[t], sorting[t], grouping[t], windowing[t], joining[t, sym], filling_and_naming[t], computing[t], moments[], quoting[]]
+lot = lots[]
+sig = signals[]
+report = [loading[t], selecting_and_filtering[t], sorting[t], grouping[t], windowing[t], joining[t, sym], filling_and_naming[t], computing[t], moments[], quoting[], aggregating_more[t], windowing_more[t], keying[t, lot, sig], bucketing[t], texting[t], reshaping[t]]
 agreed = 0
 for ok in report
     if ok
@@ -255,3 +364,21 @@ test moments_as_pandas[]
 
 test quoted_cells_as_pandas[]
     assert[quoting[]]
+
+test the_other_aggregates_as_pandas[]
+    assert[aggregating_more[trades[]]]
+
+test windows_of_them_and_over_a_span_as_pandas[]
+    assert[windowing_more[trades[]]]
+
+test several_keys_as_pandas[]
+    assert[keying[trades[], lots[], signals[]]]
+
+test buckets_as_pandas[]
+    assert[bucketing[trades[]]]
+
+test text_over_a_column_as_pandas[]
+    assert[texting[trades[]]]
+
+test unpivot_fills_where_and_casts_as_pandas[]
+    assert[reshaping[trades[]]]

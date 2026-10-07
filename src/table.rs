@@ -653,6 +653,11 @@ pub fn write_column(c: crow_runtime::frame::CrowColumn) -> CrowValue {
     CrowValue::ok(Value::Array((0..c.len()).map(|i| crate::ops::column_cell(&c.data, c.valid[i], i)).collect()))
 }
 
+/// A mask answered: a list of bools.
+pub fn write_bools(bs: Vec<bool>) -> CrowValue {
+    CrowValue::ok(Value::Array(bs.into_iter().map(|b| CrowValue::ok(Value::Bool(b))).collect()))
+}
+
 pub fn write_strs(ss: Vec<String>) -> CrowValue {
     CrowValue::ok(Value::Array(ss.into_iter().map(write_str).collect()))
 }
@@ -1090,6 +1095,7 @@ macro_rules! answer {
     (Bytes, $x:expr) => { write_bytes($x) };
     (Stream, $x:expr) => { write_stream($x) };
     (Strs, $x:expr) => { write_strs($x) };
+    (Bools, $x:expr) => { write_bools($x) };
     (Tensors, $x:expr) => { write_tensors($x) };
     (Unit, $x:expr) => { write_unit($x) };
     (Sparse, $x:expr) => { write_sparse($x) };
@@ -1363,6 +1369,8 @@ pub static ROWS: &[Row] = &[
     // follow — the compiled program had shown a record holding a list, or a
     // list of records, in Rust's debug form, and `str` of a JSON list as its
     // JSON text; the interpreter had refused to encode a record
+    // (a column's cells as text, before the form that shows any value as text)
+    row!("frame.str_column", "", "str", crow_runtime::frames::str_column, (Column) -> Column, stops),
     row!("display.str", "", "str", crow_runtime::display::shown, (Shown) -> Str, never),
     row!("json.parse", "", "json", crow_runtime::json::parse, (Str) -> Json, value "parse"),
     row!("json.encode", "", "encode", crow_runtime::json::encode, (Encoded) -> Str, never),
@@ -1461,6 +1469,7 @@ pub static ROWS: &[Row] = &[
     row!("moments.moment_text_in", "", "moment", crow_runtime::moments::moment_text_in, (Str, Str) -> Moment, value "time"),
     row!("moments.moment_of_seconds", "", "moment", crow_runtime::moments::moment_of_seconds, (Float) -> Moment, never),
     row!("moments.moment_self", "", "moment", crow_runtime::moments::moment_self, (Moment) -> Moment, never),
+    row!("moments.bucket", "", "bucket", crow_runtime::moments::bucket, (Moment, Float) -> Moment, stops),
     row!("moments.min", "", "min", crow_runtime::moments::min_of, (Moment, Moment) -> Moment, never),
     row!("moments.max", "", "max", crow_runtime::moments::max_of, (Moment, Moment) -> Moment, never),
     row!("moments.moment", "", "moment", crow_runtime::moments::moment_parts, (Int, Int, Int, Int, Int, Float, Str) -> Moment, value "time"),
@@ -1789,18 +1798,43 @@ pub static ROWS: &[Row] = &[
     row!("frame.filter_where", "", "__filter_where", crow_runtime::mask::filter_where, (Frame, Str, Strs, Scalars) -> Frame, stops),
     row!("frame.sort", "frame", "sort", crow_runtime::frames::sort, (Frame, Str) -> Frame, stops),
     row!("frame.sort_by", "frame", "sort", crow_runtime::frames::sort_by, (Frame, Str, Bool) -> Frame, stops),
+    row!("frame.sort_keys", "frame", "sort", crow_runtime::frames::sort_keys, (Frame, Strs) -> Frame, stops),
+    row!("frame.sort_keys_by", "frame", "sort", crow_runtime::frames::sort_keys_by, (Frame, Strs, Bool) -> Frame, stops),
+    row!("frame.sort_keys_each", "frame", "sort", crow_runtime::frames::sort_keys_each, (Frame, Strs, Bools) -> Frame, stops),
     row!("frame.group", "frame", "group", crow_runtime::frames::group, (Frame, Str, Lists) -> Frame, stops),
     row!("frame.group_keys", "frame", "group", crow_runtime::frames::group_keys, (Frame, Strs, Lists) -> Frame, stops),
     row!("frame.pivot", "frame", "pivot", crow_runtime::frames::pivot, (Frame, Str, Str, Str) -> Frame, stops),
-    row!("frame.window", "frame", "window", crow_runtime::frames::window, (Frame, Str, Str, Int, Strs) -> Column, stops),
-    row!("frame.window_one", "frame", "window", crow_runtime::frames::window_one, (Frame, Str, Str, Int, Str) -> Column, stops),
+    row!("frame.window", "frame", "window", crow_runtime::frames::window, (Frame, Str, Str, Int, Strs, Float, Str) -> Column, stops),
+    row!("frame.window_one", "frame", "window", crow_runtime::frames::window_one, (Frame, Str, Str, Int, Str, Float, Str) -> Column, stops),
     row!("frame.join", "frame", "join", crow_runtime::frames::join, (Frame, Frame, Str) -> Frame, stops),
     row!("frame.join_how", "frame", "join", crow_runtime::frames::join_how, (Frame, Frame, Str, Str) -> Frame, stops),
+    row!("frame.join_keys", "frame", "join", crow_runtime::frames::join_keys, (Frame, Frame, Strs) -> Frame, stops),
+    row!("frame.join_keys_how", "frame", "join", crow_runtime::frames::join_keys_how, (Frame, Frame, Strs, Str) -> Frame, stops),
+    row!("frame.unpivot", "frame", "unpivot", crow_runtime::frames::unpivot, (Frame, Strs, Strs) -> Frame, stops),
+    row!("frame.unpivot_one", "frame", "unpivot", crow_runtime::frames::unpivot_one, (Frame, Str, Strs) -> Frame, stops),
+    row!("frame.complete", "frame", "complete", crow_runtime::frames::complete, (Frame) -> Frame, stops),
+    row!("frame.complete_one", "frame", "complete", crow_runtime::frames::complete_one, (Frame, Str) -> Frame, stops),
+    row!("frame.complete_in", "frame", "complete", crow_runtime::frames::complete_in, (Frame, Strs) -> Frame, stops),
+    row!("frame.sample", "frame", "sample", crow_runtime::frames::sample, (Frame, Int) -> Frame, stops),
+    row!("frame.bucket", "frame", "bucket", crow_runtime::frames::bucket, (Column, Float) -> Column, stops),
+    row!("frame.where", "frame", "where", crow_runtime::frames::choose, (Bools, Cells, Cells) -> Column, stops),
+    row!("frame.int_column", "", "int", crow_runtime::frames::int_column, (Column) -> Column, stops),
+    row!("frame.float_column", "", "float", crow_runtime::frames::float_column, (Column) -> Column, stops),
+    row!("frame.moment_column", "", "moment", crow_runtime::frames::moment_column, (Column) -> Column, stops),
+    row!("frame.lower_column", "", "lower", crow_runtime::verbs::lower_column, (Column) -> Column, stops),
+    row!("frame.upper_column", "", "upper", crow_runtime::verbs::upper_column, (Column) -> Column, stops),
+    row!("frame.trim_column", "", "trim", crow_runtime::verbs::trim_column, (Column) -> Column, stops),
+    row!("frame.replace_column", "", "replace", crow_runtime::verbs::replace_column, (Column, Str, Str) -> Column, stops),
+    row!("frame.sub_column", "", "sub", crow_runtime::verbs::sub_column, (Column, Str, Str) -> Column, stops),
+    row!("frame.contains_column", "", "contains", crow_runtime::verbs::contains_column, (Column, Str) -> Bools, stops),
+    row!("frame.starts_column", "", "starts", crow_runtime::verbs::starts_column, (Column, Str) -> Bools, stops),
+    row!("frame.ends_column", "", "ends", crow_runtime::verbs::ends_column, (Column, Str) -> Bools, stops),
     row!("frame.stack", "frame", "stack", crow_runtime::frames::stack, (Frame, Frame) -> Frame, stops),
     row!("frame.head", "frame", "head", crow_runtime::frames::head, (Frame, Int) -> Frame, stops),
     row!("frame.tail", "frame", "tail", crow_runtime::frames::tail, (Frame, Int) -> Frame, stops),
-    row!("frame.fill", "frame", "fill", crow_runtime::frames::fill, (Frame, Str, Cell) -> Frame, stops),
+    row!("frame.fill", "frame", "fill", crow_runtime::frames::fill, (Frame, Str, Cell, Str) -> Frame, stops),
     row!("frame.unique", "frame", "unique", crow_runtime::frames::unique, (Frame, Str) -> Column, stops),
+    row!("frame.unique_rows", "frame", "unique", crow_runtime::frames::unique_rows, (Frame, Strs) -> Frame, stops),
     row!("frame.rename", "frame", "rename", crow_runtime::frames::rename, (Frame, Str, Str) -> Frame, stops),
     row!("frame.stats", "frame", "stats", crow_runtime::frames::stats, (Frame) -> Str, never),
     // the modules' files: effects, as the file system's are. `save`'s

@@ -30,6 +30,17 @@ g = with[with[frame.new[], 'symbol', ['A', 'B']], 'px', [1.5, 2.5]]
 log[g.columns]
 log[with[g, 'day', 'today'].day[1]]
 log[join[['x', 'y'], '+']]
+log[group[t, 'symbol', ['price', 'median'], ['qty', 'p75'], ['symbol', 'distinct']].price_median]
+log[sort[t, ['symbol', 'qty'], desc = [false, true]].qty]
+log[where[t.qty gt 50, 'big', 'small']]
+log[unique[t, ['symbol']].price]
+log[len[complete[t]]]
+log[len[sample[t, 2]]]
+log[unpivot[t, 'symbol', ['qty', 'price']].variable]
+log[contains[t.symbol, 'AA']]
+log[window[t, 'price', 'median', n = 2]]
+log[bucket[d, 3600]]
+log[fill[with[frame.new[], 'x', where[[true, false, true], 1, 2]], 'x', how = 'forward'].x]
 rm['ex_trades.csv']
 rm['ex_copy.csv']
 ```
@@ -56,6 +67,17 @@ true
 ['symbol', 'px']
 today
 x+y
+[192.3, 415.2]
+[100, 40, 50]
+['big', 'small', 'small']
+[191.5, 415.2]
+3
+2
+['qty', 'qty', 'qty', 'price', 'price', 'price']
+[true, false, true]
+[191.5, 303.35, 304.15]
+2026-07-14T13:00:00Z
+[1, 2, 1]
 ```
 
 `frame.new[]` and `with[]` build a frame column by column from arrays or

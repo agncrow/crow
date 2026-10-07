@@ -4,11 +4,11 @@ Every module ships with the compiler: `use` it and its names are there in both e
 
 | Module | Import | Names | Page |
 |---|---|---|---|
-| Core builtins | `(none)` | 77 | [Core builtins](core.md) |
+| Core builtins | `(none)` | 78 | [Core builtins](core.md) |
 | math | `use math` | 103 | [math](math.md) |
 | math.stats | `use math.stats` | 13 | [math.stats](math-stats.md) |
 | math.nn | `use math.nn` | 8 | [math.nn](math-nn.md) |
-| frame | `use frame` | 18 | [frame](frame.md) |
+| frame | `use frame` | 23 | [frame](frame.md) |
 | db | `use db` | 7 | [db](db.md) |
 | io | `use io` | 2 | [io](io.md) |
 | doc | `use doc` | 6 | [doc](doc.md) |

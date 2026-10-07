@@ -45,6 +45,7 @@ pub mod tensor;
 pub mod text;
 pub mod textcol;
 pub mod validity;
+pub mod verbs;
 
 /// A lock that a panic on another thread cannot poison for everyone after
 /// it: the data is still there, and the program goes on with it. A stop,

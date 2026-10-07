@@ -166,24 +166,30 @@ sorted = sort[df, col]             --- dynamic column names just work
 | save | Write frame → CSV | `save[df, 'out.csv']` |
 | select | Pick columns | `sub = select[df, ['age', 'salary']]` |
 | filter | Filter rows | `old = filter[df, df.age gt 50]` |
-| sort | Sort by column | `s = sort[df, 'age']` |
+| sort | Sort by a column, or by several with a direction each | `s = sort[df, ['symbol', 'qty'], desc = [false, true]]` |
 | group | Group and aggregate, by one key or several | `g = group[df, ['dept', 'city'], ['salary', 'mean'], ['age', 'max']]` |
 | pivot | The long frame made wide: rows, columns, the values between | `wide = pivot[df, 'symbol', 'day', 'close']` |
-| window | A column computed over each row's partition | `with[df, 'avg3', window[df, 'close', 'mean', n = 3, by = 'symbol']]` |
-| join | Combine frames on key | `m = join[df1, df2, 'id']` |
+| window | A column computed over each row's partition, over rows or a span of time | `with[df, 'avg3', window[df, 'close', 'mean', n = 3, by = 'symbol']]` |
+| join | Combine frames on a key or several: inner, left, right, outer, semi, anti, as-of | `m = join[bars, signals, ['symbol', 'at'], 'asof']` |
+| unpivot | The wide frame made long: keys, `variable`, `value` | `long = unpivot[df, 'id', ['q1', 'q2']]` |
+| complete | The rows with every cell present, or every cell of some columns | `clean = complete[df, ['qty', 'price']]` |
+| sample | n rows drawn by the seeded generator, in the frame's order | `some = sample[df, 100]` |
+| where | A column picked by a mask from two sides | `with[df, 'px', where[df.filled, df.price, 0.0]]` |
+| bucket | Each moment's bucket start, a column of moments | `with[df, 'hour', bucket[df.at, 3600]]` |
 | stack | Stack frames vertically | `all = stack[df1, df2]` |
 | head | First N rows | `top = head[df, 5]` |
 | tail | Last N rows | `bottom = tail[df, 5]` |
-| fill | Fill missing values | `clean = fill[df, 'age', 0]` |
-| unique | The column's distinct present cells, in its kind | `vals = unique[df, 'age']` |
+| fill | Fill missing values, with a value or by direction | `clean = fill[df, 'age', how = 'forward']` |
+| unique | The column's distinct present cells, or the first row of each distinct combination | `rows = unique[df, ['symbol', 'side']]` |
 | rename | Rename column | `df2 = rename[df, 'salary', 'pay']` |
 | stats | Summary statistics | `stats[df]` |
 
 - `sort` defaults ascending. `sort[df, 'age', desc = true]` for descending. Stable, missing cells last either way (2026-10-06, held to pandas).
 - `group` takes pairs of `['column', 'agg']` — single scan, multiple aggregations; a list of keys groups by their combinations, each key column kept as it was. Each aggregate is in the kind it has: a count or a sum over ints an int, a mean a float, a min or max a cell of the column's kind, missing where a group has none present (2026-10-06).
 - `pivot` reshapes only: a pair two rows share stops the program, naming the `group` that aggregates it first (spec, Design Note "pivot reshapes, group aggregates").
-- `window` is `sum`, `mean`, `min`, `max`, `count`, `lag`, `lead` or `rank` over the trailing `n` rows (0: every row so far) within the partitions `by` names (2026-10-02).
-- `join` defaults inner. `join[df1, df2, 'id', 'left']` for left/right/outer.
+- `group` and `window` take `sum`, `mean`, `min`, `max`, `count`, `median`, `std`, `var`, `first`, `last`, `distinct` and a percentile `p1`…`p99`; `window` also `lag`, `lead` and `rank`, over the trailing `n` rows (0: every row so far) or the rows within `span` seconds before each row's own on the column `on` names, within the partitions `by` names (2026-10-02; the rest 2026-10-07, held to pandas 3.0 to the last digit — its rolling kernels compile to fused multiply-adds, which the runtime's `mul_add` reproduces).
+- `join` defaults inner. `join[df1, df2, 'id', 'left']` for left/right/outer; `semi` and `anti` keep the left's rows with and without a match; `asof` matches the last key by time, the others exactly.
+- Text functions (`lower`, `upper`, `trim`, `replace`, `sub`, `contains`, `starts`, `ends`), casts (`int`, `float`, `str`, `moment`) and a moment's fields (`df.at.hour`) work over a column cell by cell; a cell that cannot convert is missing.
 
 Plus properties: `.shape`, `.columns`, `.dtypes`
 

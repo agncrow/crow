@@ -1,0 +1,11 @@
+id,symbol,day,side,qty,price,filled,at,note
+1,NVDA,11,sell,180,78.965,false,2026-09-11T03:20:55+00:00,late
+2,TSLA,5,buy,150,,true,2026-09-05T21:18:14+00:00,review
+4,AAPL,4,sell,,265.406,true,2026-09-04T07:10:05+00:00,review
+5,MSFT,11,sell,130,345.983,true,2026-09-11T23:39:27+00:00,review
+8,TSLA,8,sell,500,181.062,true,2026-09-08T20:35:44+00:00,ok
+11,MSFT,8,buy,170,874.266,true,2026-09-08T14:59:50+00:00,ok
+17,AMZN,9,buy,390,,true,2026-09-09T00:47:37+00:00,review
+19,NVDA,7,buy,150,857.558,true,2026-09-07T22:27:51+00:00,partial
+21,AAPL,4,buy,430,493.006,true,2026-09-04T14:44:56+00:00,ok
+28,AMZN,3,sell,250,517.549,true,2026-09-03T19:57:39+00:00,vwap

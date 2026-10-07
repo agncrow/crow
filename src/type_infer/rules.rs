@@ -175,8 +175,14 @@ impl TypeContext {
             }
             "sqrt" => CrowType::Float,
             "floor" | "ceil" | "round" => CrowType::Int,
-            // String builtins
-            "contains" => CrowType::Bool,
+            // String builtins (`contains` over a frame's column is a mask)
+            "contains" => {
+                if matches!(args.first().map(arg_ty), Some(CrowType::FrameCol)) {
+                    CrowType::Array(Box::new(CrowType::Bool))
+                } else {
+                    CrowType::Bool
+                }
+            }
             // Immutable collection builtins (return same type as first arg)
             "push" => {
                 // push[array, val] returns Array/NumArray with element type from val
@@ -784,10 +790,12 @@ impl TypeContext {
                 _ => return CrowType::FrameCol, // column access by name → typed column
             }
         }
-        // FrameCol properties
+        // FrameCol properties: its validity, and a moment's fields over a
+        // column of moments (the lowering types the column by its cells)
         if matches!(obj_type, CrowType::FrameCol) {
             match field {
                 "ok" => return CrowType::Array(Box::new(CrowType::Bool)),
+                "year" | "month" | "day" | "hour" | "minute" | "second" | "weekday" | "offset" => return CrowType::FrameCol,
                 _ => return CrowType::Unknown,
             }
         }

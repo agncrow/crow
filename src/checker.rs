@@ -40,7 +40,7 @@ pub(crate) const BUILTINS: &[&str] = &[
     "later", "running",
     "app", "html", "click", "elements", "change", "box", "fits", "style", "downloads", "mails",
     "fmt",
-    "now", "moment", "captured", "chart",
+    "now", "moment", "bucket", "captured", "chart",
 ];
 
 // --- Issue types ---

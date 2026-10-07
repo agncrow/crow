@@ -127,3 +127,14 @@ steps on every push and must be green.
 - `crow_runtime`, `crow_db` and `crow_web` deny panics under clippy: a
   runtime function answers its reason, and a failure no value can carry
   stops through `crow_runtime::stops` (docs/bug-classes.md).
+- A kernel held to pandas "to the last digit" reproduces its arithmetic,
+  not its formula: pandas's rolling kernels (`roll_var`, `roll_quantile`,
+  `group_var`) compile to fused multiply-adds on arm64, so the runtime
+  uses `f64::mul_add` where pandas writes `a + b * c`; `roll_var` also
+  restarts a window whose squared sum collapsed (its `InvCondTol`). Read
+  the `.pyx` itself (curl the raw file) — a summary of it cost an hour.
+- A function a test does not call is still lowered, its parameters
+  untyped: a comparison over an untyped column is a guessed `Bool`, which
+  the kinds check and the row choice read as unknown (`guessed_truth`),
+  or `where[df.filled eq true, …]` was refused in every test that did not
+  call the function and resolved to math's row in the one that did.

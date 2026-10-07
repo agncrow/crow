@@ -118,7 +118,7 @@ fn reader_options() -> Vec<(&'static str, Expr)> {
 /// `n` rows (0: every row so far) within the partitions `by` names (none:
 /// the whole frame) — and the default of each.
 fn window_options() -> Vec<(&'static str, Expr)> {
-    vec![("n", Expr::Int(0)), ("by", Expr::Array(vec![]))]
+    vec![("n", Expr::Int(0)), ("by", Expr::Array(vec![])), ("span", Expr::Float(0.0)), ("on", Expr::Str(String::new()))]
 }
 
 /// What a request is sent with beyond its URL, method and body, and the
@@ -1099,12 +1099,31 @@ impl Lowerer {
                         let resolved = self.resolve_builtin_args(name, named_params, args)?;
                         Expr::Call { callee: Box::new(callee), args: resolved }
                     }
-                    // window[frame, col, how, n = rows, by = keys]: the options
-                    // it leaves out filled in, so its rows take them all
+                    // window[frame, col, how, n = rows, by = keys, span =
+                    // seconds, on = column]: the options it leaves out
+                    // filled in, so its rows take them all
                     Some("window") if !self.fns.contains_key("window") => {
                         let (mut positional, options) = self.options("window", args, &window_options())?;
                         if positional.len() != 3 {
-                            return Err(self.err("window[] takes a frame, a column and what to compute, then n = rows and by = keys: window[df, 'close', 'mean', n = 3, by = 'symbol']".to_string()));
+                            return Err(self.err("window[] takes a frame, a column and what to compute, then n = rows and by = keys (or span = seconds and on = column): window[df, 'close', 'mean', n = 3, by = 'symbol']".to_string()));
+                        }
+                        positional.extend(options);
+                        Expr::Call { callee: Box::new(callee), args: positional }
+                    }
+                    // fill[frame, col, value] or fill[frame, col, how =
+                    // 'forward' | 'backward']: one row takes a value and a
+                    // direction, the one not given blank
+                    Some("fill") if !self.fns.contains_key("fill") => {
+                        let (mut positional, options) = self.options("fill", args, &[("how", Expr::Str(String::new()))])?;
+                        let how_given = !matches!(options.first(), Some(Expr::Str(s)) if s.is_empty());
+                        match (positional.len(), how_given) {
+                            (3, false) => {}
+                            (2, true) => positional.push(Expr::Int(0)),
+                            (4, false) => {
+                                // (lowered already: value and how in place)
+                                return Ok(Expr::Call { callee: Box::new(callee), args: positional });
+                            }
+                            _ => return Err(self.err("fill[] takes a frame, a column and a value — fill[df, 'qty', 0] — or a direction: fill[df, 'qty', how = 'forward']".to_string())),
                         }
                         positional.extend(options);
                         Expr::Call { callee: Box::new(callee), args: positional }

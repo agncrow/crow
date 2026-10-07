@@ -1012,6 +1012,11 @@ impl Emitter {
             let method = if field == "offset" { "offset_minutes" } else { field };
             return format!("({}).{}()", t, method);
         }
+        // a moment's field over a column of moments: a column of ints
+        if matches!(oinner, CrowType::FrameCol) && crate::lower_ir::moment_field_name(field) {
+            self.needs_crow_runtime = true;
+            return format!("crow_runtime::verbs::moment_field(&{}, \"{}\").unwrap_or_else(|e| crow_stop({}, e))", obj, field, self.line_now());
+        }
         if matches!(oinner, CrowType::NumArray(..)) {
             let t = if matches!(oty, CrowType::Result(_)) { format!("{}.value.clone()", obj) } else { obj.clone() };
             match field {

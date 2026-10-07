@@ -33,7 +33,7 @@ pub(crate) const CORE_RESERVED: &[&str] = &[
     "find", "matches", "sub", "any", "all",
     "later", "running", "notice",
     "test",
-    "now", "moment", "captured", "chart",
+    "now", "moment", "bucket", "captured", "chart",
     "cpu", "gpu", "nodes",
     "grad",
 ];
@@ -103,7 +103,7 @@ pub(crate) const BUILTINS: &[&str] = &[
     "sign_in", "sign_out", "__reader", "__known", "__fmt_time", "download",
     "test",
     // Date/time
-    "now", "moment", "captured", "chart",
+    "now", "moment", "bucket", "captured", "chart",
     // Resource
     "cpu", "gpu", "nodes",
     // Autograd
@@ -1015,7 +1015,10 @@ impl<'a> Lowerer<'a> {
                 // module's rows; the call is then checked as the row's)
                 let kinds: Vec<crate::table::Arg> = types.iter().map(crate::table::Arg::of_type).collect();
                 let taking = providers.iter().filter(|m| crate::table::row_taking(m, name, &kinds).is_some()).count();
-                if taking == 1 {
+                // (a kind not known here — a function not yet called with
+                // its frame — settles nothing: the row is picked where the
+                // kinds are known, or by the values as the program runs)
+                if taking == 1 || kinds.contains(&crate::table::Arg::Unknown) {
                     return;
                 }
                 let forms: Vec<String> = providers.iter().map(|m| format!("{}.{}[...]", m, name)).collect();
@@ -1215,6 +1218,11 @@ fn returns_value(body: &[S]) -> bool {
         S::For { body, .. } | S::While { body, .. } => returns_value(body),
         _ => false,
     })
+}
+
+/// The fields of a moment, read of one or over a column of them.
+pub(crate) fn moment_field_name(field: &str) -> bool {
+    matches!(field, "year" | "month" | "day" | "hour" | "minute" | "second" | "weekday" | "offset")
 }
 
 /// Whether a builtin takes this many arguments (after named arguments are
