@@ -6,14 +6,11 @@ use crate::modules::CrowModule;
 
 pub struct FrameModule;
 
-pub(crate) const FRAME_FUNCTIONS: &[&str] = &[
-    "load", "save", "select", "filter", "sort", "group", "join", "stack",
-    "head", "tail", "fill", "unique", "rename", "stats",
-    "new", "with", "pivot", "window", "unpivot", "complete", "sample", "where", "bucket",
-];
+/// The frame module's functions: its rows' names, derived from the table.
+pub(crate) static FRAME_FUNCTIONS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| crate::table::module_names("frame"));
 
 impl CrowModule for FrameModule {
     fn name(&self) -> &str { "frame" }
 
-    fn functions(&self) -> &[&str] { FRAME_FUNCTIONS }
+    fn functions(&self) -> &[&str] { &FRAME_FUNCTIONS }
 }

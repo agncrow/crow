@@ -86,7 +86,7 @@ impl TypeContext {
             }
         }
         // Module function dispatch (overlapping builtins: check arg type)
-        let is_overlapping = matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round" | "min" | "max");
+        let is_overlapping = crate::table::CORE_AND_MATH.contains(&name);
         if is_overlapping && self.registry.has_function(name) {
             let arg_types: Vec<Ty> = args.iter().map(|a| arg_ty(a)).collect();
             // (a list of numbers is taken where a tensor is: `max` of a list
@@ -113,7 +113,7 @@ impl TypeContext {
         // round decides, where a guess would stick in what returns it
         let arg0 = args.first().map(|a| Self::walked(arg_ty(a)));
         let frame_core_fallback = self.registry.module_name_of(name) == Some("frame")
-            && crate::checker::BUILTINS.contains(&name)
+            && crate::table::has_core_rows(name)
             && !matches!(arg0, Some(Ty::Frame(_) | Ty::Column(_)));
         if frame_core_fallback && matches!(arg0, Some(Ty::Unknown | Ty::Unit)) {
             return Ty::Unknown;

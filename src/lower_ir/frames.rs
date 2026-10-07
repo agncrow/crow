@@ -16,7 +16,16 @@ use std::sync::Arc;
 pub(super) fn rebound(settled: &Ty, value: &Ty) -> Ty {
     match (settled, value.detail()) {
         (Ty::Frame(_), Some(Detail::Columns(cols))) => Ty::Frame(cols.clone()),
-        (Ty::Tensor(elem, _), Some(Detail::Shape(dims))) => Ty::Tensor(elem.clone(), dims.cloned()),
+        // (a tensor of ints given floats holds floats from then on, as a
+        // variable ever assigned a float is a float — spec §1: the binding
+        // had kept the ints while its value's row answered floats)
+        (Ty::Tensor(elem, _), Some(Detail::Shape(dims))) => {
+            let given = match value.payload() {
+                Ty::Tensor(e, _) => e.as_ref().clone(),
+                _ => elem.as_ref().clone(),
+            };
+            Ty::Tensor(Box::new(elem.unify(&given)), dims.cloned())
+        }
         (Ty::Result(inner), Some(_)) => Ty::Result(Box::new(rebound(inner, value))),
         _ => settled.clone(),
     }

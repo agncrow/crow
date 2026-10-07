@@ -139,7 +139,7 @@ Expr ::= Const(value, ty)
        | Load(fact) | Derived(name)
        | Call    { target: Row(row) | Runtime(name) | User(name) | Module(mod, name), args, ty }
        | Effect  { kind, row, args, ty, answered: bool }  -- query exec insert read write fetch shell mail later notice now
-       | Convert { how: IntToFloat | Unwrap | ToStr | ..., expr }
+       | Convert { how: IntToFloat | Unwrap | ..., expr }
        | Binary  { op, l, r, ty } | Unary { op, expr }
        | Index { base, index } | Field { base, name } | Slice {..}
        | Interp([Str | Expr])                        -- string interpolation

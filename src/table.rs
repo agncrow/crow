@@ -1878,6 +1878,14 @@ pub fn core_row(name: &str, args: &[Arg]) -> Option<&'static Row> {
     ROWS.iter().filter(|r| r.module.is_empty() && r.name == name).find(|r| takes(r, args))
 }
 
+/// The names a module's rows answer, each once, in order.
+pub fn module_names(module: &str) -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = ROWS.iter().filter(|r| r.module == module).map(|r| r.name).collect();
+    names.sort_unstable();
+    names.dedup();
+    names
+}
+
 /// Whether a module (`""` the core) answers the name with rows.
 pub fn has_rows(module: &str, name: &str) -> bool {
     ROWS.iter().any(|r| r.module == module && r.name == name)
@@ -2221,13 +2229,16 @@ impl Kind {
 /// takes one where it says so (`len`), the interpreter's cells being a list.
 fn takes(row: &Row, args: &[Arg]) -> bool {
     match spans(row.params, args.len(), row.name) {
-        Ok(spans) => row
-            .params
-            .iter()
-            .zip(spans)
-            .all(|(k, (a, b))| args[a..b].iter().all(|x| k.takes(*x) && !(row.module.is_empty() && *x == Arg::Column && k.each() == Kind::Tensor))),
+        Ok(spans) => row.params.iter().zip(spans).all(|(k, (a, b))| args[a..b].iter().all(|x| accepts(row, *k, *x))),
         Err(_) => false,
     }
+}
+
+/// Whether a parameter of the row takes an argument of the class: what its
+/// kind takes, except that a core row's tensor parameter does not take a
+/// frame's column (the column form is the frame module's).
+fn accepts(row: &Row, k: Kind, x: Arg) -> bool {
+    k.takes(x) && !(row.module.is_empty() && x == Arg::Column && k.each() == Kind::Tensor)
 }
 
 /// A module function's row for a call with these arguments: of the rows of
@@ -2332,6 +2343,12 @@ pub const OWN_FORM: &[&str] = &[
     "type", "error", "assert", "captured", "later", "running", "notice", "any", "all", "find", "grad", "cpu", "gpu", "nodes", "test", "chart",
 ];
 
+/// The scalar names the core and math both answer — a number's row the
+/// core's, a tensor's math's. One list, read wherever a call is resolved
+/// by name (it had been written in the interpreter and twice in the
+/// emitter); the test below holds it to the table.
+pub const CORE_AND_MATH: &[&str] = &["abs", "sqrt", "floor", "ceil", "round", "min", "max"];
+
 /// The core builtins still written twice, each to become a row (docs/
 /// bug-classes.md §4). The list only shrinks: a builtin added outside the
 /// table fails `every_core_builtin_is_a_row_or_says_why_not`.
@@ -2411,7 +2428,7 @@ mod tests {
     /// moved one left on the list, fails here.
     #[test]
     fn every_core_builtin_is_a_row_or_says_why_not() {
-        for name in crate::lower_ir::CORE_RESERVED {
+        for name in crate::lower_ir::CORE_RESERVED.iter() {
             let places = [core(name).is_some(), OWN_FORM.contains(name), TO_MOVE.contains(name)];
             assert_eq!(places.iter().filter(|p| **p).count(), 1, "'{}' is in {} of: the table, OWN_FORM, TO_MOVE", name, places.iter().filter(|p| **p).count());
         }
@@ -2430,7 +2447,7 @@ mod tests {
             ("math", math::MATH_FUNCTIONS),
             ("math.stats", stats::STATS_FUNCTIONS),
             ("math.nn", nn::NN_FUNCTIONS),
-            ("frame", frame::FRAME_FUNCTIONS),
+            ("frame", &frame::FRAME_FUNCTIONS[..]),
             ("db", db::DB_FUNCTIONS),
             ("io", io::IO_FUNCTIONS),
             ("doc", doc::DOC_FUNCTIONS),
@@ -2552,5 +2569,46 @@ mod tests {
         assert!(core_row("sort", &[Arg::Records]).is_none());
         assert_eq!(core_row("len", &[Arg::Column]).map(|r| r.id), Some("core.len_column"));
         assert!(core_row("contains", &[Arg::Column, Arg::Int]).is_none());
+    }
+
+    /// Every row is reachable: no earlier row of its name and module takes
+    /// every argument it takes, or the first-fit lookup would never reach
+    /// it (`str[column]` had been listed after the form that shows any
+    /// value, and every column was shown).
+    #[test]
+    fn no_row_is_shadowed_by_an_earlier_row() {
+        fn positional(r: &Row) -> bool {
+            matches!(spans(r.params, r.params.len(), r.name), Ok(sp) if sp.iter().all(|(a, b)| b - a == 1))
+        }
+        let classes = crate::totality::every_arg();
+        let mut shadowed = Vec::new();
+        for (j, later) in ROWS.iter().enumerate() {
+            if !positional(later) {
+                continue;
+            }
+            for earlier in &ROWS[..j] {
+                if earlier.name != later.name || earlier.module != later.module || earlier.params.len() != later.params.len() || !positional(earlier) {
+                    continue;
+                }
+                let covered = (0..later.params.len())
+                    .all(|i| classes.iter().all(|&x| !accepts(later, later.params[i], x) || accepts(earlier, earlier.params[i], x)));
+                if covered {
+                    shadowed.push(format!("{} is never reached: {} before it takes everything it takes", later.id, earlier.id));
+                }
+            }
+        }
+        assert!(shadowed.is_empty(), "{}", shadowed.join("\n"));
+    }
+
+    /// The one list of the scalar names core and math both answer is what
+    /// the table says it is.
+    #[test]
+    fn the_core_and_math_list_is_the_tables() {
+        use std::collections::BTreeSet;
+        let core: BTreeSet<&str> = ROWS.iter().filter(|r| r.module.is_empty()).map(|r| r.name).collect();
+        let math: BTreeSet<&str> = ROWS.iter().filter(|r| r.module == "math").map(|r| r.name).collect();
+        let both: BTreeSet<&str> = core.intersection(&math).copied().collect();
+        let listed: BTreeSet<&str> = CORE_AND_MATH.iter().copied().collect();
+        assert_eq!(both, listed, "the names core and math both answer");
     }
 }

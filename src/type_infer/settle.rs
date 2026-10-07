@@ -57,5 +57,5 @@ pub(crate) fn settle(existing: &Ty, value: Ty, in_body: bool) -> Ty {
 /// is `payload`: it holds a plain value the payload fits, so its first
 /// value could not fail, and the failure is refused where it is assigned.
 pub(crate) fn refuses_failed(held: &Ty, payload: &Ty) -> bool {
-    !matches!(held, Ty::Result(_)) && !format!("{:?}", held).contains("Unknown") && held.compatible(payload)
+    !matches!(held, Ty::Result(_)) && !held.has_unknown() && held.compatible(payload)
 }

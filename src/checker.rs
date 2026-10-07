@@ -10,38 +10,13 @@ use crate::type_infer::{Ty, FnSig, TypeContext};
 use crate::value::{CrowValue, Value};
 
 // --- Impure builtins ---
-const IMPURE_BUILTINS: &[&str] = &[
-    "read", "write", "log", "input", "rand", "now", "sleep", "env", "exit",
-    "args", "exists", "mkdir", "ls", "rm", "mv", "cp",
-    "later", "running", "shell", "request",
-    "captured",
-];
+/// The builtins a pure function cannot call: the effects (crate::ir::EFFECTS),
+/// the draws from the random generator (crate::ir::DRAWS), and what reads
+/// the file system or the session's state without being an effect.
+fn impure_builtin(name: &str) -> bool {
+    crate::ir::is_effect(name) || crate::ir::DRAWS.contains(&name) || matches!(name, "exists" | "running" | "captured")
+}
 
-/// All builtin function names (reused from validator for undefined-variable detection).
-pub(crate) const BUILTINS: &[&str] = &[
-    "log", "assert", "type",
-    "abs", "sqrt", "floor", "ceil", "round", "pow", "min", "max",
-    "split", "trim", "replace", "upper", "lower", "join", "starts", "ends",
-    "repeat",
-    "int", "float", "str",
-    "len", "contains", "slice", "push", "pop", "sort", "reverse", "concat",
-    "range", "map",
-    "keys", "values", "has", "set", "del",
-    "args", "input",
-    "read", "write",
-    "exists", "mkdir", "ls", "rm", "mv", "cp",
-    "rand", "sleep", "env", "exit", "halt",
-    "json", "encode", "decode",
-    "error",
-    "cpu", "gpu",
-    "shell",
-    "request",
-    "serve", "route", "page",
-    "later", "running",
-    "app", "html", "click", "elements", "change", "box", "fits", "style", "downloads", "mails",
-    "fmt",
-    "now", "moment", "bucket", "captured", "chart",
-];
 
 // --- Issue types ---
 
@@ -298,6 +273,37 @@ pub struct TestCounts {
     pub inputs_run: usize,
 }
 
+/// How many assertions a test block reaches: the `assert` calls in its
+/// body (a bare truth is lowered as one) and in every function it calls,
+/// transitively.
+fn asserts_reached(program: &crate::ir::Program, test: &crate::ir::Test) -> usize {
+    use crate::ir::{Expr, Target};
+    let fns: std::collections::HashMap<&str, &crate::ir::Fn> = program.parts.iter().flat_map(|p| p.fns.iter()).map(|f| (f.name.as_str(), f)).collect();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut todo: Vec<&[crate::ir::Stmt]> = vec![&test.body];
+    let mut count = 0;
+    while let Some(body) = todo.pop() {
+        let mut called = Vec::new();
+        crate::ir::visit_block(body, &mut |e| {
+            if let Expr::Call { target, .. } = e {
+                match target {
+                    Target::Runtime(n) if n == "assert" => count += 1,
+                    Target::User(n) => called.push(n.clone()),
+                    _ => {}
+                }
+            }
+        });
+        for n in called {
+            if seen.insert(n.clone()) {
+                if let Some(f) = fns.get(n.as_str()) {
+                    todo.push(&f.body);
+                }
+            }
+        }
+    }
+    count
+}
+
 /// Execute every test block: attached (unnamed — the fn above's examples and
 /// laws) and named (standalone scenarios). Params are generated inputs,
 /// boundaries first; bodies run in the interpreter against declarations only
@@ -371,6 +377,18 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
             continue;
         };
         counts.truths += test.truths;
+        // a block that reaches no assertion — no bare truth, no assert[],
+        // in its body or in a function it calls — cannot fail, and is a
+        // failure itself (a block whose one truth was never a truth had
+        // passed for weeks)
+        if asserts_reached(&program, test) == 0 {
+            issues.push(Issue::TestFailure {
+                block: block.label.clone(),
+                line: block.line,
+                detail: "asserts nothing: no bare truth and no assert[…] is reached by the block or the functions it calls".into(),
+            });
+            continue;
+        }
         let sig = FnSig {
             params: test.params.iter().map(|(p, t)| (p.clone(), crate::lower_ir::as_inferred(t))).collect(),
             return_type: Ty::Unit,
@@ -1165,7 +1183,7 @@ pub fn find_pure_functions(ctx: &TypeContext) -> BTreeSet<String> {
     }
     for (name, callees) in &call_graph {
         for c in callees {
-            if IMPURE_BUILTINS.contains(&c.as_str()) {
+            if impure_builtin(c.as_str()) {
                 impure.insert(name.clone());
                 break;
             }
@@ -1534,8 +1552,7 @@ fn find_undefined_vars_in_fn(
     // Builtins are defined — the static list plus everything the module
     // registry provides (db/web/frame/... exports) and, in views/handlers,
     // the HTML element vocabulary.
-    for b in BUILTINS { defined.insert(b.to_string()); }
-    for b in crate::lower_ir::BUILTINS { defined.insert(b.to_string()); }
+    for b in crate::lower_ir::BUILTINS.iter() { defined.insert(b.to_string()); }
     for b in stdlib_names() { defined.insert(b.clone()); }
     if reactive_readers(ctx).contains(name) {
         // the signed-in reader, where the gate lets a web program read it

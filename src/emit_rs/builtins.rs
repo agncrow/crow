@@ -315,21 +315,23 @@ impl Emitter {
             _ => {}
         }
 
-        // module functions: a scalar name core and math both answer goes to
-        // the module only when a tensor is among the arguments
-        let overlapping = matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round" | "min" | "max");
-        if overlapping && self.registry.has_function(name) && args.iter().any(|x| matches!(self.tt(x), Ty::Tensor(..))) {
-            return Some(self.registry_call(name, args, a));
-        }
-        let frame_select_widget = name == "select" && self.needs_ui && n == 2 && self.registry.module_name_for(name).map_or(false, |m| m == "frame");
-        let frame_core = self.registry.module_name_for(name).map_or(false, |m| m == "frame")
-            && crate::checker::BUILTINS.contains(&name)
-            && !args.first().map(|x| matches!(Self::inner(&self.tt(x)), Ty::Frame(_) | Ty::Column(_))).unwrap_or(false);
+        // module functions: the module a bare name reaches is the one the
+        // arguments' kinds pick, by the one rule inference and the lowering
+        // decide by (table::module_of_bare); none is the core's form below.
+        // A select in a page is the widget, an element in a view the
+        // element, and a message the session's to hold: their arms below,
+        // not a module's row
+        let kinds: Vec<crate::table::Arg> = args.iter().map(|x| crate::table::Arg::of_type(&self.tt(x))).collect();
+        let providers = self.registry.providers_of(name);
+        let frame_select_widget = name == "select" && self.needs_ui && n == 2 && providers.contains(&"frame");
         let element_in_view = self.in_view() && crate::lower::UI_ELEMENTS.contains(&name);
-        // (a message is the session's to hold: its arm below, not its row,
-        // which is written in Crow and sends it)
-        if !overlapping && !frame_select_widget && !frame_core && !element_in_view && name != "mail" && self.registry.has_function(name) {
-            return Some(self.registry_call(name, args, a));
+        if !frame_select_widget && !element_in_view && name != "mail" {
+            if let Some(m) = crate::table::module_of_bare(name, &providers, &kinds) {
+                let saved = self.pinned_module.replace(m);
+                let out = self.registry_call(name, args, a);
+                self.pinned_module = saved;
+                return Some(out);
+            }
         }
 
         Some(match name {

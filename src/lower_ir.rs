@@ -190,7 +190,6 @@ fn written_names(program: &mut Program) {
                 block(body);
             }
             Stmt::Propagate { values, .. } => values.iter_mut().for_each(name),
-            Stmt::Stop { value } => name(value),
             _ => {}
         }
     }
@@ -499,7 +498,7 @@ impl LoopOrder {
         visit_stmts(body, &mut |s| {
             order |= match s {
                 Stmt::Set { var, .. } | Stmt::SetPath { var, .. } => !own.contains(var),
-                Stmt::Store { .. } | Stmt::Return(_) | Stmt::Propagate { .. } | Stmt::Stop { .. } => true,
+                Stmt::Store { .. } | Stmt::Return(_) | Stmt::Propagate { .. } => true,
                 _ => false,
             }
         });
@@ -1703,11 +1702,8 @@ impl<'a> Lowerer<'a> {
                 if self.pass != Pass::Final && path.is_empty() {
                     let held = self.ctx.vars.get(&var).cloned().unwrap_or(Ty::Unknown);
                     let item = read(&expr);
-                    let open = match &held {
-                        Ty::List(inner) => format!("{:?}", inner).contains("Unknown"),
-                        _ => false,
-                    };
-                    if open && !format!("{:?}", item).contains("Unknown") && !matches!(item, Ty::Unit) {
+                    let open = matches!(&held, Ty::List(inner) if inner.has_unknown());
+                    if open && !item.has_unknown() && !matches!(item, Ty::Unit) {
                         let refined = Ty::List(Box::new(item));
                         self.ctx.note_scanned_assign(&var, refined.clone());
                         self.rebind(&var, &refined);
@@ -1818,6 +1814,7 @@ impl<'a> Lowerer<'a> {
                     b
                 } else {
                     self.check_rank_known(&it, "a loop over");
+                    self.check_walkable(&it);
                     let saved = self.bind_loop_var(var, &it.ty());
                     // a body that binds a frame anew reads, at its top, what
                     // the loop's entry and its end both give
@@ -2754,6 +2751,7 @@ impl<'a> Lowerer<'a> {
                     None
                 } else {
                     self.check_rank_known(&it, "a loop over");
+                    self.check_walkable(&it);
                     Some(self.bind_loop_var(var, &it.ty()))
                 };
                 let listed = self.pass == Pass::Scan && fn_list.is_some();
@@ -2965,8 +2963,8 @@ impl<'a> Lowerer<'a> {
                 if self.pass != Pass::Final {
                     let field_ty = self.ctx.structs.get(&name).and_then(|s| s.fields.get(i)).map(|(_, t)| t.clone());
                     if let (Expr::Local(v, _), Some(field_ty)) = (&value, field_ty) {
-                        let open = matches!(full(&value), Ty::List(_)) && format!("{:?}", full(&value)).contains("Unknown");
-                        let known = matches!(field_ty, Ty::List(_)) && !format!("{:?}", field_ty).contains("Unknown");
+                        let open = matches!(full(&value), Ty::List(_)) && full(&value).has_unknown();
+                        let known = matches!(field_ty, Ty::List(_)) && !field_ty.has_unknown();
                         if open && known {
                             let v = v.clone();
                             self.ctx.note_scanned_assign(&v, field_ty.clone());
@@ -3448,16 +3446,16 @@ impl<'a> Lowerer<'a> {
         if !registry.has_function(name) {
             return None;
         }
-        let overlapping = matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round" | "min" | "max");
-        // (a list of numbers is taken where a tensor is: `max` of a list a
-        // function computed is math's, of the whole list — it had been left
-        // to the core's two-number `max`, and refused for its count)
-        let tensor_among = types.iter().any(|t| matches!(t, Ty::Tensor(..)) || matches!(t, Ty::List(inner) if matches!(inner.as_ref(), Ty::Int | Ty::Float)));
-        let frame_fn = registry.module_name_for(name) == Some("frame");
-        let control = name == "select" && self.in_ui && lowered.len() == 2 && frame_fn;
-        let frame_core = frame_fn && crate::checker::BUILTINS.contains(&name) && !types.first().is_some_and(|t| matches!(t, Ty::Frame(_) | Ty::Column(_)));
+        // a select in a page is the widget, an element in a view the
+        // element: forms of their own, not a module's row. Which module a
+        // bare name reaches is the one rule's (table::module_of_bare, in
+        // module_for): a name the core also answers goes to the module
+        // when the core's rows do not take the kinds — `max` of a tensor,
+        // or of a list of numbers, is math's of the whole; `sort` of a list
+        // with frame imported is the core's
+        let control = name == "select" && self.in_ui && lowered.len() == 2 && registry.providers_of(name).contains(&"frame");
         let element = matches!(self.at, Where::In(FnKind::View)) && crate::lower::UI_ELEMENTS.contains(&name);
-        if !(overlapping && tensor_among) && (overlapping || control || frame_core || element) {
+        if control || element {
             return None;
         }
         let chosen;
@@ -3785,15 +3783,18 @@ impl<'a> Lowerer<'a> {
     /// not built.)
     fn widen_items(row: &'static crate::table::Row, mut args: Vec<Expr>, ty: Ty) -> (Vec<Expr>, Ty) {
         fn ints(t: &Ty) -> bool {
-            matches!(t.payload(), Ty::List(e) | Ty::Map(e) if **e == Ty::Int)
+            matches!(t.payload(), Ty::List(e) | Ty::Map(e) | Ty::Tensor(e, _) if **e == Ty::Int)
         }
         fn floats(t: &Ty) -> bool {
-            matches!(t.payload(), Ty::List(e) | Ty::Map(e) if **e == Ty::Float)
+            matches!(t.payload(), Ty::List(e) | Ty::Map(e) | Ty::Tensor(e, _) if **e == Ty::Float)
         }
         fn of_floats(t: Ty) -> Ty {
             match t {
                 Ty::List(e) if *e == Ty::Int => Ty::List(Box::new(Ty::Float)),
                 Ty::Map(e) if *e == Ty::Int => Ty::Map(Box::new(Ty::Float)),
+                // (numbers held as a tensor: its numbers are floats already;
+                // what changes is what the type says of them)
+                Ty::Tensor(e, d) if *e == Ty::Int => Ty::Tensor(Box::new(Ty::Float), d),
                 Ty::Result(inner) => Ty::Result(Box::new(of_floats(*inner))),
                 other => other,
             }
@@ -3804,7 +3805,7 @@ impl<'a> Lowerer<'a> {
             args[at] = Expr::Convert { how: Convert::IntsToFloats, expr: Box::new(x), ty };
         }
         let item = match row.id {
-            "core.push" | "core.contains" => 1,
+            "core.push" | "core.push_number" | "core.contains" => 1,
             "core.set" => 2,
             "core.concat" if args.len() == 2 => {
                 if ints(&args[0].ty()) && floats(&args[1].ty()) {
@@ -4034,14 +4035,13 @@ fn local_named(e: &Expr) -> Option<String> {
 /// item assigned later typed the items): the loop had kept its unknown
 /// items, which the compiled program read as text.
 fn settled_yield(expr: Expr, declared: &Ty) -> Expr {
-    let open = |t: &Ty| format!("{:?}", t).contains("Unknown");
-    if !open(&expr.ty()) || open(declared) {
+    if !expr.ty().has_unknown() || declared.has_unknown() {
         return expr;
     }
     match expr {
         Expr::ForExpr { var, iter, mut body, ty: _, parallel } if matches!(declared, Ty::List(_)) => {
             if let (Ty::List(item), Some(Stmt::Do(Expr::ListLit(items, lt)))) = (declared, body.iter_mut().rev().find(|s| !matches!(s, Stmt::Line(_)))) {
-                if items.is_empty() && open(lt) {
+                if items.is_empty() && lt.has_unknown() {
                     *lt = (**item).clone();
                 }
             }
@@ -4118,7 +4118,7 @@ fn declared_as(first: &Ty, settled: Option<&Ty>) -> Ty {
             return Ty::OptRecord(n.clone());
         }
     }
-    if !format!("{:?}", first).contains("Unknown") {
+    if !first.has_unknown() {
         return first.clone();
     }
     match settled {
@@ -4585,9 +4585,6 @@ fn stmt_reads(s: &Stmt, out: &mut HashSet<String>) {
         }
         Stmt::Return(Some(e)) => expr_reads(e, out),
         Stmt::Propagate { values, .. } => out.extend(values.iter().cloned()),
-        Stmt::Stop { value } => {
-            out.insert(value.clone());
-        }
         _ => {}
     }
 }
@@ -5321,6 +5318,21 @@ mod tests {
         assert_eq!(test.truths, 2);
         let asserts = test.body.iter().filter(|s| matches!(s, Stmt::Do(Expr::Call { target: Target::Runtime(n), .. }) if n == "assert")).count();
         assert_eq!(asserts, 3);
+    }
+
+    /// A loop walks what has items. A map, text or a frame has none, and
+    /// the loop is refused before the program runs, in both modes, naming
+    /// what to walk instead (the interpreter had refused the map as it
+    /// ran; the loop over text had compiled to Rust that did not build).
+    #[test]
+    fn a_loop_over_what_has_no_items_is_refused() {
+        let refused = |src: &str| crate::build(src).ok().and_then(|stmts| crate::ir_interp::prepare(&stmts, "t").err()).unwrap_or_default();
+        assert!(refused("counts = map[a = 1, b = 2]\nfor k in counts\n    log[k]\n").contains("a loop walks map[int], which has no items — walk keys[m] or values[m]"));
+        assert!(refused("for c in 'abc'\n    log[c]\n").contains("a loop walks str, which has no items — walk split[s, '']"));
+        assert!(refused("use frame\ndf = with[frame.new[], 'a', [1, 2]]\nfor r in df\n    log[r]\n").contains("a loop walks frame, which has no items — walk one of its columns"));
+        assert!(refused("for n in 3\n    log[n]\n").contains("a loop walks int, which has no items"));
+        // what has items walks
+        assert!(crate::build("for x in [1, 2]\n    log[x]\nfor r in [[1.0, 2.0], [3.0, 4.0]]\n    log[r]\n").ok().and_then(|s| crate::ir_interp::prepare(&s, "t").ok()).is_some());
     }
 
     #[test]

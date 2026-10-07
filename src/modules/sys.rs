@@ -7,10 +7,13 @@ use crate::modules::CrowModule;
 
 pub struct SysModule;
 
-pub(crate) const SYS_FUNCTIONS: &[&str] = &["open", "send", "recv", "close", "bytes", "text", "slice", "find", "concat", "byte", "gather", "file", "store", "random", "hex", "hash", "hmac", "reply", "answer", "csv_rows", "frame_of_csv", "frame_of_csv_bytes", "frame_of_json", "frame_of_parquet", "frame_of_rowbinary", "frame_of_postgres", "frame_csv", "frame_json", "frame_parquet", "tensor_of_frame", "exchange", "exchange_on", "fetch", "put", "format_of", "format_sniffed", "remote", "with_query", "redirected", "base64", "base64url", "unbase64", "same", "pack", "ieee", "binary", "socket_of", "stream_of", "leftover", "unread", "mask", "digest", "read_head", "upgrade", "mailer_field", "secure", "civil", "betainc", "gammainc", "lgamma", "shaped", "note", "noted", "machine", "process", "alive", "rowbinary_of_frame", "xor", "copy_of_frame"];
+/// The sys rows a standard module may call: every sys row's name, derived
+/// from the table (a row left out of the list had been "undefined
+/// function" in both modes).
+pub(crate) static SYS_FUNCTIONS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| crate::table::module_names("sys"));
 
 impl CrowModule for SysModule {
     fn name(&self) -> &str { "sys" }
 
-    fn functions(&self) -> &[&str] { SYS_FUNCTIONS }
+    fn functions(&self) -> &[&str] { &SYS_FUNCTIONS }
 }

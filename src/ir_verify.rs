@@ -301,11 +301,6 @@ impl<'p> Verifier<'p> {
                     }
                 }
             }
-            Stmt::Stop { value } => {
-                if self.local(value).is_none() {
-                    self.found(format!("stops on '{}', which is not bound", value));
-                }
-            }
         }
     }
 
@@ -330,9 +325,7 @@ impl<'p> Verifier<'p> {
         match &t {
             Ty::List(e) | Ty::Column(e) => e.as_ref().clone(),
             Ty::Tensor(e, dims) => Ty::tensor_item(e, dims),
-            Ty::Map(_) => Ty::Str,
-            Ty::Str | Ty::Markup => Ty::Str,
-            Ty::Frame(_) | Ty::Json | Ty::Unknown => Ty::Unknown,
+            Ty::Json | Ty::Unknown => Ty::Unknown,
             // refused where it runs, by both backends: `cannot loop over an
             // error value`
             Ty::Result(inner) => match inner.as_ref() {
@@ -636,9 +629,9 @@ impl<'p> Verifier<'p> {
             // (a value that can fail converts as its payload does)
             Convert::IntToFloat => matches!(inner.payload(), Ty::Int | Ty::Unknown) && matches!(ty.payload(), Ty::Float),
             Convert::IntsToFloats => {
-                matches!(ty.payload(), Ty::List(e) | Ty::Map(e) if **e == Ty::Float) && matches!(inner.payload(), Ty::List(e) | Ty::Map(e) if **e == Ty::Int || **e == Ty::Unknown)
+                matches!(ty.payload(), Ty::List(e) | Ty::Map(e) | Ty::Tensor(e, _) if **e == Ty::Float)
+                    && matches!(inner.payload(), Ty::List(e) | Ty::Map(e) | Ty::Tensor(e, _) if **e == Ty::Int || **e == Ty::Unknown)
             }
-            Convert::ToStr => matches!(ty, Ty::Str | Ty::Markup),
             // numbers held as a list, a frame's column, or already a tensor
             Convert::ToTensor => matches!(ty.payload(), Ty::Tensor(..)) && matches!(inner.payload(), Ty::List(_) | Ty::Column(_) | Ty::Tensor(..) | Ty::Unknown),
             Convert::ToList => matches!(ty.payload(), Ty::List(_)),

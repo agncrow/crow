@@ -563,10 +563,6 @@ impl Emitter {
                     }
                 }
             }
-            Stmt::Stop { value } => {
-                let who = self.shown_fn_name();
-                self.line(&format!("{{ state.stop(format!(\"{} stopped: {{}}\", {}.reason)); return; }}", who, value));
-            }
         }
     }
 
@@ -621,13 +617,13 @@ impl Emitter {
         if holds_markup {
             t = Ty::Markup;
         }
-        if format!("{:?}", t).contains("Unknown") {
+        if t.has_unknown() {
             let declared = as_inferred(ty);
             // a first binding that cannot fail is not a result because a
             // later one can (`ts = []`, then `ts = push[ts, float[x]]`): the
             // later is a consumption point, and the variable holds values
             let declared = if matches!(t, Ty::Result(_)) { declared } else { Self::inner(&declared) };
-            if !format!("{:?}", declared).contains("Unknown") || matches!(t, Ty::Unknown) {
+            if !declared.has_unknown() || matches!(t, Ty::Unknown) {
                 t = declared;
             }
         }

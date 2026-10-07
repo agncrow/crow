@@ -1132,6 +1132,14 @@ fn cmd_test_parity(only: &[String]) {
         let (t_ok, t_out, t_err) = run_mode(&["run"], file);
 
         if i_ok && t_ok && i_out == t_out {
+            // the same silence is no match: a program that logs nothing
+            // compares nothing, and would pass with every builtin wrong
+            if i_out.trim().is_empty() {
+                failures += 1;
+                println!("  FAIL  {}", name);
+                println!("        prints nothing in either mode: a program that logs nothing compares nothing");
+                continue;
+            }
             println!("  ok    {}", name);
             continue;
         }
@@ -2894,7 +2902,7 @@ fn derive_hoist_rewrite(source: &str, view: &str, conn: &str) -> Result<(String,
     let mut prev_dot = false;
     for st in &tokens {
         if let token::Token::Ident(id) = &st.token {
-            let known = prev_dot || id == "query" || id == conn || top_level.contains(id) || checker::BUILTINS.contains(&id.as_str());
+            let known = prev_dot || id == "query" || id == conn || top_level.contains(id) || lower_ir::BUILTINS.contains(&id.as_str());
             if !known {
                 return Err(format!(
                     "the query reads '{}', which lives inside the view — make it a fact (a top-level variable a handler writes), then rewrite",

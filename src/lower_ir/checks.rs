@@ -12,31 +12,17 @@ use std::collections::HashMap;
 
 /// True core — reserved in every Crow file, forever (frozen by the budget
 /// rule). Names here can never be user definitions.
-pub(crate) const CORE_RESERVED: &[&str] = &[
-    "log", "assert", "type",
-    "abs", "sqrt", "floor", "ceil", "round", "min", "max",
-    "split", "trim", "replace", "upper", "lower", "join", "starts", "ends",
-    "repeat", "fmt",
-    "int", "float", "str",
-    "len", "contains", "slice", "push", "pop", "sort", "reverse", "concat",
-    "range", "map",
-    "keys", "values", "has", "set", "del",
-    "args", "input",
-    "read", "write",
-    "exists", "mkdir", "ls", "rm", "mv", "cp",
-    "rand", "sleep", "env", "exit", "halt",
-    "json", "encode", "decode",
-    "error",
-    "shell",
-    "request",
-    "hash",
-    "find", "matches", "sub", "any", "all",
-    "later", "running", "notice",
-    "test",
-    "now", "moment", "bucket", "captured", "chart",
-    "cpu", "gpu", "nodes",
-    "grad",
-];
+/// The core's reserved names: every core row's name and the forms of
+/// their own (table::OWN_FORM) — derived from the table, not written
+/// beside it (a builtin added as a row had to be listed here too, and
+/// the list and the table drifted: `bucket` reached one before the other).
+pub(crate) static CORE_RESERVED: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
+    let mut names: Vec<&'static str> = crate::table::ROWS.iter().filter(|r| r.module.is_empty() && !r.name.starts_with("__")).map(|r| r.name).collect();
+    names.extend(crate::table::OWN_FORM.iter().copied());
+    names.sort_unstable();
+    names.dedup();
+    names
+});
 
 /// Why `mail` is refused in a view or a derivation, directly or through a
 /// function it calls.
@@ -65,58 +51,33 @@ pub(crate) const WEB_MODULES: &[&str] = &["auth", "mail", "ws"];
 /// Reserved only in files that import ui
 pub(crate) const UI_RESERVED: &[&str] = &["fetch", "poll", "field", "slider", "checkbox", "toggle", "radio", "tabs", "progress", "icon", "today"];
 
-/// All builtin function names recognized by the Crow language.
-pub(crate) const BUILTINS: &[&str] = &[
-    "log", "assert", "type",
-    // Math
-    "abs", "sqrt", "floor", "ceil", "round", "min", "max",
-    // String
-    "split", "trim", "replace", "upper", "lower", "join", "starts", "ends",
-    "repeat", "pad", "fmt",
-    // Conversion
-    "int", "float", "str",
-    // Collections
-    "len", "contains", "slice", "push", "pop", "sort", "reverse", "append", "concat",
-    "range", "map",
-    // Map
-    "keys", "values", "has", "set", "del",
-    // CLI / IO
-    "args", "input",
-    // File I/O
-    "read", "write",
-    // File system
-    "exists", "mkdir", "ls", "rm", "mv", "cp",
-    // System
-    "rand", "sleep", "env", "exit", "halt",
-    // JSON
-    "json", "encode", "decode",
-    // Error
-    "error",
-    // Shell
-    "shell",
-    "request",
-    // Hashing
-    "hash",
-    // Regex
-    "find", "matches", "sub", "any", "all",
-    "later", "running", "notice", "__notice_text", "__notice_at",
-    "sign_in", "sign_out", "__reader", "__known", "__fmt_time", "download",
-    "test",
-    // Date/time
-    "now", "moment", "bucket", "captured", "chart",
-    // Resource
-    "cpu", "gpu", "nodes",
-    // Autograd
-    "grad",
-    // Web
-    "route", "serve", "respond", "redirect", "html", "text",
-    "arrow", "bytes", "stream",
-    "exec", "query",
-    "connect",
-    "page",
-    // UI reactive builtins
-    "fetch", "poll", "field", "slider", "checkbox", "toggle", "radio", "tabs", "select", "progress", "icon", "today",
-];
+/// The module functions a program calls bare where their module is
+/// imported, which the checks know by name: a frame's `select` (and the
+/// page's widget), the database's verbs.
+const MODULE_BARE: &[&str] = &["select", "exec", "query", "connect"];
+
+/// The forms the compiler itself writes into a program: a value a guard
+/// made known good (lower::KNOWN), a notice's text and time, the page's
+/// reader.
+const INTERNAL_FORMS: &[&str] = &["__known", "__notice_text", "__notice_at", "__reader"];
+
+/// Every name the compiler answers as a builtin, bare: the core's names
+/// and its internal forms, web's and ui's, and the module functions called
+/// bare — derived from the lists each keeps, not written again (this list
+/// had kept `pad` and `append` long after they went, and lacked `bucket`
+/// the day it came).
+pub(crate) static BUILTINS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
+    let mut names: Vec<&'static str> = CORE_RESERVED.iter().copied().collect();
+    names.extend(crate::table::ROWS.iter().filter(|r| r.module.is_empty() && r.name.starts_with("__")).map(|r| r.name));
+    names.extend(WEB_RESERVED.iter().copied());
+    names.extend(WEB_EXTRA_FUNCTIONS.iter().copied());
+    names.extend(UI_RESERVED.iter().copied());
+    names.extend(MODULE_BARE.iter().copied());
+    names.extend(INTERNAL_FORMS.iter().copied());
+    names.sort_unstable();
+    names.dedup();
+    names
+});
 
 /// The modules whose functions and constants a bare `use` makes names.
 const REGISTRY_MODULES: &[&str] = &["math", "math.stats", "math.nn", "io", "frame", "doc", "chart", "sys"];

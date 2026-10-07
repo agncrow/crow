@@ -95,6 +95,10 @@ impl Emitter {
                 }
                 Convert::IntsToFloats => {
                     let inner = self.owned_expr(expr);
+                    // numbers held as a tensor are floats already
+                    if matches!(Self::inner(&self.tt(expr)), Ty::Tensor(..)) {
+                        return inner;
+                    }
                     let map = match Self::inner(&self.tt(expr)) {
                         Ty::Map(_) => "into_iter().map(|(k, v)| (k, v as f64)).collect::<std::collections::BTreeMap<String, f64>>()",
                         _ => "into_iter().map(|v| v as f64).collect::<Vec<f64>>()",
@@ -131,10 +135,6 @@ impl Emitter {
                         }
                         _ => inner,
                     }
-                }
-                Convert::ToStr => {
-                    let inner = self.expr(expr);
-                    format!("format!(\"{{}}\", {})", inner)
                 }
                 // a tensor's numbers as a list's items, ints where the list
                 // holds ints; a list's numbers as a tensor of one axis
@@ -1507,8 +1507,10 @@ impl Emitter {
                 if name == "set" {
                     return false;
                 }
-                if self.registry.has_function(name) && !matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round" | "min" | "max") {
-                    if let Some(t) = self.registry.type_of(name, &raw_args.iter().map(|a| self.tt(a)).collect::<Vec<_>>()) {
+                let types: Vec<Ty> = raw_args.iter().map(|a| self.tt(a)).collect();
+                let kinds: Vec<crate::table::Arg> = types.iter().map(crate::table::Arg::of_type).collect();
+                if let Some(m) = crate::table::module_of_bare(name, &self.registry.providers_of(name), &kinds) {
+                    if let Some(t) = self.registry.type_of_in(&m, name, &types) {
                         return matches!(t, Ty::Result(_));
                     }
                 }
@@ -1807,7 +1809,7 @@ impl Emitter {
     /// conversion (a bare unwrap is read past by `raw`).
     fn unwrapped_through<'a>(&self, a: &'a Expr) -> Option<(&'a Expr, &'a Expr)> {
         match a {
-            Expr::Convert { how: Convert::ToList | Convert::ToTensor | Convert::ToStr | Convert::IntToFloat | Convert::IntsToFloats, expr, .. } => match expr.as_ref() {
+            Expr::Convert { how: Convert::ToList | Convert::ToTensor | Convert::IntToFloat | Convert::IntsToFloats, expr, .. } => match expr.as_ref() {
                 node @ Expr::Convert { how: Convert::Unwrap, expr: inner, .. } if matches!(self.tt(inner), Ty::Result(_)) => Some((node, inner)),
                 deeper => self.unwrapped_through(deeper),
             },
@@ -2223,7 +2225,7 @@ impl Emitter {
 /// error handed back from a condition, a handler's stop.
 fn leaves(body: &[Stmt]) -> bool {
     let mut out = false;
-    visit_stmts(body, &mut |s| out |= matches!(s, Stmt::Return(_) | Stmt::Propagate { .. } | Stmt::Stop { .. }));
+    visit_stmts(body, &mut |s| out |= matches!(s, Stmt::Return(_) | Stmt::Propagate { .. }));
     // a collecting loop inside over a list that can fail refuses it there
     visit_block(body, &mut |e| out |= matches!(e, Expr::ForExpr { iter, .. } if iter.ty().is_result()));
     out

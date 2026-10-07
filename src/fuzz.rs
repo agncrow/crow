@@ -60,9 +60,11 @@ enum Kind {
     Mat,
     /// a frame of four rows: text `k` and `g`, int `a`, float `b`
     Frame,
+    /// a moment: an instant with the offset it was written in
+    Moment,
 }
 
-const KINDS: &[Kind] = &[Kind::Int, Kind::Float, Kind::Text, Kind::Bool, Kind::Ints, Kind::Texts, Kind::Counts, Kind::Doc, Kind::Vec, Kind::Mat, Kind::Frame];
+const KINDS: &[Kind] = &[Kind::Int, Kind::Float, Kind::Text, Kind::Bool, Kind::Ints, Kind::Texts, Kind::Counts, Kind::Doc, Kind::Vec, Kind::Mat, Kind::Frame, Kind::Moment];
 
 /// The helper functions every generated program declares, which its cases
 /// call: two ints in, an int out.
@@ -100,7 +102,15 @@ impl<'r> Case<'r> {
         }
         let d = depth - 1;
         match kind {
-            Kind::Int => match self.rng.below(24) {
+            Kind::Int => match self.rng.below(30) {
+                // a moment's fields, and the seconds between two
+                24 => format!("{}.hour", self.expr(Kind::Moment, d)),
+                25 => format!("{}.weekday", self.expr(Kind::Moment, d)),
+                26 => format!("{}.year", self.expr(Kind::Moment, d)),
+                27 => format!("{}.day", self.expr(Kind::Moment, d)),
+                28 => format!("int[{} - {}]", self.expr(Kind::Moment, d), self.expr(Kind::Moment, d)),
+                // a value that can fail, read where it is known good
+                29 => format!("len[keys[{}]]", self.expr(Kind::Counts, d)),
                 16 => format!("len[{}]", self.expr(Kind::Vec, d)),
                 17 => format!("len[{}]", self.expr(Kind::Mat, d)),
                 18 => format!("argmax[{}]", self.expr(Kind::Vec, d)),
@@ -129,7 +139,10 @@ impl<'r> Case<'r> {
                 7 => format!("abs[{}]", self.expr(Kind::Int, d)),
                 _ => format!("int[{}]", self.expr(Kind::Float, d)),
             },
-            Kind::Float => match self.rng.below(20) {
+            Kind::Float => match self.rng.below(23) {
+                20 => format!("float[{}]", self.expr(Kind::Moment, d)),
+                21 => format!("({} - {})", self.expr(Kind::Moment, d), self.expr(Kind::Moment, d)),
+                22 => format!("float[{}.n]", self.expr(Kind::Doc, d)),
                 6 => format!("sum[{}]", self.expr(Kind::Vec, d)),
                 7 => format!("mean[{}]", self.expr(Kind::Vec, d)),
                 8 => format!("max[{}]", self.expr(Kind::Vec, d)),
@@ -154,13 +167,17 @@ impl<'r> Case<'r> {
                 4 => format!("({} - {})", self.expr(Kind::Float, d), self.expr(Kind::Float, d)),
                 _ => format!("({} + {})", self.expr(Kind::Float, d), self.expr(Kind::Int, d)),
             },
-            Kind::Text => match self.rng.below(14) {
+            Kind::Text => match self.rng.below(18) {
+                14 => format!("str[{}]", self.expr(Kind::Moment, d)),
+                15 => format!("encode[{}]", self.expr(Kind::Doc, d)),
+                16 => format!("int[{}].kind", self.rng.pick(&["'12'", "'x1'", "'4.5'"])),
                 12 => format!("{}.k[0]", self.expr(Kind::Frame, d)),
                 13 => format!("type[{}[{}]]", self.expr(Kind::Vec, d), self.rng.below(3)),
                 10 => format!("str[{}.a]", self.expr(Kind::Doc, d)),
                 // a document's members spliced into text — of a variable,
-                // since a span holds no quotes
-                11 => match self.var_of(Kind::Doc) {
+                // since a span holds no quotes (two draws of eighteen: the
+                // kind that found the quoting bug stays frequent)
+                11 | 17 => match self.var_of(Kind::Doc) {
                     Some(v) => format!("'a `{}.a` n `{}.n` l `{}.l`'", v, v, v),
                     None => self.leaf(Kind::Text),
                 },
@@ -178,7 +195,12 @@ impl<'r> Case<'r> {
                     format!("'n`{}`'", inside)
                 }
             },
-            Kind::Bool => match self.rng.below(13) {
+            Kind::Bool => match self.rng.below(18) {
+                13 => format!("({} lt {})", self.expr(Kind::Moment, d), self.expr(Kind::Moment, d)),
+                14 => format!("({} eq bucket[{}, 86400])", self.expr(Kind::Moment, d), self.expr(Kind::Moment, d)),
+                15 => format!("any[{}, p{}]", self.expr(Kind::Ints, d), self.rng.below(2)),
+                16 => format!("all[{}, p{}]", self.expr(Kind::Ints, d), self.rng.below(2)),
+                17 => format!("has[{}, 'a']", self.expr(Kind::Doc, d)),
                 10 => format!("(sum[{}] gt sum[{}])", self.expr(Kind::Vec, d), self.expr(Kind::Vec, d)),
                 11 => {
                     let df = self.var_frame(d);
@@ -260,8 +282,17 @@ impl<'r> Case<'r> {
                     format!("frame.stack[{}, {}]", df, df)
                 }
             },
-            Kind::Texts => match self.rng.below(5) {
-                4 => format!("frame.unique[{}, 'k']", self.expr(Kind::Frame, d)),
+            // a moment moved by seconds, floored to an hour or a day, read
+            // back from its text
+            Kind::Moment => match self.rng.below(6) {
+                0 => format!("({} + {})", self.expr(Kind::Moment, d), self.leaf(Kind::Float)),
+                1 => format!("({} - {})", self.expr(Kind::Moment, d), self.small_int()),
+                2 => format!("bucket[{}, 3600]", self.expr(Kind::Moment, d)),
+                3 => format!("bucket[{}, 86400]", self.expr(Kind::Moment, d)),
+                4 => format!("moment[{}]", self.expr(Kind::Moment, d)),
+                _ => format!("moment[str[{}]]", self.expr(Kind::Moment, d)),
+            },
+            Kind::Texts => match self.rng.below(4) {
                 3 => format!("keys[{}]", self.expr(Kind::Counts, d)),
                 0 => format!("split[{}, ' ']", self.expr(Kind::Text, d)),
                 1 => format!("push[{}, {}]", self.expr(Kind::Texts, d), self.expr(Kind::Text, d)),
@@ -340,6 +371,10 @@ impl<'r> Case<'r> {
                 .to_string(),
             Kind::Vec => self.rng.pick(&["[1.0, 2.0, 3.0]", "[0.5, -1.5, 2.0]", "zeros[3]", "ones[3]", "linspace[0.0, 1.0, 3]", "tensor[[2.0, 2.0, 2.0]]"]).to_string(),
             Kind::Mat => self.rng.pick(&["[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]", "zeros[2, 3]", "ones[2, 3]", "reshape[linspace[0.0, 5.0, 6], 2, 3]", "[[0.5, -1.0, 2.0], [1.5, 0.0, -2.5]]"]).to_string(),
+            Kind::Moment => self
+                .rng
+                .pick(&["moment['2026-07-14T09:30:00Z']", "moment['2026-01-05T10:00:00-04:00']", "moment[1784035800.0]", "moment['2026-12-31T23:59:59.250+01:00']"])
+                .to_string(),
             Kind::Frame => self
                 .rng
                 .pick(&[
@@ -364,7 +399,60 @@ impl<'r> Case<'r> {
     /// A statement: a binding, a log, a branch, or a bounded loop.
     fn stmt(&mut self, budget: usize) {
         let pad = self.indent();
-        match self.rng.below(if budget > 0 { 17 } else { 3 }) {
+        match self.rng.below(if budget > 0 { 21 } else { 3 }) {
+            // a value that can fail: read where a guard makes it known
+            // good, its kind and reason where it is not
+            17 => {
+                let v = format!("e{}", self.lines.len());
+                let text = *self.rng.pick(&["'12'", "'x1'", "'-3'", "'4.5'", "''"]);
+                self.lines.push(format!("{}{} = int[{}]", pad, v, text));
+                self.lines.push(format!("{}if {}.ok", pad, v));
+                self.lines.push(format!("{}    log[{} + 1]", pad, v));
+                self.lines.push(format!("{}else", pad));
+                self.lines.push(format!("{}    log[{}.kind]", pad, v));
+                self.lines.push(format!("{}    log[{}.reason]", pad, v));
+                let r = format!("f{}", self.lines.len());
+                let n = self.rng.below(9);
+                self.lines.push(format!("{}{} = read['no-such-file-{}.txt']", pad, r, n));
+                self.lines.push(format!("{}log[{}.ok]", pad, r));
+                self.lines.push(format!("{}log[{}.kind]", pad, r));
+            }
+            // a parsed document: its number read, its list walked and
+            // measured, the whole written back
+            18 => {
+                let d = format!("d{}", self.lines.len());
+                let doc = self.leaf(Kind::Doc);
+                self.lines.push(format!("{}{} = {}", pad, d, doc));
+                self.lines.push(format!("{}log[float[{}.n] + 1.0]", pad, d));
+                self.lines.push(format!("{}log['a `{}.a` n `{}.n` l `{}.l`']", pad, d, d, d));
+                self.lines.push(format!("{}log[len[{}.l]]", pad, d));
+                self.lines.push(format!("{}for x in {}.l", pad, d));
+                self.lines.push(format!("{}    log[str[x]]", pad));
+                self.lines.push(format!("{}log[encode[{}]]", pad, d));
+            }
+            // moments: a column of them bucketed and read by field, sorted
+            // (of seconds, which cannot fail to parse: a column's cells hold
+            // no error)
+            19 => {
+                let df = self.var_frame(2);
+                let w = format!("m{}", self.lines.len());
+                let ts: Vec<String> = (0..4).map(|_| self.rng.pick(&["moment[1784035800.0]", "moment[1767625200.5]", "moment[1798761599.25]", "moment[0.0]"]).to_string()).collect();
+                self.lines.push(format!("{}{} = with[{}, 't', [{}]]", pad, w, df, ts.join(", ")));
+                self.lines.push(format!("{}log[{}.t.hour]", pad, w));
+                self.lines.push(format!("{}log[bucket[{}.t, 86400]]", pad, w));
+                self.lines.push(format!("{}log[sort[{}, 't'].t]", pad, w));
+                self.lines.push(format!("{}log[{}.t[0] + 90.0]", pad, w));
+            }
+            // text over a column, a mask of it, where, a cast
+            20 => {
+                let df = self.var_frame(2);
+                match self.rng.below(4) {
+                    0 => self.lines.push(format!("{}log[upper[{}.k]]", pad, df)),
+                    1 => self.lines.push(format!("{}log[len[filter[{}, contains[{}.g, 'p']]]]", pad, df, df)),
+                    2 => self.lines.push(format!("{}log[where[{}.a gt 2, {}.a, 0]]", pad, df, df)),
+                    _ => self.lines.push(format!("{}log[replace[{}.g, 'p', 'P']]", pad, df)),
+                }
+            }
             // a vector walked: its numbers, each a float
             9 => {
                 let v = self.expr(Kind::Vec, 2);
@@ -400,7 +488,47 @@ impl<'r> Case<'r> {
             // a frame's column walked, shown, extended, grouped, pivoted, windowed
             13 => {
                 let df = self.var_frame(2);
-                match self.rng.below(6) {
+                match self.rng.below(12) {
+                    // joined with its own groups, inner and left
+                    6 => {
+                        let (g, j) = (format!("g{}", self.lines.len()), format!("j{}", self.lines.len()));
+                        self.lines.push(format!("{}{} = group[{}, 'k', ['a', 'sum']]", pad, g, df));
+                        self.lines.push(format!("{}{} = join[{}, {}, 'k', 'inner']", pad, j, df, g));
+                        self.lines.push(format!("{}log['`len[{}]` `{}.a_sum[0]`']", pad, j, j));
+                    }
+                    7 => {
+                        let (g, j) = (format!("g{}", self.lines.len()), format!("j{}", self.lines.len()));
+                        self.lines.push(format!("{}{} = group[{}, 'k', ['a', 'sum']]", pad, g, df));
+                        self.lines.push(format!("{}{} = join[{}, filter[{}, {}.a_sum gt 3], 'k', 'left']", pad, j, df, g, g));
+                        self.lines.push(format!("{}log[{}.a_sum]", pad, j));
+                    }
+                    // distinct rows of two keys, sorted by both
+                    8 => {
+                        let u = format!("u{}", self.lines.len());
+                        self.lines.push(format!("{}{} = sort[unique[{}, ['k', 'g']], ['k', 'g'], desc = [true, false]]", pad, u, df));
+                        self.lines.push(format!("{}log[{}.k]", pad, u));
+                        self.lines.push(format!("{}log[{}.g]", pad, u));
+                    }
+                    // the aggregates: a median, a deviation, a percentile,
+                    // distinct, first and last
+                    9 => {
+                        let q = format!("q{}", self.lines.len());
+                        self.lines.push(format!("{}{} = group[{}, 'k', ['a', 'median'], ['b', 'std'], ['b', 'p90'], ['g', 'distinct'], ['a', 'first'], ['b', 'last']]", pad, q, df));
+                        self.lines.push(format!("{}log['`{}.a_median` `{}.b_std` `{}.b_p90` `{}.g_distinct` `{}.a_first` `{}.b_last`']", pad, q, q, q, q, q, q));
+                    }
+                    // a window over a span measured on a column, and a
+                    // rolling median
+                    10 => {
+                        let s = format!("s{}", self.lines.len());
+                        self.lines.push(format!("{}{} = sort[{}, 'b']", pad, s, df));
+                        self.lines.push(format!("{}log[window[{}, 'a', 'sum', span = 1.5, on = 'b']]", pad, s));
+                        self.lines.push(format!("{}log[window[{}, 'a', 'median', n = 2]]", pad, df));
+                    }
+                    // the reverse of a pivot, and the rows complete
+                    11 => {
+                        self.lines.push(format!("{}log[len[unpivot[{}, 'k', ['a', 'b']]]]", pad, df));
+                        self.lines.push(format!("{}log[len[complete[{}]]]", pad, df));
+                    }
                     0 => {
                         self.lines.push(format!("{}for c in {}.a", pad, df));
                         self.lines.push(format!("{}    log[c * 2]", pad));
@@ -534,6 +662,8 @@ pub fn program(seed: u64, cases: usize) -> String {
     out.push_str("fn t0[v]\n    return sum[v] * 2.0 + max[v]\n\nfn t1[m]\n    total = 0.0\n    for r in m\n        total = total + sum[r]\n    return total\n\n");
     // a function handed as a value, and handed on
     out.push_str("fn ap[f, a, b]\n    return f[a, b]\n\nfn relay[f, a, b]\n    return ap[f, a, b]\n\n");
+    // the predicates any[] and all[] are handed
+    out.push_str("fn p0[x]\n    return x gt 1\n\nfn p1[x]\n    return x % 2 eq 0\n\n");
     for h in 0..HELPERS {
         let mut case = Case { rng: &mut rng, vars: vec![("a".to_string(), Kind::Int), ("b".to_string(), Kind::Int)], lines: Vec::new(), depth: 0, made: 0 };
         // a helper calls no helper (no recursion without a base)
@@ -666,6 +796,12 @@ mod tests {
         assert!(all.contains("for r") && all.contains("transpose["), "no matrix walked or multiplied");
         assert!(all.contains("filter[") && all.contains("frame.new[]"), "no frame built and filtered");
         assert!(all.contains("relay[h") || all.contains("ap[h"), "no function handed as a value");
+        // and the kinds the coverage of 2026-10-07 found no suite reached:
+        // moments, values that can fail read where known good, parsed
+        // documents walked, joins and keys, text over a column, predicates
+        for (needle, what) in [("moment[", "a moment"), (".ok\n", "a value that can fail, guarded"), ("for x in d", "a parsed list walked"), ("join[", "a join"), ("unique[", "distinct rows"), ("upper[", "text over a column"), ("any[", "a predicate handed"), ("bucket[", "a moment floored"), ("span = ", "a window over a span")] {
+            assert!(all.contains(needle), "no {} generated", what);
+        }
     }
 
     /// Whatever the text, the compiler answers with a program or a reason:

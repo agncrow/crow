@@ -39,7 +39,9 @@ repository root points assistants here.
     underscore, it's too long.
 11. **Interpreter–compiler parity.** Every feature works identically in
     `crow run -i` and `crow run`. New behavior gets a program in
-    `tests/parity/`; `crow test --parity` diffs the two modes.
+    `tests/parity/`; `crow test --parity` diffs the two modes. A parity
+    program logs what it checks: one that prints nothing in either mode
+    fails, since the same silence compares nothing.
 12. **One kernel, both modes.** Logic both modes need (chart geometry,
     layout, markdown, indicators, formatting) lives in `crow_runtime`, and
     both the interpreter and generated code call it. The modes agree by

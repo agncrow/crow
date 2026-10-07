@@ -839,15 +839,6 @@ impl ModuleRegistry {
         }
     }
 
-    /// Call a module function (interpreter, bare call).
-    pub fn call(&self, name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
-        if let Some(msg) = self.ambiguity(name) {
-            return Err(msg);
-        }
-        let idx = self.providers(name).into_iter().next()
-            .ok_or_else(|| format!("unknown module function: {}", name))?;
-        self.call_at(idx, name, args)
-    }
 
     /// Emit Rust for a module function (the Rust backend, bare call).
     pub fn emit_rust(&self, name: &str, arg_strs: &[String], arg_types: &[Ty]) -> Result<String, String> {
@@ -885,12 +876,6 @@ impl ModuleRegistry {
         self.const_map.iter().filter(|(_, i)| self.visible(**i)).map(|(s, _)| s.as_str()).collect()
     }
 
-    /// Return the module name that owns a given function, if any.
-    /// (First provider when several do — prefer providers_of for messages.)
-    pub fn module_name_for(&self, fn_name: &str) -> Option<&str> {
-        let idx = self.providers(fn_name).into_iter().next()?;
-        Some(self.modules[idx].name())
-    }
 }
 
 #[cfg(test)]

@@ -1,0 +1,52 @@
+--- The rows a coverage measurement found no suite had ever called, and
+--- the arms of the backends it found no program had reached: each here,
+--- the same in both modes. A float of a bool; a moment of a moment; the
+--- minimum along an axis; log2, asin, acos, atan and erf of a number;
+--- dense of a sparse matrix and of a tensor; a tensor of a frame and of
+--- its columns; trim over a column; a number before a moment in
+--- arithmetic; a function handed where a function is taken; a list of
+--- numbers handed where a tensor is taken; ints that become floats.
+use math, frame
+
+log[float[true]]
+log[float[false]]
+
+t = moment['2026-07-14T09:30:00Z']
+log[moment[t]]
+log[moment[t] eq t]
+log[60 + t]
+log[1.5 + t]
+log[t - 60]
+log[t + 60]
+
+m = [[4.0, 5.0], [3.0, 0.5]]
+log[min[m, 1]]
+log[min[m, 0]]
+log[log2[8.0]]
+log[asin[0.5]]
+log[acos[0.5]]
+log[atan[1.0]]
+log[erf[0.5]]
+
+s = sparse[eye[3]]
+log[dense[s]]
+log[dense[eye[2]]]
+
+df = with[with[frame.new[], 'a', [1.0, 2.0]], 'b', [3.0, 4.0]]
+log[tensor[df]]
+log[tensor[df, ['b']]]
+n = with[frame.new[], 'note', ['  ok ', ' late']]
+log[trim[n.note]]
+
+fn inc[x]
+    return x + 1
+fn twice[f, x]
+    return f[f[x]]
+log[twice[inc, 1]]
+
+log[norm[[3.0, 4.0]]]
+log[dot[[1.0, 2.0], [3.0, 4.0]]]
+log[mean[[1.0, 2.0, 6.0]]]
+xs = [1, 2]
+xs = push[xs, 2.5]
+log[xs]

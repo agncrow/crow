@@ -38,6 +38,30 @@ fn variant_of(t: &Ty) -> &'static str {
     }
 }
 
+/// One of every class of argument a row's kind is asked about.
+pub(crate) fn every_arg() -> Vec<Arg> {
+    vec![
+        Arg::Int, Arg::Float, Arg::Moment, Arg::Moments, Arg::Bytes, Arg::Stream, Arg::Socket, Arg::Mailer, Arg::Chunks,
+        Arg::Json, Arg::Tensor, Arg::Ints, Arg::Floats, Arg::Tensors, Arg::Text, Arg::Texts, Arg::Truth, Arg::Truths,
+        Arg::Records, Arg::Maps, Arg::Items, Arg::FallibleNumbers, Arg::Fallible, Arg::Column, Arg::Map, Arg::Record,
+        Arg::Sparse, Arg::Frame, Arg::Fn, Arg::AnyList, Arg::Unknown,
+    ]
+}
+
+/// The class, by name, with no wildcard: a class added fails here until
+/// `every_arg` names it too.
+fn arg_variant(a: Arg) -> &'static str {
+    match a {
+        Arg::Int => "Int", Arg::Float => "Float", Arg::Moment => "Moment", Arg::Moments => "Moments", Arg::Bytes => "Bytes",
+        Arg::Stream => "Stream", Arg::Socket => "Socket", Arg::Mailer => "Mailer", Arg::Chunks => "Chunks", Arg::Json => "Json",
+        Arg::Tensor => "Tensor", Arg::Ints => "Ints", Arg::Floats => "Floats", Arg::Tensors => "Tensors", Arg::Text => "Text",
+        Arg::Texts => "Texts", Arg::Truth => "Truth", Arg::Truths => "Truths", Arg::Records => "Records", Arg::Maps => "Maps",
+        Arg::Items => "Items", Arg::FallibleNumbers => "FallibleNumbers", Arg::Fallible => "Fallible", Arg::Column => "Column",
+        Arg::Map => "Map", Arg::Record => "Record", Arg::Sparse => "Sparse", Arg::Frame => "Frame", Arg::Fn => "Fn",
+        Arg::AnyList => "AnyList", Arg::Unknown => "Unknown",
+    }
+}
+
 /// One value of every variant of the interpreter's value that a test can
 /// make without a connection, a socket or a session.
 fn every_value() -> Vec<Value> {
@@ -134,5 +158,33 @@ fn every_value_is_equal_to_itself_and_has_a_name() {
         let name = crate::builtins::call("type", &[a.clone()], "t:1").expect("type[] answers").expect("a name");
         assert!(matches!(name.value, Value::Str(ref s) if !s.is_empty()), "{} has no type name", value_variant(&v));
         let _ = crate::ops::field(a.clone(), "ok").expect("every value has .ok");
+    }
+}
+
+/// Every class of argument is named once.
+#[test]
+fn every_class_of_argument_is_named() {
+    let all = every_arg();
+    let names: std::collections::BTreeSet<&str> = all.iter().map(|a| arg_variant(*a)).collect();
+    assert_eq!(names.len(), all.len());
+}
+
+/// Whether a type holds an unknown, and whether it is concrete, are
+/// answered by the type — the same answers the type's debug text had
+/// given at the sites that read it.
+#[test]
+fn unknown_inside_and_concrete_are_what_the_text_said() {
+    let mut types = every_ty();
+    types.push(Ty::List(Box::new(Ty::Unknown)));
+    types.push(Ty::Column(Box::new(Ty::Unknown)));
+    types.push(Ty::Result(Box::new(Ty::List(Box::new(Ty::Frame(None))))));
+    types.push(Ty::Fn(vec![Ty::Unknown], Box::new(Ty::Int)));
+    types.push(Ty::Tensor(Box::new(Ty::Unknown), Some(vec![None])));
+    let open = crate::type_infer::Cols::closed(std::collections::BTreeMap::from([("a".to_string(), Ty::Unknown)]));
+    types.push(Ty::Frame(Some(open)));
+    for t in &types {
+        let shown = format!("{:?}", t);
+        assert_eq!(t.has_unknown(), shown.contains("Unknown"), "{}", shown);
+        assert_eq!(t.is_concrete(), !shown.contains("Unknown") && !shown.contains("Frame(None)"), "{}", shown);
     }
 }

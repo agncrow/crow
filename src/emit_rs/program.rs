@@ -1513,7 +1513,7 @@ impl Emitter {
                 };
                 let (ty, v) = if matches!(ty, Ty::Float) && matches!(vty, Ty::Int) { (ty, format!("({}) as f64", v)) } else if matches!(ty, Ty::Unknown) { (vty, v) } else { (ty, v) };
                 let kw = if self.mutated.contains(&fact.name) { "let mut" } else { "let" };
-                if format!("{:?}", ty).contains("Unknown") {
+                if ty.has_unknown() {
                     self.line(&format!("{} {} = {};", kw, fact.name, v));
                 } else {
                     self.line(&format!("{} {}: {} = {};", kw, fact.name, ty.to_rust_type(), v));

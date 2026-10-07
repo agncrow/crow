@@ -75,6 +75,36 @@ impl Ty {
         }
     }
 
+    /// Whether the type holds one not known anywhere inside it: a list's
+    /// items, a frame's columns, a function's parameters. One answer, read
+    /// wherever a decision rests on it (it had been read off the type's
+    /// debug text at a dozen sites).
+    pub fn has_unknown(&self) -> bool {
+        match self {
+            Ty::Unknown => true,
+            Ty::List(i) | Ty::Map(i) | Ty::Column(i) | Ty::Result(i) | Ty::Tensor(i, _) => i.has_unknown(),
+            Ty::Frame(cols) => cols.as_ref().is_some_and(|c| c.cols.values().any(Ty::has_unknown)),
+            Ty::Fn(params, ret) => params.iter().any(Ty::has_unknown) || ret.has_unknown(),
+            Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Moment | Ty::Bytes | Ty::Unit | Ty::Markup | Ty::Json
+            | Ty::Record(_) | Ty::OptRecord(_) | Ty::Db | Ty::Tx | Ty::Sparse | Ty::WebApp | Ty::WebRequest
+            | Ty::WebResponse | Ty::Mailer | Ty::Socket | Ty::Stream | Ty::App | Ty::Node => false,
+        }
+    }
+
+    /// Whether every part of the type is known: nothing unknown inside it,
+    /// and no frame whose columns are not worked out yet.
+    pub fn is_concrete(&self) -> bool {
+        match self {
+            Ty::Unknown | Ty::Frame(None) => false,
+            Ty::Frame(Some(cols)) => cols.cols.values().all(Ty::is_concrete),
+            Ty::List(i) | Ty::Map(i) | Ty::Column(i) | Ty::Result(i) | Ty::Tensor(i, _) => i.is_concrete(),
+            Ty::Fn(params, ret) => params.iter().all(Ty::is_concrete) && ret.is_concrete(),
+            Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Moment | Ty::Bytes | Ty::Unit | Ty::Markup | Ty::Json
+            | Ty::Record(_) | Ty::OptRecord(_) | Ty::Db | Ty::Tx | Ty::Sparse | Ty::WebApp | Ty::WebRequest
+            | Ty::WebResponse | Ty::Mailer | Ty::Socket | Ty::Stream | Ty::App | Ty::Node => true,
+        }
+    }
+
     pub fn to_rust_type(&self) -> String {
         match self {
             Ty::Int => "i64".into(),
@@ -822,9 +852,7 @@ impl TypeContext {
     /// A type is concrete if it contains no Unknown anywhere (used to decide
     /// whether a call signature is usable for monomorphization).
     pub(crate) fn type_is_concrete(t: &Ty) -> bool {
-        // (a frame whose columns are not worked out yet is not either)
-        let shown = format!("{:?}", t);
-        !shown.contains("Unknown") && !shown.contains("Frame(None)")
+        t.is_concrete()
     }
 
     /// One round of the F2 monomorphization pass: each function called with

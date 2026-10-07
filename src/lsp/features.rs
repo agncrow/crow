@@ -77,7 +77,7 @@ pub fn completions(a: &Analysis) -> Vec<CompletionItem> {
             &mut items,
         );
     }
-    for b in crate::checker::BUILTINS {
+    for b in crate::lower_ir::BUILTINS.iter() {
         push(b, CompletionItemKind::FUNCTION, Some("builtin".into()), &mut items);
     }
     for k in KEYWORDS {
@@ -102,7 +102,7 @@ pub fn hover(a: &Analysis, pos: Position) -> Option<String> {
     if let Some(ty) = a.ctx.vars.get(&word) {
         return Some(format!("{}: {}", word, type_name(ty)));
     }
-    if crate::checker::BUILTINS.contains(&word.as_str()) {
+    if crate::lower_ir::BUILTINS.contains(&word.as_str()) {
         return Some(format!("{} — builtin", word));
     }
     None

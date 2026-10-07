@@ -349,9 +349,6 @@ pub enum Stmt {
     /// `at` is where the error was refused: a branch, a loop's list, or a
     /// variable whose first value could not fail.
     Propagate { values: Vec<String>, at: Decision },
-    /// A handler meets an error at a fact or an effect: commits nothing and
-    /// reports (core-design.md §2; emitted once the session layer lands).
-    Stop { value: String },
     /// A source line, for traces and the checker; not executed.
     Line(usize),
 }
@@ -441,8 +438,6 @@ pub enum Convert {
     /// The payload of a result a guard made known good (spec, Errors in
     /// Conditions): no error reaches here, so nothing propagates from it.
     Known,
-    /// Value to text, as `str[]` does: the text `log` prints.
-    ToStr,
     /// A list of numbers to a tensor, or back.
     ToTensor,
     ToList,
@@ -1055,9 +1050,6 @@ fn block(out: &mut String, b: &Block, depth: usize) {
                 };
                 let _ = writeln!(out, "{}propagate {}{}", pad, values.join(", "), at);
             }
-            Stmt::Stop { value } => {
-                let _ = writeln!(out, "{}stop {}", pad, value);
-            }
             Stmt::Line(_) => {}
         }
     }
@@ -1109,7 +1101,6 @@ pub fn expr(e: &Expr) -> String {
             Convert::IntToFloat => format!("float({})", expr(inner)),
             Convert::Unwrap => format!("unwrap {}", expr(inner)),
             Convert::Known => format!("known {}", expr(inner)),
-            Convert::ToStr => format!("str({})", expr(inner)),
             Convert::ToTensor => format!("tensor({})", expr(inner)),
             Convert::ToList => format!("list({})", expr(inner)),
             Convert::IntsToFloats => format!("floats({})", expr(inner)),

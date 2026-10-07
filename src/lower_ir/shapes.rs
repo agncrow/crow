@@ -297,6 +297,24 @@ impl<'a> Lowerer<'a> {
     /// states, so both backends decide alike. Where the lowering does not
     /// know it, the decision is refused rather than guessed, and the
     /// program states the rank.
+    /// What a loop walks has items: a list, a tensor (its rows, or its
+    /// numbers), a frame's column (its cells) or a parsed list. Anything
+    /// else is refused here, the same in both modes: the interpreter had
+    /// refused a map as it ran, and a loop over text had not built.
+    pub(super) fn check_walkable(&mut self, x: &Expr) {
+        if self.pass != Pass::Final {
+            return;
+        }
+        let walk = match x.ty().payload() {
+            Ty::List(_) | Ty::Tensor(..) | Ty::Column(_) | Ty::Json | Ty::Unknown => return,
+            Ty::Map(_) => " — walk keys[m] or values[m]",
+            Ty::Str | Ty::Markup | Ty::Node => " — walk split[s, '']",
+            Ty::Frame(_) => " — walk one of its columns",
+            _ => "",
+        };
+        self.refuse(format!("a loop walks {}, which has no items{}", x.ty().payload().crow_name(), walk));
+    }
+
     pub(super) fn check_rank_known(&mut self, x: &Expr, what: &str) {
         if self.pass != Pass::Final || !matches!(x.ty().payload(), Ty::Tensor(_, None)) {
             return;

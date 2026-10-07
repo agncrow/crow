@@ -496,6 +496,8 @@ for x in [1, 2, 3]
     log[x]              --- prints 1, 2, 3: output keeps a loop in order
 ```
 
+A loop walks a list, a tensor (its rows, or its numbers when it has one axis), a frame's column (its cells) or a parsed list. A map, text, a frame or a number has no items, and a loop over one is refused before the program runs, in both modes: walk `keys[m]` or `values[m]`, `split[s, '']`, or a column of the frame.
+
 When a `for` loop is used as a statement (not assigned to a variable), the results of each iteration are discarded. The loop runs only for its side effects:
 
 ```
@@ -3612,7 +3614,10 @@ it, when nothing else does), or a number, when it meets one in arithmetic.
 
 A bare boolean line is a truth to check. `assert` is for steps inside
 scenarios, and reports both operands on failure. Preconditions are plain
-`if`s. Bindings are plain assignments. A test body is ordinary Crow.
+`if`s. Bindings are plain assignments. A test body is ordinary Crow. A
+block that reaches no truth and no `assert` — in its body or in a function
+it calls — fails with `asserts nothing`: a test that cannot fail tests
+nothing.
 
 A test block sees declarations (functions, views, structs, imports) and two kinds of top-level assignment: literal values — a number, text, a bool, a list or a map of them, a frame built from them, a moment of them (`moment[0.0]`, `moment['2026-01-01']`) — which are reactive-state defaults, and connections (`db.connect[...]`), which are resources a render-time view needs. Computed top-level values are invisible, as inside any function.
 

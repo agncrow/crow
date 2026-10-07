@@ -86,10 +86,34 @@ steps on every push and must be green.
   the places that must answer for every variant, and refuses to compile
   until a new variant is placed (design rule 21).
 - The row a bare name reaches is decided once, in
-  `crate::table::module_of_bare`: inference (rules.rs) and the lowering
-  (`module_for`) both call it. A second rule in either is the bug class
-  that produced "the lowered program disagrees with itself" and a compiled
-  program the Rust compiler refused.
+  `crate::table::module_of_bare`: inference (rules.rs), the lowering
+  (`module_for`, `builtin_row`) and both backends' by-name paths (the
+  interpreter's `runtime_call`, the emitter's `builtin` and
+  `base_is_result`) all call it. A second rule in any of them is the bug
+  class that produced "the lowered program disagrees with itself" and a
+  compiled program the Rust compiler refused; the scalar-overlap list
+  (abs, sqrt, …) had been written four times.
+- A builtin's name lives in the table and nowhere else: `CORE_RESERVED`,
+  `BUILTINS`, `FRAME_FUNCTIONS` and `SYS_FUNCTIONS` are derived from
+  `ROWS` (plus `OWN_FORM`, the web and ui lists, `MODULE_BARE` and
+  `INTERNAL_FORMS` in checks.rs), and the checker's purity reads
+  `ir::EFFECTS` and `ir::DRAWS`. A hand-kept copy had held `pad` and
+  `append` long after they went and lacked `bucket` the day it came.
+- Whether a type holds an unknown is `Ty::has_unknown()` /
+  `is_concrete()`, never the type's debug text; `src/totality.rs` holds
+  them to every variant.
+- `no_row_is_shadowed_by_an_earlier_row` (table.rs) fails when a row's
+  position makes it unreachable: `str[column]` listed after the form that
+  shows any value had shown every column.
+- A test block that reaches no truth and no `assert` fails with "asserts
+  nothing" (finch's `sim/autonext.co` had a line meant as a truth that
+  was not one, and passed for weeks); a parity program that prints
+  nothing in either mode fails.
+- A backend's fallback arm for what the lowering must never produce
+  (the interpreter's int-plus-float arithmetic, the verifier's loop over a
+  map) is where a lowering slip hides: the coverage run lists them as
+  arms no suite reaches. Refuse in the lowering, in both modes, or
+  convert there; do not widen the backend.
   And four places the gate found afterwards: its serde form is ONE JSON
   text both modes read (`served::json_to_typed`/`json_to_fact` read a fact
   back by `Ty`, the emitter's `by_serde` list decodes a handler's

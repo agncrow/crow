@@ -17,7 +17,6 @@ use std::sync::Arc;
 
 /// Scalar and tensor names both core and math answer: scalars go to the
 /// core builtin, as the AST walker routes them.
-const OVERLAPPING: &[&str] = &["abs", "sqrt", "floor", "ceil", "round", "min", "max"];
 
 /// A call of the core's `len`: by the row the IR names, or by the name its
 /// values pick a row for.
@@ -913,10 +912,6 @@ impl IrInterp {
                 }
                 Ok(Flow::Next)
             }
-            Stmt::Stop { value } => {
-                let val = self.lookup(value).cloned().ok_or_else(|| format!("undefined variable '{}'", value))?;
-                Err(format!("stopped: {}", val.reason()))
-            }
         }
     }
 
@@ -1147,7 +1142,7 @@ impl IrInterp {
                     },
                     // a CrowValue is its own payload; an error reached here is
                     // the caller's to propagate
-                    Convert::Unwrap | Convert::Known | Convert::ToStr => v,
+                    Convert::Unwrap | Convert::Known => v,
                 }
             }
             Expr::Binary { op, l, r, .. } => {
@@ -1784,21 +1779,20 @@ impl IrInterp {
         if matches!(name, "serve" | "page" | "route" | "fetch" | "poll" | "app" | "html" | "elements" | "change" | "click" | "box" | "fits" | "style" | "downloads" | "mails") {
             return self.harness(name, vals);
         }
-        // a scalar name both core and math answer goes to the core builtin
-        // unless a tensor is among the arguments
-        let scalar_overlap = OVERLAPPING.contains(&name) && !vals.iter().any(|v| matches!(v.value, Value::NumArray(_)));
-        if self.registry.has_function(name) && !scalar_overlap {
-            if let Some(m) = self.registry.module_name_for(name).map(str::to_string) {
-                if let Some(answer) = self.crow_row_call(&m, name, &vals) {
-                    return answer;
-                }
+        // a name a module answers reaches the module the values' kinds pick,
+        // by the one rule inference and the lowering decide by
+        // (table::module_of_bare); none is the core's row, below. (The
+        // interpreter had its own two rules here — a scalar name math and
+        // the core share, a frame name given no frame — and the emitter
+        // another copy of each.)
+        let kinds: Vec<crate::table::Arg> = vals.iter().map(crate::table::Arg::of_value).collect();
+        let providers: Vec<String> = self.registry.providers_of(name).into_iter().map(str::to_string).collect();
+        let provider_names: Vec<&str> = providers.iter().map(String::as_str).collect();
+        if let Some(m) = crate::table::module_of_bare(name, &provider_names, &kinds) {
+            if let Some(answer) = self.crow_row_call(&m, name, &vals) {
+                return answer;
             }
-            let frame_fn = self.registry.module_name_for(name) == Some("frame");
-            let first_is_frame = vals.first().map_or(false, |a| matches!(a.value, Value::Frame(_)));
-            let core_too = crate::checker::BUILTINS.contains(&name);
-            if !(frame_fn && core_too && !first_is_frame) {
-                return self.registry.call(name, &vals).map(|v| Self::stamp(name, v));
-            }
+            return self.registry.call_in(&m, name, &vals).map(|v| Self::stamp(name, v));
         }
         // an effect with a row (the file system's): the row, inside what the
         // session layer does around it (a dual number takes grad's own form)
@@ -2297,14 +2291,17 @@ impl IrInterp {
         if name == "transact" && module == "db" {
             return self.transact(vals);
         }
-        if OVERLAPPING.contains(&name) && !vals.iter().any(|v| matches!(v.value, Value::NumArray(_))) {
-            // math.min[1, 2]: the core's row, as the bare call's
+        // math.min[1, 2]: a name the core answers for these kinds is the
+        // core's row, as the bare call's is (the one rule, table::module_of_bare)
+        if module == "math" && crate::table::has_core_rows(name) {
             let kinds: Vec<crate::table::Arg> = vals.iter().map(crate::table::Arg::of_value).collect();
-            if let Some(row) = crate::table::core_row(name, &kinds) {
-                return (row.call)(&vals, &self.trace_entry());
-            }
-            if let Some(r) = crate::builtins::call(name, &vals, &self.trace_entry()) {
-                return r;
+            if crate::table::module_of_bare(name, &[module], &kinds).is_none() {
+                if let Some(row) = crate::table::core_row(name, &kinds) {
+                    return (row.call)(&vals, &self.trace_entry());
+                }
+                if let Some(r) = crate::builtins::call(name, &vals, &self.trace_entry()) {
+                    return r;
+                }
             }
         }
         if self.registry.is_loaded(module) {
