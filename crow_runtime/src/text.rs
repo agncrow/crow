@@ -62,7 +62,7 @@ pub fn repeat(s: &str, n: i64) -> Result<String, String> {
 
 /// A pattern compiled, or what is wrong with it on one line: the regex
 /// crate draws the pattern over several, and a stop is one line.
-fn compile(pattern: &str) -> Result<regex::Regex, String> {
+pub(crate) fn compile(pattern: &str) -> Result<regex::Regex, String> {
     regex::Regex::new(pattern).map_err(|e| {
         let said = e.to_string();
         let why = said.lines().last().unwrap_or("").trim().trim_start_matches("error: ");

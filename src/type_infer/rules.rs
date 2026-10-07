@@ -129,6 +129,22 @@ impl TypeContext {
             // emitters use — so a qualified call that lowering made bare
             // keeps its type.
             if self.registry.providers_of(name).len() > 1 {
+                // the row the arguments' kinds pick, as the lowering picks
+                // it (any two modules' rows the kinds tell apart: sys's
+                // `recv` of a stream beside a socket's, inside the socket's
+                // module; frame's `where` of a mask beside math's of
+                // tensors, whose first argument — a mask, a list of bools —
+                // had read as math's, and the variable holding the column
+                // was declared a tensor, which the compiled program refused)
+                let taking: Vec<&str> = self.registry.providers_of(name).into_iter().filter(|m| crate::table::row_taking(m, name, &kinds).is_some()).collect();
+                if taking.len() == 1 {
+                    if let Some(t) = self.registry.type_of_in(taking[0], name, &args.iter().map(|a| arg_ty(a)).collect::<Vec<_>>()) {
+                        return t;
+                    }
+                }
+                // else by its first argument's type (a frame or its column
+                // the frame's, a tensor or a list math's), where the kinds
+                // are not known yet
                 let arg0 = args.first().map(|a| arg_ty(a));
                 let arg0 = arg0.map(|t| if let CrowType::Result(i) = t { *i } else { t });
                 let pick = match arg0 {
@@ -138,14 +154,6 @@ impl TypeContext {
                 };
                 if let Some(m) = pick {
                     if let Some(t) = self.registry.type_of_in(m, name, &args.iter().map(|a| arg_ty(a)).collect::<Vec<_>>()) {
-                        return t;
-                    }
-                }
-                // (any two modules' rows the kinds tell apart: sys's `recv`
-                // of a stream beside a socket's, inside the socket's module)
-                let taking: Vec<&str> = self.registry.providers_of(name).into_iter().filter(|m| crate::table::row_taking(m, name, &kinds).is_some()).collect();
-                if taking.len() == 1 {
-                    if let Some(t) = self.registry.type_of_in(taking[0], name, &args.iter().map(|a| arg_ty(a)).collect::<Vec<_>>()) {
                         return t;
                     }
                 }

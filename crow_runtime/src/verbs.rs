@@ -344,82 +344,10 @@ impl CrowFrame {
                 let parts: Vec<Vec<(usize, f64)>> = members
                     .par_iter()
                     .zip(starts.par_iter())
-                    .map(|(rows, st)| {
-                        let mut acc = Vec::with_capacity(rows.len());
-                        let mut from = 0;
-                        let mut roll = Roll::default();
-                        let mut var = RollVar::default();
-                        let mut sorted: Vec<f64> = Vec::new();
-                        for (k, &row) in rows.iter().enumerate() {
-                            let x = xs[row];
-                            // a window that shares no row with the one
-                            // before starts afresh (pandas's windows do:
-                            // the compensations are not carried); else
-                            // what leaves is taken off before the row's
-                            // own cell is added
-                            let afresh = st[k] >= k;
-                            if afresh {
-                                roll = Roll::default();
-                                var = RollVar::default();
-                                sorted.clear();
-                                from = k;
-                            }
-                            while from < st[k] {
-                                let gone = xs[rows[from]];
-                                match agg {
-                                    AggFn::Sum | AggFn::Mean => roll.remove(gone),
-                                    AggFn::Std | AggFn::Var => var.remove(gone),
-                                    AggFn::Median | AggFn::Percentile(_) => {
-                                        let at = sorted.partition_point(|v| *v < gone);
-                                        if at < sorted.len() {
-                                            sorted.remove(at);
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                                from += 1;
-                            }
-                            // a deviation whose sum collapsed is computed
-                            // afresh over the window, as pandas computes it
-                            let mut variance = |var: &mut RollVar| -> f64 {
-                                var.add(x);
-                                if var.unstable && !afresh {
-                                    *var = RollVar::default();
-                                    for &r in &rows[st[k]..=k] {
-                                        var.add(xs[r]);
-                                    }
-                                    var.unstable = false;
-                                }
-                                var.var()
-                            };
-                            let value = match agg {
-                                AggFn::Sum => {
-                                    roll.add(x);
-                                    roll.sum()
-                                }
-                                AggFn::Mean => {
-                                    roll.add(x);
-                                    roll.mean()
-                                }
-                                AggFn::Min => rows[st[k]..=k].iter().map(|&r| xs[r]).fold(f64::INFINITY, f64::min),
-                                AggFn::Max => rows[st[k]..=k].iter().map(|&r| xs[r]).fold(f64::NEG_INFINITY, f64::max),
-                                AggFn::Var => variance(&mut var),
-                                AggFn::Std => variance(&mut var).max(0.0).sqrt(),
-                                AggFn::Median => {
-                                    let at = sorted.partition_point(|v| *v <= x);
-                                    sorted.insert(at, x);
-                                    median_sorted(&sorted)
-                                }
-                                AggFn::Percentile(p) => {
-                                    let at = sorted.partition_point(|v| *v <= x);
-                                    sorted.insert(at, x);
-                                    percentile_sorted(&sorted, p as f64 / 100.0)
-                                }
-                                _ => f64::NAN,
-                            };
-                            acc.push((row, value));
-                        }
-                        acc
+                    .map(|(rows, st)| match agg {
+                        AggFn::Min | AggFn::Max => extremes(agg, xs, rows, st),
+                        AggFn::Median | AggFn::Percentile(_) => quantiles(agg, xs, rows, st),
+                        _ => totals(agg, xs, rows, st),
                     })
                     .collect();
                 let mut out = vec![0.0; nrows];
@@ -485,6 +413,202 @@ impl CrowFrame {
             }
         }
     }
+}
+
+/// A partition's sums, means and deviations over its windows (`rows[st[k]..=k]`
+/// for each `k`): compensated running totals, each cell added as its row
+/// comes and taken off as it leaves (pandas's order); a window that shares
+/// no row with the one before starts afresh, as pandas's does, and a
+/// deviation whose sum collapsed is computed afresh over the window.
+fn totals(agg: AggFn, xs: &[f64], rows: &[usize], st: &[usize]) -> Vec<(usize, f64)> {
+    let mut acc = Vec::with_capacity(rows.len());
+    let mut from = 0;
+    let mut roll = Roll::default();
+    let mut var = RollVar::default();
+    for (k, &row) in rows.iter().enumerate() {
+        let x = xs[row];
+        let afresh = st[k] >= k;
+        if afresh {
+            roll = Roll::default();
+            var = RollVar::default();
+            from = k;
+        }
+        while from < st[k] {
+            let gone = xs[rows[from]];
+            match agg {
+                AggFn::Sum | AggFn::Mean => roll.remove(gone),
+                _ => var.remove(gone),
+            }
+            from += 1;
+        }
+        let value = match agg {
+            AggFn::Sum => {
+                roll.add(x);
+                roll.sum()
+            }
+            AggFn::Mean => {
+                roll.add(x);
+                roll.mean()
+            }
+            _ => {
+                var.add(x);
+                if var.unstable && !afresh {
+                    var = RollVar::default();
+                    for &r in &rows[st[k]..=k] {
+                        var.add(xs[r]);
+                    }
+                    var.unstable = false;
+                }
+                if agg == AggFn::Var { var.var() } else { var.var().max(0.0).sqrt() }
+            }
+        };
+        acc.push((row, value));
+    }
+    acc
+}
+
+/// A partition's minimum or maximum over its windows: the positions whose
+/// cell could still be the answer, kept in a queue in the cell's order (a
+/// window had been scanned, and a span of a day over a year of ticks took
+/// its square).
+fn extremes(agg: AggFn, xs: &[f64], rows: &[usize], st: &[usize]) -> Vec<(usize, f64)> {
+    let mut acc = Vec::with_capacity(rows.len());
+    let mut queue: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+    let beaten = |held: f64, x: f64| if agg == AggFn::Min { held >= x } else { held <= x };
+    for (k, &row) in rows.iter().enumerate() {
+        let x = xs[row];
+        while queue.front().is_some_and(|&p| p < st[k]) {
+            queue.pop_front();
+        }
+        while queue.back().is_some_and(|&p| beaten(xs[rows[p]], x)) {
+            queue.pop_back();
+        }
+        queue.push_back(k);
+        acc.push((row, queue.front().map_or(x, |&p| xs[rows[p]])));
+    }
+    acc
+}
+
+/// Counts over the ranks of a partition's cells: how many of the window's
+/// cells are at or below each rank, and the rank with `k` cells below it,
+/// each in logarithmic time (a Fenwick tree).
+struct Ranked {
+    tree: Vec<u32>,
+}
+
+impl Ranked {
+    fn new(n: usize) -> Ranked {
+        Ranked { tree: vec![0; n + 1] }
+    }
+
+    fn add(&mut self, rank: usize, delta: i32) {
+        let mut i = rank + 1;
+        while i < self.tree.len() {
+            self.tree[i] = (self.tree[i] as i32 + delta) as u32;
+            i += i & i.wrapping_neg();
+        }
+    }
+
+    /// The rank with `k` of the window's cells below it (the k-th smallest).
+    fn kth(&self, k: usize) -> usize {
+        let n = self.tree.len() - 1;
+        let mut bit = 1usize;
+        while bit * 2 <= n {
+            bit *= 2;
+        }
+        let mut pos = 0usize;
+        let mut remaining = k + 1;
+        while bit > 0 {
+            let next = pos + bit;
+            if next <= n && (self.tree[next] as usize) < remaining {
+                pos = next;
+                remaining -= self.tree[next] as usize;
+            }
+            bit >>= 1;
+        }
+        pos
+    }
+}
+
+/// A partition's medians or percentiles over its windows: the cells ranked
+/// once, each window's cells counted over the ranks, the middle cells found
+/// by rank (a sorted vector had been kept, and every row so far cost a
+/// move of it).
+fn quantiles(agg: AggFn, xs: &[f64], rows: &[usize], st: &[usize]) -> Vec<(usize, f64)> {
+    let n = rows.len();
+    let widest = (0..n).map(|k| k + 1 - st[k]).max().unwrap_or(0);
+    // a window of a few cells is a small sorted vector, moved cell by
+    // cell (ranking every cell of the partition costs more than it saves)
+    if widest <= 64 {
+        let mut acc = Vec::with_capacity(n);
+        let mut sorted: Vec<f64> = Vec::with_capacity(widest);
+        let mut from = 0;
+        for (k, &row) in rows.iter().enumerate() {
+            while from < st[k] {
+                let gone = xs[rows[from]];
+                let at = sorted.partition_point(|v| *v < gone);
+                if at < sorted.len() {
+                    sorted.remove(at);
+                }
+                from += 1;
+            }
+            let x = xs[row];
+            let at = sorted.partition_point(|v| *v <= x);
+            sorted.insert(at, x);
+            let value = match agg {
+                AggFn::Median => median_sorted(&sorted),
+                AggFn::Percentile(p) => percentile_sorted(&sorted, p as f64 / 100.0),
+                _ => f64::NAN,
+            };
+            acc.push((row, value));
+        }
+        return acc;
+    }
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&a, &b| xs[rows[a]].partial_cmp(&xs[rows[b]]).unwrap_or_else(|| xs[rows[a]].is_nan().cmp(&xs[rows[b]].is_nan())));
+    let mut rank_of = vec![0usize; n];
+    let mut sorted = vec![0.0; n];
+    for (r, &k) in order.iter().enumerate() {
+        rank_of[k] = r;
+        sorted[r] = xs[rows[k]];
+    }
+    let mut counts = Ranked::new(n);
+    let mut acc = Vec::with_capacity(n);
+    let mut from = 0;
+    let mut held = 0usize;
+    for (k, &row) in rows.iter().enumerate() {
+        while from < st[k] {
+            counts.add(rank_of[from], -1);
+            held -= 1;
+            from += 1;
+        }
+        counts.add(rank_of[k], 1);
+        held += 1;
+        let at = |i: usize| sorted[counts.kth(i)];
+        let value = match agg {
+            AggFn::Median => {
+                if held % 2 == 1 {
+                    at(held / 2)
+                } else {
+                    (at(held / 2 - 1) + at(held / 2)) / 2.0
+                }
+            }
+            AggFn::Percentile(p) => {
+                let idx = p as f64 / 100.0 * (held - 1) as f64;
+                let lo = idx as usize;
+                let frac = idx - lo as f64;
+                if frac == 0.0 || lo + 1 >= held {
+                    at(lo)
+                } else {
+                    let (a, b) = (at(lo), at(lo + 1));
+                    (b - a).mul_add(frac, a)
+                }
+            }
+            _ => f64::NAN,
+        };
+        acc.push((row, value));
+    }
+    acc
 }
 
 // ── sorting on several keys ─────────────────────────────────────────
@@ -599,7 +723,7 @@ fn key_of(codes: &[Vec<u32>], row: usize) -> Option<Key> {
 
 /// Both frames' cells of one key, coded alike: equal cells share a code,
 /// a missing cell `u32::MAX`; cells of two kinds compare as they show.
-fn shared_codes(l: &Column, lv: &Validity, r: &Column, rv: &Validity) -> (Vec<u32>, Vec<u32>) {
+fn shared_codes<'a>(l: &'a Column, lv: &Validity, r: &'a Column, rv: &Validity) -> (Vec<u32>, Vec<u32>) {
     fn both<K: std::hash::Hash + Eq>(lk: impl Iterator<Item = K>, lv: &Validity, rk: impl Iterator<Item = K>, rv: &Validity) -> (Vec<u32>, Vec<u32>) {
         let mut seen: HashMap<K, u32> = HashMap::new();
         let mut code = |k: K, present: bool| -> u32 {
@@ -618,7 +742,26 @@ fn shared_codes(l: &Column, lv: &Validity, r: &Column, rv: &Validity) -> (Vec<u3
         (Column::DateTime(a, _), Column::DateTime(b, _)) => both(a.iter().copied(), lv, b.iter().copied(), rv),
         (Column::Float(a), Column::Float(b)) => both(a.iter().map(|x| x.to_bits()), lv, b.iter().map(|x| x.to_bits()), rv),
         (Column::Bool(a), Column::Bool(b)) => both(a.iter().copied(), lv, b.iter().copied(), rv),
-        (Column::Str(a), Column::Str(b)) => both(a.iter(), lv, b.iter(), rv),
+        (Column::Str(a), Column::Str(b)) => {
+            // a side held by a dictionary is coded once per distinct value
+            fn code<'a>(seen: &mut HashMap<&'a str, u32>, k: &'a str) -> u32 {
+                let next = seen.len() as u32;
+                *seen.entry(k).or_insert(next)
+            }
+            fn side<'a>(t: &'a Text, valid: &Validity, seen: &mut HashMap<&'a str, u32>) -> Vec<u32> {
+                match t.dictionary() {
+                    Some((codes, values)) => {
+                        let by_value: Vec<u32> = values.iter().map(|v| code(seen, v)).collect();
+                        codes.iter().enumerate().map(|(i, &c)| if valid[i] { by_value[c as usize] } else { u32::MAX }).collect()
+                    }
+                    None => t.iter().enumerate().map(|(i, v)| if valid[i] { code(seen, v) } else { u32::MAX }).collect(),
+                }
+            }
+            let mut seen: HashMap<&str, u32> = HashMap::new();
+            let left = side(a, lv, &mut seen);
+            let right = side(b, rv, &mut seen);
+            (left, right)
+        }
         (a, b) => {
             let shown = |c: &Column, v: &Validity| -> Vec<String> { (0..c.len()).map(|i| if v[i] { c.fmt_cell(i, true) } else { String::new() }).collect() };
             let (la, rb) = (shown(a, lv), shown(b, rv));
@@ -873,10 +1016,29 @@ fn text_of<'a>(what: &str, c: &'a CrowColumn) -> Result<&'a Text, String> {
     }
 }
 
-/// Each present cell mapped; a missing cell stays missing.
+/// Each present cell mapped; a missing cell stays missing. A column held
+/// as a dictionary has its values mapped once, the cells keeping their
+/// codes (two values one text now maps to share a code again).
 fn mapped(what: &str, c: &CrowColumn, f: impl Fn(&str) -> String) -> Result<CrowColumn, String> {
     let t = text_of(what, c)?;
     let n = t.len();
+    if let Some((codes, values)) = t.dictionary() {
+        let mut seen: HashMap<String, u32> = HashMap::new();
+        let mut distinct = TextBuilder::with_capacity(values.len());
+        let remap: Vec<u32> = values
+            .iter()
+            .map(|v| {
+                let m = f(v);
+                let next = seen.len() as u32;
+                *seen.entry(m.clone()).or_insert_with(|| {
+                    distinct.push(&m);
+                    next
+                })
+            })
+            .collect();
+        let data = Text::Dict { codes: codes.iter().map(|&code| remap[code as usize]).collect(), values: Box::new(distinct.finish().plain()) };
+        return Ok(CrowColumn { data: Arc::new(Column::Str(data)), valid: Arc::clone(&c.valid) });
+    }
     let mut b = TextBuilder::with_capacity(n);
     for i in 0..n {
         if c.valid[i] {
@@ -888,9 +1050,14 @@ fn mapped(what: &str, c: &CrowColumn, f: impl Fn(&str) -> String) -> Result<Crow
     Ok(CrowColumn { data: Arc::new(Column::Str(b.finish())), valid: Arc::clone(&c.valid) })
 }
 
-/// Each present cell tested; a missing cell is false (a mask).
+/// Each present cell tested; a missing cell is false (a mask). A
+/// dictionary's values are tested once.
 fn tested(what: &str, c: &CrowColumn, f: impl Fn(&str) -> bool) -> Result<Vec<bool>, String> {
     let t = text_of(what, c)?;
+    if let Some((codes, values)) = t.dictionary() {
+        let flags: Vec<bool> = values.iter().map(f).collect();
+        return Ok(codes.iter().enumerate().map(|(i, &code)| c.valid[i] && flags[code as usize]).collect());
+    }
     Ok((0..t.len()).map(|i| c.valid[i] && f(t.get(i))).collect())
 }
 
@@ -913,17 +1080,8 @@ pub fn replace_column(c: &CrowColumn, old: &str, new: &str) -> Result<CrowColumn
 /// `sub[column, pattern, replacement]`: the pattern read once; one that is
 /// no pattern is the reason (a cell cannot carry it).
 pub fn sub_column(c: &CrowColumn, pattern: &str, replacement: &str) -> Result<CrowColumn, String> {
-    let t = text_of("sub", c)?;
-    let n = t.len();
-    let mut b = TextBuilder::with_capacity(n);
-    for i in 0..n {
-        if c.valid[i] {
-            b.push(&crate::text::sub(t.get(i), pattern, replacement)?);
-        } else {
-            b.push("");
-        }
-    }
-    Ok(CrowColumn { data: Arc::new(Column::Str(b.finish())), valid: Arc::clone(&c.valid) })
+    let re = crate::text::compile(pattern)?;
+    mapped("sub", c, |cell| re.replace_all(cell, replacement).to_string())
 }
 
 pub fn contains_column(c: &CrowColumn, needle: &str) -> Result<Vec<bool>, String> {
