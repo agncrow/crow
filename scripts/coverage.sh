@@ -11,9 +11,9 @@
 #            ran, the rows no suite calls, and the match arms among the
 #            uncovered lines of the backends (scripts/coverage_arms.py) —
 #            where a lowering slip hides.
-#   The floors are the gate's measurement of 2026-10-07 — crow 81.68%,
-#   crow_runtime 88.09%, crow_web 76.21%, crow_db 83.85% — rounded down by
-#   one; they only rise. A change that lowers one names the uncovered lines
+#   The floors are the gate's measurement of 2026-10-08 under every suite —
+#   crow 83.35%, crow_runtime 88.93%, crow_web 76.56%, crow_db 84.16% —
+#   rounded down by one; they only rise. A change that lowers one names the uncovered lines
 #   in its commit message, with why they cannot be reached.
 set -e
 cd "$(dirname "$0")/.."
@@ -27,10 +27,10 @@ for a in "$@"; do
   esac
 done
 typeset -A FLOOR
-FLOOR[crow]=80
-FLOOR[crow_runtime]=86
+FLOOR[crow]=82
+FLOOR[crow_runtime]=87
 FLOOR[crow_web]=75
-FLOOR[crow_db]=82
+FLOOR[crow_db]=83
 export CROW_IR_VERIFY=strict
 cargo llvm-cov clean --workspace > /dev/null 2>&1
 cargo llvm-cov --workspace --release --no-report 2>&1 | grep -E '^test result|^error' || true

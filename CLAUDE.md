@@ -97,11 +97,27 @@ steps on every push and must be green.
   compiled program the Rust compiler refused; the scalar-overlap list
   (abs, sqrt, …) had been written four times.
 - A builtin's name lives in the table and nowhere else: `CORE_RESERVED`,
-  `BUILTINS`, `FRAME_FUNCTIONS` and `SYS_FUNCTIONS` are derived from
+  `BUILTINS` and every module's function list (`MATH_FUNCTIONS`,
+  `STATS_FUNCTIONS`, `NN_FUNCTIONS`, `IO_FUNCTIONS`, `DOC_FUNCTIONS`,
+  `CHART_FUNCTIONS`, `FRAME_FUNCTIONS`, `SYS_FUNCTIONS`) are derived from
   `ROWS` (plus `OWN_FORM`, the web and ui lists, `MODULE_BARE` and
-  `INTERNAL_FORMS` in checks.rs), and the checker's purity reads
-  `ir::EFFECTS` and `ir::DRAWS`. A hand-kept copy had held `pad` and
-  `append` long after they went and lacked `bucket` the day it came.
+  `INTERNAL_FORMS` in checks.rs; db's and web's lists stay written, being
+  own forms), and the checker's purity reads `ir::EFFECTS` and
+  `ir::DRAWS`. A hand-kept copy had held `pad` and `append` long after
+  they went, lacked `bucket` the day it came, and lacked `fma` the hour
+  it came: "undefined function" in a package, "documented but the
+  compiler has no such builtin" in the docs check.
+- A package's files call each other qualified (`words.counts[…]`, with
+  `use words`); a bare sibling name is undefined even inside the package.
+  A parameter may not be named like a builtin (`values`), a module
+  (`words`) or a function of its own file (`scores` reads as a call), and
+  a module needs its own `use math` for `ln`, `sqrt`, `fma`. A `return`
+  of a collecting loop is written as an assignment first.
+- A reference compiled with clang contracts `sum += x * x` into a fused
+  multiply-add: scikit-learn's row norms and scipy's sparse products, as
+  pandas's rolling kernels. A sum held to one runs with `fma[x, x, total]`
+  (the row exists for that); a plain sum differs in the last digit a third
+  of the time.
 - Whether a type holds an unknown is `Ty::has_unknown()` /
   `is_concrete()`, never the type's debug text; `src/totality.rs` holds
   them to every variant.

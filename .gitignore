@@ -46,6 +46,8 @@ _tmp_test_error_line
 !tests/served/fixtures/*.csv
 !tests/frames/data/*.csv
 !tests/frames/expected/*.csv
+!packages/retrieval/reference/data/*.csv
+!packages/retrieval/reference/expected/*.csv
 !examples/taskboard/fixtures/*.csv
 docs/book/crow-site/
 editors/vscode/node_modules/

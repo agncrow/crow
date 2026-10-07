@@ -26,6 +26,16 @@ pub fn binop(
     let l = &left.value;
     let r = &right.value;
 
+    // an int meets a float in arithmetic only through the lowering's
+    // conversion (spec §1), and the verifier holds the IR to it: a pair here
+    // is a bug in Crow, said as one. (The arms that had computed around it
+    // hid a lowering slip the compiled program would have refused.)
+    if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow)
+        && matches!((l, r), (Value::Int(_), Value::Float(_)) | (Value::Float(_), Value::Int(_)) | (Value::Int(_), Value::Dual(..)) | (Value::Dual(..), Value::Int(_)))
+    {
+        return Err(format!("internal error: an int met a float in '{}' without a conversion — a bug in Crow, not in this program", format!("{:?}", op).to_lowercase()));
+    }
+
     // a value a function grad differentiates computes with: the autograd
     // kernel's own operation, recorded on the tape
     if matches!(l, Value::Traced(_)) || matches!(r, Value::Traced(_)) {
@@ -38,8 +48,6 @@ pub fn binop(
             (Value::Dual(a, da), Value::Dual(b, db)) => Ok(CrowValue::ok(Value::Dual(a + b, da + db))),
             (Value::Dual(a, da), Value::Float(b)) => Ok(CrowValue::ok(Value::Dual(a + b, *da))),
             (Value::Float(a), Value::Dual(b, db)) => Ok(CrowValue::ok(Value::Dual(a + b, *db))),
-            (Value::Dual(a, da), Value::Int(b)) => Ok(CrowValue::ok(Value::Dual(a + *b as f64, *da))),
-            (Value::Int(a), Value::Dual(b, db)) => Ok(CrowValue::ok(Value::Dual(*a as f64 + b, *db))),
             (Value::Int(a), Value::Int(b)) => stops::add(*a, *b).map(|n| CrowValue::ok(Value::Int(n))),
             (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a + b))),
             // a moment and seconds: the moment on
@@ -47,8 +55,6 @@ pub fn binop(
             (Value::Moment(t), Value::Float(s)) => Ok(CrowValue::ok(Value::Moment(*t + *s))),
             (Value::Int(s), Value::Moment(t)) => Ok(CrowValue::ok(Value::Moment(*t + *s))),
             (Value::Float(s), Value::Moment(t)) => Ok(CrowValue::ok(Value::Moment(*t + *s))),
-            (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(*a as f64 + b))),
-            (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a + *b as f64))),
             (Value::NumArray(a), Value::NumArray(b)) => a.try_elementwise(b, "+").map(|t| CrowValue::ok(Value::NumArray(Box::new(t)))),
             (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.add_scalar(*b as f64))))),
             (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.add_scalar(*b))))),
@@ -69,16 +75,12 @@ pub fn binop(
             (Value::Dual(a, da), Value::Dual(b, db)) => Ok(CrowValue::ok(Value::Dual(a - b, da - db))),
             (Value::Dual(a, da), Value::Float(b)) => Ok(CrowValue::ok(Value::Dual(a - b, *da))),
             (Value::Float(a), Value::Dual(b, db)) => Ok(CrowValue::ok(Value::Dual(a - b, -db))),
-            (Value::Dual(a, da), Value::Int(b)) => Ok(CrowValue::ok(Value::Dual(a - *b as f64, *da))),
-            (Value::Int(a), Value::Dual(b, db)) => Ok(CrowValue::ok(Value::Dual(*a as f64 - b, -db))),
             (Value::Int(a), Value::Int(b)) => stops::sub(*a, *b).map(|n| CrowValue::ok(Value::Int(n))),
             (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a - b))),
             // a moment back by seconds, and the seconds between two moments
             (Value::Moment(t), Value::Int(s)) => Ok(CrowValue::ok(Value::Moment(*t - *s))),
             (Value::Moment(t), Value::Float(s)) => Ok(CrowValue::ok(Value::Moment(*t - *s))),
             (Value::Moment(a), Value::Moment(b)) => Ok(CrowValue::ok(Value::Float(*a - *b))),
-            (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(*a as f64 - b))),
-            (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a - *b as f64))),
             (Value::NumArray(a), Value::NumArray(b)) => a.try_elementwise(b, "-").map(|t| CrowValue::ok(Value::NumArray(Box::new(t)))),
             (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.add_scalar(-(*b as f64)))))),
             (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.add_scalar(-*b))))),
@@ -98,12 +100,8 @@ pub fn binop(
             (Value::Dual(a, da), Value::Dual(b, db)) => Ok(CrowValue::ok(Value::Dual(a * b, da * b + a * db))),
             (Value::Dual(a, da), Value::Float(b)) => Ok(CrowValue::ok(Value::Dual(a * b, da * b))),
             (Value::Float(a), Value::Dual(b, db)) => Ok(CrowValue::ok(Value::Dual(a * b, a * db))),
-            (Value::Dual(a, da), Value::Int(b)) => Ok(CrowValue::ok(Value::Dual(a * *b as f64, da * *b as f64))),
-            (Value::Int(a), Value::Dual(b, db)) => Ok(CrowValue::ok(Value::Dual(*a as f64 * b, *a as f64 * db))),
             (Value::Int(a), Value::Int(b)) => stops::mul(*a, *b).map(|n| CrowValue::ok(Value::Int(n))),
             (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a * b))),
-            (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(*a as f64 * b))),
-            (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a * *b as f64))),
             // tensor * tensor → matmul; tensor * scalar → scale
             (Value::NumArray(a), Value::NumArray(b)) => a.try_matmul(b).map(|t| CrowValue::ok(Value::NumArray(Box::new(t)))),
             (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.mul_scalar(*b as f64))))),
@@ -128,20 +126,10 @@ pub fn binop(
             (Value::Float(a), Value::Dual(b, db)) => {
                 Ok(CrowValue::ok(Value::Dual(a / b, (-a * db) / (b * b))))
             }
-            (Value::Dual(a, da), Value::Int(b)) => {
-                let bf = *b as f64;
-                Ok(CrowValue::ok(Value::Dual(a / bf, da / bf)))
-            }
-            (Value::Int(a), Value::Dual(b, db)) => {
-                let af = *a as f64;
-                Ok(CrowValue::ok(Value::Dual(af / b, (-af * db) / (b * b))))
-            }
             // an int divided by zero stops the program, as in the compiled
             // one: the quotient is typed int, and no int says it failed
             (Value::Int(a), Value::Int(b)) => stops::div(*a, *b).map(|n| CrowValue::ok(Value::Int(n))),
             (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a / b))),
-            (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(*a as f64 / b))),
-            (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a / *b as f64))),
             // tensor / tensor → error (use ./ for element-wise)
             (Value::NumArray(_), Value::NumArray(_)) => Err("use ./ for element-wise tensor division".to_string()),
             (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.mul_scalar(1.0 / *b as f64))))),
@@ -169,10 +157,6 @@ pub fn binop(
         },
         BinOp::Pow => match (l, r) {
             // Dual: d/dx(x^n) = n * x^(n-1) * x'
-            (Value::Dual(a, da), Value::Int(b)) => {
-                let bf = *b as f64;
-                Ok(CrowValue::ok(Value::Dual(a.powf(bf), da * bf * a.powf(bf - 1.0))))
-            }
             (Value::Dual(a, da), Value::Float(b)) => {
                 Ok(CrowValue::ok(Value::Dual(a.powf(*b), da * b * a.powf(b - 1.0))))
             }
@@ -183,8 +167,6 @@ pub fn binop(
             }
             // int ^ int is an int: exact, or the program stops
             (Value::Int(a), Value::Int(b)) => stops::pow(*a, *b).map(|n| CrowValue::ok(Value::Int(n))),
-            (Value::Float(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Float(a.powf(*b as f64)))),
-            (Value::Int(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float((*a as f64).powf(*b)))),
             (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a.powf(*b)))),
             _ => Err("^ requires numbers".to_string()),
         },

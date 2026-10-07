@@ -1,0 +1,81 @@
+--- The package at work, held to what scikit-learn and rank_bm25 answered
+--- for a corpus of twenty-four documents and eight queries
+--- (reference/reference.py wrote the files): every idf, weight, cosine,
+--- score and ranking compared, and a few shown. The same in both modes.
+use frame
+use words, tfidf, bm25
+
+folder = 'packages/retrieval/reference'
+if len[args[]] gt 0
+    folder = args[][0]
+docs_table = frame.load['`folder`/data/docs.csv']
+queries_table = frame.load['`folder`/data/queries.csv']
+--- (the tables come from a path the program is given, so their cells
+--- are read as text first, as every value typed only as it runs is)
+docs = for t in docs_table.text
+    words.tokens[str[t]]
+queries = for t in queries_table.text
+    words.tokens[str[t]]
+
+vocabulary = words.vocab[docs]
+idfs = tfidf.idf[docs, vocabulary]
+log['`len[docs]` documents, `len[queries]` queries, `len[vocabulary]` words']
+log['tokens of the first document: `docs[0]`']
+
+--- the idf, held to the reference's
+ref_vocab = frame.load['`folder`/expected/vocab.csv']
+same_idf = 0
+for j in range[len[vocabulary]]
+    if vocabulary[j] eq ref_vocab.term[j] and idfs[j] eq ref_vocab.idf[j]
+        same_idf = same_idf + 1
+log['idf: `same_idf` of `len[vocabulary]` the same']
+
+--- every document's weights, held cell by cell
+rows = tfidf.rows[docs, vocabulary, idfs]
+ref_w = frame.load['`folder`/expected/tfidf.csv']
+same_w = 0
+for k in range[len[ref_w]]
+    d = int[ref_w.doc[k]]
+    j = 0
+    for i in range[len[vocabulary]]
+        if vocabulary[i] eq ref_w.term[k]
+            j = i
+    if rows[d][j] eq ref_w.weight[k]
+        same_w = same_w + 1
+log['tf-idf: `same_w` of `len[ref_w]` weights the same']
+
+--- the cosine of each query with each document
+qrows = for q in queries
+    tfidf.weights[q, vocabulary, idfs]
+ref_c = frame.load['`folder`/expected/cosine.csv']
+same_c = 0
+for k in range[len[ref_c]]
+    if tfidf.cosine[qrows[int[ref_c.query[k]]], rows[int[ref_c.doc[k]]]] eq ref_c.score[k]
+        same_c = same_c + 1
+log['cosine: `same_c` of `len[ref_c]` the same']
+log['cosine of the first query with the first three documents: `tfidf.cosine[qrows[0], rows[0]]` `tfidf.cosine[qrows[0], rows[1]]` `tfidf.cosine[qrows[0], rows[2]]`']
+
+--- BM25: the index, the scores and the top three
+ix = bm25.build[docs]
+ref_i = frame.load['`folder`/expected/bm25_idf.csv']
+same_i = 0
+for k in range[len[ref_i]]
+    if ix.idf[str[ref_i.term[k]]] eq ref_i.idf[k]
+        same_i = same_i + 1
+log['bm25 idf: `same_i` of `len[ref_i]` the same, avgdl `ix.avgdl`']
+all_scores = for q in queries
+    bm25.scores[ix, q]
+ref_s = frame.load['`folder`/expected/bm25.csv']
+same_s = 0
+for k in range[len[ref_s]]
+    if all_scores[int[ref_s.query[k]]][int[ref_s.doc[k]]] eq ref_s.score[k]
+        same_s = same_s + 1
+log['bm25: `same_s` of `len[ref_s]` scores the same']
+ref_t = frame.load['`folder`/expected/top.csv']
+same_t = 0
+for k in range[len[ref_t]]
+    if bm25.top[all_scores[int[ref_t.query[k]]], 3][int[ref_t.rank[k]]] eq ref_t.doc[k]
+        same_t = same_t + 1
+log['top three: `same_t` of `len[ref_t]` the same']
+log['the best documents for "`queries_table.text[0]`": `bm25.top[all_scores[0], 3]`']
+log['scores of "`queries_table.text[7]`": `all_scores[7][0]` `all_scores[7][23]`']

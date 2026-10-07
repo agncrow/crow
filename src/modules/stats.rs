@@ -5,13 +5,12 @@ use crate::modules::CrowModule;
 
 pub struct StatsModule;
 
-pub(crate) const STATS_FUNCTIONS: &[&str] = &[
-    "median", "std", "var", "percentile", "zscore", "corr", "cov", "ttest", "linreg",
-    "chisq", "anova", "kstest", "fit",
-];
+/// The stats module's functions: its rows' names, derived from the table (a row added had to
+/// be listed here too, and `fma` was not).
+pub(crate) static STATS_FUNCTIONS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| crate::table::module_names("math.stats"));
 
 impl CrowModule for StatsModule {
     fn name(&self) -> &str { "math.stats" }
 
-    fn functions(&self) -> &[&str] { STATS_FUNCTIONS }
+    fn functions(&self) -> &[&str] { &STATS_FUNCTIONS }
 }

@@ -5,10 +5,12 @@ use crate::modules::CrowModule;
 
 pub struct IoModule;
 
-pub(crate) const IO_FUNCTIONS: &[&str] = &["csv", "lines"];
+/// The io module's functions: its rows' names, derived from the table (a row added had to
+/// be listed here too, and `fma` was not).
+pub(crate) static IO_FUNCTIONS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| crate::table::module_names("io"));
 
 impl CrowModule for IoModule {
     fn name(&self) -> &str { "io" }
 
-    fn functions(&self) -> &[&str] { IO_FUNCTIONS }
+    fn functions(&self) -> &[&str] { &IO_FUNCTIONS }
 }

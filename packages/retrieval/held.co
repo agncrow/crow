@@ -1,0 +1,94 @@
+--- The package held to scikit-learn and rank_bm25: every number the
+--- references wrote (reference/reference.py) is the number this package
+--- computes — the same double, not a near one — and the rankings agree.
+use frame
+use words, tfidf, bm25
+
+--- the corpus and the queries, tokenised (a test block sees functions,
+--- not a frame loaded at the top level; the cells are read as text, as
+--- every value typed only as the program runs is)
+fn tokenised[name]
+    table = frame.load['packages/retrieval/reference/data/`name`.csv']
+    toks = for t in table.text
+        words.tokens[str[t]]
+    return toks
+
+fn where_term[vocabulary, term]
+    for i in range[len[vocabulary]]
+        if vocabulary[i] eq term
+            return i
+    return -1
+
+test the_tokenizer_reads_as_scikit_learn_does[]
+    words.tokens['The quick brown fox jumps over the lazy dog'] eq ['the', 'quick', 'brown', 'fox', 'jumps', 'over', 'the', 'lazy', 'dog']
+    words.tokens['Quarterly earnings beat estimates; the stock jumped 12 percent'] eq ['quarterly', 'earnings', 'beat', 'estimates', 'the', 'stock', 'jumped', '12', 'percent']
+    words.tokens['A fox, a dog & a 2-letter word: ok'] eq ['fox', 'dog', 'letter', 'word', 'ok']
+    words.tokens[''] eq []
+    words.counts[['a', 'b', 'a']]['a'] eq 2
+    words.vocab[[['b', 'a'], ['c', 'a']]] eq ['a', 'b', 'c']
+    words.first_seen[[['b', 'a'], ['c', 'a']]] eq ['b', 'a', 'c']
+
+test the_idf_and_every_weight_are_scikit_learns[]
+    docs = tokenised['docs']
+    vocabulary = words.vocab[docs]
+    idfs = tfidf.idf[docs, vocabulary]
+    ref = frame.load['packages/retrieval/reference/expected/vocab.csv']
+    len[vocabulary] eq len[ref]
+    same = 0
+    for j in range[len[vocabulary]]
+        if vocabulary[j] eq ref.term[j] and idfs[j] eq ref.idf[j]
+            same = same + 1
+    same eq len[ref]
+    rows = tfidf.rows[docs, vocabulary, idfs]
+    ref_w = frame.load['packages/retrieval/reference/expected/tfidf.csv']
+    same_w = 0
+    for k in range[len[ref_w]]
+        j = where_term[vocabulary, ref_w.term[k]]
+        if rows[int[ref_w.doc[k]]][j] eq ref_w.weight[k]
+            same_w = same_w + 1
+    same_w eq len[ref_w]
+
+test the_cosines_are_scikit_learns[]
+    docs = tokenised['docs']
+    queries = tokenised['queries']
+    vocabulary = words.vocab[docs]
+    idfs = tfidf.idf[docs, vocabulary]
+    rows = tfidf.rows[docs, vocabulary, idfs]
+    qrows = for q in queries
+        tfidf.weights[q, vocabulary, idfs]
+    ref = frame.load['packages/retrieval/reference/expected/cosine.csv']
+    same = 0
+    for k in range[len[ref]]
+        if tfidf.cosine[qrows[int[ref.query[k]]], rows[int[ref.doc[k]]]] eq ref.score[k]
+            same = same + 1
+    same eq len[ref]
+
+test the_scores_and_rankings_are_rank_bm25s[]
+    docs = tokenised['docs']
+    queries = tokenised['queries']
+    ix = bm25.build[docs]
+    ix.avgdl eq 9.75
+    ref_i = frame.load['packages/retrieval/reference/expected/bm25_idf.csv']
+    same_i = 0
+    for k in range[len[ref_i]]
+        if ix.idf[str[ref_i.term[k]]] eq ref_i.idf[k]
+            same_i = same_i + 1
+    same_i eq len[ref_i]
+    all_scores = for q in queries
+        bm25.scores[ix, q]
+    ref = frame.load['packages/retrieval/reference/expected/bm25.csv']
+    same = 0
+    for k in range[len[ref]]
+        if all_scores[int[ref.query[k]]][int[ref.doc[k]]] eq ref.score[k]
+            same = same + 1
+    same eq len[ref]
+    ref_t = frame.load['packages/retrieval/reference/expected/top.csv']
+    same_t = 0
+    for k in range[len[ref_t]]
+        if bm25.top[all_scores[int[ref_t.query[k]]], 3][int[ref_t.rank[k]]] eq ref_t.doc[k]
+            same_t = same_t + 1
+    same_t eq len[ref_t]
+    --- a word no document holds scores nothing
+    nothing = for d in docs
+        0.0
+    bm25.scores[ix, ['unicorn']] eq nothing

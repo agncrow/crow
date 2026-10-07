@@ -194,6 +194,7 @@ Negative indices are supported (wrap around from the end). The result tensor has
 |---|---|---|
 | `gamma[x]` | Gamma function Γ(x), element-wise | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [The standard library's layer: `use sys`](../by-example/sys.md) |
 | `erf[x]` | Error function erf(x), of a number or element-wise over a tensor (it had taken a tensor only) | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
+| `fma[a, b, c]` | a × b + c rounded once: the fused multiply-add a compiled loop accumulates with (pandas's rolling kernels, scikit-learn's row norms, scipy's sparse products), so a sum held to one of them runs with it — `total = fma[x, x, total]` | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `bessel[x, n]` | Bessel function J_n(x), element-wise | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `factorial[x]` | Factorial x! = Γ(x+1), element-wise | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `choose[n, k]` | Binomial coefficient C(n,k), element-wise | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |

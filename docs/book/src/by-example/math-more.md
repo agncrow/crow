@@ -108,6 +108,7 @@ log[fmt[erf[[1.0]][0], decimals = 3]]
 log[fmt[bessel[[1.0], 0][0], decimals = 3]]
 log[round[factorial[[0.0, 5.0]]]]
 log[choose[[5.0], [2.0]]]
+log[fma[2.0, 3.0, 1.0]]
 
 z = complex[3.0, 4.0]
 log[real[z][0]]
@@ -123,6 +124,7 @@ log[conjugate[z]]
 0.765
 [1, 120]
 [10]
+7
 3
 4
 5

@@ -1,0 +1,52 @@
+--- Words out of text, as scikit-learn's default tokenizer reads them: the
+--- text lowered, and a word is two or more word characters — letters,
+--- digits or an underscore; everything else separates. (A letter beyond
+--- ASCII separates here, where the reference keeps it.)
+fn tokens[text]
+    spaced = sub[lower[text], '[^a-z0-9_]+', ' ']
+    out = []
+    for w in split[spaced, ' ']
+        if len[w] gte 2
+            out = push[out, w]
+    return out
+
+--- How often each word occurs: a map from the word to its count
+fn counts[toks]
+    m = map[]
+    for w in toks
+        if has[m, w]
+            m = set[m, w, m[w] + 1]
+        else
+            m = set[m, w, 1]
+    return m
+
+--- Every word of every document, once, sorted — the vocabulary, in the
+--- order scikit-learn numbers its features
+fn vocab[docs]
+    seen = map[]
+    for d in docs
+        for w in d
+            seen = set[seen, w, 1]
+    return sort[keys[seen]]
+
+--- Every word once, in the order first seen across the documents
+fn first_seen[docs]
+    seen = map[]
+    out = []
+    for d in docs
+        for w in d
+            if not has[seen, w]
+                seen = set[seen, w, 1]
+                out = push[out, w]
+    return out
+
+--- In how many documents each word occurs
+fn frequencies[docs]
+    df = map[]
+    for d in docs
+        for w in keys[counts[d]]
+            if has[df, w]
+                df = set[df, w, df[w] + 1]
+            else
+                df = set[df, w, 1]
+    return df

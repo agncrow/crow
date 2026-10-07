@@ -7,50 +7,14 @@ use crate::modules::CrowModule;
 
 pub struct MathModule;
 
-pub(crate) const MATH_FUNCTIONS: &[&str] = &[
-    // Tensor creation
-    "zeros", "ones", "eye", "onehot", "randn", "linspace", "arange", "full", "diag", "tensor",
-    // Element-wise math (ln replaces log; abs/sqrt/floor/ceil/round overlap with core builtins)
-    "exp", "ln", "log2", "log10",
-    "sin", "cos", "sign", "clip", "mod",
-    "tan", "asin", "acos", "atan", "atan2",
-    "sinh", "cosh", "tanh",
-    "abs", "sqrt", "floor", "ceil", "round",
-    // Reductions (min/max overlap with core builtins)
-    "sum", "mean", "min", "max", "prod",
-    "argmax", "argmin",
-    // Cumulative
-    "cumsum", "cumprod",
-    // Combining
-    "stack",
-    // Sorting & selection
-    "argsort", "topk", "unique", "where",
-    // Shape ops
-    "reshape", "flatten", "transpose",
-    // Linear algebra
-    "solve", "inv", "det", "norm", "svd", "qr", "cholesky", "eigen",
-    "dot", "pinv", "lstsq", "triu", "tril", "rank", "cond",
-    // Random & distributions
-    "seed", "normal", "uniform", "poisson", "bernoulli",
-    "gamma_dist", "beta_dist", "exponential",
-    "shuffle", "choice", "permutation",
-    // Signal processing
-    "fft", "fft2", "ifft", "conv", "conv2d", "hamming", "hanning",
-    "stft", "spectrogram", "lowpass", "highpass", "bandpass",
-    // Special functions
-    "gamma", "erf", "bessel", "factorial", "choose",
-    // Complex numbers
-    "complex", "real", "imag", "magnitude", "phase", "conjugate",
-    // Sparse
-    "sparse", "dense", "nnz", "spmv",
-    // I/O
-    "load",
-];
+/// The math module's functions: its rows' names, derived from the table (a row added had to
+/// be listed here too, and `fma` was not).
+pub(crate) static MATH_FUNCTIONS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| crate::table::module_names("math"));
 
 impl CrowModule for MathModule {
     fn name(&self) -> &str { "math" }
 
-    fn functions(&self) -> &[&str] { MATH_FUNCTIONS }
+    fn functions(&self) -> &[&str] { &MATH_FUNCTIONS }
 
     fn constants(&self) -> Vec<(&str, CrowValue)> {
         vec![

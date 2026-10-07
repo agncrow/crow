@@ -14,11 +14,12 @@ use crate::modules::CrowModule;
 
 pub struct ChartModule;
 
-pub(crate) const CHART_FUNCTIONS: &[&str] =
-    &["sma", "ema", "rsi", "macd", "vwap", "rolling_sum", "cvd"];
+/// The chart module's functions: its rows' names, derived from the table (a row added had to
+/// be listed here too, and `fma` was not).
+pub(crate) static CHART_FUNCTIONS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| crate::table::module_names("chart"));
 
 impl CrowModule for ChartModule {
     fn name(&self) -> &str { "chart" }
 
-    fn functions(&self) -> &[&str] { CHART_FUNCTIONS }
+    fn functions(&self) -> &[&str] { &CHART_FUNCTIONS }
 }

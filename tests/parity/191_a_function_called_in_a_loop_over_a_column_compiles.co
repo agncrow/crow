@@ -1,0 +1,34 @@
+--- A function called only inside a collecting loop over a frame's column
+--- takes the column's cells: the loop had read the column as unknown in
+--- the lowering's scan, so the function took an unknown, was never
+--- emitted, and the compiled program named a function it did not hold
+--- (the interpreter ran it; a loop over a list, or a statement loop, had
+--- been fine). Found writing the retrieval package.
+use frame
+
+fn shout[t]
+    return upper[t]
+
+fn half[x]
+    return x / 2.0
+
+fn label[t, x]
+    return '`t`:`x`'
+
+df = with[with[frame.new[], 'text', ['Ab cd', 'ef gh', 'ij']], 'px', [1.5, 2.0, 7.0]]
+shouted = for t in df.text
+    shout[t]
+log[shouted]
+halves = for x in df.px
+    half[x]
+log[halves]
+labels = for t in df.text
+    label[t, len[t]]
+log[labels]
+--- the statement loop and a list, which had worked, still do
+for t in df.text
+    log[shout[t]]
+xs = ['one', 'two']
+ys = for t in xs
+    shout[t]
+log[ys]

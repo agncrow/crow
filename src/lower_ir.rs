@@ -606,6 +606,19 @@ fn read(x: &Expr) -> Ty {
     full(x).text()
 }
 
+/// What a loop walks, as inference reads it: a frame's column walks its
+/// cells, as its type says them (a column's inferred type does not carry
+/// them), anything else what its items are. (The collecting loop had read
+/// a column as unknown in the scan, so a function called only inside one
+/// took an unknown and was never emitted: the compiled program named a
+/// function it did not hold.)
+fn walked(it: &Expr) -> Ty {
+    match it.ty().payload() {
+        Ty::Column(cell) if **cell != Ty::Unknown => Ty::List(Box::new(as_inferred(cell))),
+        _ => read(it),
+    }
+}
+
 /// A lowered value's type with markup told apart (`infer_expr_full`): a
 /// tree is markup.
 fn full(x: &Expr) -> Ty {
@@ -1850,12 +1863,7 @@ impl<'a> Lowerer<'a> {
                 self.check_reserved(var, "loop variable");
                 // a list that can fail is refused like a condition
                 let it = self.lower_expr(iter)?;
-                let walks = match it.ty().payload() {
-                    // a frame's column walks its cells, as its type says them
-                    // (a column's Ty does not carry them)
-                    Ty::Column(cell) if **cell != Ty::Unknown => Ty::List(Box::new(as_inferred(cell))),
-                    _ => read(&it),
-                };
+                let walks = walked(&it);
                 let it = self.decided(it, Decision::Loop);
                 let mut prelude = std::mem::take(&mut self.pre);
                 self.scopes.push([var.clone()].into_iter().collect());
@@ -2807,7 +2815,7 @@ impl<'a> Lowerer<'a> {
                     _ => None,
                 };
                 let saved = if self.pass == Pass::Scan {
-                    self.ctx.scan_loop_var(var, read(&it));
+                    self.ctx.scan_loop_var(var, walked(&it));
                     None
                 } else {
                     self.check_rank_known(&it, "a loop over");
@@ -2933,6 +2941,17 @@ impl<'a> Lowerer<'a> {
                 idx.push(self.lower_expr(a)?);
             }
             let arg_types: Vec<Ty> = idx.iter().map(read).collect();
+            // a position or a key the program does not know the type of — a
+            // parsed value, a cell of a frame typed only as it runs — is read
+            // as one first, in both modes (the interpreter had read it as it
+            // ran, and the compiled program had not built)
+            if self.pass == Pass::Final && !matches!(base.ty().payload(), Ty::Json) {
+                if let Some(at) = arg_types.iter().position(|t| matches!(t.payload(), Ty::Json)) {
+                    let what = local_named(&base).unwrap_or_else(|| "the value".to_string());
+                    let by = if matches!(base.ty().payload(), Ty::Map(_)) { "str[…] for a key" } else { "int[…] for a position" };
+                    self.refuse(format!("{}[…] is indexed by a value whose type the program does not know (argument {}): read it as one first, {}", what, at + 1, by));
+                }
+            }
             let full_types: Vec<Ty> = idx.iter().map(full).collect();
             self.scan_call(callee, args, &full_types);
             let checks: Vec<Ty> = idx.iter().map(|x| self.checked(x)).collect();
@@ -5425,6 +5444,23 @@ mod tests {
         assert_eq!(counts.truths, 1);
         assert_eq!(issues.len(), 1, "{:?}", issues);
         assert!(format!("{:?}", issues[0]).contains("assert failed"), "{:?}", issues);
+    }
+
+    /// A position or a key typed only as the program runs — a cell of a
+    /// frame loaded from a path the program is given, a parsed value — is
+    /// read as one first, in both modes: the interpreter had read it as it
+    /// ran and the compiled program had not built (a map indexed by a
+    /// cell, in the retrieval package).
+    #[test]
+    fn an_index_the_program_cannot_type_is_read_first() {
+        let refused = |src: &str| crate::build(src).ok().and_then(|stmts| crate::ir_interp::prepare(&stmts, "t").err()).unwrap_or_default();
+        let by_cell = "use frame\nname = args[][0]\nt = frame.load[name]\nxs = [10, 20, 30]\nlog[xs[t.at[0]]]\n";
+        assert!(refused(by_cell).contains("xs[…] is indexed by a value whose type the program does not know (argument 1): read it as one first, int[…] for a position"), "{}", refused(by_cell));
+        let by_key = "use frame\nname = args[][0]\nt = frame.load[name]\nm = map[a = 1]\nlog[m[t.k[0]]]\n";
+        assert!(refused(by_key).contains("m[…] is indexed by a value whose type the program does not know (argument 1): read it as one first, str[…] for a key"), "{}", refused(by_key));
+        // read first, both lower; a parsed value indexed by its own kind does too
+        let read = "use frame\nname = args[][0]\nt = frame.load[name]\nxs = [10, 20, 30]\nm = map[a = 1]\nlog[xs[int[t.at[0]]]]\nlog[m[str[t.k[0]]]]\nd = json['{\"a\": [1, 2]}']\nlog[d['a']]\n";
+        assert_eq!(refused(read), "");
     }
 
     #[test]

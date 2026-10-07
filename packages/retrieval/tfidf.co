@@ -1,0 +1,76 @@
+--- TF-IDF as scikit-learn's TfidfVectorizer computes it with its defaults:
+--- raw counts, the smoothed idf, and each document's row l2-normalised.
+use math
+use words
+
+--- The smoothed idf of each word of the vocabulary: ln[(1 + n) / (1 + df)] + 1
+fn idf[docs, vocabulary]
+    n = float[len[docs]]
+    df = words.frequencies[docs]
+    out = []
+    for w in vocabulary
+        out = push[out, ln[(1.0 + n) / (1.0 + float[df[w]])] + 1.0]
+    return out
+
+--- A text's weights over the vocabulary, as the reference transforms a
+--- text once fitted: its count of each word times the word's idf, the row
+--- divided by the root of its sum of squares — taken in the vocabulary's
+--- order with a fused multiply-add, as the reference's compiled loop
+--- takes it over a transformed row
+fn weights[toks, vocabulary, idfs]
+    raw = products[toks, vocabulary, idfs]
+    total = 0.0
+    for x in raw
+        total = fma[x, x, total]
+    return scaled[raw, sqrt[total]]
+
+--- The fitted documents' rows, as the reference fits and transforms them
+--- at once: the same weights, each row's squares summed in the order the
+--- corpus first met its words — the reference sorts a row's cells by the
+--- index a word had before the vocabulary was sorted, and sums in that
+--- order — with the same fused multiply-add
+fn rows[docs, vocabulary, idfs]
+    at = map[]
+    for i in range[len[vocabulary]]
+        at = set[at, vocabulary[i], i]
+    met = words.first_seen[docs]
+    out = []
+    for d in docs
+        raw = products[d, vocabulary, idfs]
+        total = 0.0
+        for w in met
+            x = raw[at[w]]
+            if x ne 0.0
+                total = fma[x, x, total]
+        out = push[out, scaled[raw, sqrt[total]]]
+    return out
+
+--- each word's count times its idf, over the vocabulary
+fn products[toks, vocabulary, idfs]
+    c = words.counts[toks]
+    raw = []
+    for i in range[len[vocabulary]]
+        w = vocabulary[i]
+        if has[c, w]
+            raw = push[raw, float[c[w]] * idfs[i]]
+        else
+            raw = push[raw, 0.0]
+    return raw
+
+--- a row divided by its norm; a row of nothing stays
+fn scaled[raw, by]
+    if by eq 0.0
+        return raw
+    out = []
+    for x in raw
+        out = push[out, x / by]
+    return out
+
+--- The cosine of two normalised rows: their dot, summed in the
+--- vocabulary's order with a fused multiply-add, as the reference's
+--- sparse product sums it
+fn cosine[a, b]
+    dot = 0.0
+    for i in range[len[a]]
+        dot = fma[a[i], b[i], dot]
+    return dot

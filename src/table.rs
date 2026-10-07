@@ -1539,6 +1539,10 @@ pub static ROWS: &[Row] = &[
     row!("math.exp_t", "math", "exp", crow_runtime::math::exp_t, (Tensor) -> Tensor, never),
     row!("math.ln_n", "math", "ln", crow_runtime::math::ln_n, (Float) -> Float, never),
     row!("math.ln_t", "math", "ln", crow_runtime::math::ln_t, (Tensor) -> Tensor, never),
+    // (a × b + c rounded once: what a compiled loop accumulates with, and
+    // a sum held to one must too — scikit-learn's row norms and scipy's
+    // sparse products differed in the last digit from a plain sum)
+    row!("math.fma", "math", "fma", crow_runtime::math::fma, (Float, Float, Float) -> Float, never),
     row!("math.log2_n", "math", "log2", crow_runtime::math::log2_n, (Float) -> Float, never),
     row!("math.log2_t", "math", "log2", crow_runtime::math::log2_t, (Tensor) -> Tensor, never),
     row!("math.log10_n", "math", "log10", crow_runtime::math::log10_n, (Float) -> Float, never),
@@ -2444,14 +2448,14 @@ mod tests {
     fn every_module_function_is_a_row_or_says_why_not() {
         use crate::modules::{chart, db, doc, frame, io, math, nn, stats};
         let modules: [(&str, &[&str]); 8] = [
-            ("math", math::MATH_FUNCTIONS),
-            ("math.stats", stats::STATS_FUNCTIONS),
-            ("math.nn", nn::NN_FUNCTIONS),
+            ("math", &math::MATH_FUNCTIONS[..]),
+            ("math.stats", &stats::STATS_FUNCTIONS[..]),
+            ("math.nn", &nn::NN_FUNCTIONS[..]),
             ("frame", &frame::FRAME_FUNCTIONS[..]),
             ("db", db::DB_FUNCTIONS),
-            ("io", io::IO_FUNCTIONS),
-            ("doc", doc::DOC_FUNCTIONS),
-            ("chart", chart::CHART_FUNCTIONS),
+            ("io", &io::IO_FUNCTIONS[..]),
+            ("doc", &doc::DOC_FUNCTIONS[..]),
+            ("chart", &chart::CHART_FUNCTIONS[..]),
         ];
         for (m, names) in modules {
             for name in names {

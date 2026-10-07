@@ -1,0 +1,71 @@
+--- BM25 as rank_bm25's BM25Okapi computes it: k1 = 1.5, b = 0.75, and an
+--- idf of ln[n - df + 0.5] - ln[df + 0.5], a negative one replaced by a
+--- quarter of the average idf.
+use math
+use words
+
+struct Index [docs, lens, avgdl, idf, k1, b]
+
+--- The index of tokenised documents
+fn build[docs]
+    lens = []
+    total = 0
+    for d in docs
+        lens = push[lens, len[d]]
+        total = total + len[d]
+    n = len[docs]
+    avgdl = float[total] / float[n]
+    df = words.frequencies[docs]
+    --- the idf of each word, the average over the words in the order
+    --- first seen (the reference sums them so), and a negative one
+    --- replaced by epsilon times that average
+    order = words.first_seen[docs]
+    idf = map[]
+    total_idf = 0.0
+    negatives = []
+    for w in order
+        v = ln[float[n] - float[df[w]] + 0.5] - ln[float[df[w]] + 0.5]
+        idf = set[idf, w, v]
+        total_idf = total_idf + v
+        if v lt 0.0
+            negatives = push[negatives, w]
+    eps = 0.25 * (total_idf / float[len[order]])
+    for w in negatives
+        idf = set[idf, w, eps]
+    return Index[docs, lens, avgdl, idf, 1.5, 0.75]
+
+--- The score of a tokenised query against every document, in the
+--- reference's order of operations, word by word
+fn scores[ix, query]
+    out = []
+    for i in range[len[ix.docs]]
+        c = words.counts[ix.docs[i]]
+        dl = float[ix.lens[i]]
+        s = 0.0
+        for q in query
+            f = 0.0
+            if has[c, q]
+                f = float[c[q]]
+            w = 0.0
+            if has[ix.idf, q]
+                w = ix.idf[q]
+            s = s + w * ((f * (ix.k1 + 1.0)) / (f + ix.k1 * ((1.0 - ix.b) + (ix.b * dl) / ix.avgdl)))
+        out = push[out, s]
+    return out
+
+--- The n best documents by score, an earlier document first between equals
+fn top[vals, n]
+    taken = map[]
+    out = []
+    for k in range[min[n, len[vals]]]
+        best = -1
+        for i in range[len[vals]]
+            if not has[taken, str[i]]
+                if best lt 0
+                    best = i
+                else
+                    if vals[i] gt vals[best]
+                        best = i
+        taken = set[taken, str[best], 1]
+        out = push[out, best]
+    return out

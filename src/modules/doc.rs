@@ -10,10 +10,12 @@ use crate::modules::CrowModule;
 
 pub struct DocModule;
 
-pub(crate) const DOC_FUNCTIONS: &[&str] = &["markdown", "chapters", "menu", "pager", "plain", "document"];
+/// The doc module's functions: its rows' names, derived from the table (a row added had to
+/// be listed here too, and `fma` was not).
+pub(crate) static DOC_FUNCTIONS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| crate::table::module_names("doc"));
 
 impl CrowModule for DocModule {
     fn name(&self) -> &str { "doc" }
 
-    fn functions(&self) -> &[&str] { DOC_FUNCTIONS }
+    fn functions(&self) -> &[&str] { &DOC_FUNCTIONS }
 }

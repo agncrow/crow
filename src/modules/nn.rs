@@ -11,16 +11,14 @@ pub struct NnModule;
 /// The module's source: one copy, in the binary.
 pub(crate) const NN_SOURCE: &str = include_str!("nn.co");
 
-pub(crate) const NN_FUNCTIONS: &[&str] = &[
-    "relu", "sigmoid", "softmax", "gelu",
-    "mse", "crossentropy", "bce",
-    "linear",
-];
+/// The nn module's functions: its rows' names, derived from the table (a row added had to
+/// be listed here too, and `fma` was not).
+pub(crate) static NN_FUNCTIONS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| crate::table::module_names("math.nn"));
 
 impl CrowModule for NnModule {
     fn name(&self) -> &str { "math.nn" }
 
-    fn functions(&self) -> &[&str] { NN_FUNCTIONS }
+    fn functions(&self) -> &[&str] { &NN_FUNCTIONS }
 }
 
 #[cfg(test)]
@@ -31,7 +29,7 @@ mod tests {
     #[test]
     fn the_sources_functions_are_the_modules_rows() {
         let declared: Vec<&str> = NN_SOURCE.lines().filter_map(|l| l.strip_prefix("fn ")).map(|l| l.split('[').next().unwrap_or("")).filter(|f| !f.is_empty()).collect();
-        for f in NN_FUNCTIONS {
+        for f in NN_FUNCTIONS.iter() {
             assert!(declared.contains(f), "nn.co declares {}", f);
             let row = crate::table::ROWS.iter().find(|r| r.module == "math.nn" && r.name == *f).unwrap_or_else(|| panic!("a row for {}", f));
             assert!(row.is_crow(), "the row of {} is written in Crow", f);

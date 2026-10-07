@@ -575,6 +575,13 @@ pub fn erf_n(x: f64) -> f64 {
     crate::special::erf_scalar(x)
 }
 
+/// a × b + c rounded once: the fused multiply-add a compiled loop
+/// accumulates with (pandas's rolling kernels, scikit-learn's row norms,
+/// scipy's sparse products), so a sum held to one runs with it.
+pub fn fma(a: f64, b: f64, c: f64) -> f64 {
+    a.mul_add(b, c)
+}
+
 pub fn erf(t: &CrowTensor) -> CrowTensor {
     t.erf()
 }
