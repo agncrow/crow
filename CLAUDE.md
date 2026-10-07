@@ -77,6 +77,20 @@ steps on every push and must be green.
   rules (binop_type, fields), lower_ir/checks (arithmetic), the emitter
   (field reads, cell reads, placeholders, `mask` cells), ir_verify (kinds),
   the interpreter's ops and the runtime's Cell/mask::Cell/CrowDisplay/ToJson.
+  And four places the gate found afterwards: its serde form is ONE JSON
+  text both modes read (`served::json_to_typed`/`json_to_fact` read a fact
+  back by `Ty`, the emitter's `by_serde` list decodes a handler's
+  argument); `int[]`/`float[]` of it are `never` rows listed BEFORE the
+  `(Cell)` rows in table.rs (or a derivation over it is `Result`); a fact
+  declared from it is a literal default only if `checker::declarations`
+  says so (`moment[…]` of literals is; any other call is "undefined
+  variable" in every test and fine under `crow run`); and an option
+  desugaring in lower.rs passes its own lowered form through unchanged
+  (`lowering_twice_is_lowering_once`).
+- A removed builtin a standard module (`src/modules/*.co`) still calls
+  fails only in programs that reach that row: `time[]` in auth.co and
+  mail.co broke two parity programs, two book blocks, a harness and six
+  unit tests while every module test passed.
 - A `sys` row a standard module may call is listed in `SYS_FUNCTIONS`
   (`src/modules/sys.rs`) beside its row in the table; without the entry the
   module's call is "undefined function" in both modes.
