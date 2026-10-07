@@ -43,6 +43,7 @@ cargo clippy --workspace --all-features
 ./target/release/crow test src/modules/stats.co
 ./target/release/crow test src/modules/clickhouse.co
 ./target/release/crow test src/modules/postgres.co
+scripts/coverage.sh
 ```
 
 Use the release binary for the layout and site suites: the debug binary
@@ -71,12 +72,24 @@ steps on every push and must be green.
   before a gate: three unit tests looked flaky for an hour until the
   variable, exported in some shells and not others, turned out to be what
   differed — and the finding was real.
-- A moment is a kind (`crow_runtime::moments::Moment`, `CrowType::Moment`,
-  `Ty::Moment`, `Value::Moment`, `Kind::Moment`/`Arg::Moment`): a new kind
-  threads through type_infer, ir, value, table (kind, conversions, rows),
-  rules (binop_type, fields), lower_ir/checks (arithmetic), the emitter
-  (field reads, cell reads, placeholders, `mask` cells), ir_verify (kinds),
-  the interpreter's ops and the runtime's Cell/mask::Cell/CrowDisplay/ToJson.
+- One type: `crate::ir::Ty` (re-exported by `type_infer`) is the only type
+  enum since 2026-10-07 — `CrowType` and the IR's `Ty` were one thing
+  twice with a lossy map between them, and `where` of a mask was math's
+  to inference and the frame's to the lowering. `Value` is the
+  interpreter's value, `Kind` a row's contract, `Arg` a type's class for
+  choosing a row. `lower_ir::as_inferred` is the one projection (a
+  column's cells and a view's node forgotten), not a second vocabulary. A
+  new kind (`Ty::Moment`, `Value::Moment`, `Kind::Moment`/`Arg::Moment`)
+  still threads through the table's rows, rules (binop_type, fields),
+  lower_ir/checks, the emitter, ir_verify, the interpreter's ops and the
+  runtime's Cell/mask::Cell/CrowDisplay/ToJson — `src/totality.rs` lists
+  the places that must answer for every variant, and refuses to compile
+  until a new variant is placed (design rule 21).
+- The row a bare name reaches is decided once, in
+  `crate::table::module_of_bare`: inference (rules.rs) and the lowering
+  (`module_for`) both call it. A second rule in either is the bug class
+  that produced "the lowered program disagrees with itself" and a compiled
+  program the Rust compiler refused.
   And four places the gate found afterwards: its serde form is ONE JSON
   text both modes read (`served::json_to_typed`/`json_to_fact` read a fact
   back by `Ty`, the emitter's `by_serde` list decodes a handler's

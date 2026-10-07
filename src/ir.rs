@@ -35,7 +35,7 @@ pub enum Ty {
     /// A frame, with its columns and their types when `describe` or a
     /// literal knew them.
     /// A frame, with its columns when they are known.
-    Frame(Option<Box<FrameCols>>),
+    Frame(Option<std::sync::Arc<crate::type_infer::Cols>>),
     /// A frame column read.
     Column(Box<Ty>),
     /// A parsed JSON value, dynamic until read through int[], float[], str[].
@@ -48,9 +48,20 @@ pub enum Ty {
     /// A value that can fail: status lives only here (ir-design.md §3.1).
     Result(Box<Ty>),
     Fn(Vec<Ty>, Box<Ty>),
-    /// A connection or another handle the runtime owns: "db", "tx",
-    /// "sparse", "web.app", "web.request", "web.response".
-    Handle(String),
+    /// A database connection (`db.connect`), and a transaction within one.
+    Db,
+    Tx,
+    /// A sparse matrix (crow_runtime::sparse).
+    Sparse,
+    /// A web application, a request a route reads, a response it answers.
+    WebApp,
+    WebRequest,
+    WebResponse,
+    /// A mailer, a socket, a byte stream `sys` opened, a test's app session.
+    Mailer,
+    Socket,
+    Stream,
+    App,
     /// A view tree.
     Node,
     /// The checker did not know; the backends treat it as a plain value.
@@ -95,8 +106,8 @@ impl Ty {
     /// A frame's columns, of a frame or of one that can fail, as the
     /// lowering's types carry them.
     pub fn frame_cols_ty(&self) -> Option<Option<std::sync::Arc<crate::type_infer::Cols>>> {
-        match crate::lower_ir::crow_type(self.payload()) {
-            crate::type_infer::CrowType::Frame(c) => Some(c),
+        match self.payload() {
+            Ty::Frame(c) => Some(c.clone()),
             _ => None,
         }
     }
@@ -107,14 +118,6 @@ impl Ty {
             t => t,
         }
     }
-}
-
-/// A frame's columns in the IR: each one's cell type, in name order, and
-/// whether a column the program cannot name may be there too.
-#[derive(Debug, Clone, PartialEq)]
-pub struct FrameCols {
-    pub cols: Vec<(String, Ty)>,
-    pub open: bool,
 }
 
 impl std::fmt::Display for Ty {
@@ -161,7 +164,16 @@ impl std::fmt::Display for Ty {
                 }
                 write!(f, ") -> {}", r)
             }
-            Ty::Handle(k) => write!(f, "Handle({})", k),
+            Ty::Db => write!(f, "Handle(db)"),
+            Ty::Tx => write!(f, "Handle(tx)"),
+            Ty::Sparse => write!(f, "Handle(sparse)"),
+            Ty::WebApp => write!(f, "Handle(web.app)"),
+            Ty::WebRequest => write!(f, "Handle(web.request)"),
+            Ty::WebResponse => write!(f, "Handle(web.response)"),
+            Ty::Mailer => write!(f, "Handle(mailer)"),
+            Ty::Socket => write!(f, "Handle(socket)"),
+            Ty::Stream => write!(f, "Handle(stream)"),
+            Ty::App => write!(f, "Handle(app)"),
             Ty::Node => write!(f, "Node"),
             Ty::Unknown => write!(f, "?"),
         }

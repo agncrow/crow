@@ -36,13 +36,13 @@ impl Emitter {
     /// one — as the interpreter hands a function value its argument, an int
     /// to a float parameter a float (compiled, `any[[1.5], big]` beside
     /// `any[[1], big]` did not build).
-    fn pred_cast(&self, pred: &Expr, items: &CrowType) -> &'static str {
+    fn pred_cast(&self, pred: &Expr, items: &Ty) -> &'static str {
         let param = fn_named(pred).and_then(|f| self.fns.get(f)).and_then(|sig| sig.params.first()).map(|(_, t)| t.clone());
         match (items, param) {
-            (CrowType::NumArray(..), Some(Ty::Int)) => " as i64",
-            (CrowType::NumArray(..), Some(Ty::Float)) => "",
-            (CrowType::NumArray(inner, _), _) if matches!(inner.as_ref(), CrowType::Int) => " as i64",
-            (CrowType::Array(inner), Some(Ty::Float)) if matches!(inner.as_ref(), CrowType::Int) => " as f64",
+            (Ty::Tensor(..), Some(Ty::Int)) => " as i64",
+            (Ty::Tensor(..), Some(Ty::Float)) => "",
+            (Ty::Tensor(inner, _), _) if matches!(inner.as_ref(), Ty::Int) => " as i64",
+            (Ty::List(inner), Some(Ty::Float)) if matches!(inner.as_ref(), Ty::Int) => " as f64",
             _ => "",
         }
     }
@@ -73,13 +73,13 @@ impl Emitter {
             let s = self.expr(e);
             let t = self.tt(e);
             let (f, inner) = match t {
-                CrowType::Result(i) => (true, *i),
+                Ty::Result(i) => (true, *i),
                 o => (false, o),
             };
             let value = if f { format!("({}).value", s) } else { format!("({})", s) };
             let json = if Self::is_empty_list(e) {
                 "serde_json::Value::Array(vec![])".to_string()
-            } else if matches!(inner, CrowType::NumArray(..)) {
+            } else if matches!(inner, Ty::Tensor(..)) {
                 format!("serde_json::json!({}.to_vec().iter().map(|&_f| if _f.is_finite() && _f == (_f as i64) as f64 {{ serde_json::json!(_f as i64) }} else {{ serde_json::json!(_f) }}).collect::<Vec<_>>())", value)
             } else {
                 format!("serde_json::json!({})", value)
@@ -159,7 +159,7 @@ impl Emitter {
     fn db_transact(&mut self, conn: &str, f: &str) -> String {
         let ret = self.fns.get(f).map(|x| x.ret.clone()).unwrap_or(Ty::Unknown);
         let fallible = matches!(ret, Ty::Result(_));
-        let default = Self::inner(&crow_type(&ret)).default_rust_value();
+        let default = Self::inner(&as_inferred(&ret)).default_rust_value();
         let failed = format!("CrowResult {{ ok: false, value: {}, reason: __e, kind: \"db\".to_string(), trace: vec![], captured: 0.0 }}", default);
         let (judged, kept, refused) = if fallible {
             ("let __failed = !__v.ok; let __why = __v.reason.clone();", "__v", "if !__v.ok { __v } else { CrowResult { ok: false, value: __v.value, reason: __e, kind: \"db\".to_string(), trace: vec![], captured: 0.0 } }")
@@ -194,14 +194,14 @@ impl Emitter {
     }
 
     fn registry_call(&mut self, name: &str, args: &[Expr], arg_strs: &[String]) -> String {
-        let mut arg_types: Vec<CrowType> = args.iter().map(|x| self.tt(x)).collect();
+        let mut arg_types: Vec<Ty> = args.iter().map(|x| self.tt(x)).collect();
         let mut strs = arg_strs.to_vec();
         // a view's tree handed to a module function is its markup
         for (i, a) in args.iter().enumerate() {
             if let Expr::Call { target: Target::User(v), .. } = a {
                 if self.views.contains(v) {
                     strs[i] = format!("({}).to_html()", strs[i]);
-                    arg_types[i] = CrowType::Str;
+                    arg_types[i] = Ty::Str;
                 }
             }
         }
@@ -279,7 +279,7 @@ impl Emitter {
 
     pub(crate) fn builtin(&mut self, name: &str, args: &[Expr], a: &[String], whole: &Expr) -> Option<String> {
         let n = a.len();
-        let ty0 = args.first().map(|x| self.tt(x)).unwrap_or(CrowType::Unknown);
+        let ty0 = args.first().map(|x| self.tt(x)).unwrap_or(Ty::Unknown);
         let in0 = Self::inner(&ty0);
         match name {
             "grad" if n == 1 => {
@@ -318,13 +318,13 @@ impl Emitter {
         // module functions: a scalar name core and math both answer goes to
         // the module only when a tensor is among the arguments
         let overlapping = matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round" | "min" | "max");
-        if overlapping && self.registry.has_function(name) && args.iter().any(|x| matches!(self.tt(x), CrowType::NumArray(..))) {
+        if overlapping && self.registry.has_function(name) && args.iter().any(|x| matches!(self.tt(x), Ty::Tensor(..))) {
             return Some(self.registry_call(name, args, a));
         }
         let frame_select_widget = name == "select" && self.needs_ui && n == 2 && self.registry.module_name_for(name).map_or(false, |m| m == "frame");
         let frame_core = self.registry.module_name_for(name).map_or(false, |m| m == "frame")
             && crate::checker::BUILTINS.contains(&name)
-            && !args.first().map(|x| matches!(Self::inner(&self.tt(x)), CrowType::Frame(_) | CrowType::FrameCol)).unwrap_or(false);
+            && !args.first().map(|x| matches!(Self::inner(&self.tt(x)), Ty::Frame(_) | Ty::Column(_))).unwrap_or(false);
         let element_in_view = self.in_view() && crate::lower::UI_ELEMENTS.contains(&name);
         // (a message is the session's to hold: its arm below, not its row,
         // which is written in Crow and sends it)
@@ -340,7 +340,7 @@ impl Emitter {
             "floor" | "ceil" | "round" if n == 1 => format!("({}).{}()", a[0], name),
             "captured" if n == 1 => {
                 self.needs_crow_runtime = true;
-                if matches!(ty0, CrowType::Result(_)) {
+                if matches!(ty0, Ty::Result(_)) {
                     format!(
                         "{{ let _v = &({}); if !_v.ok {{ CrowResult {{ ok: false, value: crow_runtime::moments::Moment::default(), reason: _v.reason.clone(), kind: _v.kind.clone(), trace: _v.trace.clone(), captured: 0.0 }} }} else if _v.captured > 0.0 {{ CrowResult {{ ok: true, value: crow_runtime::moments::Moment::of_seconds(_v.captured), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }} }} else {{ CrowResult {{ ok: false, value: crow_runtime::moments::Moment::default(), reason: \"this value was computed here, not read from outside - it has no capture moment\".to_string(), kind: \"no_capture\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
                         a[0]
@@ -383,8 +383,8 @@ impl Emitter {
             "download" if n == 2 => {
                 let stop = self.stop_check();
                 match in0 {
-                    CrowType::Frame(_) => format!("{{ match ({}).to_csv() {{ Ok(_t) => state.download(&{}, _t.into_bytes()), Err(_e) => state.stop(format!(\"download: {{}}\", _e)) }} {} }}", a[0], a[1], stop),
-                    CrowType::Map(_) => format!(
+                    Ty::Frame(_) => format!("{{ match ({}).to_csv() {{ Ok(_t) => state.download(&{}, _t.into_bytes()), Err(_e) => state.stop(format!(\"download: {{}}\", _e)) }} {} }}", a[0], a[1], stop),
+                    Ty::Map(_) => format!(
                         "{{ match ({}).get(\"path\").map(|_p| std::fs::read(_p)) {{ Some(Ok(_b)) => state.download(&{}, _b), Some(Err(_e)) => state.stop(format!(\"download: {{}}\", _e)), None => state.stop(\"download: a file to hand on is a picked file, with a path\".to_string()) }} {} }}",
                         a[0], a[1], stop
                     ),
@@ -482,10 +482,10 @@ impl Emitter {
             }
             "assert" if n == 1 || n == 2 => {
                 let cond = match &ty0 {
-                    CrowType::Bool => a[0].clone(),
-                    CrowType::Result(_) => format!("{{ let _a = &({}); if !_a.ok {{ crow_stop({}, format!(\"cannot branch on an error value — {{}}\", _a.reason)); }} _a.value }}", a[0], self.line_now()),
-                    CrowType::Int => format!("({}) != 0", a[0]),
-                    CrowType::Str => format!("!({}).is_empty()", a[0]),
+                    Ty::Bool => a[0].clone(),
+                    Ty::Result(_) => format!("{{ let _a = &({}); if !_a.ok {{ crow_stop({}, format!(\"cannot branch on an error value — {{}}\", _a.reason)); }} _a.value }}", a[0], self.line_now()),
+                    Ty::Int => format!("({}) != 0", a[0]),
+                    Ty::Str => format!("!({}).is_empty()", a[0]),
                     _ => format!("({}) != 0", a[0]),
                 };
                 // a failed assert stops with the interpreter's words, not
@@ -510,32 +510,32 @@ impl Emitter {
                 // record, a frame or a JSON value had been "unknown")
                 // a record by the name it was declared by (a module's `Day`)
                 let shown: std::collections::BTreeMap<String, String> = self.structs.iter().map(|(n, d)| (n.clone(), d.shown.clone())).collect();
-                fn word(t: &CrowType, v: &str, shown: &std::collections::BTreeMap<String, String>) -> String {
+                fn word(t: &Ty, v: &str, shown: &std::collections::BTreeMap<String, String>) -> String {
                     match t {
-                        CrowType::Int => "\"int\"".to_string(),
-                        CrowType::Float => "\"float\"".to_string(),
-                        CrowType::Moment => "\"moment\"".to_string(),
-                        CrowType::Str | CrowType::Markup => "\"str\"".to_string(),
-                        CrowType::Bool => "\"bool\"".to_string(),
+                        Ty::Int => "\"int\"".to_string(),
+                        Ty::Float => "\"float\"".to_string(),
+                        Ty::Moment => "\"moment\"".to_string(),
+                        Ty::Str | Ty::Markup => "\"str\"".to_string(),
+                        Ty::Bool => "\"bool\"".to_string(),
                         // a frame's column is the list of its cells there
-                        CrowType::Array(_) | CrowType::NumArray(..) | CrowType::FrameCol => "\"array\"".to_string(),
-                        CrowType::Sparse => "\"sparse\"".to_string(),
-                        CrowType::Bytes => "\"bytes\"".to_string(),
-                        CrowType::Stream => "\"stream\"".to_string(),
-                        CrowType::Map(_) => "\"map\"".to_string(),
-                        CrowType::Fn(_, _) => "\"fn\"".to_string(),
-                        CrowType::Void => "\"none\"".to_string(),
-                        CrowType::Frame(_) => "\"frame\"".to_string(),
-                        CrowType::DbHandle => "\"db\"".to_string(),
+                        Ty::List(_) | Ty::Tensor(..) | Ty::Column(_) => "\"array\"".to_string(),
+                        Ty::Sparse => "\"sparse\"".to_string(),
+                        Ty::Bytes => "\"bytes\"".to_string(),
+                        Ty::Stream => "\"stream\"".to_string(),
+                        Ty::Map(_) => "\"map\"".to_string(),
+                        Ty::Fn(_, _) => "\"fn\"".to_string(),
+                        Ty::Unit => "\"none\"".to_string(),
+                        Ty::Frame(_) => "\"frame\"".to_string(),
+                        Ty::Db => "\"db\"".to_string(),
                         // the web runtime's handles, as the interpreter names them
-                        CrowType::WebResponse => "\"response\"".to_string(),
-                        CrowType::Socket => "\"socket\"".to_string(),
-                        CrowType::Mailer => "\"mailer\"".to_string(),
+                        Ty::WebResponse => "\"response\"".to_string(),
+                        Ty::Socket => "\"socket\"".to_string(),
+                        Ty::Mailer => "\"mailer\"".to_string(),
                         // the runtime's records are the interpreter's maps
-                        CrowType::Struct(nm) if matches!(nm.as_str(), "CrowShell" | "CrowFindResult" | "CrowReply" | "CrowAnswer") => "\"map\"".to_string(),
-                        CrowType::Struct(nm) => format!("\"{}\"", shown.get(nm).unwrap_or(nm)),
-                        CrowType::Json => format!("crow_runtime::json::type_word(&({}))", v),
-                        CrowType::Result(inner) => format!("{{ let _v = &({}); if _v.ok {{ {} }} else {{ \"error\" }} }}", v, word(inner, "_v.value", shown)),
+                        Ty::Record(nm) if matches!(nm.as_str(), "CrowShell" | "CrowFindResult" | "CrowReply" | "CrowAnswer") => "\"map\"".to_string(),
+                        Ty::Record(nm) => format!("\"{}\"", shown.get(nm).unwrap_or(nm)),
+                        Ty::Json => format!("crow_runtime::json::type_word(&({}))", v),
+                        Ty::Result(inner) => format!("{{ let _v = &({}); if _v.ok {{ {} }} else {{ \"error\" }} }}", v, word(inner, "_v.value", shown)),
                         _ => "\"unknown\"".to_string(),
                     }
                 }
@@ -554,7 +554,7 @@ impl Emitter {
             // search: a parallel early exit
             "any" | "all" if n == 2 => {
                 self.needs_rayon = true;
-                if matches!(in0, CrowType::NumArray(..)) {
+                if matches!(in0, Ty::Tensor(..)) {
                     let cast = self.pred_cast(&args[1], &in0);
                     return Some(format!("{}.to_vec().par_iter().{}(|&_x| {}(_x{}))", a[0], name, a[1], cast));
                 }
@@ -565,15 +565,15 @@ impl Emitter {
                 };
                 format!("{}.par_iter().{}(|_x| {}{})", a[0], name, a[1], call)
             }
-            "find" if n == 2 && matches!(in0, CrowType::Array(_) | CrowType::NumArray(..)) => {
+            "find" if n == 2 && matches!(in0, Ty::List(_) | Ty::Tensor(..)) => {
                 self.needs_rayon = true;
                 let el = match &in0 {
-                    CrowType::Array(i) | CrowType::NumArray(i, _) => i.as_ref().clone(),
-                    _ => CrowType::Unknown,
+                    Ty::List(i) | Ty::Tensor(i, _) => i.as_ref().clone(),
+                    _ => Ty::Unknown,
                 };
                 let default = el.default_rust_value();
-                if matches!(in0, CrowType::NumArray(..)) {
-                    let cast = if matches!(el, CrowType::Int) { " as i64" } else { "" };
+                if matches!(in0, Ty::Tensor(..)) {
+                    let cast = if matches!(el, Ty::Int) { " as i64" } else { "" };
                     let call_cast = self.pred_cast(&args[1], &in0);
                     return Some(format!(
                         "{{ match {}.to_vec().par_iter().copied().find_first(|&_x| {}(_x{})) {{ Some(_v) => CrowResult {{ ok: true, value: _v{}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, None => CrowResult {{ ok: false, value: {}, reason: \"no match\".to_string(), kind: \"find\".to_string(), trace: vec![], captured: 0.0 }} }} }}",

@@ -91,6 +91,30 @@ repository root points assistants here.
     the manifests name, by one of the four reasons; a crate added gets
     its line there.
 
+## Verification rules
+
+21. **One vocabulary, total.** A value has one type, `crate::ir::Ty`,
+    which inference, the lowering, the verifier and both backends read
+    and write; the interpreter holds a value as `Value`; a builtin row
+    states its contract as `Kind`, and `Arg` is a type's class for
+    choosing a row (`Arg::of_type`). No other enum names a type. A `match`
+    over `Ty`, `Value`, `Kind` or `Arg` names every variant; a wildcard
+    arm is for a pair of two kinds and nothing else, since a wildcard
+    hides the variant nobody thought about (a list of moments compared
+    whole fell to `_ => false`). `src/totality.rs` names every variant
+    and holds every function that maps one: a variant added fails there
+    until it is placed, and each test says what each variant answers.
+    The one row choice for a bare name is `crate::table::module_of_bare`,
+    which inference and the lowering both call.
+22. **Covered.** The gate measures line coverage of the compiler
+    (`scripts/coverage.sh`: the unit tests, the docs check, the parity
+    corpus and the packages under `cargo llvm-cov`) and fails when a
+    crate falls under its floor, recorded in the script; the floor only
+    rises. A change that adds code adds the test that reaches it — a unit
+    test for a function, a parity program for both modes, a book block
+    for a user-facing name, a harness for a page — and a line the gate
+    cannot reach is named in the commit message with why.
+
 ## Workflow
 
 Every feature follows this sequence.

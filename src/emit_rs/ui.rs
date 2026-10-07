@@ -23,7 +23,7 @@ impl Emitter {
         }
         // table[frame]: the frame's rows; a table of element children is an
         // ordinary element
-        if element == "table" && children.len() == 1 && matches!(Self::inner(&self.tt(&children[0])), CrowType::Frame(_)) {
+        if element == "table" && children.len() == 1 && matches!(Self::inner(&self.tt(&children[0])), Ty::Frame(_)) {
             return self.frame_table(attrs, &children[0]);
         }
         let is_container = crow_runtime::layout::CONTAINERS.contains(&element);
@@ -138,7 +138,7 @@ impl Emitter {
         // a literal text, or text with spans: a failed span shows its reason
         if matches!(raw, Expr::Const(Const::Str(_), _) | Expr::Interp(_)) {
             let s = self.expr(raw);
-            if matches!(self.tt(raw), CrowType::Result(_)) {
+            if matches!(self.tt(raw), Ty::Result(_)) {
                 return (format!("{{ let _c = &({}); if !_c.ok {{ CrowVNode::failed(&_c.reason) }} else {{ CrowVNode::text(&_c.value) }} }}", s), false);
             }
             return (format!("CrowVNode::text(&{})", s), false);
@@ -161,26 +161,26 @@ impl Emitter {
             Expr::Local(n, _) | Expr::Move(n, _) => self.local_ty(n).unwrap_or_else(|| self.tt_full(raw)),
             _ => self.tt_full(raw),
         };
-        let fallible = matches!(ty, CrowType::Result(_));
+        let fallible = matches!(ty, Ty::Result(_));
         let inner = Self::inner(&ty);
         let s = self.expr(raw);
-        if let CrowType::Array(item) = &inner {
-            let place = if matches!(item.as_ref(), CrowType::Markup) { "crow_web::view::markup_children" } else { "crow_web::view::children_of" };
+        if let Ty::List(item) = &inner {
+            let place = if matches!(item.as_ref(), Ty::Markup) { "crow_web::view::markup_children" } else { "crow_web::view::children_of" };
             if fallible {
                 return (format!("{{ let _c = &({}); if !_c.ok {{ vec![CrowVNode::failed(&_c.reason)] }} else {{ {}(&_c.value) }} }}", s, place), true);
             }
             return (format!("{}(&{})", place, s), true);
         }
         let text = match inner {
-            CrowType::Markup if fallible => format!("{{ let _c = &({}); if !_c.ok {{ CrowVNode::failed(&_c.reason) }} else {{ CrowVNode::raw(&_c.value) }} }}", s),
-            CrowType::Str if fallible => format!("{{ let _c = &({}); if !_c.ok {{ CrowVNode::failed(&_c.reason) }} else {{ CrowVNode::text(&_c.value) }} }}", s),
-            CrowType::Int | CrowType::Float | CrowType::Bool if fallible => {
+            Ty::Markup if fallible => format!("{{ let _c = &({}); if !_c.ok {{ CrowVNode::failed(&_c.reason) }} else {{ CrowVNode::raw(&_c.value) }} }}", s),
+            Ty::Str if fallible => format!("{{ let _c = &({}); if !_c.ok {{ CrowVNode::failed(&_c.reason) }} else {{ CrowVNode::text(&_c.value) }} }}", s),
+            Ty::Int | Ty::Float | Ty::Bool if fallible => {
                 format!("{{ let _c = &({}); if !_c.ok {{ CrowVNode::failed(&_c.reason) }} else {{ CrowVNode::text(&format!(\"{{}}\", _c.value)) }} }}", s)
             }
             // markup a view, an element or doc made is markup; a string is text
-            CrowType::Markup => format!("CrowVNode::raw(&{})", s),
-            CrowType::Str => format!("CrowVNode::text(&{})", s),
-            CrowType::Int | CrowType::Float | CrowType::Bool => format!("CrowVNode::text(&format!(\"{{}}\", {}))", s),
+            Ty::Markup => format!("CrowVNode::raw(&{})", s),
+            Ty::Str => format!("CrowVNode::text(&{})", s),
+            Ty::Int | Ty::Float | Ty::Bool => format!("CrowVNode::text(&format!(\"{{}}\", {}))", s),
             _ => s,
         };
         (text, false)
@@ -197,7 +197,7 @@ impl Emitter {
             match k.as_str() {
                 "props" => {
                     self.needs_serde_json = true;
-                    if matches!(self.tt(v), CrowType::Result(_)) {
+                    if matches!(self.tt(v), Ty::Result(_)) {
                         failed = Some(self.expr(v));
                         props = "serde_json::to_value(&_p.value).unwrap_or(serde_json::Value::Null)".to_string();
                     } else {
@@ -284,7 +284,7 @@ impl Emitter {
             "CrowVNode::table(vec![CrowVNode::raw(&crow_runtime::layout::frame_table_html(_f, {}, {}, {}, {}, {}, {}, {}, {}, {}))])",
             click, key, mark, delta, actions, hide, confirm, page, sort
         );
-        if matches!(frame_ty, CrowType::Result(_)) {
+        if matches!(frame_ty, Ty::Result(_)) {
             return format!("{{ let _fr = &({}); if !_fr.ok {{ CrowVNode::failed(&_fr.reason) }} else {{ let _f = &_fr.value; {} }} }}", f, rows);
         }
         format!("{{ let _f = &{}; {} }}", f, rows)
@@ -308,7 +308,7 @@ impl Emitter {
                 }
                 let kind = match Emitter::raw(&args[2]) {
                     Expr::Const(Const::Str(s), _) if s.is_empty() => match self.tt(&args[1]) {
-                        CrowType::Int | CrowType::Float => "\"number\"".to_string(),
+                        Ty::Int | Ty::Float => "\"number\"".to_string(),
                         _ => "\"text\"".to_string(),
                     },
                     _ => format!("&{}", a[2]),
@@ -367,10 +367,10 @@ impl Emitter {
         );
         let with_points = match Emitter::raw(&args[10]) {
             Expr::Const(Const::Int(0), _) => format!("{{ let _pts: Option<&crow_runtime::frame::CrowFrame> = None; {} }}", core),
-            _ if matches!(self.tt(&args[10]), CrowType::Result(_)) => format!("{{ let _pr = &({}); let _pts = if _pr.ok {{ Some(&_pr.value) }} else {{ None }}; {} }}", a[10], core),
+            _ if matches!(self.tt(&args[10]), Ty::Result(_)) => format!("{{ let _pr = &({}); let _pts = if _pr.ok {{ Some(&_pr.value) }} else {{ None }}; {} }}", a[10], core),
             _ => format!("{{ let _pf: &crow_runtime::frame::CrowFrame = &{}; let _pts = Some(_pf); {} }}", a[10], core),
         };
-        if matches!(frame_ty, CrowType::Result(_)) {
+        if matches!(frame_ty, Ty::Result(_)) {
             return format!("{{ let _fr = &({}); if !_fr.ok {{ CrowVNode::failed(&_fr.reason) }} else {{ let _f = &_fr.value; {} }} }}", a[0], with_points);
         }
         format!("{{ let _f = &{}; {} }}", a[0], with_points)

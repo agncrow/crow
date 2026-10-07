@@ -6,7 +6,7 @@ use super::*;
 
 /// What `enter_fn_scan` saved: restored by `leave_fn_scan`.
 pub(crate) struct FnScan {
-    saved_vars: BTreeMap<String, CrowType>,
+    saved_vars: BTreeMap<String, Ty>,
     saved_fn_name: Option<String>,
     saved_in_view: bool,
     saved_assigned: Option<std::collections::HashSet<String>>,
@@ -15,7 +15,7 @@ pub(crate) struct FnScan {
 
 /// What `enter_derive_scan` saved: restored by `leave_derive_scan`.
 pub(crate) struct DeriveScan {
-    saved_vars: BTreeMap<String, CrowType>,
+    saved_vars: BTreeMap<String, Ty>,
     saved_fn_name: Option<String>,
     saved_assigned: Option<std::collections::HashSet<String>>,
 }
@@ -52,7 +52,7 @@ impl TypeContext {
     /// record's fields do, a handler a table or a search calls takes its
     /// item, a variable called is a function of them. The arguments' own
     /// calls are the caller's to read.
-    pub(crate) fn note_call(&mut self, callee: &Expr, args: &[Expr], arg_types: &[CrowType]) {
+    pub(crate) fn note_call(&mut self, callee: &Expr, args: &[Expr], arg_types: &[Ty]) {
         if let Expr::Ident(name) = callee {
             // table[frame, click = h, key = 'id', actions = map[…]]: the
             // row's key cell is what every one of those handlers
@@ -98,7 +98,7 @@ impl TypeContext {
                             if let Some(p) = sig.params.first_mut() {
                                 match &known {
                                     Some(t) => p.1 = t.clone(),
-                                    None if matches!(p.1, CrowType::Unknown) => p.1 = CrowType::Str,
+                                    None if matches!(p.1, Ty::Unknown) => p.1 = Ty::Str,
                                     None => {}
                                 }
                             }
@@ -112,8 +112,8 @@ impl TypeContext {
             if matches!(name.as_str(), "any" | "all" | "find") && args.len() == 2 {
                 if let Expr::Ident(fn_name) = &args[1] {
                     let elem = match arg_types.first() {
-                        Some(CrowType::Array(inner)) => Some(inner.as_ref().clone()),
-                        Some(CrowType::NumArray(inner, dims)) => Some(Self::tensor_item(inner, dims)),
+                        Some(Ty::List(inner)) => Some(inner.as_ref().clone()),
+                        Some(Ty::Tensor(inner, dims)) => Some(Self::tensor_item(inner, dims)),
                         _ => None,
                     };
                     if let Some(elem) = elem {
@@ -153,7 +153,7 @@ impl TypeContext {
                 _ => None,
             };
             if let Some(p) = handler.and_then(|f| self.functions.get_mut(&f)).and_then(|sig| sig.params.first_mut()) {
-                p.1 = CrowType::WebRequest;
+                p.1 = Ty::WebRequest;
             }
 
             // stream[feed, a, …] IS a call of feed[put, a, …], read as one
@@ -164,10 +164,10 @@ impl TypeContext {
                 && let Some(Expr::Ident(feed)) = args.first()
                 && let Some(sig) = self.functions.get(feed).cloned()
             {
-                let mut given = vec![CrowType::Fn(vec![CrowType::Str], Box::new(CrowType::Bool))];
+                let mut given = vec![Ty::Fn(vec![Ty::Str], Box::new(Ty::Bool))];
                 given.extend(arg_types.get(1..).unwrap_or(&[]).iter().map(|t| match t {
-                    CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::Void) => CrowType::Unknown,
-                    CrowType::Result(inner) => *inner.clone(),
+                    Ty::Result(inner) if matches!(inner.as_ref(), Ty::Unit) => Ty::Unknown,
+                    Ty::Result(inner) => *inner.clone(),
                     other => other.clone(),
                 }));
                 let mut params = sig.params.clone();
@@ -192,7 +192,7 @@ impl TypeContext {
                 if let Expr::Ident(fn_name) = &args[1] {
                     if let Some(sig) = self.functions.get_mut(fn_name) {
                         if let Some(p) = sig.params.first_mut() {
-                            p.1 = CrowType::DbTx;
+                            p.1 = Ty::Tx;
                         }
                     }
                 }
@@ -205,7 +205,7 @@ impl TypeContext {
             if self.calls_fn(name) {
                 let sig = self.functions.get(name).unwrap().clone();
                 let mut new_params = sig.params.clone();
-                let mut normalized_sig: Vec<CrowType> = Vec::with_capacity(arg_types.len());
+                let mut normalized_sig: Vec<Ty> = Vec::with_capacity(arg_types.len());
                 for (i, at) in arg_types.iter().enumerate() {
                     // Normalize types for function params:
                     // - OptBoxStruct -> Struct (the Rust backend unwraps before passing)
@@ -213,9 +213,9 @@ impl TypeContext {
                     // - an error with no value (error[…]) says nothing of the
                     //   parameter: that call never reaches the body
                     let normalized = match at {
-                        CrowType::OptBoxStruct(n) => CrowType::Struct(n.clone()),
-                        CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::Void) => CrowType::Unknown,
-                        CrowType::Result(inner) => *inner.clone(),
+                        Ty::OptRecord(n) => Ty::Record(n.clone()),
+                        Ty::Result(inner) if matches!(inner.as_ref(), Ty::Unit) => Ty::Unknown,
+                        Ty::Result(inner) => *inner.clone(),
                         other => other.clone(),
                     };
                     normalized_sig.push(normalized.clone());
@@ -270,8 +270,8 @@ impl TypeContext {
             // is no variable — guessing a function from its call made a
             // builtin one, and a fact not typed yet one a view indexed.
             if !self.functions.contains_key(name) && !self.structs.contains_key(name) {
-                if let Some(existing @ CrowType::Fn(_, _)) = self.vars.get(name) {
-                    let fn_type = CrowType::Fn(arg_types.to_vec(), Box::new(CrowType::Unknown));
+                if let Some(existing @ Ty::Fn(_, _)) = self.vars.get(name) {
+                    let fn_type = Ty::Fn(arg_types.to_vec(), Box::new(Ty::Unknown));
                     let unified = existing.unify(&fn_type);
                     self.vars.insert(name.clone(), unified);
                 }
@@ -287,14 +287,14 @@ impl TypeContext {
         if let Expr::FieldAccess { object, field } = callee {
             if let Expr::Ident(mod_name) = object.as_ref() {
                 let prefixed = format!("{}_{}", mod_name, field);
-                let text: Vec<CrowType> = arg_types.iter().map(|t| t.text()).collect();
+                let text: Vec<Ty> = arg_types.iter().map(|t| t.text()).collect();
                 if self.functions.contains_key(&prefixed) {
                     let sig = self.functions.get(&prefixed).unwrap().clone();
                     let mut new_params = sig.params.clone();
                     for (i, at) in text.iter().enumerate() {
                         if i < new_params.len() {
                             let normalized = match at {
-                                CrowType::OptBoxStruct(n) => CrowType::Struct(n.clone()),
+                                Ty::OptRecord(n) => Ty::Record(n.clone()),
                                 other => other.clone(),
                             };
                             new_params[i].1 = new_params[i].1.unify(&normalized);
@@ -337,11 +337,11 @@ impl TypeContext {
     /// is inlined as, whose parameters take the row's kinds — one
     /// signature, whatever the program hands it — so the body is typed
     /// once, as the module's tests type it.
-    pub(crate) fn note_crow_row(&mut self, module: &str, name: &str, arg_types: &[CrowType]) {
+    pub(crate) fn note_crow_row(&mut self, module: &str, name: &str, arg_types: &[Ty]) {
         let kinds: Vec<crate::table::Arg> = arg_types
             .iter()
             .map(|t| match t {
-                CrowType::Result(inner) => inner.as_ref(),
+                Ty::Result(inner) => inner.as_ref(),
                 other => other,
             })
             .map(crate::table::Arg::of_type)
@@ -349,7 +349,7 @@ impl TypeContext {
         let Some(row) = crate::table::crow_row(module, name, &kinds) else { return };
         let f = crate::table::crow_fn_name(row);
         let Some(sig) = self.functions.get(&f).cloned() else { return };
-        let given: Vec<CrowType> = row.params.iter().map(|k| crate::table::crow_param_type(*k)).collect();
+        let given: Vec<Ty> = row.params.iter().map(|k| crate::table::crow_param_type(*k)).collect();
         let mut params = sig.params.clone();
         for (i, t) in given.iter().enumerate() {
             if let Some(p) = params.get_mut(i) {
@@ -380,7 +380,7 @@ impl TypeContext {
         let handed_to = callee;
         let Some(sig) = self.functions.get(callee).cloned() else { return };
         for (i, arg) in args.iter().enumerate() {
-            let Some((_, CrowType::Fn(param_types, ret_type))) = sig.params.get(i) else { continue };
+            let Some((_, Ty::Fn(param_types, ret_type))) = sig.params.get(i) else { continue };
             // a gradient handed as a value (`descend[f, grad[f], x0]`): the
             // parameter takes the gradient's type — its answer above all, a
             // tensor or a float, which the parameter's application reads —
@@ -397,7 +397,7 @@ impl TypeContext {
                             // the gradient gives it)
                             let guessed = self.grad_forced.contains(f);
                             for (j, pt) in param_types.iter().enumerate() {
-                                if j < params.len() && !matches!(pt, CrowType::Unknown) {
+                                if j < params.len() && !matches!(pt, Ty::Unknown) {
                                     params[j].1 = if guessed { pt.clone() } else { params[j].1.unify(pt) };
                                 }
                             }
@@ -407,13 +407,13 @@ impl TypeContext {
                             // (the application says what the function is
                             // of — numbers or tensors — as a direct call of
                             // the gradient would)
-                            if !param_types.is_empty() && param_types.iter().all(|t| !matches!(t, CrowType::Unknown)) {
+                            if !param_types.is_empty() && param_types.iter().all(|t| !matches!(t, Ty::Unknown)) {
                                 self.grad_forced.remove(f);
                             }
                         }
                         if let Some(handed) = self.gradient_type(f) {
                             let (param_types, ret_type) = (param_types.clone(), ret_type.clone());
-                            let merged = CrowType::Fn(param_types, ret_type).unify(&handed);
+                            let merged = Ty::Fn(param_types, ret_type).unify(&handed);
                             if let Some(c) = self.functions.get_mut(handed_to)
                                 && let Some(p) = c.params.get_mut(i)
                             {
@@ -441,9 +441,9 @@ impl TypeContext {
                     t.params = params.clone();
                     t.return_type = ret.clone();
                 }
-                CrowType::Fn(params.into_iter().map(|(_, t)| t).collect(), Box::new(ret))
-            } else if let Some(existing @ CrowType::Fn(..)) = self.vars.get(n).cloned() {
-                let handed = CrowType::Fn(param_types.clone(), ret_type.clone());
+                Ty::Fn(params.into_iter().map(|(_, t)| t).collect(), Box::new(ret))
+            } else if let Some(existing @ Ty::Fn(..)) = self.vars.get(n).cloned() {
+                let handed = Ty::Fn(param_types.clone(), ret_type.clone());
                 let merged = existing.unify(&handed);
                 self.vars.insert(n.clone(), merged.clone());
                 merged
@@ -461,7 +461,7 @@ impl TypeContext {
     /// A call through a loop's variable over a list of named functions
     /// (`for f in [a, b]`, then `f[x]`): each of them takes the arguments'
     /// types (read as text) when it takes as many.
-    pub(crate) fn note_through_list(&mut self, f: &str, types: &[CrowType]) {
+    pub(crate) fn note_through_list(&mut self, f: &str, types: &[Ty]) {
         if let Some(sig) = self.functions.get_mut(f) {
             if types.len() == sig.params.len() {
                 for (p, t) in sig.params.iter_mut().zip(types) {
@@ -473,9 +473,9 @@ impl TypeContext {
 
     /// A loop's variable while its calls are read: an item of what it
     /// walks, a list that can fail refused first; left bound after.
-    pub(crate) fn scan_loop_var(&mut self, var: &str, iter_type: CrowType) {
+    pub(crate) fn scan_loop_var(&mut self, var: &str, iter_type: Ty) {
         let item = Self::loop_item(Self::walked(iter_type));
-        if item != CrowType::Unknown {
+        if item != Ty::Unknown {
             self.vars.insert(var.to_string(), item);
         }
     }
@@ -483,11 +483,11 @@ impl TypeContext {
     /// An assignment while calls are read, once its value's calls are:
     /// the variable takes the value's type (a function's first assignment
     /// of a name binds it, spec §7).
-    pub(crate) fn note_scanned_assign(&mut self, name: &str, ty: CrowType) {
+    pub(crate) fn note_scanned_assign(&mut self, name: &str, ty: Ty) {
         if self.fresh_binding(name) {
             self.vars.insert(name.to_string(), ty);
         } else {
-            let existing = self.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
+            let existing = self.vars.get(name).cloned().unwrap_or(Ty::Unknown);
             self.vars.insert(name.to_string(), settle::settle(&existing, ty, self.body_assigned.is_some()));
         }
     }
@@ -532,12 +532,12 @@ impl TypeContext {
         // assignment is a local of its own (spec §7), and a local
         // named like a module variable says nothing about it.
         let module_vars: Vec<String> = saved_vars.keys().filter(|m| self.is_ui && self.facts.contains(*m)).cloned().collect();
-        let mut refined: Vec<(String, CrowType)> = Vec::new();
+        let mut refined: Vec<(String, Ty)> = Vec::new();
         for m in &module_vars {
             if let (Some(before), Some(after)) = (saved_vars.get(m), self.vars.get(m)) {
-                let open = matches!(before, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Unknown))
-                    || matches!(before, CrowType::Map(inner) if matches!(inner.as_ref(), CrowType::Unknown))
-                    || matches!(before, CrowType::Unknown);
+                let open = matches!(before, Ty::List(inner) if matches!(inner.as_ref(), Ty::Unknown))
+                    || matches!(before, Ty::Map(inner) if matches!(inner.as_ref(), Ty::Unknown))
+                    || matches!(before, Ty::Unknown);
                 if open && before != after {
                     refined.push((m.clone(), before.unify(after)));
                 }
@@ -553,10 +553,10 @@ impl TypeContext {
             let mut new_params = sig.params.clone();
             for (i, (pname, pty)) in sig.params.iter().enumerate() {
                 if let Some(updated_type) = self.vars.get(pname) {
-                    let open = matches!(pty, CrowType::Unknown)
-                        || matches!(pty, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Unknown))
-                        || matches!(pty, CrowType::Map(inner) if matches!(inner.as_ref(), CrowType::Unknown));
-                    if matches!(updated_type, CrowType::Fn(_, _)) || (open && updated_type != pty && !matches!(updated_type, CrowType::Unknown)) {
+                    let open = matches!(pty, Ty::Unknown)
+                        || matches!(pty, Ty::List(inner) if matches!(inner.as_ref(), Ty::Unknown))
+                        || matches!(pty, Ty::Map(inner) if matches!(inner.as_ref(), Ty::Unknown));
+                    if matches!(updated_type, Ty::Fn(_, _)) || (open && updated_type != pty && !matches!(updated_type, Ty::Unknown)) {
                         new_params[i].1 = new_params[i].1.unify(updated_type);
                     }
                 }

@@ -12,7 +12,7 @@ pub mod web;
 use std::collections::HashMap;
 use std::sync::Arc;
 use crate::value::CrowValue;
-use crate::type_infer::CrowType;
+use crate::type_infer::Ty;
 
 /// The source of a standard module written in Crow (design rule 20), by
 /// its import path. Each is inlined into the program that imports it, its
@@ -569,13 +569,13 @@ pub trait CrowModule: Send + Sync {
     /// Emit Rust code for a function call. Called by the Rust backend.
     /// `arg_strs` are the argument expressions, already printed.
     /// `arg_types` are the inferred types of each argument.
-    fn emit_rust(&self, name: &str, _arg_strs: &[String], _arg_types: &[CrowType]) -> Result<String, String> {
+    fn emit_rust(&self, name: &str, _arg_strs: &[String], _arg_types: &[Ty]) -> Result<String, String> {
         Err(format!("module '{}' has no function '{}'", self.name(), name))
     }
 
     /// Infer the return type of a function call. Called by the type inference engine.
-    fn type_of(&self, _name: &str, _arg_count: usize) -> CrowType {
-        CrowType::Unknown
+    fn type_of(&self, _name: &str, _arg_count: usize) -> Ty {
+        Ty::Unknown
     }
 }
 
@@ -741,7 +741,7 @@ impl ModuleRegistry {
     }
 
     /// Emit Rust for a function through its module prefix.
-    pub fn emit_rust_in(&self, module_name: &str, name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Result<String, String> {
+    pub fn emit_rust_in(&self, module_name: &str, name: &str, arg_strs: &[String], arg_types: &[Ty]) -> Result<String, String> {
         let idx = self.idx_in(module_name, name).ok_or_else(|| {
             format!("module '{}' has no function '{}'", module_name, name)
         })?;
@@ -749,7 +749,7 @@ impl ModuleRegistry {
     }
 
     /// Infer return type through a module prefix, from the arguments' types.
-    pub fn type_of_in(&self, module_name: &str, name: &str, arg_types: &[CrowType]) -> Option<CrowType> {
+    pub fn type_of_in(&self, module_name: &str, name: &str, arg_types: &[Ty]) -> Option<Ty> {
         let idx = self.idx_in(module_name, name)?;
         Some(self.type_at(idx, name, arg_types))
     }
@@ -770,7 +770,7 @@ impl ModuleRegistry {
         }
     }
 
-    fn emit_at(&self, idx: usize, name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Result<String, String> {
+    fn emit_at(&self, idx: usize, name: &str, arg_strs: &[String], arg_types: &[Ty]) -> Result<String, String> {
         if let Some(e) = crate::table::miscounted(self.modules[idx].name(), name, arg_strs.len()) {
             return Err(e);
         }
@@ -785,7 +785,7 @@ impl ModuleRegistry {
         }
     }
 
-    fn type_at(&self, idx: usize, name: &str, arg_types: &[CrowType]) -> CrowType {
+    fn type_at(&self, idx: usize, name: &str, arg_types: &[Ty]) -> Ty {
         let kinds: Vec<crate::table::Arg> = arg_types.iter().map(crate::table::Arg::of_type).collect();
         let module = self.modules[idx].name();
         // an argument whose kind is not known yet picks the row as the
@@ -796,17 +796,17 @@ impl ModuleRegistry {
         if kinds.iter().any(|k| matches!(k, crate::table::Arg::Unknown | crate::table::Arg::AnyList)) {
             // (the core's rows of the name too, where it has them: `slice`
             // of text or of bytes is picked as the program runs)
-            let answers: Vec<CrowType> = crate::table::ROWS
+            let answers: Vec<Ty> = crate::table::ROWS
                 .iter()
                 .filter(|r| (r.module == module || r.module.is_empty()) && r.name == name && crate::table::kinds_of(r.params, arg_types.len()).is_some())
-                .map(|r| r.crow_type())
+                .map(|r| r.ty())
                 .collect();
             if answers.iter().any(|t| *t != answers[0]) {
-                return CrowType::Unknown;
+                return Ty::Unknown;
             }
         }
         match crate::table::module(module, name, &kinds) {
-            Some(row) => row.crow_type(),
+            Some(row) => row.ty(),
             None => self.modules[idx].type_of(name, arg_types.len()),
         }
     }
@@ -850,7 +850,7 @@ impl ModuleRegistry {
     }
 
     /// Emit Rust for a module function (the Rust backend, bare call).
-    pub fn emit_rust(&self, name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Result<String, String> {
+    pub fn emit_rust(&self, name: &str, arg_strs: &[String], arg_types: &[Ty]) -> Result<String, String> {
         if let Some(msg) = self.ambiguity(name) {
             return Err(msg);
         }
@@ -861,7 +861,7 @@ impl ModuleRegistry {
 
     /// Infer return type of a module function (bare call; None when
     /// ambiguous), from the arguments' types.
-    pub fn type_of(&self, name: &str, arg_types: &[CrowType]) -> Option<CrowType> {
+    pub fn type_of(&self, name: &str, arg_types: &[Ty]) -> Option<Ty> {
         let idxs = self.providers(name);
         if idxs.len() != 1 {
             return None;

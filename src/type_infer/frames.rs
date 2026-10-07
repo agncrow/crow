@@ -37,7 +37,7 @@ impl TypeContext {
     /// The query's own connection answers when the handle is a known
     /// top-level one; a handle that is a parameter (a helper's `conn`) is
     /// unknown here, and every connection is asked until one answers.
-    pub(crate) fn describe_sql(&mut self, sql: &str, handle: Option<&str>) -> Option<BTreeMap<String, CrowType>> {
+    pub(crate) fn describe_sql(&mut self, sql: &str, handle: Option<&str>) -> Option<BTreeMap<String, Ty>> {
         if self.conn_urls.is_empty() { return None; }
         if let Some(cached) = self.describe_cache.get(sql) {
             if std::env::var("CROW_DEBUG_SCHEMAS").is_ok() {
@@ -58,7 +58,7 @@ impl TypeContext {
             if !in_span { scrubbed.push(c); }
         }
         let mut reasons = Vec::new();
-        let mut found: Option<BTreeMap<String, CrowType>> = None;
+        let mut found: Option<BTreeMap<String, Ty>> = None;
         let names: Vec<String> = candidates.iter().map(|(v, _)| v.clone()).collect();
         // not asked (CROW_NO_DESCRIBE): no database answers, so what one
         // answered last time, kept in the project, types the cells, as when
@@ -72,7 +72,7 @@ impl TypeContext {
             match crate::type_infer::describe_with_tables(&url, &scrubbed, &self.ddl) {
                 Ok(cols) => {
                     schema_record::write(&var, &scrubbed, &cols);
-                    let schema: BTreeMap<String, CrowType> = cols.into_iter().map(|(n, kind)| (n, cell_type_of_kind(&kind))).collect();
+                    let schema: BTreeMap<String, Ty> = cols.into_iter().map(|(n, kind)| (n, cell_type_of_kind(&kind))).collect();
                     found = Some(schema);
                     break;
                 }
@@ -333,19 +333,19 @@ pub(crate) fn mark_nullable(db: &crow_db::DbHandle, url: &str, sql: &str, cols: 
 
 /// A described column's kind as the type of its cells: a column that can
 /// hold NULL (`float?`) has fallible cells, a missing one an error.
-pub(crate) fn cell_type_of_kind(kind: &str) -> CrowType {
+pub(crate) fn cell_type_of_kind(kind: &str) -> Ty {
     let (base, nullable) = match kind.strip_suffix('?') {
         Some(b) => (b, true),
         None => (kind, false),
     };
     let t = match base {
-        "int" => CrowType::Int,
-        "float" => CrowType::Float,
-        "datetime" => CrowType::Moment,
-        "bool" => CrowType::Bool,
-        _ => CrowType::Str,
+        "int" => Ty::Int,
+        "float" => Ty::Float,
+        "datetime" => Ty::Moment,
+        "bool" => Ty::Bool,
+        _ => Ty::Str,
     };
-    if nullable { CrowType::Result(Box::new(t)) } else { t }
+    if nullable { Ty::Result(Box::new(t)) } else { t }
 }
 
 /// What a program's databases answered about its statements, kept in the
@@ -357,7 +357,7 @@ pub(crate) fn cell_type_of_kind(kind: &str) -> CrowType {
 /// without the data — so the program is typed as it was; a rehearsal
 /// generates rows from it.
 pub(crate) mod schema_record {
-    use super::CrowType;
+    use super::Ty;
     use std::collections::BTreeMap;
 
     /// The FNV-1a hash of the parts, a stable file name (crow_db's, which a
@@ -394,7 +394,7 @@ pub(crate) mod schema_record {
     }
 
     /// What `var` answered for `sql` when it last could, if it is kept.
-    pub(crate) fn read(var: &str, sql: &str) -> Option<BTreeMap<String, CrowType>> {
+    pub(crate) fn read(var: &str, sql: &str) -> Option<BTreeMap<String, Ty>> {
         let (_, cols) = parse(&std::fs::read_to_string(file_for(var, sql)?).ok()?)?;
         Some(cols.into_iter().map(|(n, k)| (n, super::cell_type_of_kind(&k))).collect())
     }

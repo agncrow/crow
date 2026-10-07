@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use crate::ast::*;
-use crate::type_infer::{CrowType, FnSig, TypeContext};
+use crate::type_infer::{Ty, FnSig, TypeContext};
 use crate::value::{CrowValue, Value};
 
 // --- Impure builtins ---
@@ -372,8 +372,8 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
         };
         counts.truths += test.truths;
         let sig = FnSig {
-            params: test.params.iter().map(|(p, t)| (p.clone(), crate::lower_ir::crow_type(t))).collect(),
-            return_type: CrowType::Void,
+            params: test.params.iter().map(|(p, t)| (p.clone(), crate::lower_ir::as_inferred(t))).collect(),
+            return_type: Ty::Unit,
             body: Vec::new(),
         };
 
@@ -385,7 +385,7 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
                 || sig
                     .params
                     .iter()
-                    .any(|(_, ty)| matches!(ty, CrowType::Unknown))
+                    .any(|(_, ty)| matches!(ty, Ty::Unknown))
             {
                 issues.push(Issue::TestFailure {
                     block: block.label.clone(),
@@ -481,7 +481,7 @@ pub fn run_determinism_probe(
             None => continue,
         };
         if !can_generate_edge_cases(sig)
-            || sig.params.iter().any(|(_, ty)| matches!(ty, CrowType::Unknown))
+            || sig.params.iter().any(|(_, ty)| matches!(ty, Ty::Unknown))
         {
             continue;
         }
@@ -1777,35 +1777,35 @@ pub fn find_fn_lines(stmts: &[Stmt]) -> BTreeMap<String, usize> {
 
 // --- Edge case generation ---
 
-/// Generate boundary values for a CrowType.
-fn boundary_values(ty: &CrowType) -> Option<Vec<CrowValue>> {
+/// Generate boundary values for a Ty.
+fn boundary_values(ty: &Ty) -> Option<Vec<CrowValue>> {
     match ty {
-        CrowType::Int => Some(vec![
+        Ty::Int => Some(vec![
             CrowValue::ok(Value::Int(0)),
             CrowValue::ok(Value::Int(1)),
             CrowValue::ok(Value::Int(-1)),
             CrowValue::ok(Value::Int(i64::MAX)),
             CrowValue::ok(Value::Int(i64::MIN)),
         ]),
-        CrowType::Float => Some(vec![
+        Ty::Float => Some(vec![
             CrowValue::ok(Value::Float(0.0)),
             CrowValue::ok(Value::Float(1.0)),
             CrowValue::ok(Value::Float(-1.0)),
             CrowValue::ok(Value::Float(0.5)),
             CrowValue::ok(Value::Float(-0.5)),
         ]),
-        CrowType::Str => Some(vec![
+        Ty::Str => Some(vec![
             CrowValue::ok(Value::Str(String::new())),
             CrowValue::ok(Value::Str("a".into())),
             CrowValue::ok(Value::Str("hello".into())),
         ]),
-        CrowType::Bool => Some(vec![
+        Ty::Bool => Some(vec![
             CrowValue::ok(Value::Bool(true)),
             CrowValue::ok(Value::Bool(false)),
         ]),
-        CrowType::Array(inner) => {
+        Ty::List(inner) => {
             match inner.as_ref() {
-                CrowType::Int => Some(vec![
+                Ty::Int => Some(vec![
                     CrowValue::ok(Value::Array(vec![])),
                     CrowValue::ok(Value::Array(vec![CrowValue::ok(Value::Int(0))])),
                     CrowValue::ok(Value::Array(vec![
@@ -1820,7 +1820,7 @@ fn boundary_values(ty: &CrowType) -> Option<Vec<CrowValue>> {
                         CrowValue::ok(Value::Int(1)),
                     ])),
                 ]),
-                CrowType::Str => Some(vec![
+                Ty::Str => Some(vec![
                     CrowValue::ok(Value::Array(vec![])),
                     CrowValue::ok(Value::Array(vec![CrowValue::ok(Value::Str(String::new()))])),
                     CrowValue::ok(Value::Array(vec![
@@ -1831,10 +1831,10 @@ fn boundary_values(ty: &CrowType) -> Option<Vec<CrowValue>> {
                 _ => None, // unsupported inner type
             }
         }
-        CrowType::NumArray(inner, _) => {
+        Ty::Tensor(inner, _) => {
             // Same boundary values as Array but for numeric arrays
             match inner.as_ref() {
-                CrowType::Int | CrowType::Float => Some(vec![
+                Ty::Int | Ty::Float => Some(vec![
                     CrowValue::ok(Value::Array(vec![])),
                     CrowValue::ok(Value::Array(vec![CrowValue::ok(Value::Int(0))])),
                     CrowValue::ok(Value::Array(vec![
@@ -1935,7 +1935,7 @@ pub fn run_edge_cases(
             None => continue,
         };
         if !can_generate_edge_cases(sig) { continue; }
-        if sig.params.iter().any(|(_, ty)| matches!(ty, CrowType::Unknown)) { continue; }
+        if sig.params.iter().any(|(_, ty)| matches!(ty, Ty::Unknown)) { continue; }
 
         let combos = generate_input_combos(sig);
         let mut fn_snapshots = Vec::new();

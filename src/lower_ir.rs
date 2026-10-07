@@ -11,7 +11,7 @@
 
 use crate::ast::{BinOp, Expr as A, Stmt as S};
 use crate::ir::*;
-use crate::type_infer::{CrowType, Dims, TypeContext};
+use crate::type_infer::{Ty, Dims, TypeContext};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod fuse;
@@ -603,92 +603,33 @@ fn handed(e: &Expr) -> Vec<String> {
 
 /// A lowered value's type as inference's rules read a child's
 /// (`infer_expr`): markup is text there.
-fn read(x: &Expr) -> CrowType {
+fn read(x: &Expr) -> Ty {
     full(x).text()
 }
 
 /// A lowered value's type with markup told apart (`infer_expr_full`): a
 /// tree is markup.
-fn full(x: &Expr) -> CrowType {
+fn full(x: &Expr) -> Ty {
     match x.ty() {
-        Ty::Node => CrowType::Markup,
-        t => crow_type(&t),
+        Ty::Node => Ty::Markup,
+        t => as_inferred(&t),
     }
 }
 
-pub fn ty_of(t: &CrowType) -> Ty {
-    match t {
-        CrowType::Int => Ty::Int,
-        CrowType::Float => Ty::Float,
-        CrowType::Moment => Ty::Moment,
-        CrowType::Str => Ty::Str,
-        CrowType::Markup => Ty::Markup,
-        CrowType::Bool => Ty::Bool,
-        CrowType::Array(inner) => Ty::List(Box::new(ty_of(inner))),
-        CrowType::NumArray(inner, dims) => Ty::Tensor(Box::new(ty_of(inner)), dims.clone()),
-        CrowType::Map(inner) => Ty::Map(Box::new(ty_of(inner))),
-        CrowType::Struct(n) => Ty::Record(n.clone()),
-        CrowType::OptBoxStruct(n) => Ty::OptRecord(n.clone()),
-        CrowType::Frame(cols) => Ty::Frame(cols.as_ref().map(|c| Box::new(FrameCols { cols: c.cols.iter().map(|(n, t)| (n.clone(), ty_of(t))).collect(), open: c.open }))),
-        CrowType::FrameCol => Ty::Column(Box::new(Ty::Unknown)),
-        CrowType::Json => Ty::Json,
-        CrowType::Result(inner) => Ty::Result(Box::new(ty_of(inner))),
-        CrowType::Fn(ps, r) => Ty::Fn(ps.iter().map(ty_of).collect(), Box::new(ty_of(r))),
-        CrowType::DbHandle => Ty::Handle("db".into()),
-        CrowType::DbTx => Ty::Handle("tx".into()),
-        CrowType::WebApp => Ty::Handle("web.app".into()),
-        CrowType::WebResponse => Ty::Handle("web.response".into()),
-        CrowType::WebRequest => Ty::Handle("web.request".into()),
-        CrowType::Sparse => Ty::Handle("sparse".into()),
-        CrowType::Mailer => Ty::Handle("mailer".into()),
-        CrowType::Socket => Ty::Handle("socket".into()),
-        CrowType::Bytes => Ty::Bytes,
-        CrowType::Stream => Ty::Handle("stream".into()),
-        CrowType::App => Ty::Handle("app".into()),
-        CrowType::Void => Ty::Unit,
-        CrowType::Unknown => Ty::Unknown,
-    }
-}
 
 /// The inference type an IR type came from: the Rust backend reads the
 /// type tables (Rust names, defaults) through it.
-pub fn crow_type(t: &Ty) -> CrowType {
+/// A type as inference reads it: a column without its cells' type (the
+/// lowering's types carry them; inference types a column by its frame's
+/// columns where they are known), a view's node as nothing known. One
+/// enum since 2026-10-07; this is what the conversion from the IR's
+/// type to inference's used to forget.
+pub fn as_inferred(t: &Ty) -> Ty {
     match t {
-        Ty::Int => CrowType::Int,
-        Ty::Float => CrowType::Float,
-        Ty::Moment => CrowType::Moment,
-        Ty::Bool => CrowType::Bool,
-        Ty::Bytes => CrowType::Bytes,
-        Ty::Str => CrowType::Str,
-        Ty::Markup => CrowType::Markup,
-        Ty::Unit => CrowType::Void,
-        Ty::List(inner) => CrowType::Array(Box::new(crow_type(inner))),
-        Ty::Map(inner) => CrowType::Map(Box::new(crow_type(inner))),
-        Ty::Tensor(inner, dims) => CrowType::NumArray(Box::new(crow_type(inner)), dims.clone()),
-        Ty::Frame(cols) => CrowType::Frame(cols.as_ref().map(|c| std::sync::Arc::new(crate::type_infer::Cols { cols: c.cols.iter().map(|(n, t)| (n.clone(), crow_type(t))).collect(), open: c.open }))),
-        Ty::Column(_) => CrowType::FrameCol,
-        Ty::Json => CrowType::Json,
-        Ty::Record(n) => CrowType::Struct(n.clone()),
-        Ty::OptRecord(n) => CrowType::OptBoxStruct(n.clone()),
-        Ty::Result(inner) => CrowType::Result(Box::new(crow_type(inner))),
-        Ty::Fn(ps, r) => CrowType::Fn(ps.iter().map(crow_type).collect(), Box::new(crow_type(r))),
-        Ty::Handle(k) => match k.as_str() {
-            "db" => CrowType::DbHandle,
-            "tx" => CrowType::DbTx,
-            "sparse" => CrowType::Sparse,
-            "web.app" => CrowType::WebApp,
-            "web.response" => CrowType::WebResponse,
-            "web.request" => CrowType::WebRequest,
-            "mailer" => CrowType::Mailer,
-            "socket" => CrowType::Socket,
-            "stream" => CrowType::Stream,
-            "app" => CrowType::App,
-            _ => CrowType::Unknown,
-        },
-        // a view's tree has no inference type of its own: the backends
-        // hold it as a node
-        Ty::Node => CrowType::Unknown,
-        Ty::Unknown => CrowType::Unknown,
+        Ty::Column(_) => Ty::Column(Box::new(Ty::Unknown)),
+        Ty::Node => Ty::Unknown,
+        Ty::Result(inner) => Ty::Result(Box::new(as_inferred(inner))),
+        t => t.clone(),
     }
 }
 
@@ -699,10 +640,10 @@ pub(crate) struct Seen {
     /// Each call of a function or record the program declares, by the name
     /// written, with its arguments' types as lowered: markup told apart, a
     /// failure not yet unwrapped.
-    pub calls: Vec<(String, Vec<CrowType>)>,
+    pub calls: Vec<(String, Vec<Ty>)>,
     /// The type of each value the body returns, where it is returned (a
     /// collecting loop's body returns nothing of the function's).
-    pub returns: Vec<CrowType>,
+    pub returns: Vec<Ty>,
     /// Each place an error leaves the body — a decision on a value that
     /// can fail, or an assignment refusing one — and whether it is inside
     /// a collecting loop.
@@ -734,7 +675,7 @@ enum Where {
 /// The names an earlier fragment bound, with the types inference holds for
 /// them: the scope a fragment's main is checked in.
 fn known_types(ctx: &TypeContext, known: &HashSet<String>) -> HashMap<String, Ty> {
-    known.iter().map(|n| (n.clone(), ctx.vars.get(n).map(ty_of).unwrap_or(Ty::Unknown))).collect()
+    known.iter().map(|n| (n.clone(), ctx.vars.get(n).cloned().unwrap_or(Ty::Unknown))).collect()
 }
 
 struct Lowerer<'a> {
@@ -782,19 +723,19 @@ struct Lowerer<'a> {
     fn_lists: Vec<(String, Vec<String>)>,
     /// A provisional lowering's locals, each with its first value's type:
     /// with the type it settles on, what it is declared as (`declared_as`).
-    first_types: HashMap<String, CrowType>,
+    first_types: HashMap<String, Ty>,
     /// A provisional lowering's assignments of a value that can fail to a
     /// variable declared before: the variable, the value's payload, and
     /// whether inside a collecting loop. Whether each refuses the failed
     /// value is known once the body's locals have settled.
-    held: Vec<(String, CrowType, bool)>,
+    held: Vec<(String, Ty, bool)>,
     /// While a test is lowered for the handlers it clicks: each handler
     /// call a click holds, with its arguments' types (`type_clicks`).
-    clicks: Option<Vec<(String, Vec<CrowType>)>>,
+    clicks: Option<Vec<(String, Vec<Ty>)>>,
     /// While a test is lowered for what only it types: each call of one of
     /// the program's functions it makes, with its arguments' types
     /// (`type_clicks`).
-    tested: Option<Vec<(String, Vec<CrowType>)>>,
+    tested: Option<Vec<(String, Vec<Ty>)>>,
     /// The names a guard knows have failed where the lowering is (`if not
     /// x.ok`'s body, `if x.ok`'s else): a return of one hands back its
     /// failure, never its value's type.
@@ -876,8 +817,8 @@ impl<'a> Lowerer<'a> {
         for (name, payload, collecting) in std::mem::take(&mut self.held) {
             let settled = self.ctx.vars.get(&name);
             let held = match self.first_types.get(&name) {
-                Some(first) => crow_type(&declared_as(&ty_of(first), settled)),
-                None => settled.cloned().unwrap_or(CrowType::Unknown),
+                Some(first) => as_inferred(&declared_as(&(first).clone(), settled)),
+                None => settled.cloned().unwrap_or(Ty::Unknown),
             };
             if crate::type_infer::settle::refuses_failed(&held, &payload) {
                 if let Some(seen) = &mut self.seen {
@@ -984,13 +925,13 @@ impl<'a> Lowerer<'a> {
     /// Each test is lowered as it runs, its own variables in view where its
     /// clicks' and calls' arguments are typed. Whether any parameter moved.
     fn type_clicks(&mut self, stmts: &[S]) -> bool {
-        let mut clicks: Vec<(String, Vec<CrowType>)> = Vec::new();
-        let mut tested: Vec<(String, Vec<CrowType>)> = Vec::new();
+        let mut clicks: Vec<(String, Vec<Ty>)> = Vec::new();
+        let mut tested: Vec<(String, Vec<Ty>)> = Vec::new();
         for s in stmts {
             if let S::TestBlock { name, params, body } = s {
                 let saved = self.ctx.vars.clone();
                 for p in params {
-                    self.ctx.vars.insert(p.clone(), CrowType::Unknown);
+                    self.ctx.vars.insert(p.clone(), Ty::Unknown);
                 }
                 self.at = Where::Test;
                 self.current_fn = name.clone().unwrap_or_default();
@@ -1060,7 +1001,7 @@ impl<'a> Lowerer<'a> {
 
     /// A call's arguments' types noted for its callee's signature, in the
     /// call scan (F5).
-    fn scan_call(&mut self, callee: &A, args: &[A], types: &[CrowType]) {
+    fn scan_call(&mut self, callee: &A, args: &[A], types: &[Ty]) {
         if self.pass != Pass::Scan || self.unscanned > 0 {
             return;
         }
@@ -1072,7 +1013,7 @@ impl<'a> Lowerer<'a> {
         // parameters unknown and not be emitted)
         if let A::Ident(n) = callee {
             if let Some((_, fns)) = self.fn_lists.iter().rev().find(|(v, _)| v == n) {
-                let text: Vec<CrowType> = types.iter().map(|t| t.text()).collect();
+                let text: Vec<Ty> = types.iter().map(|t| t.text()).collect();
                 for f in fns.clone() {
                     self.ctx.note_through_list(&f, &text);
                 }
@@ -1143,7 +1084,7 @@ impl<'a> Lowerer<'a> {
                     self.check_struct(name, fields);
                     let sig = self.ctx.structs.get(name).cloned();
                     let fields = match sig {
-                        Some(sig) => sig.fields.iter().map(|(n, t)| (n.clone(), ty_of(t))).collect(),
+                        Some(sig) => sig.fields.iter().map(|(n, t)| (n.clone(), (t).clone())).collect(),
                         None => fields.iter().map(|f| (f.clone(), Ty::Unknown)).collect(),
                     };
                     part.structs.push(StructDef { name: name.clone(), shown: crate::declared_record_name(name), fields });
@@ -1196,7 +1137,7 @@ impl<'a> Lowerer<'a> {
                     // the payload (it had held the error, and a compiled
                     // program could not keep it in a session's state)
                     let refuses = default.ty().is_result();
-                    let ty = self.ctx.vars.get(name).map(ty_of).unwrap_or_else(|| default.ty());
+                    let ty = self.ctx.vars.get(name).cloned().unwrap_or_else(|| default.ty());
                     let ty = if refuses { ty.payload().clone() } else { ty };
                     // a fact's tensor has the shape its declared value states
                     let ty = match default.ty().tensor_dims().cloned() {
@@ -1369,10 +1310,10 @@ impl<'a> Lowerer<'a> {
             let t = sig
                 .as_ref()
                 .and_then(|s| s.params.iter().find(|(n, _)| n == p).map(|(_, t)| t.clone()))
-                .unwrap_or(CrowType::Unknown);
-            ps.push((p.clone(), ty_of(&t)));
+                .unwrap_or(Ty::Unknown);
+            ps.push((p.clone(), t.clone()));
         }
-        let ret = sig.as_ref().map(|s| ty_of(&s.return_type)).unwrap_or(Ty::Unknown);
+        let ret = sig.as_ref().map(|s| (&s.return_type).clone()).unwrap_or(Ty::Unknown);
         let ret = if kind == FnKind::View { Ty::Node } else { ret };
         self.at = Where::In(kind);
         self.current_fn = name.to_string();
@@ -1406,7 +1347,7 @@ impl<'a> Lowerer<'a> {
         let mut own: HashSet<String> = params.iter().cloned().collect();
         own.extend(crate::lower::assigned(body));
         loop_vars(body, &mut own);
-        let env: BTreeMap<String, CrowType> = own.into_iter().filter_map(|n| self.ctx.vars.get(&n).map(|t| (n, t.clone()))).collect();
+        let env: BTreeMap<String, Ty> = own.into_iter().filter_map(|n| self.ctx.vars.get(&n).map(|t| (n, t.clone()))).collect();
         self.ctx.body_envs.insert(key.to_string(), env);
     }
 
@@ -1428,7 +1369,7 @@ impl<'a> Lowerer<'a> {
         self.scopes.pop();
         self.ctx.leave_body(scope);
         place_moves_in(&mut block, &HashSet::new(), Some(&HashSet::new()));
-        let ty = self.ctx.vars.get(name).map(ty_of).unwrap_or(Ty::Unknown);
+        let ty = self.ctx.vars.get(name).cloned().unwrap_or(Ty::Unknown);
         let mut reads = ReadSet::default();
         let mut names = BTreeSet::new();
         let mut clock = false;
@@ -1447,7 +1388,7 @@ impl<'a> Lowerer<'a> {
     fn lower_test(&mut self, name: Option<String>, params: &[String], body: &[S]) -> Result<Test, String> {
         let saved = self.ctx.vars.clone();
         for p in params {
-            self.ctx.vars.insert(p.clone(), CrowType::Unknown);
+            self.ctx.vars.insert(p.clone(), Ty::Unknown);
         }
         self.at = Where::Test;
         self.current_fn = name.clone().unwrap_or_default();
@@ -1458,14 +1399,14 @@ impl<'a> Lowerer<'a> {
         // arithmetic with a number is a number — read twice, as an input
         // typed by the first reading can type another (`dt` in `a - dt`)
         for _ in 0..2 {
-            if params.iter().all(|p| !matches!(self.ctx.vars.get(p), Some(CrowType::Unknown) | None)) {
+            if params.iter().all(|p| !matches!(self.ctx.vars.get(p), Some(Ty::Unknown) | None)) {
                 break;
             }
             let Ok(lowered) = self.provisional_block(Pass::Settle, Some(own.clone()), body).1 else {
                 break;
             };
             for p in params {
-                if matches!(self.ctx.vars.get(p), Some(CrowType::Unknown) | None) {
+                if matches!(self.ctx.vars.get(p), Some(Ty::Unknown) | None) {
                     if let Some(t) = self.input_type_by_use(&lowered, p) {
                         self.ctx.vars.insert(p.clone(), t);
                     }
@@ -1478,7 +1419,7 @@ impl<'a> Lowerer<'a> {
         let block = self.lower_test_body(body);
         let (mut block, truths) = block?;
         self.scopes.pop();
-        let typed: Vec<(String, Ty)> = params.iter().map(|p| (p.clone(), self.ctx.vars.get(p).map(ty_of).unwrap_or(Ty::Unknown))).collect();
+        let typed: Vec<(String, Ty)> = params.iter().map(|p| (p.clone(), self.ctx.vars.get(p).cloned().unwrap_or(Ty::Unknown))).collect();
         self.ctx.vars = saved;
         place_moves_in(&mut block, &HashSet::new(), Some(&own));
         Ok(Test { name, params: typed, body: block, truths })
@@ -1487,14 +1428,29 @@ impl<'a> Lowerer<'a> {
     /// A test's body, each bare line that is a truth (a bool, or a bool
     /// that can fail) lowered as an assertion, which reports its operands
     /// when it fails; and how many there are.
+    /// Whether an expression is a truth by its syntax: a comparison, a
+    /// conjunction or disjunction of expressions, or a negation.
+    fn truth_syntax(e: &A) -> bool {
+        match e {
+            A::BinOp { op, .. } => matches!(op, BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte | BinOp::And | BinOp::Or),
+            A::UnaryOp { op, .. } => matches!(op, crate::ast::UnaryOp::Not),
+            _ => false,
+        }
+    }
+
     fn lower_test_body(&mut self, body: &[S]) -> Result<(Block, usize), String> {
         let mut out = Vec::new();
         let mut truths = 0;
         for s in body {
             let mut lowered = self.lower_stmt(s)?;
             self.flush_pre_into(&mut out);
+            // a bare line is a truth by what it is written as — a
+            // comparison, a conjunction, a negation — or, a call, by the
+            // bool it answers (its operands' types alone had decided, and a
+            // comparison over an input not yet typed was no truth)
+            let written_as_truth = matches!(s, S::ExprStmt(e) if Self::truth_syntax(e));
             if let (S::ExprStmt(_), [Stmt::Do(x)]) = (s, lowered.as_slice()) {
-                if matches!(x.ty(), Ty::Bool) || matches!(x.ty(), Ty::Result(inner) if *inner == Ty::Bool) {
+                if written_as_truth || matches!(x.ty(), Ty::Bool) || matches!(x.ty(), Ty::Result(inner) if *inner == Ty::Bool) {
                     let Some(Stmt::Do(x)) = lowered.pop() else { unreachable!() };
                     truths += 1;
                     lowered.push(Stmt::Do(Expr::Call { target: Target::Runtime("assert".to_string()), args: vec![x], ty: Ty::Unit, propagates: false }));
@@ -1508,7 +1464,7 @@ impl<'a> Lowerer<'a> {
     /// The type a test's input takes from its use in the lowered body: a
     /// function's parameter it is handed to, or the number on the other
     /// side of arithmetic it is in; the first use that says.
-    fn input_type_by_use(&self, block: &[Stmt], param: &str) -> Option<CrowType> {
+    fn input_type_by_use(&self, block: &[Stmt], param: &str) -> Option<Ty> {
         fn read_through(e: &Expr) -> &Expr {
             match e {
                 Expr::Convert { expr, .. } => read_through(expr),
@@ -1519,14 +1475,14 @@ impl<'a> Lowerer<'a> {
         // what a function's parameter is handed where the test calls it with
         // a value of known type (`half[4]` beside `half[n]`): a function only
         // the test calls has no other signature
-        let handed = |base: &str, i: usize| -> Option<CrowType> {
-            let mut seen: Option<CrowType> = None;
+        let handed = |base: &str, i: usize| -> Option<Ty> {
+            let mut seen: Option<Ty> = None;
             crate::ir::visit_block(block, &mut |e| {
                 if let (None, Expr::Call { target: Target::User(g), args, .. }) = (&seen, e) {
                     if g.split("__").next() == Some(base) {
                         if let Some(a) = args.get(i).filter(|a| !is_param(a)) {
-                            let t = crow_type(&read_through(a).ty());
-                            if !matches!(t, CrowType::Unknown) {
+                            let t = as_inferred(&read_through(a).ty());
+                            if !matches!(t, Ty::Unknown) {
                                 seen = Some(t);
                             }
                         }
@@ -1535,7 +1491,7 @@ impl<'a> Lowerer<'a> {
             });
             seen
         };
-        let mut found: Option<CrowType> = None;
+        let mut found: Option<Ty> = None;
         crate::ir::visit_block(block, &mut |e| {
             if found.is_some() {
                 return;
@@ -1546,7 +1502,7 @@ impl<'a> Lowerer<'a> {
                     for (i, a) in args.iter().enumerate() {
                         if is_param(a) {
                             let sig = self.ctx.functions.get(f.as_str()).or_else(|| self.ctx.functions.get(base));
-                            let declared = sig.and_then(|s| s.params.get(i)).map(|(_, t)| t.clone()).filter(|t| !matches!(t, CrowType::Unknown));
+                            let declared = sig.and_then(|s| s.params.get(i)).map(|(_, t)| t.clone()).filter(|t| !matches!(t, Ty::Unknown));
                             if let Some(t) = declared.or_else(|| handed(base, i)) {
                                 found = Some(t);
                                 return;
@@ -1556,8 +1512,8 @@ impl<'a> Lowerer<'a> {
                 }
                 Expr::Binary { op, l, r, .. } if matches!(op.as_str(), "add" | "sub" | "mul" | "div" | "pow") => {
                     let other = if is_param(l) { Some(r) } else if is_param(r) { Some(l) } else { None };
-                    if let Some(t) = other.map(|o| crow_type(&o.ty())) {
-                        if matches!(t, CrowType::Int | CrowType::Float) {
+                    if let Some(t) = other.map(|o| as_inferred(&o.ty())) {
+                        if matches!(t, Ty::Int | Ty::Float) {
                             found = Some(t);
                         }
                     }
@@ -1616,10 +1572,10 @@ impl<'a> Lowerer<'a> {
         }
         let (Some(Expr::Local(holder, _)), Some(item)) = (lowered.first(), lowered.get(1)) else { return };
         let held = full(&lowered[0]);
-        let open = matches!(held, CrowType::Unknown) || matches!(&held, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Unknown));
+        let open = matches!(held, Ty::Unknown) || matches!(&held, Ty::List(inner) if matches!(inner.as_ref(), Ty::Unknown));
         let item_ty = read(item);
-        if open && !matches!(item_ty, CrowType::Unknown | CrowType::Void) {
-            let refined = CrowType::Array(Box::new(item_ty));
+        if open && !matches!(item_ty, Ty::Unknown | Ty::Unit) {
+            let refined = Ty::List(Box::new(item_ty));
             if self.pass == Pass::Scan {
                 self.ctx.note_scanned_assign(holder, refined.clone());
             } else {
@@ -1643,9 +1599,9 @@ impl<'a> Lowerer<'a> {
     /// at its top level holds no error, so one declared from a value that
     /// can fail holds the payload (the failure stops the program where the
     /// facts are set).
-    fn held_by_fact(&self, name: &str, ty: CrowType) -> CrowType {
+    fn held_by_fact(&self, name: &str, ty: Ty) -> Ty {
         match ty {
-            CrowType::Result(inner) if self.in_ui && self.at == Where::Top && self.ctx.facts.contains(name) => *inner,
+            Ty::Result(inner) if self.in_ui && self.at == Where::Top && self.ctx.facts.contains(name) => *inner,
             other => other,
         }
     }
@@ -1745,14 +1701,14 @@ impl<'a> Lowerer<'a> {
                 // whose kind is not known at all: a tensor takes an item too,
                 // and a guess of a list stuck to a function it was handed to)
                 if self.pass != Pass::Final && path.is_empty() {
-                    let held = self.ctx.vars.get(&var).cloned().unwrap_or(CrowType::Unknown);
+                    let held = self.ctx.vars.get(&var).cloned().unwrap_or(Ty::Unknown);
                     let item = read(&expr);
                     let open = match &held {
-                        CrowType::Array(inner) => format!("{:?}", inner).contains("Unknown"),
+                        Ty::List(inner) => format!("{:?}", inner).contains("Unknown"),
                         _ => false,
                     };
-                    if open && !format!("{:?}", item).contains("Unknown") && !matches!(item, CrowType::Void) {
-                        let refined = CrowType::Array(Box::new(item));
+                    if open && !format!("{:?}", item).contains("Unknown") && !matches!(item, Ty::Unit) {
+                        let refined = Ty::List(Box::new(item));
                         self.ctx.note_scanned_assign(&var, refined.clone());
                         self.rebind(&var, &refined);
                     }
@@ -1760,7 +1716,7 @@ impl<'a> Lowerer<'a> {
                 // a tensor's item assigned is a number: a row cannot be (the
                 // interpreter had stopped there, and the compiled program
                 // had not built)
-                if path.is_empty() && matches!(self.ctx.vars.get(&var), Some(CrowType::NumArray(..))) && matches!(expr.ty().payload(), Ty::Tensor(..) | Ty::List(_)) {
+                if path.is_empty() && matches!(self.ctx.vars.get(&var), Some(Ty::Tensor(..))) && matches!(expr.ty().payload(), Ty::Tensor(..) | Ty::List(_)) {
                     self.refuse(format!(
                         "`{}[…]` takes a number: a tensor's rows cannot be assigned one at a time — build the matrix anew (concat[…], stack[…], reshape[…])",
                         crate::lower::shown(&var)
@@ -1840,8 +1796,8 @@ impl<'a> Lowerer<'a> {
                 let it = self.lower_expr(iter)?;
                 let walks = match it.ty().payload() {
                     // a frame's column walks its cells, as its type says them
-                    // (a column's CrowType does not carry them)
-                    Ty::Column(cell) if **cell != Ty::Unknown => CrowType::Array(Box::new(crow_type(cell))),
+                    // (a column's Ty does not carry them)
+                    Ty::Column(cell) if **cell != Ty::Unknown => Ty::List(Box::new(as_inferred(cell))),
                     _ => read(&it),
                 };
                 let it = self.decided(it, Decision::Loop);
@@ -1884,7 +1840,7 @@ impl<'a> Lowerer<'a> {
             }
             S::Return(None) => {
                 if let (Some(seen), 0) = (&mut self.seen, self.collecting) {
-                    seen.returns.push(CrowType::Void);
+                    seen.returns.push(Ty::Unit);
                 }
                 vec![Stmt::Return(None)]
             }
@@ -1895,15 +1851,15 @@ impl<'a> Lowerer<'a> {
                 // function's
                 let failure_only = matches!(e, A::Ident(v) if self.failed.contains(v)) && x.ty().is_result();
                 if let (Some(seen), 0) = (&mut self.seen, self.collecting) {
-                    seen.returns.push(if failure_only { CrowType::Result(Box::new(CrowType::Unknown)) } else { full(&x) });
+                    seen.returns.push(if failure_only { Ty::Result(Box::new(Ty::Unknown)) } else { full(&x) });
                 }
                 // an int returned by a function whose value is a float is a
                 // float (spec §1), as one assigned to a float variable is: the
                 // interpreter handed the caller the int
                 let floats = self.pass == Pass::Final
                     && self.ctx.functions.get(&self.current_fn).is_some_and(|sig| match &sig.return_type {
-                        CrowType::Result(inner) => matches!(inner.as_ref(), CrowType::Float),
-                        t => matches!(t, CrowType::Float),
+                        Ty::Result(inner) => matches!(inner.as_ref(), Ty::Float),
+                        t => matches!(t, Ty::Float),
                     });
                 // (an int that can fail returned from a function of floats
                 // that can fail converts as its payload: a function handed as
@@ -1921,13 +1877,13 @@ impl<'a> Lowerer<'a> {
                 // did not build)
                 let tensor = self.pass == Pass::Final
                     && self.ctx.functions.get(&self.current_fn).is_some_and(|sig| match &sig.return_type {
-                        CrowType::Result(inner) => matches!(inner.as_ref(), CrowType::NumArray(..)),
-                        t => matches!(t, CrowType::NumArray(..)),
+                        Ty::Result(inner) => matches!(inner.as_ref(), Ty::Tensor(..)),
+                        t => matches!(t, Ty::Tensor(..)),
                     });
                 let list = self.pass == Pass::Final
                     && self.ctx.functions.get(&self.current_fn).is_some_and(|sig| match &sig.return_type {
-                        CrowType::Result(inner) => matches!(inner.as_ref(), CrowType::Array(i) if matches!(i.as_ref(), CrowType::Int | CrowType::Float)),
-                        t => matches!(t, CrowType::Array(i) if matches!(i.as_ref(), CrowType::Int | CrowType::Float)),
+                        Ty::Result(inner) => matches!(inner.as_ref(), Ty::List(i) if matches!(i.as_ref(), Ty::Int | Ty::Float)),
+                        t => matches!(t, Ty::List(i) if matches!(i.as_ref(), Ty::Int | Ty::Float)),
                     });
                 let mut x = if tensor && !x.ty().is_result() && matches!(x.ty(), Ty::List(item) if matches!(item.payload(), Ty::Int | Ty::Float)) {
                     let ty = Ty::Tensor(Box::new(Ty::Float), shapes::stacked_dims(&x.ty()));
@@ -2090,7 +2046,7 @@ impl<'a> Lowerer<'a> {
         // conversion is explicit in the form
         // (a variable holding a float that can fail takes an int as a
         // float too: `cur = loss[…]`, then `cur = 2`)
-        let holds_float = matches!(self.ctx.vars.get(name), Some(CrowType::Float)) || matches!(self.ctx.vars.get(name), Some(CrowType::Result(inner)) if matches!(inner.as_ref(), CrowType::Float));
+        let holds_float = matches!(self.ctx.vars.get(name), Some(Ty::Float)) || matches!(self.ctx.vars.get(name), Some(Ty::Result(inner)) if matches!(inner.as_ref(), Ty::Float));
         let expr = if holds_float && expr.ty() == Ty::Int {
             Expr::Convert { how: Convert::IntToFloat, expr: Box::new(expr), ty: Ty::Float }
         } else {
@@ -2102,27 +2058,27 @@ impl<'a> Lowerer<'a> {
         // the `Vec`, and the interpreter held a tensor where the IR said a
         // list)
         // (a value that can fail converts as its payload, its failure kept)
-        let as_held = |held: &CrowType, failing: bool| if failing { Ty::Result(Box::new(ty_of(held))) } else { ty_of(held) };
+        let as_held = |held: &Ty, failing: bool| if failing { Ty::Result(Box::new((held).clone())) } else { (held).clone() };
         let failing = expr.ty().is_result();
         // (a variable that holds a value that can fail is read by what it
         // holds: a list that can fail given a tensor that can converts too)
         let held = self.ctx.vars.get(name).map(|t| match t {
-            CrowType::Result(inner) => inner.as_ref(),
+            Ty::Result(inner) => inner.as_ref(),
             t => t,
         });
         let expr = match (held, expr.ty().payload().clone()) {
-            (Some(var @ CrowType::Array(_)), Ty::Tensor(..)) => {
+            (Some(var @ Ty::List(_)), Ty::Tensor(..)) => {
                 let ty = as_held(var, failing);
                 Expr::Convert { how: Convert::ToList, expr: Box::new(expr), ty }
             }
-            (Some(var @ CrowType::NumArray(..)), Ty::List(e)) if matches!(*e, Ty::Int | Ty::Float) => {
+            (Some(var @ Ty::Tensor(..)), Ty::List(e)) if matches!(*e, Ty::Int | Ty::Float) => {
                 let ty = as_held(var, failing);
                 Expr::Convert { how: Convert::ToTensor, expr: Box::new(expr), ty }
             }
             // (ints held as a list assigned to a variable holding a list of
             // floats — `t = [1.0, 2.0]`, then `t = range[3]` — are floats,
             // as one int assigned to a float variable is)
-            (Some(var @ CrowType::Array(item)), Ty::List(e)) if matches!(item.as_ref(), CrowType::Float) && *e == Ty::Int => {
+            (Some(var @ Ty::List(item)), Ty::List(e)) if matches!(item.as_ref(), Ty::Float) && *e == Ty::Int => {
                 let ty = as_held(var, failing);
                 Expr::Convert { how: Convert::IntsToFloats, expr: Box::new(expr), ty }
             }
@@ -2137,19 +2093,19 @@ impl<'a> Lowerer<'a> {
                     && !(self.is_fact(name) && self.sees_facts())
                     && was.detail().is_some()
                     && was.detail() != now.detail()
-                    && expr.ty().is_result() == matches!(now, CrowType::Result(_))
+                    && expr.ty().is_result() == matches!(now, Ty::Result(_))
             }
             _ => false,
         };
         if rebinding {
-            let ty = ty_of(self.ctx.vars.get(name).unwrap_or(&CrowType::Unknown));
+            let ty = (self.ctx.vars.get(name).unwrap_or(&Ty::Unknown)).clone();
             return Stmt::Let { var: name.to_string(), ty, expr };
         }
         if self.is_fact(name) && self.sees_facts() {
             return Stmt::Store { fact: name.to_string(), expr };
         }
         if self.declared(name) {
-            let held = self.ctx.vars.get(name).map(ty_of);
+            let held = self.ctx.vars.get(name).cloned();
             let expr = match held {
                 Some(held) => settled_yield(expr, &held),
                 None => expr,
@@ -2161,7 +2117,7 @@ impl<'a> Lowerer<'a> {
         // declared: its first value's type, or the type it settles on
         let ty = declared_as(&expr.ty(), self.ctx.vars.get(name));
         if !matches!(ty, Ty::Unknown) {
-            self.ctx.vars.insert(name.to_string(), crow_type(&ty));
+            self.ctx.vars.insert(name.to_string(), as_inferred(&ty));
         }
         let expr = settled_yield(expr, &ty);
         Stmt::Let { var: name.to_string(), ty, expr }
@@ -2180,7 +2136,7 @@ impl<'a> Lowerer<'a> {
             Some(t) => t.clone(),
             None => return expr,
         };
-        if !crate::type_infer::settle::refuses_failed(&held, &crow_type(&payload)) {
+        if !crate::type_infer::settle::refuses_failed(&held, &as_inferred(&payload)) {
             return expr;
         }
         let at = Decision::Assign(name.to_string());
@@ -2282,7 +2238,7 @@ impl<'a> Lowerer<'a> {
         let settled = if self.ctx.fresh_binding(name) {
             ty.clone()
         } else {
-            let existing = self.ctx.vars.get(name).cloned().unwrap_or(CrowType::Unknown);
+            let existing = self.ctx.vars.get(name).cloned().unwrap_or(Ty::Unknown);
             crate::type_infer::settle::settle(&existing, ty.clone(), self.ctx.body_assigned.is_some())
         };
         self.ctx.vars.insert(name.to_string(), settled);
@@ -2297,12 +2253,12 @@ impl<'a> Lowerer<'a> {
     /// declaration: a new local's first value's type is kept, and a value
     /// that can fail, given to a variable declared before, is held to be
     /// judged once the body has settled (`provisional`).
-    fn note_held(&mut self, name: &str, ty: &CrowType, store: bool) {
+    fn note_held(&mut self, name: &str, ty: &Ty, store: bool) {
         if store {
             return;
         }
         if self.declared(name) {
-            if let CrowType::Result(payload) = ty {
+            if let Ty::Result(payload) = ty {
                 self.held.push((name.to_string(), payload.as_ref().clone(), self.collecting > 0));
             }
         } else {
@@ -2330,7 +2286,7 @@ impl<'a> Lowerer<'a> {
         }
         let in_body = self.ctx.body_assigned.is_some();
         for (n, t) in names.iter().zip(types) {
-            let existing = self.ctx.vars.get(n).cloned().unwrap_or(CrowType::Unknown);
+            let existing = self.ctx.vars.get(n).cloned().unwrap_or(Ty::Unknown);
             self.ctx.vars.insert(n.clone(), crate::type_infer::settle::settle(&existing, t, in_body));
         }
         for n in names {
@@ -2364,7 +2320,7 @@ impl<'a> Lowerer<'a> {
         }
         let in_body = self.ctx.body_assigned.is_some();
         for (n, t) in names.iter().zip(types) {
-            let existing = self.ctx.vars.get(n).cloned().unwrap_or(CrowType::Unknown);
+            let existing = self.ctx.vars.get(n).cloned().unwrap_or(Ty::Unknown);
             self.ctx.vars.insert(n.clone(), crate::type_infer::settle::settle(&existing, t, in_body));
         }
         for n in names {
@@ -2380,9 +2336,9 @@ impl<'a> Lowerer<'a> {
     /// value's type, as inference's walk has it.
     fn settled_entry(&mut self, object: &A, value: &Expr) {
         if let A::Ident(var) = object {
-            if let CrowType::Map(inner) = self.ctx.ident_type(var).text() {
+            if let Ty::Map(inner) = self.ctx.ident_type(var).text() {
                 let joined = inner.unify(&read(value));
-                self.ctx.vars.insert(var.clone(), CrowType::Map(Box::new(joined)));
+                self.ctx.vars.insert(var.clone(), Ty::Map(Box::new(joined)));
             }
         }
     }
@@ -2401,29 +2357,29 @@ impl<'a> Lowerer<'a> {
             },
             _ => return,
         };
-        let existing = self.ctx.vars.get(var).cloned().unwrap_or(CrowType::Unknown);
-        self.ctx.vars.insert(var.clone(), existing.unify(&CrowType::Map(Box::new(value))));
+        let existing = self.ctx.vars.get(var).cloned().unwrap_or(Ty::Unknown);
+        self.ctx.vars.insert(var.clone(), existing.unify(&Ty::Map(Box::new(value))));
     }
 
     /// While a loop's body is lowered, its variable has the element type
     /// of what it iterates (inference typed the body in a copy of its
     /// context, so the lowering's context has not seen the variable).
-    fn bind_loop_var(&mut self, var: &str, iter_ty: &Ty) -> Option<CrowType> {
+    fn bind_loop_var(&mut self, var: &str, iter_ty: &Ty) -> Option<Ty> {
         let saved = self.ctx.vars.get(var).cloned();
         let elem = match iter_ty.payload() {
             // a frame's column walks its cells, as its type says them (the
             // variable had been unknown here and a float cell in the IR, so
             // `n = n + cell` kept `n` an int that a float was given)
-            Ty::Column(cell) => crow_type(cell),
-            t => crate::type_infer::TypeContext::loop_item(crow_type(t)),
+            Ty::Column(cell) => as_inferred(cell),
+            t => crate::type_infer::TypeContext::loop_item(as_inferred(t)),
         };
-        if !matches!(elem, CrowType::Unknown) {
+        if !matches!(elem, Ty::Unknown) {
             self.ctx.vars.insert(var.to_string(), elem);
         }
         saved
     }
 
-    fn unbind_loop_var(&mut self, var: &str, saved: Option<CrowType>) {
+    fn unbind_loop_var(&mut self, var: &str, saved: Option<Ty>) {
         match saved {
             Some(t) => {
                 self.ctx.vars.insert(var.to_string(), t);
@@ -2454,7 +2410,7 @@ impl<'a> Lowerer<'a> {
 
     /// An assignment target's variable, its path, and the type of what the
     /// path names, by inference's rules along it (read as text).
-    fn path_of(&mut self, object: &A) -> Result<(String, Vec<PathStep>, CrowType), String> {
+    fn path_of(&mut self, object: &A) -> Result<(String, Vec<PathStep>, Ty), String> {
         match object {
             A::Ident(n) => {
                 self.check_ident(n);
@@ -2485,7 +2441,7 @@ impl<'a> Lowerer<'a> {
                 }
                 self.check_callee(callee, args, &checks);
                 self.scan_call(callee, args, &types);
-                let ty = crow_type(&self.call_type(callee, args, &arg_types, &types, Some(callee_type))).text();
+                let ty = as_inferred(&self.call_type(callee, args, &arg_types, &types, Some(callee_type))).text();
                 Ok((v, p, ty))
             }
             _ => Err("lowering: an assignment target must be a variable, a field or an index".into()),
@@ -2495,7 +2451,7 @@ impl<'a> Lowerer<'a> {
     /// What an assignment's target names, before its value is lowered:
     /// inference's rules along the path, an index typed by a lowering of it
     /// that keeps nothing (its own checks are made when it is lowered).
-    fn target_type(&mut self, e: &A) -> CrowType {
+    fn target_type(&mut self, e: &A) -> Ty {
         match e {
             A::Ident(n) => self.ctx.ident_type(n).text(),
             A::FieldAccess { object, field } => {
@@ -2505,7 +2461,7 @@ impl<'a> Lowerer<'a> {
             _ => {
                 let (pre, temp) = (std::mem::take(&mut self.pre), self.temp);
                 self.unscanned += 1;
-                let t = self.muted(|l| l.lower_expr(e)).map(|x| read(&x)).unwrap_or(CrowType::Unknown);
+                let t = self.muted(|l| l.lower_expr(e)).map(|x| read(&x)).unwrap_or(Ty::Unknown);
                 self.unscanned -= 1;
                 self.pre = pre;
                 self.temp = temp;
@@ -2534,7 +2490,7 @@ impl<'a> Lowerer<'a> {
             }
             A::Ident(name) => {
                 self.check_ident(name);
-                let ty = ty_of(&self.ctx.ident_type(name));
+                let ty = (&self.ctx.ident_type(name)).clone();
                 self.ident(name, ty)
             }
             A::BinOp { left, op, right } => {
@@ -2584,7 +2540,7 @@ impl<'a> Lowerer<'a> {
                 if matches!(op, BinOp::Mod) && self.pass == Pass::Final && (matches!(l.ty().payload(), Ty::Float) || matches!(r.ty().payload(), Ty::Float)) {
                     self.refuse("`%` takes ints and answers the remainder — round a float first (int[x], floor[x], round[x]), or use mod[t, d] on a tensor".to_string());
                 }
-                let ty = shapes::shaped(ty_of(&self.ctx.binop_type(op, read(&l), read(&r))), shapes::binary_dims(op, &l, &r));
+                let ty = shapes::shaped(self.ctx.binop_type(op, read(&l), read(&r)), shapes::binary_dims(op, &l, &r));
                 let arithmetic = matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::Pow | BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte);
                 if arithmetic {
                     match (l.ty().payload(), r.ty().payload()) {
@@ -2597,7 +2553,7 @@ impl<'a> Lowerer<'a> {
             }
             A::UnaryOp { op, expr } => {
                 let x = self.lower_expr(expr)?;
-                let ty = shapes::shaped(ty_of(&self.ctx.unary_type(op, read(&x))), x.ty().tensor_dims().cloned());
+                let ty = shapes::shaped(self.ctx.unary_type(op, read(&x)), x.ty().tensor_dims().cloned());
                 Expr::Unary { op: format!("{:?}", op).to_lowercase(), expr: Box::new(x), ty }
             }
             A::Call { callee, args } => self.call(callee, args)?,
@@ -2622,7 +2578,7 @@ impl<'a> Lowerer<'a> {
                     _ => {
                         if let A::Ident(m) = object.as_ref() {
                             if self.is_module(m) && !self.declared(m) {
-                                let ty = ty_of(&self.qualified_type(object, field));
+                                let ty = (&self.qualified_type(object, field)).clone();
                                 return Ok(Expr::Constant(format!("{}.{}", m, field), ty));
                             }
                         }
@@ -2636,10 +2592,10 @@ impl<'a> Lowerer<'a> {
                             // (typed without lowering it twice: `f[x].len`
                             // calls `f` once)
                             let measured = match self.target_type(object) {
-                                CrowType::Result(inner) => *inner,
+                                Ty::Result(inner) => *inner,
                                 t => t,
                             };
-                            if matches!(measured, CrowType::Array(_) | CrowType::NumArray(..) | CrowType::Str | CrowType::FrameCol) {
+                            if matches!(measured, Ty::List(_) | Ty::Tensor(..) | Ty::Str | Ty::Column(_)) {
                                 return self.call(&A::Ident("len".to_string()), std::slice::from_ref(object.as_ref()));
                             }
                         }
@@ -2666,7 +2622,7 @@ impl<'a> Lowerer<'a> {
                         if !member {
                             self.check_field(&read(&base), field);
                         }
-                        let ty = ty_of(&self.ctx.field_type(object, read(&base), field));
+                        let ty = self.ctx.field_type(object, read(&base), field);
                         // a frame's column is typed by its cells as the frame's
                         // type says them; one it does not name shows as the
                         // program runs; and of a frame whose columns are not
@@ -2676,7 +2632,7 @@ impl<'a> Lowerer<'a> {
                             self.refuse_column_read(&base, field);
                         }
                         let ty = match (&ty, read(&base).frame_cols()) {
-                            (Ty::Column(_), Some(Some(cols))) => Ty::Column(Box::new(ty_of(cols.cols.get(field).unwrap_or(&CrowType::Json)))),
+                            (Ty::Column(_), Some(Some(cols))) => Ty::Column(Box::new((cols.cols.get(field).unwrap_or(&Ty::Json)).clone())),
                             (Ty::Column(_), Some(None)) if self.pass != Pass::Final => Ty::Unknown,
                             (Ty::Column(_), Some(None)) => Ty::Column(Box::new(Ty::Json)),
                             _ => ty,
@@ -2738,7 +2694,7 @@ impl<'a> Lowerer<'a> {
                 }
                 // (a literal whose rows' sizes show only as the program runs
                 // keeps the rank its nesting states)
-                let ty = ty_of(&TypeContext::array_type(out.iter().map(full)));
+                let ty = TypeContext::array_type(out.iter().map(full));
                 let ty = match shapes::literal_dims(&out) {
                     Some(dims) => shapes::shaped(ty, Some(dims)),
                     None => ty,
@@ -2757,7 +2713,7 @@ impl<'a> Lowerer<'a> {
                     };
                     out.push((key, self.lower_expr(v)?));
                 }
-                let ty = ty_of(&TypeContext::map_type(out.iter().map(|(_, v)| read(v))));
+                let ty = TypeContext::map_type(out.iter().map(|(_, v)| read(v)));
                 // (each value in the form the map holds its values: a tensor
                 // literal beside an empty list, or a list, is the list)
                 let out = match &ty {
@@ -2811,7 +2767,7 @@ impl<'a> Lowerer<'a> {
                     self.fn_lists.pop();
                 }
                 // a list of what the body yields, as the lowering typed it
-                let ty = ty_of(&TypeContext::for_type(yield_of(&b)));
+                let ty = TypeContext::for_type(yield_of(&b));
                 if let Some(saved) = saved {
                     self.unbind_loop_var(var, saved);
                 }
@@ -2918,10 +2874,10 @@ impl<'a> Lowerer<'a> {
             for a in args {
                 idx.push(self.lower_expr(a)?);
             }
-            let arg_types: Vec<CrowType> = idx.iter().map(read).collect();
-            let full_types: Vec<CrowType> = idx.iter().map(full).collect();
+            let arg_types: Vec<Ty> = idx.iter().map(read).collect();
+            let full_types: Vec<Ty> = idx.iter().map(full).collect();
             self.scan_call(callee, args, &full_types);
-            let checks: Vec<CrowType> = idx.iter().map(|x| self.checked(x)).collect();
+            let checks: Vec<Ty> = idx.iter().map(|x| self.checked(x)).collect();
             self.check_callee(callee, args, &checks);
             // (an indexed column is read as it is lowered here, not where
             // it was lowered muted)
@@ -2931,7 +2887,7 @@ impl<'a> Lowerer<'a> {
             // a cell of a column its frame's type knows, not a gather by a
             // list of indices: frame.col[i]
             if let (Ty::Column(cell), [index]) = (base.ty().payload(), arg_types.as_slice()) {
-                if **cell != Ty::Unknown && !matches!(index, CrowType::NumArray(..) | CrowType::Array(_)) {
+                if **cell != Ty::Unknown && !matches!(index, Ty::Tensor(..) | Ty::List(_)) {
                     let ty = (**cell).clone();
                     return Ok(Expr::Index { base: Box::new(base), indices: idx, ty });
                 }
@@ -2945,14 +2901,14 @@ impl<'a> Lowerer<'a> {
                 // too, `grad[f][x][1]` — unifying twice changes nothing)
                 if self.pass == Pass::Scan {
                     // (an int handed to a function of numbers is a float)
-                    let handed: Vec<CrowType> = full_types.iter().map(|t| if *t == CrowType::Int { CrowType::Float } else { t.clone() }).collect();
+                    let handed: Vec<Ty> = full_types.iter().map(|t| if *t == Ty::Int { Ty::Float } else { t.clone() }).collect();
                     self.ctx.grad_forced.remove(&f);
                     self.ctx.note_call(&A::Ident(f), args, &handed);
                 }
             }
             // a row or a number, by a rank the lowering knows
             if let ([index], Ty::Tensor(_, None)) = (arg_types.as_slice(), base.ty().payload())
-                && matches!(index, CrowType::Int | CrowType::Unknown)
+                && matches!(index, Ty::Int | Ty::Unknown)
             {
                 self.check_rank_known(&base, "an index into");
             }
@@ -2995,7 +2951,7 @@ impl<'a> Lowerer<'a> {
         }
         // a struct constructor
         if module.is_none() && self.ctx.structs.contains_key(&name) {
-            let declared: Vec<Ty> = self.ctx.structs.get(&name).map(|s| s.fields.iter().map(|(_, t)| ty_of(t)).collect()).unwrap_or_default();
+            let declared: Vec<Ty> = self.ctx.structs.get(&name).map(|s| s.fields.iter().map(|(_, t)| (t).clone()).collect()).unwrap_or_default();
             let mut fields = Vec::new();
             let mut types = Vec::new();
             let mut checks = Vec::new();
@@ -3009,8 +2965,8 @@ impl<'a> Lowerer<'a> {
                 if self.pass != Pass::Final {
                     let field_ty = self.ctx.structs.get(&name).and_then(|s| s.fields.get(i)).map(|(_, t)| t.clone());
                     if let (Expr::Local(v, _), Some(field_ty)) = (&value, field_ty) {
-                        let open = matches!(full(&value), CrowType::Array(_)) && format!("{:?}", full(&value)).contains("Unknown");
-                        let known = matches!(field_ty, CrowType::Array(_)) && !format!("{:?}", field_ty).contains("Unknown");
+                        let open = matches!(full(&value), Ty::List(_)) && format!("{:?}", full(&value)).contains("Unknown");
+                        let known = matches!(field_ty, Ty::List(_)) && !format!("{:?}", field_ty).contains("Unknown");
                         if open && known {
                             let v = v.clone();
                             self.ctx.note_scanned_assign(&v, field_ty.clone());
@@ -3062,7 +3018,7 @@ impl<'a> Lowerer<'a> {
             let mut children = Vec::new();
             // what the call scan reads of the arguments: the attributes as
             // one map, each held handler call as the call it holds
-            let mut types: Vec<CrowType> = Vec::with_capacity(args.len());
+            let mut types: Vec<Ty> = Vec::with_capacity(args.len());
             for (i, a) in args.iter().enumerate() {
                 if i == 0 {
                     if let A::Map(pairs) = a {
@@ -3085,7 +3041,7 @@ impl<'a> Lowerer<'a> {
                             }
                             attrs.push((key, self.lower_expr(v)?));
                         }
-                        let values: Vec<CrowType> = pairs.iter().zip(&attrs).map(|((_, v), (_, x))| if matches!(x, Expr::Deferred { .. }) { self.held_type(v, x).text() } else { read(x) }).collect();
+                        let values: Vec<Ty> = pairs.iter().zip(&attrs).map(|((_, v), (_, x))| if matches!(x, Expr::Deferred { .. }) { self.held_type(v, x).text() } else { read(x) }).collect();
                         types.push(TypeContext::map_type(values.into_iter()));
                         continue;
                     }
@@ -3094,7 +3050,7 @@ impl<'a> Lowerer<'a> {
                 // a response is what a route returns, not something a page
                 // shows (the interpreter showed `text[s]` as its text; the
                 // compiled page did not build)
-                if matches!(child.ty().payload(), Ty::Handle(h) if h == "web.response") {
+                if matches!(child.ty().payload(), Ty::WebResponse) {
                     let what = match a {
                         A::Call { callee, .. } => match callee.as_ref() {
                             A::Ident(f) => format!("{}[…]", f),
@@ -3108,7 +3064,7 @@ impl<'a> Lowerer<'a> {
                 types.push(full(&child));
                 children.push(child);
             }
-            let checks: Vec<CrowType> = types.iter().map(|t| t.text()).collect();
+            let checks: Vec<Ty> = types.iter().map(|t| t.text()).collect();
             self.check_call(&name, args, &checks);
             self.scan_call(callee, args, &types);
             self.check_tree_columns(&name, &attrs, &children);
@@ -3142,7 +3098,7 @@ impl<'a> Lowerer<'a> {
             let x = self.lower_expr(a)?;
             arg_types.push(read(&x));
             full_types.push(full(&x));
-            checks.push(if Self::guessed_truth(&x) { CrowType::Unknown } else { self.checked(&x) });
+            checks.push(self.checked(&x));
             if propagates && x.ty().is_result() {
                 let rty = x.ty();
                 lowered.push(Expr::Convert { how: Convert::Unwrap, expr: Box::new(x), ty: rty.payload().clone() });
@@ -3168,8 +3124,8 @@ impl<'a> Lowerer<'a> {
                 let before = words_before_placeholders(sql);
                 for (i, item) in items.iter().enumerate() {
                     let t = read(item);
-                    let t = if let CrowType::Result(inner) = t { *inner } else { t };
-                    let is_list = matches!(t, CrowType::Array(_) | CrowType::NumArray(..));
+                    let t = if let Ty::Result(inner) = t { *inner } else { t };
+                    let is_list = matches!(t, Ty::List(_) | Ty::Tensor(..));
                     if is_list && before.get(i).is_some_and(|w| !w.eq_ignore_ascii_case("IN")) {
                         self.refuse(format!("{}: parameter {} is a list, which is sent as (?, ?, …) — only `IN ?` reads one: write `x IN ?`", name, i + 1));
                     }
@@ -3268,16 +3224,16 @@ impl<'a> Lowerer<'a> {
             // (a literal handed where a call elsewhere made the parameter a
             // list did not build)
             if let Some(sig) = self.ctx.functions.get(&resolved) {
-                let params: Vec<CrowType> = sig.params.iter().map(|(_, t)| t.clone()).collect();
+                let params: Vec<Ty> = sig.params.iter().map(|(_, t)| t.clone()).collect();
                 lowered = lowered
                     .into_iter()
                     .enumerate()
                     .map(|(i, x)| match (params.get(i), x.ty()) {
-                        (Some(CrowType::Float), Ty::Int) => Expr::Convert { how: Convert::IntToFloat, expr: Box::new(x), ty: Ty::Float },
-                        (Some(p @ CrowType::Array(_)), Ty::Tensor(..)) => Expr::Convert { how: Convert::ToList, expr: Box::new(x), ty: ty_of(p) },
+                        (Some(Ty::Float), Ty::Int) => Expr::Convert { how: Convert::IntToFloat, expr: Box::new(x), ty: Ty::Float },
+                        (Some(p @ Ty::List(_)), Ty::Tensor(..)) => Expr::Convert { how: Convert::ToList, expr: Box::new(x), ty: (p).clone() },
                         // (an empty literal, whose items are not known, is
                         // any list the backends need: parity 71)
-                        (Some(p @ CrowType::NumArray(..)), Ty::List(e)) if *e != Ty::Unknown => Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty: ty_of(p) },
+                        (Some(p @ Ty::Tensor(..)), Ty::List(e)) if *e != Ty::Unknown => Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty: (p).clone() },
                         _ => x,
                     })
                     .collect();
@@ -3411,7 +3367,7 @@ impl<'a> Lowerer<'a> {
             for (k, (a, b)) in row.params.iter().zip(spans) {
                 if k.is_rest() {
                     let items: Vec<Expr> = (a..b).filter_map(|i| rest[i].take()).map(|x| read_as(k.each(), x)).collect();
-                    let item = ty_of(&k.each().crow_type());
+                    let item = (&k.each().ty()).clone();
                     bundled.push(Expr::ListLit(items, Ty::List(Box::new(item))));
                 } else if let Some(x) = rest[a].take() {
                     bundled.push(read_as(*k, x));
@@ -3436,7 +3392,7 @@ impl<'a> Lowerer<'a> {
     fn crow_target(&mut self, row: &'static crate::table::Row) -> Target {
         // (the copy for the row's own signature, were the function
         // specialised by another call)
-        let given: Vec<CrowType> = row.params.iter().map(|k| crate::table::crow_param_type(*k)).collect();
+        let given: Vec<Ty> = row.params.iter().map(|k| crate::table::crow_param_type(*k)).collect();
         let f = self.specialised(&crate::table::crow_fn_name(row), &given);
         if self.pass == Pass::Final {
             let current = self.current_fn.clone();
@@ -3467,19 +3423,8 @@ impl<'a> Lowerer<'a> {
     /// module's rows; none where they tell nothing apart.
     fn module_for(&self, name: &str, lowered: &[Expr]) -> Option<String> {
         let providers = self.ctx.registry.providers_of(name);
-        let kinds: Vec<crate::table::Arg> = lowered.iter().map(Self::arg_kind).collect();
-        // the core's row the kinds pick comes first: `where` of a mask and
-        // two columns is the core's beside math's of three tensors (math's,
-        // picked by its count, had the column converted to a tensor)
-        if !providers.is_empty() && !kinds.contains(&crate::table::Arg::Unknown) && crate::table::core_row(name, &kinds).is_some() {
-            return None;
-        }
-        if providers.len() <= 1 {
-            return self.ctx.registry.module_name_for(name).map(str::to_string);
-        }
-        let mut taking = providers.iter().filter(|m| crate::table::row_taking(m, name, &kinds).is_some());
-        let first = taking.next()?;
-        taking.next().is_none().then(|| first.to_string())
+        let kinds: Vec<crate::table::Arg> = lowered.iter().map(|x| crate::table::Arg::of_type(&read(x))).collect();
+        crate::table::module_of_bare(name, &providers, &kinds)
     }
 
     fn builtin_row(&self, module: Option<&str>, name: &str, lowered: &[Expr]) -> Option<&'static crate::table::Row> {
@@ -3491,8 +3436,8 @@ impl<'a> Lowerer<'a> {
             Some(_) => return None,
             None => None,
         };
-        let types: Vec<CrowType> = lowered.iter().map(read).collect();
-        let kinds: Vec<Arg> = lowered.iter().map(Self::arg_kind).collect();
+        let types: Vec<Ty> = lowered.iter().map(read).collect();
+        let kinds: Vec<Arg> = types.iter().map(Arg::of_type).collect();
         if kinds.contains(&Arg::Unknown) {
             return None;
         }
@@ -3507,10 +3452,10 @@ impl<'a> Lowerer<'a> {
         // (a list of numbers is taken where a tensor is: `max` of a list a
         // function computed is math's, of the whole list — it had been left
         // to the core's two-number `max`, and refused for its count)
-        let tensor_among = types.iter().any(|t| matches!(t, CrowType::NumArray(..)) || matches!(t, CrowType::Array(inner) if matches!(inner.as_ref(), CrowType::Int | CrowType::Float)));
+        let tensor_among = types.iter().any(|t| matches!(t, Ty::Tensor(..)) || matches!(t, Ty::List(inner) if matches!(inner.as_ref(), Ty::Int | Ty::Float)));
         let frame_fn = registry.module_name_for(name) == Some("frame");
         let control = name == "select" && self.in_ui && lowered.len() == 2 && frame_fn;
-        let frame_core = frame_fn && crate::checker::BUILTINS.contains(&name) && !types.first().is_some_and(|t| matches!(t, CrowType::Frame(_) | CrowType::FrameCol));
+        let frame_core = frame_fn && crate::checker::BUILTINS.contains(&name) && !types.first().is_some_and(|t| matches!(t, Ty::Frame(_) | Ty::Column(_)));
         let element = matches!(self.at, Where::In(FnKind::View)) && crate::lower::UI_ELEMENTS.contains(&name);
         if !(overlapping && tensor_among) && (overlapping || control || frame_core || element) {
             return None;
@@ -3529,25 +3474,7 @@ impl<'a> Lowerer<'a> {
         crate::table::module(m, name, &kinds)
     }
 
-    /// Whether a bool was guessed: a comparison, or a conjunction of them,
-/// with a side nothing has typed yet — `t.filled eq true` of a frame a
-/// function is not yet called with, which may be a mask — is no kind for
-/// a call to be refused on (`where` of it had been refused in every test
-/// that did not call the function).
-fn arg_kind(x: &Expr) -> crate::table::Arg {
-    if Self::guessed_truth(x) { crate::table::Arg::Unknown } else { crate::table::Arg::of_type(&read(x)) }
-}
-
-fn guessed_truth(x: &Expr) -> bool {
-    match x {
-        Expr::Binary { op, l, r, .. } if matches!(op.as_str(), "eq" | "ne" | "gt" | "lt" | "gte" | "lte") => l.ty() == Ty::Unknown || r.ty() == Ty::Unknown,
-        Expr::Binary { op, l, r, .. } if matches!(op.as_str(), "and" | "or") => Self::guessed_truth(l) || Self::guessed_truth(r),
-        Expr::Unary { op, expr, .. } if op == "not" => Self::guessed_truth(expr),
-        _ => false,
-    }
-}
-
-/// A builtin row's arguments as its parameters take them (docs/
+    /// A builtin row's arguments as its parameters take them (docs/
     /// bug-classes.md §4): numbers held as a list, or a frame's column,
     /// handed to a parameter that takes a tensor are converted where they
     /// meet, the same way in both modes — compiled, a list did not build
@@ -3681,7 +3608,7 @@ fn guessed_truth(x: &Expr) -> bool {
         if core_too && !crate::table::has_core_rows(name) {
             return;
         }
-        let kinds: Vec<crate::table::Arg> = lowered.iter().map(Self::arg_kind).collect();
+        let kinds: Vec<crate::table::Arg> = lowered.iter().map(|x| crate::table::Arg::of_type(&read(x))).collect();
         let modules: Vec<&str> = if core_too { vec!["", m] } else { vec![m] };
         if let Some(e) = crate::table::refusal(&modules, name, &kinds) {
             self.refuse(e);
@@ -3691,7 +3618,7 @@ fn guessed_truth(x: &Expr) -> bool {
     fn row_arguments(&self, module: &str, name: &str, lowered: Vec<Expr>) -> Vec<Expr> {
         use crate::table::{self, Kind};
         let core = CORE_RESERVED.contains(&name);
-        let args: Vec<crate::table::Arg> = lowered.iter().map(Self::arg_kind).collect();
+        let args: Vec<crate::table::Arg> = lowered.iter().map(|x| crate::table::Arg::of_type(&read(x))).collect();
         let Some(kinds) = table::module(module, name, &args).and_then(|row| table::kinds_of(row.params, lowered.len())) else {
             return lowered;
         };
@@ -3735,7 +3662,7 @@ fn guessed_truth(x: &Expr) -> bool {
     /// as lowered, before a failure among them is unwrapped) and, when the
     /// callee was lowered as a value, the callee's. The rule is picked by the
     /// callee's form, as the walk picks it.
-    fn call_type(&self, callee: &A, args: &[A], arg_types: &[CrowType], full_types: &[CrowType], callee_type: Option<CrowType>) -> Ty {
+    fn call_type(&self, callee: &A, args: &[A], arg_types: &[Ty], full_types: &[Ty], callee_type: Option<Ty>) -> Ty {
         let t = match callee {
             A::Ident(name) => self.ctx.named_call_type(name, args, callee, arg_types, full_types),
             _ => {
@@ -3754,19 +3681,19 @@ fn guessed_truth(x: &Expr) -> bool {
                         let callee_type = match (callee_type, callee) {
                             (Some(t), _) => t,
                             (None, A::FieldAccess { object, field }) => self.qualified_type(object, field),
-                            (None, _) => CrowType::Unknown,
+                            (None, _) => Ty::Unknown,
                         };
                         self.ctx.index_type(callee_type, arg_types.first().cloned())
                     }
                 }
             }
         };
-        ty_of(&t)
+        t.clone()
     }
 
     /// A call's own checks, made after its arguments': a name called is
     /// checked as a call by name, `m.f[…]` as a module's.
-    fn check_callee(&mut self, callee: &A, args: &[A], types: &[CrowType]) {
+    fn check_callee(&mut self, callee: &A, args: &[A], types: &[Ty]) {
         match callee {
             A::Ident(n) => self.check_call(n, args, types),
             A::FieldAccess { object, field } => {
@@ -3779,10 +3706,10 @@ fn guessed_truth(x: &Expr) -> bool {
     }
 
     /// The type of a value a module names, `m.x`.
-    fn qualified_type(&self, object: &A, field: &str) -> CrowType {
+    fn qualified_type(&self, object: &A, field: &str) -> Ty {
         let object_type = match object {
             A::Ident(m) => self.ctx.ident_type(m).text(),
-            _ => CrowType::Unknown,
+            _ => Ty::Unknown,
         };
         self.ctx.field_type(object, object_type, field)
     }
@@ -3797,9 +3724,9 @@ fn guessed_truth(x: &Expr) -> bool {
                     for a in args {
                         lowered.push(self.lower_expr(a)?);
                     }
-                    let checks: Vec<CrowType> = lowered.iter().map(|x| if Self::guessed_truth(x) { CrowType::Unknown } else { self.checked(x) }).collect();
+                    let checks: Vec<Ty> = lowered.iter().map(|x| self.checked(x)).collect();
                     self.check_call(f, args, &checks);
-                    let types: Vec<CrowType> = lowered.iter().map(full).collect();
+                    let types: Vec<Ty> = lowered.iter().map(full).collect();
                     self.scan_call(callee, args, &types);
                     return Ok(Some(Expr::Deferred { name: f.clone(), args: lowered }));
                 }
@@ -3810,17 +3737,17 @@ fn guessed_truth(x: &Expr) -> bool {
 
     /// The type of the call a deferred call holds (`h[x]` in `click[a,
     /// h[x]]`), from its lowered arguments, markup told apart.
-    fn held_type(&self, a: &A, d: &Expr) -> CrowType {
+    fn held_type(&self, a: &A, d: &Expr) -> Ty {
         match (a, d) {
             (A::Call { callee, args }, Expr::Deferred { args: lowered, .. }) => {
-                let arg_types: Vec<CrowType> = lowered.iter().map(read).collect();
-                let full_types: Vec<CrowType> = lowered.iter().map(full).collect();
+                let arg_types: Vec<Ty> = lowered.iter().map(read).collect();
+                let full_types: Vec<Ty> = lowered.iter().map(full).collect();
                 match self.call_type(callee, args, &arg_types, &full_types, None) {
-                    Ty::Node => CrowType::Markup,
-                    t => crow_type(&t),
+                    Ty::Node => Ty::Markup,
+                    t => as_inferred(&t),
                 }
             }
-            _ => CrowType::Unknown,
+            _ => Ty::Unknown,
         }
     }
 
@@ -3840,7 +3767,7 @@ fn guessed_truth(x: &Expr) -> bool {
         }
         for a in args {
             if let Expr::FnRef(f, _) = a
-                && self.ctx.functions.get(f).is_some_and(|sig| sig.params.iter().any(|(_, t)| *t == CrowType::Unknown))
+                && self.ctx.functions.get(f).is_some_and(|sig| sig.params.iter().any(|(_, t)| *t == Ty::Unknown))
             {
                 self.refuse(format!(
                     "`{}` is handed as a value, and nothing types its parameters — apply it in the function it is handed to, or call it directly once",
@@ -3916,7 +3843,7 @@ fn guessed_truth(x: &Expr) -> bool {
         }
     }
 
-    fn specialised(&self, name: &str, full_types: &[CrowType]) -> String {
+    fn specialised(&self, name: &str, full_types: &[Ty]) -> String {
         self.ctx.specialization_for(name, full_types).unwrap_or_else(|| name.to_string())
     }
 
@@ -4176,17 +4103,17 @@ fn in_holders_form(name: &str, lowered: &[Expr], ty: Ty) -> Ty {
     }
 }
 
-fn declared_as(first: &Ty, settled: Option<&CrowType>) -> Ty {
+fn declared_as(first: &Ty, settled: Option<&Ty>) -> Ty {
     if matches!(first, Ty::Node) {
         return Ty::Markup;
     }
-    if *first == Ty::Int && matches!(settled, Some(CrowType::Float)) {
+    if *first == Ty::Int && matches!(settled, Some(Ty::Float)) {
         return Ty::Float;
     }
     // a variable that settles on a record or none — first 0, the empty
     // sentinel, or a record, and the other later — holds a record or none
     // from its declaration (the Rust backend declares it so)
-    if let Some(CrowType::OptBoxStruct(n)) = settled {
+    if let Some(Ty::OptRecord(n)) = settled {
         if *first == Ty::Int || matches!(first, Ty::Record(_)) {
             return Ty::OptRecord(n.clone());
         }
@@ -4195,8 +4122,8 @@ fn declared_as(first: &Ty, settled: Option<&CrowType>) -> Ty {
         return first.clone();
     }
     match settled {
-        Some(t) if !matches!(t, CrowType::Unknown) => {
-            let settled = ty_of(t);
+        Some(t) if !matches!(t, Ty::Unknown) => {
+            let settled = (t).clone();
             if first.is_result() {
                 settled
             } else {
@@ -4210,7 +4137,7 @@ fn declared_as(first: &Ty, settled: Option<&CrowType>) -> Ty {
 /// What a collecting loop's lowered body yields: its last expression, or
 /// what the branches of a trailing `if` yield (the filter pattern);
 /// unknown when the body ends otherwise.
-fn yield_of(body: &Block) -> CrowType {
+fn yield_of(body: &Block) -> Ty {
     match body.iter().rev().find(|s| !matches!(s, Stmt::Line(_))) {
         Some(Stmt::Do(x)) => full(x),
         Some(Stmt::If { then, els, .. }) => {
@@ -4220,7 +4147,7 @@ fn yield_of(body: &Block) -> CrowType {
                 None => t,
             }
         }
-        _ => CrowType::Unknown,
+        _ => Ty::Unknown,
     }
 }
 
@@ -4617,7 +4544,7 @@ fn move_last_reads(e: &mut Expr, live: &HashSet<String>, allowed: &HashSet<Strin
 /// A value worth moving: anything that owns memory. A scalar copies.
 fn movable(ty: &Ty) -> bool {
     match ty {
-        Ty::Int | Ty::Float | Ty::Bool | Ty::Unit | Ty::Fn(_, _) | Ty::Handle(_) => false,
+        Ty::Int | Ty::Float | Ty::Bool | Ty::Unit | Ty::Fn(_, _) | Ty::Db | Ty::Tx | Ty::Sparse | Ty::WebApp | Ty::WebRequest | Ty::WebResponse | Ty::Mailer | Ty::Socket | Ty::Stream | Ty::App => false,
         Ty::Result(inner) => movable(inner),
         _ => true,
     }
@@ -4737,7 +4664,7 @@ mod tests {
     /// A function's body lowered provisionally (F5): what it met, the
     /// environment it leaves, and the lowering's state after it, which
     /// must be as before.
-    fn provisional_of(src: &str, f: &str) -> (Seen, BTreeMap<String, CrowType>) {
+    fn provisional_of(src: &str, f: &str) -> (Seen, BTreeMap<String, Ty>) {
         let mut lexer = crate::lexer::Lexer::new(src);
         let tokens = lexer.tokenize().unwrap();
         let mut parser = crate::parser::Parser::new(tokens);
@@ -4770,13 +4697,13 @@ mod tests {
     fn a_body_lowered_to_learn_its_types_settles_as_inference_walks() {
         let src = "fn half[x]\n    return x / 2.0\nfn f[n, s]\n    xs = []\n    for i in range[n]\n        xs = push[xs, i * 1.5]\n    ys = for x in xs\n        y = half[x]\n        y\n    m = map[a = 1]\n    set[m, 'b', 2]\n    m['c'] = 3\n    a, b = 1, 'x'\n    k = int[s]\n    if k gt 5\n        return half[2]\n    return len[ys] * 1.0\nlog[f[3, '7']]\n";
         let (seen, lowered) = provisional_of(src, "f");
-        assert_eq!(lowered.get("xs"), Some(&CrowType::Array(Box::new(CrowType::Float))));
-        assert_eq!(lowered.get("i"), Some(&CrowType::Int));
+        assert_eq!(lowered.get("xs"), Some(&Ty::List(Box::new(Ty::Float))));
+        assert_eq!(lowered.get("i"), Some(&Ty::Int));
         assert!(!lowered.contains_key("y") && !lowered.contains_key("x"), "{:?}", lowered);
-        assert_eq!(lowered.get("m"), Some(&CrowType::Map(Box::new(CrowType::Int))));
-        assert_eq!((lowered.get("a"), lowered.get("b")), (Some(&CrowType::Int), Some(&CrowType::Str)));
-        assert_eq!(seen.calls, vec![("half".to_string(), vec![CrowType::Float]), ("half".to_string(), vec![CrowType::Int])]);
-        assert_eq!(seen.returns, vec![CrowType::Float, CrowType::Float]);
+        assert_eq!(lowered.get("m"), Some(&Ty::Map(Box::new(Ty::Int))));
+        assert_eq!((lowered.get("a"), lowered.get("b")), (Some(&Ty::Int), Some(&Ty::Str)));
+        assert_eq!(seen.calls, vec![("half".to_string(), vec![Ty::Float]), ("half".to_string(), vec![Ty::Int])]);
+        assert_eq!(seen.returns, vec![Ty::Float, Ty::Float]);
         assert_eq!(seen.refusals, vec![(Decision::Branch, false)]);
     }
 

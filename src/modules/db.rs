@@ -1,5 +1,5 @@
 use crate::value::{CrowValue, Value};
-use crate::type_infer::CrowType;
+use crate::type_infer::Ty;
 use crate::modules::CrowModule;
 
 pub struct DbModule;
@@ -75,11 +75,11 @@ impl CrowModule for DbModule {
         call_db(name, args)
     }
 
-    fn emit_rust(&self, name: &str, arg_strs: &[String], arg_types: &[CrowType]) -> Result<String, String> {
+    fn emit_rust(&self, name: &str, arg_strs: &[String], arg_types: &[Ty]) -> Result<String, String> {
         emit_db_rust(name, arg_strs, arg_types)
     }
 
-    fn type_of(&self, name: &str, _arg_count: usize) -> CrowType {
+    fn type_of(&self, name: &str, _arg_count: usize) -> Ty {
         db_type_of(name)
     }
 }
@@ -242,23 +242,23 @@ fn crow_value_to_json_params(v: &CrowValue) -> Result<Vec<serde_json::Value>, St
     }
 }
 
-fn emit_db_rust(_name: &str, _arg_strs: &[String], _arg_types: &[CrowType]) -> Result<String, String> {
+fn emit_db_rust(_name: &str, _arg_strs: &[String], _arg_types: &[Ty]) -> Result<String, String> {
     // the Rust backend prints database calls itself (emit_rs/builtins.rs:
     // the parameter guard, the typed cells); one reaching the registry is
     // a backend gap, reported where it is printed
     Err(format!("db.{}: the Rust backend prints database calls itself, and missed this one", _name))
 }
 
-fn db_type_of(name: &str) -> CrowType {
+fn db_type_of(name: &str) -> Ty {
     match name {
-        "connect" => CrowType::DbHandle,
-        "query" => CrowType::Result(Box::new(CrowType::Frame(None))),
-        "exec" => CrowType::Result(Box::new(CrowType::Int)),
-        "describe" => CrowType::Result(Box::new(CrowType::Frame(None))),
-        "insert" => CrowType::Int,
-        "migrate" => CrowType::Int,
-        "transact" => CrowType::Unknown,
-        _ => CrowType::Unknown,
+        "connect" => Ty::Db,
+        "query" => Ty::Result(Box::new(Ty::Frame(None))),
+        "exec" => Ty::Result(Box::new(Ty::Int)),
+        "describe" => Ty::Result(Box::new(Ty::Frame(None))),
+        "insert" => Ty::Int,
+        "migrate" => Ty::Int,
+        "transact" => Ty::Unknown,
+        _ => Ty::Unknown,
     }
 }
 

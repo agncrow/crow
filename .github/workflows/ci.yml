@@ -25,7 +25,11 @@ jobs:
           df -h / | tail -1
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
+      - name: The coverage tool (design rule 22)
+        run: cargo install cargo-llvm-cov --locked
       - name: Unit tests (a debug build checks the IR of every program it lowers)
         run: cargo test --workspace
       - name: The runtime never panics (clippy refuses an unaudited unwrap, expect or panic in crow_runtime, crow_db and crow_web)
@@ -117,3 +121,5 @@ jobs:
       - name: Disk used by the run
         if: always()
         run: df -h / | tail -1; du -sh target .crow_build 2>/dev/null || true
+      - name: Coverage of the compiler under the gate's tests, above its floor (design rule 22)
+        run: scripts/coverage.sh

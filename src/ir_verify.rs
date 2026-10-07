@@ -93,7 +93,7 @@ pub fn verify_in(program: &Program, known: &HashMap<String, Ty>) -> Vec<String> 
             // where the row never fails would not build compiled)
             if let Some(row) = crow_row_of(&f.name) {
                 let fails = matches!(row.fails, crate::table::Fails::Value(_));
-                let want = crate::lower_ir::ty_of(&row.ret.crow_type());
+                let want = row.ret.ty();
                 if f.ret.is_result() != fails {
                     v.found(format!("answers {}, but its row ({}) {}", f.ret, row.id, if fails { "can fail" } else { "never fails" }));
                 } else if want != Ty::Unknown && !fits(f.ret.payload(), &want) {
@@ -411,7 +411,7 @@ impl<'p> Verifier<'p> {
                     // lowering names the row of any other
                     Target::Runtime(path) => {
                         let name = crate::ir::RUNTIME_TABLE.iter().find(|(_, r)| r == path).map_or(path.as_str(), |(b, _)| b);
-                        let kinds: Vec<crate::table::Arg> = ts.iter().map(|t| crate::table::Arg::of_type(&crate::lower_ir::crow_type(t))).collect();
+                        let kinds: Vec<crate::table::Arg> = ts.iter().map(|t| crate::table::Arg::of_type(&crate::lower_ir::as_inferred(t))).collect();
                         if !kinds.contains(&crate::table::Arg::Unknown)
                             && let Some(row) = crate::table::core_row(name, &kinds)
                         {
@@ -594,7 +594,7 @@ impl<'p> Verifier<'p> {
         if !module.is_empty() && crate::lower_ir::CORE_RESERVED.contains(&name) {
             return;
         }
-        let kinds: Vec<crate::table::Arg> = args.iter().map(|t| crate::table::Arg::of_type(&crate::lower_ir::crow_type(t))).collect();
+        let kinds: Vec<crate::table::Arg> = args.iter().map(|t| crate::table::Arg::of_type(&crate::lower_ir::as_inferred(t))).collect();
         // (a core call no row takes is the lowering's to refuse, or a JSON
         // value's, whose kind shows as it runs; one with an argument the
         // table has no kind for — a handle, a value of unknown type — picks
@@ -697,14 +697,14 @@ fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
             Kind::Words => matches!(t, Ty::Tensor(..) | Ty::Column(_)) || items(t, &|e| matches!(e, Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Moment)),
             Kind::Bool => *t == Ty::Bool,
             Kind::Bytes => *t == Ty::Bytes,
-            Kind::Stream => matches!(t, Ty::Handle(h) if h == "stream"),
+            Kind::Stream => matches!(t, Ty::Stream),
             Kind::Str => matches!(t, Ty::Str | Ty::Markup),
             Kind::Tensor => matches!(t, Ty::Tensor(..)) || items(t, &|_| false),
             Kind::Tensors => items(t, &|e| matches!(e, Ty::Tensor(..))),
             Kind::Strs => items(t, &|e| matches!(e, Ty::Str | Ty::Markup)),
             Kind::Chunks => items(t, &|e| *e == Ty::Bytes),
             Kind::Bools => items(t, &|e| *e == Ty::Bool),
-            Kind::Sparse => matches!(t, Ty::Handle(h) if h == "sparse"),
+            Kind::Sparse => matches!(t, Ty::Sparse),
             Kind::Frame => matches!(t, Ty::Frame(_)),
             Kind::Cell => cell(t) || *t == Ty::Json,
             // a column's values: a list of cells, a tensor, a column, a cell
@@ -719,7 +719,14 @@ fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
             Kind::Column => matches!(t, Ty::Column(_)),
             Kind::Operand => matches!(t, Ty::Tensor(..) | Ty::Int | Ty::Float),
             Kind::Scalar => matches!(t, Ty::Int | Ty::Float | Ty::Str | Ty::Markup | Ty::Bool),
-            _ => true,
+            Kind::Socket => matches!(t, Ty::Socket),
+            Kind::Response => matches!(t, Ty::WebResponse),
+            Kind::Markup => matches!(t, Ty::Markup | Ty::Str),
+            // (what a row gives, never takes; a map of text or a record read
+            // by its fields; what a row shows or encodes, which is any
+            // value; the rest of the arguments as sizes or operands)
+            Kind::FloatMap | Kind::Unit | Kind::Answer | Kind::Shell | Kind::Reply | Kind::TextRows | Kind::JsonList => true,
+            Kind::Mailer | Kind::Sizes | Kind::Groups | Kind::Lists | Kind::Item | Kind::ItemRef | Kind::TextMap | Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn | Kind::Operands | Kind::Scalars => true,
         }
 }
 

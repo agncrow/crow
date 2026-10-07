@@ -67,7 +67,7 @@ impl TypeContext {
             match stmt {
                 Stmt::StructDecl { name, fields } => {
                     self.structs.insert(name.clone(), StructSig {
-                        fields: fields.iter().map(|f| (f.clone(), CrowType::Unknown)).collect(),
+                        fields: fields.iter().map(|f| (f.clone(), Ty::Unknown)).collect(),
                     });
                 }
                 Stmt::FnDecl { name, params, body, is_view, .. } => {
@@ -76,14 +76,14 @@ impl TypeContext {
                     // parameters its row states — the row is its contract,
                     // however it is called: bare, qualified, or from
                     // another module's function
-                    let contract: Option<Vec<CrowType>> = crate::modules::is_crow_fn(name)
+                    let contract: Option<Vec<Ty>> = crate::modules::is_crow_fn(name)
                         .then(|| crate::table::ROWS.iter().find(|r| r.is_crow() && crate::table::crow_fn_name(r) == *name))
                         .flatten()
-                        .map(|r| r.params.iter().map(|k| crate::table::crow_param_type(*k)).collect::<Vec<CrowType>>())
+                        .map(|r| r.params.iter().map(|k| crate::table::crow_param_type(*k)).collect::<Vec<Ty>>())
                         .filter(|given| given.len() == params.len());
                     self.functions.insert(name.clone(), FnSig {
-                        params: params.iter().enumerate().map(|(i, p)| (p.clone(), contract.as_ref().map_or(CrowType::Unknown, |g| g[i].clone()))).collect(),
-                        return_type: CrowType::Unknown,
+                        params: params.iter().enumerate().map(|(i, p)| (p.clone(), contract.as_ref().map_or(Ty::Unknown, |g| g[i].clone()))).collect(),
+                        return_type: Ty::Unknown,
                         body: body.clone(),
                     });
                     if *is_view {
@@ -95,7 +95,7 @@ impl TypeContext {
                 Stmt::Derive { name, body, .. } => {
                     self.functions.insert(name.clone(), FnSig {
                         params: vec![],
-                        return_type: CrowType::Unknown,
+                        return_type: Ty::Unknown,
                         body: body.clone(),
                     });
                     self.derives.insert(name.clone());
@@ -533,14 +533,14 @@ impl TypeContext {
                     }
                 } else if let Some(sig) = self.functions.get_mut(&f) {
                     if let Some(p) = sig.params.first_mut() {
-                        p.1 = CrowType::Float;
+                        p.1 = Ty::Float;
                     }
                 }
             }
             for f in widgets {
                 if let Some(sig) = self.functions.get_mut(&f) {
-                    for p in sig.params.iter_mut().filter(|p| matches!(p.1, CrowType::Unknown)) {
-                        p.1 = CrowType::Str;
+                    for p in sig.params.iter_mut().filter(|p| matches!(p.1, Ty::Unknown)) {
+                        p.1 = Ty::Str;
                     }
                 }
             }

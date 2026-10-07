@@ -3,7 +3,7 @@
 //! give it, and a frame variable reassigned is bound anew to the columns of
 //! what it is given — where ways through join, it has the columns they
 //! share. A tensor's shape is rebound and joined the same way (a local's
-//! detail, `CrowType::detail`; shapes.rs computes it).
+//! detail, `Ty::detail`; shapes.rs computes it).
 
 use super::*;
 use crate::type_infer::{Cols, Detail};
@@ -13,11 +13,11 @@ use std::sync::Arc;
 /// value's (a new binding), and how it is held — a frame, or one that can
 /// fail; a tensor of its element type — is what reassignment settles it
 /// to, so the variable is held the same way throughout.
-pub(super) fn rebound(settled: &CrowType, value: &CrowType) -> CrowType {
+pub(super) fn rebound(settled: &Ty, value: &Ty) -> Ty {
     match (settled, value.detail()) {
-        (CrowType::Frame(_), Some(Detail::Columns(cols))) => CrowType::Frame(cols.clone()),
-        (CrowType::NumArray(elem, _), Some(Detail::Shape(dims))) => CrowType::NumArray(elem.clone(), dims.cloned()),
-        (CrowType::Result(inner), Some(_)) => CrowType::Result(Box::new(rebound(inner, value))),
+        (Ty::Frame(_), Some(Detail::Columns(cols))) => Ty::Frame(cols.clone()),
+        (Ty::Tensor(elem, _), Some(Detail::Shape(dims))) => Ty::Tensor(elem.clone(), dims.cloned()),
+        (Ty::Result(inner), Some(_)) => Ty::Result(Box::new(rebound(inner, value))),
         _ => settled.clone(),
     }
 }
@@ -48,24 +48,24 @@ pub(super) fn names(cols: &Cols) -> String {
 
 /// A column's cell type from the values `with` is given: a list's items, a
 /// tensor's numbers, a value repeated for every row.
-fn cell_of(t: &CrowType) -> CrowType {
+fn cell_of(t: &Ty) -> Ty {
     let t = match t {
-        CrowType::Result(inner) => inner.as_ref().clone(),
+        Ty::Result(inner) => inner.as_ref().clone(),
         t => t.clone(),
     };
     match t {
-        CrowType::Array(inner) => *inner,
+        Ty::List(inner) => *inner,
         // (`[1, 2]`, numbers held as a tensor of ints, had made a column of
         // floats)
-        CrowType::NumArray(elem, _) => match elem.as_ref() {
-            CrowType::Int => CrowType::Int,
-            _ => CrowType::Float,
+        Ty::Tensor(elem, _) => match elem.as_ref() {
+            Ty::Int => Ty::Int,
+            _ => Ty::Float,
         },
-        CrowType::Int => CrowType::Int,
-        CrowType::Float => CrowType::Float,
-        CrowType::Bool => CrowType::Bool,
-        CrowType::Moment => CrowType::Moment,
-        _ => CrowType::Str,
+        Ty::Int => Ty::Int,
+        Ty::Float => Ty::Float,
+        Ty::Bool => Ty::Bool,
+        Ty::Moment => Ty::Moment,
+        _ => Ty::Str,
     }
 }
 
@@ -73,7 +73,7 @@ impl<'a> Lowerer<'a> {
     /// A frame local given a frame, or a tensor local a tensor: bound anew
     /// to its columns or its shape (a fact, which a view reads at any time,
     /// keeps what every assignment to it shares, as reassignment settles it).
-    pub(super) fn rebind(&mut self, name: &str, value: &CrowType) {
+    pub(super) fn rebind(&mut self, name: &str, value: &Ty) {
         if self.is_fact(name) && self.sees_facts() {
             return;
         }
@@ -87,8 +87,8 @@ impl<'a> Lowerer<'a> {
 
     /// The frame and tensor locals in view: their types now, to join with
     /// what a block leaves them.
-    pub(super) fn detailed_in_view(&self) -> Vec<(String, CrowType)> {
-        let mut out: Vec<(String, CrowType)> = self
+    pub(super) fn detailed_in_view(&self) -> Vec<(String, Ty)> {
+        let mut out: Vec<(String, Ty)> = self
             .ctx
             .vars
             .iter()
@@ -100,13 +100,13 @@ impl<'a> Lowerer<'a> {
     }
 
     /// The same locals' types as they stand now.
-    pub(super) fn detailed_now(&self, before: &[(String, CrowType)]) -> Vec<(String, CrowType)> {
+    pub(super) fn detailed_now(&self, before: &[(String, Ty)]) -> Vec<(String, Ty)> {
         before.iter().map(|(n, t)| (n.clone(), self.ctx.vars.get(n).cloned().unwrap_or_else(|| t.clone()))).collect()
     }
 
     /// Where ways through a block meet: each frame local has the columns
     /// they share, each tensor local the dimensions they agree on.
-    pub(super) fn join_detailed(&mut self, a: &[(String, CrowType)], b: &[(String, CrowType)]) {
+    pub(super) fn join_detailed(&mut self, a: &[(String, Ty)], b: &[(String, Ty)]) {
         for ((n, ta), (_, tb)) in a.iter().zip(b) {
             self.ctx.vars.insert(n.clone(), ta.unify(tb));
         }
@@ -116,7 +116,7 @@ impl<'a> Lowerer<'a> {
     /// it leaves:
     /// each is joined with what it was on entry, so the body's top reads
     /// what either gives (the body is then lowered for good).
-    pub(super) fn pre_join_loop(&mut self, before: &[(String, CrowType)], body: &[S]) {
+    pub(super) fn pre_join_loop(&mut self, before: &[(String, Ty)], body: &[S]) {
         let saved = self.ctx.vars.clone();
         let _ = self.provisional_block(Pass::Settle, Some(HashSet::new()), body);
         let end = self.detailed_now(before);
@@ -125,7 +125,7 @@ impl<'a> Lowerer<'a> {
     }
 
     /// Whether a body assigns one of these names, in any block within it.
-    pub(super) fn body_assigns(body: &[S], names: &[(String, CrowType)]) -> bool {
+    pub(super) fn body_assigns(body: &[S], names: &[(String, Ty)]) -> bool {
         body.iter().any(|s| match s {
             S::Assign { name, .. } => names.iter().any(|(n, _)| n == name),
             S::MultiAssign { names: assigned, .. } => assigned.iter().any(|a| names.iter().any(|(n, _)| n == a)),
@@ -162,7 +162,7 @@ impl<'a> Lowerer<'a> {
     /// missing where one could not convert. `lower`, `upper`, `trim`,
     /// `replace` and `sub` of a column: text. A column nothing typed gives
     /// dynamic cells, as a loaded file's are.
-    pub(super) fn column_typed(&mut self, callee: &A, args: &[A], arg_types: &[CrowType], lowered: &[Expr], ty: Ty) -> Ty {
+    pub(super) fn column_typed(&mut self, callee: &A, args: &[A], arg_types: &[Ty], lowered: &[Expr], ty: Ty) -> Ty {
         if !matches!(ty.payload(), Ty::Column(_)) {
             return ty;
         }
@@ -170,43 +170,43 @@ impl<'a> Lowerer<'a> {
         if !matches!(module.as_deref(), None | Some("frame")) {
             return ty;
         }
-        let wrap = |cell: CrowType, ty: &Ty| -> Ty {
-            let column = Ty::Column(Box::new(ty_of(&cell)));
+        let wrap = |cell: Ty, ty: &Ty| -> Ty {
+            let column = Ty::Column(Box::new(cell.clone()));
             match ty {
                 Ty::Result(_) => Ty::Result(Box::new(column)),
                 _ => column,
             }
         };
-        let plain = |t: &CrowType| match t {
-            CrowType::Result(inner) => inner.as_ref().clone(),
+        let plain = |t: &Ty| match t {
+            Ty::Result(inner) => inner.as_ref().clone(),
             t => t.clone(),
         };
-        let fallible = |t: &CrowType| matches!(t, CrowType::Result(_));
+        let fallible = |t: &Ty| matches!(t, Ty::Result(_));
         // the cells of a value handed whole — a column, a list, one value —
         // as its lowered type says them
-        let cell_of_arg = |i: usize| -> Option<CrowType> {
+        let cell_of_arg = |i: usize| -> Option<Ty> {
             match lowered.get(i).map(|x| x.ty()) {
-                Some(Ty::Column(cell)) if *cell != Ty::Unknown => Some(crow_type(&cell)),
-                Some(Ty::List(item)) => Some(crow_type(&item)),
-                Some(Ty::Tensor(..)) => Some(CrowType::Float),
-                Some(t @ (Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Moment | Ty::Json)) => Some(crow_type(&t)),
-                Some(Ty::Result(inner)) if matches!(*inner, Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Moment) => Some(CrowType::Result(Box::new(crow_type(&inner)))),
+                Some(Ty::Column(cell)) if *cell != Ty::Unknown => Some(as_inferred(&cell)),
+                Some(Ty::List(item)) => Some(as_inferred(&item)),
+                Some(Ty::Tensor(..)) => Some(Ty::Float),
+                Some(t @ (Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Moment | Ty::Json)) => Some(as_inferred(&t)),
+                Some(Ty::Result(inner)) if matches!(*inner, Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Moment) => Some(Ty::Result(Box::new(as_inferred(&inner)))),
                 _ => None,
             }
         };
         match name.as_str() {
             "bucket" => match cell_of_arg(0) {
-                Some(t) if matches!(plain(&t), CrowType::Moment | CrowType::Json) => wrap(t, &ty),
+                Some(t) if matches!(plain(&t), Ty::Moment | Ty::Json) => wrap(t, &ty),
                 _ => ty,
             },
             "where" => match (cell_of_arg(1), cell_of_arg(2)) {
                 (Some(a), Some(b)) => {
                     let kind = match (plain(&a), plain(&b)) {
-                        (CrowType::Int, CrowType::Float) | (CrowType::Float, CrowType::Int) => CrowType::Float,
+                        (Ty::Int, Ty::Float) | (Ty::Float, Ty::Int) => Ty::Float,
                         (x, y) if x == y => x,
-                        _ => CrowType::Json,
+                        _ => Ty::Json,
                     };
-                    let kind = if fallible(&a) || fallible(&b) { CrowType::Result(Box::new(kind)) } else { kind };
+                    let kind = if fallible(&a) || fallible(&b) { Ty::Result(Box::new(kind)) } else { kind };
                     wrap(kind, &ty)
                 }
                 _ => ty,
@@ -214,23 +214,23 @@ impl<'a> Lowerer<'a> {
             "int" | "float" | "str" | "moment" => {
                 let Some(source) = cell_of_arg(0) else { return ty };
                 let target = match name.as_str() {
-                    "int" => CrowType::Int,
-                    "float" => CrowType::Float,
-                    "str" => CrowType::Str,
-                    _ => CrowType::Moment,
+                    "int" => Ty::Int,
+                    "float" => Ty::Float,
+                    "str" => Ty::Str,
+                    _ => Ty::Moment,
                 };
                 let src = plain(&source);
                 let can_fail = match name.as_str() {
                     "str" => false,
-                    "float" => !matches!(src, CrowType::Int | CrowType::Float | CrowType::Bool | CrowType::Moment),
-                    "int" => !matches!(src, CrowType::Int | CrowType::Bool | CrowType::Moment),
-                    _ => !matches!(src, CrowType::Moment),
+                    "float" => !matches!(src, Ty::Int | Ty::Float | Ty::Bool | Ty::Moment),
+                    "int" => !matches!(src, Ty::Int | Ty::Bool | Ty::Moment),
+                    _ => !matches!(src, Ty::Moment),
                 };
-                let kind = if can_fail || fallible(&source) { CrowType::Result(Box::new(target)) } else { target };
+                let kind = if can_fail || fallible(&source) { Ty::Result(Box::new(target)) } else { target };
                 wrap(kind, &ty)
             }
             "lower" | "upper" | "trim" | "replace" | "sub" => match cell_of_arg(0) {
-                Some(source) => wrap(if fallible(&source) { CrowType::Result(Box::new(CrowType::Str)) } else { CrowType::Str }, &ty),
+                Some(source) => wrap(if fallible(&source) { Ty::Result(Box::new(Ty::Str)) } else { Ty::Str }, &ty),
                 None => ty,
             },
             "window" | "unique" => {
@@ -253,7 +253,7 @@ impl<'a> Lowerer<'a> {
                 if name == "unique" {
                     let cell = match &source {
                         Some(t) => plain(t),
-                        None => CrowType::Json,
+                        None => Ty::Json,
                     };
                     return wrap(cell, &ty);
                 }
@@ -263,33 +263,33 @@ impl<'a> Lowerer<'a> {
                     // (every window had been a float; a sum over ints is an int,
                     // and over a column nothing typed its kind shows as it runs)
                     Some("sum" | "min" | "max") => match source.as_ref().map(plain) {
-                        Some(CrowType::Int) => CrowType::Int,
-                        Some(_) => CrowType::Float,
-                        None => CrowType::Json,
+                        Some(Ty::Int) => Ty::Int,
+                        Some(_) => Ty::Float,
+                        None => Ty::Json,
                     },
-                    Some("mean" | "median" | "std" | "var") => CrowType::Float,
-                    Some(_) if percentile => CrowType::Float,
-                    Some("count" | "distinct") => CrowType::Int,
+                    Some("mean" | "median" | "std" | "var") => Ty::Float,
+                    Some(_) if percentile => Ty::Float,
+                    Some("count" | "distinct") => Ty::Int,
                     Some("rank") => match source {
-                        Some(t) if fallible(&t) => CrowType::Result(Box::new(CrowType::Int)),
-                        Some(_) => CrowType::Int,
-                        None if base.is_some() => CrowType::Int,
-                        None => CrowType::Json,
+                        Some(t) if fallible(&t) => Ty::Result(Box::new(Ty::Int)),
+                        Some(_) => Ty::Int,
+                        None if base.is_some() => Ty::Int,
+                        None => Ty::Json,
                     },
                     Some("lag" | "lead") => match source {
-                        Some(CrowType::Result(t)) => CrowType::Result(t),
-                        Some(t) => CrowType::Result(Box::new(t)),
-                        None => CrowType::Json,
+                        Some(Ty::Result(t)) => Ty::Result(t),
+                        Some(t) => Ty::Result(Box::new(t)),
+                        None => Ty::Json,
                     },
                     Some("first" | "last") => match source {
                         Some(t) => t,
-                        None => CrowType::Json,
+                        None => Ty::Json,
                     },
                     _ => return ty,
                 };
                 let cell = match cell {
-                    CrowType::Json | CrowType::Result(_) => cell,
-                    t if keys_fallible => CrowType::Result(Box::new(t)),
+                    Ty::Json | Ty::Result(_) => cell,
+                    t if keys_fallible => Ty::Result(Box::new(t)),
                     t => t,
                 };
                 wrap(cell, &ty)
@@ -309,7 +309,7 @@ impl<'a> Lowerer<'a> {
 
     /// A call's type with the columns of the frame it answers, when it is a
     /// frame operation: its result's columns are its arguments'.
-    pub(super) fn frame_typed(&mut self, callee: &A, args: &[A], arg_types: &[CrowType], lowered: &[Expr], ty: Ty) -> Ty {
+    pub(super) fn frame_typed(&mut self, callee: &A, args: &[A], arg_types: &[Ty], lowered: &[Expr], ty: Ty) -> Ty {
         if !matches!(ty.payload(), Ty::Frame(None)) {
             return ty;
         }
@@ -317,17 +317,17 @@ impl<'a> Lowerer<'a> {
         // a builtin that answers a frame no rule here reads the columns of
         // answers one whose columns show as it runs (`load`, `stats`)
         // (a column handed on whole is its cells, as its type says them: the
-        // lowered argument's, which a column's CrowType does not carry)
-        let arg_types: Vec<CrowType> = arg_types
+        // lowered argument's, which a column's Ty does not carry)
+        let arg_types: Vec<Ty> = arg_types
             .iter()
             .zip(lowered.iter().map(Some).chain(std::iter::repeat(None)))
             .map(|(t, x)| match x.map(|x| x.ty()) {
-                Some(Ty::Column(cell)) if *cell != Ty::Unknown => CrowType::Array(Box::new(crow_type(&cell))),
+                Some(Ty::Column(cell)) if *cell != Ty::Unknown => Ty::List(Box::new(as_inferred(&cell))),
                 _ => t.clone(),
             })
             .collect();
         let cols = self.frame_columns(module.as_deref(), &name, args, &arg_types).unwrap_or_else(|| Some(Cols::dynamic()));
-        let frame = ty_of(&CrowType::Frame(cols));
+        let frame = (&Ty::Frame(cols)).clone();
         match ty {
             Ty::Result(_) => Ty::Result(Box::new(frame)),
             _ => frame,
@@ -336,7 +336,7 @@ impl<'a> Lowerer<'a> {
 
     /// The literal column names an operation is given, each checked
     /// against the frame it is given.
-    fn check_columns(&mut self, name: &str, args: &[A], arg_types: &[CrowType]) {
+    fn check_columns(&mut self, name: &str, args: &[A], arg_types: &[Ty]) {
         let base = |i: usize| -> Option<Arc<Cols>> { arg_types.get(i).and_then(|t| t.frame_cols()).cloned().flatten() };
         let lit = |i: usize| -> Option<String> {
             match args.get(i) {
@@ -494,14 +494,14 @@ impl<'a> Lowerer<'a> {
     /// The columns a frame operation's result has, from its arguments'
     /// types and the names it is given; `None` when the call is no frame
     /// operation, `Some(None)` when nothing is known of the columns.
-    fn frame_columns(&mut self, module: Option<&str>, name: &str, args: &[A], arg_types: &[CrowType]) -> Option<Option<Arc<Cols>>> {
-        let fixed = |cols: &[(&str, CrowType)]| Some(Some(Cols::closed(cols.iter().map(|(n, t)| (n.to_string(), t.clone())).collect())));
+    fn frame_columns(&mut self, module: Option<&str>, name: &str, args: &[A], arg_types: &[Ty]) -> Option<Option<Arc<Cols>>> {
+        let fixed = |cols: &[(&str, Ty)]| Some(Some(Cols::closed(cols.iter().map(|(n, t)| (n.to_string(), t.clone())).collect())));
         match (module, name) {
             // the frames the standard modules build have fixed columns:
             // doc.chapters as crow_runtime::markdown::chapters_frame builds
             // it, chart.macd as crow_runtime::ta::macd_frame does
-            (Some("doc"), "chapters") => fixed(&[("title", CrowType::Str), ("path", CrowType::Str), ("depth", CrowType::Int), ("part", CrowType::Str)]),
-            (Some("chart"), "macd") => fixed(&[("line", CrowType::Float), ("signal", CrowType::Float), ("hist", CrowType::Float)]),
+            (Some("doc"), "chapters") => fixed(&[("title", Ty::Str), ("path", Ty::Str), ("depth", Ty::Int), ("part", Ty::Str)]),
+            (Some("chart"), "macd") => fixed(&[("line", Ty::Float), ("signal", Ty::Float), ("hist", Ty::Float)]),
             // a literal query's columns, as its database describes them
             (None | Some("db"), "query") => {
                 let Some(A::Str(sql)) = args.get(1) else {
@@ -523,7 +523,7 @@ impl<'a> Lowerer<'a> {
     }
 
     /// The frame module's rules for its operations' result columns.
-    fn frame_rule(&mut self, name: &str, args: &[A], arg_types: &[CrowType]) -> Option<Option<Arc<Cols>>> {
+    fn frame_rule(&mut self, name: &str, args: &[A], arg_types: &[Ty]) -> Option<Option<Arc<Cols>>> {
         let base = |i: usize| -> Option<Arc<Cols>> { arg_types.get(i).and_then(|t| t.frame_cols()).cloned().flatten() };
         let lit = |i: usize| -> Option<String> {
             match args.get(i) {
@@ -550,7 +550,7 @@ impl<'a> Lowerer<'a> {
                     let all = args.len() == 1;
                     for (k, t) in c.cols.iter_mut() {
                         if all || named.contains(k) {
-                            if let CrowType::Result(inner) = t {
+                            if let Ty::Result(inner) = t {
                                 *t = (**inner).clone();
                             }
                         }
@@ -568,29 +568,29 @@ impl<'a> Lowerer<'a> {
                     let mut cols = BTreeMap::new();
                     let mut open = !literal(1) || !literal(2);
                     for k in Self::names_in(args.get(1)) {
-                        cols.insert(k.clone(), b.cols.get(&k).cloned().unwrap_or(CrowType::Json));
+                        cols.insert(k.clone(), b.cols.get(&k).cloned().unwrap_or(Ty::Json));
                     }
-                    cols.insert("variable".to_string(), CrowType::Str);
-                    let kinds: Vec<CrowType> = Self::names_in(args.get(2)).iter().map(|c| b.cols.get(c).cloned().unwrap_or(CrowType::Json)).collect();
-                    let plain = |t: &CrowType| match t {
-                        CrowType::Result(inner) => inner.as_ref().clone(),
+                    cols.insert("variable".to_string(), Ty::Str);
+                    let kinds: Vec<Ty> = Self::names_in(args.get(2)).iter().map(|c| b.cols.get(c).cloned().unwrap_or(Ty::Json)).collect();
+                    let plain = |t: &Ty| match t {
+                        Ty::Result(inner) => inner.as_ref().clone(),
                         t => t.clone(),
                     };
                     let value = if kinds.is_empty() {
                         open = true;
-                        CrowType::Json
+                        Ty::Json
                     } else {
-                        let kinds_plain: Vec<CrowType> = kinds.iter().map(plain).collect();
-                        let kind = if kinds_plain.iter().all(|k| *k == CrowType::Int) {
-                            CrowType::Int
-                        } else if kinds_plain.iter().all(|k| matches!(k, CrowType::Int | CrowType::Float)) {
-                            CrowType::Float
+                        let kinds_plain: Vec<Ty> = kinds.iter().map(plain).collect();
+                        let kind = if kinds_plain.iter().all(|k| *k == Ty::Int) {
+                            Ty::Int
+                        } else if kinds_plain.iter().all(|k| matches!(k, Ty::Int | Ty::Float)) {
+                            Ty::Float
                         } else if kinds_plain.iter().all(|k| *k == kinds_plain[0]) {
                             kinds_plain[0].clone()
                         } else {
-                            CrowType::Json
+                            Ty::Json
                         };
-                        if kinds.iter().any(|k| matches!(k, CrowType::Result(_))) { CrowType::Result(Box::new(kind)) } else { kind }
+                        if kinds.iter().any(|k| matches!(k, Ty::Result(_))) { Ty::Result(Box::new(kind)) } else { kind }
                     };
                     cols.insert("value".to_string(), value);
                     Arc::new(Cols { cols, open })
@@ -602,7 +602,7 @@ impl<'a> Lowerer<'a> {
                     let mut c = (*b).clone();
                     let directed = args.get(3).is_some_and(|h| !matches!(h, A::Str(s) if s.is_empty()));
                     if let (Some(col), false) = (lit(1), directed) {
-                        if let Some(CrowType::Result(inner)) = c.cols.get(&col).cloned() {
+                        if let Some(Ty::Result(inner)) = c.cols.get(&col).cloned() {
                             c.cols.insert(col, *inner);
                         }
                     }
@@ -614,9 +614,9 @@ impl<'a> Lowerer<'a> {
                     for i in 1..args.len() {
                         if let Some(other) = base(i) {
                             for (k, t) in &other.cols {
-                                if let (CrowType::Result(_), Some(mine)) = (t, c.cols.get_mut(k)) {
-                                    if !matches!(mine, CrowType::Result(_)) {
-                                        *mine = CrowType::Result(Box::new(mine.clone()));
+                                if let (Ty::Result(_), Some(mine)) = (t, c.cols.get_mut(k)) {
+                                    if !matches!(mine, Ty::Result(_)) {
+                                        *mine = Ty::Result(Box::new(mine.clone()));
                                     }
                                 }
                             }
@@ -628,7 +628,7 @@ impl<'a> Lowerer<'a> {
                 // with[df, 'col', values]: one more column, typed by what it
                 // is given; named by a variable, a column the type cannot name
                 "with" => {
-                    let value = arg_types.get(2).map(cell_of).unwrap_or(CrowType::Str);
+                    let value = arg_types.get(2).map(cell_of).unwrap_or(Ty::Str);
                     match (base(0), lit(1)) {
                         (Some(b), Some(col)) => {
                             let mut c = (*b).clone();
@@ -672,14 +672,14 @@ impl<'a> Lowerer<'a> {
                 "join" => base(0).map(|left| {
                     let keys = Self::names_in(args.get(2));
                     let how = lit(3).unwrap_or_else(|| "inner".to_string());
-                    let missing = |t: CrowType, can: bool| match t {
-                        CrowType::Result(_) => t,
-                        t if can => CrowType::Result(Box::new(t)),
+                    let missing = |t: Ty, can: bool| match t {
+                        Ty::Result(_) => t,
+                        t if can => Ty::Result(Box::new(t)),
                         t => t,
                     };
                     let left_can_miss = matches!(how.as_str(), "right" | "outer");
                     let right_can_miss = matches!(how.as_str(), "left" | "outer" | "asof");
-                    let mut cols: BTreeMap<String, CrowType> = left.cols.iter().map(|(k, t)| (k.clone(), missing(t.clone(), left_can_miss))).collect();
+                    let mut cols: BTreeMap<String, Ty> = left.cols.iter().map(|(k, t)| (k.clone(), missing(t.clone(), left_can_miss))).collect();
                     let mut open = left.open || keys.is_empty() || (args.len() > 3 && lit(3).is_none());
                     if matches!(how.as_str(), "semi" | "anti") {
                         return Arc::new(Cols { cols, open });
@@ -729,7 +729,7 @@ impl<'a> Lowerer<'a> {
                         open = true;
                     }
                     for key in keys {
-                        let t = b.cols.get(&key).cloned().unwrap_or(CrowType::Json);
+                        let t = b.cols.get(&key).cloned().unwrap_or(Ty::Json);
                         cols.insert(key, t);
                     }
                     for a in args.iter().skip(2) {
@@ -737,21 +737,21 @@ impl<'a> Lowerer<'a> {
                             A::Array(pair) => match (pair.first(), pair.get(1)) {
                                 (Some(A::Str(col)), Some(A::Str(agg))) => {
                                     let (plain, fallible) = match b.cols.get(col) {
-                                        Some(CrowType::Result(t)) => (Some(t.as_ref().clone()), true),
+                                        Some(Ty::Result(t)) => (Some(t.as_ref().clone()), true),
                                         Some(t) => (Some(t.clone()), false),
                                         None => (None, false),
                                     };
                                     let t = match (agg.as_str(), plain) {
-                                        ("count" | "distinct", _) => CrowType::Int,
-                                        (_, None) => CrowType::Json,
-                                        ("sum", Some(CrowType::Int | CrowType::Bool)) => CrowType::Int,
-                                        ("sum", Some(_)) => CrowType::Float,
-                                        ("mean" | "median" | "std" | "var", Some(_)) => CrowType::Float,
+                                        ("count" | "distinct", _) => Ty::Int,
+                                        (_, None) => Ty::Json,
+                                        ("sum", Some(Ty::Int | Ty::Bool)) => Ty::Int,
+                                        ("sum", Some(_)) => Ty::Float,
+                                        ("mean" | "median" | "std" | "var", Some(_)) => Ty::Float,
                                         ("min" | "max" | "first" | "last", Some(t)) => t,
                                         // (a percentile; a word that is none stops the program)
-                                        (_, Some(_)) => CrowType::Float,
+                                        (_, Some(_)) => Ty::Float,
                                     };
-                                    let t = if fallible && !matches!(agg.as_str(), "count" | "distinct" | "sum") { CrowType::Result(Box::new(t)) } else { t };
+                                    let t = if fallible && !matches!(agg.as_str(), "count" | "distinct" | "sum") { Ty::Result(Box::new(t)) } else { t };
                                     cols.insert(format!("{}_{}", col, agg), t);
                                 }
                                 _ => open = true,
@@ -766,7 +766,7 @@ impl<'a> Lowerer<'a> {
                 "pivot" => base(0).map(|b| {
                     let mut cols = BTreeMap::new();
                     if let Some(rows) = lit(1) {
-                        let t = b.cols.get(&rows).cloned().unwrap_or(CrowType::Str);
+                        let t = b.cols.get(&rows).cloned().unwrap_or(Ty::Str);
                         cols.insert(rows, t);
                     }
                     Arc::new(Cols { cols, open: true })

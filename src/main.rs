@@ -38,6 +38,8 @@ mod served;
 mod compiled_harness;
 mod served_parity;
 mod sql_types;
+#[cfg(test)]
+mod totality;
 mod table;
 mod token;
 mod type_infer;
@@ -4617,17 +4619,17 @@ pub(crate) fn tested_by_parts() -> TestedCalls {
 
 /// A type a part alone gave, as a program importing the part spells it: the
 /// part's own structs by their prefixed names.
-fn spelled_as(t: &type_infer::CrowType, names: &std::collections::BTreeMap<String, String>) -> type_infer::CrowType {
-    use type_infer::CrowType as T;
+fn spelled_as(t: &type_infer::Ty, names: &std::collections::BTreeMap<String, String>) -> type_infer::Ty {
+    use type_infer::Ty as T;
     let named = |n: &String| names.get(n).cloned().unwrap_or_else(|| n.clone());
     let spelled = |t: &T| Box::new(spelled_as(t, names));
     match t {
-        T::Struct(n) => T::Struct(named(n)),
-        T::OptBoxStruct(n) => T::OptBoxStruct(named(n)),
-        T::Array(e) => T::Array(spelled(e)),
+        T::Record(n) => T::Record(named(n)),
+        T::OptRecord(n) => T::OptRecord(named(n)),
+        T::List(e) => T::List(spelled(e)),
         T::Map(e) => T::Map(spelled(e)),
         T::Result(e) => T::Result(spelled(e)),
-        T::NumArray(e, dims) => T::NumArray(spelled(e), dims.clone()),
+        T::Tensor(e, dims) => T::Tensor(spelled(e), dims.clone()),
         T::Fn(params, ret) => T::Fn(params.iter().map(|p| spelled_as(p, names)).collect(), spelled(ret)),
         other => other.clone(),
     }
@@ -4996,7 +4998,7 @@ pub(crate) fn declared_record_name(name: &str) -> String {
 }
 
 /// A function's name and the types a test calls it with, call by call.
-type TestedCalls = Vec<(String, Vec<type_infer::CrowType>)>;
+type TestedCalls = Vec<(String, Vec<type_infer::Ty>)>;
 
 /// Each part validated alone: its fingerprint then, and what it found.
 type PartValidations = std::collections::HashMap<std::path::PathBuf, (u64, Result<(), String>)>;
@@ -5957,7 +5959,7 @@ mod module_parts_tests {
         let ctx = infer_and_validate(&lower::lower_program(&stmts).unwrap(), true).unwrap();
         let cols = ctx.vars.get("r").and_then(|t| t.frame_cols().cloned().flatten()).map(|c| c.cols.clone()).unwrap_or_default();
         // columns not declared NOT NULL: their cells can be missing
-        assert_eq!(cols.get("n"), Some(&type_infer::CrowType::Result(Box::new(type_infer::CrowType::Int))), "{:?}", cols);
+        assert_eq!(cols.get("n"), Some(&type_infer::Ty::Result(Box::new(type_infer::Ty::Int))), "{:?}", cols);
         let kept: Vec<_> = std::fs::read_dir(dir.join(".crow/schema")).unwrap().collect();
         assert_eq!(kept.len(), 1, "one statement kept");
         // not answered: a server that is not there types it from the record
@@ -5967,7 +5969,7 @@ mod module_parts_tests {
         let stmts = expand_module_imports(&build(&src).unwrap(), &dir, &mut std::collections::HashSet::new());
         let ctx = infer_and_validate(&lower::lower_program(&stmts).unwrap(), true).unwrap();
         let cols = ctx.vars.get("r").and_then(|t| t.frame_cols().cloned().flatten()).map(|c| c.cols.clone()).unwrap_or_default();
-        assert_eq!(cols.get("px"), Some(&type_infer::CrowType::Result(Box::new(type_infer::CrowType::Float))), "{:?}\n{}", cols, text);
+        assert_eq!(cols.get("px"), Some(&type_infer::Ty::Result(Box::new(type_infer::Ty::Float))), "{:?}\n{}", cols, text);
         assert!(text.contains("\"float?\""), "the record keeps that a column can hold NULL: {}", text);
         assert!(ctx.describe_notes.iter().any(|n| n.contains("typed from .crow/schema")), "{:?}", ctx.describe_notes);
         // not asked (CROW_NO_DESCRIBE): no database answers either, so the
@@ -5976,7 +5978,7 @@ mod module_parts_tests {
         let stmts = expand_module_imports(&build(&src).unwrap(), &dir, &mut std::collections::HashSet::new());
         let ctx = infer_and_validate(&lower::lower_program(&stmts).unwrap(), false).unwrap();
         let cols = ctx.vars.get("r").and_then(|t| t.frame_cols().cloned().flatten()).map(|c| c.cols.clone()).unwrap_or_default();
-        assert_eq!(cols.get("sym"), Some(&type_infer::CrowType::Result(Box::new(type_infer::CrowType::Str))), "{:?}", cols);
+        assert_eq!(cols.get("sym"), Some(&type_infer::Ty::Result(Box::new(type_infer::Ty::Str))), "{:?}", cols);
         assert_eq!(std::fs::read_dir(dir.join(".crow/schema")).unwrap().count(), 1, "one statement kept, as before");
         let _ = std::fs::remove_dir_all(&dir);
     }

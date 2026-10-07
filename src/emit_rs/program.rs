@@ -248,11 +248,11 @@ impl Emitter {
         for h in self.web_handlers.clone() {
             if let Some(f) = self.fns.get_mut(&h) {
                 if let Some(p) = f.params.first_mut() {
-                    p.1 = Ty::Handle("web.request".into());
+                    p.1 = Ty::WebRequest;
                 }
                 // a handler whose value can fail keeps its Result, and its
                 // route answers the failure (route_handler)
-                let response = Ty::Handle("web.response".into());
+                let response = Ty::WebResponse;
                 f.ret = if f.ret.is_result() { Ty::Result(Box::new(response)) } else { response };
             }
         }
@@ -559,7 +559,7 @@ impl Emitter {
             }
             // a connection is infrastructure: a process-wide static, as a
             // mailer is
-            if matches!(fact.ty, Ty::Handle(ref k) if k == "db" || k == "mailer") || matches!(self.tt(&fact.default), CrowType::DbHandle | CrowType::Mailer) {
+            if matches!(fact.ty, Ty::Db | Ty::Mailer) || matches!(self.tt(&fact.default), Ty::Db | Ty::Mailer) {
                 self.static_handle_vars.insert(fact.name.clone());
                 continue;
             }
@@ -570,15 +570,15 @@ impl Emitter {
                 continue;
             }
             let value = fact.default.clone();
-            let declared = crow_type(&fact.ty).text();
+            let declared = as_inferred(&fact.ty).text();
             // (a declared value that can fail is refused where the facts are
             // set: what it holds is the payload)
             let vty = match self.tt(&value) {
-                CrowType::Result(inner) if fact.refuses => *inner,
+                Ty::Result(inner) if fact.refuses => *inner,
                 other => other,
             };
-            let ty = if matches!(declared, CrowType::Unknown) { vty.clone() } else { declared };
-            let widened = matches!(vty, CrowType::Int) && matches!(ty, CrowType::Float);
+            let ty = if matches!(declared, Ty::Unknown) { vty.clone() } else { declared };
+            let widened = matches!(vty, Ty::Int) && matches!(ty, Ty::Float);
             let saved_line = self.current_line;
             self.current_line = fact.line;
             let text = self.top_level_expr(&value);
@@ -591,10 +591,10 @@ impl Emitter {
                 format!("({}) as f64", text)
             } else if open_list {
                 match &ty {
-                    CrowType::Array(inner) => format!("Vec::<{}>::new()", inner.to_rust_type()),
+                    Ty::List(inner) => format!("Vec::<{}>::new()", inner.to_rust_type()),
                     _ => text,
                 }
-            } else if open_map && matches!(ty, CrowType::Map(_)) {
+            } else if open_map && matches!(ty, Ty::Map(_)) {
                 ty.default_rust_value()
             } else {
                 text
@@ -669,7 +669,7 @@ impl Emitter {
             self.line("#[allow(unused_imports)]");
             self.line("use crow_runtime::tensor::CrowTensor;");
         }
-        if self.any_type(&|t| matches!(t, Ty::Handle(k) if k == "sparse")) {
+        if self.any_type(&|t| matches!(t, Ty::Sparse)) {
             self.line("#[allow(unused_imports)]");
             self.line("use crow_runtime::sparse::CrowSparse;");
         }
@@ -972,7 +972,7 @@ impl Emitter {
         fn compares(e: &Emitter, t: &Ty, seen: &mut BTreeSet<String>) -> bool {
             match t {
                 Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) | Ty::Frame(_) | Ty::Column(_) => true,
-                Ty::Handle(h) => h == "sparse",
+                Ty::Sparse => true,
                 Ty::List(i) | Ty::Map(i) | Ty::Result(i) => compares(e, i, seen),
                 Ty::Record(n) | Ty::OptRecord(n) => e.record_compares(n, seen),
                 _ => false,
@@ -996,7 +996,7 @@ impl Emitter {
         self.line(&format!("struct {} {{", s.name));
         self.indent += 1;
         for (f, t) in &s.fields {
-            let rust = crow_type(t).to_rust_type();
+            let rust = as_inferred(t).to_rust_type();
             // a tensor, a frame or a column field is the runtime's type
             if rust.contains("crow_runtime::") {
                 self.needs_crow_runtime = true;
@@ -1006,7 +1006,7 @@ impl Emitter {
         self.indent -= 1;
         self.line("}");
         // the value an error of this struct's type carries: each field's default
-        let defaults: Vec<String> = s.fields.iter().map(|(f, t)| format!("{}: {}", Self::rust_field(f), crow_type(t).default_rust_value())).collect();
+        let defaults: Vec<String> = s.fields.iter().map(|(f, t)| format!("{}: {}", Self::rust_field(f), as_inferred(t).default_rust_value())).collect();
         self.line("#[allow(dead_code)]");
         self.line(&format!("impl {} {{ fn crow_default() -> Self {{ {} {{ {} }} }} }}", s.name, s.name, defaults.join(", ")));
         self.line("");
@@ -1037,11 +1037,11 @@ impl Emitter {
     /// The records whose every field has a JSON form (numbers, text, lists
     /// and maps of them, results of them, tensors, and such records).
     fn json_records(&self) -> BTreeSet<String> {
-        fn jsonable(t: &CrowType, ok: &BTreeSet<String>) -> bool {
+        fn jsonable(t: &Ty, ok: &BTreeSet<String>) -> bool {
             match t {
-                CrowType::Int | CrowType::Float | CrowType::Bool | CrowType::Str | CrowType::Markup | CrowType::Json | CrowType::NumArray(..) => true,
-                CrowType::Array(i) | CrowType::Map(i) | CrowType::Result(i) => jsonable(i, ok),
-                CrowType::Struct(n) => ok.contains(n),
+                Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) => true,
+                Ty::List(i) | Ty::Map(i) | Ty::Result(i) => jsonable(i, ok),
+                Ty::Record(n) => ok.contains(n),
                 _ => false,
             }
         }
@@ -1053,7 +1053,7 @@ impl Emitter {
                 if matches!(name.as_str(), "CrowFindResult" | "CrowShell" | "CrowElapsed" | "CrowReply" | "CrowAnswer") || ok.contains(name) {
                     continue;
                 }
-                if def.fields.iter().all(|(_, t)| jsonable(&crow_type(t), &ok)) {
+                if def.fields.iter().all(|(_, t)| jsonable(&as_inferred(t), &ok)) {
                     ok.insert(name.clone());
                 }
             }
@@ -1096,7 +1096,7 @@ impl Emitter {
     fn ty_shows(&self, t: &Ty, seen: &mut BTreeSet<String>) -> bool {
         match t {
             Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) | Ty::Frame(_) | Ty::Column(_) => true,
-            Ty::Handle(h) => h == "sparse",
+            Ty::Sparse => true,
             Ty::List(i) | Ty::Map(i) | Ty::Result(i) => self.ty_shows(i, seen),
             Ty::Record(n) | Ty::OptRecord(n) => self.record_is(n, &|e, t, seen| e.ty_shows(t, seen), seen),
             _ => false,
@@ -1117,19 +1117,19 @@ impl Emitter {
     /// type's `CrowDisplay`, the runtime's or one written with the program.
     /// (A number, a bool, text, a tensor and a frame show as Rust displays
     /// them, which is the one display's; a JSON value through its own.)
-    pub(crate) fn kernel_displayable(&self, ty: &CrowType) -> bool {
+    pub(crate) fn kernel_displayable(&self, ty: &Ty) -> bool {
         match ty {
             // an empty map's values are no type yet
-            CrowType::Map(inner) if matches!(inner.as_ref(), CrowType::Unknown) => true,
-            CrowType::Array(inner) | CrowType::Map(inner) | CrowType::Result(inner) => self.shows_inside(inner),
-            CrowType::Struct(n) | CrowType::OptBoxStruct(n) => self.struct_kernel_displayable(n),
+            Ty::Map(inner) if matches!(inner.as_ref(), Ty::Unknown) => true,
+            Ty::List(inner) | Ty::Map(inner) | Ty::Result(inner) => self.shows_inside(inner),
+            Ty::Record(n) | Ty::OptRecord(n) => self.struct_kernel_displayable(n),
             _ => false,
         }
     }
 
     /// Whether a value shows inside a list, a map or a record.
-    fn shows_inside(&self, t: &CrowType) -> bool {
-        matches!(t, CrowType::Int | CrowType::Float | CrowType::Bool | CrowType::Str | CrowType::Markup | CrowType::Json | CrowType::NumArray(..) | CrowType::Frame(_) | CrowType::FrameCol | CrowType::Sparse)
+    fn shows_inside(&self, t: &Ty) -> bool {
+        matches!(t, Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) | Ty::Frame(_) | Ty::Column(_) | Ty::Sparse)
             || self.kernel_displayable(t)
     }
 
@@ -1217,25 +1217,25 @@ impl Emitter {
         self.indent += 1;
         self.line("match name {");
         self.indent += 1;
-        let as_json = |t: &CrowType, v: &str| -> Option<String> {
+        let as_json = |t: &Ty, v: &str| -> Option<String> {
             match t {
-                CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Markup | CrowType::Bool | CrowType::Json | CrowType::Frame(_) => {
+                Ty::Int | Ty::Float | Ty::Str | Ty::Markup | Ty::Bool | Ty::Json | Ty::Frame(_) => {
                     Some(format!("serde_json::to_value(&{}).unwrap_or(serde_json::Value::Null)", v))
                 }
-                CrowType::NumArray(..) => Some(format!("crow_runtime::json::ToJson::to_json(&{})", v)),
-                CrowType::Array(i) | CrowType::Map(i) if matches!(i.as_ref(), CrowType::Int | CrowType::Float | CrowType::Str | CrowType::Markup | CrowType::Bool | CrowType::Json) => {
+                Ty::Tensor(..) => Some(format!("crow_runtime::json::ToJson::to_json(&{})", v)),
+                Ty::List(i) | Ty::Map(i) if matches!(i.as_ref(), Ty::Int | Ty::Float | Ty::Str | Ty::Markup | Ty::Bool | Ty::Json) => {
                     Some(format!("serde_json::to_value(&{}).unwrap_or(serde_json::Value::Null)", v))
                 }
-                CrowType::Struct(n) if records.contains(n) => Some(format!("crow_runtime::json::ToJson::to_json(&{})", v)),
+                Ty::Record(n) if records.contains(n) => Some(format!("crow_runtime::json::ToJson::to_json(&{})", v)),
                 _ => None,
             }
         };
         let derives: Vec<(String, Ty)> = self.part.derives.iter().map(|d| (d.name.clone(), d.ty.clone())).collect();
         for (d, ty) in derives {
-            let rt = crow_type(&ty);
+            let rt = as_inferred(&ty);
             let read = format!("__derive_{}(state)", d);
             match &rt {
-                CrowType::Result(inner) => {
+                Ty::Result(inner) => {
                     if let Some(value) = as_json(inner, "_r.value") {
                         self.line(&format!(
                             "\"{}\" => {{ let _r = {}; Some(if _r.ok {{ serde_json::json!({{ \"ok\": true, \"value\": {} }}) }} else {{ serde_json::json!({{ \"ok\": false, \"reason\": _r.reason, \"kind\": _r.kind }}) }}) }},",
@@ -1245,7 +1245,7 @@ impl Emitter {
                 }
                 other => {
                     if let Some(value) = as_json(other, &read) {
-                        if matches!(other, CrowType::NumArray(..)) {
+                        if matches!(other, Ty::Tensor(..)) {
                             self.needs_crow_runtime = true;
                         }
                         self.line(&format!("\"{}\" => Some(serde_json::json!({{ \"ok\": true, \"value\": {} }})),", d, value));
@@ -1312,7 +1312,7 @@ impl Emitter {
                         Ty::Float => format!("_a[{i}].as_f64().or_else(|| _a[{i}].as_str().and_then(|s| s.trim().parse::<f64>().ok())).unwrap_or(0.0)", i = i),
                         Ty::Bool => format!("_a[{i}].as_bool().or_else(|| _a[{i}].as_str().map(|s| s == \"true\")).unwrap_or(false)", i = i),
                         t if by_serde(t) => {
-                            decoded.push((format!("_p{}", i), format!("serde_json::from_value::<{}>(_a[{}].clone()).ok()", crow_type(t).to_rust_type(), i)));
+                            decoded.push((format!("_p{}", i), format!("serde_json::from_value::<{}>(_a[{}].clone()).ok()", as_inferred(t).to_rust_type(), i)));
                             format!("_p{}", i)
                         }
                         _ => format!("_a[{i}].as_str().map(|s| s.to_string()).unwrap_or_else(|| _a[{i}].to_string())", i = i),
@@ -1367,7 +1367,7 @@ impl Emitter {
         }
         if !self.static_handle_vars.is_empty() {
             for n in self.static_handle_vars.clone() {
-                let mailer = self.part.facts.iter().any(|f| f.name == n && (matches!(f.ty, Ty::Handle(ref k) if k == "mailer") || matches!(self.tt(&f.default), CrowType::Mailer)));
+                let mailer = self.part.facts.iter().any(|f| f.name == n && (matches!(f.ty, Ty::Mailer) || matches!(self.tt(&f.default), Ty::Mailer)));
                 let ty = if mailer { "crow_runtime::sys::Mailer" } else { "crow_db::DbHandle" };
                 self.line("#[allow(non_upper_case_globals)]");
                 self.line(&format!("static __crow_handle_{}: std::sync::OnceLock<{}> = std::sync::OnceLock::new();", n, ty));
@@ -1506,12 +1506,12 @@ impl Emitter {
                 let v = self.owned_expr(&fact.default);
                 self.current_line = saved_line;
                 let v = Self::refused_fact(fact, v);
-                let ty = crow_type(&fact.ty).text();
+                let ty = as_inferred(&fact.ty).text();
                 let vty = match self.tt(&fact.default) {
-                    CrowType::Result(inner) if fact.refuses => *inner,
+                    Ty::Result(inner) if fact.refuses => *inner,
                     other => other,
                 };
-                let (ty, v) = if matches!(ty, CrowType::Float) && matches!(vty, CrowType::Int) { (ty, format!("({}) as f64", v)) } else if matches!(ty, CrowType::Unknown) { (vty, v) } else { (ty, v) };
+                let (ty, v) = if matches!(ty, Ty::Float) && matches!(vty, Ty::Int) { (ty, format!("({}) as f64", v)) } else if matches!(ty, Ty::Unknown) { (vty, v) } else { (ty, v) };
                 let kw = if self.mutated.contains(&fact.name) { "let mut" } else { "let" };
                 if format!("{:?}", ty).contains("Unknown") {
                     self.line(&format!("{} {} = {};", kw, fact.name, v));
@@ -1557,8 +1557,8 @@ impl Emitter {
         if self.reactive_vars.is_empty() || !self.has_page_routes {
             return;
         }
-        let facts: Vec<(String, CrowType)> = self.reactive_vars.iter().map(|(n, (t, _))| (n.clone(), t.clone())).collect();
-        let rust_ty = |t: &CrowType| t.to_rust_type();
+        let facts: Vec<(String, Ty)> = self.reactive_vars.iter().map(|(n, (t, _))| (n.clone(), t.clone())).collect();
+        let rust_ty = |t: &Ty| t.to_rust_type();
         self.line("");
         self.line("#[allow(non_snake_case, dead_code)]");
         self.line("#[derive(Clone)]");

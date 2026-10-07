@@ -22,7 +22,7 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use crate::type_infer::CrowType;
+use crate::type_infer::Ty;
 use crate::value::{CrowValue, Value};
 use crow_runtime::tensor::CrowTensor;
 
@@ -45,8 +45,6 @@ pub enum Kind {
     /// `&CrowTensor` taken, `CrowTensor` given: a tensor, or a list of
     /// numbers.
     Tensor,
-    /// `BTreeMap<String, i64>` given.
-    IntMap,
     /// `BTreeMap<String, f64>` given: a test's numbers by name (`ttest`'s
     /// `t` and `p`).
     FloatMap,
@@ -230,57 +228,56 @@ impl Row {
 
     /// The call's type, for inference and the lowering: the answer's, able
     /// to fail when a failure is a value.
-    pub fn crow_type(&self) -> CrowType {
-        let t = self.ret.crow_type();
+    pub fn ty(&self) -> Ty {
+        let t = self.ret.ty();
         match self.fails {
-            Fails::Value(_) => CrowType::Result(Box::new(t)),
+            Fails::Value(_) => Ty::Result(Box::new(t)),
             _ => t,
         }
     }
 }
 
 impl Kind {
-    pub fn crow_type(self) -> CrowType {
+    pub fn ty(self) -> Ty {
         match self {
-            Kind::Int | Kind::Whole => CrowType::Int,
-            Kind::Float => CrowType::Float,
-            Kind::Moment => CrowType::Moment,
-            Kind::Bool => CrowType::Bool,
-            Kind::Str => CrowType::Str,
-            Kind::Tensor => CrowType::tensor(CrowType::Float),
-            Kind::IntMap => CrowType::Map(Box::new(CrowType::Int)),
-            Kind::FloatMap => CrowType::Map(Box::new(CrowType::Float)),
-            Kind::Sizes => CrowType::Array(Box::new(CrowType::Int)),
-            Kind::Tensors | Kind::Groups => CrowType::Array(Box::new(CrowType::tensor(CrowType::Float))),
-            Kind::Unit => CrowType::Void,
-            Kind::Sparse => CrowType::Sparse,
-            Kind::Frame => CrowType::Frame(None),
-            Kind::Strs => CrowType::Array(Box::new(CrowType::Str)),
-            Kind::Chunks => CrowType::Array(Box::new(CrowType::Bytes)),
-            Kind::Bools => CrowType::Array(Box::new(CrowType::Bool)),
-            Kind::Cell | Kind::Cells => CrowType::Unknown,
-            Kind::Lists => CrowType::Array(Box::new(CrowType::Array(Box::new(CrowType::Str)))),
-            Kind::Words | Kind::Texts => CrowType::Array(Box::new(CrowType::Str)),
-            Kind::Ints => CrowType::Array(Box::new(CrowType::Int)),
-            Kind::Floats => CrowType::Array(Box::new(CrowType::Float)),
-            Kind::Json => CrowType::Json,
-            Kind::Column => CrowType::FrameCol,
-            Kind::Bytes => CrowType::Bytes,
-            Kind::Stream => CrowType::Stream,
-            Kind::Markup => CrowType::Markup,
-            Kind::TextRows => CrowType::Array(Box::new(CrowType::Map(Box::new(CrowType::Str)))),
-            Kind::Shell => CrowType::Struct("CrowShell".to_string()),
-            Kind::Reply => CrowType::Struct("CrowReply".to_string()),
-            Kind::Answer => CrowType::Struct("CrowAnswer".to_string()),
-            Kind::Response => CrowType::WebResponse,
-            Kind::Socket => CrowType::Socket,
-            Kind::Mailer => CrowType::Mailer,
-            Kind::TextMap => CrowType::Map(Box::new(CrowType::Str)),
-            Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn | Kind::Operands | Kind::Operand | Kind::Scalars | Kind::Scalar => CrowType::Unknown,
-            Kind::JsonList => CrowType::Array(Box::new(CrowType::Json)),
+            Kind::Int | Kind::Whole => Ty::Int,
+            Kind::Float => Ty::Float,
+            Kind::Moment => Ty::Moment,
+            Kind::Bool => Ty::Bool,
+            Kind::Str => Ty::Str,
+            Kind::Tensor => Ty::tensor(Ty::Float),
+            Kind::FloatMap => Ty::Map(Box::new(Ty::Float)),
+            Kind::Sizes => Ty::List(Box::new(Ty::Int)),
+            Kind::Tensors | Kind::Groups => Ty::List(Box::new(Ty::tensor(Ty::Float))),
+            Kind::Unit => Ty::Unit,
+            Kind::Sparse => Ty::Sparse,
+            Kind::Frame => Ty::Frame(None),
+            Kind::Strs => Ty::List(Box::new(Ty::Str)),
+            Kind::Chunks => Ty::List(Box::new(Ty::Bytes)),
+            Kind::Bools => Ty::List(Box::new(Ty::Bool)),
+            Kind::Cell | Kind::Cells => Ty::Unknown,
+            Kind::Lists => Ty::List(Box::new(Ty::List(Box::new(Ty::Str)))),
+            Kind::Words | Kind::Texts => Ty::List(Box::new(Ty::Str)),
+            Kind::Ints => Ty::List(Box::new(Ty::Int)),
+            Kind::Floats => Ty::List(Box::new(Ty::Float)),
+            Kind::Json => Ty::Json,
+            Kind::Column => Ty::Column(Box::new(Ty::Unknown)),
+            Kind::Bytes => Ty::Bytes,
+            Kind::Stream => Ty::Stream,
+            Kind::Markup => Ty::Markup,
+            Kind::TextRows => Ty::List(Box::new(Ty::Map(Box::new(Ty::Str)))),
+            Kind::Shell => Ty::Record("CrowShell".to_string()),
+            Kind::Reply => Ty::Record("CrowReply".to_string()),
+            Kind::Answer => Ty::Record("CrowAnswer".to_string()),
+            Kind::Response => Ty::WebResponse,
+            Kind::Socket => Ty::Socket,
+            Kind::Mailer => Ty::Mailer,
+            Kind::TextMap => Ty::Map(Box::new(Ty::Str)),
+            Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn | Kind::Operands | Kind::Operand | Kind::Scalars | Kind::Scalar => Ty::Unknown,
+            Kind::JsonList => Ty::List(Box::new(Ty::Json)),
             // what the arguments' items are: inference types the call from
             // them (a generic row's answer is the list or map it was given)
-            Kind::List | Kind::Seq | Kind::Item | Kind::ItemRef | Kind::MapOf | Kind::MapRef => CrowType::Unknown,
+            Kind::List | Kind::Seq | Kind::Item | Kind::ItemRef | Kind::MapOf | Kind::MapRef => Ty::Unknown,
         }
     }
 
@@ -355,7 +352,7 @@ impl Kind {
             Kind::Bool => "false",
             Kind::Str => "String::new()",
             Kind::Tensor => "crow_runtime::tensor::CrowTensor::from_vec(vec![], vec![0])",
-            Kind::IntMap | Kind::FloatMap => "std::collections::BTreeMap::new()",
+            Kind::FloatMap => "std::collections::BTreeMap::new()",
             Kind::Sizes => "Vec::<i64>::new()",
             Kind::Tensors | Kind::Groups => "Vec::<crow_runtime::tensor::CrowTensor>::new()",
             Kind::Unit => "()",
@@ -603,10 +600,6 @@ pub fn write_str(s: String) -> CrowValue {
 
 pub fn write_tensor(t: CrowTensor) -> CrowValue {
     CrowValue::ok(Value::NumArray(Box::new(t)))
-}
-
-pub fn write_int_map(m: BTreeMap<String, i64>) -> CrowValue {
-    CrowValue::ok(Value::Map(m.into_iter().map(|(k, v)| (k, write_int(v))).collect()))
 }
 
 pub fn write_frame(f: crow_runtime::frame::CrowFrame) -> CrowValue {
@@ -1089,7 +1082,6 @@ macro_rules! answer {
     (Bool, $x:expr) => { write_bool($x) };
     (Str, $x:expr) => { write_str($x) };
     (Tensor, $x:expr) => { write_tensor($x) };
-    (IntMap, $x:expr) => { write_int_map($x) };
     (Frame, $x:expr) => { write_frame($x) };
     (Column, $x:expr) => { write_column($x) };
     (Bytes, $x:expr) => { write_bytes($x) };
@@ -1241,10 +1233,10 @@ pub fn crow_arguments(row: &Row, vals: &[CrowValue]) -> Result<Vec<CrowValue>, S
 /// one form every such value takes in Crow, read back with `json[…]`. The
 /// lowering hands the call `encode[value]` (`crow_call_args`) and the
 /// interpreter the same (`value_as`).
-pub fn crow_param_type(k: Kind) -> CrowType {
+pub fn crow_param_type(k: Kind) -> Ty {
     match k {
-        Kind::Encoded => CrowType::Str,
-        other => other.crow_type(),
+        Kind::Encoded => Ty::Str,
+        other => other.ty(),
     }
 }
 
@@ -2046,35 +2038,38 @@ impl Arg {
         }
     }
 
-    pub fn of_type(t: &CrowType) -> Arg {
+    pub fn of_type(t: &Ty) -> Arg {
         match t {
             // a value that can fail is handed on as its error before the
             // call: the call takes what it holds
-            CrowType::Result(inner) => Arg::of_type(inner),
-            CrowType::Int => Arg::Int,
-            CrowType::Float => Arg::Float,
-            CrowType::Moment => Arg::Moment,
-            CrowType::Json => Arg::Json,
-            CrowType::Array(inner) => match inner.as_ref() {
-                CrowType::Unknown => Arg::AnyList,
-                CrowType::Result(item) if matches!(item.as_ref(), CrowType::Int | CrowType::Float) => Arg::FallibleNumbers,
-                CrowType::Result(_) => Arg::Fallible,
+            Ty::Result(inner) => Arg::of_type(inner),
+            Ty::Int => Arg::Int,
+            Ty::Float => Arg::Float,
+            Ty::Moment => Arg::Moment,
+            Ty::Json => Arg::Json,
+            Ty::List(inner) => match inner.as_ref() {
+                Ty::Unknown => Arg::AnyList,
+                Ty::Result(item) if matches!(item.as_ref(), Ty::Int | Ty::Float) => Arg::FallibleNumbers,
+                Ty::Result(_) => Arg::Fallible,
                 i => Arg::of_items(Arg::of_type(i)),
             },
-            CrowType::NumArray(..) => Arg::Tensor,
-            CrowType::FrameCol => Arg::Column,
-            CrowType::Str | CrowType::Markup => Arg::Text,
-            CrowType::Bool => Arg::Truth,
-            CrowType::Map(_) => Arg::Map,
-            CrowType::Struct(_) | CrowType::OptBoxStruct(_) => Arg::Record,
-            CrowType::Sparse => Arg::Sparse,
-            CrowType::Bytes => Arg::Bytes,
-            CrowType::Stream => Arg::Stream,
-            CrowType::Socket => Arg::Socket,
-            CrowType::Mailer => Arg::Mailer,
-            CrowType::Frame(_) => Arg::Frame,
-            CrowType::Fn(..) => Arg::Fn,
-            _ => Arg::Unknown,
+            Ty::Tensor(..) => Arg::Tensor,
+            Ty::Column(_) => Arg::Column,
+            Ty::Str | Ty::Markup => Arg::Text,
+            Ty::Bool => Arg::Truth,
+            Ty::Map(_) => Arg::Map,
+            Ty::Record(_) | Ty::OptRecord(_) => Arg::Record,
+            Ty::Sparse => Arg::Sparse,
+            Ty::Bytes => Arg::Bytes,
+            Ty::Stream => Arg::Stream,
+            Ty::Socket => Arg::Socket,
+            Ty::Mailer => Arg::Mailer,
+            Ty::Frame(_) => Arg::Frame,
+            Ty::Fn(..) => Arg::Fn,
+            // (no row takes a handle a program cannot hand on, a view's
+            // node, nothing, or what is not known: each is read by the
+            // value as the program runs)
+            Ty::Db | Ty::Tx | Ty::WebApp | Ty::WebRequest | Ty::WebResponse | Ty::App | Ty::Node | Ty::Unit | Ty::Unknown => Arg::Unknown,
         }
     }
 
@@ -2150,7 +2145,7 @@ impl Kind {
             Kind::Sizes => "sizes",
             Kind::Groups => "tensors",
             Kind::Lists => "lists of text",
-            Kind::IntMap | Kind::FloatMap | Kind::MapOf | Kind::MapRef | Kind::TextMap => "a map",
+            Kind::FloatMap | Kind::MapOf | Kind::MapRef | Kind::TextMap => "a map",
             Kind::Unit => "nothing",
             Kind::List | Kind::Seq => "a list",
             Kind::Item | Kind::ItemRef => "a value",
@@ -2242,6 +2237,40 @@ fn takes(row: &Row, args: &[Arg]) -> bool {
 /// A module's row of a name that takes these arguments, or none: what
 /// tells two modules' rows of one name apart (sys's `send` of a stream,
 /// a socket's of a socket).
+/// The module a bare call reaches, decided once for every pipeline: type
+/// inference typing the call and the lowering naming its row read this
+/// one answer. (Each had picked by a rule of its own — inference by the
+/// first argument's type, the lowering by every argument's kind — and
+/// `where` of a mask was math's to the one and the frame's to the other,
+/// so the variable holding the column was declared a tensor and the
+/// compiled program did not build.) The core's row the kinds pick comes
+/// first; else, among the modules in scope that answer the name, the one
+/// whose row takes the kinds, where exactly one does; else, where the
+/// kinds do not settle it, the first argument's class — a frame or its
+/// column the frame's, a tensor or a list math's; else none.
+pub fn module_of_bare(name: &str, providers: &[&str], kinds: &[Arg]) -> Option<String> {
+    if providers.is_empty() {
+        return None;
+    }
+    let unknown = kinds.iter().any(|k| matches!(k, Arg::Unknown | Arg::AnyList));
+    if !unknown && core_row(name, kinds).is_some() {
+        return None;
+    }
+    if providers.len() == 1 {
+        return Some(providers[0].to_string());
+    }
+    let taking: Vec<&&str> = providers.iter().filter(|m| row_taking(m, name, kinds).is_some()).collect();
+    if taking.len() == 1 {
+        return Some(taking[0].to_string());
+    }
+    let by_first = match kinds.first() {
+        Some(Arg::Frame | Arg::Column) => "frame",
+        Some(Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Tensors | Arg::Texts | Arg::Truths | Arg::Records | Arg::Maps | Arg::Items | Arg::AnyList | Arg::FallibleNumbers | Arg::Fallible) => "math",
+        _ => return None,
+    };
+    providers.contains(&by_first).then(|| by_first.to_string())
+}
+
 pub fn row_taking(module: &str, name: &str, args: &[Arg]) -> Option<&'static Row> {
     ROWS.iter().find(|r| r.module == module && r.name == name && takes(r, args))
 }
@@ -2336,9 +2365,9 @@ mod tests {
         let r = by_id("text.repeat").expect("the row");
         assert_eq!(r.rust_path(), "crow_runtime::text::repeat");
         assert_eq!(r.params, &[Kind::Str, Kind::Int]);
-        assert_eq!(r.crow_type(), CrowType::Str);
-        assert_eq!(by_id("moments.moment_text").expect("the row").crow_type(), CrowType::Result(Box::new(CrowType::Moment)));
-        assert_eq!(by_id("moments.now").expect("the row").crow_type(), CrowType::Moment);
+        assert_eq!(r.ty(), Ty::Str);
+        assert_eq!(by_id("moments.moment_text").expect("the row").ty(), Ty::Result(Box::new(Ty::Moment)));
+        assert_eq!(by_id("moments.now").expect("the row").ty(), Ty::Moment);
     }
 
     #[test]
@@ -2351,6 +2380,30 @@ mod tests {
         assert!(bad.is_error());
         assert_eq!(bad.kind(), "time");
         assert_eq!(bad.trace(), &["t:3".to_string()]);
+    }
+
+    /// The one row choice for a bare name, as inference and the lowering
+    /// both read it: the core's row the kinds fit, else the one module whose
+    /// row takes them, else the first argument's class, else none.
+    #[test]
+    fn a_bare_name_reaches_one_module_by_its_kinds() {
+        let both = ["frame", "math"];
+        // where of a mask, a column and an int is the frame's; of three tensors math's
+        assert_eq!(module_of_bare("where", &both, &[Arg::Truths, Arg::Column, Arg::Int]), Some("frame".to_string()));
+        assert_eq!(module_of_bare("where", &both, &[Arg::Tensor, Arg::Tensor, Arg::Tensor]), Some("math".to_string()));
+        // sort of a list is the core's (none), of a frame the frame's
+        assert_eq!(module_of_bare("sort", &["frame"], &[Arg::Ints]), None);
+        assert_eq!(module_of_bare("sort", &["frame"], &[Arg::Frame, Arg::Text]), Some("frame".to_string()));
+        // a kind not known yet is taken by any row, so the count decides:
+        // unique of a frame and a name fits the frame's rows, of one value
+        // math's; of a list the kinds pick math's (the core's unique is a
+        // tensor's)
+        assert_eq!(module_of_bare("unique", &both, &[Arg::Frame, Arg::Unknown]), Some("frame".to_string()));
+        assert_eq!(module_of_bare("unique", &both, &[Arg::Unknown]), Some("math".to_string()));
+        assert_eq!(module_of_bare("stack", &both, &[Arg::Unknown, Arg::Unknown]), None, "two rows take two unknowns and the class of nothing is nothing");
+        // one provider is reached whatever the kinds say
+        assert_eq!(module_of_bare("rank", &["math"], &[Arg::Unknown]), Some("math".to_string()));
+        assert_eq!(module_of_bare("nope", &[], &[Arg::Int]), None);
     }
 
     /// A core builtin is a row, has a form of its own, or is still to move,
@@ -2473,14 +2526,14 @@ mod tests {
     /// whose items' kind shows as the program runs.
     #[test]
     fn a_list_is_what_its_items_are() {
-        let fallible = CrowType::Array(Box::new(CrowType::Result(Box::new(CrowType::Float))));
+        let fallible = Ty::List(Box::new(Ty::Result(Box::new(Ty::Float))));
         assert_eq!(Arg::of_type(&fallible), Arg::FallibleNumbers);
         assert!(core_row("sum", &[Arg::FallibleNumbers]).is_none(), "sum is math's");
         assert!(module("math", "sum", &[Arg::FallibleNumbers]).is_some_and(|r| takes(r, &[Arg::FallibleNumbers])));
         // a list of parsed values is a list, whatever its items turn out to
         // be: a list's parameter takes it, a text's does not
-        assert_eq!(Arg::of_type(&CrowType::Array(Box::new(CrowType::Json))), Arg::AnyList);
-        assert_eq!(Arg::of_type(&CrowType::Array(Box::new(CrowType::Unknown))), Arg::AnyList);
+        assert_eq!(Arg::of_type(&Ty::List(Box::new(Ty::Json))), Arg::AnyList);
+        assert_eq!(Arg::of_type(&Ty::List(Box::new(Ty::Unknown))), Arg::AnyList);
         assert_eq!(core_row("len", &[Arg::AnyList]).map(|r| r.id), Some("core.len"));
         assert!(core_row("upper", &[Arg::AnyList]).is_none());
         assert!(refusal(&[""], "upper", &[Arg::AnyList]).is_some());

@@ -4,7 +4,7 @@
 
 use crate::ast::Stmt;
 use crate::token::Token;
-use crate::type_infer::CrowType;
+use crate::type_infer::Ty;
 use lsp_types::{
     CompletionItem, CompletionItemKind, DocumentSymbol, Location, Position, Range, SymbolKind,
     Uri,
@@ -317,23 +317,23 @@ fn struct_detail(name: &str, s: &crate::type_infer::StructSig) -> String {
 }
 
 /// User-facing type names, matching the language's vocabulary.
-pub fn type_name(ty: &CrowType) -> String {
+pub fn type_name(ty: &Ty) -> String {
     match ty {
-        CrowType::Int => "int".into(),
-        CrowType::Float => "float".into(),
-        CrowType::Bool => "bool".into(),
-        CrowType::Str => "str".into(),
-        CrowType::Array(inner) => format!("array of {}", type_name(inner)),
-        CrowType::Map(inner) => format!("map of {}", type_name(inner)),
-        CrowType::Struct(name) | CrowType::OptBoxStruct(name) => name.clone(),
-        CrowType::Fn(params, ret) => format!(
+        Ty::Int => "int".into(),
+        Ty::Float => "float".into(),
+        Ty::Bool => "bool".into(),
+        Ty::Str => "str".into(),
+        Ty::List(inner) => format!("array of {}", type_name(inner)),
+        Ty::Map(inner) => format!("map of {}", type_name(inner)),
+        Ty::Record(name) | Ty::OptRecord(name) => name.clone(),
+        Ty::Fn(params, ret) => format!(
             "fn[{}] -> {}",
             params.iter().map(type_name).collect::<Vec<_>>().join(", "),
             type_name(ret)
         ),
-        CrowType::Result(inner) => format!("result of {}", type_name(inner)),
-        CrowType::Json => "json".into(),
-        CrowType::NumArray(inner, _) => format!("tensor of {}", type_name(inner)),
+        Ty::Result(inner) => format!("result of {}", type_name(inner)),
+        Ty::Json => "json".into(),
+        Ty::Tensor(inner, _) => format!("tensor of {}", type_name(inner)),
         other => format!("{:?}", other).to_lowercase(),
     }
 }

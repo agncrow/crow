@@ -149,7 +149,7 @@ pub(super) struct Checks {
     /// The type each of the current function's own variables was first
     /// given: a local reusing a module variable's name is a new binding
     /// (spec §7), so its type is its own, not the module's.
-    pub local_types: HashMap<String, CrowType>,
+    pub local_types: HashMap<String, Ty>,
     /// Inside a test attached to a function (`test[p]` after it), which
     /// sees what a caller of that function sees.
     pub attached_test: bool,
@@ -326,11 +326,11 @@ impl<'a> Lowerer<'a> {
     /// of an unknown type, not of none (inference types such a function as
     /// returning nothing until it knows), so an error in the function is not
     /// blamed on its callers too.
-    pub(super) fn checked(&self, x: &Expr) -> CrowType {
+    pub(super) fn checked(&self, x: &Expr) -> Ty {
         if let Expr::Call { target: Target::User(f), .. } = x {
             let returns = self.ctx.functions.get(f).map_or(false, |sig| returns_value(&sig.body));
-            if returns && matches!(self.ctx.functions.get(f).map(|s| &s.return_type), Some(CrowType::Void)) {
-                return CrowType::Unknown;
+            if returns && matches!(self.ctx.functions.get(f).map(|s| &s.return_type), Some(Ty::Unit)) {
+                return Ty::Unknown;
             }
         }
         read(x)
@@ -473,24 +473,24 @@ impl<'a> Lowerer<'a> {
 
     /// An assignment: a derivation is not assigned, and a variable keeps the
     /// type it was first given.
-    pub(super) fn check_assign(&mut self, name: &str, new_ty: &CrowType) {
+    pub(super) fn check_assign(&mut self, name: &str, new_ty: &Ty) {
         let in_local_scope = self.in_fn().is_some() && !(self.v.reactive && self.v.module_vars.contains(name));
         let existing = if in_local_scope { self.v.local_types.get(name).cloned() } else { self.ctx.vars.get(name).cloned() };
-        if in_local_scope && !matches!(new_ty, CrowType::Unknown) {
+        if in_local_scope && !matches!(new_ty, Ty::Unknown) {
             self.v.local_types.entry(name.to_string()).or_insert_with(|| new_ty.clone());
         }
         let Some(existing_ty) = existing else { return };
         // Assignment into a typed variable is a consumption point: result[T]
         // unwraps into T (the function stops on the error) — not a type change.
-        let unwraps = matches!(new_ty, CrowType::Result(inner)
+        let unwraps = matches!(new_ty, Ty::Result(inner)
             if existing_ty.compatible(inner)
-                || (matches!(existing_ty, CrowType::Float) && matches!(inner.as_ref(), CrowType::Int)))
-            || matches!(&existing_ty, CrowType::Result(inner) if inner.compatible(new_ty));
-        if !unwraps && !existing_ty.compatible(new_ty) && !matches!(existing_ty, CrowType::Unknown) && !matches!(new_ty, CrowType::Unknown) {
+                || (matches!(existing_ty, Ty::Float) && matches!(inner.as_ref(), Ty::Int)))
+            || matches!(&existing_ty, Ty::Result(inner) if inner.compatible(new_ty));
+        if !unwraps && !existing_ty.compatible(new_ty) && !matches!(existing_ty, Ty::Unknown) && !matches!(new_ty, Ty::Unknown) {
             // a value whose type the program does not know (a cell of a
             // column no database described, a parsed document's member)
             // says what it is first
-            let unknown = matches!(new_ty, CrowType::Json) || matches!(new_ty, CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::Json));
+            let unknown = matches!(new_ty, Ty::Json) || matches!(new_ty, Ty::Result(inner) if matches!(inner.as_ref(), Ty::Json));
             let why = if unknown {
                 "a value whose type the program does not know is read as one first: str[…], int[…] or float[…]"
             } else {
@@ -557,17 +557,17 @@ impl<'a> Lowerer<'a> {
     }
 
     /// An arithmetic operator's operands, by the types they were lowered to.
-    pub(super) fn check_binop(&mut self, op: &BinOp, lt: CrowType, rt: CrowType) {
-        let lt = if let CrowType::Result(inner) = lt { *inner } else { lt };
-        let rt = if let CrowType::Result(inner) = rt { *inner } else { rt };
-        if matches!(lt, CrowType::Unknown) || matches!(rt, CrowType::Unknown) {
+    pub(super) fn check_binop(&mut self, op: &BinOp, lt: Ty, rt: Ty) {
+        let lt = if let Ty::Result(inner) = lt { *inner } else { lt };
+        let rt = if let Ty::Result(inner) = rt { *inner } else { rt };
+        if matches!(lt, Ty::Unknown) || matches!(rt, Ty::Unknown) {
             return;
         }
         if !matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod) {
             return;
         }
         // String + is not allowed — use interpolation instead
-        if matches!(op, BinOp::Add) && (matches!(lt, CrowType::Str) || matches!(rt, CrowType::Str)) {
+        if matches!(op, BinOp::Add) && (matches!(lt, Ty::Str) || matches!(rt, Ty::Str)) {
             self.refuse("cannot use '+' with strings — interpolate to combine ('`a` `b`'), or collect parts and join[parts, sep] to build".to_string());
             return;
         }
@@ -575,16 +575,16 @@ impl<'a> Lowerer<'a> {
         // frame's column as its numbers); a list of text is no numbers (the
         // compiled program had parsed it, where the interpreter made each
         // item an error)
-        let is_num_like = |t: &CrowType| matches!(t, CrowType::Int | CrowType::Float | CrowType::NumArray(..) | CrowType::Sparse | CrowType::FrameCol);
+        let is_num_like = |t: &Ty| matches!(t, Ty::Int | Ty::Float | Ty::Tensor(..) | Ty::Sparse | Ty::Column(_));
         // a moment: on or back by seconds, and the seconds between two
-        let moment = |t: &CrowType| matches!(t, CrowType::Moment);
+        let moment = |t: &Ty| matches!(t, Ty::Moment);
         if moment(&lt) || moment(&rt) {
             // (a side nothing has typed yet — a parameter typed by its
             // callers — is judged where it is known)
-            if matches!(lt, CrowType::Unknown) || matches!(rt, CrowType::Unknown) {
+            if matches!(lt, Ty::Unknown) || matches!(rt, Ty::Unknown) {
                 return;
             }
-            let number = |t: &CrowType| matches!(t, CrowType::Int | CrowType::Float);
+            let number = |t: &Ty| matches!(t, Ty::Int | Ty::Float);
             let allowed = match op {
                 BinOp::Add => (moment(&lt) && number(&rt)) || (number(&lt) && moment(&rt)),
                 BinOp::Sub => moment(&lt) && (number(&rt) || moment(&rt)),
@@ -605,7 +605,7 @@ impl<'a> Lowerer<'a> {
             };
             // a value whose type is not known (a cell of a column nothing
             // typed, a parsed document's member) says what it is first
-            let hint = if matches!(lt, CrowType::Json) || matches!(rt, CrowType::Json) {
+            let hint = if matches!(lt, Ty::Json) || matches!(rt, Ty::Json) {
                 " — a value whose type the program does not know is read as one first: int[…], float[…] or str[…]"
             } else {
                 ""
@@ -708,11 +708,11 @@ impl<'a> Lowerer<'a> {
     /// A field read from a record; a list has `len` and no other field (a
     /// list of tensors asked its `.shape` had stopped interpreted and not
     /// built compiled).
-    pub(super) fn check_field(&mut self, obj_type: &CrowType, field: &str) {
+    pub(super) fn check_field(&mut self, obj_type: &Ty, field: &str) {
         if matches!(field, "ok" | "reason" | "kind" | "trace") {
             return;
         }
-        if matches!(obj_type, CrowType::Array(_)) && field != "len" {
+        if matches!(obj_type, Ty::List(_)) && field != "len" {
             let owner = match field {
                 "shape" | "dtype" | "device" => "a tensor's",
                 "columns" | "dtypes" => "a frame's",
@@ -721,7 +721,7 @@ impl<'a> Lowerer<'a> {
             self.refuse(format!("a list has no field '{}': `.{}` is {} — index an item for its own", field, field, owner));
             return;
         }
-        if let CrowType::Struct(name) = obj_type {
+        if let Ty::Record(name) = obj_type {
             if let Some(sig) = self.ctx.structs.get(name) {
                 if !sig.fields.iter().any(|(f, _)| f == field) {
                     let name = name.clone();
@@ -768,7 +768,7 @@ impl<'a> Lowerer<'a> {
     /// A builtin with rows takes the counts and kinds its rows take — the
     /// core's, and a loaded module's of the same name — refused in the
     /// table's words when none does.
-    fn refuse_kinds(&mut self, name: &str, argc: usize, types: &[CrowType]) {
+    fn refuse_kinds(&mut self, name: &str, argc: usize, types: &[Ty]) {
         if !crate::table::has_core_rows(name) {
             return;
         }
@@ -799,8 +799,8 @@ impl<'a> Lowerer<'a> {
         found.next().is_none().then_some(first)
     }
 
-    pub(super) fn check_call(&mut self, name: &str, args: &[A], types: &[CrowType]) {
-        let arg_type = |_: &Self, i: usize| -> CrowType { types.get(i).cloned().unwrap_or(CrowType::Unknown) };
+    pub(super) fn check_call(&mut self, name: &str, args: &[A], types: &[Ty]) {
+        let arg_type = |_: &Self, i: usize| -> Ty { types.get(i).cloned().unwrap_or(Ty::Unknown) };
         // a message is sent once, and a render or a derivation runs
         // whenever the page needs it (mail's row is web.mail's, written in
         // Crow; the rule is the session's, wherever the name resolves)
@@ -816,7 +816,7 @@ impl<'a> Lowerer<'a> {
                 }
             }
         }
-        if name == "route" && !self.defined("route") && !matches!(arg_type(self, 0), CrowType::Str | CrowType::Unknown) {
+        if name == "route" && !self.defined("route") && !matches!(arg_type(self, 0), Ty::Str | Ty::Unknown) {
             self.refuse("route[] takes a path first — the app is implicit: route['/', handler]".to_string());
         }
         // Test-harness builtins exist only inside test blocks (which never
@@ -893,11 +893,11 @@ impl<'a> Lowerer<'a> {
         // Crow terms before either backend meets it.
         if name == "set" && argc == 3 {
             let map_ty = arg_type(self, 0);
-            let map_ty = if let CrowType::Result(i) = map_ty { *i } else { map_ty };
-            if let CrowType::Map(inner) = &map_ty {
+            let map_ty = if let Ty::Result(i) = map_ty { *i } else { map_ty };
+            if let Ty::Map(inner) = &map_ty {
                 let val_ty = arg_type(self, 2);
-                let val_ty = if let CrowType::Result(i) = val_ty { *i } else { val_ty };
-                if !matches!(inner.as_ref(), CrowType::Unknown) && !matches!(val_ty, CrowType::Unknown | CrowType::Void) && !inner.compatible(&val_ty) {
+                let val_ty = if let Ty::Result(i) = val_ty { *i } else { val_ty };
+                if !matches!(inner.as_ref(), Ty::Unknown) && !matches!(val_ty, Ty::Unknown | Ty::Unit) && !inner.compatible(&val_ty) {
                     self.refuse(format!(
                         "map values must all be the same type — this map holds {} values, cannot add {} (use a struct for mixed named data)",
                         inner.crow_name(),
@@ -1083,10 +1083,10 @@ impl<'a> Lowerer<'a> {
             // type, size and path there
             if name == "field" && argc == 4 && matches!(&args[2], A::Str(k) if k == "file") {
                 let t = match arg_type(self, 1) {
-                    CrowType::Result(inner) => *inner,
+                    Ty::Result(inner) => *inner,
                     other => other,
                 };
-                if !matches!(t, CrowType::Map(_) | CrowType::Unknown) {
+                if !matches!(t, Ty::Map(_) | Ty::Unknown) {
                     self.refuse(format!("a file field binds a map, which holds the file picked — declare it `name = map[]` (got {})", t.crow_name()));
                 }
             }
@@ -1107,10 +1107,10 @@ impl<'a> Lowerer<'a> {
             // before the program runs
             if name == "sign_in" && argc == 1 {
                 let t = match arg_type(self, 0) {
-                    CrowType::Result(inner) => *inner,
+                    Ty::Result(inner) => *inner,
                     other => other,
                 };
-                if !matches!(&t, CrowType::Map(inner) if matches!(inner.as_ref(), CrowType::Str | CrowType::Unknown)) && !matches!(t, CrowType::Unknown) {
+                if !matches!(&t, Ty::Map(inner) if matches!(inner.as_ref(), Ty::Str | Ty::Unknown)) && !matches!(t, Ty::Unknown) {
                     self.refuse(format!(
                         "sign_in[] takes the reader as a map of strings — an id, a name, a role: sign_in[map[id = '42', name = 'Ada']] (got {})",
                         t.crow_name()
@@ -1159,7 +1159,7 @@ impl<'a> Lowerer<'a> {
 
         // A variable holding a function, a list or a map
         if self.defined(name) {
-            if let Some(CrowType::Fn(params, _)) = self.ctx.vars.get(name).cloned() {
+            if let Some(Ty::Fn(params, _)) = self.ctx.vars.get(name).cloned() {
                 let expected = params.len();
                 if argc != expected {
                     self.refuse(format!("'{}' expects {} argument{}, got {}", name, expected, if expected == 1 { "" } else { "s" }, argc));
@@ -1168,10 +1168,10 @@ impl<'a> Lowerer<'a> {
                 // among them (the compiled program did not build otherwise)
                 for (i, p) in params.iter().enumerate() {
                     let given = match arg_type(self, i) {
-                        CrowType::Result(inner) => *inner,
+                        Ty::Result(inner) => *inner,
                         other => other,
                     };
-                    if matches!(p, CrowType::Str) && !matches!(given, CrowType::Str | CrowType::Markup | CrowType::Unknown | CrowType::Void) {
+                    if matches!(p, Ty::Str) && !matches!(given, Ty::Str | Ty::Markup | Ty::Unknown | Ty::Unit) {
                         self.refuse(format!("{}[] takes text, and this is {}: write it into text, {}['`…`']", name, given.crow_name(), name));
                     }
                 }

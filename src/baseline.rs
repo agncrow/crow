@@ -1050,7 +1050,10 @@ pub fn derive_artifacts(stmts: &[Stmt], ctx: &TypeContext, parts: &BTreeMap<Stri
 
     // facts
     for f in &facts {
-        let ty = ctx.vars.get(f).map(|t| format!("{:?}", t).to_lowercase()).unwrap_or_else(|| "unknown".into());
+        // (in Crow's own words — `array[str]`, `frame`, `moment` — not the
+        // compiler's names for them, which a refactor renames and a
+        // baseline would then report as a change in every fact)
+        let ty = ctx.vars.get(f).map(|t| t.crow_name()).unwrap_or_else(|| "unknown".into());
         let mut text = format!("fact {} ({})\n  type: {}\n", f, m.file_of(f), ty);
         let ws = writers.get(f).map(|s| s.iter().cloned().collect::<Vec<_>>()).unwrap_or_default();
         text.push_str(&format!("  written by: {}\n", if ws.is_empty() { "nobody".to_string() } else { ws.join(", ") }));

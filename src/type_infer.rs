@@ -19,66 +19,9 @@ pub fn join_dims(a: &Option<Dims>, b: &Option<Dims>) -> Option<Dims> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum CrowType {
-    Int,
-    Float,
-    Bool,
-    Str,
-    /// A moment: an instant and the offset it was written in (moments.rs).
-    Moment,
-    /// Markup a view, an element or `doc` made: a string everywhere a
-    /// string is read, and the one kind of string a view places as markup.
-    /// Every other string is text (`infer_expr` reads it as `Str`; only
-    /// `infer_expr_full` and the placing of children tell them apart).
-    Markup,
-    Array(Box<CrowType>),
-    Map(Box<CrowType>),
-    Struct(String),
-    /// Recursive/optional struct field: Option<Box<StructName>>
-    /// Used when a struct field holds both a sentinel (e.g. 0) and a recursive struct reference.
-    OptBoxStruct(String),
-    Fn(Vec<CrowType>, Box<CrowType>),
-    /// Error-value wrapper: CrowResult<T> with .ok, .reason, .kind, .trace
-    Result(Box<CrowType>),
-    /// Dynamic JSON value (serde_json::Value) — returned by json[]
-    Json,
-    /// Numeric array backed by CrowTensor (f64 internally). Inner type
-    /// tracks original element type; the shape is its dimensions where the
-    /// program states them (second-half-design.md §3) — none where its
-    /// rank shows only as it runs.
-    NumArray(Box<CrowType>, Option<Dims>),
-    /// Sparse matrix backed by CrowSparse (CSR format).
-    Sparse,
-    /// Column-oriented data frame: its columns, when the program knows
-    /// them (none: nothing is known of them).
-    Frame(Option<std::sync::Arc<Cols>>),
-    /// A single typed column from a frame (CrowColumn wrapper).
-    FrameCol,
-    /// Web application (crow_web::server::CrowApp).
-    WebApp,
-    /// Web HTTP response (crow_web::core::CrowResponse).
-    WebResponse,
-    /// Web HTTP request (crow_web::core::CrowRequest).
-    WebRequest,
-    /// Database connection handle (crow_db::DbHandle) — `use db` connect[].
-    DbHandle,
-    /// Database transaction handle (&dyn crow_db::DbTx) — transact[] callback param.
-    DbTx,
-    /// An SMTP mailer (crow_runtime::sys::Mailer) — `use web.mail` smtp[].
-    Mailer,
-    /// A WebSocket client's connection (crow_runtime::sys::Socket) — `socket[url]`.
-    Socket,
-    /// Bytes (crow_runtime::sys::Bytes): what a connection reads and writes.
-    Bytes,
-    /// A connection `sys.open` made (crow_runtime::sys::CrowStream).
-    Stream,
-    /// A test's app session (`a = app[render]`), which the harness's words
-    /// read and drive: `html[a]`, `elements[a, …]`, `click[a, …]`.
-    App,
-    Void,
-    Unknown,
-}
+/// The one type of a value, the IR's (crate::ir::Ty): inference, the
+/// lowering, the verifier and both backends read and write this one enum.
+pub use crate::ir::Ty;
 
 /// The effects a session keeps or holds for its handler's commit: a
 /// function that makes one acts for the session.
@@ -95,7 +38,7 @@ pub use frames::describe_with_tables;
 const SESSION_EFFECTS: &[&str] = &["notice", "sign_in", "sign_out", "download", "mail"];
 
 /// What a type knows beyond its kind that an assignment can change
-/// (`CrowType::detail`).
+/// (`Ty::detail`).
 #[derive(Debug, PartialEq)]
 pub enum Detail<'a> {
     Columns(&'a Option<std::sync::Arc<Cols>>),
@@ -116,11 +59,8 @@ pub fn shown_dims(dims: &Dims) -> String {
     format!("[{}]", each.join(", "))
 }
 
-impl CrowType {
+impl Ty {
     /// A tensor of `elem`s whose shape nothing states.
-    pub fn tensor(elem: CrowType) -> CrowType {
-        CrowType::NumArray(Box::new(elem), None)
-    }
 
     /// What a local's type knows beyond its kind that an assignment can
     /// change: a frame's columns, a tensor's shape. A local holding either
@@ -128,47 +68,47 @@ impl CrowType {
     /// where they meet (lower_ir/frames.rs).
     pub fn detail(&self) -> Option<Detail<'_>> {
         match self {
-            CrowType::Frame(cols) => Some(Detail::Columns(cols)),
-            CrowType::NumArray(_, dims) => Some(Detail::Shape(dims.as_ref())),
-            CrowType::Result(inner) => inner.detail(),
+            Ty::Frame(cols) => Some(Detail::Columns(cols)),
+            Ty::Tensor(_, dims) => Some(Detail::Shape(dims.as_ref())),
+            Ty::Result(inner) => inner.detail(),
             _ => None,
         }
     }
 
     pub fn to_rust_type(&self) -> String {
         match self {
-            CrowType::Int => "i64".into(),
-            CrowType::Float => "f64".into(),
-            CrowType::Bool => "bool".into(),
-            CrowType::Moment => "crow_runtime::moments::Moment".into(),
-            CrowType::Str | CrowType::Markup => "String".into(),
-            CrowType::Array(inner) => format!("Vec<{}>", inner.to_rust_type()),
-            CrowType::Map(inner) => format!("std::collections::BTreeMap<String, {}>", inner.to_rust_type()),
-            CrowType::Struct(name) => name.clone(),
-            CrowType::OptBoxStruct(name) => format!("Option<Box<{}>>", name),
-            CrowType::Fn(params, ret) => {
+            Ty::Int => "i64".into(),
+            Ty::Float => "f64".into(),
+            Ty::Bool => "bool".into(),
+            Ty::Moment => "crow_runtime::moments::Moment".into(),
+            Ty::Str | Ty::Markup | Ty::Node => "String".into(),
+            Ty::List(inner) => format!("Vec<{}>", inner.to_rust_type()),
+            Ty::Map(inner) => format!("std::collections::BTreeMap<String, {}>", inner.to_rust_type()),
+            Ty::Record(name) => name.clone(),
+            Ty::OptRecord(name) => format!("Option<Box<{}>>", name),
+            Ty::Fn(params, ret) => {
                 let param_types: Vec<String> = params.iter().map(|p| p.to_rust_type()).collect();
                 format!("fn({}) -> {}", param_types.join(", "), ret.to_rust_type())
             }
-            CrowType::Result(inner) => format!("CrowResult<{}>", inner.to_rust_type()),
-            CrowType::Json => "serde_json::Value".into(),
-            CrowType::NumArray(..) => "crow_runtime::tensor::CrowTensor".into(),
-            CrowType::Sparse => "crow_runtime::sparse::CrowSparse".into(),
-            CrowType::Frame(_) => "crow_runtime::frame::CrowFrame".into(),
-            CrowType::FrameCol => "crow_runtime::frame::CrowColumn".into(),
-            CrowType::WebApp => "crow_web::server::CrowApp".into(),
-            CrowType::WebResponse => "crow_web::core::CrowResponse".into(),
-            CrowType::WebRequest => "crow_web::core::CrowRequest".into(),
-            CrowType::DbHandle => "crow_db::DbHandle".into(),
-            CrowType::DbTx => "&dyn crow_db::DbTx".into(),
-            CrowType::Mailer => "crow_runtime::sys::Mailer".into(),
-            CrowType::Socket => "crow_runtime::sys::Socket".into(),
-            CrowType::Bytes => "crow_runtime::sys::Bytes".into(),
-            CrowType::Stream => "crow_runtime::sys::CrowStream".into(),
+            Ty::Result(inner) => format!("CrowResult<{}>", inner.to_rust_type()),
+            Ty::Json => "serde_json::Value".into(),
+            Ty::Tensor(..) => "crow_runtime::tensor::CrowTensor".into(),
+            Ty::Sparse => "crow_runtime::sparse::CrowSparse".into(),
+            Ty::Frame(_) => "crow_runtime::frame::CrowFrame".into(),
+            Ty::Column(_) => "crow_runtime::frame::CrowColumn".into(),
+            Ty::WebApp => "crow_web::server::CrowApp".into(),
+            Ty::WebResponse => "crow_web::core::CrowResponse".into(),
+            Ty::WebRequest => "crow_web::core::CrowRequest".into(),
+            Ty::Db => "crow_db::DbHandle".into(),
+            Ty::Tx => "&dyn crow_db::DbTx".into(),
+            Ty::Mailer => "crow_runtime::sys::Mailer".into(),
+            Ty::Socket => "crow_runtime::sys::Socket".into(),
+            Ty::Bytes => "crow_runtime::sys::Bytes".into(),
+            Ty::Stream => "crow_runtime::sys::CrowStream".into(),
             // (a test's session: a test block runs interpreted)
-            CrowType::App => "()".into(),
-            CrowType::Void => "()".into(),
-            CrowType::Unknown => "String".into(),
+            Ty::App => "()".into(),
+            Ty::Unit => "()".into(),
+            Ty::Unknown => "String".into(),
         }
     }
 
@@ -176,47 +116,47 @@ impl CrowType {
     /// Used in auto-propagation to construct CrowResult error variants.
     pub fn default_rust_value(&self) -> String {
         match self {
-            CrowType::Int => "0_i64".into(),
-            CrowType::Float => "0.0_f64".into(),
-            CrowType::Moment => "crow_runtime::moments::Moment::default()".into(),
-            CrowType::Bool => "false".into(),
-            CrowType::Str | CrowType::Markup => "String::new()".into(),
-            CrowType::Array(inner) => format!("Vec::<{}>::new()", inner.to_rust_type()),
-            CrowType::Map(inner) => format!("std::collections::BTreeMap::<String, {}>::new()", inner.to_rust_type()),
+            Ty::Int => "0_i64".into(),
+            Ty::Float => "0.0_f64".into(),
+            Ty::Moment => "crow_runtime::moments::Moment::default()".into(),
+            Ty::Bool => "false".into(),
+            Ty::Str | Ty::Markup | Ty::Node => "String::new()".into(),
+            Ty::List(inner) => format!("Vec::<{}>::new()", inner.to_rust_type()),
+            Ty::Map(inner) => format!("std::collections::BTreeMap::<String, {}>::new()", inner.to_rust_type()),
             // each generated struct has its own default, field by field (a
             // zeroed struct holding a list is undefined, and Rust refuses it)
-            CrowType::Struct(name) => format!("{}::crow_default()", name),
-            CrowType::OptBoxStruct(_) => "None".into(),
-            CrowType::Fn(_, _) => "panic!(\"unreachable\")".into(),
-            CrowType::Result(inner) => format!("CrowResult {{ ok: false, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", inner.default_rust_value()),
-            CrowType::Json => "serde_json::Value::Null".into(),
-            CrowType::NumArray(..) => "crow_runtime::tensor::CrowTensor::zeros(vec![0])".into(),
-            CrowType::Sparse => "CrowSparse::from_coo(&[], &[], &[], 0, 0)".into(),
-            CrowType::Frame(_) => "crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![])".into(),
-            CrowType::FrameCol => "crow_runtime::frame::CrowColumn { data: std::sync::Arc::new(crow_runtime::frame::Column::Int(vec![])), valid: std::sync::Arc::new(crow_runtime::frame::Validity::none(0)) }".into(),
-            CrowType::WebApp => "crow_web::server::CrowApp::new()".into(),
-            CrowType::WebResponse => "crow_web::core::CrowResponse::default()".into(),
-            CrowType::WebRequest => "crow_web::core::CrowRequest::new()".into(),
-            CrowType::DbHandle => "panic!(\"no default db connection\")".into(),
-            CrowType::DbTx => "panic!(\"no default db transaction\")".into(),
-            CrowType::Mailer => "crow_runtime::sys::Mailer::default()".into(),
-            CrowType::Socket => "crow_runtime::sys::Socket::closed()".into(),
-            CrowType::Bytes => "crow_runtime::sys::Bytes::default()".into(),
-            CrowType::Stream => "crow_runtime::sys::CrowStream::closed()".into(),
-            CrowType::App => "()".into(),
-            CrowType::Void => "()".into(),
-            CrowType::Unknown => "String::new()".into(),
+            Ty::Record(name) => format!("{}::crow_default()", name),
+            Ty::OptRecord(_) => "None".into(),
+            Ty::Fn(_, _) => "panic!(\"unreachable\")".into(),
+            Ty::Result(inner) => format!("CrowResult {{ ok: false, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", inner.default_rust_value()),
+            Ty::Json => "serde_json::Value::Null".into(),
+            Ty::Tensor(..) => "crow_runtime::tensor::CrowTensor::zeros(vec![0])".into(),
+            Ty::Sparse => "CrowSparse::from_coo(&[], &[], &[], 0, 0)".into(),
+            Ty::Frame(_) => "crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![])".into(),
+            Ty::Column(_) => "crow_runtime::frame::CrowColumn { data: std::sync::Arc::new(crow_runtime::frame::Column::Int(vec![])), valid: std::sync::Arc::new(crow_runtime::frame::Validity::none(0)) }".into(),
+            Ty::WebApp => "crow_web::server::CrowApp::new()".into(),
+            Ty::WebResponse => "crow_web::core::CrowResponse::default()".into(),
+            Ty::WebRequest => "crow_web::core::CrowRequest::new()".into(),
+            Ty::Db => "panic!(\"no default db connection\")".into(),
+            Ty::Tx => "panic!(\"no default db transaction\")".into(),
+            Ty::Mailer => "crow_runtime::sys::Mailer::default()".into(),
+            Ty::Socket => "crow_runtime::sys::Socket::closed()".into(),
+            Ty::Bytes => "crow_runtime::sys::Bytes::default()".into(),
+            Ty::Stream => "crow_runtime::sys::CrowStream::closed()".into(),
+            Ty::App => "()".into(),
+            Ty::Unit => "()".into(),
+            Ty::Unknown => "String::new()".into(),
         }
     }
 
     /// The type as every string reader sees it: markup is a string.
-    pub fn text(&self) -> CrowType {
+    pub fn text(&self) -> Ty {
         match self {
-            CrowType::Markup => CrowType::Str,
-            CrowType::Array(t) => CrowType::Array(Box::new(t.text())),
-            CrowType::Map(t) => CrowType::Map(Box::new(t.text())),
-            CrowType::Result(t) => CrowType::Result(Box::new(t.text())),
-            CrowType::Fn(p, r) => CrowType::Fn(p.iter().map(|t| t.text()).collect(), Box::new(r.text())),
+            Ty::Markup => Ty::Str,
+            Ty::List(t) => Ty::List(Box::new(t.text())),
+            Ty::Map(t) => Ty::Map(Box::new(t.text())),
+            Ty::Result(t) => Ty::Result(Box::new(t.text())),
+            Ty::Fn(p, r) => Ty::Fn(p.iter().map(|t| t.text()).collect(), Box::new(r.text())),
             other => other.clone(),
         }
     }
@@ -226,9 +166,9 @@ impl CrowType {
     /// the same view given text).
     pub fn has_markup(&self) -> bool {
         match self {
-            CrowType::Markup => true,
-            CrowType::Array(t) | CrowType::Map(t) | CrowType::Result(t) => t.has_markup(),
-            CrowType::Fn(p, r) => p.iter().any(|t| t.has_markup()) || r.has_markup(),
+            Ty::Markup => true,
+            Ty::List(t) | Ty::Map(t) | Ty::Result(t) => t.has_markup(),
+            Ty::Fn(p, r) => p.iter().any(|t| t.has_markup()) || r.has_markup(),
             _ => false,
         }
     }
@@ -238,8 +178,8 @@ impl CrowType {
     /// specializations, so each reads the columns it is handed.
     pub fn frame_cols(&self) -> Option<&Option<std::sync::Arc<Cols>>> {
         match self {
-            CrowType::Frame(c) => Some(c),
-            CrowType::Result(t) => t.frame_cols(),
+            Ty::Frame(c) => Some(c),
+            Ty::Result(t) => t.frame_cols(),
             _ => None,
         }
     }
@@ -247,83 +187,83 @@ impl CrowType {
     /// Human-readable Crow type name for error messages.
     pub fn crow_name(&self) -> String {
         match self {
-            CrowType::Int => "int".into(),
-            CrowType::Float => "float".into(),
-            CrowType::Moment => "moment".into(),
-            CrowType::Bool => "bool".into(),
-            CrowType::Str => "str".into(),
-            CrowType::Markup => "markup".into(),
-            CrowType::Array(inner) => format!("array[{}]", inner.crow_name()),
-            CrowType::NumArray(..) => "array".into(),
-            CrowType::Sparse => "sparse".into(),
-            CrowType::Frame(_) => "frame".into(),
-            CrowType::FrameCol => "column".into(),
-            CrowType::Map(inner) => format!("map[{}]", inner.crow_name()),
-            CrowType::Struct(name) => name.clone(),
-            CrowType::OptBoxStruct(name) => name.clone(),
-            CrowType::Fn(params, ret) => {
+            Ty::Int => "int".into(),
+            Ty::Float => "float".into(),
+            Ty::Moment => "moment".into(),
+            Ty::Bool => "bool".into(),
+            Ty::Str => "str".into(),
+            Ty::Markup | Ty::Node => "markup".into(),
+            Ty::List(inner) => format!("array[{}]", inner.crow_name()),
+            Ty::Tensor(..) => "array".into(),
+            Ty::Sparse => "sparse".into(),
+            Ty::Frame(_) => "frame".into(),
+            Ty::Column(_) => "column".into(),
+            Ty::Map(inner) => format!("map[{}]", inner.crow_name()),
+            Ty::Record(name) => name.clone(),
+            Ty::OptRecord(name) => name.clone(),
+            Ty::Fn(params, ret) => {
                 let p: Vec<String> = params.iter().map(|p| p.crow_name()).collect();
                 format!("fn[{}] -> {}", p.join(", "), ret.crow_name())
             }
-            CrowType::Result(inner) => format!("result[{}]", inner.crow_name()),
-            CrowType::Json => "json".into(),
-            CrowType::WebApp => "web.app".into(),
-            CrowType::WebResponse => "web.response".into(),
-            CrowType::WebRequest => "web.request".into(),
-            CrowType::DbHandle => "db.conn".into(),
-            CrowType::DbTx => "db.tx".into(),
-            CrowType::Mailer => "mailer".into(),
-            CrowType::Socket => "socket".into(),
-            CrowType::Bytes => "bytes".into(),
-            CrowType::Stream => "stream".into(),
-            CrowType::App => "app".into(),
-            CrowType::Void => "void".into(),
-            CrowType::Unknown => "unknown".into(),
+            Ty::Result(inner) => format!("result[{}]", inner.crow_name()),
+            Ty::Json => "json".into(),
+            Ty::WebApp => "web.app".into(),
+            Ty::WebResponse => "web.response".into(),
+            Ty::WebRequest => "web.request".into(),
+            Ty::Db => "db.conn".into(),
+            Ty::Tx => "db.tx".into(),
+            Ty::Mailer => "mailer".into(),
+            Ty::Socket => "socket".into(),
+            Ty::Bytes => "bytes".into(),
+            Ty::Stream => "stream".into(),
+            Ty::App => "app".into(),
+            Ty::Unit => "void".into(),
+            Ty::Unknown => "unknown".into(),
         }
     }
 
     /// Check if two types are compatible for reassignment.
     /// Returns true if the same variable can hold both types.
-    pub fn compatible(&self, other: &CrowType) -> bool {
+    pub fn compatible(&self, other: &Ty) -> bool {
         if self == other { return true; }
         match (self, other) {
-            (CrowType::Unknown, _) | (_, CrowType::Unknown) => true,
-            (CrowType::Void, _) | (_, CrowType::Void) => true,
-            (CrowType::Int, CrowType::Float) | (CrowType::Float, CrowType::Int) => true,
+            (Ty::Unknown, _) | (_, Ty::Unknown) => true,
+            (Ty::Unit, _) | (_, Ty::Unit) => true,
+            (Ty::Int, Ty::Float) | (Ty::Float, Ty::Int) => true,
             // markup is a string wherever a string is read
-            (CrowType::Markup, CrowType::Str) | (CrowType::Str, CrowType::Markup) => true,
-            (CrowType::Array(a), CrowType::Array(b)) => a.compatible(b),
-            (CrowType::Map(a), CrowType::Map(b)) => a.compatible(b),
-            (CrowType::Result(a), CrowType::Result(b)) => a.compatible(b),
+            (Ty::Markup, Ty::Str) | (Ty::Str, Ty::Markup) => true,
+            (Ty::List(a), Ty::List(b)) => a.compatible(b),
+            (Ty::Map(a), Ty::Map(b)) => a.compatible(b),
+            (Ty::Result(a), Ty::Result(b)) => a.compatible(b),
             // Fn types: compatible when arity matches and every component is
             // (Unknown params from a not-yet-typed fn are wildcards)
-            (CrowType::Fn(p1, r1), CrowType::Fn(p2, r2)) if p1.len() == p2.len() => {
+            (Ty::Fn(p1, r1), Ty::Fn(p2, r2)) if p1.len() == p2.len() => {
                 p1.iter().zip(p2.iter()).all(|(a, b)| a.compatible(b)) && r1.compatible(r2)
             }
             // NumArray is compatible with Array of numeric types
-            (CrowType::NumArray(..), CrowType::Array(inner)) | (CrowType::Array(inner), CrowType::NumArray(..)) => {
-                matches!(inner.as_ref(), CrowType::Int | CrowType::Float | CrowType::Unknown)
+            (Ty::Tensor(..), Ty::List(inner)) | (Ty::List(inner), Ty::Tensor(..)) => {
+                matches!(inner.as_ref(), Ty::Int | Ty::Float | Ty::Unknown)
             }
-            (CrowType::NumArray(..), CrowType::NumArray(..)) => true,
+            (Ty::Tensor(..), Ty::Tensor(..)) => true,
             // a frame is a frame whatever its columns: a reassignment that
             // changes them binds the variable anew
-            (CrowType::Frame(_), CrowType::Frame(_)) => true,
-            (CrowType::Int, CrowType::Struct(_)) | (CrowType::Struct(_), CrowType::Int) => true, // OptBoxStruct
-            (CrowType::OptBoxStruct(_), CrowType::Int) | (CrowType::Int, CrowType::OptBoxStruct(_)) => true,
-            (CrowType::OptBoxStruct(_), CrowType::Struct(_)) | (CrowType::Struct(_), CrowType::OptBoxStruct(_)) => true,
+            (Ty::Frame(_), Ty::Frame(_)) => true,
+            (Ty::Int, Ty::Record(_)) | (Ty::Record(_), Ty::Int) => true, // OptBoxStruct
+            (Ty::OptRecord(_), Ty::Int) | (Ty::Int, Ty::OptRecord(_)) => true,
+            (Ty::OptRecord(_), Ty::Record(_)) | (Ty::Record(_), Ty::OptRecord(_)) => true,
             _ => false,
         }
     }
 
-    pub fn unify(&self, other: &CrowType) -> CrowType {
+    pub fn unify(&self, other: &Ty) -> Ty {
         if self == other { return self.clone(); }
         match (self, other) {
-            (CrowType::Unknown, t) | (t, CrowType::Unknown) => t.clone(),
-            (CrowType::Int, CrowType::Float) | (CrowType::Float, CrowType::Int) => CrowType::Float,
+            (Ty::Unknown, t) | (t, Ty::Unknown) => t.clone(),
+            (Ty::Int, Ty::Float) | (Ty::Float, Ty::Int) => Ty::Float,
             // markup mixed with text is text: nothing a string holds makes it markup
-            (CrowType::Markup, CrowType::Str) | (CrowType::Str, CrowType::Markup) => CrowType::Str,
-            (CrowType::NumArray(a, da), CrowType::NumArray(b, db)) => CrowType::NumArray(Box::new(a.unify(b)), join_dims(da, db)),
-            (CrowType::Array(a), CrowType::Array(b)) => CrowType::Array(Box::new(a.unify(b))),
+            (Ty::Markup, Ty::Str) | (Ty::Str, Ty::Markup) => Ty::Str,
+            (Ty::Tensor(a, da), Ty::Tensor(b, db)) => Ty::Tensor(Box::new(a.unify(b)), join_dims(da, db)),
+            (Ty::List(a), Ty::List(b)) => Ty::List(Box::new(a.unify(b))),
             // numbers held as a list meet numbers held as a tensor,
             // whichever came first: a list of numbers beside a vector is the
             // list, a list of rows beside a matrix the matrix (the lowering
@@ -333,55 +273,55 @@ impl CrowType {
             // on the order the inference met the two: a function's rows
             // were a tensor at one site and a list at another, and the
             // compiled program did not build.
-            (CrowType::Array(a), CrowType::NumArray(b, d)) | (CrowType::NumArray(b, d), CrowType::Array(a)) => match d {
+            (Ty::List(a), Ty::Tensor(b, d)) | (Ty::Tensor(b, d), Ty::List(a)) => match d {
                 Some(dims) if dims.len() >= 2 => {
                     // (the list's length is not stated, so the matrix's rows
                     // are not either; its rows' own shape is joined)
-                    let row = CrowType::NumArray(b.clone(), Some(dims[1..].to_vec()));
+                    let row = Ty::Tensor(b.clone(), Some(dims[1..].to_vec()));
                     let (elem, row_dims) = match a.unify(&row) {
-                        CrowType::NumArray(e, d) => (*e, d),
+                        Ty::Tensor(e, d) => (*e, d),
                         e => (e, Some(dims[1..].to_vec())),
                     };
                     let mut joined = vec![None];
                     joined.extend(row_dims.unwrap_or_else(|| vec![None; dims.len() - 1]));
-                    CrowType::NumArray(Box::new(elem), Some(joined))
+                    Ty::Tensor(Box::new(elem), Some(joined))
                 }
-                _ => CrowType::Array(Box::new(a.unify(b))),
+                _ => Ty::List(Box::new(a.unify(b))),
             },
-            (CrowType::Map(a), CrowType::Map(b)) => CrowType::Map(Box::new(a.unify(b))),
+            (Ty::Map(a), Ty::Map(b)) => Ty::Map(Box::new(a.unify(b))),
             // two ways a frame could have come: the columns both give (a
             // frame whose columns are not worked out yet adds nothing — one
             // whose columns show only as it runs is a frame of none known,
             // open)
-            (CrowType::Frame(a), CrowType::Frame(b)) => CrowType::Frame(match (a, b) {
+            (Ty::Frame(a), Ty::Frame(b)) => Ty::Frame(match (a, b) {
                 (Some(a), Some(b)) => Some(std::sync::Arc::new(Cols::join(a, b))),
                 (Some(c), None) | (None, Some(c)) => Some(c.clone()),
                 (None, None) => None,
             }),
-            (CrowType::Void, t) | (t, CrowType::Void) => t.clone(),
+            (Ty::Unit, t) | (t, Ty::Unit) => t.clone(),
             // Int + Struct => OptBoxStruct (recursive struct with sentinel)
-            (CrowType::Int, CrowType::Struct(name)) | (CrowType::Struct(name), CrowType::Int) => {
-                CrowType::OptBoxStruct(name.clone())
+            (Ty::Int, Ty::Record(name)) | (Ty::Record(name), Ty::Int) => {
+                Ty::OptRecord(name.clone())
             }
             // OptBoxStruct stays OptBoxStruct
-            (CrowType::OptBoxStruct(name), CrowType::Int) | (CrowType::Int, CrowType::OptBoxStruct(name)) => {
-                CrowType::OptBoxStruct(name.clone())
+            (Ty::OptRecord(name), Ty::Int) | (Ty::Int, Ty::OptRecord(name)) => {
+                Ty::OptRecord(name.clone())
             }
-            (CrowType::OptBoxStruct(name), CrowType::Struct(_)) | (CrowType::Struct(_), CrowType::OptBoxStruct(name)) => {
-                CrowType::OptBoxStruct(name.clone())
+            (Ty::OptRecord(name), Ty::Record(_)) | (Ty::Record(_), Ty::OptRecord(name)) => {
+                Ty::OptRecord(name.clone())
             }
             // Result unification
-            (CrowType::Result(a), CrowType::Result(b)) => CrowType::Result(Box::new(a.unify(b))),
+            (Ty::Result(a), Ty::Result(b)) => Ty::Result(Box::new(a.unify(b))),
             // Result(T) + U => Result(U): the non-error return tells us the
             // actual value type — unified with T, so what either side knows
             // stays (a list of unknown items and a result of floats is a
             // result of floats; an error with no value adds nothing)
-            (CrowType::Result(inner), other) | (other, CrowType::Result(inner)) => CrowType::Result(Box::new(other.unify(inner))),
+            (Ty::Result(inner), other) | (other, Ty::Result(inner)) => Ty::Result(Box::new(other.unify(inner))),
             // Fn unification
-            (CrowType::Fn(p1, r1), CrowType::Fn(p2, r2)) if p1.len() == p2.len() => {
-                let params: Vec<CrowType> = p1.iter().zip(p2.iter()).map(|(a, b)| a.unify(b)).collect();
+            (Ty::Fn(p1, r1), Ty::Fn(p2, r2)) if p1.len() == p2.len() => {
+                let params: Vec<Ty> = p1.iter().zip(p2.iter()).map(|(a, b)| a.unify(b)).collect();
                 let ret = r1.unify(r2);
-                CrowType::Fn(params, Box::new(ret))
+                Ty::Fn(params, Box::new(ret))
             }
             _ => self.clone(),
         }
@@ -394,13 +334,13 @@ impl CrowType {
 /// holds).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Cols {
-    pub cols: BTreeMap<String, CrowType>,
+    pub cols: BTreeMap<String, Ty>,
     pub open: bool,
 }
 
 impl Cols {
     /// Exactly these columns.
-    pub fn closed(cols: BTreeMap<String, CrowType>) -> std::sync::Arc<Cols> {
+    pub fn closed(cols: BTreeMap<String, Ty>) -> std::sync::Arc<Cols> {
         std::sync::Arc::new(Cols { cols, open: false })
     }
 
@@ -427,19 +367,19 @@ impl Cols {
 
 #[derive(Debug, Clone)]
 pub struct FnSig {
-    pub params: Vec<(String, CrowType)>,
-    pub return_type: CrowType,
+    pub params: Vec<(String, Ty)>,
+    pub return_type: Ty,
     pub body: Vec<Stmt>,
 }
 
 #[derive(Debug, Clone)]
 pub struct StructSig {
-    pub fields: Vec<(String, CrowType)>,
+    pub fields: Vec<(String, Ty)>,
 }
 
 /// What `enter_body` saved: restored by `leave_body`.
 pub(crate) struct BodyScope {
-    saved_vars: BTreeMap<String, CrowType>,
+    saved_vars: BTreeMap<String, Ty>,
     outer_assigned: Option<std::collections::HashSet<String>>,
     outer_in_view: bool,
     outer_fn_name: Option<String>,
@@ -447,10 +387,10 @@ pub(crate) struct BodyScope {
 
 #[derive(Debug, Clone)]
 pub struct TypeContext {
-    pub vars: BTreeMap<String, CrowType>,
+    pub vars: BTreeMap<String, Ty>,
     pub functions: BTreeMap<String, FnSig>,
     /// F2 monomorphization: distinct concrete call signatures per user fn
-    pub call_signatures: BTreeMap<String, Vec<Vec<CrowType>>>,
+    pub call_signatures: BTreeMap<String, Vec<Vec<Ty>>>,
     /// Names declared with `view` — UI-tree builders; the element vocabulary
     /// is active only inside their bodies
     pub views: std::collections::BTreeSet<String>,
@@ -483,7 +423,7 @@ pub struct TypeContext {
     /// alias → module path for `use X as y` imports (qualified-only)
     pub module_aliases: BTreeMap<String, String>,
     /// fn name → [(signature, mangled clone name)] for specialized functions
-    pub specializations: BTreeMap<String, Vec<(Vec<CrowType>, String)>>,
+    pub specializations: BTreeMap<String, Vec<(Vec<Ty>, String)>>,
     pub structs: BTreeMap<String, StructSig>,
     pub cpu_count: Option<usize>,
     /// Module registry for generic type dispatch
@@ -500,13 +440,13 @@ pub struct TypeContext {
     /// --types`, the oracle every step of inference's rewrite is held to).
     pub record_envs: bool,
     /// Each body's parameters and locals, as its lowering began with them.
-    pub body_envs: BTreeMap<String, BTreeMap<String, CrowType>>,
+    pub body_envs: BTreeMap<String, BTreeMap<String, Ty>>,
     /// Ask the program's databases what its query literals return. Every
     /// pipeline's gate asks the same way (`CROW_NO_DESCRIBE` turns it off),
     /// so a program refused for a query's column types is refused by run,
     /// run -i, test and check alike.
     pub describe_queries: bool,
-    describe_cache: BTreeMap<String, Option<BTreeMap<String, CrowType>>>,
+    describe_cache: BTreeMap<String, Option<BTreeMap<String, Ty>>>,
     /// Queries no database could type, as notes: the compiled program reads
     /// their cells as text, so the build prints them; the interpreter types
     /// cells from the rows and has nothing to say.
@@ -515,12 +455,12 @@ pub struct TypeContext {
     /// them (`type_tested`): a program that imports this one as a part
     /// types the part's functions from them, since a part's tests are not
     /// its importer's.
-    pub(crate) tested: Vec<(String, Vec<CrowType>)>,
+    pub(crate) tested: Vec<(String, Vec<Ty>)>,
     /// The parameters (and record fields) only a test's call or click
     /// typed, with the type it gave each: a later reading of the tests
     /// refines one nothing else has changed since, as the functions its
     /// arguments come from settle.
-    by_tests: BTreeMap<(String, usize), CrowType>,
+    by_tests: BTreeMap<(String, usize), Ty>,
     current_fn_name: Option<String>,
 }
 
@@ -534,9 +474,9 @@ impl TypeContext {
             "CrowShell".to_string(),
             StructSig {
                 fields: vec![
-                    ("status".to_string(), CrowType::Int),
-                    ("stdout".to_string(), CrowType::Str),
-                    ("stderr".to_string(), CrowType::Str),
+                    ("status".to_string(), Ty::Int),
+                    ("stdout".to_string(), Ty::Str),
+                    ("stderr".to_string(), Ty::Str),
                 ],
             },
         );
@@ -545,9 +485,9 @@ impl TypeContext {
             "CrowReply".to_string(),
             StructSig {
                 fields: vec![
-                    ("status".to_string(), CrowType::Int),
-                    ("body".to_string(), CrowType::Str),
-                    ("headers".to_string(), CrowType::Map(Box::new(CrowType::Str))),
+                    ("status".to_string(), Ty::Int),
+                    ("body".to_string(), Ty::Str),
+                    ("headers".to_string(), Ty::Map(Box::new(Ty::Str))),
                 ],
             },
         );
@@ -557,10 +497,10 @@ impl TypeContext {
             "CrowAnswer".to_string(),
             StructSig {
                 fields: vec![
-                    ("status".to_string(), CrowType::Int),
-                    ("phrase".to_string(), CrowType::Str),
-                    ("headers".to_string(), CrowType::Map(Box::new(CrowType::Str))),
-                    ("body".to_string(), CrowType::Bytes),
+                    ("status".to_string(), Ty::Int),
+                    ("phrase".to_string(), Ty::Str),
+                    ("headers".to_string(), Ty::Map(Box::new(Ty::Str))),
+                    ("body".to_string(), Ty::Bytes),
                 ],
             },
         );
@@ -568,10 +508,10 @@ impl TypeContext {
             "CrowElapsed".to_string(),
             StructSig {
                 fields: vec![
-                    ("seconds".to_string(), CrowType::Float),
-                    ("minutes".to_string(), CrowType::Float),
-                    ("hours".to_string(), CrowType::Float),
-                    ("days".to_string(), CrowType::Float),
+                    ("seconds".to_string(), Ty::Float),
+                    ("minutes".to_string(), Ty::Float),
+                    ("hours".to_string(), Ty::Float),
+                    ("days".to_string(), Ty::Float),
                 ],
             },
         );
@@ -579,8 +519,8 @@ impl TypeContext {
             "CrowFindResult".to_string(),
             StructSig {
                 fields: vec![
-                    ("ok".to_string(), CrowType::Bool),
-                    ("groups".to_string(), CrowType::Array(Box::new(CrowType::Str))),
+                    ("ok".to_string(), Ty::Bool),
+                    ("groups".to_string(), Ty::List(Box::new(Ty::Str))),
                 ],
             },
         );
@@ -641,7 +581,7 @@ impl TypeContext {
 
     /// Every function's return type and parameters: a round of inference
     /// that moves none of them has settled.
-    pub(crate) fn signatures(&self) -> Vec<(String, CrowType, Vec<(String, CrowType)>)> {
+    pub(crate) fn signatures(&self) -> Vec<(String, Ty, Vec<(String, Ty)>)> {
         self.functions.iter().map(|(n, s)| (n.clone(), s.return_type.clone(), s.params.clone())).collect()
     }
 
@@ -649,10 +589,10 @@ impl TypeContext {
     /// with its arguments' types: a parameter nothing in the program types
     /// takes the click's (the program's own evidence — a view's call, a
     /// table's action, a widget's text — comes first). Whether any moved.
-    pub(crate) fn type_clicked(&mut self, clicks: &[(String, Vec<CrowType>)]) -> bool {
+    pub(crate) fn type_clicked(&mut self, clicks: &[(String, Vec<Ty>)]) -> bool {
         // every click of a handler met, argument by argument: an int and a
         // float make a float, whichever click comes first
-        let mut met: BTreeMap<(String, usize), CrowType> = BTreeMap::new();
+        let mut met: BTreeMap<(String, usize), Ty> = BTreeMap::new();
         for (h, types) in clicks {
             if self.functions.get(h).is_none_or(|sig| sig.params.len() != types.len()) {
                 continue;
@@ -663,7 +603,7 @@ impl TypeContext {
                 // `sig` came from parse_time: compiled, the parameter had
                 // been made a result, and the click's number never fit it)
                 let t = reaching(t);
-                if !matches!(t, CrowType::Unknown) {
+                if !matches!(t, Ty::Unknown) {
                     met.entry((h.clone(), i)).and_modify(|m| *m = m.unify(&t)).or_insert_with(|| t.clone());
                 }
             }
@@ -680,7 +620,7 @@ impl TypeContext {
     /// nothing else has changed since — the tests are read again once the
     /// functions their arguments come from settle, and a frame whose
     /// columns were not worked out then is known now. Whether it moved.
-    fn type_by_tests(&mut self, f: &str, i: usize, t: &CrowType, params_only: bool) -> bool {
+    fn type_by_tests(&mut self, f: &str, i: usize, t: &Ty, params_only: bool) -> bool {
         let before = self.by_tests.get(&(f.to_string(), i)).cloned();
         let slot = match self.functions.get_mut(f) {
             Some(sig) => sig.params.get_mut(i),
@@ -688,16 +628,16 @@ impl TypeContext {
             None => self.structs.get_mut(f).and_then(|st| st.fields.get_mut(i)),
         };
         let Some(p) = slot else { return false };
-        let ours = matches!(p.1, CrowType::Unknown) || before.as_ref() == Some(&p.1);
+        let ours = matches!(p.1, Ty::Unknown) || before.as_ref() == Some(&p.1);
         // a tensor parameter the program's calls typed takes the shapes a
         // test's calls hand it too: what the sizes disagree on is unknown
         // (one call in the program had fixed a function's sizes, and a
         // test's call of another size was refused by the shape the program's
         // call gave the return)
         if !ours {
-            if let (CrowType::NumArray(pe, pd), CrowType::NumArray(te, td)) = (&p.1, t) {
+            if let (Ty::Tensor(pe, pd), Ty::Tensor(te, td)) = (&p.1, t) {
                 if pe == te && pd != td {
-                    let joined = CrowType::NumArray(pe.clone(), join_dims(pd, td));
+                    let joined = Ty::Tensor(pe.clone(), join_dims(pd, td));
                     if joined != p.1 {
                         p.1 = joined;
                         return true;
@@ -723,8 +663,8 @@ impl TypeContext {
     /// program's tests' and its parts' tests' (a part's function is typed
     /// alike whichever file is the entry); a type naming a struct the
     /// program does not declare types nothing. Whether any moved.
-    pub(crate) fn type_tested(&mut self, calls: &[(String, Vec<CrowType>)]) -> bool {
-        let mut agreed: BTreeMap<(String, usize), Option<CrowType>> = BTreeMap::new();
+    pub(crate) fn type_tested(&mut self, calls: &[(String, Vec<Ty>)]) -> bool {
+        let mut agreed: BTreeMap<(String, usize), Option<Ty>> = BTreeMap::new();
         for (f, types) in calls {
             // a function's parameters, or a record's fields: a test that
             // builds a record the program only receives (the layout engine's
@@ -742,7 +682,7 @@ impl TypeContext {
             // had been lowered against the program's signature and handed
             // a tensor to a parameter the program made a number
             if self.functions.contains_key(f) {
-                let sig: Vec<CrowType> = types.iter().map(reaching).collect();
+                let sig: Vec<Ty> = types.iter().map(reaching).collect();
                 if sig.iter().all(Self::type_is_concrete) {
                     let entry = self.call_signatures.entry(f.clone()).or_default();
                     if !entry.iter().any(|existing| Self::same_signature(existing, &sig)) {
@@ -754,7 +694,7 @@ impl TypeContext {
                 let t = reaching(t);
                 let entry = agreed.entry((f.clone(), i)).or_insert_with(|| Some(t.clone()));
                 let keep = match entry.as_ref() {
-                    Some(a) => !matches!(t, CrowType::Unknown) && self.declares(&t) && a.compatible(&t),
+                    Some(a) => !matches!(t, Ty::Unknown) && self.declares(&t) && a.compatible(&t),
                     None => false,
                 };
                 *entry = if keep { entry.as_ref().map(|a| a.unify(&t)) } else { None };
@@ -762,18 +702,18 @@ impl TypeContext {
         }
         let mut moved = false;
         for ((f, i), t) in agreed {
-            let Some(t) = t.filter(|t| !matches!(t, CrowType::Unknown)) else { continue };
+            let Some(t) = t.filter(|t| !matches!(t, Ty::Unknown)) else { continue };
             moved |= self.type_by_tests(&f, i, &t, false);
         }
         moved
     }
 
     /// Whether every struct a type names is one the program declares.
-    fn declares(&self, t: &CrowType) -> bool {
+    fn declares(&self, t: &Ty) -> bool {
         match t {
-            CrowType::Struct(n) | CrowType::OptBoxStruct(n) => self.structs.contains_key(n),
-            CrowType::Array(e) | CrowType::Map(e) | CrowType::Result(e) | CrowType::NumArray(e, _) => self.declares(e),
-            CrowType::Fn(params, ret) => params.iter().all(|p| self.declares(p)) && self.declares(ret),
+            Ty::Record(n) | Ty::OptRecord(n) => self.structs.contains_key(n),
+            Ty::List(e) | Ty::Map(e) | Ty::Result(e) | Ty::Tensor(e, _) => self.declares(e),
+            Ty::Fn(params, ret) => params.iter().all(|p| self.declares(p)) && self.declares(ret),
             _ => true,
         }
     }
@@ -814,7 +754,7 @@ impl TypeContext {
         // with concrete params, propagate those to the original function
         for (var_name, fn_names) in &var_to_fn {
             if let Some(var_type) = self.vars.get(var_name).cloned() {
-                if let CrowType::Fn(param_types, ret_type) = &var_type {
+                if let Ty::Fn(param_types, ret_type) = &var_type {
                     for fn_name in fn_names {
                         if let Some(sig) = self.functions.get(fn_name).cloned() {
                             let mut new_params = sig.params.clone();
@@ -881,7 +821,7 @@ impl TypeContext {
 
     /// A type is concrete if it contains no Unknown anywhere (used to decide
     /// whether a call signature is usable for monomorphization).
-    pub(crate) fn type_is_concrete(t: &CrowType) -> bool {
+    pub(crate) fn type_is_concrete(t: &Ty) -> bool {
         // (a frame whose columns are not worked out yet is not either)
         let shown = format!("{:?}", t);
         !shown.contains("Unknown") && !shown.contains("Frame(None)")
@@ -904,12 +844,12 @@ impl TypeContext {
             // v1 limitation: generic higher-order functions (fn-typed
             // params) used at multiple types are not specialized — the
             // predicate's types would need per-clone propagation
-            if sigs.iter().any(|sig| sig.iter().any(|t| matches!(t, CrowType::Fn(_, _)))) {
+            if sigs.iter().any(|sig| sig.iter().any(|t| matches!(t, Ty::Fn(_, _)))) {
                 continue;
             }
             for (idx, sig) in sigs.iter().enumerate() {
                 let mangled = format!("{}__{}", name, idx + 1);
-                let params: Vec<(String, CrowType)> = base
+                let params: Vec<(String, Ty)> = base
                     .params
                     .iter()
                     .zip(sig.iter())
@@ -917,7 +857,7 @@ impl TypeContext {
                     .collect();
                 self.functions.insert(mangled.clone(), FnSig {
                     params,
-                    return_type: CrowType::Unknown,
+                    return_type: Ty::Unknown,
                     body: base.body.clone(),
                 });
                 self.specializations.entry(name.clone()).or_default().push((sig.clone(), mangled.clone()));
@@ -946,16 +886,16 @@ impl TypeContext {
     /// stick when its body is typed again; its body.
     pub(crate) fn reset_clone(&mut self, mangled: &str) -> Option<Vec<Stmt>> {
         let sig = self.functions.get_mut(mangled)?;
-        sig.return_type = CrowType::Unknown;
+        sig.return_type = Ty::Unknown;
         Some(sig.body.clone())
     }
 
     /// A function's parameters bound in the environment, typed by its
     /// signature; the environment before, to put back.
-    pub(crate) fn bind_params(&mut self, name: &str) -> BTreeMap<String, CrowType> {
+    pub(crate) fn bind_params(&mut self, name: &str) -> BTreeMap<String, Ty> {
         let saved_vars = self.vars.clone();
         if let Some(sig) = self.functions.get(name) {
-            let bind: Vec<(String, CrowType)> = sig.params.clone();
+            let bind: Vec<(String, Ty)> = sig.params.clone();
             for (p, t) in bind {
                 self.vars.insert(p, t);
             }
@@ -965,9 +905,9 @@ impl TypeContext {
 
     /// What a loop walks: a list that can fail is refused before the loop
     /// runs (spec, Errors in Conditions), so its items are the value's.
-    pub(crate) fn walked(t: CrowType) -> CrowType {
+    pub(crate) fn walked(t: Ty) -> Ty {
         match t {
-            CrowType::Result(inner) => *inner,
+            Ty::Result(inner) => *inner,
             other => other,
         }
     }
@@ -1006,7 +946,7 @@ impl TypeContext {
     /// returned, as the lowering met it), widened to a Result when the
     /// lowering handed an error out of it (`fails`), and a fact a view or
     /// handler gives a float widened for the program.
-    pub(crate) fn finish_body(&mut self, name: &str, scope: BodyScope, returns: &[CrowType], fails: bool) {
+    pub(crate) fn finish_body(&mut self, name: &str, scope: BodyScope, returns: &[Ty], fails: bool) {
         let BodyScope { saved_vars, outer_assigned, outer_in_view, outer_fn_name } = scope;
         self.body_assigned = outer_assigned;
         self.in_view = outer_in_view;
@@ -1016,23 +956,23 @@ impl TypeContext {
         // all unknown make an unknown, not the no-value of a bare return
         // (a function built without its callers returned "nothing", and a
         // local holding its value was declared as the unit type)
-        let ret = returns.iter().fold(None::<CrowType>, |r, t| {
+        let ret = returns.iter().fold(None::<Ty>, |r, t| {
             Some(match (r, t) {
                 (None, t) => t.clone(),
-                (Some(CrowType::Void), CrowType::Unknown) | (Some(CrowType::Unknown), CrowType::Void) => CrowType::Unknown,
+                (Some(Ty::Unit), Ty::Unknown) | (Some(Ty::Unknown), Ty::Unit) => Ty::Unknown,
                 (Some(r), t) => r.unify(t),
             })
         });
-        let ret = ret.unwrap_or(CrowType::Void);
+        let ret = ret.unwrap_or(Ty::Unit);
         // A decision on a value that can fail hands its error out of the
         // function (spec §11: Errors in Conditions), as a failed value
         // assigned to a variable that holds no error does: the return type
         // widens to Result
         if let Some(sig) = self.functions.get_mut(name) {
             sig.return_type = sig.return_type.unify(&ret);
-            if fails && !matches!(sig.return_type, CrowType::Result(_)) {
-                let inner = std::mem::replace(&mut sig.return_type, CrowType::Unknown);
-                sig.return_type = CrowType::Result(Box::new(inner));
+            if fails && !matches!(sig.return_type, Ty::Result(_)) {
+                let inner = std::mem::replace(&mut sig.return_type, Ty::Unknown);
+                sig.return_type = Ty::Result(Box::new(inner));
             }
         }
 
@@ -1046,12 +986,12 @@ impl TypeContext {
         // columns (its shape): the fact holds either (it had kept its
         // default's, and a table naming a column the handler's frame has was
         // refused).
-        let mut widened: Vec<(String, CrowType)> = Vec::new();
+        let mut widened: Vec<(String, Ty)> = Vec::new();
         if self.is_ui || self.views.contains(name) || self.view_handlers.contains(name) {
             for f in &self.facts {
-                let before = saved_vars.get(f).cloned().unwrap_or(CrowType::Unknown);
+                let before = saved_vars.get(f).cloned().unwrap_or(Ty::Unknown);
                 match (&before, self.vars.get(f)) {
-                    (CrowType::Int | CrowType::Unknown, Some(CrowType::Float)) => widened.push((f.clone(), CrowType::Float)),
+                    (Ty::Int | Ty::Unknown, Some(Ty::Float)) => widened.push((f.clone(), Ty::Float)),
                     (was, Some(now)) if was.detail().zip(now.detail()).is_some_and(|(a, b)| a.same_kind(&b) && a != b) => {
                         widened.push((f.clone(), was.unify(now)));
                     }
@@ -1084,7 +1024,7 @@ impl TypeContext {
     pub fn sync_derive_types(&mut self) {
         for d in self.derives.clone() {
             if let Some(sig) = self.functions.get(&d) {
-                if !matches!(sig.return_type, CrowType::Unknown) {
+                if !matches!(sig.return_type, Ty::Unknown) {
                     self.vars.insert(d, sig.return_type.clone());
                 }
             }
@@ -1094,7 +1034,7 @@ impl TypeContext {
     /// Whether a call at `b` reaches the specialization made for `a`: every
     /// argument fits, and markup meets markup — a view given markup is not
     /// the same view given text.
-    pub fn same_signature(a: &[CrowType], b: &[CrowType]) -> bool {
+    pub fn same_signature(a: &[Ty], b: &[Ty]) -> bool {
         a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.compatible(y) && x.has_markup() == y.has_markup() && x.frame_cols() == y.frame_cols())
     }
 
@@ -1102,13 +1042,13 @@ impl TypeContext {
     /// types with markup told apart: the one rule the inference, the
     /// compiler and the interpreter share. The caller has the types (the
     /// walker from the tree, the lowering from its lowered arguments).
-    pub fn specialization_for(&self, name: &str, full: &[CrowType]) -> Option<String> {
+    pub fn specialization_for(&self, name: &str, full: &[Ty]) -> Option<String> {
         let clones = self.specializations.get(name)?;
-        let call_sig: Vec<CrowType> = full
+        let call_sig: Vec<Ty> = full
             .iter()
             .map(|t| match t {
-                CrowType::Result(inner) => *inner.clone(),
-                CrowType::OptBoxStruct(n) => CrowType::Struct(n.clone()),
+                Ty::Result(inner) => *inner.clone(),
+                Ty::OptRecord(n) => Ty::Record(n.clone()),
                 other => other.clone(),
             })
             .collect();
@@ -1131,21 +1071,21 @@ impl TypeContext {
     /// passed over: a loop over `transpose[m]`, or `zeros[2, 3][1]`, read
     /// numbers where both modes' values held rows, and the compiled program
     /// walked the numbers.)
-    pub(crate) fn tensor_item(inner: &CrowType, dims: &Option<Dims>) -> CrowType {
+    pub(crate) fn tensor_item(inner: &Ty, dims: &Option<Dims>) -> Ty {
         match dims {
-            Some(d) if d.len() >= 2 => CrowType::NumArray(Box::new(inner.clone()), Some(d[1..].to_vec())),
+            Some(d) if d.len() >= 2 => Ty::Tensor(Box::new(inner.clone()), Some(d[1..].to_vec())),
             _ => inner.clone(),
         }
     }
 
-    pub(crate) fn loop_item(iter_type: CrowType) -> CrowType {
+    pub(crate) fn loop_item(iter_type: Ty) -> Ty {
         match iter_type {
-            CrowType::Array(inner) => *inner,
-            CrowType::NumArray(inner, dims) => Self::tensor_item(&inner, &dims),
+            Ty::List(inner) => *inner,
+            Ty::Tensor(inner, dims) => Self::tensor_item(&inner, &dims),
             // a parsed value's items are parsed values, read as one type
             // where the body computes with them
-            CrowType::Json => CrowType::Json,
-            _ => CrowType::Unknown,
+            Ty::Json => Ty::Json,
+            _ => Ty::Unknown,
         }
     }
 
@@ -1207,11 +1147,11 @@ pub fn dump_types(ctx: &TypeContext) -> String {
 /// The type a call's or a click's argument gives the parameter it reaches
 /// (note_call): what a value that can fail holds, since an error among the
 /// arguments is handed on before the call; a boxed record as the record.
-fn reaching(t: &CrowType) -> CrowType {
+fn reaching(t: &Ty) -> Ty {
     match t {
-        CrowType::OptBoxStruct(n) => CrowType::Struct(n.clone()),
-        CrowType::Result(inner) if matches!(inner.as_ref(), CrowType::Void) => CrowType::Unknown,
-        CrowType::Result(inner) => *inner.clone(),
+        Ty::OptRecord(n) => Ty::Record(n.clone()),
+        Ty::Result(inner) if matches!(inner.as_ref(), Ty::Unit) => Ty::Unknown,
+        Ty::Result(inner) => *inner.clone(),
         other => other.clone(),
     }
 }
@@ -1307,9 +1247,9 @@ mod tests {
         let schema = ctx.vars.get("rows").and_then(|t| t.frame_cols().cloned().flatten()).map(|c| c.cols.clone()).unwrap_or_default();
         // an INTEGER PRIMARY KEY is the row's id, never NULL; the others
         // are not declared NOT NULL, so their cells can be missing
-        assert_eq!(schema.get("id"), Some(&CrowType::Int), "{:?}", schema);
-        assert_eq!(schema.get("stars"), Some(&CrowType::Result(Box::new(CrowType::Int))), "{:?}", schema);
-        assert_eq!(schema.get("title"), Some(&CrowType::Result(Box::new(CrowType::Str))));
+        assert_eq!(schema.get("id"), Some(&Ty::Int), "{:?}", schema);
+        assert_eq!(schema.get("stars"), Some(&Ty::Result(Box::new(Ty::Int))), "{:?}", schema);
+        assert_eq!(schema.get("title"), Some(&Ty::Result(Box::new(Ty::Str))));
         assert!(!path.exists(), "describing creates no database");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1323,7 +1263,7 @@ mod tests {
         let stmts = crate::lower::lower_program(&crate::build(src).unwrap()).unwrap();
         let mut ctx = TypeContext::new();
         ctx.infer_program(&stmts);
-        assert_eq!(ctx.functions["set_zoom"].params[0].1, CrowType::Str);
+        assert_eq!(ctx.functions["set_zoom"].params[0].1, Ty::Str);
     }
 
     /// A handler a test clicks with arguments is a handler, as one clicked
@@ -1336,7 +1276,7 @@ mod tests {
         let mut ctx = TypeContext::new();
         ctx.infer_program(&stmts);
         assert!(ctx.view_handlers.contains("begin"));
-        assert_eq!(ctx.functions["begin"].params[0].1, CrowType::Float);
+        assert_eq!(ctx.functions["begin"].params[0].1, Ty::Float);
     }
 
     /// A handler two clicks hand an int and a float takes a float, in
@@ -1349,7 +1289,7 @@ mod tests {
             let stmts = crate::lower::lower_program(&crate::build(&src).unwrap()).unwrap();
             let mut ctx = TypeContext::new();
             ctx.infer_program(&stmts);
-            assert_eq!(ctx.functions["begin"].params[0].1, CrowType::Float, "{} then {}", first, second);
+            assert_eq!(ctx.functions["begin"].params[0].1, Ty::Float, "{} then {}", first, second);
         }
     }
 
@@ -1363,7 +1303,7 @@ mod tests {
         let stmts = crate::lower::lower_program(&crate::build(src).unwrap()).unwrap();
         let mut ctx = TypeContext::new();
         ctx.infer_program(&stmts);
-        assert_eq!(ctx.functions["jump"].params[0].1, CrowType::Float);
+        assert_eq!(ctx.functions["jump"].params[0].1, Ty::Float);
     }
 
     /// A frame function over a value not typed yet is not guessed to be
@@ -1377,7 +1317,7 @@ mod tests {
         let mut ctx = TypeContext::new();
         ctx.infer_program(&stmts);
         let both = ctx.vars.get("both").cloned().map(TypeContext::walked);
-        assert!(matches!(both, Some(CrowType::Frame(_))), "{:?}", ctx.vars.get("both"));
+        assert!(matches!(both, Some(Ty::Frame(_))), "{:?}", ctx.vars.get("both"));
     }
 
     /// A function's local is its own: one named like a module variable
@@ -1390,7 +1330,7 @@ mod tests {
         let stmts = crate::lower::lower_program(&crate::build(src).unwrap()).unwrap();
         let mut ctx = TypeContext::new();
         ctx.infer_program(&stmts);
-        assert_eq!(ctx.vars.get("r"), Some(&CrowType::Float));
+        assert_eq!(ctx.vars.get("r"), Some(&Ty::Float));
         assert!(crate::lower_ir::check(&stmts, &ctx).is_ok());
     }
 
@@ -1404,7 +1344,7 @@ mod tests {
         let stmts = crate::lower::lower_program(&crate::build(src).unwrap()).unwrap();
         let mut ctx = TypeContext::new();
         ctx.infer_program(&stmts);
-        assert_eq!(ctx.functions["inner"].params[1].1, CrowType::Int);
+        assert_eq!(ctx.functions["inner"].params[1].1, Ty::Int);
         assert!(ctx.vars.get("f").is_some_and(|t| t.to_rust_type().contains("Pair")), "{:?}", ctx.vars.get("f"));
     }
 
@@ -1418,7 +1358,7 @@ mod tests {
         let mut ctx = TypeContext::new();
         ctx.infer_program(&stmts);
         let ys = &ctx.functions["edge"].params[0].1;
-        assert!(!matches!(ys, CrowType::Fn(_, _)), "{:?}", ys);
+        assert!(!matches!(ys, Ty::Fn(_, _)), "{:?}", ys);
     }
 
     /// A function that sends mail for a handler holds it for the handler's
@@ -1433,7 +1373,7 @@ mod tests {
         ctx.infer_program(&stmts);
         assert!(ctx.view_handlers.contains("notify") && ctx.view_handlers.contains("between"), "{:?}", ctx.view_handlers);
         assert!(!ctx.view_handlers.contains("alone"));
-        assert_eq!(ctx.functions["notify"].params[0].1, CrowType::Mailer);
+        assert_eq!(ctx.functions["notify"].params[0].1, Ty::Mailer);
     }
 
     /// The program's own evidence types a handler before a test's click
@@ -1445,7 +1385,7 @@ mod tests {
         let stmts = crate::lower::lower_program(&crate::build(src).unwrap()).unwrap();
         let mut ctx = TypeContext::new();
         ctx.infer_program(&stmts);
-        assert_eq!(ctx.functions["set_zoom"].params[0].1, CrowType::Str);
+        assert_eq!(ctx.functions["set_zoom"].params[0].1, Ty::Str);
     }
 
     /// A map literal is a nested set[] chain after lowering; inferring each
@@ -1462,7 +1402,7 @@ mod tests {
             let stmts = crate::lower::lower_program(&stmts).unwrap();
             let mut ctx = TypeContext::new();
             ctx.infer_program(&stmts);
-            assert_eq!(ctx.vars.get("m"), Some(&CrowType::Map(Box::new(CrowType::Float))));
+            assert_eq!(ctx.vars.get("m"), Some(&Ty::Map(Box::new(Ty::Float))));
         };
         std::thread::Builder::new().stack_size(64 << 20).spawn(infers).unwrap().join().unwrap();
     }
@@ -1476,8 +1416,8 @@ mod tests {
         let stmts = crate::lower::lower_program(&stmts).unwrap();
         let mut ctx = TypeContext::new();
         ctx.infer_program(&stmts);
-        assert_eq!(ctx.functions.get("f").map(|s| s.return_type.clone()), Some(CrowType::Int));
-        assert_eq!(ctx.vars.get("x"), Some(&CrowType::Str));
+        assert_eq!(ctx.functions.get("f").map(|s| s.return_type.clone()), Some(Ty::Int));
+        assert_eq!(ctx.vars.get("x"), Some(&Ty::Str));
     }
 
     /// A variable whose first value could not fail refuses a failed one
@@ -1491,9 +1431,9 @@ mod tests {
         let mut ctx = TypeContext::new();
         ctx.infer_program(&stmts);
         let ret = |n: &str| ctx.functions.get(n).map(|s| s.return_type.clone());
-        assert_eq!(ret("f"), Some(CrowType::Result(Box::new(CrowType::Int))));
-        assert_eq!(ret("g"), Some(CrowType::Int));
-        assert_eq!(ret("h"), Some(CrowType::Int));
+        assert_eq!(ret("f"), Some(Ty::Result(Box::new(Ty::Int))));
+        assert_eq!(ret("g"), Some(Ty::Int));
+        assert_eq!(ret("h"), Some(Ty::Int));
     }
 }
 

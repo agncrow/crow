@@ -10,8 +10,8 @@
 //! had, so a program compiled by it behaves as it did.
 
 use crate::ir::*;
-use crate::lower_ir::crow_type;
-use crate::type_infer::CrowType;
+use crate::lower_ir::as_inferred;
+use crate::type_infer::Ty;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod builtins;
@@ -82,7 +82,7 @@ pub fn emit_with(
 /// holds markup (a view's or an element's HTML) rather than text.
 #[derive(Clone, Debug)]
 pub(crate) struct Local {
-    pub ty: CrowType,
+    pub ty: Ty,
 }
 
 pub(crate) struct Emitter {
@@ -153,7 +153,7 @@ pub(crate) struct Emitter {
     pub(crate) test_control: bool,
     pub(crate) has_noapp_web: bool,
     /// facts: name → (type, the Rust default)
-    pub(crate) reactive_vars: BTreeMap<String, (CrowType, String)>,
+    pub(crate) reactive_vars: BTreeMap<String, (Ty, String)>,
     /// Each fact's declared value as main computes it, where it reads a fact
     /// declared before it or can fail (refused where the facts are set): a
     /// render or a handler does not compute it again (its getter falls back
@@ -170,7 +170,7 @@ pub(crate) struct Emitter {
 
     // the function being printed
     pub(crate) cur_fn: String,
-    pub(crate) cur_ret: Option<CrowType>,
+    pub(crate) cur_ret: Option<Ty>,
     pub(crate) returns_unit: bool,
     pub(crate) ref_params: HashSet<String>,
     pub(crate) scopes: Vec<HashMap<String, Local>>,
@@ -349,33 +349,33 @@ impl Emitter {
     /// local reads as the type it was declared with here (its first value's,
     /// as the generated programs have always declared it), everything else
     /// as the IR types it.
-    pub(crate) fn tt(&self, e: &Expr) -> CrowType {
+    pub(crate) fn tt(&self, e: &Expr) -> Ty {
         self.tt_full(e).text()
     }
 
     /// An expression's type with markup told apart from text.
-    pub(crate) fn tt_full(&self, e: &Expr) -> CrowType {
+    pub(crate) fn tt_full(&self, e: &Expr) -> Ty {
         match e {
             Expr::Local(n, _) | Expr::Move(n, _) | Expr::Load(n, _) | Expr::Derived(n, _) => match self.local_ty(n) {
-                Some(t) if !matches!(t, CrowType::Unknown) => t,
-                _ => crow_type(&e.ty()),
+                Some(t) if !matches!(t, Ty::Unknown) => t,
+                _ => as_inferred(&e.ty()),
             },
             Expr::Convert { how: Convert::Unwrap | Convert::Known, expr, ty } => {
                 let inner = self.tt_full(expr);
                 match inner {
-                    CrowType::Result(i) => *i,
-                    CrowType::Unknown => crow_type(ty),
+                    Ty::Result(i) => *i,
+                    Ty::Unknown => as_inferred(ty),
                     other => other,
                 }
             }
-            _ => crow_type(&e.ty()),
+            _ => as_inferred(&e.ty()),
         }
     }
 
     /// The payload of a result type, or the type itself.
-    pub(crate) fn inner(t: &CrowType) -> CrowType {
+    pub(crate) fn inner(t: &Ty) -> Ty {
         match t {
-            CrowType::Result(i) => i.as_ref().clone(),
+            Ty::Result(i) => i.as_ref().clone(),
             o => o.clone(),
         }
     }
@@ -396,13 +396,13 @@ impl Emitter {
         }
     }
 
-    pub(crate) fn is_copy_type(t: &CrowType) -> bool {
-        matches!(t, CrowType::Int | CrowType::Float | CrowType::Bool)
+    pub(crate) fn is_copy_type(t: &Ty) -> bool {
+        matches!(t, Ty::Int | Ty::Float | Ty::Bool)
     }
 
     // ── scopes ──────────────────────────────────────────────────────
 
-    pub(crate) fn declare(&mut self, name: &str, ty: CrowType) {
+    pub(crate) fn declare(&mut self, name: &str, ty: Ty) {
         if let Some(s) = self.scopes.last_mut() {
             s.insert(name.to_string(), Local { ty });
         }
@@ -412,7 +412,7 @@ impl Emitter {
         self.scopes.iter().any(|s| s.contains_key(name))
     }
 
-    pub(crate) fn local_ty(&self, name: &str) -> Option<CrowType> {
+    pub(crate) fn local_ty(&self, name: &str) -> Option<Ty> {
         self.scopes.iter().rev().find_map(|s| s.get(name).map(|l| l.ty.clone()))
     }
 

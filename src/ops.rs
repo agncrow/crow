@@ -303,7 +303,17 @@ fn mask_cell(v: &Value) -> crow_runtime::mask::Cell<'_> {
         Value::StructInstance(_) => Cell::Other("a record"),
         Value::Json(_) => Cell::Other("a JSON value"),
         Value::Frame(_) => Cell::Other("a frame"),
-        _ => Cell::Other("a value"),
+        Value::Fn(_) | Value::GradFn(_) => Cell::Other("a function"),
+        Value::Sparse(_) => Cell::Other("a sparse matrix"),
+        Value::DbConn(_) => Cell::Other("a database connection"),
+        Value::Mailer(_) => Cell::Other("a mailer"),
+        Value::Socket(_) => Cell::Other("a socket"),
+        Value::Bytes(_) => Cell::Other("bytes"),
+        Value::Stream(_) => Cell::Other("a stream"),
+        Value::Response(_) => Cell::Other("a response"),
+        Value::Traced(_) => Cell::Other("a tensor under grad"),
+        Value::App(_) => Cell::Other("an app session"),
+        Value::Done => Cell::Other("nothing"),
     }
 }
 
@@ -539,6 +549,14 @@ pub fn values_equal(a: &CrowValue, b: &CrowValue) -> bool {
         }
         (Value::Frame(x), Value::Frame(y)) => x == y,
         (Value::Sparse(x), Value::Sparse(y)) => x == y,
+        (Value::Traced(x), Value::Traced(y)) => x.value == y.value,
+        (Value::Done, Value::Done) => true,
+        // a function, a connection, a mailer, a socket, a stream, a
+        // response and a session are equal to nothing, themselves included:
+        // each is a handle, not a value (listed so that a kind added is
+        // decided here, not by the arm below)
+        (Value::Fn(_), Value::Fn(_)) | (Value::GradFn(_), Value::GradFn(_)) | (Value::DbConn(_), Value::DbConn(_)) | (Value::Mailer(_), Value::Mailer(_)) | (Value::Socket(_), Value::Socket(_)) | (Value::Stream(_), Value::Stream(_)) | (Value::Response(_), Value::Response(_)) | (Value::App(_), Value::App(_)) => false,
+        // two values of two kinds
         _ => false,
     }
 }

@@ -178,7 +178,7 @@ agreed, and a column the program misnamed stopped it as it ran.
   runs, in both modes, when the frame's columns are known and closed. An
   open or unknown frame's column is checked as it runs, as before.
 
-*Built (2026-09-29).* `CrowType::Frame(Option<Arc<Cols>>)` and
+*Built (2026-09-29; since 2026-10-07 the one type is `crate::ir::Ty`, so read `Ty::Frame` and `Ty::Tensor` for the names below).* `CrowType::Frame(Option<Arc<Cols>>)` and
 `Ty::Frame(Option<Box<FrameCols>>)`; `lower_ir/frames.rs` computes each
 operation's columns from its arguments' types (`frame_typed`), rebinds a
 frame local at each assignment (`rebind_frame`, a new `Let` in the block

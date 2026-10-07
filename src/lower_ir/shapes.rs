@@ -212,7 +212,7 @@ pub(super) fn row_dims(name: &str, args: &[Expr]) -> Option<Dims> {
         "tensor" | "dense" if n == 1 => match args[0].ty().payload() {
             Ty::Tensor(_, d) => d.clone(),
             Ty::Frame(_) => unknown(2),
-            Ty::Handle(h) if h == "sparse" => unknown(2),
+            Ty::Sparse => unknown(2),
             _ => None,
         },
         "tensor" if n == 2 => unknown(2),
@@ -319,10 +319,10 @@ impl<'a> Lowerer<'a> {
     /// A tensor local a part of which is assigned: its sizes are no longer
     /// stated from there on, so nothing is refused of them; its rank stays.
     pub(super) fn forget_shape(&mut self, var: &str) {
-        fn forget(t: &CrowType) -> CrowType {
+        fn forget(t: &Ty) -> Ty {
             match t {
-                CrowType::NumArray(elem, dims) => CrowType::NumArray(elem.clone(), dims.as_ref().map(|d| vec![None; d.len()])),
-                CrowType::Result(inner) => CrowType::Result(Box::new(forget(inner))),
+                Ty::Tensor(elem, dims) => Ty::Tensor(elem.clone(), dims.as_ref().map(|d| vec![None; d.len()])),
+                Ty::Result(inner) => Ty::Result(Box::new(forget(inner))),
                 other => other.clone(),
             }
         }
