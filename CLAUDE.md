@@ -107,8 +107,11 @@ steps on every push and must be green.
   shows any value had shown every column.
 - A test block that reaches no truth and no `assert` fails with "asserts
   nothing" (finch's `sim/autonext.co` had a line meant as a truth that
-  was not one, and passed for weeks); a parity program that prints
-  nothing in either mode fails.
+  was not one, and passed for weeks; its `sim/clock.co` law stood both
+  its truths under a precondition `if`, and nested bare booleans had
+  never been truths — they are now, by syntax before the lowering and by
+  their bool type after it); a parity program that prints nothing in
+  either mode fails.
 - A backend's fallback arm for what the lowering must never produce
   (the interpreter's int-plus-float arithmetic, the verifier's loop over a
   map) is where a lowering slip hides: the coverage run lists them as

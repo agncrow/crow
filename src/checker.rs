@@ -377,18 +377,6 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
             continue;
         };
         counts.truths += test.truths;
-        // a block that reaches no assertion — no bare truth, no assert[],
-        // in its body or in a function it calls — cannot fail, and is a
-        // failure itself (a block whose one truth was never a truth had
-        // passed for weeks)
-        if asserts_reached(&program, test) == 0 {
-            issues.push(Issue::TestFailure {
-                block: block.label.clone(),
-                line: block.line,
-                detail: "asserts nothing: no bare truth and no assert[…] is reached by the block or the functions it calls".into(),
-            });
-            continue;
-        }
         let sig = FnSig {
             params: test.params.iter().map(|(p, t)| (p.clone(), crate::lower_ir::as_inferred(t))).collect(),
             return_type: Ty::Unit,
@@ -415,6 +403,19 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
             counts.laws += 1;
             generate_input_combos(&sig)
         };
+        // a block that reaches no assertion — no bare truth, no assert[],
+        // in its body or in a function it calls — cannot fail, and is a
+        // failure itself (a block whose one truth was never a truth had
+        // passed for weeks; a law whose truths stood under its
+        // precondition had asserted nothing at all)
+        if asserts_reached(&program, test) == 0 {
+            issues.push(Issue::TestFailure {
+                block: block.label.clone(),
+                line: block.line,
+                detail: "asserts nothing: no bare truth and no assert[…] is reached by the block or the functions it calls".into(),
+            });
+            continue;
+        }
 
         'combos: for combo in &combos {
             counts.inputs_run += 1;
@@ -2447,7 +2448,8 @@ mod tests {
         let (issues, counts) = run_test_blocks(&stmts);
         assert!(issues.is_empty(), "expected all truths to hold, got {:?}", issues);
         assert_eq!(counts.blocks, 2);
-        assert_eq!(counts.truths, 2, "two bare boolean lines are truths");
+        // (the line under the precondition is a truth too; it had not been)
+        assert_eq!(counts.truths, 3, "two bare boolean lines are truths, and the one under the law's precondition a third");
         assert_eq!(counts.laws, 1, "the parameterized block is a law");
         assert!(counts.inputs_run > 1, "law must run over generated inputs");
     }

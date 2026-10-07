@@ -44,8 +44,9 @@ you chose. `fee[100.0] eq 1.0` records a *decision* (the fee floor is one
 dollar), and the `.kind` line pins the error path — error values are
 ordinary values (chapter 7), so verifying them needs nothing special.
 
-A block has to reach at least one truth or `assert`, in its body or in a
-function it calls. One that reaches none fails with `asserts nothing`: a
+A truth under a precondition (`if s gt 0.0`, and the comparison inside
+it) is checked where the precondition holds. A block has to reach at
+least one truth or `assert`, in its body or in a function it calls. One that reaches none fails with `asserts nothing`: a
 test that cannot fail tests nothing, and a line that was meant as a truth
 but is not one (a call whose value nobody compares) would pass forever.
 

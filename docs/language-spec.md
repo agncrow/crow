@@ -3614,10 +3614,11 @@ it, when nothing else does), or a number, when it meets one in arithmetic.
 
 A bare boolean line is a truth to check. `assert` is for steps inside
 scenarios, and reports both operands on failure. Preconditions are plain
-`if`s. Bindings are plain assignments. A test body is ordinary Crow. A
-block that reaches no truth and no `assert` — in its body or in a function
-it calls — fails with `asserts nothing`: a test that cannot fail tests
-nothing.
+`if`s, and a bare boolean line under one is a truth too, checked where the
+precondition holds. Bindings are plain assignments. A test body is
+ordinary Crow. A block that reaches no truth and no `assert` — in its body
+or in a function it calls — fails with `asserts nothing`: a test that
+cannot fail tests nothing.
 
 A test block sees declarations (functions, views, structs, imports) and two kinds of top-level assignment: literal values — a number, text, a bool, a list or a map of them, a frame built from them, a moment of them (`moment[0.0]`, `moment['2026-01-01']`) — which are reactive-state defaults, and connections (`db.connect[...]`), which are resources a render-time view needs. Computed top-level values are invisible, as inside any function.
 

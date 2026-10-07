@@ -1437,10 +1437,69 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// A bare truth under a precondition — `if s gt 0.0` and, inside it,
+    /// the comparison — is a truth too (spec: preconditions are plain
+    /// ifs): each such line in the body's nested blocks is written as an
+    /// assertion before the lowering sees it. Only the top level had been
+    /// read as truths: a law whose two truths stood under its precondition
+    /// had asserted nothing, and passed.
+    fn truths_under_guards(block: &[S], nested: bool, truths: &mut usize) -> Vec<S> {
+        block
+            .iter()
+            .map(|s| match s {
+                S::ExprStmt(e) if nested && Self::truth_syntax(e) => {
+                    *truths += 1;
+                    S::ExprStmt(A::Call { callee: Box::new(A::Ident("assert".to_string())), args: vec![e.clone()] })
+                }
+                S::If { condition, then_body, else_body } => S::If {
+                    condition: condition.clone(),
+                    then_body: Self::truths_under_guards(then_body, true, truths),
+                    else_body: else_body.as_ref().map(|b| Self::truths_under_guards(b, true, truths)),
+                },
+                S::For { var, iter, body } => S::For { var: var.clone(), iter: iter.clone(), body: Self::truths_under_guards(body, true, truths) },
+                S::While { condition, body } => S::While { condition: condition.clone(), body: Self::truths_under_guards(body, true, truths) },
+                other => other.clone(),
+            })
+            .collect()
+    }
+
+    /// A bare call answering a bool under a guard or in a loop of the body
+    /// is a truth too, as it is at the top level: asserted by its type,
+    /// once the lowering knows it.
+    fn assert_bools_under(block: &mut [Stmt], truths: &mut usize) {
+        for s in block.iter_mut() {
+            match s {
+                Stmt::If { then, els, .. } => {
+                    Self::assert_bools_in(then, truths);
+                    if let Some(e) = els {
+                        Self::assert_bools_in(e, truths);
+                    }
+                }
+                Stmt::While { body, .. } | Stmt::For { body, .. } => Self::assert_bools_in(body, truths),
+                _ => {}
+            }
+        }
+    }
+
+    fn assert_bools_in(block: &mut [Stmt], truths: &mut usize) {
+        for s in block.iter_mut() {
+            if let Stmt::Do(x) = s {
+                let ty = x.ty();
+                if matches!(ty, Ty::Bool) || matches!(&ty, Ty::Result(inner) if **inner == Ty::Bool) {
+                    let taken = std::mem::replace(x, Expr::Const(Const::Int(0), Ty::Int));
+                    *s = Stmt::Do(Expr::Call { target: Target::Runtime("assert".to_string()), args: vec![taken], ty: Ty::Unit, propagates: false });
+                    *truths += 1;
+                }
+            }
+        }
+        Self::assert_bools_under(block, truths);
+    }
+
     fn lower_test_body(&mut self, body: &[S]) -> Result<(Block, usize), String> {
         let mut out = Vec::new();
         let mut truths = 0;
-        for s in body {
+        let body = Self::truths_under_guards(body, false, &mut truths);
+        for s in &body {
             let mut lowered = self.lower_stmt(s)?;
             self.flush_pre_into(&mut out);
             // a bare line is a truth by what it is written as — a
@@ -1455,6 +1514,7 @@ impl<'a> Lowerer<'a> {
                     lowered.push(Stmt::Do(Expr::Call { target: Target::Runtime("assert".to_string()), args: vec![x], ty: Ty::Unit, propagates: false }));
                 }
             }
+            Self::assert_bools_under(&mut lowered, &mut truths);
             out.extend(lowered);
         }
         Ok((out, truths))
@@ -5333,6 +5393,38 @@ mod tests {
         assert!(refused("for n in 3\n    log[n]\n").contains("a loop walks int, which has no items"));
         // what has items walks
         assert!(crate::build("for x in [1, 2]\n    log[x]\nfor r in [[1.0, 2.0], [3.0, 4.0]]\n    log[r]\n").ok().and_then(|s| crate::ir_interp::prepare(&s, "t").ok()).is_some());
+    }
+
+    /// A truth under a precondition is a truth: a law's bare lines inside
+    /// its `if` are asserted by their syntax, a bool a call answers there
+    /// by its type, and a line in a loop the same (only the top level had
+    /// been read; a law whose two truths stood under its precondition had
+    /// asserted nothing, and passed).
+    #[test]
+    fn a_truth_under_a_precondition_is_asserted() {
+        // (positive is called by the program, so its bool is known where
+        // the test calls it; a function only a test calls answers an unknown)
+        let src = "fn area[w, h]\n    return w * h\nfn positive[x]\n    return x gt 0.0\nlog[area[2.0, 3.0]]\nlog[positive[2.0]]\ntest[a, dt]\n    if a gt 0.0 and dt gte 0.0\n        area[a, dt] gte 0.0\n        positive[a]\n    for k in [1, 2]\n        k lt 3\n";
+        let stmts = crate::build(src).expect("parses");
+        let (program, _) = crate::ir_interp::prepare(&stmts, "t").expect("lowers");
+        let test = &program.parts[0].tests[0];
+        assert_eq!(test.truths, 3);
+        let mut asserts = 0;
+        visit_block(&test.body, &mut |e| {
+            if let Expr::Call { target: Target::Runtime(n), .. } = e {
+                if n == "assert" {
+                    asserts += 1;
+                }
+            }
+        });
+        assert_eq!(asserts, 3);
+        // and a false one under its guard fails the block
+        let src = "test nested_false[]\n    y = 1.0\n    if y gt 0.0\n        y eq 2.0\n";
+        let stmts = crate::build(src).expect("parses");
+        let (issues, counts) = crate::checker::run_test_blocks(&stmts);
+        assert_eq!(counts.truths, 1);
+        assert_eq!(issues.len(), 1, "{:?}", issues);
+        assert!(format!("{:?}", issues[0]).contains("assert failed"), "{:?}", issues);
     }
 
     #[test]
