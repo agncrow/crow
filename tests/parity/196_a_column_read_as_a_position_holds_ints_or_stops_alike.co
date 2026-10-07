@@ -1,0 +1,15 @@
+--- A column the program reads as a position holds ints, and only such a
+--- use asks the file for ints: a file with 1.5 there stops the load with
+--- the column, what it holds, what the program reads and the read that
+--- asked — the same words in both modes, before any cell is read. (A
+--- column only compared with an int is a number, floats or ints as the
+--- file has them: parity 192.)
+use frame
+
+write['parity_196.csv', 'name,slot\na,0\nb,1.5\n']
+
+labels = ['first', 'second']
+df = frame.load['parity_196.csv']
+rm['parity_196.csv']
+for i in df.slot
+    log[labels[i]]

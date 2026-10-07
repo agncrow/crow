@@ -563,10 +563,15 @@ mod tests {
 /// A frame held to the columns a program reads (the lowering's
 /// `__expect_frame`; spec, Frames: a frame's type is its columns): each
 /// named column is there and holds the kind the program reads it as —
-/// text, ints, numbers (ints or floats), bools or moments — or the program
-/// stops with the column, what it holds and what the program reads. The
-/// frame is answered as it is.
-pub fn expect(f: &CrowFrame, names: &[String], kinds: &[String]) -> Result<CrowFrame, String> {
+/// text, ints, numbers, bools or moments — or the program stops with the
+/// column, what it holds, what the program reads and the read that asked
+/// (`hows`, one per column). A column of whole numbers the program reads
+/// as numbers is answered as floats: the program compares, adds and
+/// divides numbers, and which kind the file wrote is the file's business,
+/// so `q gt 20` holds for 20.5 and `q / 2` of 7 is 3.5 either way. A whole
+/// number a float cannot hold exactly (beyond 2^53) stops the load rather
+/// than lose digits.
+pub fn expect(f: &CrowFrame, names: &[String], kinds: &[String], hows: &[String]) -> Result<CrowFrame, String> {
     fn reads(kind: &str) -> &str {
         match kind {
             "str" => "text",
@@ -587,22 +592,73 @@ pub fn expect(f: &CrowFrame, names: &[String], kinds: &[String]) -> Result<CrowF
             other => other,
         }
     }
-    for (name, kind) in names.iter().zip(kinds) {
+    let mut out = f.clone();
+    for (i, (name, kind)) in names.iter().zip(kinds).enumerate() {
+        let how = hows.get(i).filter(|h| !h.is_empty()).map(|h| format!(" ({})", h)).unwrap_or_default();
         let Some(col) = f.col_native(name) else {
-            return Err(format!("the frame has no column '{}', which the program reads as {} — its columns are {}", name, reads(kind), f.columns.join(", ")));
+            return Err(format!("the frame has no column '{}', which the program reads as {}{} — its columns are {}", name, reads(kind), how, f.columns.join(", ")));
         };
         let dtype = col.data.dtype_name();
+        if kind == "float" && dtype == "int" {
+            if let crate::frame::Column::Int(v) = col.data.as_ref() {
+                const EXACT: u64 = 1 << 53;
+                let present = |i: usize| col.valid.get(i).copied().unwrap_or(true);
+                if let Some(x) = v.iter().enumerate().find(|(i, x)| present(*i) && x.unsigned_abs() > EXACT).map(|(_, x)| *x) {
+                    return Err(format!("column '{}' holds {}, a whole number a float cannot hold exactly, where the program reads numbers{} — read it with int[…] where it is compared", name, x, how));
+                }
+                let floats: Vec<f64> = v.iter().map(|x| *x as f64).collect();
+                out = out.with_validity(name, crate::frame::Column::Float(floats), col.valid.as_ref().clone())?;
+            }
+            continue;
+        }
         let fits = match kind.as_str() {
             "str" => dtype == "str",
             "int" => dtype == "int",
-            "float" => matches!(dtype, "int" | "float"),
+            "float" => dtype == "float",
             "bool" => dtype == "bool",
             "moment" => dtype == "datetime",
             _ => true,
         };
         if !fits {
-            return Err(format!("column '{}' holds {} where the program reads {}", name, holds(dtype), reads(kind)));
+            return Err(format!("column '{}' holds {} where the program reads {}{}", name, holds(dtype), reads(kind), how));
         }
     }
-    Ok(f.clone())
+    Ok(out)
+}
+
+#[cfg(test)]
+mod expect_tests {
+    use super::*;
+    use crate::frame::Column;
+
+    fn strs(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// A column of whole numbers the program reads as numbers is widened
+    /// to floats at the load, its missing cells kept; one it reads as ints
+    /// is answered as it is; one of floats where ints are asked stops with
+    /// the read that asked; a whole number beyond 2^53 stops rather than
+    /// lose digits.
+    #[test]
+    fn a_column_of_whole_numbers_read_as_numbers_is_floats_exactly() {
+        let f = CrowFrame::new(
+            strs(&["qty", "px", "id"]),
+            vec![Column::Int(vec![7, 0, 50]), Column::Float(vec![1.5, 2.5, 3.5]), Column::Int(vec![1, (1 << 53) + 1, 2])],
+            vec![vec![true, false, true], vec![true, true, true], vec![true, true, true]],
+        );
+        let held = expect(&f, &strs(&["qty"]), &strs(&["float"]), &strs(&["met in gt at line 9"])).expect("widened");
+        let qty = held.col_native("qty").expect("qty");
+        assert!(matches!(qty.data.as_ref(), Column::Float(v) if v == &vec![7.0, 0.0, 50.0]), "{:?}", qty.data.dtype_name());
+        assert_eq!(qty.valid.to_vec(), vec![true, false, true]);
+        assert_eq!(held.columns, strs(&["qty", "px", "id"]), "the columns keep their order");
+        let as_ints = expect(&f, &strs(&["qty"]), &strs(&["int"]), &strs(&["a position in names at line 3"])).expect("ints where ints are asked");
+        assert!(matches!(as_ints.col_native("qty").expect("qty").data.as_ref(), Column::Int(_)));
+        let err = expect(&f, &strs(&["px"]), &strs(&["int"]), &strs(&["a position in names at line 3"])).expect_err("floats where ints are asked");
+        assert_eq!(err, "column 'px' holds floats where the program reads ints (a position in names at line 3)");
+        let err = expect(&f, &strs(&["id"]), &strs(&["float"]), &strs(&["met in eq at line 4"])).expect_err("beyond 2^53");
+        assert_eq!(err, "column 'id' holds 9007199254740993, a whole number a float cannot hold exactly, where the program reads numbers (met in eq at line 4) — read it with int[…] where it is compared");
+        let err = expect(&f, &strs(&["sym"]), &strs(&["str"]), &strs(&["handed to upper at line 2"])).expect_err("missing");
+        assert_eq!(err, "the frame has no column 'sym', which the program reads as text (handed to upper at line 2) — its columns are qty, px, id");
+    }
 }

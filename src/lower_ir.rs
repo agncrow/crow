@@ -2105,16 +2105,20 @@ impl<'a> Lowerer<'a> {
             return expr;
         }
         let body = if self.current_fn.starts_with(uses::TOP) { uses::TOP.to_string() } else { self.current_fn.clone() };
-        let Some(cols) = self.ctx.frame_shapes.get(&(body, name.to_string())).cloned() else { return expr };
-        let Some(row) = crate::table::core_row("__expect_frame", &[crate::table::Arg::Frame, crate::table::Arg::Texts, crate::table::Arg::Texts]) else { return expr };
+        let key = (body, name.to_string());
+        let Some(cols) = self.ctx.frame_shapes.get(&key).cloned() else { return expr };
+        let reasons = self.ctx.frame_reasons.get(&key).cloned().unwrap_or_default();
+        let Some(row) = crate::table::core_row("__expect_frame", &[crate::table::Arg::Frame, crate::table::Arg::Texts, crate::table::Arg::Texts, crate::table::Arg::Texts]) else { return expr };
         let failing = expr.ty().is_result();
         let lit = |items: Vec<String>| Expr::ListLit(items.into_iter().map(|s| Expr::Const(Const::Str(s), Ty::Str)).collect(), Ty::List(Box::new(Ty::Str)));
         let names: Vec<String> = cols.cols.keys().cloned().collect();
         let kinds: Vec<String> = cols.cols.values().map(|t| t.crow_name()).collect();
+        // the read that decided each column, for the stop's words
+        let hows: Vec<String> = cols.cols.keys().map(|c| reasons.get(c).cloned().unwrap_or_default()).collect();
         let shaped = Ty::Frame(Some(cols));
         let arg = if failing { Expr::Convert { how: Convert::Unwrap, expr: Box::new(expr.clone()), ty: expr.ty().payload().clone() } } else { expr };
         let ty = if failing { Ty::Result(Box::new(shaped)) } else { shaped };
-        Expr::Call { target: Target::Row(row), args: vec![arg, lit(names), lit(kinds)], ty, propagates: failing }
+        Expr::Call { target: Target::Row(row), args: vec![arg, lit(names), lit(kinds), lit(hows)], ty, propagates: failing }
     }
 
     fn assign(&mut self, name: &str, expr: Expr) -> Stmt {
@@ -4064,6 +4068,9 @@ fn apply_shapes(ctx: &mut TypeContext, stmts: &[S]) -> usize {
         };
         ctx.frame_shapes.insert(key, std::sync::Arc::new(crate::type_infer::Cols { cols: known, open: true }));
     }
+    for (key, reasons) in shapes.reasons {
+        ctx.frame_reasons.entry(key).or_default().extend(reasons);
+    }
     ctx.frame_shapes.values().map(|c| c.cols.len()).sum()
 }
 
@@ -5511,21 +5518,28 @@ mod tests {
         assert!(format!("{:?}", issues[0]).contains("assert failed"), "{:?}", issues);
     }
 
-    /// A position or a key typed only as the program runs — a cell of a
-    /// frame loaded from a path the program is given, a parsed value — is
-    /// read as one first, in both modes: the interpreter had read it as it
-    /// ran and the compiled program had not built (a map indexed by a
-    /// cell, in the retrieval package).
+    /// A position or a key typed only as the program runs — a parsed
+    /// document's value — is read as one first, in both modes: the
+    /// interpreter had read it as it ran and the compiled program had not
+    /// built (a map indexed by a cell, in the retrieval package). A cell
+    /// of a frame loaded from a path the program is given is typed by that
+    /// very read — a position asks the file for ints, a key for text — so
+    /// nothing is read first there.
     #[test]
     fn an_index_the_program_cannot_type_is_read_first() {
         let refused = |src: &str| crate::build(src).ok().and_then(|stmts| crate::ir_interp::prepare(&stmts, "t").err()).unwrap_or_default();
-        let by_cell = "use frame\nname = args[][0]\nt = frame.load[name]\nxs = [10, 20, 30]\nlog[xs[t.at[0]]]\n";
-        assert!(refused(by_cell).contains("xs[…] is indexed by a value whose type the program does not know (argument 1): read it as one first, int[…] for a position"), "{}", refused(by_cell));
-        let by_key = "use frame\nname = args[][0]\nt = frame.load[name]\nm = map[a = 1]\nlog[m[t.k[0]]]\n";
-        assert!(refused(by_key).contains("m[…] is indexed by a value whose type the program does not know (argument 1): read it as one first, str[…] for a key"), "{}", refused(by_key));
+        let by_parsed = "d = json[args[][0]]\nxs = [10, 20, 30]\nlog[xs[d['i']]]\n";
+        assert!(refused(by_parsed).contains("xs[…] is indexed by a value whose type the program does not know (argument 1): read it as one first, int[…] for a position"), "{}", refused(by_parsed));
+        let by_parsed_key = "d = json[args[][0]]\nm = map[a = 1]\nlog[m[d['k']]]\n";
+        assert!(refused(by_parsed_key).contains("m[…] is indexed by a value whose type the program does not know (argument 1): read it as one first, str[…] for a key"), "{}", refused(by_parsed_key));
         // read first, both lower; a parsed value indexed by its own kind does too
-        let read = "use frame\nname = args[][0]\nt = frame.load[name]\nxs = [10, 20, 30]\nm = map[a = 1]\nlog[xs[int[t.at[0]]]]\nlog[m[str[t.k[0]]]]\nd = json['{\"a\": [1, 2]}']\nlog[d['a']]\n";
+        let read = "d = json[args[][0]]\nxs = [10, 20, 30]\nm = map[a = 1]\nlog[xs[int[d['i']]]]\nlog[m[str[d['k']]]]\ne = json['{\"a\": [1, 2]}']\nlog[e['a']]\n";
         assert_eq!(refused(read), "");
+        // a loaded frame's cell as a position or a key is typed by that read
+        let by_cell = "use frame\nname = args[][0]\nt = frame.load[name]\nxs = [10, 20, 30]\nm = map[a = 1]\nlog[xs[t.at[0]]]\nlog[m[t.k[0]]]\n";
+        assert_eq!(refused(by_cell), "");
+        let ir = ir_of(by_cell);
+        assert!(ir.contains("[\"at\", \"k\"], [\"int\", \"str\"], [\"a position in xs at line 6\", \"a key of m at line 7\"]"), "{}", ir);
     }
 
     #[test]

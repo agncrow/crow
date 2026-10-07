@@ -481,6 +481,8 @@ pub struct TypeContext {
     /// body that binds it and its name (lower_ir/uses.rs): applied where
     /// the frame is bound.
     pub frame_shapes: BTreeMap<(String, String), std::sync::Arc<Cols>>,
+    /// the read that decided each of those columns, for the stop at the load
+    pub frame_reasons: BTreeMap<(String, String), BTreeMap<String, String>>,
     /// A column read as two kinds: refused before the program runs, at
     /// the first read's line.
     pub shape_conflicts: Vec<(usize, String)>,
@@ -586,6 +588,7 @@ impl TypeContext {
             describe_queries: false,
             describe_cache: BTreeMap::new(),
             frame_shapes: BTreeMap::new(),
+            frame_reasons: BTreeMap::new(),
             shape_conflicts: Vec::new(),
             describe_notes: Vec::new(),
             tested: Vec::new(),

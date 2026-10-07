@@ -1,21 +1,16 @@
 --- Derivations: values computed from facts and sources, read by name,
 --- recomputed only when something they read changed (derive-design.md).
+--- A derivation reads and never writes, so no program can count its own
+--- recomputations: that count is the runtime's own tests' to hold. What a
+--- program can see is that a derivation follows the facts it reads.
 use web, ui, db
 
 conn = db.connect['sqlite://:memory:']
 
 sym = 'IMRN'
 qty = 100
-runs = 0
-
---- counts how often the body runs — a derivation must not recompute
---- when nothing it read changed
-fn count_run[]
-  runs = runs + 1
-  return runs
 
 derive total
-  count_run[]
   return qty * 2
 
 derive label
@@ -39,25 +34,29 @@ fn setup[]
 fn buy[]
   exec[conn, 'INSERT INTO trades (symbol, px) VALUES (?, ?)', [sym, 1.79]]
 
+--- the handlers are wired here: a function that writes a fact is a
+--- handler, pressed by the tests below
 view render[]
-  return stack[p[label], p['`len[trades]` trades'], gap = 's']
+  return stack[
+    p[label],
+    p['`len[trades]` trades'],
+    button['setup', click = setup],
+    button['buy', click = buy],
+    button['double', click = double],
+    button['rename', click = rename],
+    button['same', click = same],
+    gap = 's'
+  ]
 
-test a_derivation_recomputes_only_when_an_input_changed[]
+test a_derivation_follows_the_facts_it_reads[]
   a = app[render]
   click[a, setup]
-  h = html[a]
-  assert[contains[h, 'x IMRN total 200']]
-  assert[runs eq 1]
-  html[a]
-  assert[runs eq 1]
+  assert[contains[html[a], 'x IMRN total 200']]
   click[a, double]
   assert[contains[html[a], 'total 400']]
-  assert[runs eq 2]
-  --- a fact rewritten to the same value moves nothing, so the derivation
-  --- is not recomputed
+  --- a fact rewritten to the same value moves nothing: the page is as it was
   click[a, same]
-  html[a]
-  assert[runs eq 2]
+  assert[contains[html[a], 'total 400']]
 
 test a_derivation_reads_another[]
   a = app[render]

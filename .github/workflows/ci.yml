@@ -115,6 +115,10 @@ jobs:
         run: |
           ./target/release/crow test tests/chart_harness.co
           ./target/release/crow test --compiled tests/chart_harness.co
+      - name: The derive harness, in the interpreter and the compiled program (a function that writes a fact is a handler, wired in the view)
+        run: |
+          ./target/release/crow test tests/derive_harness.co
+          ./target/release/crow test --compiled tests/derive_harness.co
           rm -rf .crow_build && df -h / | tail -1
       - name: The app's book (derived from the parts fixture, with wireframes)
         run: cd tests/parts && ../../target/release/crow book --write && test -f .crow/book/site/pages.html && grep -q '<svg' .crow/book/site/pages.html

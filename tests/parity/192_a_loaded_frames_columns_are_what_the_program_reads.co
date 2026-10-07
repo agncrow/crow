@@ -1,14 +1,14 @@
 --- A frame loaded from a file has the columns the program's reads of its
 --- cells say (spec, Frames: a frame's type is its columns): a cell handed
 --- to a function that uppercases it is text, one halved a float, one
---- compared with an int an int — nothing is written, nothing is read
---- first. The frame is held to that shape where it is bound, and typed by
+--- compared with an int a number, held as floats whichever the file wrote
+--- (50.5 beside 100) — nothing is written, nothing is read first. The frame is held to that shape where it is bound, and typed by
 --- it from then on, the same in both modes (its cells had been parsed
 --- values, each read first by hand; a function handed one had taken a
 --- parsed value, and the compiled program had not held it).
 use frame
 
-write['parity_192.csv', 'sym,px,qty,note\nAAPL,191.5,100,ok\nmsft,415.25,50,late\nnvda,900.0,10,\n']
+write['parity_192.csv', 'sym,px,qty,note\nAAPL,191.5,100,ok\nmsft,415.25,50.5,late\nnvda,900.0,10,\n']
 
 fn label[t]
     return upper[t]

@@ -1,13 +1,17 @@
 //! What a program's uses say of a frame it cannot see (spec, Frames: a
 //! frame's type is its columns). A frame loaded from a file has the
 //! columns the reads of its cells say: a cell handed to `upper` is text,
-//! one multiplied by a float a float, one compared with an int an int, one
-//! a function reads as text — by that function's own uses — text. The
-//! shape is applied where the frame is bound and held at run time there
-//! (`__expect_frame`), and the frame is typed from then on in both modes.
-//! A column read as two kinds is refused before the program runs, naming
-//! both reads. Nothing is written in the program, and nothing is guessed:
-//! a column no read says anything of stays as it comes.
+//! one met as a number — compared with one, added to one, halved — a
+//! number, held as floats whichever the file wrote (`q gt 20` holds for
+//! 20.5: the program compares two numbers, and which kind the file's are
+//! is the file's business), one handed to what takes nothing but an int —
+//! a position, `head`, `repeat` — an int, one a function reads as text —
+//! by that function's own uses — text. The shape is applied where the
+//! frame is bound and held at run time there (`__expect_frame`), and the
+//! frame is typed from then on in both modes. A column read as two kinds
+//! is refused before the program runs, naming both reads. Nothing is
+//! written in the program, and nothing is guessed: a column no read says
+//! anything of stays as it comes.
 
 use crate::ast::{BinOp, Expr as A, Stmt as S, UnaryOp};
 use crate::type_infer::{Ty, TypeContext};
@@ -26,14 +30,20 @@ pub(crate) struct Shapes {
     pub frames: BTreeMap<FrameKey, BTreeMap<String, Ty>>,
     /// a column read two ways: the first read's line, and the refusal
     pub conflicts: Vec<(usize, String)>,
+    /// the read that decided each column, named in the stop at the load
+    pub reasons: BTreeMap<FrameKey, BTreeMap<String, String>>,
 }
 
-/// One read of a column, and the kind it says.
+/// One read of a column, and the kind it says. A read is strict when
+/// what it hands the cell to takes nothing else (a builtin's row, a
+/// position, a function's body handing it on); a number met in an
+/// operator says a number, int or float as the file has it.
 #[derive(Clone, Debug)]
 struct Read {
     kind: Ty,
     line: usize,
     how: String,
+    strict: bool,
 }
 
 /// The reads of every loaded frame's columns, across the program.
@@ -44,7 +54,7 @@ struct Uses<'c> {
     /// the loaded frames of each body, by the name they go by there
     loaded: BTreeMap<String, Vec<String>>,
     /// a function's parameter read as a cell: what its body says (memoised)
-    param_says: HashMap<(String, usize), Vec<Ty>>,
+    param_says: HashMap<(String, usize), Vec<(Ty, bool)>>,
     walking: HashSet<(String, usize)>,
     line: usize,
 }
@@ -187,7 +197,7 @@ impl<'c> Uses<'c> {
             S::ExprStmt(e) | S::Return(Some(e)) => self.walk_expr(e, env),
             S::If { condition, then_body, else_body } => {
                 if let Some(cell) = self.cell_of(condition, env) {
-                    self.note(&cell, Ty::Bool, "decided on");
+                    self.note(&cell, Ty::Bool, "decided on", true);
                 }
                 self.walk_expr(condition, env);
                 self.walk_block(then_body, env);
@@ -251,8 +261,8 @@ impl<'c> Uses<'c> {
         }
     }
 
-    fn note(&mut self, cell: &(FrameKey, String), kind: Ty, how: &str) {
-        self.reads.entry(cell.clone()).or_default().push(Read { kind, line: self.line, how: how.to_string() });
+    fn note(&mut self, cell: &(FrameKey, String), kind: Ty, how: &str, strict: bool) {
+        self.reads.entry(cell.clone()).or_default().push(Read { kind, line: self.line, how: how.to_string(), strict });
     }
 
     fn walk_expr(&mut self, e: &A, env: &mut Env) {
@@ -274,15 +284,34 @@ impl<'c> Uses<'c> {
                 if let Some(name) = name {
                     for (i, a) in positional.iter().enumerate() {
                         let Some(cell) = self.cell_of(a, env) else { continue };
-                        for kind in self.handed_says(module.as_deref(), &name, i, positional.len()) {
-                            self.note(&cell, kind, &format!("handed to {}", name));
+                        for (kind, strict) in self.handed_says(module.as_deref(), &name, i, positional.len()) {
+                            self.note(&cell, kind, &format!("handed to {}", name), strict);
+                        }
+                    }
+                    // a position into a list, a tensor or text takes nothing
+                    // but an int, a key into a map text
+                    if module.is_none() && !self.ctx.functions.contains_key(&name) {
+                        let takes = match self.ctx.vars.get(&name).map(|t| t.payload().clone()) {
+                            Some(Ty::List(_) | Ty::Tensor(..) | Ty::Str) => Some((Ty::Int, "a position in")),
+                            Some(Ty::Map(_)) => Some((Ty::Str, "a key of")),
+                            _ => None,
+                        };
+                        let first = positional.first().and_then(|a| self.cell_of(a, env));
+                        if let (Some((kind, what)), Some(cell)) = (takes, first) {
+                            self.note(&cell, kind, &format!("{} {}", what, name), true);
                         }
                     }
                 }
                 if let A::FieldAccess { .. } = callee.as_ref() {
-                    // (a column indexed is a cell read, not a call)
-                    if self.column_of(callee, env).is_none() {
-                        self.walk_expr(callee, env);
+                    // (a column indexed is a cell read, not a call — and its
+                    // position an int)
+                    match self.column_of(callee, env) {
+                        Some((_, column)) => {
+                            if let Some(cell) = positional.first().and_then(|a| self.cell_of(a, env)) {
+                                self.note(&cell, Ty::Int, &format!("a position in column {}", column), true);
+                            }
+                        }
+                        None => self.walk_expr(callee, env),
                     }
                 }
             }
@@ -293,19 +322,19 @@ impl<'c> Uses<'c> {
                 match op {
                     BinOp::And | BinOp::Or => {
                         for c in [lc, rc].into_iter().flatten() {
-                            self.note(&c, Ty::Bool, "joined with and/or");
+                            self.note(&c, Ty::Bool, "joined with and/or", true);
                         }
                     }
                     _ => {
                         let arithmetic = matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::Pow);
                         if let Some(c) = &lc {
                             if let Some(k) = kind_of(right, self.ctx).filter(|k| !arithmetic || matches!(k, Ty::Int | Ty::Float | Ty::Moment)) {
-                                self.note(c, k, &format!("met in {:?}", op).to_lowercase());
+                                self.note(c, k, &format!("met in {:?}", op).to_lowercase(), false);
                             }
                         }
                         if let Some(c) = &rc {
                             if let Some(k) = kind_of(left, self.ctx).filter(|k| !arithmetic || matches!(k, Ty::Int | Ty::Float | Ty::Moment)) {
-                                self.note(c, k, &format!("met in {:?}", op).to_lowercase());
+                                self.note(c, k, &format!("met in {:?}", op).to_lowercase(), false);
                             }
                         }
                     }
@@ -315,7 +344,7 @@ impl<'c> Uses<'c> {
                 self.walk_expr(expr, env);
                 if matches!(op, UnaryOp::Not) {
                     if let Some(c) = self.cell_of(expr, env) {
-                        self.note(&c, Ty::Bool, "negated");
+                        self.note(&c, Ty::Bool, "negated", true);
                     }
                 }
             }
@@ -361,24 +390,30 @@ impl<'c> Uses<'c> {
     /// function's parameter type where known, else what the function's
     /// own body reads the parameter as; a builtin's row where every row
     /// agrees.
-    fn handed_says(&mut self, module: Option<&str>, name: &str, at: usize, argc: usize) -> Vec<Ty> {
+    fn handed_says(&mut self, module: Option<&str>, name: &str, at: usize, argc: usize) -> Vec<(Ty, bool)> {
         let key = match module {
             Some(m) => format!("{}_{}", m, name),
             None => name.to_string(),
         };
-        if let Some(sig) = self.ctx.functions.get(&key) {
+        let ctx: &'c TypeContext = self.ctx;
+        if let Some(sig) = ctx.functions.get(&key) {
             if let Some((_, t)) = sig.params.get(at) {
                 if definite(t) {
-                    return vec![t.clone()];
+                    // (an int the signature says is asked of the file only
+                    // where the body hands it to what takes nothing else:
+                    // a parameter once given 3 widens to a float, a
+                    // position does not)
+                    let strict = *t == Ty::Int && self.param_says(&key, at).iter().any(|(k, s)| *s && *k == Ty::Int);
+                    return vec![(t.clone(), strict)];
                 }
             }
             return self.param_says(&key, at);
         }
-        row_says(name, module, at, argc).into_iter().collect()
+        row_says(name, module, at, argc).into_iter().map(|t| (t, true)).collect()
     }
 
     /// What a function's body says of a parameter read as a cell.
-    fn param_says(&mut self, f: &str, at: usize) -> Vec<Ty> {
+    fn param_says(&mut self, f: &str, at: usize) -> Vec<(Ty, bool)> {
         let key = (f.to_string(), at);
         if let Some(said) = self.param_says.get(&key) {
             return said.clone();
@@ -397,8 +432,8 @@ impl<'c> Uses<'c> {
         let line = self.line;
         self.walk_block(&body, &mut env);
         self.line = line;
-        let said: Vec<Ty> = self.reads.remove(&(probe, "\u{1}".to_string())).unwrap_or_default().into_iter().map(|r| r.kind).collect();
-        let mut distinct: Vec<Ty> = Vec::new();
+        let said: Vec<(Ty, bool)> = self.reads.remove(&(probe, "\u{1}".to_string())).unwrap_or_default().into_iter().map(|r| (r.kind, r.strict)).collect();
+        let mut distinct: Vec<(Ty, bool)> = Vec::new();
         for t in said {
             if !distinct.contains(&t) {
                 distinct.push(t);
@@ -445,7 +480,9 @@ pub(crate) fn shapes_from_use(stmts: &[S], ctx: &TypeContext) -> Shapes {
         if frame.0.starts_with('\u{1}') {
             continue;
         }
-        // ints read beside floats are floats; anything else read two ways is refused
+        // a number is a number — floats, whichever the file wrote — unless a
+        // read takes nothing but an int; anything else read two ways is
+        // refused
         let mut kinds: Vec<&Read> = Vec::new();
         for r in reads {
             if !kinds.iter().any(|k| k.kind == r.kind) {
@@ -453,10 +490,14 @@ pub(crate) fn shapes_from_use(stmts: &[S], ctx: &TypeContext) -> Shapes {
             }
         }
         let numbers = kinds.iter().all(|k| matches!(k.kind, Ty::Int | Ty::Float));
-        let kind = if kinds.len() == 1 {
-            kinds[0].kind.clone()
-        } else if numbers {
-            Ty::Float
+        let asks_int = reads.iter().find(|r| r.strict && r.kind == Ty::Int);
+        let (kind, decided) = if numbers {
+            match asks_int {
+                Some(r) => (Ty::Int, r),
+                None => (Ty::Float, kinds[0]),
+            }
+        } else if kinds.len() == 1 {
+            (kinds[0].kind.clone(), kinds[0])
         } else {
             let a = kinds[0];
             let b = kinds[1];
@@ -470,6 +511,7 @@ pub(crate) fn shapes_from_use(stmts: &[S], ctx: &TypeContext) -> Shapes {
             continue;
         };
         shapes.frames.entry(frame.clone()).or_default().insert(column.clone(), kind);
+        shapes.reasons.entry(frame.clone()).or_default().insert(column.clone(), format!("{} at line {}", decided.how, decided.line));
     }
     shapes
 }
@@ -487,17 +529,39 @@ mod tests {
 
     /// A loaded frame's columns are what the program reads them as: a cell
     /// handed to `upper` is text, one multiplied by a float a float, one
-    /// compared with an int a number, one a function reads as text — by its
-    /// own body — text; a column only shown says nothing.
+    /// compared with an int a number — floats, whichever the file wrote —
+    /// one used as a position, or handed to `head`, an int, one a function
+    /// reads as text — by its own body — text; a column only shown says
+    /// nothing. Each column names the read that decided it.
     #[test]
     fn the_reads_say_a_loaded_frames_columns() {
-        let s = shapes("use frame\nfn label[t]\n    return upper[t]\nfn half[x]\n    return x / 2.0\nname = args[][0]\ndf = frame.load[name]\nfor t in df.sym\n    log[label[t]]\nfor p in df.px\n    log[half[p]]\nfor q in df.qty\n    if q gt 3\n        log[q]\nlog[df.note]\n");
-        let df = s.frames.get(&(TOP.to_string(), "df".to_string())).expect("df has a shape");
+        let s = shapes("use frame\nfn label[t]\n    return upper[t]\nfn half[x]\n    return x / 2.0\nname = args[][0]\nnames = ['a', 'b']\ndf = frame.load[name]\nfor t in df.sym\n    log[label[t]]\nfor p in df.px\n    log[half[p]]\nfor q in df.qty\n    if q gt 3\n        log[q]\nfor i in df.idx\n    log[names[i]]\nfor i in df.idx\n    log[i * 1.5]\nfor n in df.n\n    log[head[df, n]]\nlog[df.note]\n");
+        let key = (TOP.to_string(), "df".to_string());
+        let df = s.frames.get(&key).expect("df has a shape");
         assert_eq!(df.get("sym"), Some(&Ty::Str), "{:?}", df);
         assert_eq!(df.get("px"), Some(&Ty::Float), "{:?}", df);
-        assert_eq!(df.get("qty"), Some(&Ty::Int), "{:?}", df);
+        assert_eq!(df.get("qty"), Some(&Ty::Float), "{:?}", df);
+        assert_eq!(df.get("idx"), Some(&Ty::Int), "{:?}", df);
+        assert_eq!(df.get("n"), Some(&Ty::Int), "{:?}", df);
         assert_eq!(df.get("note"), None, "{:?}", df);
         assert!(s.conflicts.is_empty(), "{:?}", s.conflicts);
+        let why = s.reasons.get(&key).expect("reasons");
+        assert_eq!(why.get("qty").map(String::as_str), Some("met in gt at line 14"), "{:?}", why);
+        assert_eq!(why.get("idx").map(String::as_str), Some("a position in names at line 17"), "{:?}", why);
+        assert_eq!(why.get("n").map(String::as_str), Some("handed to head at line 21"), "{:?}", why);
+        assert_eq!(why.get("sym").map(String::as_str), Some("handed to label at line 10"), "{:?}", why);
+    }
+
+    /// A function's parameter the signature says is an int asks the file
+    /// for ints only where the body hands it to what takes nothing else:
+    /// `first[n]` indexing by it does, `twice[n]` once given 3 does not — a
+    /// cell of 2.5 handed to it widens the parameter, as any float would.
+    #[test]
+    fn an_int_parameter_asks_the_file_only_where_its_body_does() {
+        let s = shapes("use frame\nnames = ['a', 'b']\nfn first[n]\n    return names[n]\nfn twice[n]\n    return n * 2\nlog[twice[3]]\ndf = frame.load[args[][0]]\nfor i in df.idx\n    log[first[i]]\nfor q in df.qty\n    log[twice[q]]\n");
+        let df = s.frames.get(&(TOP.to_string(), "df".to_string())).expect("df");
+        assert_eq!(df.get("idx"), Some(&Ty::Int), "{:?}", df);
+        assert_eq!(df.get("qty"), Some(&Ty::Float), "{:?}", df);
     }
 
     /// The shape reaches the program: the loaded frame is bound held to
@@ -515,8 +579,8 @@ mod tests {
         assert_eq!(ctx.functions.get("label").map(|s| s.params.clone()), Some(vec![("t".to_string(), Ty::Str)]));
         let program = crate::lower_ir::lower(&stmts, &mut ctx, "t").expect("lowers to the IR");
         let ir = crate::ir::print(&program);
-        assert!(ir.contains("core.__expect_frame(unwrap frame.load!now(\"x.csv\"), [\"qty\", \"sym\"], [\"int\", \"str\"])"), "{}", ir);
-        assert!(ir.contains("let df: Result(Frame{qty: Int, sym: Str, …})"), "{}", ir);
+        assert!(ir.contains("core.__expect_frame(unwrap frame.load!now(\"x.csv\"), [\"qty\", \"sym\"], [\"float\", \"str\"], [\"met in gt at line 9\", \"handed to label at line 6\"])"), "{}", ir);
+        assert!(ir.contains("let df: Result(Frame{qty: Float, sym: Str, …})"), "{}", ir);
         assert!(ir.contains("pure label(t: Str) -> Str"), "{}", ir);
     }
 
