@@ -65,13 +65,16 @@ steps on every push and must be green.
   to `~/.crow/src` for that reason.
 - After verifying a served app (finch on 3100), run `crow stop` so the
   port is free for the user.
-- A debug build checks the IR of every program it lowers
-  (`CROW_IR_VERIFY`, strict by default there; the harnesses set it for the
-  release binary). A finding is a bug in the lowering, not in the program.
-  Run `cargo test --release --bin crow` with `CROW_IR_VERIFY=strict` set
-  before a gate: three unit tests looked flaky for an hour until the
-  variable, exported in some shells and not others, turned out to be what
-  differed — and the finding was real.
+- Every build checks the IR of every program it lowers (`CROW_IR_VERIFY`:
+  strict unless set to `off` or `report`; a release binary had skipped
+  the check until 2026-10-08, so a lowering slip reached the backends
+  silently). A finding is a bug in the lowering, not in the program:
+  three unit tests looked flaky for an hour until the variable, exported
+  in some shells and not others, turned out to be what differed — and the
+  finding was real. `scripts/coverage.sh --arms` writes
+  `target/coverage/arms.txt`: the lines no suite reaches, the match arms
+  among them named — a backend's arm for what the lowering must never
+  produce is where the next slip hides.
 - One type: `crate::ir::Ty` (re-exported by `type_infer`) is the only type
   enum since 2026-10-07 — `CrowType` and the IR's `Ty` were one thing
   twice with a lossy map between them, and `where` of a mask was math's

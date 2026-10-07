@@ -23,19 +23,20 @@ pub enum Mode {
     Off,
     /// Print each finding and go on (`CROW_IR_VERIFY=report`).
     Report,
-    /// Refuse the program as the lowering's bug (`CROW_IR_VERIFY=strict`,
-    /// and every debug build, so `cargo test` checks every program it
-    /// lowers; the harnesses run the release binary strict).
+    /// Refuse the program as the lowering's bug: every build, unless
+    /// `CROW_IR_VERIFY` says otherwise (`off`, or `report` to print the
+    /// findings and run on). A release binary had skipped the check, so a
+    /// lowering slip reached the backends silently — the interpreter
+    /// computing around it where it could, the compiled program not
+    /// building — and the pass costs one walk of the IR.
     Strict,
 }
 
 pub fn mode() -> Mode {
     match std::env::var("CROW_IR_VERIFY").as_deref() {
-        Ok("strict") => Mode::Strict,
         Ok("off") => Mode::Off,
-        Ok(_) => Mode::Report,
-        Err(_) if cfg!(debug_assertions) => Mode::Strict,
-        Err(_) => Mode::Off,
+        Ok("report") => Mode::Report,
+        _ => Mode::Strict,
     }
 }
 
@@ -447,9 +448,17 @@ impl<'p> Verifier<'p> {
                 self.conversion(*how, &inner, ty);
                 ty.clone()
             }
-            Expr::Binary { l, r, ty, .. } => {
-                self.expr(l);
-                self.expr(r);
+            Expr::Binary { op, l, r, ty } => {
+                let lt = self.expr(l);
+                let rt = self.expr(r);
+                // an int meets a float only through the lowering's conversion
+                // (spec §1): a pair here is what the interpreter's fallback
+                // arms had computed around, and the compiled program refused
+                if matches!(op.as_str(), "add" | "sub" | "mul" | "div" | "mod" | "pow")
+                    && matches!((lt.payload(), rt.payload()), (Ty::Int, Ty::Float) | (Ty::Float, Ty::Int))
+                {
+                    self.found(format!("an int meets a float in '{}' without a conversion", op));
+                }
                 ty.clone()
             }
             Expr::Unary { expr, ty, .. } => {

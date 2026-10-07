@@ -212,7 +212,84 @@ mod tests {
 }
 
 
-/// One-time migration: convert legacy {expr} interpolation to `expr` inside
+/// One-time migration: convert legacy {expr} interpolation to `expr` inside/// Every program in the repository survives the formatter: formatted, it
+/// parses to the same tree (line numbers aside), and formatted again it
+/// does not change. The parser has few tests of its own; this holds it,
+/// and the formatter, to every program there is.
+#[cfg(test)]
+mod round_trip {
+    use std::path::{Path, PathBuf};
+
+    fn programs(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        for entry in rd.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if path.is_dir() {
+                if !matches!(name.as_str(), "target" | ".crow_build" | "crow_modules" | "node_modules" | ".git" | ".crow") {
+                    programs(&path, out);
+                }
+            } else if name.ends_with(".co") {
+                out.push(path);
+            }
+        }
+    }
+
+    /// The tree's text with the line markers taken out.
+    fn shape(stmts: &[crate::ast::Stmt]) -> String {
+        let text = format!("{:?}", stmts);
+        let mut out = String::with_capacity(text.len());
+        let mut rest = text.as_str();
+        while let Some(at) = rest.find("Line(") {
+            out.push_str(&rest[..at]);
+            let after = &rest[at + 5..];
+            let digits = after.chars().take_while(|c| c.is_ascii_digit()).count();
+            rest = if after[digits..].starts_with(')') { &after[digits + 1..] } else { after };
+        }
+        out.push_str(rest);
+        out
+    }
+
+    #[test]
+    fn every_program_round_trips_through_the_formatter() {
+        let mut files = Vec::new();
+        programs(Path::new(env!("CARGO_MANIFEST_DIR")), &mut files);
+        files.sort();
+        let (mut checked, mut skipped) = (0, 0);
+        let mut problems = Vec::new();
+        for path in &files {
+            let Ok(src) = std::fs::read_to_string(path) else { continue };
+            // (a program the parser refuses is a fixture of a refusal, not this test's)
+            let Ok(before) = crate::build(&src) else {
+                skipped += 1;
+                continue;
+            };
+            let shown = path.strip_prefix(env!("CARGO_MANIFEST_DIR")).unwrap_or(path).display().to_string();
+            let formatted = match super::format_source(&src) {
+                Ok(f) => f,
+                Err(e) => {
+                    problems.push(format!("{}: the formatter refuses what the parser took: {}", shown, e));
+                    continue;
+                }
+            };
+            match crate::build(&formatted) {
+                Ok(after) if shape(&after) != shape(&before) => problems.push(format!("{}: formatted, it parses to a different tree", shown)),
+                Ok(_) => {}
+                Err(e) => problems.push(format!("{}: formatted, it does not parse: {}", shown, e)),
+            }
+            match super::format_source(&formatted) {
+                Ok(twice) if twice != formatted => problems.push(format!("{}: formatting twice is not formatting once", shown)),
+                Ok(_) => {}
+                Err(e) => problems.push(format!("{}: the formatted text does not format: {}", shown, e)),
+            }
+            checked += 1;
+        }
+        assert!(problems.is_empty(), "{} of {} programs:\n{}", problems.len(), checked, problems.join("\n"));
+        assert!(checked >= 300, "{} programs checked, {} skipped", checked, skipped);
+    }
+}
+
+
 /// string literals (and \{ \} escapes to plain braces). Used by
 /// `crow fmt --fix-interpolation`. Character-exact outside strings.
 pub fn migrate_interpolation(source: &str) -> String {

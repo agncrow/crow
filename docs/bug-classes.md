@@ -121,10 +121,12 @@ does with a finding depends on `CROW_IR_VERIFY`:
 - `report` prints each finding and goes on.
 - `off` does not check.
 
-When the variable is unset, a debug build is strict and a release build
-is off. `cargo test` therefore checks every program a test lowers (1,052
-tests), and a harness can run the release binary strict. A user's release
-build pays nothing.
+When the variable is unset, every build is strict (since 2026-10-08; a
+release build had been off, so a lowering slip reached the backends
+silently — the interpreter computing around it where an arm let it, the
+compiled program not building). `cargo test` checks every program a test
+lowers, the harnesses and a user's `crow run` the same way, and the check
+costs one walk of the IR.
 
 **Found on its first run.** Over the corpus (every tracked `.co` file,
 every book block, finch: 1,053 files) the first version reported 442

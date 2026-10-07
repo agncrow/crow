@@ -116,6 +116,9 @@ repository root points assistants here.
     test for a function, a parity program for both modes, a book block
     for a user-facing name, a harness for a page — and a line the gate
     cannot reach is named in the commit message with why.
+    `scripts/coverage.sh --arms` writes the lines no suite reaches, by file,
+    with the match arms among them named: a backend's arm for what the
+    lowering must never produce is where the next slip hides.
 
 ## Workflow
 
