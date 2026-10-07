@@ -131,6 +131,15 @@ steps on every push and must be green.
   never been truths — they are now, by syntax before the lowering and by
   their bool type after it); a parity program that prints nothing in
   either mode fails.
+- A loaded frame's columns come from the program's reads
+  (`lower_ir/uses.rs`): the shapes are read off the declarations before
+  any pass types anything (a parameter once typed as a parsed value stays
+  one through every later round), and applied where the frame is bound,
+  BEFORE the scan pass types the variable — the scan settles a variable
+  from the lowered value's type ahead of `assign`, so a hook in `assign`
+  alone reached only the final pass. A frame from `load` is
+  `Frame(Some(Cols::dynamic()))` (open, no columns), not `Frame(None)`:
+  test for both (`uses::dynamic_frame`).
 - A backend's fallback arm for what the lowering must never produce
   (the interpreter's int-plus-float arithmetic, the verifier's loop over a
   map) is where a lowering slip hides: the coverage run lists them as

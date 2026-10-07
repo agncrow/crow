@@ -830,6 +830,11 @@ impl IrInterp {
                 let root = self
                     .slot(var)
                     .ok_or_else(|| format!("undefined variable '{}'", var))?;
+                // a value that failed has no items to set (spec, Errors: no
+                // fields or items to read), in the words both modes use
+                if root.is_error() {
+                    return Err(format!("cannot set an item of an error value — {}", root.reason()));
+                }
                 set_path(&mut root.value, path, &idx, new)?;
                 Ok(Flow::Next)
             }

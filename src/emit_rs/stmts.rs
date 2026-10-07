@@ -820,6 +820,22 @@ impl Emitter {
             var.to_string()
         };
         let mut ty = if in_facts { self.reactive_vars.get(var).map(|(t, _)| t.clone()).unwrap_or(Ty::Unknown).text() } else { self.local_ty(var).unwrap_or(Ty::Unknown).text() };
+        // a value that failed has no items to set, as it has none to read
+        // (spec, Errors): the program stops as the interpreter does, and a
+        // value that holds one is written into (`t[0] = 5.0` on a tensor a
+        // moment's text reached had asked the status for its length, and
+        // the compiled program did not build)
+        if !in_facts {
+            if let Ty::Result(inner) = &ty {
+                self.line(&format!(
+                    "{{ let _c = &{}; if !_c.ok {{ crow_stop({}, format!(\"cannot set an item of an error value — {{}}\", _c.reason)); }} }}",
+                    obj,
+                    self.line_now()
+                ));
+                obj = format!("{}.value", obj);
+                ty = inner.as_ref().clone();
+            }
+        }
         let mut found: Vec<String> = Vec::new();
         for step in &path[..path.len().saturating_sub(1)] {
             match step {

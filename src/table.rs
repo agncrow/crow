@@ -1404,6 +1404,9 @@ pub static ROWS: &[Row] = &[
     row!("core.halt", "", "halt", crow_runtime::core::halt, (Str) -> Unit, stops),
     row!("core.sleep_ms", "", "sleep", crow_runtime::core::sleep_ms, (Whole) -> Unit, stops),
     row!("core.sleep", "", "sleep", crow_runtime::core::sleep_secs, (Float) -> Unit, stops),
+    // (the lowering's: a loaded frame held to the columns the program's
+    // reads say it has, where it is bound — lower_ir/uses.rs)
+    row!("core.__expect_frame", "", "__expect_frame", crow_runtime::frames::expect, (Frame, Strs, Strs) -> Frame, stops),
     row!("moments.now", "", "now", crow_runtime::moments::now_moment, () -> Moment, never),
     // the file system: an effect, which the session layer performs (held to
     // a handler's commit, recorded in a rehearsal) and whose call inside is

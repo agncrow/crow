@@ -559,3 +559,50 @@ mod tests {
         assert_eq!(unique(&f, "nope").map(|_| ()), Err("unique: column 'nope' not found".to_string()));
     }
 }
+
+/// A frame held to the columns a program reads (the lowering's
+/// `__expect_frame`; spec, Frames: a frame's type is its columns): each
+/// named column is there and holds the kind the program reads it as —
+/// text, ints, numbers (ints or floats), bools or moments — or the program
+/// stops with the column, what it holds and what the program reads. The
+/// frame is answered as it is.
+pub fn expect(f: &CrowFrame, names: &[String], kinds: &[String]) -> Result<CrowFrame, String> {
+    fn reads(kind: &str) -> &str {
+        match kind {
+            "str" => "text",
+            "int" => "ints",
+            "float" => "numbers",
+            "bool" => "bools",
+            "moment" => "moments",
+            other => other,
+        }
+    }
+    fn holds(dtype: &str) -> &str {
+        match dtype {
+            "str" => "text",
+            "int" => "ints",
+            "float" => "floats",
+            "bool" => "bools",
+            "datetime" => "moments",
+            other => other,
+        }
+    }
+    for (name, kind) in names.iter().zip(kinds) {
+        let Some(col) = f.col_native(name) else {
+            return Err(format!("the frame has no column '{}', which the program reads as {} — its columns are {}", name, reads(kind), f.columns.join(", ")));
+        };
+        let dtype = col.data.dtype_name();
+        let fits = match kind.as_str() {
+            "str" => dtype == "str",
+            "int" => dtype == "int",
+            "float" => matches!(dtype, "int" | "float"),
+            "bool" => dtype == "bool",
+            "moment" => dtype == "datetime",
+            _ => true,
+        };
+        if !fits {
+            return Err(format!("column '{}' holds {} where the program reads {}", name, holds(dtype), reads(kind)));
+        }
+    }
+    Ok(f.clone())
+}

@@ -21,6 +21,7 @@ pub(crate) use checks::moment_field_name;
 mod frames;
 pub(crate) mod schema;
 mod shapes;
+pub(crate) mod uses;
 pub(crate) use checks::{BUILTINS, CORE_RESERVED, UI_RESERVED, WEB_EXTRA_FUNCTIONS, WEB_RESERVED};
 
 /// Lower a whole (expanded, lowered, inferred) program.
@@ -86,6 +87,15 @@ fn lower_checked_as(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: 
     l.fragment = fragment;
     l.scopes[0].extend(known.iter().cloned());
     l.prescan(stmts, known);
+    // a column read two ways is the one refusal then: the reads of it
+    // would each be refused too, as reads of a parsed value, and say less
+    if !l.ctx.shape_conflicts.is_empty() {
+        for (line, conflict) in l.ctx.shape_conflicts.clone() {
+            l.v.line = line;
+            l.refuse(conflict);
+        }
+        return Err(Refusal::Invalid(std::mem::take(&mut l.v.errors)));
+    }
     let part = l.lower_part(stmts, part_name);
     // what the program got wrong comes first: a form the lowering cannot
     // take is usually one of those errors seen from the other side
@@ -1701,6 +1711,9 @@ impl<'a> Lowerer<'a> {
                 }
                 self.check_top_write(name);
                 let expr = self.lower_expr(value)?;
+                // a loaded frame held to the columns the program's reads
+                // say, before any pass types the variable by it (uses.rs)
+                let expr = self.held_to_shape(name, expr);
                 if self.pass == Pass::Final {
                     self.check_assign(name, &self.checked(&expr));
                 }
@@ -2084,7 +2097,28 @@ impl<'a> Lowerer<'a> {
         e
     }
 
+    /// A loaded frame bound where the program's reads say its columns
+    /// (uses.rs): the value held to that shape as the program runs
+    /// (`__expect_frame`), and typed by it from here on, in both modes.
+    fn held_to_shape(&mut self, name: &str, expr: Expr) -> Expr {
+        if !uses::dynamic_frame(&expr.ty()) {
+            return expr;
+        }
+        let body = if self.current_fn.starts_with(uses::TOP) { uses::TOP.to_string() } else { self.current_fn.clone() };
+        let Some(cols) = self.ctx.frame_shapes.get(&(body, name.to_string())).cloned() else { return expr };
+        let Some(row) = crate::table::core_row("__expect_frame", &[crate::table::Arg::Frame, crate::table::Arg::Texts, crate::table::Arg::Texts]) else { return expr };
+        let failing = expr.ty().is_result();
+        let lit = |items: Vec<String>| Expr::ListLit(items.into_iter().map(|s| Expr::Const(Const::Str(s), Ty::Str)).collect(), Ty::List(Box::new(Ty::Str)));
+        let names: Vec<String> = cols.cols.keys().cloned().collect();
+        let kinds: Vec<String> = cols.cols.values().map(|t| t.crow_name()).collect();
+        let shaped = Ty::Frame(Some(cols));
+        let arg = if failing { Expr::Convert { how: Convert::Unwrap, expr: Box::new(expr.clone()), ty: expr.ty().payload().clone() } } else { expr };
+        let ty = if failing { Ty::Result(Box::new(shaped)) } else { shaped };
+        Expr::Call { target: Target::Row(row), args: vec![arg, lit(names), lit(kinds)], ty, propagates: failing }
+    }
+
     fn assign(&mut self, name: &str, expr: Expr) -> Stmt {
+        let expr = self.held_to_shape(name, expr);
         if let Some(f) = gradient_of_call(&expr) {
             self.grad_of.insert(name.to_string(), f);
         }
@@ -4003,6 +4037,37 @@ impl<'a> Lowerer<'a> {
 /// A body's return type and whether an error leaves it are still decided
 /// from that environment (`finish_body`).
 pub(crate) fn infer_by_lowering(ctx: &mut TypeContext, stmts: &[S]) {
+    // what the program reads of the frames it cannot see (uses.rs), read
+    // off the declarations before anything is typed, so a cell's reader
+    // takes the cell's kind and not a parsed value (a parameter once typed
+    // as one stays one); then a second look with the top level typed, for
+    // a cell met beside a typed variable
+    ctx.begin_inference(stmts);
+    let mut applied = apply_shapes(ctx, stmts);
+    infer_once(ctx, stmts);
+    if apply_shapes(ctx, stmts) > applied {
+        applied += 1;
+        infer_once(ctx, stmts);
+    }
+    let _ = applied;
+}
+
+/// The shapes the program's reads say (uses.rs), kept in the context for
+/// the lowering to hold each loaded frame to; how many columns are known.
+fn apply_shapes(ctx: &mut TypeContext, stmts: &[S]) -> usize {
+    let shapes = uses::shapes_from_use(stmts, ctx);
+    ctx.shape_conflicts = shapes.conflicts;
+    for (key, cols) in shapes.frames {
+        let known: BTreeMap<String, Ty> = match ctx.frame_shapes.get(&key) {
+            Some(had) => had.cols.iter().map(|(k, v)| (k.clone(), v.clone())).chain(cols).collect(),
+            None => cols,
+        };
+        ctx.frame_shapes.insert(key, std::sync::Arc::new(crate::type_infer::Cols { cols: known, open: true }));
+    }
+    ctx.frame_shapes.values().map(|c| c.cols.len()).sum()
+}
+
+fn infer_once(ctx: &mut TypeContext, stmts: &[S]) {
     let in_ui = stmts.iter().any(|s| matches!(s, S::Use { path, .. } if path == "ui" || path == "web.ui"));
     ctx.begin_inference(stmts);
     // five rounds at least, as ever; then more while a signature still

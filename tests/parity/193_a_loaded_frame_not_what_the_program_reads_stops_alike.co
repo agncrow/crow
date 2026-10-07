@@ -1,0 +1,15 @@
+--- A loaded frame is held to the columns the program reads where it is
+--- bound: a column holding numbers where the program reads text stops the
+--- program there, with the column, what it holds and what the program
+--- reads — the same words in both modes, before any cell is read.
+use frame
+
+write['parity_193.csv', 'sym,px\n1,191.5\n2,415.25\n']
+
+fn label[t]
+    return upper[t]
+
+df = frame.load['parity_193.csv']
+rm['parity_193.csv']
+for t in df.sym
+    log[label[t]]

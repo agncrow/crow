@@ -477,6 +477,13 @@ pub struct TypeContext {
     /// run -i, test and check alike.
     pub describe_queries: bool,
     describe_cache: BTreeMap<String, Option<BTreeMap<String, Ty>>>,
+    /// What the program's reads say of each loaded frame's columns, by the
+    /// body that binds it and its name (lower_ir/uses.rs): applied where
+    /// the frame is bound.
+    pub frame_shapes: BTreeMap<(String, String), std::sync::Arc<Cols>>,
+    /// A column read as two kinds: refused before the program runs, at
+    /// the first read's line.
+    pub shape_conflicts: Vec<(usize, String)>,
     /// Queries no database could type, as notes: the compiled program reads
     /// their cells as text, so the build prints them; the interpreter types
     /// cells from the rows and has nothing to say.
@@ -578,6 +585,8 @@ impl TypeContext {
             body_envs: BTreeMap::new(),
             describe_queries: false,
             describe_cache: BTreeMap::new(),
+            frame_shapes: BTreeMap::new(),
+            shape_conflicts: Vec::new(),
             describe_notes: Vec::new(),
             tested: Vec::new(),
             by_tests: BTreeMap::new(),

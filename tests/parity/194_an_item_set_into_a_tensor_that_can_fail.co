@@ -1,0 +1,14 @@
+--- A tensor that can fail — one a moment read from text reached — holds
+--- items like any other once it holds a value: an item set into it is
+--- set, in both modes (the compiled program had not built: the variable's
+--- length was asked of its status, not its value).
+use math
+
+t = tensor[[1.0, 2.0, 3.0]] + float[moment['2026-01-05T10:00:00Z']]
+log[t.ok]
+t[0] = 5.0
+log[t[0]]
+log[len[t]]
+xs = [1.0, 2.0] * float[moment[0.0]]
+xs[1] = 7.5
+log[xs]

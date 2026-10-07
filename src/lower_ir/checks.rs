@@ -1457,13 +1457,16 @@ mod tests {
         assert!(checked.is_ok(), "{:?}", checked);
     }
 
-    /// A cell of a column nothing typed is dynamic: arithmetic on it is
-    /// refused until the program says what it is (typed frames, decision 1)
+    /// A cell of a loaded frame is what the program reads it as: multiplied
+    /// by a float it is a float, and the frame is held to that where it is
+    /// loaded (uses.rs; it had been a parsed value, read first by hand). A
+    /// parsed value's member is still read first: nothing says its kind.
     #[test]
-    fn a_cell_nothing_typed_is_read_as_one_first() {
-        let err = check_source("use frame\ndf = load['nowhere.csv']\nlog[df.px[0] * 2.0]\n").unwrap_err();
-        assert!(err.contains("cannot use '*' with json and float — a value whose type the program does not know is read as one first: int[…], float[…] or str[…]"), "{}", err);
+    fn a_cell_is_what_the_program_reads_and_a_parsed_value_is_read_first() {
+        assert!(check_source("use frame\ndf = load['nowhere.csv']\nlog[df.px[0] * 2.0]\n").is_ok());
         assert!(check_source("use frame\ndf = load['nowhere.csv']\nlog[float[df.px[0]] * 2.0]\n").is_ok());
+        let err = check_source("d = json['{\"px\": 2}']\nlog[d.px * 2.0]\n").unwrap_err();
+        assert!(err.contains("a value whose type the program does not know is read as one first: int[…], float[…] or str[…]"), "{}", err);
     }
 
     /// A fact gets one value at the top level of a ui program: a loop that
