@@ -158,6 +158,16 @@ steps on every push and must be green.
   retype or a wrap of a source's binding must match `Expr::Effect` too, or
   it silently does nothing (the probe showed the hook running and the
   variable staying dynamic).
+- The fuzzer (`crow test --fuzz n --seed s`; `--keep` keeps every
+  program under target/crow_fuzz/) writes a user module beside each
+  program and one page per ten programs (ports 3470–3489, through
+  `served_parity::drive`). A generator slip shows as "refused alike":
+  a name a module owns (`rename`, `where`) or the predicates' names
+  (`p0`, `p1`) must not be reused; `encode` of a document literal is a
+  value that can fail, which a list literal then holds. The pass renaming
+  names Rust reserves (`rust_names.rs`) is scoped: a body's names in that
+  body, the top level's everywhere — the ClickHouse driver's local
+  `where` had renamed every program's `where[…]`.
 - A missing cell shows as `missing` in a frame's table and as `error:
   missing` in a column shown as a list (runtime `fmt_cell`, the frame's
   Display, `CrowDisplay for CrowColumn`); the interpreter's missing cell

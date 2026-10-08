@@ -47,9 +47,19 @@ pub fn rename_rust_keywords(stmts: &[Stmt]) -> Option<(Vec<Stmt>, BTreeMap<Strin
         }
         renames.insert(name, fresh);
     }
+    // a name is renamed where it is visible: the top level's own names
+    // everywhere (a handler reads its facts), a body's own names in that
+    // body — a local one body declares renames nothing in another (the
+    // ClickHouse driver's local `where`, inlined into a program that uses
+    // db, had renamed the program's `where[…]`, a builtin, to `where_`:
+    // undefined, in the compiled program alone; fuzz seed 2083)
+    let mut global = BTreeSet::new();
+    for s in stmts {
+        top_level_decls(s, &mut global);
+    }
     let mut out = stmts.to_vec();
     for s in out.iter_mut() {
-        rename_stmt(s, &renames);
+        rename_stmt(s, &renames, &global, &BTreeSet::new());
     }
     let shown = renames.into_iter().map(|(from, to)| (to, from)).collect();
     Some((out, shown))
@@ -179,124 +189,195 @@ fn collect_expr(e: &Expr, declared: &mut BTreeSet<String>, seen: &mut BTreeSet<S
     }
 }
 
-fn rename(n: &mut String, renames: &BTreeMap<String, String>) {
-    if let Some(to) = renames.get(n.as_str()) {
-        *n = to.clone();
-    }
-}
-
-fn rename_stmt(s: &mut Stmt, renames: &BTreeMap<String, String>) {
+/// The names the top level declares, which every body sees (a fact a
+/// handler writes): not those inside a function's, a derivation's or a
+/// test's body, which are that body's own.
+fn top_level_decls(s: &Stmt, out: &mut BTreeSet<String>) {
     match s {
         Stmt::Assign { name, value } => {
-            rename(name, renames);
-            rename_expr(value, renames);
+            out.insert(name.clone());
+            for_vars_in(value, out);
         }
         Stmt::MultiAssign { names, values } => {
-            for n in names.iter_mut() {
-                rename(n, renames);
-            }
-            for v in values.iter_mut() {
-                rename_expr(v, renames);
+            out.extend(names.iter().cloned());
+            for v in values {
+                for_vars_in(v, out);
             }
         }
-        Stmt::FnDecl { name, params, body, .. } => {
-            rename(name, renames);
-            for p in params.iter_mut() {
-                rename(p, renames);
-            }
-            for st in body.iter_mut() {
-                rename_stmt(st, renames);
-            }
-        }
-        Stmt::Derive { name, body, .. } => {
-            rename(name, renames);
-            for st in body.iter_mut() {
-                rename_stmt(st, renames);
-            }
-        }
-        Stmt::TestBlock { params, body, .. } => {
-            for p in params.iter_mut() {
-                rename(p, renames);
-            }
-            for st in body.iter_mut() {
-                rename_stmt(st, renames);
-            }
+        Stmt::FnDecl { name, .. } | Stmt::Derive { name, .. } => {
+            out.insert(name.clone());
         }
         Stmt::For { var, iter, body } => {
-            rename(var, renames);
-            rename_expr(iter, renames);
-            for st in body.iter_mut() {
-                rename_stmt(st, renames);
+            out.insert(var.clone());
+            for_vars_in(iter, out);
+            for st in body {
+                top_level_decls(st, out);
             }
         }
         Stmt::While { condition, body } => {
-            rename_expr(condition, renames);
-            for st in body.iter_mut() {
-                rename_stmt(st, renames);
+            for_vars_in(condition, out);
+            for st in body {
+                top_level_decls(st, out);
             }
         }
         Stmt::If { condition, then_body, else_body } => {
-            rename_expr(condition, renames);
-            for st in then_body.iter_mut() {
-                rename_stmt(st, renames);
-            }
-            if let Some(eb) = else_body {
-                for st in eb.iter_mut() {
-                    rename_stmt(st, renames);
-                }
+            for_vars_in(condition, out);
+            for st in then_body.iter().chain(else_body.iter().flatten()) {
+                top_level_decls(st, out);
             }
         }
-        Stmt::Return(Some(e)) | Stmt::ExprStmt(e) => rename_expr(e, renames),
-        Stmt::FieldAssign { object, value, .. } => {
-            rename_expr(object, renames);
-            rename_expr(value, renames);
-        }
-        Stmt::IndexAssign { object, index, value } => {
-            rename_expr(object, renames);
-            rename_expr(index, renames);
-            rename_expr(value, renames);
-        }
-        Stmt::Resource { count, .. } => rename_expr(count, renames),
+        Stmt::Return(Some(e)) | Stmt::ExprStmt(e) => for_vars_in(e, out),
         _ => {}
     }
 }
 
-fn rename_expr(e: &mut Expr, renames: &BTreeMap<String, String>) {
+/// The variables a collecting loop binds, inside an expression.
+fn for_vars_in(e: &Expr, out: &mut BTreeSet<String>) {
+    let mut seen = BTreeSet::new();
+    collect_expr(e, out, &mut seen);
+}
+
+/// A body's own names: its parameters and what it declares.
+fn body_decls(params: &[String], body: &[Stmt]) -> BTreeSet<String> {
+    let mut inner: BTreeSet<String> = params.iter().cloned().collect();
+    let mut seen = BTreeSet::new();
+    for st in body {
+        collect_stmt(st, &mut inner, &mut seen);
+    }
+    inner
+}
+
+fn visible(global: &BTreeSet<String>, locals: &BTreeSet<String>) -> BTreeSet<String> {
+    global.union(locals).cloned().collect()
+}
+
+fn rename(n: &mut String, renames: &BTreeMap<String, String>, visible: &BTreeSet<String>) {
+    if visible.contains(n.as_str()) {
+        if let Some(to) = renames.get(n.as_str()) {
+            *n = to.clone();
+        }
+    }
+}
+
+fn rename_stmt(s: &mut Stmt, renames: &BTreeMap<String, String>, global: &BTreeSet<String>, locals: &BTreeSet<String>) {
+    let v = visible(global, locals);
+    match s {
+        Stmt::Assign { name, value } => {
+            rename(name, renames, &v);
+            rename_expr(value, renames, &v);
+        }
+        Stmt::MultiAssign { names, values } => {
+            for n in names.iter_mut() {
+                rename(n, renames, &v);
+            }
+            for x in values.iter_mut() {
+                rename_expr(x, renames, &v);
+            }
+        }
+        Stmt::FnDecl { name, params, body, .. } => {
+            rename(name, renames, &v);
+            let inner = body_decls(params, body);
+            let vi = visible(global, &inner);
+            for p in params.iter_mut() {
+                rename(p, renames, &vi);
+            }
+            for st in body.iter_mut() {
+                rename_stmt(st, renames, global, &inner);
+            }
+        }
+        Stmt::Derive { name, body, .. } => {
+            rename(name, renames, &v);
+            let inner = body_decls(&[], body);
+            for st in body.iter_mut() {
+                rename_stmt(st, renames, global, &inner);
+            }
+        }
+        Stmt::TestBlock { params, body, .. } => {
+            let inner = body_decls(params, body);
+            let vi = visible(global, &inner);
+            for p in params.iter_mut() {
+                rename(p, renames, &vi);
+            }
+            for st in body.iter_mut() {
+                rename_stmt(st, renames, global, &inner);
+            }
+        }
+        Stmt::For { var, iter, body } => {
+            rename(var, renames, &v);
+            rename_expr(iter, renames, &v);
+            for st in body.iter_mut() {
+                rename_stmt(st, renames, global, locals);
+            }
+        }
+        Stmt::While { condition, body } => {
+            rename_expr(condition, renames, &v);
+            for st in body.iter_mut() {
+                rename_stmt(st, renames, global, locals);
+            }
+        }
+        Stmt::If { condition, then_body, else_body } => {
+            rename_expr(condition, renames, &v);
+            for st in then_body.iter_mut() {
+                rename_stmt(st, renames, global, locals);
+            }
+            if let Some(eb) = else_body {
+                for st in eb.iter_mut() {
+                    rename_stmt(st, renames, global, locals);
+                }
+            }
+        }
+        Stmt::Return(Some(e)) | Stmt::ExprStmt(e) => rename_expr(e, renames, &v),
+        Stmt::FieldAssign { object, value, .. } => {
+            rename_expr(object, renames, &v);
+            rename_expr(value, renames, &v);
+        }
+        Stmt::IndexAssign { object, index, value } => {
+            rename_expr(object, renames, &v);
+            rename_expr(index, renames, &v);
+            rename_expr(value, renames, &v);
+        }
+        Stmt::Resource { count, .. } => rename_expr(count, renames, &v),
+        _ => {}
+    }
+}
+
+fn rename_expr(e: &mut Expr, renames: &BTreeMap<String, String>, visible: &BTreeSet<String>) {
     match e {
-        Expr::Ident(n) => rename(n, renames),
+        Expr::Ident(n) => rename(n, renames, visible),
         Expr::Str(s) => {
             if s.contains('`') {
-                *s = rename_in_spans(s, renames);
+                *s = rename_in_spans(s, renames, visible);
             }
         }
         Expr::BinOp { left, right, .. } => {
-            rename_expr(left, renames);
-            rename_expr(right, renames);
+            rename_expr(left, renames, visible);
+            rename_expr(right, renames, visible);
         }
-        Expr::UnaryOp { expr, .. } => rename_expr(expr, renames),
+        Expr::UnaryOp { expr, .. } => rename_expr(expr, renames, visible),
         Expr::Call { callee, args } => {
-            rename_expr(callee, renames);
+            rename_expr(callee, renames, visible);
             for a in args.iter_mut() {
-                rename_expr(a, renames);
+                rename_expr(a, renames, visible);
             }
         }
-        Expr::FieldAccess { object, .. } => rename_expr(object, renames),
+        Expr::FieldAccess { object, .. } => rename_expr(object, renames, visible),
         Expr::Array(items) => {
             for i in items.iter_mut() {
-                rename_expr(i, renames);
+                rename_expr(i, renames, visible);
             }
         }
         Expr::Map(pairs) => {
             for (_, v) in pairs.iter_mut() {
-                rename_expr(v, renames);
+                rename_expr(v, renames, visible);
             }
         }
-        Expr::Named { value, .. } => rename_expr(value, renames),
+        Expr::Named { value, .. } => rename_expr(value, renames, visible),
         Expr::ForExpr { var, iter, body } => {
-            rename(var, renames);
-            rename_expr(iter, renames);
+            rename(var, renames, visible);
+            rename_expr(iter, renames, visible);
             for st in body.iter_mut() {
-                rename_stmt(st, renames);
+                // (the loop's body sees what the expression's scope sees)
+                rename_stmt(st, renames, visible, &BTreeSet::new());
             }
         }
         _ => {}
@@ -367,13 +448,13 @@ fn span_words(s: &str) -> Vec<String> {
     span_names(&chars).into_iter().map(|(a, b)| chars[a..b].iter().collect()).collect()
 }
 
-fn rename_in_spans(s: &str, renames: &BTreeMap<String, String>) -> String {
+fn rename_in_spans(s: &str, renames: &BTreeMap<String, String>, visible: &BTreeSet<String>) -> String {
     let chars: Vec<char> = s.chars().collect();
     let mut out = String::with_capacity(s.len());
     let mut last = 0;
     for (a, b) in span_names(&chars) {
         let word: String = chars[a..b].iter().collect();
-        if let Some(to) = renames.get(&word) {
+        if let Some(to) = renames.get(&word).filter(|_| visible.contains(&word)) {
             out.extend(chars[last..a].iter());
             out.push_str(to);
             last = b;
@@ -408,6 +489,23 @@ mod tests {
         assert!(text.contains("Named { name: \"move\", value: Ident(\"loop_\") }"), "a map key keeps its spelling: {}", text);
         assert_eq!(shown.get("impl_").map(String::as_str), Some("impl"));
         assert_eq!(shown.get("move_").map(String::as_str), Some("move"));
+    }
+
+    /// A reserved name one body declares renames nothing in another: the
+    /// ClickHouse driver's local `where`, inlined into a program that uses
+    /// db, had renamed the program's `where[…]` — a builtin call in another
+    /// function — to `where_`, undefined in the compiled program alone
+    /// (fuzz seed 2083). The top level's names are seen everywhere.
+    #[test]
+    fn a_reserved_local_of_one_body_renames_nothing_in_another() {
+        let src = "fn shown[s]\n    where = s\n    return 'at `where`'\n\nfn pick[xs]\n    return where[xs gt 1.0, xs, 0.0]\n\ntype = 3\nfn twice[]\n    return type * 2\n\nlog[shown['x']]\nlog[pick[[0.5, 1.5]]]\nlog[twice[]]\n";
+        let (out, shown) = rename_rust_keywords(&stmts(src)).expect("renames");
+        let text = format!("{:?}", out);
+        assert!(text.contains("Assign { name: \"where_\""), "the driver's local is renamed where it lives: {}", text);
+        assert!(text.contains("`where_`"), "and in its own body's span: {}", text);
+        assert!(text.contains("callee: Ident(\"where\")"), "the builtin call in another body keeps its name: {}", text);
+        assert!(text.contains("Ident(\"type_\")") && text.contains("Assign { name: \"type_\""), "a top-level name is renamed everywhere: {}", text);
+        assert_eq!(shown.get("where_").map(String::as_str), Some("where"));
     }
 
     /// The new name never takes one the program already uses; a program

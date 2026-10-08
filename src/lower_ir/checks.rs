@@ -788,6 +788,21 @@ impl<'a> Lowerer<'a> {
         if name == "route" && !self.defined("route") && !matches!(arg_type(self, 0), Ty::Str | Ty::Unknown) {
             self.refuse("route[] takes a path first — the app is implicit: route['/', handler]".to_string());
         }
+        // any[], all[] and find[] take a list and a function: a value of
+        // another kind — a frame a variable named like the predicate held,
+        // in a generated program — is refused before either mode runs (the
+        // interpreter had stopped as it ran, "expected a function, got
+        // frame", and the compiled program had not built)
+        if matches!(name, "any" | "all" | "find") && args.len() == 2 && !self.defined(name) {
+            // (`find[bytes, needle]` is sys's row, which its own kinds check)
+            let (xs, f) = (arg_type(self, 0), arg_type(self, 1));
+            let items = matches!(xs.payload(), Ty::List(_) | Ty::Tensor(..) | Ty::Column(_));
+            let function = matches!(f.payload(), Ty::Fn(..) | Ty::Unknown);
+            if items && !function {
+                let what = |t: &Ty| crate::table::Arg::of_type(t.payload()).words();
+                self.refuse(format!("{}[] takes a list and a function, got {} and {}", name, what(&xs), what(&f)));
+            }
+        }
         // Test-harness builtins exist only inside test blocks (which never
         // reach a build) — accept them there, refuse them anywhere else.
         if matches!(name, "app" | "click" | "elements" | "change" | "box" | "fits" | "style" | "downloads" | "mails") {
@@ -1712,6 +1727,17 @@ mod tests {
     /// loop walks a parsed list. A module function given a kind none of its
     /// rows take is refused as a core builtin is (the interpreter stopped on
     /// the value, the compiled program did not build).
+    /// A predicate handed to any[], all[] or find[] is a function: a frame
+    /// a variable named like the predicate held is refused before either
+    /// mode runs (the interpreter had stopped as it ran, the compiled
+    /// program had not built — fuzz seed 506 of the widened generator).
+    #[test]
+    fn a_predicate_that_is_not_a_function_is_refused_alike() {
+        let err = check_source("use frame\nfn p1[x]\n    return x % 2 eq 0\nfn case[]\n    p1 = with[frame.new[], 'a', [1, 2]]\n    log[all[[2, 4], p1]]\n    return 0\nr = case[]\n").unwrap_err();
+        assert!(err.contains("all[] takes a list and a function, got numbers and a frame"), "{}", err);
+        assert!(check_source("fn p1[x]\n    return x % 2 eq 0\nlog[all[[2, 4], p1]]\nlog[any[[1, 3], p1]]\n").is_ok());
+    }
+
     #[test]
     fn a_parsed_value_is_read_before_a_builtin_computes_with_it() {
         // a parsed value handed to a builtin whose rows agree on text is read as text

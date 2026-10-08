@@ -1,0 +1,20 @@
+--- A program that uses db carries the drivers written in Crow, and one of
+--- them declares a local named `where`, which Rust reserves: the compiled
+--- program's renaming of such names had reached the program's own
+--- `where[…]`, a builtin call in another body, and refused it as
+--- undefined — in the compiled program alone (the fuzzer, seed 2083 of
+--- the widened generator). A name is renamed where it is visible: a
+--- body's own in that body, the top level's everywhere.
+use math, frame, db
+
+fn pick[xs]
+    return where[xs gt 1.0, xs, 0.0]
+
+book = db.connect['sqlite://:memory:']
+exec[book, 'CREATE TABLE t (id INTEGER PRIMARY KEY, c REAL)']
+exec[book, 'INSERT INTO t (c) VALUES (?)', [2.5]]
+rows = query[book, 'SELECT c FROM t ORDER BY id']
+log[len[rows]]
+log[pick[[0.5, 1.5, 2.5]]]
+df = with[frame.new[], 'a', [1, 2, 3]]
+log[where[df.a gt 1, df.a, 0]]

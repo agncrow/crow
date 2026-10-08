@@ -76,6 +76,11 @@ struct Case<'r> {
     vars: Vec<(String, Kind)>,
     lines: Vec<String>,
     depth: usize,
+    /// the case's number: a file it writes is named by it
+    tag: usize,
+    /// the user module beside the program, called qualified (none for a
+    /// program lowered in-process, which has no file beside it)
+    module: Option<String>,
     /// names made so far: each new one is new (a block's names go out of
     /// scope with it, and a variable's type cannot change)
     made: usize,
@@ -102,7 +107,23 @@ impl<'r> Case<'r> {
         }
         let d = depth - 1;
         match kind {
-            Kind::Int => match self.rng.below(30) {
+            Kind::Int => match self.rng.below(if self.module.is_some() { 34 } else { 31 }) {
+                // the user module's functions, called qualified: an int
+                // doubled, one chained through a sibling call, a frame read
+                31 => {
+                    let e = self.expr(Kind::Int, d);
+                    format!("{}.twice[{}]", self.module.clone().unwrap_or_default(), e)
+                }
+                32 => {
+                    let e = self.expr(Kind::Int, d);
+                    format!("{}.chain[{}]", self.module.clone().unwrap_or_default(), e)
+                }
+                33 => {
+                    let e = self.expr(Kind::Frame, d);
+                    format!("{}.rows[{}]", self.module.clone().unwrap_or_default(), e)
+                }
+                // a frame handed to a function that reads it
+                30 => format!("rows_of[{}]", self.expr(Kind::Frame, d)),
                 // a moment's fields, and the seconds between two
                 24 => format!("{}.hour", self.expr(Kind::Moment, d)),
                 25 => format!("{}.weekday", self.expr(Kind::Moment, d)),
@@ -139,7 +160,11 @@ impl<'r> Case<'r> {
                 7 => format!("abs[{}]", self.expr(Kind::Int, d)),
                 _ => format!("int[{}]", self.expr(Kind::Float, d)),
             },
-            Kind::Float => match self.rng.below(23) {
+            Kind::Float => match self.rng.below(if self.module.is_some() { 24 } else { 23 }) {
+                23 => {
+                    let e = self.expr(Kind::Frame, d);
+                    format!("{}.top_b[{}]", self.module.clone().unwrap_or_default(), e)
+                }
                 20 => format!("float[{}]", self.expr(Kind::Moment, d)),
                 21 => format!("({} - {})", self.expr(Kind::Moment, d), self.expr(Kind::Moment, d)),
                 22 => format!("float[{}.n]", self.expr(Kind::Doc, d)),
@@ -167,9 +192,19 @@ impl<'r> Case<'r> {
                 4 => format!("({} - {})", self.expr(Kind::Float, d), self.expr(Kind::Float, d)),
                 _ => format!("({} + {})", self.expr(Kind::Float, d), self.expr(Kind::Int, d)),
             },
-            Kind::Text => match self.rng.below(18) {
+            Kind::Text => match self.rng.below(if self.module.is_some() { 19 } else { 18 }) {
+                18 => {
+                    let e = self.expr(Kind::Text, d);
+                    format!("{}.shout[{}]", self.module.clone().unwrap_or_default(), e)
+                }
                 14 => format!("str[{}]", self.expr(Kind::Moment, d)),
-                15 => format!("encode[{}]", self.expr(Kind::Doc, d)),
+                // (of a variable: a document literal can fail to parse, and
+                // the text of one that can is one that can — which a list
+                // literal then holds, and join[] rightly refuses)
+                15 => match self.var_of(Kind::Doc) {
+                    Some(v) => format!("encode[{}]", v),
+                    None => self.leaf(Kind::Text),
+                },
                 16 => format!("int[{}].kind", self.rng.pick(&["'12'", "'x1'", "'4.5'"])),
                 12 => format!("{}.k[0]", self.expr(Kind::Frame, d)),
                 13 => format!("type[{}[{}]]", self.expr(Kind::Vec, d), self.rng.below(3)),
@@ -221,7 +256,13 @@ impl<'r> Case<'r> {
                 4 => format!("contains[{}, {}]", self.expr(Kind::Ints, d), self.expr(Kind::Int, d)),
                 _ => format!("({} gte {})", self.expr(Kind::Float, d), self.expr(Kind::Float, d)),
             },
-            Kind::Ints => match self.rng.below(5) {
+            Kind::Ints => match self.rng.below(6) {
+                // a list that can fail: a frame's filtered length pushed on
+                // (what a predicate handed to any[] is then given)
+                5 => {
+                    let df = self.var_frame(d);
+                    format!("push[{}, len[filter[{}, {}.a gt {}]]]", self.expr(Kind::Ints, d), df, df, 1 + self.rng.below(3))
+                }
                 0 => format!("push[{}, {}]", self.expr(Kind::Ints, d), self.expr(Kind::Int, d)),
                 1 => format!("sort[{}]", self.expr(Kind::Ints, d)),
                 2 => format!("reverse[{}]", self.expr(Kind::Ints, d)),
@@ -264,7 +305,9 @@ impl<'r> Case<'r> {
                 _ => format!("({} + {})", self.expr(Kind::Mat, d), self.expr(Kind::Vec, d)),
             },
             // a frame keeps its columns: filtered, sorted, cut, stacked on itself
-            Kind::Frame => match self.rng.below(7) {
+            Kind::Frame => match self.rng.below(8) {
+                // a frame a function answers
+                7 => format!("kept[{}]", self.expr(Kind::Frame, d)),
                 0 => {
                     let df = self.var_frame(d);
                     format!("filter[{}, {}.a gt {}]", df, df, self.rng.below(4))
@@ -364,9 +407,9 @@ impl<'r> Case<'r> {
             Kind::Doc => self
                 .rng
                 .pick(&[
-                    "json['{\"a\": \"x\", \"n\": 3, \"l\": [1, 2]}']",
-                    "json['{\"a\": \"crow\", \"n\": -2.5, \"l\": []}']",
-                    "json['{\"a\": \"\", \"n\": 0, \"l\": [\"p\", 1]}']",
+                    "json['{\"a\": \"x\", \"n\": 3, \"l\": [1, 2], \"f\": true}']",
+                    "json['{\"a\": \"crow\", \"n\": -2.5, \"l\": [], \"f\": false}']",
+                    "json['{\"a\": \"\", \"n\": 0, \"l\": [\"p\", 1], \"f\": true}']",
                 ])
                 .to_string(),
             Kind::Vec => self.rng.pick(&["[1.0, 2.0, 3.0]", "[0.5, -1.5, 2.0]", "zeros[3]", "ones[3]", "linspace[0.0, 1.0, 3]", "tensor[[2.0, 2.0, 2.0]]"]).to_string(),
@@ -399,7 +442,87 @@ impl<'r> Case<'r> {
     /// A statement: a binding, a log, a branch, or a bounded loop.
     fn stmt(&mut self, budget: usize) {
         let pad = self.indent();
-        match self.rng.below(if budget > 0 { 21 } else { 3 }) {
+        match self.rng.below(if budget > 0 { 26 } else { 3 }) {
+            // a table in a database of the program's own (SQLite in memory):
+            // made, filled — a row with NULLs — and queried, its typed cells
+            // read, a column walked, a missing cell's .ok
+            25 => {
+                let (b, t, r) = (format!("b{}", self.lines.len()), format!("t{}_{}", self.tag, self.lines.len()), format!("rs{}", self.lines.len()));
+                let (c, vol) = (self.leaf(Kind::Float), 1 + self.rng.below(200));
+                let name = *self.rng.pick(&["'a'", "'crow'", "'x y'"]);
+                self.lines.push(format!("{}{} = db.connect['sqlite://:memory:']", pad, b));
+                self.lines.push(format!("{}exec[{}, 'CREATE TABLE {} (id INTEGER PRIMARY KEY, c REAL, vol INTEGER NOT NULL, name TEXT)']", pad, b, t));
+                self.lines.push(format!("{}exec[{}, 'INSERT INTO {} (c, vol, name) VALUES (?, ?, ?)', [{}, {}, {}]]", pad, b, t, c, vol, name));
+                self.lines.push(format!("{}exec[{}, 'INSERT INTO {} (vol) VALUES (?)', [{}]]", pad, b, t, 1 + self.rng.below(9)));
+                self.lines.push(format!("{}{} = query[{}, 'SELECT c, vol, name FROM {} ORDER BY id']", pad, r, b, t));
+                self.lines.push(format!("{}log[len[{}]]", pad, r));
+                self.lines.push(format!("{}log[{}.vol]", pad, r));
+                self.lines.push(format!("{}log[{}.c.ok]", pad, r));
+                self.lines.push(format!("{}log[{}.vol[0] * 2]", pad, r));
+                self.lines.push(format!("{}log[{}.c[0] + 1.0]", pad, r));
+                self.lines.push(format!("{}log[{}.name[1].ok]", pad, r));
+                self.lines.push(format!("{}for v in {}.vol", pad, r));
+                self.lines.push(format!("{}    log[v + 1]", pad));
+            }
+            // a parsed value read as its use implies: decided on, negated,
+            // joined with and, met in arithmetic and an order, compared with
+            // text, handed to a builtin (each had been refused until read by
+            // hand, and the first three had not built compiled)
+            21 => {
+                let d = format!("j{}", self.lines.len());
+                let doc = self.leaf(Kind::Doc);
+                self.lines.push(format!("{}{} = {}", pad, d, doc));
+                self.lines.push(format!("{}if {}.f", pad, d));
+                self.lines.push(format!("{}    log['on']", pad));
+                self.lines.push(format!("{}log[not {}.f]", pad, d));
+                self.lines.push(format!("{}log[{}.f and true]", pad, d));
+                self.lines.push(format!("{}log[{}.n + 1]", pad, d));
+                self.lines.push(format!("{}log[{}.n gt 1]", pad, d));
+                self.lines.push(format!("{}log[{}.a eq 'x']", pad, d));
+                self.lines.push(format!("{}log[upper[{}.a]]", pad, d));
+            }
+            // a predicate handed to any[] and all[] over a list that can fail
+            22 => {
+                let df = self.var_frame(2);
+                let xs = self.expr(Kind::Ints, 1);
+                let (n, p) = (1 + self.rng.below(3), self.rng.below(2));
+                self.lines.push(format!("{}log[any[push[{}, len[filter[{}, {}.a gt {}]]], p{}]]", pad, xs, df, df, n, p));
+                let ys = self.expr(Kind::Ints, 1);
+                let p = self.rng.below(2);
+                self.lines.push(format!("{}log[all[push[{}, len[{}]], p{}]]", pad, ys, df, p));
+            }
+            // a frame handed to a function, and one a function answers
+            23 => {
+                let df = self.var_frame(2);
+                let k = format!("k{}", self.lines.len());
+                self.lines.push(format!("{}{} = kept[{}]", pad, k, df));
+                self.lines.push(format!("{}log[rows_of[{}]]", pad, k));
+                self.lines.push(format!("{}log[{}.k]", pad, k));
+                self.lines.push(format!("{}log[first_k[{}]]", pad, df));
+                self.lines.push(format!("{}log[total_b[kept[{}]]]", pad, df));
+            }
+            // a frame loaded from a file, typed by what the case reads of
+            // it: a number compared, a cell handed to upper, a mask
+            24 => {
+                let f = format!("fz_{}_{}.csv", self.tag, self.lines.len());
+                let ld = format!("ld{}", self.lines.len());
+                let qty = *self.rng.pick(&["100", "100.5", "50"]);
+                self.lines.push(format!("{}write['{}', 'sym,qty,px\\nAAPL,{},1.5\\nmsft,50.5,2.25\\nnvda,10,0.5\\n']", pad, f, qty));
+                self.lines.push(format!("{}{} = frame.load['{}']", pad, ld, f));
+                self.lines.push(format!("{}rm['{}']", pad, f));
+                let tot = format!("t{}", self.lines.len());
+                self.lines.push(format!("{}{} = 0", pad, tot));
+                self.lines.push(format!("{}for q in {}.qty", pad, ld));
+                self.lines.push(format!("{}    if q gt 20", pad));
+                self.lines.push(format!("{}        {} = {} + q", pad, tot, tot));
+                self.lines.push(format!("{}log[{}]", pad, tot));
+                self.lines.push(format!("{}log[upper[{}.sym[0]]]", pad, ld));
+                self.lines.push(format!("{}log[len[filter[{}, {}.px gt 1.0]]]", pad, ld, ld));
+                let names = format!("nm{}", self.lines.len());
+                self.lines.push(format!("{}{} = for s in {}.sym", pad, names, ld));
+                self.lines.push(format!("{}    upper[s]", pad));
+                self.lines.push(format!("{}log[{}]", pad, names));
+            }
             // a value that can fail: read where a guard makes it known
             // good, its kind and reason where it is not
             17 => {
@@ -545,7 +668,8 @@ impl<'r> Case<'r> {
                         self.lines.push(format!("{}log['`len[{}]` `{}.k[0]` `{}.a_sum[0]` `{}.b_mean[0]`']", pad, g, g, g, g));
                     }
                     4 => {
-                        let pv = format!("p{}", self.lines.len());
+                        // (not `p{}`: the predicates are p0 and p1)
+                        let pv = format!("pv{}", self.lines.len());
                         self.lines.push(format!("{}{} = pivot[head[{}, 4], 'k', 'g', 'b']", pad, pv, df));
                         self.lines.push(format!("{}log['`len[{}]` `{}.k[0]`']", pad, pv, pv));
                     }
@@ -653,25 +777,54 @@ impl<'r> Case<'r> {
     }
 }
 
+/// A user module beside the generated program, called qualified: an int
+/// doubled, one chained through a sibling's bare call, text shouted, a
+/// frame read and summed — the scoping a module file has (its own `use`
+/// for the modules it needs; the program's names invisible inside it).
+pub fn module(name: &str) -> String {
+    format!(
+        "--- generated by crow test --fuzz: the module `{}`\nuse math, frame\n\nfn twice[x]\n    return x * 2\n\nfn chain[x]\n    return twice[x] + 1\n\nfn shout[t]\n    return upper[t]\n\nfn rows[df]\n    return len[df]\n\nfn top_b[df]\n    return sum[df.b]\n",
+        name
+    )
+}
+
 /// A program of `cases` generated cases, each its own function the top
-/// level calls, from `seed`.
-pub fn program(seed: u64, cases: usize) -> String {
+/// level calls, from `seed`; the name of the module beside it (`module`).
+pub fn program(seed: u64, cases: usize) -> (String, String) {
+    let module = format!("fm{}", seed);
+    (generate(seed, cases, Some(module.clone())), module)
+}
+
+/// The same program with no module beside it: what a test lowers
+/// in-process, where no file sits beside the source.
+pub fn program_alone(seed: u64, cases: usize) -> String {
+    generate(seed, cases, None)
+}
+
+fn generate(seed: u64, cases: usize, module: Option<String>) -> String {
     let mut rng = Rng::new(seed);
-    let mut out = String::from("--- generated by crow test --fuzz\nuse math, math.nn, frame\n\nstruct Point [x, y]\nstruct Bag [t, m]\n\n");
+    let uses = match &module {
+        Some(m) => format!("use math, math.nn, frame, db, {}", m),
+        None => "use math, math.nn, frame, db".to_string(),
+    };
+    let mut out = format!("--- generated by crow test --fuzz\n{}\n\nstruct Point [x, y]\nstruct Bag [t, m]\n\n", uses);
     // a vector's numbers and a matrix's rows walked, typed by their calls
     out.push_str("fn t0[v]\n    return sum[v] * 2.0 + max[v]\n\nfn t1[m]\n    total = 0.0\n    for r in m\n        total = total + sum[r]\n    return total\n\n");
     // a function handed as a value, and handed on
     out.push_str("fn ap[f, a, b]\n    return f[a, b]\n\nfn relay[f, a, b]\n    return ap[f, a, b]\n\n");
     // the predicates any[] and all[] are handed
     out.push_str("fn p0[x]\n    return x gt 1\n\nfn p1[x]\n    return x % 2 eq 0\n\n");
+    // a frame handed to a function, read through its body; a function
+    // that answers a frame
+    out.push_str("fn rows_of[df]\n    return len[df]\n\nfn kept[df]\n    return filter[df, df.a gt 1]\n\nfn first_k[df]\n    return df.k[0]\n\nfn total_b[df]\n    return sum[df.b]\n\n");
     for h in 0..HELPERS {
-        let mut case = Case { rng: &mut rng, vars: vec![("a".to_string(), Kind::Int), ("b".to_string(), Kind::Int)], lines: Vec::new(), depth: 0, made: 0 };
+        let mut case = Case { rng: &mut rng, vars: vec![("a".to_string(), Kind::Int), ("b".to_string(), Kind::Int)], lines: Vec::new(), depth: 0, tag: h, module: module.clone(), made: 0 };
         // a helper calls no helper (no recursion without a base)
         let body = case.expr_no_calls(Kind::Int, 2);
         out.push_str(&format!("fn h{}[a, b]\n    return {}\n\n", h, body));
     }
     for c in 0..cases {
-        let mut case = Case { rng: &mut rng, vars: Vec::new(), lines: Vec::new(), depth: 0, made: 0 };
+        let mut case = Case { rng: &mut rng, vars: Vec::new(), lines: Vec::new(), depth: 0, tag: c, module: module.clone(), made: 0 };
         let n = 3 + case.rng.below(6);
         for _ in 0..n {
             case.stmt(2);
@@ -689,6 +842,59 @@ pub fn program(seed: u64, cases: usize) -> String {
     out
 }
 
+
+/// A page program and the steps that drive it, from a seed: facts of four
+/// kinds, a derivation over one, handlers that write them, a field bound
+/// to one and — half the time — a data source of the app's own route, the
+/// records a frame the page reads. Served in both modes and driven with
+/// the same events (served_parity::drive), the pages must agree after
+/// every step.
+pub fn page(seed: u64, port: u16) -> (String, Vec<serde_json::Value>) {
+    let mut rng = Rng::new(seed ^ 0x5eed_9a9e);
+    let count = rng.below(10) as i64 - 3;
+    let name = *rng.pick(&["'ada'", "'crow'", "''"]);
+    let price = format!("{}.{}", rng.below(20), rng.below(10));
+    let on = *rng.pick(&["true", "false"]);
+    let step = 1 + rng.below(5);
+    let with_source = rng.chance(50);
+    let mut out = String::from("--- generated by crow test --fuzz: a page\nuse web, ui, frame\n\n");
+    out.push_str(&format!("count = {}\nname = {}\nprice = {}\non = {}\n\n", count, name, price, on));
+    if with_source {
+        let (q1, q2) = (rng.below(200), format!("{}.5", rng.below(100)));
+        out.push_str(&format!("fn rows[req]\n    df = with[frame.new[], 'sym', ['AAPL', 'msft']]\n    df = with[df, 'qty', [{}, {}]]\n    return json[df]\n\ndata = fetch['/api/rows']\n\n", q1, q2));
+    }
+    out.push_str(&format!("derive total\n    return count * 2 + {}\n\n", rng.below(5)));
+    let renamed = *rng.pick(&["'bob'", "'eve'", "'x y'"]);
+    // (not `rename`: the frame module owns that name)
+    out.push_str(&format!("fn inc[]\n    count = count + {}\n\nfn retitle[]\n    name = {}\n\nfn flip[]\n    on = not on\n\nfn cheaper[]\n    price = price / 2.0\n\n", step, renamed));
+    out.push_str("view render[]\n");
+    if with_source {
+        out.push_str("    names = for s in data.sym\n        upper[s]\n    joined = join[names, '-']\n    qty = 0\n    for q in data.qty\n        qty = qty + q\n");
+    }
+    out.push_str("    return stack[\n        p['count `count` total `total`'],\n        p['name `name` price `price` on `on`'],\n");
+    if with_source {
+        out.push_str("        p['rows `len[data]` `joined` qty `qty`'],\n");
+    }
+    out.push_str("        button['+', click = inc],\n        button['retitle', click = retitle],\n        button['flip', click = flip],\n        button['half', click = cheaper],\n        field['Name', name, type = 'text']\n    ]\n\n");
+    out.push_str(&format!("serve[{}]\n", port));
+    if with_source {
+        out.push_str("route['/api/rows', rows]\n");
+    }
+    out.push_str("page['/', render]\n");
+    let mut steps = vec![serde_json::json!({"open": "/"})];
+    let n = 2 + rng.below(5);
+    for _ in 0..n {
+        let typed = *rng.pick(&["Ada", "Bob", ""]);
+        steps.push(match rng.below(5) {
+            0 => serde_json::json!({"event": "inc"}),
+            1 => serde_json::json!({"event": "flip"}),
+            2 => serde_json::json!({"event": "cheaper"}),
+            3 => serde_json::json!({"event": "__field:name", "value": typed}),
+            _ => serde_json::json!({"event": "retitle"}),
+        });
+    }
+    (out, steps)
+}
 
 /// What a program said in one mode: whether it ended well, its stdout,
 /// and its stderr's last line.
@@ -718,29 +924,37 @@ pub fn cmd_test_fuzz(args: &[String]) {
         .and_then(|i| args.get(i + 1))
         .and_then(|s| s.parse().ok())
         .unwrap_or_else(|| std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(1));
+    let keep = args.iter().any(|a| a == "--keep");
     let dir = std::path::Path::new("target").join("crow_fuzz");
     let _ = std::fs::create_dir_all(&dir);
-    println!("fuzz: {} programs from seed {} (crow test --fuzz {} --seed {} repeats it)\n", n, seed, n, seed);
+    println!("fuzz: {} programs from seed {} (crow test --fuzz {} --seed {} repeats it{})\n", n, seed, n, seed, if keep { "; --keep keeps every program" } else { "" });
     let start = std::time::Instant::now();
     let (mut agreed, mut refused, mut diverged) = (0, 0, 0);
     for k in 0..n {
         let s = seed.wrapping_add(k as u64);
-        let source = program(s, 20);
+        let (source, module_name) = program(s, 20);
         let file = dir.join(format!("fuzz_{}.co", s));
-        if std::fs::write(&file, &source).is_err() {
+        let module_file = dir.join(format!("{}.co", module_name));
+        if std::fs::write(&file, &source).is_err() || std::fs::write(&module_file, module(&module_name)).is_err() {
             eprintln!("error: cannot write {}", file.display());
             std::process::exit(1);
         }
+        let remove = |file: &std::path::Path, module_file: &std::path::Path| {
+            if !keep {
+                let _ = std::fs::remove_file(file);
+                let _ = std::fs::remove_file(module_file);
+            }
+        };
         let (i_ok, i_out, i_err) = run(&["run", "-i"], &file);
         let (c_ok, c_out, c_err) = run(&["run"], &file);
         let crow_bug = |e: &str| e.contains("a bug in Crow") || e.contains("panicked");
         if i_ok && c_ok && i_out == c_out {
             agreed += 1;
-            let _ = std::fs::remove_file(&file);
+            remove(&file, &module_file);
             println!("  ok    seed {} ({} lines)", s, i_out.lines().count());
         } else if !i_ok && !c_ok && i_out == c_out && i_err == c_err && !crow_bug(&i_err) {
             refused += 1;
-            let _ = std::fs::remove_file(&file);
+            remove(&file, &module_file);
             println!("  --    seed {} refused alike: {}", s, i_err);
         } else {
             diverged += 1;
@@ -755,6 +969,61 @@ pub fn cmd_test_fuzz(args: &[String]) {
                 println!("        line {}: interpreter {:?}, compiled {:?}", at + 1, i_out.lines().nth(at).unwrap_or(""), c_out.lines().nth(at).unwrap_or(""));
             } else if i_out.lines().count() != c_out.lines().count() {
                 println!("        the interpreter said {} lines, the compiled program {}", i_out.lines().count(), c_out.lines().count());
+            }
+        }
+    }
+    // pages: one per ten programs, served in both modes and driven alike
+    let pages = (n / 10).max(1);
+    let page_dir = dir.join("served");
+    let _ = std::fs::create_dir_all(&page_dir);
+    let exe = std::env::current_exe().unwrap_or_default();
+    for k in 0..pages {
+        let s = seed.wrapping_add(k as u64);
+        let port = 3470 + (s % 20) as u16;
+        let (src, steps) = page(s, port);
+        let file = page_dir.join(format!("page_{}.co", s));
+        let events = serde_json::to_string_pretty(&steps).unwrap_or_default();
+        if std::fs::write(&file, &src).is_err() || std::fs::write(file.with_extension("events"), events).is_err() {
+            eprintln!("error: cannot write {}", file.display());
+            std::process::exit(1);
+        }
+        let compiled = crate::served_parity::drive(&exe, &["run"], &file, port, &steps);
+        let interpreted = crate::served_parity::drive(&exe, &["run", "-i"], &file, port, &steps);
+        match (compiled, interpreted) {
+            (Ok(c), Ok(i)) if c == i => {
+                agreed += 1;
+                if !keep {
+                    let _ = std::fs::remove_file(&file);
+                    let _ = std::fs::remove_file(file.with_extension("events"));
+                }
+                println!("  ok    page {} ({} steps)", s, c.len().saturating_sub(1));
+            }
+            // (a page both modes refuse alike, in the same words, is the
+            // generator's slip, as a program's is)
+            (Err(c), Err(i)) if c == i => {
+                refused += 1;
+                if !keep {
+                    let _ = std::fs::remove_file(&file);
+                    let _ = std::fs::remove_file(file.with_extension("events"));
+                }
+                println!("  --    page {} refused alike: {}", s, c);
+            }
+            (Ok(c), Ok(i)) => {
+                diverged += 1;
+                let at = c.iter().zip(i.iter()).position(|(a, b)| a != b).unwrap_or(c.len().min(i.len()));
+                println!("  FAIL  page {} — kept as {}: the pages differ after step {}", s, file.display(), at);
+                println!("        compiled:    {}", c.get(at).map(|x| x.as_str()).unwrap_or("<none>"));
+                println!("        interpreter: {}", i.get(at).map(|x| x.as_str()).unwrap_or("<none>"));
+            }
+            (c, i) => {
+                diverged += 1;
+                println!("  FAIL  page {} — kept as {}", s, file.display());
+                if let Err(e) = c {
+                    println!("        compiled: {}", e);
+                }
+                if let Err(e) = i {
+                    println!("        interpreter: {}", e);
+                }
             }
         }
     }
@@ -777,7 +1046,7 @@ mod tests {
         let mut taken = 0;
         let mut why = Vec::new();
         for seed in 0..40 {
-            let src = program(seed, 6);
+            let src = program_alone(seed, 6);
             let stmts = crate::build(&src).unwrap_or_else(|e| panic!("seed {}: {}\n{}", seed, e, src));
             match crate::ir_interp::run_script(&stmts, "fuzz") {
                 Ok(_) => taken += 1,
@@ -787,7 +1056,7 @@ mod tests {
         assert!(taken >= 36, "most generated programs run: {} of 40, and the first refused:\n{}", taken, why.iter().take(4).cloned().collect::<Vec<_>>().join("\n"));
         // the kinds that found bugs are generated: a parsed document, and its
         // members spliced into text (compiled, they had shown JSON's quotes)
-        let all: String = (0..120).map(|s| program(s, 6)).collect();
+        let all: String = (0..120).map(|s| program(s, 6).0).collect();
         assert!(all.contains("json['{"), "no parsed document generated");
         assert!(all.contains(".a` n `"), "no document's members spliced into text");
         // and the kinds the week of 2026-10-03 found its bugs in: tensors
@@ -799,7 +1068,7 @@ mod tests {
         // and the kinds the coverage of 2026-10-07 found no suite reached:
         // moments, values that can fail read where known good, parsed
         // documents walked, joins and keys, text over a column, predicates
-        for (needle, what) in [("moment[", "a moment"), (".ok\n", "a value that can fail, guarded"), ("for x in d", "a parsed list walked"), ("join[", "a join"), ("unique[", "distinct rows"), ("upper[", "text over a column"), ("any[", "a predicate handed"), ("bucket[", "a moment floored"), ("span = ", "a window over a span")] {
+        for (needle, what) in [("moment[", "a moment"), (".ok\n", "a value that can fail, guarded"), ("for x in d", "a parsed list walked"), ("join[", "a join"), ("unique[", "distinct rows"), ("upper[", "text over a column"), ("any[", "a predicate handed"), ("bucket[", "a moment floored"), ("span = ", "a window over a span"), (".f and true", "a parsed value joined with and"), ("any[push[", "a predicate over a list that can fail"), ("kept[", "a frame a function answers"), ("frame.load[", "a loaded frame"), ("sqlite://", "a table in a database")] {
             assert!(all.contains(needle), "no {} generated", what);
         }
     }

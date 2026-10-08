@@ -288,7 +288,7 @@ fn question_for(page: &str, handler: &str) -> Option<String> {
 
 /// Serve `file` in one mode, drive it with `steps`, and return the page
 /// after each step.
-fn drive(exe: &std::path::Path, mode: &[&str], file: &std::path::Path, port: u16, steps: &[serde_json::Value]) -> Result<Vec<String>, String> {
+pub(crate) fn drive(exe: &std::path::Path, mode: &[&str], file: &std::path::Path, port: u16, steps: &[serde_json::Value]) -> Result<Vec<String>, String> {
     use std::os::unix::process::CommandExt;
     let dir = file.parent().unwrap_or(std::path::Path::new("."));
     // its own process group: `crow run` starts the built program as a child,
