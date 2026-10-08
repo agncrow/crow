@@ -361,6 +361,12 @@ pub fn compare_values(l: &Value, r: &Value, cmp: Cmp) -> Result<CrowValue, Strin
         // a list (a frame's column) compared with one value: a mask
         (Value::Array(items), v) if is_scalar(v) => mask(items, cmp, v),
         (v, Value::Array(items)) if is_scalar(v) => mask(items, cmp.flipped(), v),
+        // two parsed values, or one beside a value, order as equality reads
+        // them: two numbers or two texts, another pair the reason (the
+        // compiled program had answered where this stopped)
+        (Value::Json(a), Value::Json(b)) => crow_runtime::mask::json_pair(cmp, a, b).map(|b| CrowValue::ok(Value::Bool(b))),
+        (Value::Json(j), v) if is_scalar(v) => crow_runtime::mask::json_holds(cmp, j, mask_cell(v)).map(|b| CrowValue::ok(Value::Bool(b))),
+        (v, Value::Json(j)) if is_scalar(v) => crow_runtime::mask::json_holds(cmp.flipped(), j, mask_cell(v)).map(|b| CrowValue::ok(Value::Bool(b))),
         // two values: numbers by value, text by character code; an order
         // between kinds with none is the reason, as the lowering refuses it
         // where it knows both

@@ -1,0 +1,43 @@
+--- A parsed value — a document's member — is read as the kind its use
+--- implies, in both modes (spec, JSON): a position an int, a key text,
+--- one met in arithmetic or an order a float, one compared with text
+--- text, one decided on, negated or joined with and/or a bool, one met
+--- beside a moment a moment, one handed to a builtin what its rows take,
+--- one assigned to a variable of a kind that kind, and one handed to a
+--- function what the function's body reads of it. Nothing is read first
+--- by hand. (Each had been refused until read; a parsed value decided on,
+--- negated or joined with and had run interpreted and not built
+--- compiled.) What is not what the program reads stops with what it
+--- holds and the read that asked, the same words in both modes.
+d = json['{"i": 1, "k": "b", "n": 5, "x": 2.5, "flag": true, "t": "2026-07-14T09:30:00Z", "s": "7"}']
+xs = [10, 20, 30]
+log[xs[d.i]]
+m = map[a = 1, b = 2]
+log[m[d.k]]
+log[d.n gt 1]
+log[d.n + 1]
+log[d.x * 2.0]
+total = 0
+total = d.n
+log[total]
+log[upper[d.k]]
+if d.flag
+    log['decided']
+log[not d.flag]
+log[d.flag and true]
+log[d.k eq 'b']
+log[d.n eq 5]
+log[d.t eq moment['2026-07-14T09:30:00Z']]
+--- text that reads as a number is a number where one is met
+log[d.s + 1]
+fn twice[n]
+    return n * 2
+log[twice[d.n]]
+--- two parsed values compare as the program runs, in order too, and two
+--- met in arithmetic are both numbers
+log[d.i eq d.n]
+log[d.n gt d.i]
+log[d.k gt d.s]
+log[d.i + d.n]
+bad = json['{"n": "many"}']
+log[bad.n + 1]

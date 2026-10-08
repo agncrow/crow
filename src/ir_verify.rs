@@ -158,6 +158,9 @@ struct Verifier<'p> {
     /// Whether the body being checked can run: a function nothing in the
     /// program reaches (a shared part's, in another part's program) cannot.
     runs: bool,
+    /// inside `grad[f]`'s arguments: the function differentiated is typed
+    /// by the calls of its gradient, later
+    differentiating: bool,
     out: Vec<String>,
 }
 
@@ -183,7 +186,7 @@ impl<'p> Verifier<'p> {
                 derives.insert(d.name.as_str(), &d.ty);
             }
         }
-        Verifier { fns, facts, derives, globals, kind: None, testing: false, scopes: vec![HashMap::new()], body: String::new(), ret: None, line: 0, runs: true, out: Vec::new() }
+        Verifier { fns, facts, derives, globals, kind: None, testing: false, differentiating: false, scopes: vec![HashMap::new()], body: String::new(), ret: None, line: 0, runs: true, out: Vec::new() }
     }
 
     fn found(&mut self, what: String) {
@@ -344,7 +347,23 @@ impl<'p> Verifier<'p> {
 
     fn expr(&mut self, e: &Expr) -> Ty {
         match e {
-            Expr::Const(_, t) | Expr::Constant(_, t) | Expr::FnRef(_, t) => t.clone(),
+            Expr::Const(_, t) | Expr::Constant(_, t) => t.clone(),
+            // a function handed as a value is compiled as it is called: a
+            // parameter nothing typed cannot be (the compiled program had
+            // named a function it did not emit — a predicate handed to
+            // `any` over a list that can fail, fuzz seed 1791429824)
+            Expr::FnRef(name, t) => {
+                if self.runs && !self.testing && !self.differentiating {
+                    // (a view, a handler or a helper handed to a page or a
+                    // control is typed by the runtime that calls it)
+                    if let Some(f) = self.fns.get(name.as_str()).filter(|f| !matches!(f.kind, FnKind::View | FnKind::Handler | FnKind::Helper)) {
+                        if let Some((p, _)) = f.params.iter().find(|(_, t)| matches!(t, Ty::Unknown)) {
+                            self.found(format!("`{}` is handed as a value, but its parameter `{}` is typed by nothing: the compiled program cannot hold it", name, p));
+                        }
+                    }
+                }
+                t.clone()
+            }
             Expr::Local(n, t) | Expr::Move(n, t) => {
                 match self.local(n).cloned() {
                     None => {
@@ -382,6 +401,7 @@ impl<'p> Verifier<'p> {
             Expr::Call { target, args, ty, propagates } => {
                 // an argument that can fail is marked with an unwrap for a
                 // call that hands the error on: the error is the call's value
+                let saved_differentiating = std::mem::replace(&mut self.differentiating, crate::ir::call_name(e).as_deref() == Some("grad"));
                 let ts: Vec<Ty> = args
                     .iter()
                     .map(|a| {
@@ -392,6 +412,7 @@ impl<'p> Verifier<'p> {
                         }
                     })
                     .collect();
+                self.differentiating = saved_differentiating;
                 match target {
                     Target::User(name) => self.user_call(name, &ts, ty, *propagates),
                     // the row the lowering picked: each argument is of the

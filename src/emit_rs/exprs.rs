@@ -687,9 +687,8 @@ impl Emitter {
     /// equality had answered `false` for a number and text; interpreted, a
     /// parsed `1` had not equalled `1.0`.)
     fn json(&self, op: &str, l: &str, lt: &Ty, r: &str, rt: &Ty) -> Option<String> {
-        if !matches!(op, "eq" | "ne") {
-            return None;
-        }
+        // (an order too: two parsed values order as the program runs, two
+        // numbers or two texts, and the runtime stops on another pair)
         let cmp = crow_runtime::mask::Cmp::named(op)?;
         // (a moment too: a loaded column typed by its uses met a cell of a
         // column nothing typed, and the compiled program had not built)

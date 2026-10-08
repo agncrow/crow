@@ -111,7 +111,11 @@ impl TypeContext {
             // array's element type (any[arr, pred] etc.)
             if matches!(name.as_str(), "any" | "all" | "find") && args.len() == 2 {
                 if let Expr::Ident(fn_name) = &args[1] {
-                    let elem = match arg_types.first() {
+                    // (a list that can fail — a chain through a frame's
+                    // length — hands its items too: the predicate had stayed
+                    // untyped, and the compiled program named a function it
+                    // had not emitted; fuzz seed 1791429824)
+                    let elem = match arg_types.first().map(|t| t.payload()) {
                         Some(Ty::List(inner)) => Some(inner.as_ref().clone()),
                         Some(Ty::Tensor(inner, dims)) => Some(Self::tensor_item(inner, dims)),
                         _ => None,

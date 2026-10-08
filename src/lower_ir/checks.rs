@@ -609,6 +609,13 @@ impl<'a> Lowerer<'a> {
             self.refuse(format!("{} of a list of values that can fail is a mask, and a mask decides every row: guard each value with .ok (cells of a column that can be missing: compare the column, or fill it first, fill[frame, 'column', value])", cmp.word()));
             return;
         }
+        // two parsed values compare as the program runs, in order too (two
+        // numbers, two texts; another pair stops there); one beside a value
+        // of a kind was read as that kind before this check, and one beside
+        // a value of no kind — a list, a map — has nothing to be read as
+        if matches!(l.payload(), Ty::Json) && matches!(r.payload(), Ty::Json) {
+            return;
+        }
         if matches!(l.payload(), Ty::Json) || matches!(r.payload(), Ty::Json) {
             if cmp.orders() {
                 self.refuse(format!("{} compares numbers with numbers or text with text — a value whose type the program does not know is read as one first: int[…], float[…] or str[…]", cmp.word()));
@@ -1461,13 +1468,12 @@ mod tests {
     /// A cell of a loaded frame is what the program reads it as: multiplied
     /// by a float it is a float, and the frame is held to that where it is
     /// loaded (uses.rs; it had been a parsed value, read first by hand). A
-    /// parsed value's member is still read first: nothing says its kind.
+    /// parsed value's member is read as its use implies: a number here.
     #[test]
-    fn a_cell_is_what_the_program_reads_and_a_parsed_value_is_read_first() {
+    fn a_cell_is_what_the_program_reads_and_a_parsed_value_what_its_use_implies() {
         assert!(check_source("use frame\ndf = load['nowhere.csv']\nlog[df.px[0] * 2.0]\n").is_ok());
         assert!(check_source("use frame\ndf = load['nowhere.csv']\nlog[float[df.px[0]] * 2.0]\n").is_ok());
-        let err = check_source("d = json['{\"px\": 2}']\nlog[d.px * 2.0]\n").unwrap_err();
-        assert!(err.contains("a value whose type the program does not know is read as one first: int[…], float[…] or str[…]"), "{}", err);
+        assert!(check_source("d = json['{\"px\": 2}']\nlog[d.px * 2.0]\n").is_ok());
     }
 
     /// A fact gets one value at the top level of a ui program: a loop that
@@ -1592,8 +1598,8 @@ mod tests {
     fn a_pure_functions_local_keeps_its_type() {
         let err = check_source("fn f[]\n    x = 1\n    x = 'a'\n    return x\nlog[f[]]\n").unwrap_err();
         assert!(err.contains("cannot reassign 'x' from int to str — variable type cannot change"), "{}", err);
-        let err = check_source("fn f[s]\n    x = ''\n    x = json[s]\n    return x\nlog[f['1']]\n").unwrap_err();
-        assert!(err.contains("cannot reassign 'x' from str to result[json] — a value whose type the program does not know is read as one first"), "{}", err);
+        // a parsed value assigned to a local of a kind is read as that kind
+        assert!(check_source("fn f[s]\n    x = ''\n    x = json[s]\n    return x\nlog[f['1']]\n").is_ok());
         assert!(check_source("fn f[s]\n    x = ''\n    x = str[json[s]]\n    return x\nlog[f['1']]\n").is_ok());
     }
 
@@ -1708,8 +1714,8 @@ mod tests {
     /// the value, the compiled program did not build).
     #[test]
     fn a_parsed_value_is_read_before_a_builtin_computes_with_it() {
-        let err = check_source("j = json['\"a\"']\nlog[upper[j]]\n").unwrap_err();
-        assert!(err.contains("upper[] takes text, got a JSON value — a value whose type the program does not know is read as one first: int[…], float[…] or str[…], a list item by item (for x in …)"), "{}", err);
+        // a parsed value handed to a builtin whose rows agree on text is read as text
+        assert!(check_source("j = json['\"a\"']\nlog[upper[j]]\n").is_ok());
         assert!(check_source("j = json['\"a\"']\nlog[upper[str[j]]]\nlog[len[j]]\n").is_ok());
         assert!(check_source("j = json['[1, 2]']\nfor x in j\n    log[float[x]]\n").is_ok());
         assert!(check_source("use math\nlog[mean['a']]\n").unwrap_err().contains("mean[] takes numbers, got text"));

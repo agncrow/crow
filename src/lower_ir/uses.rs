@@ -145,7 +145,7 @@ fn definite(t: &Ty) -> bool {
 /// every row of the name agrees on, when all do (`upper` takes text;
 /// `abs` takes an int or a float, which says nothing here). A read
 /// (`str`, `int`, `float`, `moment`) or a show says nothing.
-fn row_says(name: &str, module: Option<&str>, at: usize, argc: usize) -> Option<Ty> {
+pub(crate) fn row_says(name: &str, module: Option<&str>, at: usize, argc: usize) -> Option<Ty> {
     if matches!(name, "str" | "int" | "float" | "moment" | "type" | "log" | "fmt" | "encode" | "len" | "assert" | "error") {
         return None;
     }
@@ -162,7 +162,12 @@ fn row_says(name: &str, module: Option<&str>, at: usize, argc: usize) -> Option<
         said.insert(format!("{:?}", t));
         kind = Some(t);
     }
-    if said.len() == 1 { kind } else { None }
+    match said.len() {
+        1 => kind,
+        // rows that take an int or a float there take a number: a float
+        n if n > 0 && said.iter().all(|s| s == "Int" || s == "Float") => Some(Ty::Float),
+        _ => None,
+    }
 }
 
 impl<'c> Uses<'c> {

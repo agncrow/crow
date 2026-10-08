@@ -253,3 +253,113 @@ mod tests {
         assert_eq!(len(&serde_json::Value::Null), 0);
     }
 }
+
+/// What a parsed value holds, as the stop that reads it as another kind
+/// names it.
+fn holds(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => format!("text '{}'", s),
+        serde_json::Value::Number(n) => format!("a number {}", n),
+        serde_json::Value::Bool(b) => format!("a bool {}", b),
+        serde_json::Value::Array(_) => "a list".to_string(),
+        serde_json::Value::Object(_) => "a map".to_string(),
+        serde_json::Value::Null => "nothing".to_string(),
+    }
+}
+
+/// The stop's words: what the value holds, what the program reads, and
+/// the read that asked (`a position in xs at line 3`).
+fn not_read(v: &serde_json::Value, what: &str, how: &str) -> String {
+    let asked = if how.is_empty() { String::new() } else { format!(" ({})", how) };
+    format!("a parsed value holds {} where the program reads {}{}", holds(v), what, asked)
+}
+
+/// A parsed value read as an int, where its use takes one (a position, a
+/// row that takes an int): a whole number, a number with nothing after
+/// the point, or text that reads as one; anything else stops with what it
+/// holds and the read that asked. (`__read_int`; spec, JSON.)
+pub fn read_int(v: &serde_json::Value, how: &str) -> Result<i64, String> {
+    if let Some(n) = v.as_i64() {
+        return Ok(n);
+    }
+    if let Some(x) = v.as_f64() {
+        if x.fract() == 0.0 && x.abs() < 9_007_199_254_740_992.0 {
+            return Ok(x as i64);
+        }
+    }
+    if let Some(n) = v.as_str().and_then(|s| s.trim().parse::<i64>().ok()) {
+        return Ok(n);
+    }
+    Err(not_read(v, "an int", how))
+}
+
+/// A parsed value read as a number, where its use meets one (arithmetic,
+/// an order, a variable holding numbers): a number, or text that reads
+/// as one; else the stop. (`__read_float`.)
+pub fn read_float(v: &serde_json::Value, how: &str) -> Result<f64, String> {
+    if let Some(x) = v.as_f64() {
+        return Ok(x);
+    }
+    if let Some(x) = v.as_str().and_then(|s| s.trim().parse::<f64>().ok()) {
+        return Ok(x);
+    }
+    Err(not_read(v, "a number", how))
+}
+
+/// A parsed value read as text, where its use takes text: text itself, a
+/// number or a bool as `str[…]` shows it; a list or a map stops.
+/// (`__read_str`.)
+pub fn read_str(v: &serde_json::Value, how: &str) -> Result<String, String> {
+    match v {
+        serde_json::Value::String(s) => Ok(s.clone()),
+        serde_json::Value::Number(n) => Ok(n.to_string()),
+        serde_json::Value::Bool(b) => Ok(b.to_string()),
+        _ => Err(not_read(v, "text", how)),
+    }
+}
+
+/// A parsed value read as a bool, where the program decides on it,
+/// negates it or joins it with and/or: a bool, nothing else.
+/// (`__read_bool`.)
+pub fn read_bool(v: &serde_json::Value, how: &str) -> Result<bool, String> {
+    match v {
+        serde_json::Value::Bool(b) => Ok(*b),
+        _ => Err(not_read(v, "a bool", how)),
+    }
+}
+
+/// A parsed value read as a moment, where it meets one: ISO 8601 text, or
+/// a number of seconds; else the stop. (`__read_moment`.)
+pub fn read_moment(v: &serde_json::Value, how: &str) -> Result<crate::moments::Moment, String> {
+    match v {
+        serde_json::Value::String(s) => crate::moments::Moment::parse(s).map_err(|_| not_read(v, "a moment", how)),
+        serde_json::Value::Number(n) => n.as_f64().map(crate::moments::Moment::of_seconds).ok_or_else(|| not_read(v, "a moment", how)),
+        _ => Err(not_read(v, "a moment", how)),
+    }
+}
+
+#[cfg(test)]
+mod read_tests {
+    use super::*;
+
+    /// Each read takes what its kind can hold and stops on the rest, naming
+    /// what the value holds and the read that asked.
+    #[test]
+    fn a_parsed_value_is_read_as_its_use_implies_or_stops_naming_both() {
+        let j: serde_json::Value = serde_json::from_str(r#"{"i": 1, "f": 2.0, "x": 2.5, "s": "7", "k": "b", "flag": true, "t": "2026-07-14T09:30:00Z", "l": [1]}"#).unwrap_or(serde_json::Value::Null);
+        assert_eq!(read_int(&j["i"], "a position in xs at line 3"), Ok(1));
+        assert_eq!(read_int(&j["f"], ""), Ok(2));
+        assert_eq!(read_int(&j["s"], ""), Ok(7));
+        assert_eq!(read_int(&j["x"], "a position in xs at line 3"), Err("a parsed value holds a number 2.5 where the program reads an int (a position in xs at line 3)".to_string()));
+        assert_eq!(read_float(&j["i"], ""), Ok(1.0));
+        assert_eq!(read_float(&j["s"], ""), Ok(7.0));
+        assert_eq!(read_float(&j["k"], "met in add at line 4"), Err("a parsed value holds text 'b' where the program reads a number (met in add at line 4)".to_string()));
+        assert_eq!(read_str(&j["k"], ""), Ok("b".to_string()));
+        assert_eq!(read_str(&j["i"], ""), Ok("1".to_string()));
+        assert_eq!(read_str(&j["l"], "handed to upper at line 5"), Err("a parsed value holds a list where the program reads text (handed to upper at line 5)".to_string()));
+        assert_eq!(read_bool(&j["flag"], ""), Ok(true));
+        assert_eq!(read_bool(&j["i"], "decided on at line 6"), Err("a parsed value holds a number 1 where the program reads a bool (decided on at line 6)".to_string()));
+        assert!(read_moment(&j["t"], "").is_ok());
+        assert_eq!(read_moment(&j["k"], "met in eq at line 7"), Err("a parsed value holds text 'b' where the program reads a moment (met in eq at line 7)".to_string()));
+    }
+}

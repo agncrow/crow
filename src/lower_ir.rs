@@ -1746,6 +1746,16 @@ impl<'a> Lowerer<'a> {
                 // a loaded frame held to the columns the program's reads
                 // say, before any pass types the variable by it (uses.rs)
                 let expr = self.held_to_shape(name, expr);
+                // a parsed value assigned to a variable of a kind is read as
+                // that kind (a number as a float: the variable widens, as one
+                // assigned a float does)
+                let expr = match self.ctx.vars.get(name).map(|t| t.payload().clone()) {
+                    Some(kind @ (Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Moment)) if self.declared(name) || self.is_fact(name) => {
+                        let kind = if matches!(kind, Ty::Int) { Ty::Float } else { kind };
+                        self.read_json(expr, &kind, &format!("assigned to {}", name))
+                    }
+                    _ => expr,
+                };
                 if self.pass == Pass::Final {
                     self.check_assign(name, &self.checked(&expr));
                 }
@@ -2100,6 +2110,8 @@ impl<'a> Lowerer<'a> {
     /// in Conditions), then decided on its payload.
     fn lower_cond(&mut self, c: &A) -> Result<Expr, String> {
         let e = self.lower_expr(c)?;
+        // a parsed value decided on is read as a bool
+        let e = self.read_json(e, &Ty::Bool, "decided on");
         Ok(self.decided(e, Decision::Branch))
     }
 
@@ -2132,6 +2144,34 @@ impl<'a> Lowerer<'a> {
     /// A loaded frame bound where the program's reads say its columns
     /// (uses.rs): the value held to that shape as the program runs
     /// (`__expect_frame`), and typed by it from here on, in both modes.
+    /// A parsed value read as the kind its use implies — a position an
+    /// int, a key text, one met in arithmetic a float, one decided on a
+    /// bool — by a row that stops with what the value holds and the read
+    /// that asked, in both modes (spec, JSON). A value of any other type
+    /// is itself. (Each such use had been refused until read by hand, and
+    /// a parsed value decided on, negated or joined with and had run
+    /// interpreted and not built compiled.)
+    fn read_json(&mut self, expr: Expr, kind: &Ty, what: &str) -> Expr {
+        if !matches!(expr.ty().payload(), Ty::Json) {
+            return expr;
+        }
+        let row_name = match kind {
+            Ty::Int => "__read_int",
+            Ty::Float => "__read_float",
+            Ty::Str | Ty::Markup => "__read_str",
+            Ty::Bool => "__read_bool",
+            Ty::Moment => "__read_moment",
+            _ => return expr,
+        };
+        let Some(row) = crate::table::core_row(row_name, &[crate::table::Arg::Json, crate::table::Arg::Text]) else { return expr };
+        let failing = expr.ty().is_result();
+        let arg = if failing { Expr::Convert { how: Convert::Unwrap, expr: Box::new(expr), ty: Ty::Json } } else { expr };
+        let how = Expr::Const(Const::Str(format!("{} at line {}", what, self.v.line)), Ty::Str);
+        let read = if matches!(kind, Ty::Markup) { Ty::Str } else { kind.clone() };
+        let ty = if failing { Ty::Result(Box::new(read)) } else { read };
+        Expr::Call { target: Target::Row(row), args: vec![arg, how], ty, propagates: failing }
+    }
+
     fn held_to_shape(&mut self, name: &str, expr: Expr) -> Expr {
         if !uses::dynamic_frame(&expr.ty()) {
             return expr;
@@ -2655,6 +2695,47 @@ impl<'a> Lowerer<'a> {
             A::BinOp { left, op, right } => {
                 let mut l = self.lower_expr(left)?;
                 let mut r = self.lower_expr(right)?;
+                // a parsed value met in an operator is read as the kind the
+                // other side says — a number as a float, `%` an int — and as
+                // a bool by and/or; two parsed values compare as the program
+                // runs
+                let (lj, rj) = (matches!(l.ty().payload(), Ty::Json), matches!(r.ty().payload(), Ty::Json));
+                if lj != rj {
+                    let other = if lj { r.ty().payload().clone() } else { l.ty().payload().clone() };
+                    let arithmetic = matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow | BinOp::ElemMul | BinOp::ElemDiv | BinOp::ElemPow);
+                    let kind = match op {
+                        BinOp::And | BinOp::Or => Some(Ty::Bool),
+                        BinOp::Mod => Some(Ty::Int),
+                        _ => match other {
+                            Ty::Int | Ty::Float => Some(Ty::Float),
+                            Ty::Str | Ty::Markup => Some(Ty::Str),
+                            Ty::Bool => Some(Ty::Bool),
+                            Ty::Moment => Some(Ty::Moment),
+                            _ if arithmetic => Some(Ty::Float),
+                            _ => None,
+                        },
+                    };
+                    if let Some(kind) = kind {
+                        let how = format!("met in {:?}", op).to_lowercase();
+                        if lj {
+                            l = self.read_json(l, &kind, &how);
+                        } else {
+                            r = self.read_json(r, &kind, &how);
+                        }
+                    }
+                } else if lj && rj && matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow | BinOp::Mod | BinOp::ElemMul | BinOp::ElemDiv | BinOp::ElemPow | BinOp::And | BinOp::Or) {
+                    // two parsed values met in arithmetic are both numbers
+                    // (`%` ints), joined by and/or both bools; two compared,
+                    // whole or in order, compare as the program runs
+                    let kind = match op {
+                        BinOp::And | BinOp::Or => Ty::Bool,
+                        BinOp::Mod => Ty::Int,
+                        _ => Ty::Float,
+                    };
+                    let how = format!("met in {:?}", op).to_lowercase();
+                    l = self.read_json(l, &kind, &how);
+                    r = self.read_json(r, &kind, &how);
+                }
                 self.check_binop(op, self.checked(&l), self.checked(&r));
                 self.check_order(op, &l.ty(), &r.ty());
                 // a frame's column in arithmetic is its numbers, as it is
@@ -2712,6 +2793,12 @@ impl<'a> Lowerer<'a> {
             }
             A::UnaryOp { op, expr } => {
                 let x = self.lower_expr(expr)?;
+                // a parsed value negated is read as a bool, one made negative
+                // as a number
+                let x = match op {
+                    crate::ast::UnaryOp::Not => self.read_json(x, &Ty::Bool, "negated"),
+                    crate::ast::UnaryOp::Neg => self.read_json(x, &Ty::Float, "made negative"),
+                };
                 let ty = shapes::shaped(self.ctx.unary_type(op, read(&x)), x.ty().tensor_dims().cloned());
                 Expr::Unary { op: format!("{:?}", op).to_lowercase(), expr: Box::new(x), ty }
             }
@@ -3034,18 +3121,21 @@ impl<'a> Lowerer<'a> {
             for a in args {
                 idx.push(self.lower_expr(a)?);
             }
-            let arg_types: Vec<Ty> = idx.iter().map(read).collect();
             // a position or a key the program does not know the type of — a
-            // parsed value, a cell of a frame typed only as it runs — is read
-            // as one first, in both modes (the interpreter had read it as it
-            // ran, and the compiled program had not built)
-            if self.pass == Pass::Final && !matches!(base.ty().payload(), Ty::Json) {
-                if let Some(at) = arg_types.iter().position(|t| matches!(t.payload(), Ty::Json)) {
-                    let what = local_named(&base).unwrap_or_else(|| "the value".to_string());
-                    let by = if matches!(base.ty().payload(), Ty::Map(_)) { "str[…] for a key" } else { "int[…] for a position" };
-                    self.refuse(format!("{}[…] is indexed by a value whose type the program does not know (argument {}): read it as one first, {}", what, at + 1, by));
+            // parsed value — is read as what the place takes: a position an
+            // int, a key text, in both modes, stopping with what it holds
+            // (the interpreter had read it as it ran and the compiled
+            // program had not built; then both had refused it until read)
+            if !matches!(base.ty().payload(), Ty::Json) && idx.iter().any(|x| matches!(x.ty().payload(), Ty::Json)) {
+                let what = local_named(&base).unwrap_or_else(|| "the value".to_string());
+                let (kind, how) = if matches!(base.ty().payload(), Ty::Map(_)) { (Ty::Str, format!("a key of {}", what)) } else { (Ty::Int, format!("a position in {}", what)) };
+                let mut read_idx = Vec::with_capacity(idx.len());
+                for x in idx {
+                    read_idx.push(self.read_json(x, &kind, &how));
                 }
+                idx = read_idx;
             }
+            let arg_types: Vec<Ty> = idx.iter().map(read).collect();
             let full_types: Vec<Ty> = idx.iter().map(full).collect();
             self.scan_call(callee, args, &full_types);
             let checks: Vec<Ty> = idx.iter().map(|x| self.checked(x)).collect();
@@ -3276,6 +3366,28 @@ impl<'a> Lowerer<'a> {
             } else {
                 lowered.push(x);
             }
+        }
+        // a parsed value handed to a builtin whose rows agree on the kind
+        // they take there is read as that kind (`upper[j.name]` text,
+        // `abs[j.n]` a number); a function's parameter takes it as it is,
+        // and the function's own body reads it
+        if !self.ctx.functions.contains_key(&name) && lowered.iter().any(|x| matches!(x.ty().payload(), Ty::Json)) {
+            let argc = lowered.len();
+            let mut read_args = Vec::with_capacity(argc);
+            for (i, x) in lowered.into_iter().enumerate() {
+                let kind = if matches!(x.ty().payload(), Ty::Json) { uses::row_says(&name, module.as_deref(), i, argc) } else { None };
+                match kind {
+                    Some(k) => {
+                        let x = self.read_json(x, &k, &format!("handed to {}", name));
+                        arg_types[i] = read(&x);
+                        full_types[i] = full(&x);
+                        checks[i] = self.checked(&x);
+                        read_args.push(x);
+                    }
+                    None => read_args.push(x),
+                }
+            }
+            lowered = read_args;
         }
         self.check_callee(callee, args, &checks);
         self.scan_call(callee, args, &full_types);
@@ -5016,7 +5128,6 @@ mod tests {
         refused(&format!("{}log[2 lt df.name]\n", df), "lt compares numbers with numbers or text with text, not a number with text");
         refused("log[['a'] gt ['b']]\n", "gt compares numbers with numbers or text with text, not a list of text with a list of text");
         refused("log[['a'] eq [1]]\n", "eq compares values of one kind, not a list of text with a list of numbers");
-        refused("j = json['{\"n\": 1}']\nlog[j.n gt 0]\n", "a value whose type the program does not know is read as one first");
         refused("xs = ['1', '2']\nlog[xs + 1]\n", "cannot use '+' with array[str] and int");
         refused("a = float['1.5']\nxs = [a, a]\nlog[xs eq 1.5]\n", "eq of a list of values that can fail is a mask, and a mask decides every row: guard each value with .ok");
         refused("log[contains[['a'], 1]]\n", "contains[] takes a list and an item of its kind: its items are text, not a number");
@@ -5581,24 +5692,29 @@ mod tests {
         assert!(format!("{:?}", issues[0]).contains("assert failed"), "{:?}", issues);
     }
 
-    /// A position or a key typed only as the program runs — a parsed
-    /// document's value — is read as one first, in both modes: the
-    /// interpreter had read it as it ran and the compiled program had not
-    /// built (a map indexed by a cell, in the retrieval package). A cell
-    /// of a frame loaded from a path the program is given is typed by that
-    /// very read — a position asks the file for ints, a key for text — so
-    /// nothing is read first there.
+    /// A parsed value — a document's member — is read as the kind its use
+    /// implies, in both modes: a position an int, a key text, one met in
+    /// arithmetic or an order a float, one decided on, negated or joined
+    /// with and/or a bool, one handed to a builtin what its rows take,
+    /// one assigned to a variable of a kind that kind; the program stops
+    /// where the value is not that, with what it holds and the read that
+    /// asked. (Each had been refused until read by hand; a parsed value
+    /// decided on, negated or joined with and had run interpreted and not
+    /// built compiled.) Two parsed values compare as the program runs, and
+    /// a loaded frame's cell as a position or a key is typed by that read.
     #[test]
-    fn an_index_the_program_cannot_type_is_read_first() {
+    fn a_parsed_value_is_read_as_its_use_implies() {
+        let ir = ir_of("d = json[args[][0]]\nxs = [10, 20, 30]\nm = map[a = 1]\nlog[xs[d['i']]]\nlog[m[d['k']]]\nlog[d['n'] gt 1]\nlog[d['x'] * 2.0]\ntotal = 0\ntotal = d['n']\nlog[total]\nlog[upper[d['k']]]\nif d['flag']\n    log['yes']\nlog[not d['flag']]\nlog[d['flag'] and true]\n");
+        for needle in ["core.__read_int(", "\"a position in xs at line 4\"", "core.__read_str(", "\"a key of m at line 5\"", "\"met in gt at line 6\"", "\"met in mul at line 7\"", "\"assigned to total at line 9\"", "\"handed to upper at line 11\"", "core.__read_bool(", "\"decided on at line 12\"", "\"negated at line 14\"", "\"met in and at line 15\""] {
+            assert!(ir.contains(needle), "{} missing in\n{}", needle, ir);
+        }
+        // two parsed values compared, whole or in order, compare as the
+        // program runs; two met in arithmetic are both read as numbers
+        let dynamic = ir_of("d = json[args[][0]]\nlog[d['a'] eq d['b']]\nlog[d['a'] gt d['b']]\n");
+        assert!(!dynamic.contains("__read_"), "{}", dynamic);
+        let both = ir_of("d = json[args[][0]]\nlog[d['a'] + d['b']]\n");
+        assert_eq!(both.matches("core.__read_float(").count(), 2, "{}", both);
         let refused = |src: &str| crate::build(src).ok().and_then(|stmts| crate::ir_interp::prepare(&stmts, "t").err()).unwrap_or_default();
-        let by_parsed = "d = json[args[][0]]\nxs = [10, 20, 30]\nlog[xs[d['i']]]\n";
-        assert!(refused(by_parsed).contains("xs[…] is indexed by a value whose type the program does not know (argument 1): read it as one first, int[…] for a position"), "{}", refused(by_parsed));
-        let by_parsed_key = "d = json[args[][0]]\nm = map[a = 1]\nlog[m[d['k']]]\n";
-        assert!(refused(by_parsed_key).contains("m[…] is indexed by a value whose type the program does not know (argument 1): read it as one first, str[…] for a key"), "{}", refused(by_parsed_key));
-        // read first, both lower; a parsed value indexed by its own kind does too
-        let read = "d = json[args[][0]]\nxs = [10, 20, 30]\nm = map[a = 1]\nlog[xs[int[d['i']]]]\nlog[m[str[d['k']]]]\ne = json['{\"a\": [1, 2]}']\nlog[e['a']]\n";
-        assert_eq!(refused(read), "");
-        // a loaded frame's cell as a position or a key is typed by that read
         let by_cell = "use frame\nname = args[][0]\nt = frame.load[name]\nxs = [10, 20, 30]\nm = map[a = 1]\nlog[xs[t.at[0]]]\nlog[m[t.k[0]]]\n";
         assert_eq!(refused(by_cell), "");
         let ir = ir_of(by_cell);

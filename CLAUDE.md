@@ -158,6 +158,14 @@ steps on every push and must be green.
   retype or a wrap of a source's binding must match `Expr::Effect` too, or
   it silently does nothing (the probe showed the hook running and the
   variable staying dynamic).
+- A parsed value's reads are inserted by the lowering: `read_json`
+  (lower_ir.rs) at six sites — a position or key, an operator, not/neg, a
+  condition, an assignment to a variable of a kind, a builtin's argument
+  (by `uses::row_says`). A NEW site that meets `Ty::Json` must call it, or
+  the compiled program refuses or does not build (`if j.flag`, `not
+  j.flag`, `j.flag and true` had run interpreted and not built). The rows
+  are `core.__read_*(Json, Text)`; the second argument names the use and
+  line for the stop.
 - Never `crow run` a program IN PLACE under tests/parity or tests/served
   while a harness runs: the directory's `.crow_build` is shared, and the
   binary you execute may be another program's (a run printed parity 190's

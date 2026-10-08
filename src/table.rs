@@ -1407,6 +1407,13 @@ pub static ROWS: &[Row] = &[
     // (the lowering's: a loaded frame held to the columns the program's
     // reads say it has, where it is bound — lower_ir/uses.rs)
     row!("core.__expect_frame", "", "__expect_frame", crow_runtime::frames::expect, (Frame, Strs, Strs, Strs) -> Frame, stops),
+    // a parsed value read as the kind its use implies (the lowering's
+    // `read_json`; spec, JSON): the read that asked is the second argument
+    row!("core.__read_int", "", "__read_int", crow_runtime::json::read_int, (Json, Str) -> Int, stops),
+    row!("core.__read_float", "", "__read_float", crow_runtime::json::read_float, (Json, Str) -> Float, stops),
+    row!("core.__read_str", "", "__read_str", crow_runtime::json::read_str, (Json, Str) -> Str, stops),
+    row!("core.__read_bool", "", "__read_bool", crow_runtime::json::read_bool, (Json, Str) -> Bool, stops),
+    row!("core.__read_moment", "", "__read_moment", crow_runtime::json::read_moment, (Json, Str) -> Moment, stops),
     row!("moments.now", "", "now", crow_runtime::moments::now_moment, () -> Moment, never),
     // the file system: an effect, which the session layer performs (held to
     // a handler's commit, recorded in a rehearsal) and whose call inside is
