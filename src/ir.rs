@@ -234,6 +234,10 @@ pub struct Fact {
     /// facts are set (`cannot assign an error value to 'name' — reason`),
     /// and the fact holds the payload, `ty` — a fact never holds an error.
     pub refuses: bool,
+    /// A page's data source (`fetch`, `poll`): the columns the program's
+    /// reads say it has — each name, its kind and the read that decided it
+    /// — held where its answer arrives, in the session (uses.rs).
+    pub held: Vec<(String, String, String)>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -792,6 +796,14 @@ pub fn visit_stmts(b: &[Stmt], f: &mut dyn FnMut(&Stmt)) {
         for b in inner {
             visit_stmts(&b, f);
         }
+    }
+}
+
+/// The arguments of a call or an effect.
+pub fn call_args(e: &Expr) -> &[Expr] {
+    match e {
+        Expr::Call { args, .. } | Expr::Effect { args, .. } => args,
+        _ => &[],
     }
 }
 

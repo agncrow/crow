@@ -277,8 +277,8 @@ mod live_integration {
     #[test]
     fn live_state_register_fetch_poll() {
         let mut state = CrowLiveState::new();
-        state.register_fetch("data", "http://localhost/api/data");
-        state.register_poll("prices", "http://localhost/api/prices", 5);
+        state.register_fetch("data", "http://localhost/api/data", Vec::new());
+        state.register_poll("prices", "http://localhost/api/prices", 5, Vec::new());
         assert_eq!(state.sources.len(), 2);
         assert!(state.sources[0].interval_secs.is_none());
         assert_eq!(state.sources[1].interval_secs, Some(5));

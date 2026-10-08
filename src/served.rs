@@ -217,6 +217,15 @@ pub fn serve(template: IrInterp) -> Result<(), String> {
             initial.set(name, fact_to_json(v));
         }
     }
+    // the page's data sources, registered as the compiled program registers
+    // them: the session loads each and holds it to the columns the program
+    // reads (the interpreter had registered none)
+    for (name, url, secs, held) in &template.sources {
+        match secs {
+            None => initial.register_fetch(name, url, held.clone()),
+            Some(s) => initial.register_poll(name, url, *s, held.clone()),
+        }
+    }
     // each page's address: the facts its path's `:name` segments name, and
     // its `url` facts, as the Rust backend resolves them
     let mut pages: Vec<(String, String, Vec<(String, String)>)> = Vec::new();

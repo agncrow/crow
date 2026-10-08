@@ -691,7 +691,9 @@ impl Emitter {
             return None;
         }
         let cmp = crow_runtime::mask::Cmp::named(op)?;
-        let cell = |t: &Ty| matches!(t, Ty::Int | Ty::Float | Ty::Str | Ty::Markup | Ty::Bool);
+        // (a moment too: a loaded column typed by its uses met a cell of a
+        // column nothing typed, and the compiled program had not built)
+        let cell = |t: &Ty| matches!(t, Ty::Int | Ty::Float | Ty::Str | Ty::Markup | Ty::Bool | Ty::Moment);
         let call = match (lt, rt) {
             (Ty::Json, Ty::Json) => format!("crow_runtime::mask::json_pair(crow_runtime::mask::Cmp::{:?}, _l, _r)", cmp),
             (Ty::Json, t) if cell(t) => format!("crow_runtime::mask::json_holds(crow_runtime::mask::Cmp::{:?}, _l, crow_runtime::mask::Cell::from(_r))", cmp),
@@ -1500,6 +1502,9 @@ impl Emitter {
             Target::Row(row) => matches!(row.fails, crate::table::Fails::Value(_)),
             Target::User(n) => self.fns.get(n).map_or(false, |f| matches!(f.ret, Ty::Result(_))),
             Target::Module(m, f) => self.registry.type_of_in(m, f, &raw_args.iter().map(|a| self.tt(a)).collect::<Vec<_>>()).map_or(false, |t| matches!(t, Ty::Result(_))),
+            // `json[map]` and `json[frame]` answer a response, never a status
+            // (the row of the name, `json[text]`, parses and can fail)
+            Target::Runtime(_) if name == "json" && raw_args.first().is_some_and(|a| matches!(Self::inner(&self.tt(a)), Ty::Map(_) | Ty::Frame(_))) => false,
             Target::Runtime(_) if self.row_for(name, raw_args).is_some() => {
                 matches!(self.row_for(name, raw_args).map(|r| r.fails), Some(crate::table::Fails::Value(_)))
             }

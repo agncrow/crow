@@ -150,7 +150,7 @@ async fn answer(c: &Control, op: &str, body: serde_json::Value) -> Result<serde_
         }
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         state.later_tx = Some(tx);
-        fetch_sources(&mut state).await;
+        fetch_sources(&mut state, &mut Vec::new()).await;
         state.next_tick();
         let clock = body.get("now").and_then(|v| v.as_f64());
         // nothing renders until the test asks: a view may read what the

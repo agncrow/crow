@@ -62,6 +62,21 @@ pub struct CrowApp {
     files: Option<String>,
 }
 
+/// The address this server answers at, for a page's data source written
+/// as a path of its own (`fetch['/api/rows']`): set once the listener is
+/// bound; a wildcard host is asked at the loopback.
+static BASE_URL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+pub(crate) fn set_base_url(addr: &str) {
+    let host = addr.strip_prefix("0.0.0.0:").map(|p| format!("127.0.0.1:{}", p)).or_else(|| addr.strip_prefix("[::]:").map(|p| format!("[::1]:{}", p))).unwrap_or_else(|| addr.to_string());
+    let _ = BASE_URL.set(format!("http://{}", host));
+}
+
+/// The server's own address, `http://host:port`, once it listens.
+pub fn base_url() -> Option<&'static str> {
+    BASE_URL.get().map(String::as_str)
+}
+
 impl CrowApp {
     /// Create a new app (`web.new[]` in Crow).
     pub fn new() -> Self {
@@ -161,6 +176,7 @@ impl CrowApp {
             }
             None => router,
         };
+        set_base_url(&addr);
         println!("crow server listening on http://{}", addr);
         tokio::spawn(stop_on_signal());
         axum::serve(listener, router.into_make_service_with_connect_info::<std::net::SocketAddr>()).await?;

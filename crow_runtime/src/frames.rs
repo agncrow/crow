@@ -560,6 +560,23 @@ mod tests {
     }
 }
 
+/// The table with no rows yet, in the columns a program reads: what a
+/// page's data source is before its answer arrives, in both modes, and
+/// what an answer of no records is.
+pub fn empty_with(names: &[String], kinds: &[String]) -> CrowFrame {
+    let data: Vec<crate::frame::Column> = kinds
+        .iter()
+        .map(|k| match k.as_str() {
+            "int" => crate::frame::Column::Int(Vec::new()),
+            "float" => crate::frame::Column::Float(Vec::new()),
+            "bool" => crate::frame::Column::Bool(Vec::new()),
+            "moment" => crate::frame::Column::DateTime(Vec::new(), Vec::new()),
+            _ => crate::frame::Column::strs(Vec::new()),
+        })
+        .collect();
+    CrowFrame::new(names.to_vec(), data, vec![Vec::new(); names.len()])
+}
+
 /// A frame held to the columns a program reads (the lowering's
 /// `__expect_frame`; spec, Frames: a frame's type is its columns): each
 /// named column is there and holds the kind the program reads it as —
@@ -591,6 +608,11 @@ pub fn expect(f: &CrowFrame, names: &[String], kinds: &[String], hows: &[String]
             "datetime" => "moments",
             other => other,
         }
+    }
+    // a frame of no rows and no columns — a source that answered `[]` — is
+    // the table with no rows yet: it is given the columns it is held to
+    if f.columns.is_empty() && f.nrows() == 0 && !names.is_empty() {
+        return Ok(empty_with(names, kinds));
     }
     let mut out = f.clone();
     for (i, (name, kind)) in names.iter().zip(kinds).enumerate() {
@@ -660,5 +682,11 @@ mod expect_tests {
         assert_eq!(err, "column 'id' holds 9007199254740993, a whole number a float cannot hold exactly, where the program reads numbers (met in eq at line 4) — read it with int[…] where it is compared");
         let err = expect(&f, &strs(&["sym"]), &strs(&["str"]), &strs(&["handed to upper at line 2"])).expect_err("missing");
         assert_eq!(err, "the frame has no column 'sym', which the program reads as text (handed to upper at line 2) — its columns are qty, px, id");
+        // no rows and no columns: the table with no rows yet, in the shape held
+        let none = CrowFrame::new(Vec::new(), Vec::new(), Vec::new());
+        let held = expect(&none, &strs(&["sym", "qty"]), &strs(&["str", "float"]), &strs(&["", ""])).expect("empty, shaped");
+        assert_eq!(held.columns, strs(&["sym", "qty"]));
+        assert_eq!(held.nrows(), 0);
+        assert!(matches!(held.col_native("qty").expect("qty").data.as_ref(), Column::Float(v) if v.is_empty()));
     }
 }

@@ -1,0 +1,6 @@
+[
+  {"open": "/"},
+  {"expect": "2 rows"},
+  {"expect": "AAPL, MSFT"},
+  {"expect": "total 150.5"}
+]

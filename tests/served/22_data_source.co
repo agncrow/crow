@@ -1,0 +1,30 @@
+--- A page's data source (spec, Frames: a frame loaded from a file has
+--- the columns the program reads; ui: fetch): the records a route of this
+--- same app answers arrive through the session as a frame held to the
+--- columns the page's reads say — sym is text, qty a number — the same in
+--- both modes (the interpreter had answered an empty map and registered no
+--- source; the compiled program had turned the records into a frame of its
+--- own at every render). A number is a number: 50.5 beside 100.
+use web, ui, frame
+
+fn rows[req]
+    df = with[frame.new[], 'sym', ['AAPL', 'msft']]
+    df = with[df, 'qty', [100, 50.5]]
+    return json[df]
+
+data = fetch['/api/rows']
+
+fn shout[t]
+    return upper[t]
+
+view render[]
+    names = for t in data.sym
+        shout[t]
+    total = 0
+    for q in data.qty
+        total = total + q
+    return stack[p['`len[data]` rows'], p[join[names, ', ']], p['total `total`']]
+
+serve[3461]
+route['/api/rows', rows]
+page['/', render]

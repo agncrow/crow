@@ -60,6 +60,10 @@ pub struct DataSource {
     pub key: String,
     /// If Some, poll every N seconds. If None, fetch once on mount.
     pub interval_secs: Option<u64>,
+    /// The columns the program reads of it — each name, its kind and the
+    /// read that decided it (the lowering's `Fact::held`) — held where the
+    /// answer arrives.
+    pub expected: Vec<(String, String, String)>,
 }
 
 /// What a derivation reads (derive-design.md §3.2), fixed at compile time
@@ -1086,13 +1090,64 @@ fn with_dialog(vnode: CrowVNode, text: &str) -> CrowVNode {
 
 /// Run a session's registered fetch[] sources once, so its first render has
 /// their data.
-async fn fetch_sources(state: &mut CrowLiveState) {
+async fn fetch_sources(state: &mut CrowLiveState, dev_events: &mut Vec<String>) {
     for source in &state.sources.clone() {
-        if let Ok(resp) = reqwest::get(&source.url).await {
-            if let Ok(json) = resp.json::<serde_json::Value>().await {
-                state.set(&source.key, json);
-            }
+        arrive(state, source, dev_events).await;
+    }
+}
+
+/// A source before its answer arrives: the table with no rows yet, in the
+/// columns the program reads (so a render before the answer reads an
+/// empty column, not a missing one), in the frame's own form.
+fn not_yet(expected: &[(String, String, String)]) -> serde_json::Value {
+    let names: Vec<String> = expected.iter().map(|(n, _, _)| n.clone()).collect();
+    let kinds: Vec<String> = expected.iter().map(|(_, k, _)| k.clone()).collect();
+    serde_json::to_value(crow_runtime::frames::empty_with(&names, &kinds)).unwrap_or(serde_json::Value::Null)
+}
+
+/// A source's URL as the session asks it: one written as a path of its
+/// own (`fetch['/api/rows']`) is this server's.
+fn resolved(url: &str) -> String {
+    match crate::server::base_url() {
+        Some(base) if url.starts_with('/') => format!("{}{}", base, url),
+        _ => url.to_string(),
+    }
+}
+
+/// A source's answer, as the session takes it: the records as a frame
+/// (the runtime's one conversion), held to the columns the program reads
+/// (`DataSource::expected`, the lowering's uses), and stored in the
+/// frame's own form, as every frame fact is. What is not what the program
+/// reads — no answer, no JSON, a column missing or of another kind — stops
+/// the session where it arrives, with the column, what it holds, what the
+/// program reads and the read that asked: the reason in the log, the stop
+/// told to the reader, the same in both modes. Answers whether new data
+/// landed.
+async fn arrive(state: &mut CrowLiveState, source: &DataSource, dev_events: &mut Vec<String>) -> bool {
+    let url = resolved(&source.url);
+    let failed = |state: &mut CrowLiveState, why: String, dev_events: &mut Vec<String>| {
+        let stopped = state.stopped_by(&source.key, &why);
+        log_stop(&stopped, dev_events);
+        false
+    };
+    let answer = match reqwest::get(&url).await {
+        Ok(r) => r,
+        Err(e) => return failed(state, format!("no answer from {} — {}", url, e), dev_events),
+    };
+    let json = match answer.json::<serde_json::Value>().await {
+        Ok(j) => j,
+        Err(e) => return failed(state, format!("{} did not answer JSON — {}", url, e), dev_events),
+    };
+    let names: Vec<String> = source.expected.iter().map(|(n, _, _)| n.clone()).collect();
+    let kinds: Vec<String> = source.expected.iter().map(|(_, k, _)| k.clone()).collect();
+    let hows: Vec<String> = source.expected.iter().map(|(_, _, h)| h.clone()).collect();
+    let frame = crow_runtime::frame::of_records(&json).and_then(|f| crow_runtime::frames::expect(&f, &names, &kinds, &hows));
+    match frame.and_then(|f| serde_json::to_value(&f).map_err(|e| e.to_string())) {
+        Ok(v) => {
+            state.set(&source.key, v);
+            true
         }
+        Err(why) => failed(state, why, dev_events),
     }
 }
 
@@ -2110,21 +2165,26 @@ impl CrowLiveState {
         self.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
     }
 
-    /// Register a one-time fetch: `fetch[url]` → stores result under `key`.
-    pub fn register_fetch(&mut self, key: &str, url: &str) {
+    /// Register a one-time fetch: `fetch[url]` → stores result under `key`,
+    /// held to the columns the program reads (`expected`).
+    pub fn register_fetch(&mut self, key: &str, url: &str, expected: Vec<(String, String, String)>) {
+        self.set(key, not_yet(&expected));
         self.sources.push(DataSource {
             url: url.to_string(),
             key: key.to_string(),
             interval_secs: None,
+            expected,
         });
     }
 
     /// Register a polling fetch: `poll[url, secs]` → stores result under `key`, refetches every `secs`.
-    pub fn register_poll(&mut self, key: &str, url: &str, interval_secs: u64) {
+    pub fn register_poll(&mut self, key: &str, url: &str, interval_secs: u64, expected: Vec<(String, String, String)>) {
+        self.set(key, not_yet(&expected));
         self.sources.push(DataSource {
             url: url.to_string(),
             key: key.to_string(),
             interval_secs: Some(interval_secs),
+            expected,
         });
     }
 }
@@ -3006,7 +3066,7 @@ where
                     let shown = uri.path().replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
                     return (axum::http::StatusCode::NOT_FOUND, axum::response::Html(format!("<!DOCTYPE html><title>Not found</title><p>no page at {}</p>", shown))).into_response();
                 }
-                fetch_sources(&mut state).await;
+                fetch_sources(&mut state, &mut Vec::new()).await;
                 state.next_tick();
                 // a render runs off the threads that carry the sockets
                 let rendered = tokio::task::spawn_blocking(move || {
@@ -3118,7 +3178,7 @@ where
                                     // a fresh session starts from its address
                                     // (one its page could not show was a 404)
                                     let _ = u2.read_into(&mut state, &address_path, &address_query);
-                                    fetch_sources(&mut state).await;
+                                    fetch_sources(&mut state, &mut Vec::new()).await;
                                     state.next_tick();
                                     let r = r2.clone();
                                     let rendered = tokio::task::spawn_blocking(move || {
@@ -3344,13 +3404,8 @@ where
                                     // Re-fetch only sources whose interval has elapsed
                                     for source in &poll_sources {
                                         let interval = source.interval_secs.unwrap_or(base_secs);
-                                        if elapsed_secs % interval == 0 {
-                                            if let Ok(resp) = reqwest::get(&source.url).await {
-                                                if let Ok(json) = resp.json::<serde_json::Value>().await {
-                                                    state.set(&source.key, json);
-                                                    render = true;
-                                                }
-                                            }
+                                        if elapsed_secs % interval == 0 && arrive(&mut state, source, &mut dev_events).await {
+                                            render = true;
                                         }
                                     }
                                 }
@@ -6041,7 +6096,7 @@ mod tests {
     #[test]
     fn test_live_state_register_fetch() {
         let mut state = CrowLiveState::new();
-        state.register_fetch("positions", "http://localhost:8000/api/positions");
+        state.register_fetch("positions", "http://localhost:8000/api/positions", Vec::new());
         assert_eq!(state.sources.len(), 1);
         assert_eq!(state.sources[0].key, "positions");
         assert_eq!(state.sources[0].url, "http://localhost:8000/api/positions");
@@ -6051,7 +6106,7 @@ mod tests {
     #[test]
     fn test_live_state_register_poll() {
         let mut state = CrowLiveState::new();
-        state.register_poll("prices", "http://localhost:8000/api/prices", 5);
+        state.register_poll("prices", "http://localhost:8000/api/prices", 5, Vec::new());
         assert_eq!(state.sources.len(), 1);
         assert_eq!(state.sources[0].key, "prices");
         assert_eq!(state.sources[0].interval_secs, Some(5));

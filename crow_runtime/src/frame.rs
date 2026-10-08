@@ -2382,9 +2382,15 @@ pub fn record_batch(frame: &CrowFrame) -> Result<arrow::record_batch::RecordBatc
 /// lacks the key, or holds `null`, has a missing cell there. A column whose
 /// values are of mixed kinds, or lists or objects, is their JSON text.
 pub fn from_json(text: &str) -> Result<CrowFrame, String> {
+    let value: serde_json::Value = serde_json::from_str(text).map_err(|e| format!("load: not JSON: {}", e))?;
+    of_records(&value)
+}
+
+/// A frame from JSON records already parsed, by `from_json`'s rules: what
+/// a page's data source answers arrives this way, through the session.
+pub fn of_records(value: &serde_json::Value) -> Result<CrowFrame, String> {
     use serde_json::Value;
-    let value: Value = serde_json::from_str(text).map_err(|e| format!("load: not JSON: {}", e))?;
-    let records: &Vec<Value> = match &value {
+    let records: &Vec<Value> = match value {
         Value::Array(items) => items,
         Value::Object(map) => {
             let lists: Vec<(&String, &Vec<Value>)> = map
@@ -2446,6 +2452,12 @@ pub fn from_json(text: &str) -> Result<CrowFrame, String> {
 /// A frame as JSON: a list of records, a missing cell `null`, a moment its
 /// ISO text, a float that is not finite `null`.
 pub fn to_json(frame: &CrowFrame) -> String {
+    records(frame).to_string()
+}
+
+/// A frame's records as a JSON value (`to_json`'s form): what a route
+/// answers for `json[frame]`, in both modes.
+pub fn records(frame: &CrowFrame) -> serde_json::Value {
     use serde_json::{Map, Value};
     let rows: Vec<Value> = (0..frame.nrows())
         .map(|r| {
@@ -2467,7 +2479,7 @@ pub fn to_json(frame: &CrowFrame) -> String {
             Value::Object(record)
         })
         .collect();
-    Value::Array(rows).to_string()
+    Value::Array(rows)
 }
 
 /// A frame from a Parquet file's bytes: integers are ints, floating and

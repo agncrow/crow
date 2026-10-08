@@ -111,6 +111,12 @@ pub struct IrInterp {
     /// Every fact's declared type: how a session's facts come back from
     /// the JSON they cross the loop as.
     pub(crate) fact_types: HashMap<String, Ty>,
+    /// The page's data sources as the template met them: the fact, its
+    /// URL, its period, and what it is held to (`Fact::held`) — what a
+    /// served app registers, as the compiled program does.
+    pub(crate) sources: Vec<(String, String, Option<u64>, Vec<(String, String, String)>)>,
+    /// The source the fact being set declares: `fetch`/`poll` just evaluated.
+    pending_source: Option<(String, Option<u64>)>,
     /// The harness's sessions, each with its own facts, as the server gives
     /// each page. The active session's facts are the globals; the others
     /// wait here until a verb acts on them.
@@ -452,6 +458,8 @@ impl IrInterp {
             cancel: None,
             fact_names: Vec::new(),
             fact_types: HashMap::new(),
+            sources: Vec::new(),
+            pending_source: None,
             sessions: HashMap::new(),
             active_session: None,
             session_start: HashMap::new(),
@@ -510,6 +518,14 @@ impl IrInterp {
                     return Err(self.with_line(format!("{} — {}", Decision::Assign(fact.name.clone()).refusal(), v.reason())));
                 }
                 self.set_fact(&fact.name, v);
+                if let Some((url, secs)) = self.pending_source.take() {
+                    // the table with no rows yet, in the columns the program
+                    // reads, until the session loads it
+                    let names: Vec<String> = fact.held.iter().map(|(n, _, _)| n.clone()).collect();
+                    let kinds: Vec<String> = fact.held.iter().map(|(_, k, _)| k.clone()).collect();
+                    self.set_fact(&fact.name, CrowValue::ok(Value::Frame(Box::new(crow_runtime::frames::empty_with(&names, &kinds)))));
+                    self.sources.push((fact.name.clone(), url, secs, fact.held.clone()));
+                }
                 if !self.fact_names.contains(&fact.name) {
                     self.fact_names.push(fact.name.clone());
                 }
@@ -2129,6 +2145,11 @@ impl IrInterp {
         let response = match (name, vals) {
             ("text", [body]) if is_text(body) => CrowResponse::text(text(body)),
             ("html", [body]) if is_text(body) => CrowResponse::html(text(body)),
+            // a frame answers as its records (`frame::records`, the one form)
+            ("json", [frame]) if matches!(frame.value, Value::Frame(_)) => match &frame.value {
+                Value::Frame(f) => CrowResponse::json(crow_runtime::frame::records(f)),
+                other => return Some(Err(format!("json[] takes a map or a frame, got {}", other.type_name()))),
+            },
             ("json", [value]) if !is_text(value) && !value.is_error() => match crate::builtins::crow_to_json("json", value) {
                 Ok(j) => CrowResponse::json(j),
                 Err(e) => return Some(Err(e)),
@@ -2786,7 +2807,18 @@ impl IrInterp {
                 self.routes.push((method, format!("{}", path.value), handler, limit as u64));
                 CrowValue::done()
             }
-            "fetch" | "poll" => CrowValue::ok(Value::Map(std::collections::BTreeMap::new())),
+            // a page's data source: a frame the session loads — empty until
+            // it arrives, held to the columns the program reads there
+            "fetch" | "poll" => {
+                let url = vals.first().map(|v| format!("{}", v.value)).unwrap_or_default();
+                let secs = (name == "poll").then(|| match vals.get(1).map(|v| &v.value) {
+                    Some(Value::Int(n)) => (*n).max(0) as u64,
+                    Some(Value::Float(x)) => x.max(0.0) as u64,
+                    _ => 0,
+                });
+                self.pending_source = Some((url, secs));
+                CrowValue::ok(Value::Frame(Box::new(crow_runtime::frame::CrowFrame::new(Vec::new(), Vec::new(), Vec::new()))))
+            }
             "app" => {
                 let f = match vals.first().map(|v| &v.value) {
                     Some(Value::Fn(f)) => f.clone(),

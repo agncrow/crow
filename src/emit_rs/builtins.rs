@@ -548,7 +548,12 @@ impl Emitter {
                 // reading it)
                 format!("{{ let _t = &({}); ({}).to_string() }}", a[0], word(&ty0, "(*_t)", &shown))
             }
-            // `json[map]`, a web response (use web): `json[text]` is its row
+            // `json[map]`, a web response (use web): `json[text]` is its row;
+            // a frame answers as its records, the runtime's one form
+            "json" if n == 1 && matches!(in0, Ty::Frame(_)) => {
+                self.needs_crow_runtime = true;
+                format!("CrowResponse::json(crow_runtime::frame::records(&{}))", a[0])
+            }
             "json" if n == 1 => {
                 self.needs_serde_json = true;
                 format!("CrowResponse::json(serde_json::to_value(&{}).unwrap())", a[0])
@@ -717,8 +722,8 @@ impl Emitter {
             "migrate" if db && n == 2 => format!("{}.migrate(&{}).unwrap()", a[0], a[1]),
             "transact" if db && n == 2 => self.db_transact(&a[0], &a[1]),
             "page" if web && (n == 2 || n == 3) => self.page_route(args, a),
-            "fetch" if n == 1 => format!("{{ __crow_state.register_fetch(\"_anon\", &{}); serde_json::Value::Null }}", a[0]),
-            "poll" if n == 2 => format!("{{ __crow_state.register_poll(\"_anon\", &{}, {} as u64); serde_json::Value::Null }}", a[0], a[1]),
+            "fetch" if n == 1 => format!("{{ __crow_state.register_fetch(\"_anon\", &{}, Vec::new()); serde_json::Value::Null }}", a[0]),
+            "poll" if n == 2 => format!("{{ __crow_state.register_poll(\"_anon\", &{}, {} as u64, Vec::new()); serde_json::Value::Null }}", a[0], a[1]),
             _ => return None,
         })
     }

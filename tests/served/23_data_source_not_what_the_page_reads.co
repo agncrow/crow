@@ -1,0 +1,22 @@
+--- A data source that is not what the page reads — qty holding text where
+--- the page adds it up — stops where it arrives, with the column, what it
+--- holds, what the program reads and the read that asked, the same words
+--- in both modes; the page shows the reason and its table has no rows.
+use web, ui, frame
+
+fn rows[req]
+    df = with[frame.new[], 'sym', ['AAPL']]
+    df = with[df, 'qty', ['many']]
+    return json[df]
+
+data = fetch['/api/rows']
+
+view render[]
+    total = 0
+    for q in data.qty
+        total = total + q
+    return stack[p['`len[data]` rows'], p['total `total`']]
+
+serve[3462]
+route['/api/rows', rows]
+page['/', render]

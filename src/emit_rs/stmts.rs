@@ -149,12 +149,6 @@ impl Emitter {
                     self.declare(&d, dty);
                 }
             }
-            if is_reactive_render {
-                for v in self.data_source_vars.clone() {
-                    self.line(&format!("let {} = __json_to_frame(&state.get(\"{}\").unwrap_or(serde_json::Value::Null));", v, v));
-                    self.declare(&v, Ty::Frame(None));
-                }
-            }
         }
 
         // a handler is void: its last statement runs for its effect and the
@@ -242,10 +236,6 @@ impl Emitter {
             let oty = self.derives.get(&other).map(|x| as_inferred(&x.ty)).unwrap_or(Ty::Unknown);
             self.line(&format!("let {} = __derive_{}(state);", other, other));
             self.declare(&other, oty);
-        }
-        for v in self.data_source_vars.clone() {
-            self.line(&format!("let {} = __json_to_frame(&state.get(\"{}\").unwrap_or(serde_json::Value::Null));", v, v));
-            self.declare(&v, Ty::Frame(None));
         }
         let mut body = d.body.clone();
         if let Some(i) = body.iter().rposition(|s| !matches!(s, Stmt::Line(_))) {

@@ -41,7 +41,10 @@ it's a managed channel.
 
 Data sources compose the same way: `prices = poll['/api/prices', 5]`
 declares state that refreshes every five seconds and re-renders whatever
-reads it.
+reads it. The records arrive as a frame with the columns the page reads
+of them — `prices.px` added up is a column of numbers — and are checked
+where they arrive, in both modes: a column missing or of another kind
+stops the session with the column, what it holds and the read that asked.
 
 State gets its value once, where it is declared: `count = 0` is what
 every session starts from, and handlers move it from there. The top

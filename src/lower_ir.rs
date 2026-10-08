@@ -520,6 +520,12 @@ impl LoopOrder {
                     // a collecting loop over a list that can fail refuses it
                     // where it starts: it can leave the function
                     Expr::ForExpr { iter, .. } => iter.ty().is_result(),
+                    // a value that can fail, unwrapped in the body, leaves
+                    // the function with its failure — which a round run on
+                    // another thread cannot (the compiled program had
+                    // returned the function's result from the loop's
+                    // closure, and did not build: fuzz seed 1791422055)
+                    Expr::Convert { how: Convert::Unwrap, expr, .. } => expr.ty().is_result(),
                     _ => false,
                 }
                 || handed(e).iter().any(|n| self.ordered.contains(n) || !self.known.contains(n));
@@ -626,6 +632,27 @@ fn walked(it: &Expr) -> Ty {
     match it.ty().payload() {
         Ty::Column(cell) if **cell != Ty::Unknown => Ty::List(Box::new(as_inferred(cell))),
         _ => read(it),
+    }
+}
+
+/// A lowered value's type as a variable keeps it: a column keeps its
+/// cells' kind (`texts = str[t.at]` is a column of text, so `moment[texts]`
+/// is one of moments and its cell a moment, not a parsed value — the
+/// compiled program had compared the ISO text with a moment, and stopped
+/// where the interpreter answered true).
+fn kept(x: &Expr) -> Ty {
+    match x.ty() {
+        Ty::Column(cell) if !cell.has_unknown() => Ty::Column(cell),
+        _ => full(x),
+    }
+}
+
+/// A type as a variable keeps it: a column with its cells' kind, anything
+/// else as inference reads it.
+fn keep_cells(t: &Ty) -> Ty {
+    match t {
+        Ty::Column(cell) if !cell.has_unknown() => t.clone(),
+        other => as_inferred(other),
     }
 }
 
@@ -1152,6 +1179,11 @@ impl<'a> Lowerer<'a> {
                     let default = self.lower_expr(value);
                     self.in_fact_default = false;
                     let default = default?;
+                    // a loaded frame is held to the columns the program
+                    // reads where it is bound; a page's data source carries
+                    // them to the session, where its answer arrives
+                    let default = self.held_to_shape(name, default);
+                    let held = if is_source_call(&default) { self.held_of(name) } else { Vec::new() };
                     self.check_assign(name, &self.checked(&default));
                     self.flush_pre_into(&mut part.main);
                     // a fact holds no error: a declared value that can fail
@@ -1176,7 +1208,7 @@ impl<'a> Lowerer<'a> {
                     };
                     self.scopes[0].insert(name.clone());
                     self.v.fact_lines.insert(name.clone(), self.v.line);
-                    part.facts.push(Fact { name: name.clone(), ty, default, session: written.contains(name), line, refuses });
+                    part.facts.push(Fact { name: name.clone(), ty, default, session: written.contains(name), line, refuses, held });
                 }
                 other => {
                     self.at = Where::Top;
@@ -1720,7 +1752,7 @@ impl<'a> Lowerer<'a> {
                 if self.pass == Pass::Scan {
                     // the call scan settles the variable once its value's
                     // calls are read, with the value's type
-                    let held = self.held_by_fact(name, full(&expr));
+                    let held = self.held_by_fact(name, kept(&expr));
                     self.ctx.note_scanned_assign(name, held.clone());
                     self.ctx.note_scanned_value(name, value);
                     self.rebind(name, &held);
@@ -2107,6 +2139,19 @@ impl<'a> Lowerer<'a> {
         let body = if self.current_fn.starts_with(uses::TOP) { uses::TOP.to_string() } else { self.current_fn.clone() };
         let key = (body, name.to_string());
         let Some(cols) = self.ctx.frame_shapes.get(&key).cloned() else { return expr };
+        // a page's data source arrives through the session, which holds it
+        // to the columns its fact carries (`Fact::held`): the call is typed
+        // by them here and wrapped in nothing
+        if is_source_call(&expr) {
+            let shaped = Ty::Frame(Some(cols));
+            return match expr {
+                Expr::Call { target, args, propagates, .. } => Expr::Call { target, args, ty: shaped, propagates },
+                // (`fetch` and `poll` are effects: they run where the
+                // session loads the source)
+                Expr::Effect { name, row, args, answered, propagates, .. } => Expr::Effect { name, row, args, ty: shaped, answered, propagates },
+                other => other,
+            };
+        }
         let reasons = self.ctx.frame_reasons.get(&key).cloned().unwrap_or_default();
         let Some(row) = crate::table::core_row("__expect_frame", &[crate::table::Arg::Frame, crate::table::Arg::Texts, crate::table::Arg::Texts, crate::table::Arg::Texts]) else { return expr };
         let failing = expr.ty().is_result();
@@ -2119,6 +2164,15 @@ impl<'a> Lowerer<'a> {
         let arg = if failing { Expr::Convert { how: Convert::Unwrap, expr: Box::new(expr.clone()), ty: expr.ty().payload().clone() } } else { expr };
         let ty = if failing { Ty::Result(Box::new(shaped)) } else { shaped };
         Expr::Call { target: Target::Row(row), args: vec![arg, lit(names), lit(kinds), lit(hows)], ty, propagates: failing }
+    }
+
+    /// What a data source's fact carries to the session: each column the
+    /// program reads, its kind and the read that decided it.
+    fn held_of(&self, name: &str) -> Vec<(String, String, String)> {
+        let key = (uses::TOP.to_string(), name.to_string());
+        let Some(cols) = self.ctx.frame_shapes.get(&key) else { return Vec::new() };
+        let reasons = self.ctx.frame_reasons.get(&key).cloned().unwrap_or_default();
+        cols.cols.iter().map(|(c, t)| (c.clone(), t.crow_name(), reasons.get(c).cloned().unwrap_or_default())).collect()
     }
 
     fn assign(&mut self, name: &str, expr: Expr) -> Stmt {
@@ -2141,7 +2195,7 @@ impl<'a> Lowerer<'a> {
         }
         let expr = if self.declared(name) && !(self.is_fact(name) && self.sees_facts()) { self.held_by(name, expr) } else { expr };
         let before = self.ctx.vars.get(name).cloned();
-        self.rebind(name, &full(&expr));
+        self.rebind(name, &kept(&expr));
         // (converted before a local bound anew is, too: the conversions had
         // come after that early return, so a list that can fail bound anew
         // was given a tensor, which did not build)
@@ -2220,7 +2274,9 @@ impl<'a> Lowerer<'a> {
         // declared: its first value's type, or the type it settles on
         let ty = declared_as(&expr.ty(), self.ctx.vars.get(name));
         if !matches!(ty, Ty::Unknown) {
-            self.ctx.vars.insert(name.to_string(), as_inferred(&ty));
+            // (a column keeps its cells' kind: `texts = str[t.at]` is read
+            // as a column of text from here on, not of cells unknown)
+            self.ctx.vars.insert(name.to_string(), keep_cells(&ty));
         }
         let expr = settled_yield(expr, &ty);
         Stmt::Let { var: name.to_string(), ty, expr }
@@ -2335,7 +2391,7 @@ impl<'a> Lowerer<'a> {
     /// final lowering keeps them. A failed value's refusal is observed
     /// (`held_by`), the value's own type settling.
     fn settled(&mut self, name: &str, expr: Expr) -> Stmt {
-        let ty = self.held_by_fact(name, full(&expr));
+        let ty = self.held_by_fact(name, kept(&expr));
         let store = self.is_fact(name) && self.sees_facts();
         self.note_held(name, &ty, store);
         let settled = if self.ctx.fresh_binding(name) {
@@ -4058,6 +4114,13 @@ pub(crate) fn infer_by_lowering(ctx: &mut TypeContext, stmts: &[S]) {
 
 /// The shapes the program's reads say (uses.rs), kept in the context for
 /// the lowering to hold each loaded frame to; how many columns are known.
+/// A page's data source: `fetch[url]` or `poll[url, seconds]`, as the
+/// emitter tells them too.
+fn is_source_call(e: &Expr) -> bool {
+    let n = crate::ir::call_args(e).len();
+    matches!(crate::ir::call_name(e).as_deref(), Some("fetch")) && n == 1 || matches!(crate::ir::call_name(e).as_deref(), Some("poll")) && n == 2
+}
+
 fn apply_shapes(ctx: &mut TypeContext, stmts: &[S]) -> usize {
     let shapes = uses::shapes_from_use(stmts, ctx);
     ctx.shape_conflicts = shapes.conflicts;

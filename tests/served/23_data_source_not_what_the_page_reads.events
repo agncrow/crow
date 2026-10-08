@@ -1,0 +1,5 @@
+[
+  {"open": "/"},
+  {"expect": "data stopped, and nothing changed"},
+  {"expect": "0 rows"}
+]

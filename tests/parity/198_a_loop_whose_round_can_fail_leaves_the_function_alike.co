@@ -1,0 +1,22 @@
+--- A loop whose body unwraps a value that can fail, into a value that
+--- cannot hold the failure (a bool), leaves the function with that
+--- failure, in both modes: a round of it cannot run on another thread, so
+--- the loop keeps its order (the compiled program had returned the
+--- function's result from the loop's closure, and did not build — found
+--- by the fuzzer, seed 1791422055). The function answers the first
+--- failure, with its reason; rounds that all succeed answer the count.
+use frame
+
+fn late_days[texts]
+    hits = 0
+    for t in texts
+        late = (not (bucket[moment[t], 86400] eq bucket[moment['2026-07-14T00:00:00Z'], 86400]))
+        if late
+            hits = hits + 1
+    return int[str[hits]]
+
+good = late_days[['2026-07-14T09:30:00Z', '2026-12-31T23:59:59.250+01:00', '2026-07-14T23:00:00Z']]
+log[good]
+bad = late_days[['2026-07-14T09:30:00Z', 'not a moment', '2026-01-01T00:00:00Z']]
+log[bad.ok]
+log[bad.reason]

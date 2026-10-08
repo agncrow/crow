@@ -140,6 +140,40 @@ steps on every push and must be green.
   alone reached only the final pass. A frame from `load` is
   `Frame(Some(Cols::dynamic()))` (open, no columns), not `Frame(None)`:
   test for both (`uses::dynamic_frame`).
+- A column held in a variable keeps its cells' kind: the lowering wrote
+  `as_inferred` (cells forgotten) into `ctx.vars` at FOUR sites — the
+  scan's note, the settle pass, the final rebind and the `let` — so
+  `texts = str[t.at]` then `moment[texts]` then `back[2] eq t.at[2]`
+  compared ISO text with a moment compiled (parity 189). `kept`/
+  `keep_cells` in lower_ir.rs keep a column's cells; `Ty::compatible` and
+  `unify` have a Column arm (by cells, as lists by items).
+- Inside a view, a function named like an element (`label`, `div`, …) IS
+  the element; a Crow map holds one kind (`map[sym = 'A', qty = 1]` is
+  refused); a route's `json[text]` PARSES the text (it is `json.parse`),
+  `json[map]` and `json[frame]` answer responses; the emitter's
+  `base_is_result` found the parse row for `json` by name and skipped the
+  `CrowResult { ok: true, … }` wrap of a propagating call (the response
+  forms are own forms: listed there now).
+- `fetch`/`poll` are EFFECTS in the IR (`fetch!now(…)`), not calls: a
+  retype or a wrap of a source's binding must match `Expr::Effect` too, or
+  it silently does nothing (the probe showed the hook running and the
+  variable staying dynamic).
+- Never `crow run` a program IN PLACE under tests/parity or tests/served
+  while a harness runs: the directory's `.crow_build` is shared, and the
+  binary you execute may be another program's (a run printed parity 190's
+  output for 198, and once "crow_web unresolved"). Copy the program to the
+  scratchpad and run it there.
+- A loop whose body's failure leaves the function (an unwrap into a value
+  that cannot hold it — a bool — in a function that answers a result)
+  keeps its order: a round on another thread cannot return from the
+  function (`keeps_order`, fuzz seed 1791422055, parity 198). A failure
+  assigned to a variable that can hold it (`day: Result(Moment)`) is
+  held, and the function goes on — in both modes.
+- A served page's first render runs `fetch_sources` before rendering; the
+  stop's reason goes to the server's log only (Vijay, 2026-10-01) and the
+  page shows "<who> stopped, and nothing changed — the log has why"; the
+  served parity harness normalises the id. `crow test --served <word>`
+  runs only the pages whose names hold the word.
 - A backend's fallback arm for what the lowering must never produce
   (the interpreter's int-plus-float arithmetic, the verifier's loop over a
   map) is where a lowering slip hides: the coverage run lists them as

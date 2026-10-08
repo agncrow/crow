@@ -1,0 +1,33 @@
+--- A loaded frame handed to a function is typed by what that function's
+--- own body reads of it, and a frame a verb derives from it with its
+--- columns is the frame itself: nothing is written, nothing is read first,
+--- the same in both modes (the callee's reads had said nothing of the
+--- caller's frame, so its cells were parsed values inside the function —
+--- and the compiled program had not held a function reading them).
+use frame
+
+write['parity_197.csv', 'sym,qty,flag\nAAPL,100,true\nmsft,50.5,false\nAAPL,10,true\n']
+
+fn total[rows]
+    t = 0
+    for q in rows.qty
+        t = t + q
+    return t
+
+fn labels[rows]
+    kept = filter[rows, rows.sym eq 'AAPL']
+    names = for s in kept.sym
+        upper[s]
+    return names
+
+df = frame.load['parity_197.csv']
+rm['parity_197.csv']
+log[total[df]]
+log[labels[df]]
+same = df
+log[total[same]]
+flagged = 0
+for f in df.flag
+    if f
+        flagged = flagged + 1
+log[flagged]

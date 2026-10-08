@@ -5,15 +5,7 @@ use super::*;
 
 // ── walking the IR (the visitors live with the IR) ──────────────────
 
-pub(crate) use crate::ir::{call_name, visit_block, visit_expr, visit_stmts};
-
-/// The arguments of a call or an effect.
-pub(crate) fn call_args(e: &Expr) -> &[Expr] {
-    match e {
-        Expr::Call { args, .. } | Expr::Effect { args, .. } => args,
-        _ => &[],
-    }
-}
+pub(crate) use crate::ir::{call_args, call_name, visit_block, visit_expr, visit_stmts};
 
 /// A function named by a value: `f`, or a held call `f[args]`.
 pub(crate) fn fn_named(e: &Expr) -> Option<&str> {
@@ -555,6 +547,15 @@ impl Emitter {
                 || matches!(call_name(&fact.default).as_deref(), Some("poll")) && call_args(&fact.default).len() == 2
             {
                 self.data_source_vars.insert(fact.name.clone());
+                // a source is a frame fact of the session, typed by the
+                // program's reads (Fact::held) and decoded from the frame's
+                // own form as every frame fact is; main registers it where
+                // it would set another
+                let ty = match as_inferred(&fact.ty) {
+                    Ty::Unknown => Ty::Frame(None),
+                    t => t,
+                };
+                self.reactive_vars.insert(fact.name.clone(), (ty.clone(), ty.default_rust_value()));
                 continue;
             }
             // a connection is infrastructure: a process-wide static, as a
@@ -615,6 +616,13 @@ impl Emitter {
             }
             self.reactive_vars.insert(fact.name.clone(), (ty, default));
         }
+    }
+
+    /// What a source is held to, as the session takes it: each column the
+    /// program reads, its kind and the read that decided it.
+    fn held_literal(held: &[(String, String, String)]) -> String {
+        let items: Vec<String> = held.iter().map(|(n, k, h)| format!("({:?}.to_string(), {:?}.to_string(), {:?}.to_string())", n, k, h)).collect();
+        format!("vec![{}]", items.join(", "))
     }
 
     /// One fact's declared value set in main's state: bound by its name too
@@ -760,10 +768,6 @@ impl Emitter {
             if !matches!(s.name.as_str(), "CrowFindResult" | "CrowShell" | "CrowElapsed" | "CrowReply" | "CrowAnswer") {
                 self.emit_struct(s);
             }
-        }
-
-        if !self.data_source_vars.is_empty() {
-            self.emit_json_to_frame();
         }
 
         // functions; the original of a specialized function is never
@@ -1134,40 +1138,6 @@ impl Emitter {
     }
 
 
-    fn emit_json_to_frame(&mut self) {
-        self.needs_serde_json = true;
-        self.needs_crow_runtime = true;
-        for l in [
-            "fn __json_to_frame(v: &serde_json::Value) -> crow_runtime::frame::CrowFrame {",
-            "    use crow_runtime::frame::{CrowFrame, Column};",
-            "    let arr = match v.as_array() { Some(a) => a, None => return CrowFrame::new(vec![], vec![], vec![]) };",
-            "    if arr.is_empty() { return CrowFrame::new(vec![], vec![], vec![]); }",
-            "    let cols: Vec<String> = arr[0].as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default();",
-            "    let mut data: Vec<Column> = Vec::new();",
-            "    let mut validity: Vec<Vec<bool>> = Vec::new();",
-            "    for col_name in &cols {",
-            "        let vals: Vec<&serde_json::Value> = arr.iter().map(|row| row.get(col_name.as_str()).unwrap_or(&serde_json::Value::Null)).collect();",
-            "        let valid: Vec<bool> = vals.iter().map(|v| !v.is_null()).collect();",
-            "        let all_int = vals.iter().all(|v| v.is_i64() || v.is_null());",
-            "        let all_float = vals.iter().all(|v| v.is_f64() || v.is_i64() || v.is_null());",
-            "        let col = if all_int && vals.iter().any(|v| v.is_i64()) {",
-            "            Column::Int(vals.iter().map(|v| v.as_i64().unwrap_or(0)).collect())",
-            "        } else if all_float && vals.iter().any(|v| v.is_f64() || v.is_i64()) {",
-            "            Column::Float(vals.iter().map(|v| v.as_f64().unwrap_or(0.0)).collect())",
-            "        } else {",
-            "            Column::Str(vals.iter().map(|v| v.as_str().unwrap_or(\"\").to_string()).collect())",
-            "        };",
-            "        data.push(col);",
-            "        validity.push(valid);",
-            "    }",
-            "    CrowFrame::new(cols, data, validity)",
-            "}",
-            "",
-        ] {
-            self.line(l);
-        }
-    }
-
     /// For the test harness (`crow test --compiled`): each view without
     /// parameters by name, and each derivation by name as JSON — a failed
     /// one as its reason, a value with no JSON form as none.
@@ -1461,13 +1431,14 @@ impl Emitter {
                     self.line(&format!("let _ = __crow_handle_{}.set({});", fact.name, v));
                 } else if self.data_source_vars.contains(&fact.name) {
                     let args = call_args(&fact.default).to_vec();
+                    let held = Self::held_literal(&fact.held);
                     if call_name(&fact.default).as_deref() == Some("fetch") {
                         let url = self.expr(&args[0]);
-                        self.line(&format!("__crow_state.register_fetch(\"{}\", &{});", fact.name, url));
+                        self.line(&format!("__crow_state.register_fetch(\"{}\", &{}, {});", fact.name, url, held));
                     } else {
                         let url = self.expr(&args[0]);
                         let secs = self.expr(&args[1]);
-                        self.line(&format!("__crow_state.register_poll(\"{}\", &{}, {} as u64);", fact.name, url, secs));
+                        self.line(&format!("__crow_state.register_poll(\"{}\", &{}, {} as u64, {});", fact.name, url, secs, held));
                     }
                 } else if self.reactive_vars.contains_key(&fact.name) {
                     self.set_fact_in_main(&fact.name, read_later.contains(&fact.name));

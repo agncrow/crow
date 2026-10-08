@@ -162,6 +162,13 @@ impl Ty {
             Ty::Json => "serde_json::Value::Null".into(),
             Ty::Tensor(..) => "crow_runtime::tensor::CrowTensor::zeros(vec![0])".into(),
             Ty::Sparse => "CrowSparse::from_coo(&[], &[], &[], 0, 0)".into(),
+            // a frame whose columns are known starts as the table with no
+            // rows in them (a page's data source before its answer arrives)
+            Ty::Frame(Some(cols)) if !cols.cols.is_empty() => {
+                let names: Vec<String> = cols.cols.keys().map(|n| format!("{:?}.to_string()", n)).collect();
+                let kinds: Vec<String> = cols.cols.values().map(|t| format!("{:?}.to_string()", t.crow_name())).collect();
+                format!("crow_runtime::frames::empty_with(&[{}], &[{}])", names.join(", "), kinds.join(", "))
+            }
             Ty::Frame(_) => "crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![])".into(),
             Ty::Column(_) => "crow_runtime::frame::CrowColumn { data: std::sync::Arc::new(crow_runtime::frame::Column::Int(vec![])), valid: std::sync::Arc::new(crow_runtime::frame::Validity::none(0)) }".into(),
             Ty::WebApp => "crow_web::server::CrowApp::new()".into(),
@@ -264,6 +271,9 @@ impl Ty {
             (Ty::Markup, Ty::Str) | (Ty::Str, Ty::Markup) => true,
             (Ty::List(a), Ty::List(b)) => a.compatible(b),
             (Ty::Map(a), Ty::Map(b)) => a.compatible(b),
+            // a column keeps its cells' kind in a variable: one of text is
+            // one of text, or of cells not known yet
+            (Ty::Column(a), Ty::Column(b)) => a.compatible(b),
             (Ty::Result(a), Ty::Result(b)) => a.compatible(b),
             // Fn types: compatible when arity matches and every component is
             // (Unknown params from a not-yet-typed fn are wildcards)
@@ -319,6 +329,8 @@ impl Ty {
                 _ => Ty::List(Box::new(a.unify(b))),
             },
             (Ty::Map(a), Ty::Map(b)) => Ty::Map(Box::new(a.unify(b))),
+            // a column's cells, as a list's items: known where either knows them
+            (Ty::Column(a), Ty::Column(b)) => Ty::Column(Box::new(a.unify(b))),
             // two ways a frame could have come: the columns both give (a
             // frame whose columns are not worked out yet adds nothing — one
             // whose columns show only as it runs is a frame of none known,

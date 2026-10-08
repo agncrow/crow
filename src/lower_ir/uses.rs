@@ -44,6 +44,11 @@ struct Read {
     line: usize,
     how: String,
     strict: bool,
+    /// the whole column met (`df.qty gt 0`, a mask), not a cell of it: a
+    /// mask or an aggregate works on ints or floats as they are, so such a
+    /// read says what the column holds only where another read types a
+    /// cell
+    whole: bool,
 }
 
 /// The reads of every loaded frame's columns, across the program.
@@ -56,15 +61,48 @@ struct Uses<'c> {
     /// a function's parameter read as a cell: what its body says (memoised)
     param_says: HashMap<(String, usize), Vec<(Ty, bool)>>,
     walking: HashSet<(String, usize)>,
+    /// a function's body being walked with a frame as its parameter
+    walking_frames: HashSet<(String, usize, FrameKey)>,
     line: usize,
 }
 
-/// Whether a value is a frame loaded from a file.
+/// The verbs whose answer has the columns of the frame they are given,
+/// each cell as it was: a read of the answer's column is a read of that
+/// frame's. (`with`, `rename`, `join`, `group`, `pivot`, `unpivot` and
+/// `window` change the columns, and say nothing of the frame they take.)
+const KEEPS_COLUMNS: &[&str] = &["filter", "sort", "head", "tail", "sample", "unique", "fill", "complete", "select"];
+
+/// The frame a value is, when it is one the body holds: the name itself,
+/// or a verb's answer over it.
+fn frame_of(e: &A, env: &Env) -> Option<FrameKey> {
+    match e {
+        A::Ident(f) => env.frames.get(f).cloned(),
+        A::Call { callee, args } => {
+            let verb = match callee.as_ref() {
+                A::Ident(n) => n.as_str(),
+                A::FieldAccess { object, field } if matches!(object.as_ref(), A::Ident(m) if m == "frame") => field.as_str(),
+                _ => return None,
+            };
+            if !KEEPS_COLUMNS.contains(&verb) {
+                return None;
+            }
+            match args.first() {
+                Some(A::Ident(f)) => env.frames.get(f).cloned(),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Whether a value is a frame the program cannot see: one loaded from a
+/// file, or a page's data source (`fetch[url]`, `poll[url, seconds]`),
+/// which the session loads.
 fn is_load(e: &A) -> bool {
     match e {
-        A::Call { callee, .. } => match callee.as_ref() {
+        A::Call { callee, args } => match callee.as_ref() {
             A::FieldAccess { object, field } => matches!(object.as_ref(), A::Ident(m) if m == "frame") && field == "load",
-            A::Ident(n) => n == "load",
+            A::Ident(n) => n == "load" || (n == "fetch" && args.len() == 1) || (n == "poll" && args.len() == 2),
             _ => false,
         },
         _ => false,
@@ -72,15 +110,16 @@ fn is_load(e: &A) -> bool {
 }
 
 /// The definite kind a value says of what it meets: a literal's, a
-/// moment's, a top-level variable's.
-fn kind_of(e: &A, ctx: &TypeContext) -> Option<Ty> {
+/// moment's, a top-level variable's, a local's the body gave a literal
+/// (`total = 0`, then `total + q`).
+fn kind_of(e: &A, ctx: &TypeContext, env: &Env) -> Option<Ty> {
     match e {
         A::Int(_) => Some(Ty::Int),
         A::Float(_) => Some(Ty::Float),
         A::Str(_) => Some(Ty::Str),
         A::Bool(_) => Some(Ty::Bool),
         A::Call { callee, .. } if matches!(callee.as_ref(), A::Ident(n) if n == "moment" || n == "now") => Some(Ty::Moment),
-        A::Ident(v) => match ctx.vars.get(v) {
+        A::Ident(v) => match env.kinds.get(v).or_else(|| ctx.vars.get(v)) {
             Some(t @ (Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Moment)) => Some(t.clone()),
             _ => None,
         },
@@ -177,12 +216,27 @@ impl<'c> Uses<'c> {
                     env.frames.insert(name.clone(), (env.body.clone(), name.clone()));
                     self.loaded.entry(env.body.clone()).or_default().push(name.clone());
                     env.cells.remove(name);
+                } else if let Some(key) = frame_of(value, env) {
+                    // the frame itself, or a verb's answer with its columns:
+                    // its reads are the frame's
+                    env.frames.insert(name.clone(), key);
+                    env.cells.remove(name);
                 } else if let Some(cell) = self.cell_of(value, env) {
                     env.cells.insert(name.clone(), cell);
                     env.frames.remove(name);
                 } else {
                     env.cells.remove(name);
                     env.frames.remove(name);
+                }
+                // a local given a literal says its kind where it meets a
+                // cell later (a local given a cell is the cell)
+                match kind_of(value, self.ctx, env) {
+                    Some(k) if !env.cells.contains_key(name) => {
+                        env.kinds.insert(name.clone(), k);
+                    }
+                    _ => {
+                        env.kinds.remove(name);
+                    }
                 }
             }
             S::MultiAssign { names, values } => {
@@ -262,7 +316,12 @@ impl<'c> Uses<'c> {
     }
 
     fn note(&mut self, cell: &(FrameKey, String), kind: Ty, how: &str, strict: bool) {
-        self.reads.entry(cell.clone()).or_default().push(Read { kind, line: self.line, how: how.to_string(), strict });
+        self.reads.entry(cell.clone()).or_default().push(Read { kind, line: self.line, how: how.to_string(), strict, whole: false });
+    }
+
+    /// A whole column met beside a value of a kind.
+    fn note_whole(&mut self, column: &(FrameKey, String), kind: Ty, how: &str) {
+        self.reads.entry(column.clone()).or_default().push(Read { kind, line: self.line, how: how.to_string(), strict: false, whole: true });
     }
 
     fn walk_expr(&mut self, e: &A, env: &mut Env) {
@@ -286,6 +345,19 @@ impl<'c> Uses<'c> {
                         let Some(cell) = self.cell_of(a, env) else { continue };
                         for (kind, strict) in self.handed_says(module.as_deref(), &name, i, positional.len()) {
                             self.note(&cell, kind, &format!("handed to {}", name), strict);
+                        }
+                    }
+                    // a frame handed to a function: the function's body reads
+                    // the caller's frame through its parameter
+                    let key = match module.as_deref() {
+                        Some(m) => format!("{}_{}", m, name),
+                        None => name.clone(),
+                    };
+                    if self.ctx.functions.contains_key(&key) {
+                        for (i, a) in positional.iter().enumerate() {
+                            if let Some(frame) = frame_of(a, env) {
+                                self.frame_handed(&key, i, frame);
+                            }
                         }
                     }
                     // a position into a list, a tensor or text takes nothing
@@ -327,14 +399,23 @@ impl<'c> Uses<'c> {
                     }
                     _ => {
                         let arithmetic = matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::Pow);
-                        if let Some(c) = &lc {
-                            if let Some(k) = kind_of(right, self.ctx).filter(|k| !arithmetic || matches!(k, Ty::Int | Ty::Float | Ty::Moment)) {
-                                self.note(c, k, &format!("met in {:?}", op).to_lowercase(), false);
+                        // a cell met beside a literal says the kind; a whole
+                        // column (`df.qty gt 0`, a mask) says it too, but of
+                        // numbers only where a cell is read as one
+                        let how = format!("met in {:?}", op).to_lowercase();
+                        let fits = |k: &Ty| !arithmetic || matches!(k, Ty::Int | Ty::Float | Ty::Moment);
+                        if let Some(k) = kind_of(right, self.ctx, env).filter(fits) {
+                            if let Some(c) = &lc {
+                                self.note(c, k, &how, false);
+                            } else if let Some(c) = self.column_of(left, env) {
+                                self.note_whole(&c, k, &how);
                             }
                         }
-                        if let Some(c) = &rc {
-                            if let Some(k) = kind_of(left, self.ctx).filter(|k| !arithmetic || matches!(k, Ty::Int | Ty::Float | Ty::Moment)) {
-                                self.note(c, k, &format!("met in {:?}", op).to_lowercase(), false);
+                        if let Some(k) = kind_of(left, self.ctx, env).filter(fits) {
+                            if let Some(c) = &rc {
+                                self.note(c, k, &how, false);
+                            } else if let Some(c) = self.column_of(right, env) {
+                                self.note_whole(&c, k, &how);
                             }
                         }
                     }
@@ -412,6 +493,29 @@ impl<'c> Uses<'c> {
         row_says(name, module, at, argc).into_iter().map(|t| (t, true)).collect()
     }
 
+    /// A function handed a frame: its body walked with the parameter as
+    /// that frame, so its reads are the frame's (once per frame handed;
+    /// a body that hands it on again to itself stops there).
+    fn frame_handed(&mut self, f: &str, at: usize, frame: FrameKey) {
+        let key = (f.to_string(), at, frame.clone());
+        if !self.walking_frames.insert(key.clone()) {
+            return;
+        }
+        let ctx: &'c TypeContext = self.ctx;
+        if let Some(sig) = ctx.functions.get(f) {
+            if let Some((param, _)) = sig.params.get(at).cloned() {
+                let top = self.loaded.get(TOP).cloned().unwrap_or_default();
+                let mut env = Env::new(top.iter().map(|n| (n.clone(), (TOP.to_string(), n.clone()))).collect());
+                env.body = f.to_string();
+                env.frames.insert(param, frame);
+                let line = self.line;
+                self.walk_block(&sig.body, &mut env);
+                self.line = line;
+            }
+        }
+        self.walking_frames.remove(&key);
+    }
+
     /// What a function's body says of a parameter read as a cell.
     fn param_says(&mut self, f: &str, at: usize) -> Vec<(Ty, bool)> {
         let key = (f.to_string(), at);
@@ -451,11 +555,13 @@ struct Env {
     body: String,
     frames: HashMap<String, FrameKey>,
     cells: HashMap<String, (FrameKey, String)>,
+    /// the locals the body gave a literal, and the kind each says
+    kinds: HashMap<String, Ty>,
 }
 
 impl Env {
     fn new(frames: HashMap<String, FrameKey>) -> Self {
-        Env { body: String::new(), frames, cells: HashMap::new() }
+        Env { body: String::new(), frames, cells: HashMap::new(), kinds: HashMap::new() }
     }
 }
 
@@ -473,7 +579,7 @@ fn word(t: &Ty) -> &'static str {
 
 /// What the program's reads say of each loaded frame's columns.
 pub(crate) fn shapes_from_use(stmts: &[S], ctx: &TypeContext) -> Shapes {
-    let mut uses = Uses { ctx, reads: BTreeMap::new(), loaded: BTreeMap::new(), param_says: HashMap::new(), walking: HashSet::new(), line: 0 };
+    let mut uses = Uses { ctx, reads: BTreeMap::new(), loaded: BTreeMap::new(), param_says: HashMap::new(), walking: HashSet::new(), walking_frames: HashSet::new(), line: 0 };
     uses.walk_program(stmts);
     let mut shapes = Shapes::default();
     for ((frame, column), reads) in &uses.reads {
@@ -490,11 +596,16 @@ pub(crate) fn shapes_from_use(stmts: &[S], ctx: &TypeContext) -> Shapes {
             }
         }
         let numbers = kinds.iter().all(|k| matches!(k.kind, Ty::Int | Ty::Float));
+        // a column met only whole as numbers — a mask, an aggregate — holds
+        // ints or floats as they are: nothing of it is held
+        if numbers && reads.iter().all(|r| r.whole) {
+            continue;
+        }
         let asks_int = reads.iter().find(|r| r.strict && r.kind == Ty::Int);
         let (kind, decided) = if numbers {
             match asks_int {
                 Some(r) => (Ty::Int, r),
-                None => (Ty::Float, kinds[0]),
+                None => (Ty::Float, reads.iter().find(|r| !r.whole).unwrap_or(kinds[0])),
             }
         } else if kinds.len() == 1 {
             (kinds[0].kind.clone(), kinds[0])
@@ -582,6 +693,73 @@ mod tests {
         assert!(ir.contains("core.__expect_frame(unwrap frame.load!now(\"x.csv\"), [\"qty\", \"sym\"], [\"float\", \"str\"], [\"met in gt at line 9\", \"handed to label at line 6\"])"), "{}", ir);
         assert!(ir.contains("let df: Result(Frame{qty: Float, sym: Str, …})"), "{}", ir);
         assert!(ir.contains("pure label(t: Str) -> Str"), "{}", ir);
+    }
+
+    /// A page's data source is a frame the session loads: its reads, in
+    /// the views and handlers that read it, say its columns as a loaded
+    /// file's do — a local given a literal inside the view counting too.
+    #[test]
+    fn a_pages_data_source_is_read_as_a_loaded_frame() {
+        let s = shapes("use web, ui\n\nfn rows[req]\n    return json['[{\"sym\": \"AAPL\", \"qty\": 100}]']\n\ndata = fetch['/api/rows']\n\nfn shout[t]\n    return upper[t]\n\nview render[]\n    names = for t in data.sym\n        shout[t]\n    total = 0\n    for q in data.qty\n        total = total + q\n    return stack[p['`len[data]` rows'], p[join[names, ', ']], p['total `total`']]\n\nserve[3461]\nroute['/api/rows', rows]\npage['/', render]\n");
+        let key = (TOP.to_string(), "data".to_string());
+        let df = s.frames.get(&key).unwrap_or_else(|| panic!("data has a shape: {:?}", s));
+        assert_eq!(df.get("sym"), Some(&Ty::Str), "{:?}", df);
+        assert_eq!(df.get("qty"), Some(&Ty::Float), "{:?}", df);
+        assert!(s.conflicts.is_empty(), "{:?}", s.conflicts);
+    }
+
+    /// The shape reaches a page program: the source's fact is typed by
+    /// the reads and carries what it is held to (`Fact::held`) for the
+    /// session, where its answer arrives; the call is wrapped in nothing.
+    #[test]
+    fn a_data_source_fact_carries_what_it_is_held_to() {
+        let src = "use web, ui\n\nfn rows[req]\n    return json['[{\"sym\": \"AAPL\", \"qty\": 100}]']\n\ndata = fetch['/api/rows']\n\nfn shout[t]\n    return upper[t]\n\nview render[]\n    names = for t in data.sym\n        shout[t]\n    total = 0\n    for q in data.qty\n        total = total + q\n    return stack[p['`len[data]` rows'], p[join[names, ', ']], p['total `total`']]\n\nserve[3461]\nroute['/api/rows', rows]\npage['/', render]\n";
+        let stmts = crate::build(src).expect("parses");
+        let stmts = crate::lower::lower_program(&stmts).expect("lowers");
+        let mut ctx = TypeContext::new();
+        ctx.describe_queries = false;
+        ctx.infer_program(&stmts);
+        // (the shapes are read off the lowered program, as the lowering reads them)
+        let found = shapes_from_use(&stmts, &ctx);
+        assert!(found.frames.contains_key(&(TOP.to_string(), "data".to_string())), "{:?}\n{:#?}", found, stmts.iter().take(8).collect::<Vec<_>>());
+        let program = crate::lower_ir::lower(&stmts, &mut ctx, "t").expect("lowers to the IR");
+        let fact = program.parts.iter().flat_map(|p| p.facts.iter()).find(|f| f.name == "data").expect("the data fact");
+        assert_eq!(fact.held, vec![("qty".to_string(), "float".to_string(), "met in add at line 16".to_string()), ("sym".to_string(), "str".to_string(), "handed to shout at line 13".to_string())], "{:?}", fact.held);
+        assert!(matches!(&fact.ty, Ty::Frame(Some(cols)) if cols.cols.len() == 2), "{:?}", fact.ty);
+        let ir = crate::ir::print(&program);
+        assert!(!ir.contains("__expect_frame"), "{}", ir);
+    }
+
+    /// A frame handed to a function is read through the function's own
+    /// body; a frame a verb derives with its columns, or another name
+    /// holds, is the frame it came from; a whole column compared with a
+    /// literal says what its cells are.
+    #[test]
+    fn a_frame_handed_on_or_derived_is_read_as_itself() {
+        let s = shapes("use frame\nfn total[rows]\n    t = 0\n    for q in rows.qty\n        t = t + q\n    return t\nfn names[rows]\n    kept = filter[rows, rows.sym eq 'AAPL']\n    labels = for t in kept.sym\n        upper[t]\n    return labels\ndf = frame.load[args[][0]]\nsame = df\nlog[total[df]]\nlog[names[same]]\nfor f in df.flag\n    if f\n        log[f]\n");
+        let key = (TOP.to_string(), "df".to_string());
+        let df = s.frames.get(&key).expect("df");
+        assert_eq!(df.get("qty"), Some(&Ty::Float), "{:?}", df);
+        assert_eq!(df.get("sym"), Some(&Ty::Str), "{:?}", df);
+        assert_eq!(df.get("flag"), Some(&Ty::Bool), "{:?}", df);
+        assert!(s.conflicts.is_empty(), "{:?}", s.conflicts);
+        let why = s.reasons.get(&key).expect("reasons");
+        assert_eq!(why.get("qty").map(String::as_str), Some("met in add at line 5"), "{:?}", why);
+        assert!(why.get("sym").is_some_and(|r| r.starts_with("met in eq at line 8") || r.starts_with("handed to upper at line 10")), "{:?}", why);
+    }
+
+    /// A column met only whole as numbers — a mask, an aggregate — holds
+    /// ints or floats as they are, and nothing of it is held (the book's
+    /// `filter[trades, trades.qty gte 40]` had widened `qty` to floats,
+    /// and the printed frame said so); a cell read as a number holds it to
+    /// numbers; a column met whole as text is text.
+    #[test]
+    fn a_column_met_only_whole_as_numbers_is_left_as_it_comes() {
+        let s = shapes("use frame\ndf = frame.load[args[][0]]\nbig = filter[df, df.qty gte 40]\nlog[len[big]]\nkept = filter[df, df.sym eq 'AAPL']\nlog[len[kept]]\nfor p in df.px\n    log[p * 2.0]\nhigh = filter[df, df.px gt 100]\nlog[len[high]]\n");
+        let df = s.frames.get(&(TOP.to_string(), "df".to_string())).expect("df");
+        assert_eq!(df.get("qty"), None, "{:?}", df);
+        assert_eq!(df.get("sym"), Some(&Ty::Str), "{:?}", df);
+        assert_eq!(df.get("px"), Some(&Ty::Float), "{:?}", df);
     }
 
     /// A column read as text and as a number is refused, naming both reads;

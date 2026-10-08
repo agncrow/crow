@@ -1902,9 +1902,12 @@ fn test_ui_state_get_bool() {
 fn test_ui_fetch_assignment() {
     let rust = transpile("use web\nuse ui\nview render[s]\n    return div[h1['hi']]\n\ndata = fetch['/api/data']\nserve[3000]\npage['/', render]\n");
     assert!(rust.contains("register_fetch(\"data\""), "fetch assignment should emit register_fetch\n{}", rust);
-    // no top-level local for a data source; a view reads it as a frame
-    // from its preamble, and that is the only `let data` there is
-    assert_eq!(rust.matches("let data").count(), rust.matches("let data = __json_to_frame(").count(), "fetch should not create a local variable\n{}", rust);
+    // no top-level local for a data source: it is a frame fact of the
+    // session, read in place as every fact is, and there is one conversion
+    // of its records — the runtime's, where the answer arrives
+    assert!(!rust.contains("let data"), "fetch should not create a local variable\n{}", rust);
+    assert!(!rust.contains("__json_to_frame"), "the records are a frame where they arrive, not at every render\n{}", rust);
+    assert!(rust.contains("data: crow_runtime::frame::CrowFrame"), "a source is a frame fact of the session\n{}", rust);
 }
 
 #[test]
