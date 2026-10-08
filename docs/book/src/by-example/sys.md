@@ -159,7 +159,7 @@ log[frame_of_postgres[unbase64['VAAAAC4AAm4AAAAAAAAAAAAAFwAE/////wAAcwAAAAAAAAAA
 log[machine[] ne '']
 log[process[] gt 0]
 log[alive[process[]]]
-log[len[rowbinary_of_frame[frame_of_csv['n,s\n1,a\n2,b\n'], push[push[[], 'UInt64'], 'String']]]]
+log[len[rowbinary_of_frame[frame_of_csv['n,s\n1,a\n2,b\n'], ['UInt64', 'String']]]]
 log[hex[xor[bytes['ab'], bytes['  ']]]]
 log[len[copy_of_frame[frame_of_csv['n,s\n1,a\n2,b\n']]]]
 ```
