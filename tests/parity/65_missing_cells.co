@@ -1,4 +1,5 @@
---- A frame's missing cell: a column shows it as nan and its .ok says it is
+--- A frame's missing cell: a column shows it as the error it is read as,
+--- `error: missing` (a frame's table as `missing`), and its .ok says it is
 --- missing. A column that can have missing cells — a join's unmatched
 --- side, a database column that can be NULL — has fallible cells: a
 --- missing one is an error of reason 'missing', which computes and cannot

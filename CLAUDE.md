@@ -158,6 +158,13 @@ steps on every push and must be green.
   retype or a wrap of a source's binding must match `Expr::Effect` too, or
   it silently does nothing (the probe showed the hook running and the
   variable staying dynamic).
+- A missing cell shows as `missing` in a frame's table and as `error:
+  missing` in a column shown as a list (runtime `fmt_cell`, the frame's
+  Display, `CrowDisplay for CrowColumn`); the interpreter's missing cell
+  is an error of reason `missing` (ops.rs `column_cell`) and its plain
+  placeholder is empty text, as the compiled `get_str` answers. A NaN a
+  number column holds is a value and shows as `nan`; arithmetic over a
+  column with a missing cell answers a tensor holding NaN there.
 - A parsed value's reads are inserted by the lowering: `read_json`
   (lower_ir.rs) at six sites — a position or key, an operator, not/neg, a
   condition, an assignment to a variable of a kind, a builtin's argument

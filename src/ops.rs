@@ -670,7 +670,7 @@ pub fn frame_cell(frame: &crow_runtime::frame::CrowFrame, col: usize, row: usize
 pub fn column_cell(column: &crow_runtime::frame::Column, valid: bool, row: usize) -> CrowValue {
     use crow_runtime::frame::Column;
     if !valid {
-        let mut missing = CrowValue::error_with_kind("nan", "missing", "");
+        let mut missing = CrowValue::error_with_kind("missing", "missing", "");
         missing.status_mut().trace.clear();
         // the safe default a failed value holds (spec §10), of the column's
         // kind: a column copied from its cells keeps its kind even when every

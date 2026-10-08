@@ -180,7 +180,8 @@ impl CrowDisplay for crate::sparse::CrowSparse {
 }
 
 /// A frame column prints like the interpreter's array of its values:
-/// numbers bare, strings quoted, missing cells as nan.
+/// numbers bare, strings quoted, a missing cell as the error it is read
+/// as, `error: missing` (it had shown as `nan`, in a text column too).
 impl CrowDisplay for crate::frame::CrowColumn {
     fn crow_repr(&self) -> String {
         use crate::frame::Column;
@@ -188,7 +189,7 @@ impl CrowDisplay for crate::frame::CrowColumn {
         let parts: Vec<String> = (0..n)
             .map(|i| {
                 if !self.valid[i] {
-                    return "nan".to_string();
+                    return failed("missing");
                 }
                 match self.data.as_ref() {
                     Column::Int(v) => v[i].crow_repr(),

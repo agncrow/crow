@@ -57,10 +57,13 @@ impl Column {
         }
     }
 
-    /// Format a single cell value as string (for display)
+    /// Format a single cell value as string (for display): a missing cell
+    /// as `missing` — it is an error of that reason when read, not a
+    /// value, and a NaN a number column holds is a value and shows as
+    /// `nan` (both had shown as `nan`, a text column's too)
     pub fn fmt_cell(&self, row: usize, valid: bool) -> String {
         if !valid {
-            return "nan".to_string();
+            return "missing".to_string();
         }
         match self {
             Column::Int(v) => format!("{}", v[row]),
@@ -182,7 +185,7 @@ impl CrowFrame {
     }
 
     /// Get column values as formatted strings (column access in generated code).
-    /// Missing values are represented as "nan".
+    /// Missing values are represented as "missing".
     pub fn col_as_strings(&self, name: &str) -> Option<Vec<String>> {
         let idx = self.col_index(name)?;
         let col = &self.data[idx];
@@ -259,7 +262,13 @@ impl CrowColumn {
 
     /// Get a single cell as a formatted string.
     pub fn get_str(&self, idx: usize) -> String {
-        self.data.fmt_cell(idx, self.valid[idx])
+        // (a missing cell read as plain text is the placeholder, empty
+        // text, as the interpreter's read answers it — not the word a
+        // frame shows it as)
+        if !self.valid.get(idx).copied().unwrap_or(false) {
+            return String::new();
+        }
+        self.data.fmt_cell(idx, true)
     }
 
     /// A cell as a float: ints cast, numeric strings parse, moments are
@@ -2224,7 +2233,7 @@ impl fmt::Display for CrowFrame {
                 } else if self.validity[ci][row] {
                     self.data[ci].fmt_cell(row, true)
                 } else {
-                    "nan".to_string()
+                    "missing".to_string()
                 };
                 if cell.len() > col_widths[ci] {
                     col_widths[ci] = cell.len();

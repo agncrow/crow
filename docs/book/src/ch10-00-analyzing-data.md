@@ -218,22 +218,22 @@ symbol  day  qty_sum
   MSFT    2       25
 
 [5 rows x 3 cols]
-symbol    1    2
-   str  int  int
-------  ---  ---
-  AAPL  100   40
-  MSFT   50   25
-  NVDA   20  nan
+symbol    1        2
+   str  int      int
+------  ---  -------
+  AAPL  100       40
+  MSFT   50       25
+  NVDA   20  missing
 
 [3 rows x 3 cols]
-symbol  day  qty  price  so_far   prev
-   str  int  int  float     int  float
-------  ---  ---  -----  ------  -----
-  AAPL    1  100  191.5     100    nan
-  MSFT    1   50  415.2      50    nan
-  AAPL    2   40  193.1     140  191.5
-  NVDA    1   20    875      20    nan
-  MSFT    2   25  411.9      75  415.2
+symbol  day  qty  price  so_far     prev
+   str  int  int  float     int    float
+------  ---  ---  -----  ------  -------
+  AAPL    1  100  191.5     100  missing
+  MSFT    1   50  415.2      50  missing
+  AAPL    2   40  193.1     140    191.5
+  NVDA    1   20    875      20  missing
+  MSFT    2   25  411.9      75    415.2
 
 [5 rows x 6 cols]
 ```
@@ -298,19 +298,19 @@ symbol  price_median  price_p90  qty_distinct
 [191.5, 190, 193.1, 410, 415.2]
 [100, 50, 0, 40, 70]
 [191.5, 415.2, 190, 410]
-symbol  variable  value
-   str       str  float
-------  --------  -----
-  AAPL       qty    100
-  MSFT       qty     50
-  AAPL       qty    nan
-  AAPL       qty     40
-  MSFT       qty     70
-  AAPL     price  191.5
-  MSFT     price  415.2
-  AAPL     price  193.1
-  AAPL     price    190
-  MSFT     price    410
+symbol  variable    value
+   str       str    float
+------  --------  -------
+  AAPL       qty      100
+  MSFT       qty       50
+  AAPL       qty  missing
+  AAPL       qty       40
+  MSFT       qty       70
+  AAPL     price    191.5
+  MSFT     price    415.2
+  AAPL     price    193.1
+  AAPL     price      190
+  MSFT     price      410
 
 [10 rows x 3 cols]
 [191.5, 193.1]

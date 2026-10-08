@@ -182,18 +182,18 @@ smtp.example.com
 0.865
 3.178
 [[0, 1, 2], [3, 4, 5]]
-n    x
-int  float
--  ---
-0    0
-1  nan
+n        x
+int    float
+-  -------
+0        0
+1  missing
 
 [2 rows x 2 cols]
-n    s
-int  str
--  ---
-1    a
-2  nan
+n        s
+int      str
+-  -------
+1        a
+2  missing
 
 [2 rows x 2 cols]
 true

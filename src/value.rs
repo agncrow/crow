@@ -339,10 +339,9 @@ impl crow_runtime::display::CrowDisplay for CrowValue {
                 Value::Json(j) => j.crow_repr(),
                 other => other.to_string(),
             }
-        } else if self.kind() == "missing" && self.reason() == "nan" {
-            // a frame column's missing cell, as the display kernel shows it
-            "nan".to_string()
         } else {
+            // (a frame's missing cell is an error of reason `missing`, shown
+            // as one: it had shown as `nan`, as the display kernel did)
             crow_runtime::display::failed(&self.reason())
         }
     }

@@ -232,7 +232,9 @@ fn placeholder(cell: CrowValue, ty: &Ty) -> CrowValue {
         (false, Ty::Float) => CrowValue::ok(Value::Float(f64::NAN)),
         (false, Ty::Int) => CrowValue::ok(Value::Int(0)),
         (false, Ty::Bool) => CrowValue::ok(Value::Bool(false)),
-        (false, Ty::Str) => CrowValue::ok(Value::Str("nan".to_string())),
+        // (a plain text column's placeholder is empty text, as the
+        // column's cell read answers it; it had been the text "nan")
+        (false, Ty::Str) => CrowValue::ok(Value::Str(String::new())),
         // a column nothing typed: its missing cell is JSON's null, an error
         // value of reason 'null', as `json[]` reads one
         (false, Ty::Json) => {

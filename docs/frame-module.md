@@ -278,7 +278,7 @@ log[df.columns]    --- ['name', 'age', 'salary', 'start_date']
 log[df.dtypes]     --- ['str', 'int', 'float', 'datetime']
 
 --- column access
-log[df.age]        --- [30, nan, 25, 42]
+log[df.age]        --- [30, error: missing, 25, 42]
 log[df.name]       --- ['alice', 'bob', error, 'carol']
 
 --- missing values
