@@ -350,7 +350,7 @@ async fn default_welcome_handler() -> axum::response::Html<&'static str> {
   body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #0a0a0a; color: #e0e0e0; }
   .card { text-align: center; max-width: 480px; padding: 2rem; }
   h1 { font-size: 2.5rem; margin-bottom: 0.5rem; }
-  .co { font-size: 4rem; }
+  .crow { font-size: 4rem; }
   p { color: #888; line-height: 1.6; }
   code { background: #1a1a2e; padding: 2px 8px; border-radius: 4px; font-size: 0.9em; }
 </style>
@@ -416,6 +416,15 @@ mod tests {
         assert_eq!(listen_host(None), "127.0.0.1");
         assert_eq!(listen_host(Some("  ".into())), "127.0.0.1");
         assert_eq!(listen_host(Some("0.0.0.0".into())), "0.0.0.0");
+    }
+
+    /// The rename to `.co` turned this page's `.crow` rule into `.co`, a
+    /// class nothing on the page carries: the bird lost its size
+    #[tokio::test]
+    async fn the_welcome_page_styles_its_bird() {
+        let page = default_welcome_handler().await.0;
+        assert!(page.contains("<div class=\"crow\">"));
+        assert!(page.contains(".crow { font-size: 4rem; }"));
     }
 
     fn echo_param_handler(req: CrowRequest) -> CrowResponse {

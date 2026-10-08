@@ -687,7 +687,7 @@ body.nav-closed .doc-side{display:none!important}\
 .crow-run{margin:0.8rem 0}\
 .crow-run .crow-editor pre{margin:0}\
 .crow-run pre.gutter{flex:none;text-align:right;user-select:none;color:var(--crow-muted);padding-right:0.7rem;border-right:0;border-radius:6px 0 0 6px}\
-.crow-run pre.co{flex:1 1 0;min-width:0;border-left:0;border-radius:0 6px 6px 0}\
+.crow-run pre.crow{flex:1 1 0;min-width:0;border-left:0;border-radius:0 6px 6px 0}\
 .crow-run code[contenteditable]{display:block;outline:none;cursor:text;min-height:1.4em}\
 .crow-run .crow-toolbar button{font-size:0.85rem;padding:0.2rem 0.7rem}\
 .crow-run .crow-toolbar button.stop{margin-left:auto}\
@@ -741,6 +741,16 @@ mod tests {
         assert!(!m.contains("<p class=\"part\">Book</p>"), "the brand is not a part heading");
         assert!(m.contains("<details class=\"group\" open=\"open\"><summary><a class=\"d1\" href=\"one.html\">One</a></summary><a class=\"d2\" href=\"one-a.html\">One A</a><a class=\"d2 current\" href=\"one-b.html\">One B</a></details>"));
         assert!(m.contains("<details class=\"group\"><summary><a class=\"d1\" href=\"two.html\">Two</a></summary><a class=\"d2\" href=\"two-a.html\">Two A</a></details><a class=\"d1\" href=\"three.html\">Three</a></nav>"));
+    }
+
+    // The rename to `.co` turned the editor pane's rule `pre.crow` into
+    // `pre.co`, a class the runner never writes: the pane lost its fill and
+    // its joined border with the gutter.
+    #[test]
+    fn the_editor_pane_has_its_rule() {
+        let h = to_html("```crow\nlog[1]\n```\n");
+        assert!(h.contains("<pre class=\"crow\" data-mode=\"run\""));
+        assert!(DOC_CSS.contains(".crow-run pre.crow{"));
     }
 
     #[test]

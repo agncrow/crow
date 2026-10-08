@@ -45,14 +45,21 @@ with the compiler.
 
 **VS Code** — the extension lives in `editors/vscode`:
 ```
-cd editors/vscode && npm install && npm run package   # then install the .vsix
+cd editors/vscode && npm install
+npx --yes @vscode/vsce package --allow-missing-repository --skip-license
+code --install-extension crow-lang-0.1.0.vsix --force
 ```
-(or open the folder and press F5 for a dev session). Set `crow.serverPath`
-if `crow` is not on PATH.
+(or open the folder and press F5 for a dev session), then reload the
+window. VS Code runs the copy it installed, not the folder: after any
+change under `editors/vscode`, package and install again. (The `.co` rename
+reached the folder in September and the installed copy a month later; until
+then VS Code opened every `.co` file as plain text, so it neither
+highlighted it nor started the server.) Set `crow.serverPath` if `crow` is
+not on PATH.
 
 **Neovim (0.11+)**
 ```lua
-vim.filetype.add({ extension = { crow = "crow" } })
+vim.filetype.add({ extension = { co = "crow" } })
 vim.lsp.config("crow", {
   cmd = { "crow", "lsp" },
   filetypes = { "crow" },
@@ -63,20 +70,20 @@ vim.lsp.enable("crow")
 
 **Helix** (`~/.config/helix/languages.toml`)
 ```toml
-[language-server.co]
+[language-server.crow]
 command = "crow"
 args = ["lsp"]
 
 [[language]]
 name = "crow"
-scope = "source.co"
-file-types = ["crow"]
+scope = "source.crow"
+file-types = ["co"]
 roots = ["crowfile"]
 language-servers = ["crow"]
 ```
 
 **Zed** — add a local language extension pointing at `crow lsp`, or use the
-generic LSP configuration with file type `crow`.
+generic LSP configuration for the language `crow` on files ending in `.co`.
 
 ## Design notes
 

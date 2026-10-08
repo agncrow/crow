@@ -392,7 +392,7 @@ pub fn args() -> Vec<String> {
     let all: Vec<String> = std::env::args().collect();
     let by_crow = all.first().and_then(|a| std::path::Path::new(a).file_stem().map(|s| s == "crow")).unwrap_or(false);
     if by_crow {
-        let source = all.iter().position(|a| [".co", ".coc", ".crow", ".crowc"].iter().any(|e| a.ends_with(e)));
+        let source = all.iter().position(|a| [".co", ".coc"].iter().any(|e| a.ends_with(e)));
         return source.map(|i| all[i + 1..].to_vec()).unwrap_or_default();
     }
     all.into_iter().skip(1).collect()

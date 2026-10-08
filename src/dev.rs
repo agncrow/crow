@@ -31,7 +31,7 @@ fn watched(root: &Path) -> BTreeMap<PathBuf, SystemTime> {
                 continue;
             }
             let ext = p.extension().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
-            if name == "crowfile" || matches!(ext.as_str(), "co" | "crow" | "sql" | "css" | "js") {
+            if name == "crowfile" || matches!(ext.as_str(), "co" | "sql" | "css" | "js") {
                 if let Ok(t) = e.metadata().and_then(|m| m.modified()) {
                     out.insert(p, t);
                 }
@@ -47,7 +47,7 @@ fn watched(root: &Path) -> BTreeMap<PathBuf, SystemTime> {
 /// reload of the tabs).
 fn is_code(path: &Path) -> bool {
     let ext = path.extension().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
-    path.file_name().is_some_and(|n| n == "crowfile") || matches!(ext.as_str(), "co" | "crow" | "sql")
+    path.file_name().is_some_and(|n| n == "crowfile") || matches!(ext.as_str(), "co" | "sql")
 }
 
 /// The program checked as `crow run -i` would take it: none, or the refusal.

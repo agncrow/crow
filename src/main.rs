@@ -356,7 +356,6 @@ fn crow_main() {
             } else if args.len() > 2 {
                 let target = &args[2];
                 if is_source(&target) || is_bytecode(&target) {
-                    if target.ends_with(".crow") || target.ends_with(".crowc") { note_legacy_extension(&target); }
                     // crow run file.co arg1 arg2 ... -> transpile + compile + run
                     let extra_args = args[3..].to_vec();
                     cmd_run_file(target, &extra_args);
@@ -886,7 +885,7 @@ fn cmd_test_docs() {
     if let Ok(rd) = std::fs::read_dir("examples") {
         for e in rd.flatten() {
             let p = e.path();
-            if p.extension().map_or(true, |x| x != "co" && x != "crow") { continue; }
+            if p.extension().map_or(true, |x| x != "co") { continue; }
             let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
             if readme.contains(&name) || prefixes.iter().any(|pre| name.starts_with(pre.as_str())) { continue; }
             unlisted.push(name);
@@ -1094,7 +1093,7 @@ fn cmd_test_parity(only: &[String]) {
     let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
         .map(|rd| {
             rd.filter_map(|e| e.ok().map(|e| e.path()))
-                .filter(|p| p.extension().map_or(false, |x| x == "co" || x == "crow"))
+                .filter(|p| p.extension().map_or(false, |x| x == "co"))
                 .filter(|p| only.is_empty() || only.iter().any(|w| p.to_string_lossy().contains(w.as_str())))
                 .collect()
         })
@@ -3198,30 +3197,19 @@ fn build_app_book(entry: &str) -> Result<std::path::PathBuf, String> {
     appbook::build(&input)
 }
 
-/// Source files end in `.co`. A `.co` file is still read this release,
-/// with a note the first time one is met, so a tree renames at leisure.
-fn is_source(path: &str) -> bool { path.ends_with(".co") || path.ends_with(".crow") }
-fn is_bytecode(path: &str) -> bool { path.ends_with(".coc") || path.ends_with(".crowc") }
-fn strip_source_ext(path: &str) -> &str {
-    path.strip_suffix(".co").or_else(|| path.strip_suffix(".crow")).unwrap_or(path)
-}
+/// Source files end in `.co`, bytecode in `.coc`.
+fn is_source(path: &str) -> bool { path.ends_with(".co") }
+fn is_bytecode(path: &str) -> bool { path.ends_with(".coc") }
+fn strip_source_ext(path: &str) -> &str { path.strip_suffix(".co").unwrap_or(path) }
 fn bytecode_path(entry: &str) -> String { format!("{}.coc", strip_source_ext(entry)) }
-/// The source a path names: a bytecode path's `.co` (or legacy `.crow`)
-/// beside it; any other path is the source already. (After the `.co`
-/// rename it appended `.co` to a source too, and every interpreter trace
-/// named `main.co` where the compiled program names `main`.)
+/// The source a path names: a bytecode path's `.co` beside it; any other
+/// path is the source already. (After the `.co` rename it appended `.co`
+/// to a source too, and every interpreter trace named `main.co` where the
+/// compiled program names `main`.)
 fn source_of_bytecode(path: &str) -> String {
-    if !is_bytecode(path) {
-        return path.to_string();
-    }
-    let base = path.strip_suffix(".coc").or_else(|| path.strip_suffix(".crowc")).unwrap_or(path);
-    let co = format!("{}.co", base);
-    if std::path::Path::new(&co).exists() || !std::path::Path::new(&format!("{}.crow", base)).exists() { co } else { format!("{}.crow", base) }
-}
-static LEGACY_NOTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-fn note_legacy_extension(path: &str) {
-    if !LEGACY_NOTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        eprintln!("note: {} — source files are `.co` now; `.crow` is still read this release (git mv to rename)", path);
+    match path.strip_suffix(".coc") {
+        Some(base) => format!("{}.co", base),
+        None => path.to_string(),
     }
 }
 
@@ -3229,26 +3217,22 @@ fn note_legacy_extension(path: &str) {
 mod extension_tests {
     use super::*;
 
-    // The rename to `.co` keeps `.crow` readable this release; a regex slip
-    // once turned every legacy branch into the new extension, so both are
-    // pinned here.
+    // `.crow` and `.crowc` were read for a release after the rename to
+    // `.co`; they are no longer Crow files.
     #[test]
-    fn new_and_legacy_extensions_are_both_recognised() {
+    fn source_and_bytecode_extensions() {
         assert!(is_source("a.co"));
-        assert!(is_source("a.crow"));
         assert!(!is_source("a.coc"));
+        assert!(!is_source("a.crow"));
         assert!(is_bytecode("a.coc"));
-        assert!(is_bytecode("a.crowc"));
         assert!(!is_bytecode("a.co"));
+        assert!(!is_bytecode("a.crowc"));
         assert_eq!(strip_source_ext("dir/a.co"), "dir/a");
-        assert_eq!(strip_source_ext("dir/a.crow"), "dir/a");
         assert_eq!(strip_source_ext("dir/a"), "dir/a");
-        assert_eq!(bytecode_path("dir/a.crow"), "dir/a.coc");
+        assert_eq!(strip_source_ext("dir/a.crow"), "dir/a.crow");
         assert_eq!(bytecode_path("dir/a.co"), "dir/a.coc");
-        assert_eq!(source_of_bytecode("zz_no_such_file.coc"), "zz_no_such_file.co");
-        assert_eq!(source_of_bytecode("zz_no_such_file.crowc"), "zz_no_such_file.co");
+        assert_eq!(source_of_bytecode("dir/a.coc"), "dir/a.co");
         assert_eq!(source_of_bytecode("main.co"), "main.co");
-        assert_eq!(source_of_bytecode("dir/a.crow"), "dir/a.crow");
     }
 }
 
@@ -4295,12 +4279,7 @@ fn parse_crowfile() -> CrowfileConfig {
                         process::exit(1);
                     }
                 },
-                None => {
-                    if !std::path::Path::new("main.co").exists() && std::path::Path::new("main.co").exists() {
-                        note_legacy_extension("main.co");
-                        "main.co".to_string()
-                    } else { "main.co".to_string() }
-                }
+                None => "main.co".to_string(),
             };
 
             let cpu = it.var("cpu").and_then(|val| {
@@ -4347,8 +4326,6 @@ fn parse_crowfile() -> CrowfileConfig {
 }
 
 fn read_file(filename: &str) -> String {
-    // a `.crow` entry still runs this release, with a note the first time
-    if filename.ends_with(".crow") { note_legacy_extension(filename); }
     match std::fs::read_to_string(filename) {
         Ok(s) => s,
         Err(e) => {
@@ -5155,23 +5132,20 @@ fn expand_into(
         // package's root is where it really lies)
         let beside = package_dir(source_dir).and_then(|p| p.parent().map(|m| m.to_path_buf()));
         let mut candidates: Vec<std::path::PathBuf> = Vec::new();
-        for ext in ["co", "crow"] {
-            candidates.push(root.join(format!("{}.{}", file_rel, ext)));
-            candidates.push(root.join(format!("crow_modules/{}.{}", file_rel, ext)));
-            candidates.push(root.join(format!("crow_modules/{}/main.{}", file_rel, ext)));
-            if let Some(modules) = &beside {
-                candidates.push(modules.join(format!("{}.{}", file_rel, ext)));
-                candidates.push(modules.join(format!("{}/main.{}", file_rel, ext)));
-            }
-            if root != source_dir {
-                candidates.push(source_dir.join(format!("{}.{}", file_rel, ext)));
-            }
+        candidates.push(root.join(format!("{}.co", file_rel)));
+        candidates.push(root.join(format!("crow_modules/{}.co", file_rel)));
+        candidates.push(root.join(format!("crow_modules/{}/main.co", file_rel)));
+        if let Some(modules) = &beside {
+            candidates.push(modules.join(format!("{}.co", file_rel)));
+            candidates.push(modules.join(format!("{}/main.co", file_rel)));
+        }
+        if root != source_dir {
+            candidates.push(source_dir.join(format!("{}.co", file_rel)));
         }
         let Some(file_path) = candidates.iter().find(|p| p.exists()).cloned() else {
             expanded.push(stmt.clone());
             continue;
         };
-        if file_path.extension().map_or(false, |e| e == "crow") { note_legacy_extension(&file_path.display().to_string()); }
         let canon = std::fs::canonicalize(&file_path).unwrap_or(file_path.clone());
         // Expanded already, through another importer: one copy, this
         // file's spelling of it

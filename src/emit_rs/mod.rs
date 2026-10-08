@@ -334,7 +334,7 @@ impl Emitter {
         let stem = if self.source_file.is_empty() {
             "unknown"
         } else {
-            self.source_file.strip_suffix(".co").or_else(|| self.source_file.strip_suffix(".crow")).unwrap_or(&self.source_file)
+            self.source_file.strip_suffix(".co").unwrap_or(&self.source_file)
         };
         if self.cur_fn.is_empty() {
             format!("format!(\"{}:{{}}\", {})", stem, self.line_now())

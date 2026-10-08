@@ -1,9 +1,9 @@
 --- The Crow Book, rendered by Crow: Markdown chapters in (docs/book/src),
 --- a static site out (docs/book/crow-site). No mdBook, no Node.
 ---
----   crow run docs/book/site.crow       --- compiled: writes every page
----   crow run -i docs/book/site.crow    --- interpreted: the same pages
----   crow test docs/book/site.crow      --- the page layout, no browser
+---   crow run docs/book/site.co       --- compiled: writes every page
+---   crow run -i docs/book/site.co    --- interpreted: the same pages
+---   crow test docs/book/site.co      --- the page layout, no browser
 use web, ui, doc
 
 src = 'docs/book/src/'
