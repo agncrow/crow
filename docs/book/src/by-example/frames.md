@@ -41,6 +41,10 @@ log[contains[t.symbol, 'AA']]
 log[window[t, 'price', 'median', n = 2]]
 log[bucket[d, 3600]]
 log[fill[with[frame.new[], 'x', where[[true, false, true], 1, 2]], 'x', how = 'forward'].x]
+gap = frame.new[node = ['a', 'b'], value = [0.5, 0.25]]
+    then join[gap, frame.new[node = ['b', 'a'], ref = [0.25, 0.75]], 'node']
+    then max[abs[gap.value - gap.ref]]
+log[gap]
 rm['ex_trades.csv']
 rm['ex_copy.csv']
 ```
@@ -78,6 +82,7 @@ x+y
 [191.5, 303.35, 304.15]
 2026-07-14T13:00:00Z
 [1, 2, 1]
+0.25
 ```
 
 `frame.new[]` and `with[]` build a frame column by column from arrays or

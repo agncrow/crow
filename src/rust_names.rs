@@ -341,7 +341,7 @@ fn rename_stmt(s: &mut Stmt, renames: &BTreeMap<String, String>, global: &BTreeS
     }
 }
 
-fn rename_expr(e: &mut Expr, renames: &BTreeMap<String, String>, visible: &BTreeSet<String>) {
+pub(crate) fn rename_expr(e: &mut Expr, renames: &BTreeMap<String, String>, visible: &BTreeSet<String>) {
     match e {
         Expr::Ident(n) => rename(n, renames, visible),
         Expr::Str(s) => {

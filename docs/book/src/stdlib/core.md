@@ -29,14 +29,14 @@ A builtin handed a number of arguments, or a kind of argument, it does not take 
 
 | Function | Description | Example |
 |----------|-------------|---|
-| `abs[n]` | Absolute value | [Math: tensors](../by-example/math.md) · [Numbers and conversion](../by-example/numbers.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
+| `abs[n]` | Absolute value | [Frames: `use frame`](../by-example/frames.md) · [Math: tensors](../by-example/math.md) · [Numbers and conversion](../by-example/numbers.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
 | `sqrt[n]` | Square root (returns float) | [Math: tensors](../by-example/math.md) · [Numbers and conversion](../by-example/numbers.md) |
 | `floor[n]` | Floor (returns int) | [Math: tensors](../by-example/math.md) · [Numbers and conversion](../by-example/numbers.md) |
 | `ceil[n]` | Ceiling (returns int) | [Numbers and conversion](../by-example/numbers.md) |
 | `round[n]` | Round to nearest int, a half away from zero (`round[2.5]` is `3`, `round[-2.5]` is `-3`); `floor`, `ceil` and `round` of a float past 64 bits are cut to the largest int, of NaN `0` | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) · [Numbers and conversion](../by-example/numbers.md) |
 | `base ^ exp` | Exponentiation (use `^` operator) |  |
 | `min[a, b]` | Minimum of two numbers | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Numbers and conversion](../by-example/numbers.md) |
-| `max[a, b]` | Maximum of two numbers | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: tensors](../by-example/math.md) · [Neural-network building blocks: `use math.nn`](../by-example/nn.md) · [Numbers and conversion](../by-example/numbers.md) · [Testing](../ch09-00-testing.md) |
+| `max[a, b]` | Maximum of two numbers | [Frames: `use frame`](../by-example/frames.md) · [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: tensors](../by-example/math.md) · [Neural-network building blocks: `use math.nn`](../by-example/nn.md) · [Numbers and conversion](../by-example/numbers.md) · [Testing](../ch09-00-testing.md) |
 
 ## Strings
 

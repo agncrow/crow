@@ -1,0 +1,49 @@
+--- A chain of `then` lines: a value stepped without naming each step. The
+--- value goes first where a step is a call; where a step names the
+--- variable, the value is where it says, as often as it says; the kind
+--- changes along the chain (a list, then text; a frame, then a number); a
+--- step that fails hands its failure on. Both modes print the same.
+use math, frame
+
+--- text, the value first in every step
+s = '  hello world  '
+    then trim
+    then split[' ']
+    then join['-']
+log[s]
+
+--- the variable named: where it says, twice
+sep = ','
+x = ['b', 'c', 'a']
+    then sort
+    then reverse[x]
+    then '`join[x, sep]`|`x[0]`'
+log[x]
+
+--- a frame stepped to a number
+m = map['0' = 0.25, '1' = 0.5, '2' = 0.3]
+table = frame.new[node = ['2', '0', '1'], pagerank = [0.25, 0.25, 0.5]]
+pr = frame.new[node = keys[m], value = values[m]]
+    then join[pr, table, 'node']
+    then max[abs[pr.value - pr.pagerank]]
+log[fmt[pr, decimals = 3]]
+
+--- inside a function
+fn shout[t]
+    r = t
+        then upper
+        then '`r`!'
+    return r
+log[shout['hey']]
+
+--- a step that can fail: good, the chain goes on; failed, the failure is
+--- the chain's value
+n = '42'
+    then int
+    then n + 1
+log[n]
+bad = 'x'
+    then int
+    then bad + 1
+log[bad.ok]
+log[bad]

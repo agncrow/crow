@@ -195,6 +195,14 @@ impl Parser {
                 return self.parse_test_block().map(|s| vec![s]);
             }
         }
+        // `then` opens a step of a chain: it continues an assignment's value
+        // from the line above (spec, Then Chaining). Alone it is a stray line.
+        if matches!(self.peek(), Token::Then) {
+            return Err(format!(
+                "line {}: `then` continues an assignment — write `x = …` on the line above, with each `then` step indented under it",
+                self.current_line()
+            ));
+        }
         match self.peek().clone() {
             Token::Fn => self.parse_fn_decl(false).map(|s| vec![s]),
             Token::View => self.parse_fn_decl(true).map(|s| vec![s]),
@@ -207,7 +215,10 @@ impl Parser {
             Token::While => self.parse_while().map(|s| vec![s]),
             Token::Struct => self.parse_struct().map(|s| vec![s]),
             Token::Use => self.parse_use(),
-            _ => self.parse_assign_or_expr().map(|s| vec![s]),
+            _ => {
+                let s = self.parse_assign_or_expr()?;
+                self.then_lines(s)
+            }
         }
     }
 
@@ -403,6 +414,68 @@ impl Parser {
             path.push_str(&next);
         }
         Ok(path)
+    }
+
+    /// A chain written as lines: `x = e` and, indented under it, lines that
+    /// each start with `then` (spec, Then Chaining). Every step is a
+    /// statement of its own, assigned to a hidden name so the value's kind
+    /// may change from step to step, as a variable's may not: `x__then1 = e`,
+    /// each step reads the value so far, and the last step assigns `x`. A
+    /// step that names `x` reads the value where it says; a step that does
+    /// not is a call, and the value is its first argument, as `x then f[a]`
+    /// is `f[x, a]`.
+    fn then_lines(&mut self, s: Stmt) -> Result<Vec<Stmt>, String> {
+        let Stmt::Assign { name, value } = s else { return Ok(vec![s]) };
+        if !(matches!(self.peek(), Token::Newline)
+            && matches!(self.peek_ahead(1), Token::Indent)
+            && matches!(self.peek_ahead(2), Token::Then))
+        {
+            return Ok(vec![Stmt::Assign { name, value }]);
+        }
+        self.advance(); // the line's end
+        self.advance(); // the indent
+        let mut steps: Vec<(usize, Expr)> = Vec::new();
+        while self.check(&Token::Then) {
+            let line = self.current_line();
+            self.advance();
+            let step = self.parse_expr()?;
+            steps.push((line, step));
+            self.skip_newlines();
+        }
+        if self.check(&Token::Dedent) {
+            self.advance();
+        } else if !self.is_at_end() {
+            return Err(format!("line {}: a chain's lines each start with `then`", self.current_line()));
+        }
+        let hidden = |k: usize| format!("{}__then{}", name, k);
+        let n = steps.len();
+        let mut out = vec![Stmt::Assign { name: hidden(1), value }];
+        for (k, (line, mut step)) in steps.into_iter().enumerate() {
+            let prev = hidden(k + 1);
+            if mentions(&step, &name) {
+                let renames = std::collections::BTreeMap::from([(name.clone(), prev)]);
+                let visible = std::collections::BTreeSet::from([name.clone()]);
+                crate::rust_names::rename_expr(&mut step, &renames, &visible);
+            } else {
+                step = match step {
+                    Expr::Call { callee, mut args } => {
+                        args.insert(0, Expr::Ident(prev));
+                        Expr::Call { callee, args }
+                    }
+                    Expr::Ident(f) => Expr::Call { callee: Box::new(Expr::Ident(f)), args: vec![Expr::Ident(prev)] },
+                    _ => {
+                        return Err(format!(
+                            "line {}: a `then` step is a call — `then f[…]`, the value so far its first argument — or an expression that names `{}`",
+                            line, name
+                        ))
+                    }
+                };
+            }
+            let target = if k + 1 == n { name.clone() } else { hidden(k + 2) };
+            out.push(Stmt::Line(line));
+            out.push(Stmt::Assign { name: target, value: step });
+        }
+        Ok(out)
     }
 
     fn parse_assign_or_expr(&mut self) -> Result<Stmt, String> {
@@ -922,6 +995,116 @@ fn python_value_hint(name: &str) -> Option<String> {
     Some(hint.to_string())
 }
 
+
+/// Whether an expression names the variable: as an identifier, a field's
+/// object, in a call, a list, a map, a named argument, or a span of text
+/// (a word there that no `.` precedes, as a field's name is).
+fn mentions(e: &Expr, name: &str) -> bool {
+    match e {
+        Expr::Ident(n) => n == name,
+        Expr::Str(s) => s.contains('`') && s.split('`').skip(1).step_by(2).any(|span| span_names_word(span, name)),
+        Expr::BinOp { left, right, .. } => mentions(left, name) || mentions(right, name),
+        Expr::UnaryOp { expr, .. } => mentions(expr, name),
+        Expr::Call { callee, args } => mentions(callee, name) || args.iter().any(|a| mentions(a, name)),
+        Expr::FieldAccess { object, .. } => mentions(object, name),
+        Expr::Array(items) => items.iter().any(|i| mentions(i, name)),
+        Expr::Map(pairs) => pairs.iter().any(|(k, v)| mentions(k, name) || mentions(v, name)),
+        Expr::Named { value, .. } => mentions(value, name),
+        Expr::ForExpr { var, iter, .. } => var != name && mentions(iter, name),
+        _ => false,
+    }
+}
+
+/// Whether a span of interpolated text holds the word as a name: whole, and
+/// not a field (`t.name`).
+fn span_names_word(span: &str, name: &str) -> bool {
+    let chars: Vec<char> = span.chars().collect();
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut i = 0;
+    while i < chars.len() {
+        if is_word(chars[i]) {
+            let start = i;
+            while i < chars.len() && is_word(chars[i]) {
+                i += 1;
+            }
+            let word: String = chars[start..i].iter().collect();
+            let after_dot = start > 0 && chars[start - 1] == '.';
+            if word == name && !after_dot {
+                return true;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod then_lines_tests {
+    use super::*;
+    use crate::lexer::Lexer;
+
+    fn parsed(src: &str) -> String {
+        let tokens = Lexer::new(src).tokenize().expect("lexes");
+        format!("{:?}", Parser::new(tokens).parse().expect("parses"))
+    }
+
+    fn err(src: &str) -> String {
+        let tokens = match Lexer::new(src).tokenize() {
+            Ok(t) => t,
+            Err(e) => return e,
+        };
+        Parser::new(tokens).parse().err().unwrap_or_default()
+    }
+
+    #[test]
+    fn a_chains_steps_are_statements_over_hidden_names() {
+        // the value first where the step is a call; where the step names
+        // the variable, the value is where it says, and the last assigns it
+        let p = parsed("x = [3, 1, 2]\n    then sort\n    then reverse[x]\n    then len[x] + 1\nlog[x]\n");
+        assert!(p.contains("name: \"x__then1\""), "{}", p);
+        assert!(p.contains("Ident(\"x__then1\")"), "{}", p);
+        assert!(p.contains("name: \"x__then2\""), "{}", p);
+        assert!(p.contains("name: \"x__then3\""), "{}", p);
+        assert!(!p.contains("name: \"x__then4\""), "{}", p);
+        assert!(p.matches("name: \"x\"").count() == 1, "{}", p);
+        // the inserted call: sort[x__then1]; the named step: reverse[x__then2]
+        assert!(p.contains("callee: Ident(\"sort\"), args: [Ident(\"x__then1\")]"), "{}", p);
+        assert!(p.contains("callee: Ident(\"reverse\"), args: [Ident(\"x__then2\")]"), "{}", p);
+        // each step keeps its line
+        assert!(p.contains("Line(2)") && p.contains("Line(3)") && p.contains("Line(4)"), "{}", p);
+    }
+
+    #[test]
+    fn a_step_names_the_variable_in_a_field_a_span_or_a_nested_call() {
+        let p = parsed("pr = frame.new[a = [1]]\n    then max[abs[pr.a - 1.0]]\n");
+        assert!(p.contains("object: Ident(\"pr__then1\")"), "{}", p);
+        let p = parsed("t = 'a'\n    then 'got `t`'\n");
+        assert!(p.contains("got `t__then1`"), "{}", p);
+        assert!(mentions(&Expr::Str("`t.x`".into()), "x") == false);
+        assert!(mentions(&Expr::Str("`x.t`".into()), "x"));
+    }
+
+    #[test]
+    fn a_step_that_is_not_a_call_and_names_nothing_is_refused() {
+        let e = err("x = 1\n    then 2 + 3\n");
+        assert!(e.contains("line 2: a `then` step is a call"), "{}", e);
+    }
+
+    #[test]
+    fn a_then_line_without_an_assignment_is_refused() {
+        let e = err("log[1]\nthen upper\n");
+        assert!(e.contains("`then` continues an assignment"), "{}", e);
+        let e = err("xs = for v in [1, 2]\n    v\n    then sort\n");
+        assert!(e.contains("`then` continues an assignment"), "{}", e);
+    }
+
+    #[test]
+    fn a_chain_inside_a_body_ends_with_the_body() {
+        let p = parsed("fn f[s]\n    r = s\n        then upper\n    return r\nlog[f['a']]\n");
+        assert!(p.contains("name: \"r__then1\"") && p.contains("Return"), "{}", p);
+    }
+}
 
 #[cfg(test)]
 mod pyism_tests {

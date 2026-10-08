@@ -174,6 +174,14 @@ mod tests {
     }
 
     #[test]
+    fn test_then_lines_preserved() {
+        let input = "pr = frame.new[a = [1]]\n    then join[pr, t, 'k']\n    then max[pr]\nlog[pr]\n";
+        let result = format_source(input).unwrap();
+        assert_eq!(result, "pr = frame.new[a = [1]]\n  then join[pr, t, 'k']\n  then max[pr]\nlog[pr]\n");
+        assert_eq!(format_source(&result).unwrap(), result);
+    }
+
+    #[test]
     fn test_then_chain_preserved() {
         let input = "result = s then trim then upper\n";
         let result = format_source(input).unwrap();

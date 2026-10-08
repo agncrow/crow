@@ -168,6 +168,16 @@ steps on every push and must be green.
   names Rust reserves (`rust_names.rs`) is scoped: a body's names in that
   body, the top level's everywhere — the ClickHouse driver's local
   `where` had renamed every program's `where[…]`.
+- A `then` chain written as lines is desugared by the PARSER (`then_lines`
+  in parser.rs): `x = e` then `then f[…]` lines become statements over
+  hidden names (`x__then1 = e`, `x__then2 = f[x__then1, …]`, the last
+  step assigns `x`), because a variable may not change its kind and a
+  chain's does. A step that names `x` has `x` renamed to the hidden
+  name (`rust_names::rename_expr`, spans included); one that does not
+  gets the value as its first argument. Nothing below the parser knows a
+  chain exists; the formatter is line-based, so it keeps the lines. The
+  installed `crow` is the OLD binary: probe a parser change with
+  `./target/release/crow`, or the probe tests nothing.
 - A missing cell shows as `missing` in a frame's table and as `error:
   missing` in a column shown as a list (runtime `fmt_cell`, the frame's
   Display, `CrowDisplay for CrowColumn`); the interpreter's missing cell

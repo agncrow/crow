@@ -29,6 +29,8 @@ There is no `class`, `lambda`, `async`, `await`, `try`, `catch`,
 +  -  *  /  %  ^        arithmetic (/ floors between ints; ^ is power)
 .*  ./  .^              element-wise on tensors
 x then f[a]             pipe: f[x, a], chains left to right
+    then g[x]           a chain as lines: x = …, then one step a line;
+                        a step that names x reads it where it says
 `expr`                  interpolation (inside 'single-quoted strings')
 ---                     comment to end of line
 ```

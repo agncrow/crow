@@ -29,7 +29,7 @@ The `math` module is built in — no file needed. It provides tensor creation, e
 | `log2[t]` | Element-wise base-2 logarithm | [Math: tensors](../by-example/math.md) |
 | `log10[t]` | Element-wise base-10 logarithm | [Math: tensors](../by-example/math.md) |
 | `sqrt[t]` | Element-wise square root | [Math: tensors](../by-example/math.md) · [Numbers and conversion](../by-example/numbers.md) |
-| `abs[t]` | Element-wise absolute value | [Math: tensors](../by-example/math.md) · [Numbers and conversion](../by-example/numbers.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
+| `abs[t]` | Element-wise absolute value | [Frames: `use frame`](../by-example/frames.md) · [Math: tensors](../by-example/math.md) · [Numbers and conversion](../by-example/numbers.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
 | `sign[t]` | Element-wise sign (-1, 0, or 1) | [Math: tensors](../by-example/math.md) · [Web: responses and submodules](../by-example/web-more.md) |
 | `floor[t]` | Element-wise floor | [Math: tensors](../by-example/math.md) · [Numbers and conversion](../by-example/numbers.md) |
 | `ceil[t]` | Element-wise ceiling | [Numbers and conversion](../by-example/numbers.md) |
@@ -54,7 +54,7 @@ The `math` module is built in — no file needed. It provides tensor creation, e
 | `sum[t]` | Sum of all elements (float), added as numpy adds them — pairwise, so the error grows as log n and `sum[x]` is `numpy.sum(x)` to the last digit | [Frames: `use frame`](../by-example/frames.md) · [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) · [Importing with use](../ch08-01-importing.md) · [Aliased Imports](../ch08-02-aliased-imports.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
 | `mean[t]` | Mean of all elements (float): the sum over the count | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: tensors](../by-example/math.md) · [Importing with use](../ch08-01-importing.md) |
 | `min[t]` | Minimum element (float) | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Numbers and conversion](../by-example/numbers.md) |
-| `max[t]` | Maximum element (float) | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: tensors](../by-example/math.md) · [Neural-network building blocks: `use math.nn`](../by-example/nn.md) · [Numbers and conversion](../by-example/numbers.md) · [Testing](../ch09-00-testing.md) |
+| `max[t]` | Maximum element (float) | [Frames: `use frame`](../by-example/frames.md) · [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: tensors](../by-example/math.md) · [Neural-network building blocks: `use math.nn`](../by-example/nn.md) · [Numbers and conversion](../by-example/numbers.md) · [Testing](../ch09-00-testing.md) |
 | `prod[t]` | Product of all elements (float) | [Math: reductions and linear algebra](../by-example/math-linalg.md) |
 | `argmax[t]` | Index of maximum element (int) | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: tensors](../by-example/math.md) |
 | `argmin[t]` | Index of minimum element (int) | [Math: reductions and linear algebra](../by-example/math-linalg.md) |

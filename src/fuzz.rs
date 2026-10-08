@@ -442,10 +442,28 @@ impl<'r> Case<'r> {
     /// A statement: a binding, a log, a branch, or a bounded loop.
     fn stmt(&mut self, budget: usize) {
         let pad = self.indent();
-        match self.rng.below(if budget > 0 { 26 } else { 3 }) {
+        match self.rng.below(if budget > 0 { 27 } else { 3 }) {
             // a table in a database of the program's own (SQLite in memory):
             // made, filled — a row with NULLs — and queried, its typed cells
             // read, a column walked, a missing cell's .ok
+            // a chain of `then` lines (spec, Then Chaining): the value first
+            // where a step is a call, where the step says when it names the
+            // variable; the kind changes along the chain
+            26 => {
+                let (v, w) = (format!("tc{}", self.lines.len()), format!("nc{}", self.lines.len()));
+                let (t, f) = (self.leaf(Kind::Text), self.leaf(Kind::Float));
+                self.lines.push(format!("{}{} = {}", pad, v, t));
+                self.lines.push(format!("{}    then upper", pad));
+                self.lines.push(format!("{}    then split[' ']", pad));
+                self.lines.push(format!("{}    then join['-']", pad));
+                self.lines.push(format!("{}    then len[{}] + 1", pad, v));
+                self.lines.push(format!("{}log[{}]", pad, v));
+                self.lines.push(format!("{}{} = {}", pad, w, f));
+                self.lines.push(format!("{}    then abs", pad));
+                self.lines.push(format!("{}    then {} * 2.0 + 1.0", pad, w));
+                self.lines.push(format!("{}    then fmt[{}, decimals = 2]", pad, w));
+                self.lines.push(format!("{}log[{}]", pad, w));
+            }
             25 => {
                 let (b, t, r) = (format!("b{}", self.lines.len()), format!("t{}_{}", self.tag, self.lines.len()), format!("rs{}", self.lines.len()));
                 let (c, vol) = (self.leaf(Kind::Float), 1 + self.rng.below(200));

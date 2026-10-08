@@ -442,6 +442,18 @@ Since all builtins are immutable and return new values, `then` works with every 
 nums = nums then sort then reverse then slice[0, 3]
 ```
 
+**A chain as lines.** An assignment's chain may be written one step a line, each line starting with `then`, indented under the assignment. A step that is a call takes the value so far as its first argument, as above. A step that names the variable being assigned reads the value so far where it says, as often as it says, so a step may be any expression over it, and the value's kind may change along the way:
+
+```
+pr = frame.new[node = keys[m], value = values[m]]
+    then join[pr, table, 'node']
+    then max[abs[pr.value - pr.pagerank]]
+```
+
+`pr` is the frame through the join and the number at the end. Each step is a statement of its own — a refusal names the step's line, and a step whose value failed hands the failure on, as a call of a failed value does (`n = '42'` then `int` then `n + 1` is `43`; from `'x'` it is the error, held by `n`). The lines belong to an assignment: a `then` line under anything else, or under a loop used as a value, is refused before the program runs, in both modes. Style: name a value you use across lines or want to explain, nest a value used once as a first argument, and write `then` lines for two or more steps.
+
+**Design Note: a chain's steps name the variable.** Considered: a word for the value flowing through — `it`, `self` — as Kotlin's scope functions and magrittr's `.` have (rejected: a keyword on every line of every chain); the dot form, `x.f[a]` for `f[x, a]` (rejected: a second way to write every call, and the dot already reads a field — a frame's `ok` column is unreachable by dot today, and every function name would join it); a pipe symbol (rejected: the shift key, and the same second way); a step continued by indentation alone (rejected: indentation would mean a body under `for` and a step under a value); bare column names inside a step over a frame, as pandas's `eval` reads them (rejected: where a name came from would go unsaid, and a variable of a column's name would collide); a dotted statement that replaces its receiver, `pr.join[…]` (rejected: a statement that changes a variable without `=`, the confusion `push` as a statement had). **Decision (Vijay, 2026-10-08):** the variable being assigned names the value so far, and a step that does not name it is a call that takes it first. One rule, read either way, and a reader can expand the chain into `pr = …` lines knowing nothing more. The parser does exactly that, each step assigned to a hidden name so the kind may change, which is why nothing below the parser — the lowering, the IR, either backend — knows a chain exists.
+
 
 ## 5. Control Flow
 
