@@ -82,6 +82,14 @@ pub fn map_literal_pairs(e: &Expr) -> Option<Vec<(String, Expr)>> {
     }
 }
 
+/// The module a qualified callee names (`frame.new` → `frame`).
+fn module_of(object: &Expr) -> String {
+    match object {
+        Expr::Ident(m) => m.clone(),
+        _ => String::new(),
+    }
+}
+
 /// `chart[..., seek = handler]` after lowering: twelve positional args with
 /// the handler's name in the last slot. Every pass that discovers event
 /// handlers asks this so the seek target counts as one.
@@ -851,6 +859,15 @@ impl Lowerer {
                 let args: Vec<Expr> = args.iter().map(|a| self.lower_expr(a)).collect::<Result<_, _>>()?;
                 let has_named = args.iter().any(|a| matches!(a, Expr::Named { .. }));
                 let callee_name = if let Expr::Ident(n) = &callee { Some(n.clone()) } else { None };
+                // `frame.new[k = v, …]`: a frame written down, its columns
+                // named — the `with` chain over the empty frame both backends
+                // already hold, typed column by column (spec, frame: new);
+                // under an alias (`use frame as f`) the chain is the alias's
+                if let Expr::FieldAccess { object, field } = &callee {
+                    if field == "new" && !args.is_empty() && matches!(object.as_ref(), Expr::Ident(_)) && self.fns.get(&format!("{}_new", module_of(object))).is_none() {
+                        return self.lower_frame_literal(object.as_ref().clone(), args);
+                    }
+                }
                 // Module-prefixed ui elements (ui.input[...]) are ui elements too
                 let ui_name = match &callee {
                     Expr::Ident(n) => Some(n.clone()),
@@ -1365,6 +1382,24 @@ impl Lowerer {
     }
 
     /// map[...] — the variadic named constructor. Desugars to a set[] chain.
+    /// `frame.new[sym = ['A', 'B'], qty = [1, 2]]` is
+    /// `with[with[frame.new[], 'sym', [...]], 'qty', [...]]`: each named
+    /// argument a column, in order, its values a list, a tensor or one
+    /// value repeated — what `with` takes.
+    fn lower_frame_literal(&self, module: Expr, args: Vec<Expr>) -> Result<Expr, String> {
+        let qualified = |field: &str| Box::new(Expr::FieldAccess { object: Box::new(module.clone()), field: field.to_string() });
+        let mut result = Expr::Call { callee: qualified("new"), args: vec![] };
+        for a in args {
+            match a {
+                Expr::Named { name, value } => {
+                    result = Expr::Call { callee: qualified("with"), args: vec![result, Expr::Str(name), *value] };
+                }
+                _ => return Err(self.err("frame.new[] takes its columns as named arguments: frame.new[sym = ['A', 'B'], qty = [1, 2]]".to_string())),
+            }
+        }
+        Ok(result)
+    }
+
     fn lower_map_call(&self, args: Vec<Expr>) -> Result<Expr, String> {
         let empty = Expr::Call {
             callee: Box::new(Expr::Ident("map".to_string())),
@@ -1402,6 +1437,26 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().expect("parse failed");
         lower_program(&stmts)
+    }
+
+    /// `frame.new[k = v, …]` is the `with` chain over the empty frame, in
+    /// order, under the module name the call used — an alias's too — and
+    /// a positional argument is refused with the form.
+    #[test]
+    fn a_frame_written_down_is_the_with_chain() {
+        let out = lower_src("use frame\ndf = frame.new[a = [1, 2], k = ['x', 'y']]\n").expect("lowers");
+        let text = format!("{:?}", out);
+        assert!(!has_named(&out), "{}", text);
+        assert!(text.contains("field: \"with\""), "{}", text);
+        assert!(text.contains("Str(\"a\")") && text.contains("Str(\"k\")"), "{}", text);
+        let a = text.find("Str(\"a\")").unwrap_or(0);
+        let k = text.find("Str(\"k\")").unwrap_or(0);
+        assert!(a < k, "the columns keep their order: {}", text);
+        let aliased = lower_src("use frame as f\ndf = f.new[a = [1]]\n").expect("lowers");
+        assert!(format!("{:?}", aliased).contains("Ident(\"f\"), field: \"with\""), "{:?}", aliased);
+        let err = lower_src("use frame\ndf = frame.new[[1, 2]]\n").unwrap_err();
+        assert!(err.contains("frame.new[] takes its columns as named arguments"), "{}", err);
+        assert!(lower_src("use frame\ndf = frame.new[]\n").is_ok());
     }
 
     fn has_named(stmts: &[Stmt]) -> bool {

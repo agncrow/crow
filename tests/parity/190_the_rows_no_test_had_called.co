@@ -32,7 +32,7 @@ s = sparse[eye[3]]
 log[dense[s]]
 log[dense[eye[2]]]
 
-df = with[with[frame.new[], 'a', [1.0, 2.0]], 'b', [3.0, 4.0]]
+df = frame.new[a = [1.0, 2.0], b = [3.0, 4.0]]
 log[tensor[df]]
 log[tensor[df, ['b']]]
 n = with[frame.new[], 'note', ['  ok ', ' late']]

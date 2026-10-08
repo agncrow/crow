@@ -24,7 +24,7 @@ by_price = sort[df, 'price', desc = true]
 log['bench: sort `now[] - t0`']
 log[len[by_price] eq len[df]]
 
-sectors = with[with[frame.new[], 'symbol', ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'META', 'GOOG', 'TSLA', 'NFLX']], 'sector', ['tech', 'tech', 'chips', 'retail', 'social', 'search', 'autos', 'media']]
+sectors = frame.new[symbol = ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'META', 'GOOG', 'TSLA', 'NFLX'], sector = ['tech', 'tech', 'chips', 'retail', 'social', 'search', 'autos', 'media']]
 t0 = now[]
 joined = join[df, sectors, 'symbol']
 log['bench: join `now[] - t0`']

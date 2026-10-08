@@ -7,10 +7,10 @@
 --- or a tensor had not built.)
 use frame
 
-a = with[with[frame.new[], 'symbol', ['A', 'B']], 'x', [1.0, 2.0]]
+a = frame.new[symbol = ['A', 'B'], x = [1.0, 2.0]]
 a = with[a, 'n', [1, 2]]
 a = with[a, 's', ['p', 'q']]
-r = with[with[frame.new[], 'symbol', ['A']], 't', ['hi']]
+r = frame.new[symbol = ['A'], t = ['hi']]
 r = with[r, 'y', [1.0]]
 j = join[a, r, 'symbol', 'left']
 log[a.x eq a.x]

@@ -5,7 +5,7 @@
 use web, ui, frame
 
 view render[]
-    prices = with[with[frame.new[], 'sym', ['b', 'A', 'c', 'a']], 'px', [2, 10, 7, 2]]
+    prices = frame.new[sym = ['b', 'A', 'c', 'a'], px = [2, 10, 7, 2]]
     return stack[
         table[prices, sort = true, page = 2]
     ]

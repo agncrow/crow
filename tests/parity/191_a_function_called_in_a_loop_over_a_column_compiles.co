@@ -15,7 +15,7 @@ fn half[x]
 fn label[t, x]
     return '`t`:`x`'
 
-df = with[with[frame.new[], 'text', ['Ab cd', 'ef gh', 'ij']], 'px', [1.5, 2.0, 7.0]]
+df = frame.new[text = ['Ab cd', 'ef gh', 'ij'], px = [1.5, 2.0, 7.0]]
 shouted = for t in df.text
     shout[t]
 log[shouted]

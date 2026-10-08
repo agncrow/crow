@@ -317,7 +317,7 @@ impl<'r> Case<'r> {
                     format!("filter[{}, {}.k eq 'x']", df, df)
                 }
                 2 => format!("sort[{}, 'b']", self.expr(Kind::Frame, d)),
-                3 => format!("sort[{}, 'a', false]", self.expr(Kind::Frame, d)),
+                3 => format!("sort[{}, 'a', desc = true]", self.expr(Kind::Frame, d)),
                 4 => format!("head[{}, 2]", self.expr(Kind::Frame, d)),
                 5 => format!("tail[{}, 3]", self.expr(Kind::Frame, d)),
                 _ => {
@@ -421,8 +421,8 @@ impl<'r> Case<'r> {
             Kind::Frame => self
                 .rng
                 .pick(&[
-                    "with[with[with[with[frame.new[], 'k', ['x', 'y', 'x', 'y']], 'g', ['p', 'p', 'q', 'q']], 'a', [1, 2, 3, 4]], 'b', [0.5, 1.5, 2.5, 3.5]]",
-                    "with[with[with[with[frame.new[], 'k', ['y', 'y', 'x', 'x']], 'g', ['q', 'p', 'q', 'p']], 'a', [4, 3, 2, 1]], 'b', [2.0, 2.0, 1.0, 0.0]]",
+                    "frame.new[k = ['x', 'y', 'x', 'y'], g = ['p', 'p', 'q', 'q'], a = [1, 2, 3, 4], b = [0.5, 1.5, 2.5, 3.5]]",
+                    "frame.new[k = ['y', 'y', 'x', 'x'], g = ['q', 'p', 'q', 'p'], a = [4, 3, 2, 1], b = [2.0, 2.0, 1.0, 0.0]]",
                 ])
                 .to_string(),
         }
@@ -703,7 +703,7 @@ impl<'r> Case<'r> {
                 let name = self.fresh(Kind::Ints);
                 self.lines.push(format!("{}{} = {}", pad, name, list));
                 self.lines.push(format!("{}if len[{}] gt 0", pad, name));
-                self.lines.push(format!("{}    log[{}[0] + {}[len[{}] - 1]]", pad, name, name, name));
+                self.lines.push(format!("{}    log[{}[0] + {}[-1]]", pad, name, name));
             }
             7 => {
                 let w = self.fresh(Kind::Int);
@@ -861,7 +861,7 @@ pub fn page(seed: u64, port: u16) -> (String, Vec<serde_json::Value>) {
     out.push_str(&format!("count = {}\nname = {}\nprice = {}\non = {}\n\n", count, name, price, on));
     if with_source {
         let (q1, q2) = (rng.below(200), format!("{}.5", rng.below(100)));
-        out.push_str(&format!("fn rows[req]\n    df = with[frame.new[], 'sym', ['AAPL', 'msft']]\n    df = with[df, 'qty', [{}, {}]]\n    return json[df]\n\ndata = fetch['/api/rows']\n\n", q1, q2));
+        out.push_str(&format!("fn rows[req]\n    return json[frame.new[sym = ['AAPL', 'msft'], qty = [{}, {}]]]\n\ndata = fetch['/api/rows']\n\n", q1, q2));
     }
     out.push_str(&format!("derive total\n    return count * 2 + {}\n\n", rng.below(5)));
     let renamed = *rng.pick(&["'bob'", "'eve'", "'x y'"]);
@@ -1063,7 +1063,7 @@ mod tests {
         // walked and indexed, frames filtered by their own columns, a
         // function handed as a value
         assert!(all.contains("for r") && all.contains("transpose["), "no matrix walked or multiplied");
-        assert!(all.contains("filter[") && all.contains("frame.new[]"), "no frame built and filtered");
+        assert!(all.contains("filter[") && all.contains("frame.new["), "no frame built and filtered");
         assert!(all.contains("relay[h") || all.contains("ap[h"), "no function handed as a value");
         // and the kinds the coverage of 2026-10-07 found no suite reached:
         // moments, values that can fail read where known good, parsed

@@ -10,7 +10,7 @@
 --- so a stop inside `x` never came).
 use math, frame
 
-df = with[with[with[frame.new[], 'k', ['x', 'y', 'x']], 'a', [1, 2, 3]], 'b', [0.5, 1.5, 2.5]]
+df = frame.new[k = ['x', 'y', 'x'], a = [1, 2, 3], b = [0.5, 1.5, 2.5]]
 log[len[df.k]]
 log[len[df.a]]
 log[len[sort[df, 'b'].k]]

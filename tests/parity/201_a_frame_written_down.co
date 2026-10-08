@@ -1,0 +1,17 @@
+--- A frame written down: `frame.new[sym = […], qty = […]]`, each named
+--- argument a column, in order, its values a list, a tensor or one value
+--- repeated — the `with` chain over the empty frame, which both modes
+--- already held, typed column by column. (Only that chain could write a
+--- frame down: four columns were four nested calls.) Under an alias the
+--- chain is the alias's.
+use frame
+use frame as f
+
+df = frame.new[sym = ['AAPL', 'msft', 'nvda'], qty = [100, 50.5, 10], tag = 'x']
+log[df]
+log[df.qty[1] + 1]
+log[upper[df.sym[0]]]
+log[len[filter[df, df.qty gt 20]]]
+g = f.new[k = ['a', 'b'], n = [1, 2]]
+log[g.n]
+log[frame.new[]]

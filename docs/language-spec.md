@@ -2418,7 +2418,7 @@ Import with `use frame`. Column-oriented DataFrames for tabular data. See `docs/
 
 | Function | Description |
 |---|---|
-| `new[]` | The empty frame (`frame.new[]`, since `new` reads best qualified); add columns with `with` |
+| `new[]`, `new[col = values, ...]` | The empty frame (`frame.new[]`, since `new` reads best qualified), or a frame written down: each named argument a column, in order — `frame.new[sym = ['AAPL', 'MSFT'], qty = [100, 50.5]]` — its values a list, a tensor or one value repeated, as `with` takes them (it is `frame.new[sym = …, qty = …]`, typed column by column; until 2026-10-09 only that chain could write a frame down) |
 | `with[frame, col, values]` | A frame with one more (or replaced) column: `values` is an array, a tensor, or a scalar repeated for every row; the length must match the rows (error-value otherwise). Ints held as a tensor (`[1, 2]`) make a column of ints |
 | `load[path]` | Load a table → frame, in the format its extension names — CSV, JSON records (columns in name order), Parquet — from a file, a URL or an S3 object (error-value on failure; Files, URLs and S3). A CSV column of whole numbers is ints, of numbers floats, of `true`/`false` (or `True`/`FALSE`, as pandas writes them) bools, of ISO 8601 moments a moment column, anything else text; an empty cell is missing; a cell in quotes may hold a comma or a quote written twice (RFC 4180), though not a line break |
 | `save[frame, path]` | Write frame → a file or an S3 object, as CSV, JSON records or Parquet by its extension (CSV otherwise); a text cell holding a comma, a quote or a line break is written in quotes, as `load` reads it; a failure is an error value of kind `'frame'`, as `load`'s is (compiled, it had stopped the program) |

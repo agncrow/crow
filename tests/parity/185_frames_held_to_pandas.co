@@ -84,7 +84,7 @@ fn all_of[oks]
 --- what the file holds: columns, kinds, rows
 fn loading[t]
     oks = []
-    oks = push[oks, held['meta', with[with[frame.new[], 'column', t.columns], 'dtype', t.dtypes]]]
+    oks = push[oks, held['meta', frame.new[column = t.columns, dtype = t.dtypes]]]
     if len[t] eq 240
         log['rows: the same']
         oks = push[oks, true]

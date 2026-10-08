@@ -14,7 +14,7 @@ fn dearest[f]
     top = sort[f, 'px', desc = true]
     return top.sym[0]
 
-t = with[with[with[frame.new[], 'sym', ['AB', 'CD', 'EF']], 'px', [1.5, 2.5, 0.5]], 'qty', [2, 4, 8]]
+t = frame.new[sym = ['AB', 'CD', 'EF'], px = [1.5, 2.5, 0.5], qty = [2, 4, 8]]
 log[total[t]]
 log[dearest[t]]
 cheap = filter[t, t.px lt 2.0]

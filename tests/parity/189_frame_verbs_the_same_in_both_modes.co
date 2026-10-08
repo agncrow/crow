@@ -46,7 +46,7 @@ log[window[by_day, 'px', 'sum', span = 1, on = 'day']]
 log[window[by_day, 'px', 'count', span = 1.5, on = 'day', by = 'sym']]
 
 --- an as-of join takes the latest signal at or before, however the left is ordered
-sig = with[with[with[frame.new[], 'sym', ['AAPL', 'AAPL', 'MSFT']], 'at', [moment[1784035800.0], moment[1784086500.0], moment[1784040000.0]]], 'sig', [1, 2, 3]]
+sig = frame.new[sym = ['AAPL', 'AAPL', 'MSFT'], at = [moment[1784035800.0], moment[1784086500.0], moment[1784040000.0]], sig = [1, 2, 3]]
 a = join[t, sig, ['sym', 'at'], 'asof']
 log[a.columns]
 log[a.sig]
