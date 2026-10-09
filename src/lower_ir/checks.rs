@@ -1449,13 +1449,16 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// Whether the code being checked is a part's — a declaration or a
-    /// function the expansion prefixed with the part's path — and not the
-    /// entry's own. (A part's own mistakes are refused when it is validated
-    /// alone, under its own imports.)
-    fn in_part(&self) -> bool {
+    /// Whether the code being checked is read under imports of its own, not
+    /// the entry's: a part's — a declaration or a function the expansion
+    /// prefixed with the part's path — or a standard module's function,
+    /// inlined, which is read in the module's scope. (A part's own mistakes
+    /// are refused when it is validated alone, under its own imports; the
+    /// ClickHouse driver's `frame.new[]` had been refused as the entry's, in
+    /// an app whose parts alone import frame.)
+    fn under_own_imports(&self) -> bool {
         let of = |n: &str| crate::part_prefix_of_declaration(n).is_some();
-        self.v.decl.as_deref().is_some_and(of) || of(&self.current_fn)
+        self.v.decl.as_deref().is_some_and(of) || of(&self.current_fn) || crate::modules::is_crow_fn(&self.current_fn)
     }
 
     /// Whether a module's names reach this code only through a part's
@@ -1463,7 +1466,7 @@ impl<'a> Lowerer<'a> {
     /// entry's own code — then they are refused for the import, as with no
     /// import at all (spec, Modules: each file's imports are its own).
     pub(super) fn only_a_part_imports(&self, module: &str) -> bool {
-        !self.in_part() && crate::PART_ONLY_IMPORTS.with(|p| p.borrow().iter().any(|m| m == module))
+        !self.under_own_imports() && crate::PART_ONLY_IMPORTS.with(|p| p.borrow().iter().any(|m| m == module))
     }
 
     /// A function the program calls from a module it does not import: the

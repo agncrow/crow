@@ -842,11 +842,12 @@ impl Lowerer {
 
     /// Whether a name the program calls through is an import of the file
     /// whose code this is: in the entry's code a module only a part imports
-    /// is not imported; inside a part's function the part's own serves.
+    /// is not imported; inside a part's function the part's own serves, and
+    /// inside a standard module's, inlined, the module's.
     fn module_imported(&self, name: &str) -> bool {
         let Some(path) = self.imports.get(name) else { return false };
-        let in_part = crate::part_prefix_of_declaration(&self.current_fn).is_some();
-        in_part || !crate::PART_ONLY_IMPORTS.with(|p| p.borrow().iter().any(|m| m == path))
+        let own = crate::part_prefix_of_declaration(&self.current_fn).is_some() || crate::modules::is_crow_fn(&self.current_fn);
+        own || !crate::PART_ONLY_IMPORTS.with(|p| p.borrow().iter().any(|m| m == path))
     }
 
     fn lower_stmt(&mut self, stmt: &Stmt) -> Result<Stmt, String> {

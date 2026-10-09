@@ -6019,6 +6019,29 @@ mod module_parts_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A standard module written in Crow keeps its own imports inside its
+    /// functions: the ClickHouse driver's `frame.new[]`, reached through a
+    /// part, had been refused as the entry's — "frame.new[] is frame's: add
+    /// `use frame`" at the entry's call — in an app whose parts alone import
+    /// frame (finch)
+    #[test]
+    fn a_standard_modules_code_keeps_its_own_imports() {
+        let dir = std::env::temp_dir().join(format!("crow_parts_module_imports_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'parts'\n").unwrap();
+        std::fs::write(dir.join("lib/data.co"), "use db, frame\n\nfn count[url]\n    c = connect[url]\n    t = query[c, 'SELECT 1 AS n']\n    return len[t]\n").unwrap();
+        let stmts = build("use lib.data\n\nlog[data.count['clickhouse://localhost:9000/default']]\n").unwrap();
+        let mut visited = std::collections::HashSet::new();
+        let stmts = expand_module_imports_checked(&stmts, &dir, &mut visited).unwrap();
+        let lowered = lower::lower_program(&stmts).unwrap();
+        let inlined = |s: &ast::Stmt| matches!(s, ast::Stmt::FnDecl { name, .. } if crate::modules::crow_scope_of(name).is_some_and(|m| m.contains("clickhouse")));
+        assert!(lowered.iter().any(inlined), "the driver is inlined, its frame.new[] with it");
+        let checked = infer_and_validate(&lowered, false);
+        assert!(checked.is_ok(), "{:?}", checked.err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A part that does not parse is the program's refusal, named by the
     /// part's file and line (it had been dropped silently, and the entry
     /// told its name was undefined)
