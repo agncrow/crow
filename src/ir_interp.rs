@@ -71,6 +71,8 @@ pub(crate) type Names = std::hash::BuildHasherDefault<NameHasher>;
 /// chunk of items; the clone costs one reference per scope).
 type Scope = Arc<HashMap<String, CrowValue, Names>>;
 
+mod prepared;
+
 #[derive(Clone)]
 struct Frame {
     scopes: Vec<Scope>,
@@ -87,6 +89,12 @@ struct Frame {
     /// a parallel loop is a reference count every call of every thread
     /// writes, slower than the copy.
     fn_name: String,
+    /// A prepared body's locals (prepared.rs), each binding its slot,
+    /// decided before the function runs; empty for a frame the walker runs.
+    slots: Vec<CrowValue>,
+    /// While the walker runs an IR node of a prepared body: the names in
+    /// scope there, each to its slot.
+    env: Option<prepared::Env>,
 }
 
 #[derive(Clone)]
@@ -95,6 +103,9 @@ pub struct IrInterp {
     /// crow_runtime::stops::DEPTH).
     depth: usize,
     fns: HashMap<String, Arc<Fn>, Names>,
+    /// Each function's body prepared for the walker (prepared.rs), made on
+    /// its first call.
+    prepared: HashMap<String, Arc<prepared::Prepared>, Names>,
     derives: HashMap<String, Arc<Derive>>,
     structs: HashMap<String, Arc<crate::ir::StructDef>>,
     registry: ModuleRegistry,
@@ -456,10 +467,11 @@ impl IrInterp {
         IrInterp {
             depth: 0,
             fns: HashMap::default(),
+            prepared: HashMap::default(),
             derives: HashMap::new(),
             structs: HashMap::new(),
             registry: registry.clone(),
-            frames: vec![Frame { scopes: vec![Arc::new(HashMap::default())], locals: Vec::new(), marks: Vec::new(), fn_name: String::new() }],
+            frames: vec![Frame { scopes: vec![Arc::new(HashMap::default())], locals: Vec::new(), marks: Vec::new(), fn_name: String::new(), slots: Vec::new(), env: None }],
             scope_pool: Vec::new(),
             line: 0,
             file,
@@ -784,6 +796,12 @@ impl IrInterp {
         if let Some((_, v)) = frame.locals.iter().rev().find(|(n, _)| n == name) {
             return Some(v);
         }
+        // a prepared body's names, for the IR node the walker runs for it
+        if let Some(env) = &frame.env
+            && let Some(s) = env.get(name)
+        {
+            return frame.slots.get(*s as usize);
+        }
         for scope in frame.scopes.iter().rev() {
             // (a block that bound nothing is skipped without hashing)
             if scope.is_empty() {
@@ -800,6 +818,9 @@ impl IrInterp {
         let frame = self.frames.last_mut().unwrap();
         if let Some(at) = frame.locals.iter().rposition(|(n, _)| n == name) {
             return Some(&mut frame.locals[at].1);
+        }
+        if let Some(s) = frame.env.as_ref().and_then(|e| e.get(name).copied()) {
+            return frame.slots.get_mut(s as usize);
         }
         for scope in frame.scopes.iter_mut().rev() {
             if scope.is_empty() {
@@ -1722,7 +1743,13 @@ impl IrInterp {
     }
 
     fn walked_items(it: &CrowValue, iter: &Expr) -> Result<Vec<CrowValue>, String> {
-        if let (Value::NumArray(t), Ty::Tensor(e, dims)) = (&it.value, iter.ty().payload()) {
+        Self::walked_items_of(it, &iter.ty())
+    }
+
+    /// The items a loop walks, by the iterable's type: a tensor's rows or
+    /// numbers (ints where the tensor holds ints), else a value's items.
+    fn walked_items_of(it: &CrowValue, ty: &Ty) -> Result<Vec<CrowValue>, String> {
+        if let (Value::NumArray(t), Ty::Tensor(e, dims)) = (&it.value, ty.payload()) {
             return Ok(match Ty::tensor_item(e, dims) {
                 Ty::Tensor(..) => crow_runtime::core::walk_rows(t)?.into_iter().map(|r| CrowValue::ok(Value::NumArray(Box::new(r)))).collect(),
                 Ty::Int => crow_runtime::core::walk_numbers(t)?.into_iter().map(|v| CrowValue::ok(Value::Int(v as i64))).collect(),
@@ -2641,8 +2668,8 @@ impl IrInterp {
                 return Ok(CrowValue::markup(crate::harness::html_escape_text(&crow_web::core::response::failed_in_view(&bad.reason()))));
             }
         }
-        let mut scope = HashMap::with_capacity_and_hasher(f.params.len(), Names::default());
-        for ((p, pty), v) in f.params.iter().zip(vals) {
+        let mut args = Vec::with_capacity(vals.len());
+        for ((_, pty), v) in f.params.iter().zip(vals) {
             // an int handed to a float parameter is a float, where the call
             // is written (the lowering converts it) and where a function
             // value is called (`any`, `find`, `later`) alike
@@ -2650,7 +2677,7 @@ impl IrInterp {
                 (Ty::Float, Value::Int(n)) if v.is_ok() => CrowValue::ok(Value::Float(*n as f64)),
                 _ => v,
             };
-            scope.insert(p.clone(), v);
+            args.push(v);
         }
         // a recursive function's calls nest to the limit and no deeper, as
         // the compiled program's guard counts them; the stop names the
@@ -2668,8 +2695,28 @@ impl IrInterp {
         if is_view {
             self.in_view += 1;
         }
-        self.frames.push(Frame { scopes: vec![Arc::new(scope)], locals: Vec::new(), marks: Vec::new(), fn_name });
-        let r = self.exec_stmts(&f.body);
+        // the body prepared (prepared.rs): its locals in slots, its hot
+        // shapes run without the general dispatch; a traced run keeps the
+        // walker
+        let prepared = if self.tracing { None } else { Some(self.prepared_for(&f)) };
+        let r = match &prepared {
+            Some(p) => {
+                let mut slots = vec![CrowValue::done(); p.n_slots];
+                for (v, s) in args.into_iter().zip(p.params.iter()) {
+                    slots[*s as usize] = v;
+                }
+                self.frames.push(Frame { scopes: Vec::new(), locals: Vec::new(), marks: Vec::new(), fn_name, slots, env: None });
+                self.pexec(&p.body)
+            }
+            None => {
+                let mut scope = HashMap::with_capacity_and_hasher(f.params.len(), Names::default());
+                for ((p, _), v) in f.params.iter().zip(args) {
+                    scope.insert(p.clone(), v);
+                }
+                self.frames.push(Frame { scopes: vec![Arc::new(scope)], locals: Vec::new(), marks: Vec::new(), fn_name, slots: Vec::new(), env: None });
+                self.exec_stmts(&f.body)
+            }
+        };
         // a stop names the line in the body it happened on, not the call's
         let r = self.returned(r).map_err(|e| self.with_line(e));
         self.frames.pop();
@@ -2704,7 +2751,7 @@ impl IrInterp {
         let d = self.derives.get(name).cloned().ok_or_else(|| format!("unknown derivation '{}'", name))?;
         // the reader's line is still the line reading it
         let saved_line = self.line;
-        self.frames.push(Frame { scopes: vec![Arc::new(HashMap::default())], locals: Vec::new(), marks: Vec::new(), fn_name: name.to_string() });
+        self.frames.push(Frame { scopes: vec![Arc::new(HashMap::default())], locals: Vec::new(), marks: Vec::new(), fn_name: name.to_string(), slots: Vec::new(), env: None });
         let r = self.exec_stmts(&d.body);
         let r = self.returned(r).map_err(|e| self.with_line(e));
         self.frames.pop();

@@ -1,0 +1,108 @@
+--- A function's locals live in slots decided before it runs; the walker's
+--- scoping holds: a nested loop reusing a name shadows it and restores it,
+--- sibling blocks bind one name to two kinds, an in-place push grows the
+--- list where it lies, and an index, a length, a call, a return and a
+--- propagated failure behave as they always did. Both modes print the same.
+use math
+
+fn shadowed[n]
+    seen = 0
+    for i in range[n]
+        for i in range[3]
+            seen = seen + i
+        seen = seen + i * 100
+    return seen
+log[shadowed[2]]
+
+fn two_kinds[c]
+    if c
+        v = 'text'
+        log[v]
+    else
+        v = 7
+        log[v + 1]
+    return c
+log[two_kinds[true]]
+log[two_kinds[false]]
+
+fn loops[limit]
+    i = 0
+    hits = 0
+    while true
+        i = i + 1
+        if i % 2 eq 0
+            continue
+        if i gt limit
+            break
+        hits = hits + i
+    return hits
+log[loops[9]]
+
+fn first_big[xs, least]
+    for x in xs
+        if x gt least
+            return x
+    return -1
+log[first_big[[3, 8, 12], 5]]
+log[first_big[[3, 8, 12], 50]]
+
+fn grow[n]
+    xs = []
+    for i in range[n]
+        xs = push[xs, i * i]
+    total = 0
+    for i in range[len[xs]]
+        total = total + xs[i]
+    last = xs[len[xs] - 1]
+    return [len[xs], total, last]
+log[grow[5]]
+
+fn fib[n]
+    if n lt 2
+        return n
+    return fib[n - 1] + fib[n - 2]
+log[fib[15]]
+
+fn parse_sum[a, b]
+    x = int[a]
+    y = int[b]
+    return x + y
+good = parse_sum['20', '22']
+log[good]
+bad = parse_sum['20', 'x']
+log[bad.ok]
+log[bad.reason]
+
+fn kinds[t]
+    words = ['a', 'bb', 'ccc']
+    m = map[one = 1, two = 2]
+    by_int = map[[10, 20], ['ten', 'twenty']]
+    nums = [1.5, 2.5, 3.5]
+    log[words[1]]
+    log[len[words]]
+    log[len[t]]
+    log[t[1]]
+    log[m['two']]
+    log[by_int[20]]
+    log[nums[2]]
+    log[len[nums]]
+    return sum[nums]
+log[kinds['hey']]
+
+fn fails[xs, at]
+    cell = xs[at]
+    return cell
+log[fails[[1, 2, 3], 1]]
+
+fn texts[n]
+    s = ''
+    for i in range[n]
+        s = '`s`ab'
+    for k in keys[map[a = 1, b = 2]]
+        s = '`s``k`'
+    log[s]
+    total = 0.0
+    for v in [1.0, 2.0, 3.0]
+        total = total + v * 0.5
+    return total
+log[texts[2]]

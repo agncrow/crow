@@ -188,7 +188,21 @@ steps on every push and must be green.
   blank). And time the right thing: `crow run file.co` is a DEV build by
   design (the runtime crates optimized, the program crate not — the spec
   says so), 30× slower than the binary `crow build` makes; the compiled
-  number is `crow build`, then the binary.
+  number is `crow build`, then the binary; the interpreter's number is CPU
+  time (`/usr/bin/time -p crow run -i …`): wall time under a running suite
+  was 3× off.
+- A function's body runs on its PREPARED form (`src/ir_interp/prepared.rs`):
+  locals in slots decided before the call, the hot shapes mirrored
+  (`PStmt`/`PExpr`), everything else an `Ir` node the walker runs with
+  `Frame::env` set so names resolve to the slots. A new arm in the walker's
+  `eval`/`exec_stmt` that gives a SHAPE its own meaning (as `assert`'s
+  message, a bound input, `len` in place and an in-place `push` have) must
+  be sent to `Ir` by the mirror too (`Prep::expr`'s `own` list,
+  `moves_first`), or the prepared body runs the general path for it and
+  the modes drift. The slots follow the walker's scoping (`declare` reuses
+  a name bound in the current block, `fresh` is a loop variable's): a
+  probe showed `for i` nested in `for i` restores the outer `i` after the
+  inner loop — one slot per NAME would have clobbered it.
 - A map's type carries its keys' kind: `Ty::Map(Key, value)` with `Key::{Text,
   Int, Open}` (open = empty until a first key). Where a map's type is REBUILT
   from another (settle, held_as, `as_inferred`, the emitter's inner types),

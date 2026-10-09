@@ -232,6 +232,20 @@ takes the value out of its slot; everything else clones, and clones of
 tensors, frames and strings are pointer bumps. There is no dynamic
 dispatch on the shape of a value: the IR said the shape.
 
+A function's body runs *prepared* (`ir_interp/prepared.rs`, since
+2026-10-08): on its first call the body is walked once, every binding
+given a slot by the walker's own scoping (a `let` binds in its block, a
+loop variable is a new binding of the loop's block), and the hot shapes
+— an assignment, `xs[i] = v`, a branch, a `while`, a `for` over a range
+or a list, a return, a local, a constant, an operator, `xs[i]`,
+`len[xs]`, a call — mirrored over those slots, so a read is an index
+into the frame and two ints or an int index are read where they lie.
+Everything else stays the IR node it is and the walker runs it, finding
+the names in scope at that point through the frame's slot table; the
+main frame, a derivation and a traced run are the walker's throughout.
+The IR itself carries no slots: adding one to `Local` would reach every
+match over `Expr` in the compiler for a fact only the interpreter uses.
+
 ## 6. The Rust backend (`crow run`, `crow build`)
 
 Types map one to one: `Int`→`i64`, `List(Str)`→`Vec<String>`,
