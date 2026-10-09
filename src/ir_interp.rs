@@ -74,6 +74,14 @@ type Scope = Arc<HashMap<String, CrowValue, Names>>;
 #[derive(Clone)]
 struct Frame {
     scopes: Vec<Scope>,
+    /// A function frame's block bindings, flat: a name bound in a block is
+    /// pushed, the block's end truncates to its mark, and a lookup scans a
+    /// handful of short names from the end — a scope per block had been a
+    /// hash map, and a lookup a hash per block of the chain (the main
+    /// frame keeps its maps: its first scope is the facts, shared with the
+    /// sessions until written).
+    locals: Vec<(String, CrowValue)>,
+    marks: Vec<usize>,
     /// The function the frame runs, named as it was called (a trace and a
     /// refusal say it). Its own copy: a name shared between the threads of
     /// a parallel loop is a reference count every call of every thread
@@ -451,7 +459,7 @@ impl IrInterp {
             derives: HashMap::new(),
             structs: HashMap::new(),
             registry: registry.clone(),
-            frames: vec![Frame { scopes: vec![Arc::new(HashMap::default())], fn_name: String::new() }],
+            frames: vec![Frame { scopes: vec![Arc::new(HashMap::default())], locals: Vec::new(), marks: Vec::new(), fn_name: String::new() }],
             scope_pool: Vec::new(),
             line: 0,
             file,
@@ -723,12 +731,42 @@ impl IrInterp {
     /// A block's scope: one from the pool where a block left one behind
     /// (a loop's body entered a scope every round, and each round had
     /// allocated it), else a new one.
+    /// The end of a loop's round: what the round bound is dropped, the
+    /// loop's variable kept (the first binding of the loop's scope).
+    fn end_round(&mut self, var: &str) {
+        if self.in_fn_frame() {
+            let frame = self.frames.last_mut().unwrap();
+            let mark = frame.marks.last().copied().unwrap_or(0);
+            frame.locals.truncate(mark + 1);
+            return;
+        }
+        Arc::make_mut(self.frames.last_mut().unwrap().scopes.last_mut().unwrap()).retain(|k, _| k == var);
+    }
+
+    /// Inside a function (a view, a handler): the frame's flat bindings;
+    /// the main frame keeps its maps.
+    fn in_fn_frame(&self) -> bool {
+        self.frames.len() > 1
+    }
+
     fn push_scope(&mut self) {
+        if self.in_fn_frame() {
+            let frame = self.frames.last_mut().unwrap();
+            frame.marks.push(frame.locals.len());
+            return;
+        }
         let scope = self.scope_pool.pop().unwrap_or_else(|| Arc::new(HashMap::default()));
         self.frames.last_mut().unwrap().scopes.push(scope);
     }
 
     fn pop_scope(&mut self) {
+        if self.in_fn_frame() {
+            let frame = self.frames.last_mut().unwrap();
+            if let Some(mark) = frame.marks.pop() {
+                frame.locals.truncate(mark);
+            }
+            return;
+        }
         if let Some(mut scope) = self.frames.last_mut().unwrap().scopes.pop() {
             // (a scope nothing else holds goes back to the pool, emptied
             // but keeping its table)
@@ -743,6 +781,9 @@ impl IrInterp {
 
     fn lookup(&self, name: &str) -> Option<&CrowValue> {
         let frame = self.frames.last().unwrap();
+        if let Some((_, v)) = frame.locals.iter().rev().find(|(n, _)| n == name) {
+            return Some(v);
+        }
         for scope in frame.scopes.iter().rev() {
             // (a block that bound nothing is skipped without hashing)
             if scope.is_empty() {
@@ -757,6 +798,9 @@ impl IrInterp {
 
     fn slot(&mut self, name: &str) -> Option<&mut CrowValue> {
         let frame = self.frames.last_mut().unwrap();
+        if let Some(at) = frame.locals.iter().rposition(|(n, _)| n == name) {
+            return Some(&mut frame.locals[at].1);
+        }
         for scope in frame.scopes.iter_mut().rev() {
             if scope.is_empty() {
                 continue;
@@ -769,6 +813,18 @@ impl IrInterp {
     }
 
     fn bind(&mut self, name: &str, v: CrowValue) {
+        if self.in_fn_frame() {
+            let frame = self.frames.last_mut().unwrap();
+            // (a name bound again in the same block — a loop's variable each
+            // round — keeps its place and its key)
+            let since = frame.marks.last().copied().unwrap_or(0);
+            if let Some(at) = frame.locals[since..].iter().rposition(|(n, _)| n == name) {
+                frame.locals[since + at].1 = v;
+            } else {
+                frame.locals.push((name.to_string(), v));
+            }
+            return;
+        }
         let scope = Arc::make_mut(self.frames.last_mut().unwrap().scopes.last_mut().unwrap());
         // (a name bound again — a loop's variable each round — keeps its key)
         if let Some(slot) = scope.get_mut(name) {
@@ -957,7 +1013,7 @@ impl IrInterp {
                     }
                     self.bind(var, item);
                     let r = self.exec_stmts(body);
-                    Arc::make_mut(self.frames.last_mut().unwrap().scopes.last_mut().unwrap()).retain(|k, _| k == var);
+                    self.end_round(var);
                     match r {
                         Err(e) => {
                             self.pop_scope();
@@ -1233,7 +1289,33 @@ impl IrInterp {
             Expr::Binary { op, l, r, .. } => {
                 let lv = self.eval(l)?;
                 let rv = self.eval(r)?;
-                crate::ops::binop(&lv, &binop_of(op)?, &rv)?
+                let bop = binop_of(op)?;
+                // two ints: computed as the compiled program computes them
+                // (crow_runtime::stops, a stop on overflow), without the
+                // general dispatch — a tight loop's arithmetic and compares
+                if lv.is_ok()
+                    && rv.is_ok()
+                    && let (Value::Int(a), Value::Int(b)) = (&lv.value, &rv.value)
+                {
+                    let (a, b) = (*a, *b);
+                    let fast = match bop {
+                        BinOp::Add => Some(Value::Int(crow_runtime::stops::add(a, b)?)),
+                        BinOp::Sub => Some(Value::Int(crow_runtime::stops::sub(a, b)?)),
+                        BinOp::Mul => Some(Value::Int(crow_runtime::stops::mul(a, b)?)),
+                        BinOp::Mod => Some(Value::Int(crow_runtime::stops::rem(a, b)?)),
+                        BinOp::Eq => Some(Value::Bool(a == b)),
+                        BinOp::Ne => Some(Value::Bool(a != b)),
+                        BinOp::Gt => Some(Value::Bool(a > b)),
+                        BinOp::Lt => Some(Value::Bool(a < b)),
+                        BinOp::Gte => Some(Value::Bool(a >= b)),
+                        BinOp::Lte => Some(Value::Bool(a <= b)),
+                        _ => None,
+                    };
+                    if let Some(v) = fast {
+                        return Ok(CrowValue::ok(v));
+                    }
+                }
+                crate::ops::binop(&lv, &bop, &rv)?
             }
             Expr::Unary { op, expr, .. } => {
                 let v = self.eval(expr)?;
@@ -2526,7 +2608,7 @@ impl IrInterp {
         if is_view {
             self.in_view += 1;
         }
-        self.frames.push(Frame { scopes: vec![Arc::new(scope)], fn_name });
+        self.frames.push(Frame { scopes: vec![Arc::new(scope)], locals: Vec::new(), marks: Vec::new(), fn_name });
         let r = self.exec_stmts(&f.body);
         // a stop names the line in the body it happened on, not the call's
         let r = self.returned(r).map_err(|e| self.with_line(e));
@@ -2562,7 +2644,7 @@ impl IrInterp {
         let d = self.derives.get(name).cloned().ok_or_else(|| format!("unknown derivation '{}'", name))?;
         // the reader's line is still the line reading it
         let saved_line = self.line;
-        self.frames.push(Frame { scopes: vec![Arc::new(HashMap::default())], fn_name: name.to_string() });
+        self.frames.push(Frame { scopes: vec![Arc::new(HashMap::default())], locals: Vec::new(), marks: Vec::new(), fn_name: name.to_string() });
         let r = self.exec_stmts(&d.body);
         let r = self.returned(r).map_err(|e| self.with_line(e));
         self.frames.pop();
@@ -3235,6 +3317,25 @@ fn style_tokens(m: &std::collections::BTreeMap<String, CrowValue>) -> CrowValue 
 }
 
 fn binop_of(op: &str) -> Result<BinOp, String> {
+    // (the common operators by length and first bytes: the chain of text
+    // compares had shown in the interpreter's profile)
+    let b = op.as_bytes();
+    match (b.len(), b.first().copied(), b.get(1).copied()) {
+        (3, Some(b'a'), Some(b'd')) => return Ok(BinOp::Add),
+        (3, Some(b's'), _) => return Ok(BinOp::Sub),
+        (3, Some(b'm'), Some(b'u')) => return Ok(BinOp::Mul),
+        (3, Some(b'd'), _) => return Ok(BinOp::Div),
+        (3, Some(b'm'), Some(b'o')) => return Ok(BinOp::Mod),
+        (2, Some(b'e'), _) => return Ok(BinOp::Eq),
+        (2, Some(b'n'), _) => return Ok(BinOp::Ne),
+        (2, Some(b'g'), _) => return Ok(BinOp::Gt),
+        (2, Some(b'l'), _) => return Ok(BinOp::Lt),
+        (3, Some(b'g'), _) => return Ok(BinOp::Gte),
+        (3, Some(b'l'), _) => return Ok(BinOp::Lte),
+        (3, Some(b'a'), Some(b'n')) => return Ok(BinOp::And),
+        (2, Some(b'o'), _) => return Ok(BinOp::Or),
+        _ => {}
+    }
     Ok(match op {
         "add" => BinOp::Add,
         "sub" => BinOp::Sub,
