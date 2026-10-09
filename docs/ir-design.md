@@ -248,7 +248,16 @@ instruction for each of the first program's at the same position; an instruction
 form runs as the boxed one with its typed registers boxed around it, and a
 value a typed register cannot hold (a dual number under `grad`, an item
 that is no plain int) hands the run over to the boxed program at the same
-position. Everything else stays the IR node it is and the walker runs it
+position. A call whose arguments and answer are ints and floats is a typed
+instruction too: a callee whose typed program runs on bare registers alone
+— int and float parameters, only instructions over bare registers, its
+answer returned bare — gets its arguments in a bare register file of its
+own and builds no value at all; any other callee gets them boxed. A
+prepared function is a handle on its shared body; a call clones the handle
+it runs, so each chunk of a parallel loop gets handles of its own on the
+bodies it reaches, and no reference count is written by two threads (one
+shared count had made sixteen threads run no faster than one).
+Everything else stays the IR node it is and the walker runs it
 over the lent registers, finding names through the frame's slot table;
 the main frame, a derivation and a traced run are the walker's throughout.
 The IR itself carries no registers: adding one to `Local` would reach
@@ -262,7 +271,12 @@ Types map one to one: `Int`→`i64`, `List(Str)`→`Vec<String>`,
 table today's `to_rust_type` already has. Expressions print directly;
 `Move(x)` prints `x`, `Local(x)` of a non-copy type prints `x.clone()`.
 The backend has no `infer_expr` and no `if name == "..."` chain: it
-has the runtime table and the printing of each node kind. The
+has the runtime table and the printing of each node kind. One shape is
+printed leaner than its type (`emit_rs/vectors.rs`): a function's local
+tensor of one axis that the body only reads and sets by index and
+measures — or uses as a value outside every loop — is a plain `Vec<f64>`,
+made from the tensor where the local is made and made back where it is
+used as a value, so a loop's `v[i] = v[i] - dt * a` is one store. The
 generated crate keeps its shape (`.crow_build`, the runtime crates by
 path, `--release` for `crow build`), and the warm-up rule in the
 benchmark stays.

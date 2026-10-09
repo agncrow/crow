@@ -126,6 +126,18 @@ impl Emitter {
             }
             self.declare(p, ty);
         }
+        // the vectors the body only reads and writes by index, kept plain
+        // (vectors.rs); a parameter's is made as the body starts
+        let saved_vecs = std::mem::take(&mut self.plain_vecs);
+        if !(is_reactive_render || is_reactive_handler || is_live_render || is_live_handle || is_component_view || self.emitting_dual || self.emitting_traced) {
+            self.plain_vecs = vectors::plain_vectors(f);
+            for (p, _) in &f.params {
+                if self.plain_vecs.contains(p) {
+                    self.needs_crow_runtime = true;
+                    self.line(&format!("let mut {p}: Vec<f64> = {p}.to_vec();"));
+                }
+            }
+        }
 
         self.view_mark = is_reactive_render && is_component_view && !self.derive_fns.contains(&name);
         if self.view_mark {
@@ -205,6 +217,7 @@ impl Emitter {
         self.returns_unit = unit;
         self.cur_fn = cur;
         self.view_mark = mark;
+        self.plain_vecs = saved_vecs;
         self.indent -= 1;
         self.line("}");
         self.line("");
@@ -597,6 +610,12 @@ impl Emitter {
     }
 
     fn emit_let(&mut self, var: &str, ty: &Ty, expr: &Expr) {
+        if self.plain_vecs.contains(var) {
+            let text = self.owned_expr(expr);
+            self.line(&format!("let mut {}: Vec<f64> = ({}).to_vec();", var, text));
+            self.declare(var, as_inferred(ty));
+            return;
+        }
         let mut text = self.owned_expr(expr);
         let mut holds_markup = false;
         if self.in_view() && self.makes_node(expr) {
@@ -643,6 +662,11 @@ impl Emitter {
     }
 
     fn emit_set(&mut self, var: &str, expr: &Expr) {
+        if self.plain_vecs.contains(var) {
+            let text = self.owned_expr(expr);
+            self.line(&format!("{} = ({}).to_vec();", var, text));
+            return;
+        }
         // `x = push[x, v]` and its kin move `x` into the runtime call so the
         // collection grows in place; every other shape clones
         self.move_target = if self.declared(var) && !self.static_handle_vars.contains(var) && !self.ref_params.contains(var) && Self::in_place_call_on(expr, var) {
@@ -735,6 +759,16 @@ impl Emitter {
     }
 
     fn emit_set_path(&mut self, var: &str, path: &[PathStep], expr: &Expr) {
+        if self.plain_vecs.contains(var)
+            && let [PathStep::Index(i)] = path
+        {
+            // the value first, then the index, as the interpreter reads them
+            let val = self.expr(expr);
+            let idx = self.expr(i);
+            let line = self.line_now();
+            self.line(&format!("{{ let _v = ({}) as f64; let _i = {}; let _k = crow_runtime::stops::item(_i, {}.len()).unwrap_or_else(|e| crow_stop({}, e)); {}[_k] = _v; }}", val, idx, var, line, var));
+            return;
+        }
         // a part of a fact of the session (`items[0] = x`, `p.qty = 3`),
         // written in place: the value first, then the write, then the
         // fact's version (typed-values-design.md §6)
@@ -874,14 +908,19 @@ impl Emitter {
                     // reads the key after the insert would have taken it, and
                     // the program may read it again after
                     Ty::Map(..) => self.line_after(&found, &format!("{{ let _v = {}; {}.insert(({}).to_string(), _v); }}", val, obj, idx)),
+                    // the value first, then the index, as the interpreter
+                    // reads them (a stop in each had reported the other's
+                    // first when both failed); a tensor's number is set
+                    // where the tensor lies — it had been copied out and
+                    // built again at every write, n-body's 75 a step
                     Ty::Tensor(..) => {
                         self.needs_crow_runtime = true;
                         self.line_after(&found, &format!(
-                            "{{ let _i = {}; let mut _tmp = {}.to_vec(); let _idx = crow_runtime::stops::item(_i, _tmp.len()).unwrap_or_else(|e| crow_stop({}, e)); _tmp[_idx] = {} as f64; {} = crow_runtime::tensor::CrowTensor::from_vec(_tmp, {}.shape().to_vec()); }}",
-                            idx, obj, self.line_now(), val, obj, obj
+                            "{{ let _v = ({}) as f64; let _i = {}; crow_runtime::core::set_flat_at(&mut {}, _i, _v).unwrap_or_else(|e| crow_stop({}, e)); }}",
+                            val, idx, obj, self.line_now()
                         ));
                     }
-                    _ => self.line_after(&found, &format!("{{ let _i = {}; let _idx = crow_runtime::stops::item(_i, {}.len()).unwrap_or_else(|e| crow_stop({}, e)); {}[_idx] = {}; }}", idx, obj, self.line_now(), obj, val)),
+                    _ => self.line_after(&found, &format!("{{ let _v = {}; let _i = {}; let _idx = crow_runtime::stops::item(_i, {}.len()).unwrap_or_else(|e| crow_stop({}, e)); {}[_idx] = _v; }}", val, idx, obj, self.line_now(), obj)),
                 }
             }
             None => self.line_after(&found, &format!("{} = {};", obj, val)),

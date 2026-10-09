@@ -206,6 +206,40 @@ fn an_unreached_fact_writer_is_left_out() {
     assert!(!rust.contains("fn reset("), "{}", rust);
 }
 
+/// A function's tensor of one axis that the body only reads and sets by
+/// index and measures is a plain vector: made from the tensor once,
+/// written where it lies, made back into a tensor where it is answered
+/// (n-body over lists had copied the whole tensor at every write)
+#[test]
+fn a_vector_read_and_set_by_index_is_a_plain_vector() {
+    let rust = transpile("fn step[xs, n]\n    vs = [0.5, 0.5]\n    for i in range[n]\n        vs[i] = vs[i] + xs[i] * 0.5\n        xs[i] = xs[i] + vs[len[vs] - 1]\n    return xs\nlog[step[[1.0, 2.0], 2]]\n");
+    let body = &rust[rust.find("fn step(").expect("step is emitted")..];
+    let body = &body[..body.find("\n}").unwrap_or(body.len())];
+    assert!(body.contains("let mut xs: Vec<f64> = xs.to_vec();"), "{}", body);
+    assert!(body.contains("let mut vs: Vec<f64> = ("), "{}", body);
+    assert!(!body.contains("set_flat_at") && !body.contains("number_at"), "the loop writes and reads the vectors where they lie: {}", body);
+    assert!(body.contains("CrowTensor::from_vec(xs.clone(), vec![xs.len()])"), "answered as a tensor: {}", body);
+}
+
+/// A tensor the loop hands to a call stays a tensor (each call gets its
+/// own), and its writes land in place when nothing else holds it
+#[test]
+fn a_vector_handed_on_inside_a_loop_stays_a_tensor() {
+    let rust = transpile("fn total[xs]\n    s = 0.0\n    for x in xs\n        s = s + x\n    return s\nfn handed[n]\n    a = [1.0, 1.0, 1.0, 1.0]\n    t = 0.0\n    for i in range[n]\n        a[i] = a[i] * 3.0\n        t = t + total[a]\n    return t\nlog[handed[4]]\n");
+    let body = &rust[rust.find("fn handed(").expect("handed is emitted")..];
+    let body = &body[..body.find("\n}").unwrap_or(body.len())];
+    assert!(!body.contains("Vec<f64> = a.to_vec()") && !body.contains("let mut a: Vec<f64>"), "{}", body);
+    assert!(body.contains("crow_runtime::core::set_flat_at(&mut a,"), "{}", body);
+}
+
+/// A gradient of numbers through a helper calls the helper's dual version
+#[test]
+fn a_helper_of_a_gradient_has_a_dual_version() {
+    let rust = transpile("fn sq[x]\n    return x * x\nfn curve[x]\n    return sq[x] + 1.0\nd = grad[curve]\nlog[d[0.5]]\n");
+    assert!(rust.contains("fn _dual_sq(x: CrowDual) -> CrowDual {"), "{}", rust);
+    assert!(rust.contains("_dual_sq(x)"), "{}", rust);
+}
+
 /// Helper: parse Crow source, infer, lower to the IR, emit Rust
 fn transpile(source: &str) -> String {
     let mut lexer = Lexer::new(source);

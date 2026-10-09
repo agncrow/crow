@@ -255,6 +255,9 @@ impl Emitter {
     }
 
     fn local(&self, v: &str) -> String {
+        if self.plain_vecs.contains(v) {
+            return Self::vector_as_tensor(v);
+        }
         if self.static_handle_vars.contains(v) && !self.declared(v) {
             return format!("__crow_handle_{}.get().unwrap().clone()", v);
         }
@@ -312,6 +315,10 @@ impl Emitter {
             }
         }
         if let Expr::Local(name, ty) | Expr::Move(name, ty) = e {
+            // (a plain vector used as a value is a tensor made for it)
+            if self.plain_vecs.contains(name.as_str()) {
+                return s;
+            }
             if self.ref_params.contains(name) {
                 return format!("{}.clone()", s);
             }
@@ -854,6 +861,10 @@ impl Emitter {
                     return format!("{{ let _i = {}; crow_runtime::core::row_at(&{}, _i).unwrap_or_else(|e| crow_stop({}, e)) }}", idx, b, line);
                 }
                 let cast = if matches!(el.as_ref(), Ty::Int) { " as i64" } else { "" };
+                // a plain vector's number, read where it lies (vectors.rs)
+                if let Some(v) = self.plain_vector(base) {
+                    return format!("{{ let _i = {}; {}[crow_runtime::stops::item(_i, {}.len()).unwrap_or_else(|e| crow_stop({}, e))]{} }}", idx, v, v, line, cast);
+                }
                 format!("{{ let _i = {}; crow_runtime::core::number_at(&{}, _i).unwrap_or_else(|e| crow_stop({}, e)){} }}", idx, b, line, cast)
             }
             Ty::List(el) => {
@@ -1580,6 +1591,14 @@ impl Emitter {
     }
 
     fn call(&mut self, e: &Expr) -> String {
+        // a plain vector's length, measured where it lies (vectors.rs)
+        if let Expr::Call { target: Target::Row(row), args, .. } = e
+            && row.id == "core.len_tensor"
+            && args.len() == 1
+            && let Some(v) = self.plain_vector(&args[0])
+        {
+            return format!("({}.len() as i64)", v);
+        }
         let (mut target, args, propagates) = match e {
             Expr::Call { target, args, propagates, .. } => (target.clone(), args.clone(), *propagates),
             Expr::Effect { name, row, args, propagates, .. } => {
@@ -2189,6 +2208,10 @@ impl Emitter {
     }
 
     pub(crate) fn user_call(&mut self, name: &str, args: &[Expr], mut arg_strs: Vec<String>) -> String {
+        // inside a dual version, a helper's dual version
+        if self.emitting_dual && (self.grad_functions.contains(name) || self.dual_helpers.contains(name)) {
+            return format!("_dual_{}({})", Self::rust_fn_name(name), arg_strs.join(", "));
+        }
         let params: Vec<Ty> = self.fns.get(name).map(|f| f.params.iter().map(|(_, t)| t.clone()).collect()).unwrap_or_default();
         for (i, a) in args.iter().enumerate() {
             if self.makes_node(a) {

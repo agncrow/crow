@@ -221,7 +221,35 @@ impl Emitter {
                     f.ret = Ty::Float;
                 }
             }
+            // the helpers they call, of numbers and answering one, have
+            // dual versions too: a helper is differentiated through its own
+            // run, as the interpreter runs it on dual numbers (the compiled
+            // program had called the helper's float version with a dual,
+            // and not built)
+            let mut todo: Vec<String> = grads.iter().cloned().collect();
+            let mut seen: BTreeSet<String> = BTreeSet::new();
+            let mut helpers = BTreeSet::new();
+            let numbers = |t: &Ty| matches!(t, Ty::Int | Ty::Float);
+            while let Some(n) = todo.pop() {
+                if !seen.insert(n.clone()) {
+                    continue;
+                }
+                let Some(f) = self.fns.get(&n) else { continue };
+                if !grads.contains(&n) {
+                    // (a helper of anything else is left as it is)
+                    if !(f.params.iter().all(|(_, t)| numbers(t)) && numbers(&f.ret)) {
+                        continue;
+                    }
+                    helpers.insert(n.clone());
+                }
+                crate::ir::visit_block(&f.body, &mut |e| {
+                    if let Expr::Call { target: Target::User(c), .. } = e {
+                        todo.push(c.clone());
+                    }
+                });
+            }
             self.grad_functions = grads;
+            self.dual_helpers = helpers;
         }
 
         // route handlers take the request and answer a response
@@ -817,7 +845,7 @@ impl Emitter {
             self.emit_derive(d);
         }
         if self.needs_grad {
-            for g in self.grad_functions.clone() {
+            for g in self.grad_functions.iter().chain(self.dual_helpers.iter()).cloned().collect::<Vec<_>>() {
                 if let Some(f) = self.fns.get(&g).cloned() {
                     self.emit_dual_function(&f);
                 }

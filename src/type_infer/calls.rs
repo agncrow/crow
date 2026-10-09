@@ -10,7 +10,7 @@ pub(crate) struct FnScan {
     saved_fn_name: Option<String>,
     saved_in_view: bool,
     saved_assigned: Option<std::collections::HashSet<String>>,
-    saved_scope: String,
+    saved_scope: &'static str,
 }
 
 /// What `enter_derive_scan` saved: restored by `leave_derive_scan`.

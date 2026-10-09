@@ -1,0 +1,66 @@
+--- A function whose parameters are ints and floats and whose body computes
+--- on them alone is called with them bare: no value built for an argument,
+--- the answer, or a register (the interpreter's call had cost about 2400
+--- machine instructions; spectral norm ran slower than CPython). It answers
+--- what the boxed call answered — through recursion, an overflow's stop and
+--- a gradient — and the last case stops the program.
+use math
+
+--- A(i, j) of spectral norm, called in a loop
+fn a[i, j]
+    return 1.0 / float[(i + j) * (i + j + 1) / 2 + i + 1]
+fn row[i, n]
+    s = 0.0
+    j = 0
+    while j lt n
+        s = s + a[i, j]
+        j = j + 1
+    return s
+log[fmt[row[3, 1000], decimals = 12]]
+
+--- recursion, bare all the way down
+fn fib[n]
+    if n lt 2
+        return n
+    return fib[n - 1] + fib[n - 2]
+log[fib[20]]
+
+--- a float function of a float, and of an int the call converts
+fn half[x]
+    return x / 2.0
+log[half[3.0] + half[5]]
+
+--- a bare function calling one that builds a list
+fn squares[n]
+    xs = []
+    for i in range[n]
+        xs = push[xs, i * i]
+    return xs
+fn last_square[n]
+    xs = squares[n]
+    return xs[n - 1] + 1
+fn uses[n]
+    return last_square[n] * 2
+log[uses[5]]
+
+--- called from a loop every core runs
+cells = for i in range[8]
+    fib[i] + a[i, i]
+log[cells]
+
+--- a gradient through a bare helper (its argument a dual number)
+fn sq[x]
+    return x * x
+fn curve[x]
+    return sq[x] + sin[x]
+d = grad[curve]
+log[fmt[d[0.5], decimals = 12]]
+
+--- an overflow inside the callee stops at the callee's line
+fn grow[n]
+    return n * n * n * n * n
+fn outer[n]
+    return grow[n] + 1
+log[outer[10]]
+log[outer[100000]]
+log['not reached']

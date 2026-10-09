@@ -1,0 +1,86 @@
+--- A list of floats a function reads, sets by index and measures is kept
+--- as a plain vector in the compiled program, and a write into any float
+--- list lands in place in both modes: a write had copied the whole list,
+--- and n-body over lists ran 300 times slower than over variables. A list
+--- is still a value: a copy, a parameter and a list handed on inside a
+--- loop are each their own. The last case stops the program.
+
+--- velocities and positions updated in place, step after step
+fn advance[n, steps]
+    x = for i in range[n]
+        float[i]
+    v = for i in range[n]
+        0.5 * float[i]
+    k = 0
+    while k lt steps
+        for i in range[n]
+            v[i] = v[i] - 0.01 * x[i]
+            x[i] = x[i] + 0.01 * v[i]
+        k = k + 1
+    e = 0.0
+    for i in range[len[x]]
+        e = e + x[i] * x[i] + v[i] * v[i]
+    return e
+log[fmt[advance[5, 1000], decimals = 9]]
+
+--- a parameter written: the caller's list is untouched
+fn bumped[xs]
+    xs[0] = xs[0] + 100.0
+    xs[-1] = 7.0
+    return xs[0] + xs[len[xs] - 1]
+mine = [1.5, 2.5, 3.5]
+log[bumped[mine]]
+log[mine]
+
+--- a copy written: the original is untouched
+fn copied[n]
+    a = for i in range[n]
+        1.0
+    b = a
+    b[1] = 9.0
+    return a[1] * 10.0 + b[1]
+log[copied[3]]
+
+--- an int written into a float list is a float
+fn ints_in[n]
+    a = for i in range[n]
+        0.5
+    for i in range[n]
+        a[i] = i * 2
+    return a
+log[ints_in[4]]
+
+--- a list handed on inside a loop stays a list, and each call gets its own
+fn total[xs]
+    s = 0.0
+    for x in xs
+        s = s + x
+    return s
+fn handed[n]
+    a = for i in range[n]
+        1.0
+    t = 0.0
+    for i in range[n]
+        a[i] = a[i] * 3.0
+        t = t + total[a]
+    return t
+log[handed[4]]
+
+--- answered after the loop, and written at the top level
+fn answered[n]
+    a = for i in range[n]
+        0.0
+    for i in range[n]
+        a[i] = float[i * i]
+    return a
+r = answered[4]
+r[0] = -1.0
+log[r]
+
+--- a write past the end stops the program, naming its line
+fn past[n]
+    a = for i in range[n]
+        0.0
+    a[n] = 1.0
+    return a
+log[past[3]]

@@ -177,7 +177,70 @@ impl CrowTensor {
 
     /// Whether the data is contiguous in row-major order.
     pub fn is_contiguous(&self) -> bool {
-        self.strides == Self::row_major_strides(&self.shape)
+        // `strides == row_major_strides(shape)`, compared without building
+        // the second (every element read had allocated it)
+        if self.strides.len() != self.shape.len() {
+            return false;
+        }
+        let mut expected = 1usize;
+        for d in (0..self.shape.len()).rev() {
+            if self.strides[d] != expected {
+                return false;
+            }
+            expected *= self.shape[d];
+        }
+        true
+    }
+
+    /// A vector's number at `i` read straight from its storage, when it is a
+    /// plain one — one axis, contiguous, on the CPU — and `i` is in range;
+    /// `None` sends the read the general way (a negative index, a view, a
+    /// GPU tensor, a matrix).
+    #[inline(always)]
+    pub fn number_fast(&self, i: i64) -> Option<f64> {
+        if self.shape.len() == 1
+            && self.strides.first() == Some(&1)
+            && (i as u64) < (self.shape[0] as u64)
+            && let TensorStorage::Cpu(d) = self.data.as_ref()
+        {
+            return d.get(self.offset + i as usize).copied();
+        }
+        None
+    }
+
+    /// A vector's number at `i` written straight into its storage, when it
+    /// is a plain one (one axis, contiguous, on the CPU), `i` is in range and
+    /// no other tensor shares the storage — one uniqueness check, no shape
+    /// arithmetic; false sends the write the general way.
+    #[inline(always)]
+    pub fn set_fast(&mut self, i: i64, v: f64) -> bool {
+        if self.shape.len() == 1 && self.strides.first() == Some(&1) && (i as u64) < (self.shape[0] as u64) {
+            let at = self.offset + i as usize;
+            if let Some(TensorStorage::Cpu(d)) = Arc::get_mut(&mut self.data)
+                && let Some(slot) = d.get_mut(at)
+            {
+                *slot = v;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// The number at a flat (row-major) index written in place. Another
+    /// tensor sharing the storage never sees it: a shared, strided or GPU
+    /// tensor is first made a contiguous one of its own (once — the writes
+    /// after it are in place). Writing had copied the whole tensor each time.
+    pub fn set_flat(&mut self, flat_idx: usize, v: f64) {
+        let in_place = self.is_contiguous() && matches!(self.data.as_ref(), TensorStorage::Cpu(_)) && Arc::get_mut(&mut self.data).is_some();
+        if !in_place {
+            *self = CrowTensor::from_vec(self.to_vec(), self.shape.clone());
+        }
+        let at = self.offset + flat_idx;
+        if let Some(TensorStorage::Cpu(d)) = Arc::get_mut(&mut self.data)
+            && let Some(slot) = d.get_mut(at)
+        {
+            *slot = v;
+        }
     }
 
     /// The tensor's data on the CPU: its own storage, or a copy downloaded

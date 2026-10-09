@@ -21,6 +21,7 @@ mod stmts;
 #[cfg(test)]
 mod tests;
 mod ui;
+mod vectors;
 
 /// What the build needs from the program besides its text: the crates
 /// and features the generated `Cargo.toml` lists.
@@ -136,6 +137,9 @@ pub(crate) struct Emitter {
     /// and dropped the failure, and the program did not build).
     pub(crate) unwrap_as: std::collections::HashMap<usize, String>,
     pub(crate) grad_functions: BTreeSet<String>,
+    /// The helpers a function `grad` differentiates calls (of numbers,
+    /// answering one), each with a dual version beside its own.
+    pub(crate) dual_helpers: BTreeSet<String>,
     /// The functions grad differentiates over tensors, and those they
     /// reach (the IR's `traced`): each printed again over traced values.
     pub(crate) traced_functions: BTreeSet<String>,
@@ -162,6 +166,8 @@ pub(crate) struct Emitter {
     pub(crate) fact_inits: BTreeMap<String, String>,
     /// top-level connections in a page program: process-wide statics
     pub(crate) static_handle_vars: BTreeSet<String>,
+    /// The current function's locals kept as plain `Vec<f64>` (vectors.rs).
+    pub(crate) plain_vecs: BTreeSet<String>,
     /// facts a `fetch[]`/`poll[]` fills
     pub(crate) data_source_vars: BTreeSet<String>,
     pub(crate) derive_fns: BTreeSet<String>,
@@ -243,6 +249,7 @@ impl Emitter {
             by_ref_params: BTreeMap::new(),
             unwrap_as: std::collections::HashMap::new(),
             grad_functions: BTreeSet::new(),
+            dual_helpers: BTreeSet::new(),
             traced_functions: BTreeSet::new(),
             emitting_traced: false,
             web_handlers: HashSet::new(),
@@ -256,6 +263,7 @@ impl Emitter {
             reactive_vars: BTreeMap::new(),
             fact_inits: BTreeMap::new(),
             static_handle_vars: BTreeSet::new(),
+            plain_vecs: BTreeSet::new(),
             data_source_vars: BTreeSet::new(),
             derive_fns: BTreeSet::new(),
             module_consts: BTreeSet::new(),

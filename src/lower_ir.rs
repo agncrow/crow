@@ -1840,7 +1840,7 @@ impl<'a> Lowerer<'a> {
                     self.check_top_write(&root);
                 }
                 let expr = self.lower_expr(value)?;
-                let (var, mut path) = self.muted_target(object)?;
+                let (var, mut path, _) = self.muted_target(object)?;
                 path.push(PathStep::Field(field.clone()));
                 self.forget_shape(&var);
                 vec![Stmt::SetPath { var, path, expr }]
@@ -1855,7 +1855,15 @@ impl<'a> Lowerer<'a> {
                     self.settled_entry(object, &expr);
                 }
                 let idx = self.lower_expr(index)?;
-                let (var, mut path) = self.muted_target(object)?;
+                let (var, mut path, held) = self.muted_target(object)?;
+                // an int assigned to an item of a list of floats is a float,
+                // where it is written — as one handed to a float parameter
+                // is (the compiled program had not built, and the
+                // interpreter's list had held the int)
+                let expr = match (held.payload(), expr.ty()) {
+                    (Ty::List(item), Ty::Int) if **item == Ty::Float => Expr::Convert { how: Convert::IntToFloat, expr: Box::new(expr), ty: Ty::Float },
+                    _ => expr,
+                };
                 // an item assigned a value of a known kind types the list's
                 // items where they were not known (a list of empty lists,
                 // one of them given a list of records — a graph's arcs —
@@ -2678,12 +2686,13 @@ impl<'a> Lowerer<'a> {
     /// An assignment target's path, its variable and fields already
     /// checked (`check_target`); an index's expressions are checked as they
     /// are lowered.
-    fn muted_target(&mut self, object: &A) -> Result<(String, Vec<PathStep>), String> {
-        let (v, p, _) = match object {
-            A::Ident(_) | A::FieldAccess { .. } => self.muted(|l| l.path_of(object))?,
-            _ => self.path_of(object)?,
-        };
-        Ok((v, p))
+    /// An assignment target's variable, its path, and the type of what the
+    /// path names (`path_of`), its checks made where the target is read.
+    fn muted_target(&mut self, object: &A) -> Result<(String, Vec<PathStep>, Ty), String> {
+        match object {
+            A::Ident(_) | A::FieldAccess { .. } => self.muted(|l| l.path_of(object)),
+            _ => self.path_of(object),
+        }
     }
 
     /// An assignment target's variable, its path, and the type of what the

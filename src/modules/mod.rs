@@ -161,6 +161,22 @@ pub fn crow_imports() -> Vec<(String, Vec<String>)> {
 /// The scope a function's names are resolved in: a standard module's
 /// prefix for one of its functions (inlined, or its traced copy), none for
 /// the program's own.
+/// `crow_scope_of`, borrowed: the module's prefix as the table holds it.
+pub fn crow_scope_str(name: &str) -> Option<&'static str> {
+    let name = name.strip_prefix("_traced_").unwrap_or(name);
+    CROW_MODULES
+        .iter()
+        .filter(|(_, prefix)| name.starts_with(prefix) && name.len() > prefix.len() && name.as_bytes()[prefix.len()] == b'_')
+        .max_by_key(|(_, prefix)| prefix.len())
+        .map(|(_, p)| *p)
+}
+
+/// The scope a call of the named function runs in: its standard module's,
+/// or the program's.
+pub fn scope_of_call(name: &str) -> &'static str {
+    crow_scope_str(name).unwrap_or(PROGRAM)
+}
+
 pub fn crow_scope_of(name: &str) -> Option<String> {
     let name = name.strip_prefix("_traced_").unwrap_or(name);
     // (the longest prefix that fits: `_web_auth_sign` is web.auth's, not web's)
@@ -604,7 +620,7 @@ thread_local! {
     /// The scope names are resolved in on this thread (a registry is shared
     /// by the threads a served program runs on; each resolves in the scope
     /// of the function it is running).
-    static CURRENT_SCOPE: std::cell::RefCell<String> = std::cell::RefCell::new(PROGRAM.to_string());
+    static CURRENT_SCOPE: std::cell::Cell<&'static str> = const { std::cell::Cell::new(PROGRAM) };
 }
 
 impl std::fmt::Debug for ModuleRegistry {
@@ -658,25 +674,54 @@ impl ModuleRegistry {
     /// Resolve names in the scope of a function from here on: a standard
     /// module's written in Crow sees its own imports, any other function
     /// the program's.
-    pub fn enter(&self, fn_name: &str) -> String {
-        let scope = crow_scope_of(fn_name).unwrap_or_else(|| PROGRAM.to_string());
-        CURRENT_SCOPE.with(|c| c.replace(scope))
+    pub fn enter(&self, fn_name: &str) -> &'static str {
+        CURRENT_SCOPE.with(|c| c.replace(scope_of_call(fn_name)))
     }
 
     /// Back to a scope `enter` answered.
-    pub fn resume(&self, scope: String) {
-        CURRENT_SCOPE.with(|c| c.replace(scope));
+    pub fn resume(&self, scope: &'static str) {
+        CURRENT_SCOPE.with(|c| c.set(scope));
+    }
+
+    /// `enter` for a call: the scope swapped only when the function's
+    /// differs from the current one; `None` when unchanged.
+    pub fn enter_call(&self, fn_name: &str) -> Option<&'static str> {
+        self.enter_scope(scope_of_call(fn_name))
+    }
+
+    /// Into a scope `scope_of_call` named (a prepared function keeps its
+    /// own), answering the one it left if it left one. A scope is one of
+    /// the static names (`PROGRAM`, a module's prefix): the current one is
+    /// a static name too, so a call compares two of them, and a call into
+    /// a module's function and back had built and dropped two strings.
+    pub fn enter_scope(&self, scope: &'static str) -> Option<&'static str> {
+        CURRENT_SCOPE.with(|c| {
+            let current = c.get();
+            if std::ptr::eq(current, scope) || current == scope {
+                None
+            } else {
+                c.set(scope);
+                Some(current)
+            }
+        })
+    }
+
+    /// Back to the scope `enter_call` left, if it left one.
+    pub fn resume_call(&self, saved: Option<&'static str>) {
+        if let Some(scope) = saved {
+            CURRENT_SCOPE.with(|c| c.set(scope));
+        }
     }
 
     /// The program's scope, where a pass over the program begins: a pass
     /// before it may have left a module's (the last function it typed).
     pub fn reset_scope() {
-        CURRENT_SCOPE.with(|c| c.replace(PROGRAM.to_string()));
+        CURRENT_SCOPE.with(|c| c.set(PROGRAM));
     }
 
     /// Whether the module at `idx` is visible in the current scope.
     fn visible(&self, idx: usize) -> bool {
-        CURRENT_SCOPE.with(|c| self.scopes.get(c.borrow().as_str()).is_some_and(|v| v.contains(&idx)))
+        CURRENT_SCOPE.with(|c| self.scopes.get(c.get()).is_some_and(|v| v.contains(&idx)))
     }
 
     /// The modules providing a name, in the current scope.

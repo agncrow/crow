@@ -241,14 +241,25 @@ impl<'p> Verifier<'p> {
                 }
             }
             Stmt::SetPath { var, path, expr } => {
-                self.expr(expr);
+                let t = self.expr(expr);
                 for step in path {
                     if let PathStep::Index(i) = step {
                         self.expr(i);
                     }
                 }
-                if self.local(var).is_none() && !self.facts.contains_key(var.as_str()) {
-                    self.found(format!("'{}' is assigned through before it is bound", var));
+                match self.local(var).or_else(|| self.facts.get(var.as_str()).copied()) {
+                    None => self.found(format!("'{}' is assigned through before it is bound", var)),
+                    // a list's item assigned holds what the list's items
+                    // hold (an int into a list of floats had reached the
+                    // emitter, and the compiled program had not built)
+                    Some(held) => {
+                        if let ([PathStep::Index(_)], Ty::List(item)) = (path.as_slice(), held.payload()) {
+                            if !fits(t.payload(), item) {
+                                let item = item.clone();
+                                self.found(format!("an item of '{}', a list of {}, is assigned {}", var, item, t));
+                            }
+                        }
+                    }
                 }
             }
             Stmt::Store { fact, expr } => {

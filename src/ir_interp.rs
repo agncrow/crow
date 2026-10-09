@@ -88,7 +88,7 @@ struct Frame {
     /// refusal say it). Its own copy: a name shared between the threads of
     /// a parallel loop is a reference count every call of every thread
     /// writes, slower than the copy.
-    fn_name: String,
+    fn_name: Arc<str>,
     /// A prepared body's locals (prepared.rs), each binding its slot,
     /// decided before the function runs; empty for a frame the walker runs.
     slots: Vec<CrowValue>,
@@ -106,6 +106,9 @@ pub struct IrInterp {
     /// Each function's body prepared for the walker (prepared.rs), made on
     /// its first call.
     prepared: HashMap<String, Arc<prepared::Prepared>, Names>,
+    /// Register files a returned call left, for the next call to take
+    /// (prepared.rs): a call had allocated four and freed them.
+    reg_pool: prepared::Pool,
     derives: HashMap<String, Arc<Derive>>,
     structs: HashMap<String, Arc<crate::ir::StructDef>>,
     registry: ModuleRegistry,
@@ -468,10 +471,11 @@ impl IrInterp {
             depth: 0,
             fns: HashMap::default(),
             prepared: HashMap::default(),
+            reg_pool: prepared::Pool::default(),
             derives: HashMap::new(),
             structs: HashMap::new(),
             registry: registry.clone(),
-            frames: vec![Frame { scopes: vec![Arc::new(HashMap::default())], locals: Vec::new(), marks: Vec::new(), fn_name: String::new(), slots: Vec::new(), env: None }],
+            frames: vec![Frame { scopes: vec![Arc::new(HashMap::default())], locals: Vec::new(), marks: Vec::new(), fn_name: Arc::from(""), slots: Vec::new(), env: None }],
             scope_pool: Vec::new(),
             line: 0,
             file,
@@ -890,7 +894,7 @@ impl IrInterp {
     /// holds no error: a function hands it to its caller, the top level
     /// halts with the reason (spec §10).
     fn refuse(&mut self, err: CrowValue, at: &Decision) -> Result<Flow, String> {
-        let name = self.frames.last().map(|f| f.fn_name.clone()).unwrap_or_default();
+        let name = self.frames.last().map(|f| f.fn_name.to_string()).unwrap_or_default();
         // a handler, or a helper acting for it, meets an error at a decision:
         // the whole click stops and nothing it did lands (core-design.md §2)
         if self.held.is_some() {
@@ -1821,37 +1825,101 @@ impl IrInterp {
 
     fn run_parallel(&mut self, items: &[CrowValue], var: &str, body: &[Stmt], collect: bool) -> Result<Vec<CrowValue>, String> {
         self.check_cancel()?;
+        // the functions the body reaches, prepared once here: each chunk's
+        // clone had prepared them again, and dropped what it made
+        let reached = self.prepare_reached(body);
         let threads = rayon::current_num_threads().max(1);
         let chunk = (items.len() / (threads * 4)).max(1);
         let base = &*self;
-        let chunks: Vec<Result<Vec<CrowValue>, String>> = items
+        type Chunk = (Result<Vec<CrowValue>, String>, HashMap<String, Arc<prepared::Prepared>, Names>);
+        let chunks: Vec<Chunk> = items
             .par_chunks(chunk)
             .map(|part| {
                 let mut local = base.clone();
-                let mut out = Vec::with_capacity(if collect { part.len() } else { 0 });
-                for item in part {
-                    local.push_scope();
-                    local.bind(var, item.clone());
-                    local.last_value = None;
-                    // a stop names the body's line, as the compiled loop's does
-                    let r = local.exec_stmts(body).map_err(|e| local.with_line(e));
-                    let yielded = local.last_value.take();
-                    local.pop_scope();
-                    if let Flow::Return(_) = r? {
-                        return Err("cannot return from inside a for loop".to_string());
-                    }
-                    if collect {
-                        out.push(yielded.unwrap_or_else(CrowValue::done));
+                // each chunk its own handle on each body the loop reaches
+                // (prepared.rs, `handle`)
+                for name in &reached {
+                    if let Some(p) = base.prepared.get(name.as_str()) {
+                        local.prepared.insert(name.clone(), Arc::new(p.handle(&p.name)));
                     }
                 }
-                Ok(out)
+                let mut out = Vec::with_capacity(if collect { part.len() } else { 0 });
+                let mut run = || -> Result<(), String> {
+                    for item in part {
+                        local.push_scope();
+                        local.bind(var, item.clone());
+                        local.last_value = None;
+                        // a stop names the body's line, as the compiled loop's does
+                        let r = local.exec_stmts(body).map_err(|e| local.with_line(e));
+                        let yielded = local.last_value.take();
+                        local.pop_scope();
+                        if let Flow::Return(_) = r? {
+                            return Err("cannot return from inside a for loop".to_string());
+                        }
+                        if collect {
+                            out.push(yielded.unwrap_or_else(CrowValue::done));
+                        }
+                    }
+                    Ok(())
+                };
+                let r = run().map(|()| out);
+                (r, std::mem::take(&mut local.prepared))
             })
             .collect();
         let mut results = Vec::with_capacity(if collect { items.len() } else { 0 });
-        for c in chunks {
-            results.extend(c?);
+        let mut failed = None;
+        for (c, made) in chunks {
+            // (what a clone prepared — a function reached only as a value — kept)
+            for (name, p) in made {
+                self.prepared.entry(name).or_insert(p);
+            }
+            match c {
+                Ok(part) if failed.is_none() => results.extend(part),
+                Ok(_) => {}
+                Err(e) => {
+                    if failed.is_none() {
+                        failed = Some(e);
+                    }
+                }
+            }
         }
-        Ok(results)
+        match failed {
+            Some(e) => Err(e),
+            None => Ok(results),
+        }
+    }
+
+    /// Every function a body calls by name, and every function those call,
+    /// prepared under the names the calls write (a traced run prepares
+    /// none: it walks): the names.
+    fn prepare_reached(&mut self, body: &[Stmt]) -> Vec<String> {
+        if self.tracing {
+            return Vec::new();
+        }
+        let mut todo: Vec<String> = Vec::new();
+        crate::ir::visit_block(body, &mut |e| {
+            if let Expr::Call { target: Target::User(name), .. } = e {
+                todo.push(name.clone());
+            }
+        });
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut reached = Vec::new();
+        while let Some(name) = todo.pop() {
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            let Ok(f) = self.function_named(&name) else { continue };
+            if !self.prepared.contains_key(name.as_str()) && self.prepare_called(&name).is_err() {
+                continue;
+            }
+            crate::ir::visit_block(&f.body, &mut |e| {
+                if let Expr::Call { target: Target::User(n), .. } = e {
+                    todo.push(n.clone());
+                }
+            });
+            reached.push(name);
+        }
+        reached
     }
 
     fn eval_args(&mut self, args: &[Expr]) -> Result<Vec<CrowValue>, String> {
@@ -2641,88 +2709,129 @@ impl IrInterp {
     }
 
     pub(crate) fn call_user(&mut self, name: &str, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
-        // (a standard module's function resolves the names its row left to
-        // the runtime in its own scope)
-        let scope = self.registry.enter(name);
-        let r = self.call_user_in(name, vals);
-        self.registry.resume(scope);
-        r
-    }
-
-    fn call_user_in(&mut self, name: &str, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
         self.check_cancel()?;
         if name == PUT {
             return Self::put(&vals);
         }
-        // a specialised name (first__1) is the one body to this walker
-        let f = match self.fns.get(name) {
-            Some(f) => f.clone(),
+        // the body prepared (prepared.rs): instructions over registers,
+        // typed where the IR fixes the operands, found by the name the call
+        // writes; a traced run keeps the walker
+        if !self.tracing {
+            let p = match self.prepared.get(name) {
+                Some(p) => p.clone(),
+                None => self.prepare_called(name)?,
+            };
+            // (a standard module's function resolves the names its row left
+            // to the runtime in its own scope)
+            let scope = self.registry.enter_scope(p.scope);
+            let r = self.call_prepared(name, &p, vals);
+            self.registry.resume_call(scope);
+            return r;
+        }
+        let scope = self.registry.enter_call(name);
+        let r = self.call_walked(name, vals);
+        self.registry.resume_call(scope);
+        r
+    }
+
+    /// The function a call names: a specialised name (first__1) is the one
+    /// body to the interpreter.
+    fn function_named(&self, name: &str) -> Result<Arc<Fn>, String> {
+        match self.fns.get(name) {
+            Some(f) => Ok(f.clone()),
             None => {
                 let base = name.split("__").next().unwrap_or(name);
-                self.fns.get(base).cloned().ok_or_else(|| format!("unknown function '{}'", name))?
-            }
-        };
-        if f.params.len() != vals.len() {
-            return Err(format!("{}[] expects {} arguments, got {}", name, f.params.len(), vals.len()));
-        }
-        // a view renders what it is given: a failed argument is its text
-        if f.kind == FnKind::View {
-            if let Some(bad) = vals.iter().find(|v| v.is_error()) {
-                return Ok(CrowValue::markup(crate::harness::html_escape_text(&crow_web::core::response::failed_in_view(&bad.reason()))));
+                self.fns.get(base).cloned().ok_or_else(|| format!("unknown function '{}'", name))
             }
         }
-        let mut args = Vec::with_capacity(vals.len());
-        for ((_, pty), v) in f.params.iter().zip(vals) {
-            // an int handed to a float parameter is a float, where the call
-            // is written (the lowering converts it) and where a function
-            // value is called (`any`, `find`, `later`) alike
-            let v = match (pty, &v.value) {
-                (Ty::Float, Value::Int(n)) if v.is_ok() => CrowValue::ok(Value::Float(*n as f64)),
-                _ => v,
-            };
-            args.push(v);
+    }
+
+    /// The prepared body a name calls, prepared now, kept under the name the
+    /// call writes (a specialised name gets its own handle on the body).
+    fn prepare_called(&mut self, name: &str) -> Result<Arc<prepared::Prepared>, String> {
+        let f = self.function_named(name)?;
+        let p = self.prepared_for(&f);
+        if &*p.name == name {
+            return Ok(p);
         }
-        // a recursive function's calls nest to the limit and no deeper, as
-        // the compiled program's guard counts them; the stop names the
-        // body's first line in both modes
+        let h = Arc::new(p.handle(name));
+        self.prepared.insert(name.to_string(), h.clone());
+        Ok(h)
+    }
+
+    /// What every call checks of its arguments before the body runs: their
+    /// number; a view's failed argument, which is its text; an int handed
+    /// to a float parameter, a float — where the call is written (the
+    /// lowering converts it) and where a function value is called (`any`,
+    /// `find`, `later`) alike. A value here is the call's answer.
+    fn arguments_checked(name: &str, floats: impl ExactSizeIterator<Item = bool>, view: bool, vals: &mut [CrowValue]) -> Result<Option<CrowValue>, String> {
+        if floats.len() != vals.len() {
+            return Err(format!("{}[] expects {} arguments, got {}", name, floats.len(), vals.len()));
+        }
+        if view && let Some(bad) = vals.iter().find(|v| v.is_error()) {
+            return Ok(Some(CrowValue::markup(crate::harness::html_escape_text(&crow_web::core::response::failed_in_view(&bad.reason())))));
+        }
+        for (float, v) in floats.zip(vals.iter_mut()) {
+            if float && let Some(n) = v.plain_int() {
+                *v = CrowValue::ok(Value::Float(n as f64));
+            }
+        }
+        Ok(None)
+    }
+
+    /// A recursive function's calls nest to the limit and no deeper, as the
+    /// compiled program's guard counts them; the stop names the body's first
+    /// line in both modes.
+    fn deeper(&mut self, first_line: usize) -> Result<(), String> {
+        if self.depth >= crow_runtime::stops::DEPTH {
+            self.line = first_line;
+            return Err(self.with_line(crow_runtime::stops::too_deep()));
+        }
+        self.depth += 1;
+        Ok(())
+    }
+
+    /// A call of a prepared body. The handle is the caller's own (a thread
+    /// of a parallel loop has its own, `run_parallel`): the call writes no
+    /// count another thread writes.
+    fn call_prepared(&mut self, name: &str, p: &prepared::Prepared, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
+        let n = vals.len();
+        let mut given = vals.into_iter();
+        self.call_prepared_with(name, p, n, |_| given.next().unwrap_or_else(CrowValue::done))
+    }
+
+    /// A call the walker runs (a traced run).
+    fn call_walked(&mut self, name: &str, mut vals: Vec<CrowValue>) -> Result<CrowValue, String> {
+        let f = self.function_named(name)?;
+        let view = f.kind == FnKind::View;
+        if let Some(v) = Self::arguments_checked(name, f.params.iter().map(|(_, t)| matches!(t, Ty::Float)), view, &mut vals)? {
+            return Ok(v);
+        }
         if f.recursive {
-            if self.depth >= crow_runtime::stops::DEPTH {
-                self.line = crate::ir::first_line(&f.body);
-                return Err(self.with_line(crow_runtime::stops::too_deep()));
-            }
-            self.depth += 1;
+            self.deeper(crate::ir::first_line(&f.body))?;
         }
-        let fn_name = name.to_string();
         let saved_line = self.line;
-        let is_view = f.kind == FnKind::View;
-        if is_view {
+        if view {
             self.in_view += 1;
         }
-        // the body prepared (prepared.rs): instructions over registers,
-        // typed where the IR fixes the operands; a traced run keeps the
-        // walker
-        let prepared = if self.tracing { None } else { Some(self.prepared_for(&f)) };
-        let r = match &prepared {
-            Some(p) => {
-                self.frames.push(Frame { scopes: Vec::new(), locals: Vec::new(), marks: Vec::new(), fn_name, slots: Vec::new(), env: None });
-                self.run_prepared(p, args)
-            }
-            None => {
-                let mut scope = HashMap::with_capacity_and_hasher(f.params.len(), Names::default());
-                for ((p, _), v) in f.params.iter().zip(args) {
-                    scope.insert(p.clone(), v);
-                }
-                self.frames.push(Frame { scopes: vec![Arc::new(scope)], locals: Vec::new(), marks: Vec::new(), fn_name, slots: Vec::new(), env: None });
-                self.exec_stmts(&f.body)
-            }
-        };
-        // a stop names the line in the body it happened on, not the call's
+        let mut scope = HashMap::with_capacity_and_hasher(f.params.len(), Names::default());
+        for ((p, _), v) in f.params.iter().zip(vals) {
+            scope.insert(p.clone(), v);
+        }
+        self.frames.push(Frame { scopes: vec![Arc::new(scope)], locals: Vec::new(), marks: Vec::new(), fn_name: Arc::from(name), slots: Vec::new(), env: None });
+        let r = self.exec_stmts(&f.body);
+        self.call_ended(r, view, f.recursive, saved_line)
+    }
+
+    /// A call's end: a stop names the line in the body it happened on, not
+    /// the call's; the frame goes, and the caller's line is current again.
+    fn call_ended(&mut self, r: Result<Flow, String>, view: bool, recursive: bool, saved_line: usize) -> Result<CrowValue, String> {
         let r = self.returned(r).map_err(|e| self.with_line(e));
         self.frames.pop();
-        if is_view {
+        if view {
             self.in_view -= 1;
         }
-        if f.recursive {
+        if recursive {
             self.depth -= 1;
         }
         self.line = saved_line;
@@ -2750,7 +2859,7 @@ impl IrInterp {
         let d = self.derives.get(name).cloned().ok_or_else(|| format!("unknown derivation '{}'", name))?;
         // the reader's line is still the line reading it
         let saved_line = self.line;
-        self.frames.push(Frame { scopes: vec![Arc::new(HashMap::default())], locals: Vec::new(), marks: Vec::new(), fn_name: name.to_string(), slots: Vec::new(), env: None });
+        self.frames.push(Frame { scopes: vec![Arc::new(HashMap::default())], locals: Vec::new(), marks: Vec::new(), fn_name: Arc::from(name), slots: Vec::new(), env: None });
         let r = self.exec_stmts(&d.body);
         let r = self.returned(r).map_err(|e| self.with_line(e));
         self.frames.pop();
@@ -3541,18 +3650,10 @@ fn set_path(root: &mut Value, path: &[PathStep], idx: &[CrowValue], new: CrowVal
                     _ => Err("array index must be an integer".to_string()),
                 },
                 Value::NumArray(t) => match (&i.value, &new.value) {
-                    (Value::Int(n), Value::Int(_) | Value::Float(_)) => {
-                        let mut data = t.to_vec();
-                        let at = crow_runtime::stops::item(*n, data.len())?;
-                        data[at] = match &new.value {
-                            Value::Int(x) => *x as f64,
-                            Value::Float(x) => *x,
-                            _ => unreachable!(),
-                        };
-                        let shape = t.shape().to_vec();
-                        *t = Box::new(crow_runtime::tensor::CrowTensor::from_vec(data, shape));
-                        Ok(())
-                    }
+                    // the number set where the tensor lies (it had been
+                    // copied out and built again at every write)
+                    (Value::Int(n), Value::Int(x)) => crow_runtime::core::set_flat_at(t, *n, *x as f64),
+                    (Value::Int(n), Value::Float(x)) => crow_runtime::core::set_flat_at(t, *n, *x),
                     _ => Err("a numeric array takes a number at an integer index".to_string()),
                 },
                 Value::Map(m) => match &i.value {

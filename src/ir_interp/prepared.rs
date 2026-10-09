@@ -322,6 +322,17 @@ struct IndexHow {
 }
 
 pub(super) struct Prepared {
+    /// The function's name as calls write it (a specialised name is its
+    /// own): the name its frames carry.
+    pub(super) name: Arc<str>,
+    /// The scope its module's names resolve in (modules::scope_of_call).
+    pub(super) scope: &'static str,
+    body: Arc<Body>,
+}
+
+/// A prepared function's body, and what a call needs of the function —
+/// shared by every handle on it.
+pub(super) struct Body {
     pub(super) n_regs: usize,
     /// Each register's kind (`RKind`), fixed for the function: a local's by
     /// its type, a temporary's by the pool it was drawn from.
@@ -334,6 +345,37 @@ pub(super) struct Prepared {
     /// The same body with its int and float registers kept bare (step 4):
     /// none when it has no such register.
     typed: Option<Typed>,
+    /// Each parameter: whether it is a float — an int handed to it is a
+    /// float where the call is made (`call_prepared`).
+    pub(super) float_params: Vec<bool>,
+    pub(super) view: bool,
+    /// Whether it can call itself: its calls count toward the limit.
+    pub(super) recursive: bool,
+    /// Its body's first line: where a recursion past the limit stops.
+    pub(super) first_line: usize,
+    /// Whether its typed program runs on bare registers alone: int and
+    /// float parameters, and only instructions that read and write bare
+    /// registers (`pure`). A typed call of it (`call_typed`) hands over
+    /// its arguments bare and boxes nothing.
+    pure: bool,
+}
+
+impl std::ops::Deref for Prepared {
+    type Target = Body;
+    fn deref(&self) -> &Body {
+        &self.body
+    }
+}
+
+impl Prepared {
+    /// A handle of its own on the same body, named as a call writes it. A
+    /// call clones the handle it runs and its frame the name: each thread
+    /// of a parallel loop gets its own handle on each body it reaches, or
+    /// every call of every thread writes the same two reference counts —
+    /// a 16-thread loop had run no faster than one thread.
+    pub(super) fn handle(&self, name: &str) -> Prepared {
+        Prepared { name: Arc::from(name), scope: crate::modules::scope_of_call(name), body: self.body.clone() }
+    }
 }
 
 /// The position a step answers when the body is done: its outcome is in
@@ -433,9 +475,22 @@ pub(super) fn prepare(f: &Fn) -> Prepared {
     kinds.extend(std::iter::repeat_n(RKind::Boxed, mb as usize));
     kinds.extend(std::iter::repeat_n(RKind::Int, mi as usize));
     kinds.extend(std::iter::repeat_n(RKind::Float, mf as usize));
-    let mut p = Prepared { n_regs: kinds.len(), kinds, params, code: c.code, lines: c.lines, typed: None };
-    p.typed = typed(&p);
-    p
+    let mut b = Body {
+        n_regs: kinds.len(),
+        kinds,
+        params,
+        code: c.code,
+        lines: c.lines,
+        typed: None,
+        float_params: f.params.iter().map(|(_, t)| matches!(t, Ty::Float)).collect(),
+        view: f.kind == crate::ir::FnKind::View,
+        recursive: f.recursive,
+        first_line: crate::ir::first_line(&f.body),
+        pure: false,
+    };
+    b.typed = typed(&b);
+    b.pure = !b.view && b.typed.as_ref().is_some_and(|t| pure(t, &b.params));
+    Prepared { name: Arc::from(f.name.as_str()), scope: crate::modules::scope_of_call(&f.name), body: Arc::new(b) }
 }
 
 fn scalar(t: &Ty) -> bool {
@@ -1152,6 +1207,120 @@ fn value_at(regs: &[CrowValue], o: Opnd) -> CrowValue {
 
 impl IrInterp {
     /// The function's prepared body, made on its first call and kept.
+    /// A call of a prepared body whose `n` arguments `arg` hands over one
+    /// by one, each into its parameter's register: a call from a prepared
+    /// body moves them from its own registers, with no list between.
+    pub(super) fn call_prepared_with(&mut self, name: &str, p: &Prepared, n: usize, mut arg: impl FnMut(usize) -> CrowValue) -> Result<CrowValue, String> {
+        if p.float_params.len() != n {
+            return Err(format!("{}[] expects {} arguments, got {}", name, p.float_params.len(), n));
+        }
+        let (mut regs, mut bare) = self.reg_pool.take();
+        regs.resize(p.n_regs, CrowValue::done());
+        // (`arguments_checked`, as each arrives)
+        let mut failed = None;
+        for (i, (float, r)) in p.float_params.iter().zip(p.params.iter()).enumerate() {
+            let mut v = arg(i);
+            if *float && let Some(k) = v.plain_int() {
+                v = CrowValue::ok(Value::Float(k as f64));
+            }
+            if p.view && failed.is_none() && v.is_error() {
+                failed = Some(v.reason().to_string());
+            }
+            regs[*r as usize] = v;
+        }
+        if let Some(reason) = failed {
+            self.reg_pool.give(regs, bare);
+            return Ok(CrowValue::markup(crate::harness::html_escape_text(&crow_web::core::response::failed_in_view(&reason))));
+        }
+        if p.recursive && let Err(e) = self.deeper(p.first_line) {
+            self.reg_pool.give(regs, bare);
+            return Err(e);
+        }
+        let saved_line = self.line;
+        if p.view {
+            self.in_view += 1;
+        }
+        self.frames.push(Frame { scopes: Vec::new(), locals: Vec::new(), marks: Vec::new(), fn_name: p.name.clone(), slots: Vec::new(), env: None });
+        let r = self.run_body(p, &mut regs, &mut bare);
+        self.reg_pool.give(regs, bare);
+        self.call_ended(r, p.view, p.recursive, saved_line)
+    }
+
+    /// A user function called from a typed body with int and float
+    /// arguments (`TIns::CallT`). A pure callee (`Body::pure`) gets them
+    /// bare, in a bare register file of its own, and runs with no boxed
+    /// register at all; any other callee gets them boxed, as the boxed
+    /// call hands them over.
+    fn call_typed(&mut self, name: &str, kinds: &[RKind], bare: &Bare, args: &[R]) -> Result<CrowValue, String> {
+        let boxed = |i: usize| {
+            let a = args[i] as usize;
+            match kinds[a] {
+                RKind::Int => CrowValue::ok(Value::Int(bare.ints[a])),
+                RKind::Float => CrowValue::ok(Value::Float(bare.floats[a])),
+                _ => CrowValue::done(),
+            }
+        };
+        if self.tracing {
+            let vals = (0..args.len()).map(boxed).collect();
+            return self.call_user(name, vals);
+        }
+        self.check_cancel()?;
+        let p = match self.prepared.get(name) {
+            Some(p) => p.clone(),
+            None => self.prepare_called(name)?,
+        };
+        let scope = self.registry.enter_scope(p.scope);
+        let r = match &p.typed {
+            Some(ctc) if p.pure && p.params.len() == args.len() && args.iter().zip(p.params.iter()).all(|(a, r)| handed_bare(kinds[*a as usize], ctc.kinds[*r as usize])) => self.call_pure(&p, ctc, kinds, bare, args),
+            _ => self.call_prepared_with(name, &p, args.len(), boxed),
+        };
+        self.registry.resume_call(scope);
+        r
+    }
+
+    /// A pure body called (`call_typed`): each argument into its parameter's
+    /// bare register — an int handed to a float parameter a float, as the
+    /// boxed call converts it.
+    fn call_pure(&mut self, p: &Prepared, tc: &Typed, kinds: &[RKind], bare: &Bare, args: &[R]) -> Result<CrowValue, String> {
+        let (mut regs, mut callee) = self.reg_pool.take();
+        callee.ints.resize(p.n_regs, 0);
+        callee.floats.resize(p.n_regs, 0.0);
+        for (a, r) in args.iter().zip(p.params.iter()) {
+            let (a, r) = (*a as usize, *r as usize);
+            match (kinds[a], tc.kinds[r]) {
+                (RKind::Int, RKind::Int) => callee.ints[r] = bare.ints[a],
+                (RKind::Int, _) => callee.floats[r] = bare.ints[a] as f64,
+                _ => callee.floats[r] = bare.floats[a],
+            }
+        }
+        if p.recursive && let Err(e) = self.deeper(p.first_line) {
+            self.reg_pool.give(regs, callee);
+            return Err(e);
+        }
+        let saved_line = self.line;
+        self.frames.push(Frame { scopes: Vec::new(), locals: Vec::new(), marks: Vec::new(), fn_name: p.name.clone(), slots: Vec::new(), env: None });
+        let r = self.run_typed(p, tc, &mut regs, &mut callee);
+        self.reg_pool.give(regs, callee);
+        self.call_ended(r, false, p.recursive, saved_line)
+    }
+
+    /// A user function called from a prepared body: its arguments moved
+    /// (or copied) from the caller's registers into the callee's.
+    fn call_user_from(&mut self, name: &str, regs: &mut [CrowValue], args: &[(R, bool)]) -> Result<CrowValue, String> {
+        self.check_cancel()?;
+        let p = match self.prepared.get(name) {
+            Some(p) => p.clone(),
+            None => self.prepare_called(name)?,
+        };
+        let scope = self.registry.enter_scope(p.scope);
+        let r = self.call_prepared_with(name, &p, args.len(), |i| {
+            let (r, take) = args[i];
+            if take { std::mem::replace(&mut regs[r as usize], CrowValue::done()) } else { copied(&regs[r as usize]) }
+        });
+        self.registry.resume_call(scope);
+        r
+    }
+
     pub(super) fn prepared_for(&mut self, f: &Arc<Fn>) -> Arc<Prepared> {
         if let Some(p) = self.prepared.get(&f.name) {
             return p.clone();
@@ -1210,25 +1379,25 @@ impl IrInterp {
     }
 
     /// A prepared body run: its registers, its parameters' values in theirs.
-    pub(super) fn run_prepared(&mut self, p: &Prepared, args: Vec<CrowValue>) -> Result<Flow, String> {
-        let mut regs = vec![CrowValue::done(); p.n_regs];
-        for (v, r) in args.into_iter().zip(p.params.iter()) {
-            regs[*r as usize] = v;
-        }
+    /// A prepared body run over a register file its parameters are in (the
+    /// file from the pool, `call_prepared_with`).
+    pub(super) fn run_body(&mut self, p: &Prepared, regs: &mut Vec<CrowValue>, bare: &mut Bare) -> Result<Flow, String> {
         if let Some(tc) = &p.typed {
-            let mut bare = Bare { ints: vec![0i64; p.n_regs], floats: vec![0f64; p.n_regs], lists: vec![Vec::new(); p.n_regs] };
+            bare.ints.resize(p.n_regs, 0);
+            bare.floats.resize(p.n_regs, 0.0);
+            bare.lists.resize_with(p.n_regs, Vec::new);
             // each typed parameter a plain number of its kind (a list of
             // plain ints) — or the boxed program runs (a dual number a
             // function `grad` differentiates computes with, a value the IR
             // could not see)
             for r in p.params.iter() {
-                if !unbox_reg(&tc.kinds, &regs, &mut bare, *r) {
-                    return self.run_code(p, &mut regs);
+                if !unbox_reg(&tc.kinds, regs, bare, *r) {
+                    return self.run_code(p, regs);
                 }
             }
-            return self.run_typed(p, tc, &mut regs, &mut bare);
+            return self.run_typed(p, tc, regs, bare);
         }
-        self.run_code(p, &mut regs)
+        self.run_code(p, regs)
     }
 
     fn run_code(&mut self, p: &Prepared, regs: &mut Vec<CrowValue>) -> Result<Flow, String> {
@@ -1567,6 +1736,18 @@ impl IrInterp {
                     let v = if b.is_error() { b.clone() } else { t!(Self::len_of(target, b, &trace)) };
                     regs[*d as usize].assign(v);
                 }
+                Ins::Call { d, target, args, propagates } if !self.tracing && matches!(&**target, Target::User(n) if n != PUT) => {
+                    let Target::User(name) = &**target else { return pc + 1 };
+                    self.line_of(p, pc);
+                    if *propagates && let Some(err) = args.iter().find(|(r, _)| regs[*r as usize].is_error()) {
+                        let mut err = regs[err.0 as usize].clone();
+                        err.append_trace(&self.trace_entry());
+                        regs[*d as usize].assign(err);
+                        return pc + 1;
+                    }
+                    let v = t!(self.call_user_from(name, regs, args));
+                    regs[*d as usize].assign(v);
+                }
                 Ins::Call { d, target, args, propagates } => {
                     let mut vals = Vec::with_capacity(args.len());
                     for (r, take) in args.iter() {
@@ -1692,7 +1873,8 @@ mod tests {
             "fn tri[n]\n    s = 0\n    for i in range[n]\n        for i in range[3]\n            s = s + i\n        s = s + i\n    return s\nlog[tri[4]]\n",
             "tri",
         );
-        let code = prepare(&f).code;
+        let p = prepare(&f);
+        let code = &p.code;
         let vars: Vec<R> = code.iter().filter_map(|i| match i { Ins::ForStart { var, .. } => Some(*var), _ => None }).collect();
         assert_eq!(vars.len(), 2, "{:?}", code);
         assert_ne!(vars[0], vars[1], "{:?}", code);
@@ -1779,6 +1961,12 @@ enum TIns {
     LClear { d: R },
     ForCount { var: R, ctr: R, hi: R, lo: Option<TOp>, top: TOp, end: u32 },
     ForNextCount { var: R, ctr: R, hi: R, body: u32 },
+    /// An int or a float answered (the boxed return, of a bare register).
+    IRet { s: R },
+    FRet { s: R },
+    /// A user function called with int and float arguments, answering an
+    /// int or a float: the arguments handed over bare (`call_typed`).
+    CallT { d: R, name: Box<str>, args: Box<[R]> },
 }
 
 pub(super) struct Typed {
@@ -1798,6 +1986,51 @@ pub(super) struct Bare {
     ints: Vec<i64>,
     floats: Vec<f64>,
     lists: Vec<Vec<i64>>,
+}
+
+/// Register files a returned call left, kept for the next call (each
+/// empty, its capacity kept). A clone of the interpreter — a parallel
+/// loop's — starts with none of its own.
+#[derive(Default)]
+pub(super) struct Pool(Vec<(Vec<CrowValue>, Bare)>);
+
+impl Clone for Pool {
+    fn clone(&self) -> Pool {
+        Pool(Vec::new())
+    }
+}
+
+impl Pool {
+    fn take(&mut self) -> (Vec<CrowValue>, Bare) {
+        self.0.pop().unwrap_or_else(|| (Vec::new(), Bare { ints: Vec::new(), floats: Vec::new(), lists: Vec::new() }))
+    }
+
+    /// A file back: its values dropped now, where a returning frame drops
+    /// its locals.
+    fn give(&mut self, mut regs: Vec<CrowValue>, mut bare: Bare) {
+        regs.clear();
+        bare.ints.clear();
+        bare.floats.clear();
+        bare.lists.clear();
+        if self.0.len() < 64 {
+            self.0.push((regs, bare));
+        }
+    }
+}
+
+/// Whether an argument of one kind is handed bare to a parameter of
+/// another: an int to an int or a float, a float to a float (a float to an
+/// int parameter is the boxed call's to refuse).
+fn handed_bare(arg: RKind, param: RKind) -> bool {
+    matches!((arg, param), (RKind::Int, RKind::Int) | (RKind::Int, RKind::Float) | (RKind::Float, RKind::Float))
+}
+
+/// The boxed registers sized for the body: a pure body runs without them
+/// until a hand-over needs them.
+fn boxed_sized(regs: &mut Vec<CrowValue>, p: &Prepared) {
+    if regs.len() < p.n_regs {
+        regs.resize_with(p.n_regs, CrowValue::done);
+    }
 }
 
 /// A typed register's value into its boxed register.
@@ -1982,7 +2215,47 @@ fn list_use_ok(ins: &Ins, r: R, k: &[RKind]) -> bool {
 }
 
 /// The typed program of a prepared body, when it has a typed register.
-fn typed(p: &Prepared) -> Option<Typed> {
+/// Whether a typed program runs on bare registers alone: each parameter
+/// an int or a float, and every instruction one that reads and writes bare
+/// registers only. Its one way back to the boxed program is a typed call
+/// answering what its register cannot hold, which sizes the boxed
+/// registers first.
+fn pure(t: &Typed, params: &[R]) -> bool {
+    params.iter().all(|r| matches!(t.kinds[*r as usize], RKind::Int | RKind::Float))
+        && t.lists.is_empty()
+        && t.code.iter().all(|ins| {
+            matches!(
+                ins,
+                TIns::Nop
+                    | TIns::Jump { .. }
+                    | TIns::Loop { .. }
+                    | TIns::Cancel
+                    | TIns::IConst { .. }
+                    | TIns::FConst { .. }
+                    | TIns::IMov { .. }
+                    | TIns::FMov { .. }
+                    | TIns::IArith { .. }
+                    | TIns::IAddK { .. }
+                    | TIns::ISubK { .. }
+                    | TIns::IAddR { .. }
+                    | TIns::ISubR { .. }
+                    | TIns::IJump { .. }
+                    | TIns::IJumpR { .. }
+                    | TIns::IJumpK { .. }
+                    | TIns::INeg { .. }
+                    | TIns::FArith { .. }
+                    | TIns::FNeg { .. }
+                    | TIns::I2F { .. }
+                    | TIns::ForCount { .. }
+                    | TIns::ForNextCount { .. }
+                    | TIns::IRet { .. }
+                    | TIns::FRet { .. }
+                    | TIns::CallT { .. }
+            )
+        })
+}
+
+fn typed(p: &Body) -> Option<Typed> {
     // a list of ints stays bare only where every instruction that meets it
     // is a list instruction or makes it (a list a call takes, a loop walks,
     // a fallback names or the body answers is boxed: converting it there
@@ -2170,9 +2443,20 @@ fn typed(p: &Prepared) -> Option<Typed> {
                     lend(ins)
                 }
             }
+            // `float[n]` of an int: the conversion itself (the boxed program
+            // keeps the row, for a value the IR could not see)
+            Ins::Call { d, target, args, .. } if matches!(&**target, Target::Row(row) if row.id == "core.float_of_int") && matches!(&args[..], [(s, _)] if ik(*s)) && fk(*d) => TIns::I2F { d: *d, s: args[0].0 },
+            // (an int or a float argument is never a failure: nothing to
+            // propagate)
+            Ins::Call { d, target, args, .. } if (ik(*d) || fk(*d)) && args.iter().all(|(r, _)| ik(*r) || fk(*r)) && matches!(&**target, Target::User(n) if n != PUT) => {
+                let Target::User(name) = &**target else { return wrap(&[], &[*d]) };
+                TIns::CallT { d: *d, name: name.as_str().into(), args: args.iter().map(|(r, _)| *r).collect() }
+            }
             Ins::Call { d, args, .. } => wrap(&args.iter().map(|(r, _)| *r).collect::<Vec<R>>(), &[*d]),
             Ins::Store { s, .. } | Ins::Do { s } => wrap(&[*s], &[]),
             Ins::Propagate { regs, .. } => wrap(regs, &[]),
+            Ins::Return { s: Some((r, _)) } if ik(*r) => TIns::IRet { s: *r },
+            Ins::Return { s: Some((r, _)) } if fk(*r) => TIns::FRet { s: *r },
             Ins::Return { s } => wrap(&s.iter().map(|(r, _)| *r).collect::<Vec<R>>(), &[]),
             Ins::Eval { .. } | Ins::Exec { .. } => lend(ins),
         })
@@ -2206,6 +2490,7 @@ impl IrInterp {
         // this instruction, and the rest of the call
         macro_rules! hand_over {
             () => {{
+                boxed_sized(regs, p);
                 self.box_typed(tc, regs, bare, &[]);
                 return self.run_code_from(p, regs, pc);
             }};
@@ -2374,6 +2659,12 @@ impl IrInterp {
                             Ok(k) => items[k].set_int(n),
                             Err(e) => stop!(e),
                         },
+                        // a tensor's number, set where it lies (as `set_path`)
+                        Value::NumArray(t) if ok => {
+                            if let Err(e) = crow_runtime::core::set_flat_at(t, i, n as f64) {
+                                stop!(e)
+                            }
+                        }
                         _ => hand_over!(),
                     }
                 }
@@ -2387,6 +2678,12 @@ impl IrInterp {
                             Ok(k) => items[k].set_float(x),
                             Err(e) => stop!(e),
                         },
+                        // a tensor's number, set where it lies (as `set_path`)
+                        Value::NumArray(t) if ok => {
+                            if let Err(e) = crow_runtime::core::set_flat_at(t, i, x) {
+                                stop!(e)
+                            }
+                        }
                         _ => hand_over!(),
                     }
                 }
@@ -2479,6 +2776,29 @@ impl IrInterp {
                         continue;
                     }
                     bare.ints[*var as usize] = l;
+                }
+                TIns::IRet { s } => return Ok(Flow::Return(CrowValue::ok(Value::Int(bare.ints[*s as usize])))),
+                TIns::FRet { s } => return Ok(Flow::Return(CrowValue::ok(Value::Float(bare.floats[*s as usize])))),
+                TIns::CallT { d, name, args } => {
+                    self.line_of(p, pc);
+                    let v = match self.call_typed(name, &tc.kinds, bare, args) {
+                        Ok(v) => v,
+                        Err(e) => stop!(e),
+                    };
+                    let i = *d as usize;
+                    match (tc.kinds[i], v.plain_int(), v.plain_float()) {
+                        (RKind::Int, Some(n), _) => bare.ints[i] = n,
+                        (RKind::Float, _, Some(x)) => bare.floats[i] = x,
+                        // an answer the register cannot hold (a dual number a
+                        // function `grad` differentiates computes with): the
+                        // boxed program goes on after the call
+                        _ => {
+                            boxed_sized(regs, p);
+                            regs[i].assign(v);
+                            self.box_typed(tc, regs, bare, &[*d]);
+                            return self.run_code_from(p, regs, pc + 1);
+                        }
+                    }
                 }
                 TIns::ForNextCount { var, ctr, hi, body } => {
                     // (the counter is under the bound: one more cannot pass 64 bits)

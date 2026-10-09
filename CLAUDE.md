@@ -359,3 +359,12 @@ steps on every push and must be green.
   the kinds check and the row choice read as unknown (`guessed_truth`),
   or `where[df.filled eq true, …]` was refused in every test that did not
   call the function and resolved to math's row in the one that did.
+- A prepared function (`ir_interp/prepared.rs`) is a `Prepared` handle on
+  a shared `Body`, and a call clones the handle it runs: what a call
+  clones must be the thread's own. A parallel loop's chunk gets its own
+  handles (`handle`); one reference count every thread wrote on every
+  call had made 16 threads run no faster than one (spectral norm).
+- The emitter keeps a function's one-axis float tensor that the body only
+  reads and sets by index as a plain `Vec<f64>` (`emit_rs/vectors.rs`). A
+  new emitter path that prints a local goes through `local()` or
+  `plain_vector`, or it prints a vector where a tensor is expected.

@@ -213,11 +213,29 @@ pub fn row_at(t: &crate::tensor::CrowTensor, i: i64) -> Result<crate::tensor::Cr
 }
 
 /// `v[i]` of a vector: its number, or the reason the index is outside.
+#[inline]
 pub fn number_at(t: &crate::tensor::CrowTensor, i: i64) -> Result<f64, String> {
+    if let Some(v) = t.number_fast(i) {
+        return Ok(v);
+    }
     if t.ndim() >= 2 {
         return Err(rank_disagrees("a number", "a vector", t));
     }
     Ok(t.get_flat(crate::stops::item(i, t.len())?))
+}
+
+/// `t[i] = x` of a tensor: the number at flat index `i` (counted from the
+/// end when negative, refused past it in the words a list's index uses)
+/// written in place — in both modes, which had each copied the tensor out,
+/// set one number and built it again, at every write.
+#[inline]
+pub fn set_flat_at(t: &mut crate::tensor::CrowTensor, i: i64, x: f64) -> Result<(), String> {
+    if t.set_fast(i, x) {
+        return Ok(());
+    }
+    let k = crate::stops::item(i, t.len())?;
+    t.set_flat(k, x);
+    Ok(())
 }
 
 fn rank_disagrees(read: &str, typed: &str, t: &crate::tensor::CrowTensor) -> String {
