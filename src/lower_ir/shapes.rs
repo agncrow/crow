@@ -319,6 +319,8 @@ impl<'a> Lowerer<'a> {
         if self.pass != Pass::Final || !matches!(x.ty().payload(), Ty::Tensor(_, None)) {
             return;
         }
+        // (on a line refused for something else it is that mistake's echo,
+        // and goes: checks::without_echoes)
         let name = match x {
             Expr::Local(v, _) | Expr::Move(v, _) => format!("`{}`", v),
             Expr::Field { base, name, .. } => match base.as_ref() {

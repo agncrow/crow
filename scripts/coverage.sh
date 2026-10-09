@@ -41,6 +41,7 @@ if [ $quick = 0 ]; then
   for suite in --docs --errors --parity --packages --served; do run test $suite; done
   CROW_BOOK_JOBS=2 run test --book
   run test --fuzz 20
+  run test --fuzz 50 --mistakes
   for f in tests/layout/conformance.co examples/layout_dashboard.co src/modules/*.co; do run test $f; done
   for f in tests/*_harness.co; do run test $f; run test --compiled $f; done
   # the suites that run from their own directory: the binary itself, its

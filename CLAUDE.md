@@ -26,6 +26,7 @@ cargo clippy --workspace --all-features
 ./target/release/crow test --parity
 ./target/release/crow test --packages
 ./target/release/crow test --fuzz 20
+./target/release/crow test --fuzz 50 --mistakes
 ./target/release/crow test --served
 ./target/release/crow test --docs
 ./target/release/crow test --book

@@ -52,6 +52,8 @@ jobs:
         run: ./target/release/crow test --packages && df -h / | tail -1
       - name: Generated programs agree across both modes (a new seed each run; the report names it)
         run: ./target/release/crow test --fuzz 20 && df -h / | tail -1
+      - name: Mistakes planted in generated programs are refused as the rules say (a new seed each run)
+        run: ./target/release/crow test --fuzz 50 --mistakes
       - name: Benchmarks run in both modes (small sizes, no timing thresholds)
         run: ./target/release/crow test --bench --quick
       - name: Free the suites' shared build (the book's workers build their own)

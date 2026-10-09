@@ -104,7 +104,7 @@ fn lower_checked_as(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: 
     // what the program got wrong comes first: a form the lowering cannot
     // take is usually one of those errors seen from the other side
     if !l.v.errors.is_empty() {
-        return Err(Refusal::Invalid(std::mem::take(&mut l.v.errors)));
+        return Err(Refusal::Invalid(checks::without_echoes(std::mem::take(&mut l.v.errors))));
     }
     let mut program = Program { parts: vec![part.map_err(Refusal::Unlowered)?] };
     decide_loops(&mut program);
@@ -3169,7 +3169,7 @@ impl<'a> Lowerer<'a> {
             // the interpreter as it ran — `not indexable` — and the compiled
             // program had not built); a builtin's name read as a method,
             // `xs.len[]`, is the call it means, the value first
-            if self.pass == Pass::Final && matches!(base.ty().payload(), Ty::Int | Ty::Float | Ty::Bool) && !self.contested(&base) {
+            if self.pass == Pass::Final && matches!(base.ty().payload(), Ty::Int | Ty::Float | Ty::Bool) && !self.contested(&base) && !of_unknown_rank(&base) {
                 let words = crate::table::Arg::of_type(base.ty().payload()).words();
                 match callee {
                     A::FieldAccess { object, field } if checks::BUILTINS.contains(&field.as_str()) => {
@@ -4415,6 +4415,16 @@ pub(crate) fn words_before_placeholders(sql: &str) -> Vec<String> {
 /// where it is assigned).
 /// The variable an expression reads, through the conversions a read is
 /// wrapped in (a value that can fail is decided before it is indexed).
+/// Whether a value was read out of a tensor whose rank is not known: its
+/// kind, a number, is the lowering's guess, not the program's (an index
+/// into it is the rank's refusal, not a number's).
+fn of_unknown_rank(e: &Expr) -> bool {
+    match e {
+        Expr::Index { base, .. } => matches!(base.ty().payload(), Ty::Tensor(_, None)) || of_unknown_rank(base),
+        _ => false,
+    }
+}
+
 /// The expressions a block hands its value on through: its last statement,
 /// and the last of each branch of an `if` that ends it — what a collecting
 /// loop yields, what a console shows.

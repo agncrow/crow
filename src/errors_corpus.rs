@@ -347,6 +347,251 @@ pub fn cmd_test_errors(args: &[String]) -> i32 {
     if failed > 0 { 1 } else { 0 }
 }
 
+// ── mistakes planted in generated programs ─────────────────────────────
+
+/// One mistake planted in a program that runs: the line it is on
+/// (1-based), when it has one, and what the refusal must say to teach its
+/// fix.
+struct Planted {
+    what: String,
+    line: Option<usize>,
+    teaches: String,
+}
+
+/// A seeded generator of small choices (xorshift).
+struct Draw(u64);
+
+impl Draw {
+    fn below(&mut self, n: usize) -> usize {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        (self.0 % n.max(1) as u64) as usize
+    }
+}
+
+/// The builtins a slip is planted in: names of five letters or more, so a
+/// swapped pair is one slip from them and from no other name.
+const SLIPPABLE: &[&str] = &["upper", "lower", "split", "strip", "round", "floor", "contains", "reverse", "filter", "concat", "values", "replace"];
+
+/// The mistakes a program's lines allow, each with the line changed: the
+/// program as it runs, one mistake in it.
+fn plantable(lines: &[String]) -> Vec<(Vec<String>, Planted)> {
+    let mut out = Vec::new();
+    let code = |l: &str| l.split("---").next().unwrap_or("").to_string();
+    for (i, l) in lines.iter().enumerate() {
+        let c = code(l);
+        let n = i + 1;
+        // a slip in a builtin's name: two letters swapped
+        for name in SLIPPABLE {
+            let call = format!("{}[", name);
+            if let Some(at) = c.find(&call) {
+                let before_ok = at == 0 || !c[..at].ends_with(|ch: char| ch.is_alphanumeric() || ch == '_' || ch == '.');
+                if !before_ok {
+                    continue;
+                }
+                // (two neighbours that differ: `upper`'s two p's swapped
+                // would be `upper`)
+                let chars: Vec<char> = name.chars().collect();
+                let Some(at) = (1..chars.len() - 1).find(|&k| chars[k] != chars[k + 1]) else { continue };
+                let mut slipped = chars.clone();
+                slipped.swap(at, at + 1);
+                let slipped: String = slipped.into_iter().collect();
+                let mut mutated = lines.to_vec();
+                mutated[i] = l.replacen(&call, &format!("{}[", slipped), 1);
+                out.push((mutated, Planted { what: format!("{} for {}", slipped, name), line: Some(n), teaches: format!("did you mean '{}'", name) }));
+                break;
+            }
+        }
+        // a call written with parentheses, its brackets on the line
+        if let Some(open) = c.find(|ch: char| ch.is_alphabetic()).and_then(|s| c[s..].find('[').map(|o| s + o)) {
+            let before = &c[..open];
+            if before.ends_with(|ch: char| ch.is_alphanumeric() || ch == '_') {
+                let mut depth = 0i32;
+                let mut close = None;
+                for (k, ch) in c[open..].char_indices() {
+                    match ch {
+                        '[' => depth += 1,
+                        ']' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                close = Some(open + k);
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(close) = close {
+                    let mut chars: Vec<char> = l.chars().collect();
+                    let (o, cl) = (c[..open].chars().count(), c[..close].chars().count());
+                    chars[o] = '(';
+                    chars[cl] = ')';
+                    let mut mutated = lines.to_vec();
+                    mutated[i] = chars.into_iter().collect();
+                    out.push((mutated, Planted { what: "a call with ( )".into(), line: Some(n), teaches: "square brackets".into() }));
+                }
+            }
+        }
+        // a word operator written as another language's symbol
+        for (word, symbol, teach) in [(" eq ", " == ", "'eq'"), (" and ", " && ", "'and'"), (" gt ", " > ", "'gt'"), (" ne ", " != ", "'ne'")] {
+            if c.contains(word) {
+                let mut mutated = lines.to_vec();
+                mutated[i] = l.replacen(word, symbol, 1);
+                out.push((mutated, Planted { what: format!("{} for {}", symbol.trim(), word.trim()), line: Some(n), teaches: teach.into() }));
+                break;
+            }
+        }
+        // a bracket never closed: the line's last `]` dropped, a line after it
+        if c.trim_end().ends_with(']') && i + 1 < lines.len() && !c.trim_start().starts_with("fn ") && !c.trim_start().starts_with("struct ") {
+            let at = l.rfind(']').unwrap_or(0);
+            let mut mutated = lines.to_vec();
+            mutated[i] = format!("{}{}", &l[..at], &l[at + 1..]);
+            out.push((mutated, Planted { what: "a ']' left out".into(), line: Some(n), teaches: "never closed".into() }));
+        }
+        // two statements on one line: an assignment and the plain line after it
+        if let Some(next) = lines.get(i + 1) {
+            let (ci, cn) = (code(l), code(next));
+            let indent = |s: &str| s.len() - s.trim_start().len();
+            let plain = |s: &str| {
+                let t = s.trim_start();
+                !t.is_empty() && !["fn ", "if ", "else", "for ", "while ", "struct ", "use ", "return", "test ", "view ", "derive "].iter().any(|k| t.starts_with(k)) && !t.contains("= for ")
+            };
+            let after_plain = lines.get(i + 2).is_none_or(|a| indent(&code(a)) <= indent(&ci));
+            if plain(&ci) && plain(&cn) && indent(&ci) == indent(&cn) && ci.contains(" = ") && after_plain && i > 0 && indent(&code(&lines[i - 1])) <= indent(&ci) {
+                let mut mutated = lines.to_vec();
+                mutated[i] = format!("{} {}", ci.trim_end(), cn.trim_start());
+                mutated.remove(i + 1);
+                out.push((mutated, Planted { what: "two statements on a line".into(), line: Some(n), teaches: "one statement".into() }));
+            }
+        }
+    }
+    // a module's import left out, where the program calls it: its calls
+    // say the import, once (db: the generated part imports math and
+    // frame, and a part's imports are the program's)
+    let calls_db = lines.iter().any(|l| l.contains("connect[") || l.contains("query["));
+    if let Some((i, l)) = lines.iter().enumerate().find(|(_, l)| l.starts_with("use "))
+        && calls_db
+        && l.contains(" db,")
+    {
+        let mut mutated = lines.to_vec();
+        mutated[i] = l.replacen(" db,", "", 1);
+        out.push((mutated, Planted { what: "use db left out".into(), line: None, teaches: "add `use db`".into() }));
+    }
+    out
+}
+
+/// `crow test --fuzz n --mistakes [--seed s] [--keep]`: programs the
+/// generator makes, each with one mistake planted (a slip in a name, a call
+/// written with `( )`, Python's operator, a bracket left open, two
+/// statements on a line, an import left out), held to the rules every
+/// refusal keeps — refused, once, at the line of the mistake, naming only
+/// what the program wrote, never as Crow's own bug, the same in both modes
+/// and in the language server — and to the fix the mistake asks for.
+pub fn cmd_test_mistakes(args: &[String]) -> i32 {
+    let n: usize = args.iter().filter(|a| !a.starts_with("--")).find_map(|a| a.parse().ok()).unwrap_or(10);
+    let seed: u64 = args
+        .iter()
+        .position(|a| a == "--seed")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(1));
+    let keep = args.iter().any(|a| a == "--keep");
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("crow"));
+    let dir = Path::new("target").join("crow_mistakes");
+    let _ = std::fs::create_dir_all(&dir);
+    println!("mistakes: {} generated programs from seed {}, one mistake planted in each (crow test --fuzz {} --mistakes --seed {} repeats it)\n", n, seed, n, seed);
+    let start = std::time::Instant::now();
+    let mut failed = 0;
+    let mut refused_as_made = 0;
+    for k in 0..n {
+        let s = seed.wrapping_add(k as u64);
+        let (source, module_name) = crate::fuzz::program(s, 4);
+        let _ = std::fs::write(dir.join(format!("{}.co", module_name)), crate::fuzz::module(&module_name));
+        // a program refused as generated says nothing of a mistake planted
+        // in it: it is passed over, and counted
+        let base = format!("base_{}.co", s);
+        let _ = std::fs::write(dir.join(&base), &source);
+        let (base_ok, base_out) = run(&exe, &["run", "-i", &base], &dir);
+        let _ = std::fs::remove_file(dir.join(&base));
+        if !base_ok {
+            refused_as_made += 1;
+            println!("  --    seed {}: refused as generated ({})", s, base_out.lines().find(|l| l.contains(": ")).unwrap_or("").trim());
+            continue;
+        }
+        let lines: Vec<String> = source.lines().map(String::from).collect();
+        let options = plantable(&lines);
+        if options.is_empty() {
+            println!("  --    seed {}: no mistake to plant", s);
+            continue;
+        }
+        let mut draw = Draw(s.wrapping_mul(2654435761).wrapping_add(1));
+        // a kind of mistake first, then where: each kind as likely as another
+        let mut kinds: Vec<&str> = options.iter().map(|(_, p)| p.what.split(" for ").last().unwrap_or(&p.what)).collect();
+        kinds.sort();
+        kinds.dedup();
+        let kind = kinds[draw.below(kinds.len())].to_string();
+        let of_kind: Vec<&(Vec<String>, Planted)> = options.iter().filter(|(_, p)| p.what.split(" for ").last().unwrap_or(&p.what) == kind).collect();
+        let (mutated, planted) = of_kind[draw.below(of_kind.len())];
+        let file = format!("mistake_{}.co", s);
+        let text = mutated.join("\n") + "\n";
+        let _ = std::fs::write(dir.join(&file), &text);
+        let (i_ok, i_out) = run(&exe, &["run", "-i", &file], &dir);
+        let mut why: Vec<String> = Vec::new();
+        if i_ok {
+            why.push("it ran: the mistake was not refused".into());
+        } else {
+            let (t_ok, t_out) = run(&exe, &["run", &file], &dir);
+            if t_ok != i_ok || t_out != i_out {
+                why.push(format!("the modes differ:\n          compiled: {}", t_out.trim().replace('\n', "\n                    ")));
+            }
+            if i_out.contains("a bug in Crow") || i_out.contains("internal error") {
+                why.push("refused as a bug in Crow".into());
+            }
+            let entries = printed(&file, &i_out);
+            if entries.len() != 1 {
+                why.push(format!("{} messages for one mistake", entries.len()));
+            }
+            if let (Some(want), Some((Some(got), _, _))) = (planted.line, entries.first())
+                && *got != want
+            {
+                why.push(format!("pointed at line {}, the mistake is on line {}", got, want));
+            }
+            if entries.iter().any(|(_, m, _)| !foreign_names(&text, m).is_empty()) {
+                why.push("names what the program never wrote".into());
+            }
+            if !i_out.contains(&planted.teaches) {
+                why.push(format!("does not say {}", planted.teaches));
+            }
+            let analysis = crate::lsp::analysis::analyze(&text, Some(&dir), None, &file);
+            let mut editor: Vec<(Option<usize>, String)> = analysis.diagnostics.iter().map(|d| (Some(d.range.start.line as usize + 1), d.message.clone())).collect();
+            editor.sort();
+            editor.dedup();
+            let mut terminal: Vec<(Option<usize>, String)> = entries.iter().map(|(l, m, _)| (*l, m.clone())).collect();
+            terminal.sort();
+            if editor != terminal {
+                why.push(format!("the editor says {:?}", editor));
+            }
+        }
+        if why.is_empty() {
+            println!("  ok    seed {}: {}", s, planted.what);
+            if !keep {
+                let _ = std::fs::remove_file(dir.join(&file));
+            }
+        } else {
+            failed += 1;
+            println!("  FAIL  seed {}: {} (kept as {})", s, planted.what, dir.join(&file).display());
+            for w in &why {
+                println!("        {}", w);
+            }
+            let first = i_out.lines().next().unwrap_or("(nothing)");
+            println!("        said: {}", first);
+        }
+    }
+    println!("\n{} programs, {} failed, {} refused as generated ({:.1}s)", n, failed, refused_as_made, start.elapsed().as_secs_f64());
+    i32::from(failed > 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -367,6 +612,22 @@ mod tests {
     fn a_printed_refusal_reads_back() {
         let out = "a.co:1:30: undefined variable 'm'\n  1 │ ours = frame.new[node = keys[m], value = values[m]]\n    │                              ^                  ^\na.co: no place\n";
         assert_eq!(printed("a.co", out), vec![(Some(1), "undefined variable 'm'".to_string(), vec![(29, 30), (48, 49)]), (None, "no place".to_string(), vec![])]);
+    }
+
+    /// Each kind of mistake is planted where the program allows it, at the
+    /// line it is on, and a slip is one swap of two letters that differ
+    #[test]
+    fn mistakes_are_planted_where_the_lines_allow() {
+        let lines: Vec<String> = "use math, db, frame\nc = connect['sqlite://:memory:']\nfn f[x]\n    a = upper[x]\n    b = len[a]\n    if a eq 'X'\n        log[a]\n    return b\nlog[f['x']]".lines().map(String::from).collect();
+        let planted = plantable(&lines);
+        let says = |w: &str| planted.iter().any(|(_, p)| p.what.contains(w));
+        for w in ["upepr for upper", "a call with ( )", "== for eq", "two statements on a line", "use db left out", "a ']' left out"] {
+            assert!(says(w), "{}: {:?}", w, planted.iter().map(|(_, p)| &p.what).collect::<Vec<_>>());
+        }
+        let slip = planted.iter().find(|(_, p)| p.what.starts_with("upepr")).map(|(m, p)| (m[3].clone(), p.line));
+        assert_eq!(slip, Some(("    a = upepr[x]".to_string(), Some(4))));
+        // the same seed draws the same mistake
+        assert_eq!((Draw(7).below(10), Draw(7).below(10)), (Draw(7).below(10), Draw(7).below(10)));
     }
 
     #[test]

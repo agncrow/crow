@@ -295,6 +295,10 @@ fn crow_main() {
                 // hold one of the words
                 let only: Vec<String> = args[2..].iter().filter(|a| !a.starts_with("--")).cloned().collect();
                 process::exit(served_parity::run(&only));
+            } else if args.iter().any(|a| a == "--fuzz") && args.iter().any(|a| a == "--mistakes") {
+                // `crow test --fuzz 20 --mistakes`: generated programs, one
+                // mistake planted in each, each refusal held to the rules
+                process::exit(errors_corpus::cmd_test_mistakes(&args[2..]));
             } else if args.iter().any(|a| a == "--fuzz") {
                 // `crow test --fuzz 20 --seed 7`: programs generated from a
                 // seed, run in both modes

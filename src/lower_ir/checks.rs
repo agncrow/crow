@@ -113,6 +113,33 @@ pub(crate) fn slips(a: &str, b: &str) -> usize {
     d[a.len()][b.len()]
 }
 
+/// The refusals left when the echoes go: a refusal that only says
+/// something is not known — a rank, a function value's parameters — on a
+/// line refused for something else is that mistake seen again (a slip in a
+/// name leaves what is made of it unknown), and one mistake is one
+/// message (spec, Error Messages, rule 3).
+pub(super) fn without_echoes(errors: Vec<(String, Option<String>)>) -> Vec<(String, Option<String>)> {
+    let echo = |m: &str| m.contains("is not known here") || m.contains("nothing types its parameters");
+    let line_of = |m: &str| m.split(':').next().unwrap_or("").to_string();
+    // (an echo follows what it echoes: the slip is refused as its call's
+    // arguments are lowered, before what is made of the call; a rank not
+    // known, refused first, is the mistake itself)
+    let mut firm: Vec<(String, Option<String>)> = Vec::new();
+    let mut kept = Vec::new();
+    for (m, o) in errors {
+        let at = (line_of(&m), o.clone());
+        if echo(&m) {
+            if firm.contains(&at) {
+                continue;
+            }
+        } else {
+            firm.push(at);
+        }
+        kept.push((m, o));
+    }
+    kept
+}
+
 /// The standard modules providing a function, imported or not.
 fn stdlib_providers(name: &str) -> Vec<String> {
     crate::modules::ModuleRegistry::with_stdlib().providers_of(name).into_iter().map(String::from).collect()

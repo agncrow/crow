@@ -53,12 +53,42 @@ impl Parser {
                     stmts.extend(parsed);
                 }
                 Err(e) => {
+                    // a bracket never closed: the lexer read the rest of the
+                    // file as part of it, with no lines or blocks — nothing
+                    // after it parses as what the program wrote
+                    let unclosed = e.contains("is never closed");
                     errors.push((line, e));
+                    if unclosed {
+                        break;
+                    }
                     // If parse_stmt consumed nothing, force progress.
                     if self.pos == checkpoint {
                         self.pos += 1;
                     }
-                    self.sync_to_statement_end();
+                    // an error inside one of the statement's blocks: the
+                    // rest of the statement goes with it, its blocks too,
+                    // so their lines are not read as top-level statements
+                    // (a function's `return` had been "outside a function")
+                    let mut depth: i64 = self.tokens[checkpoint..self.pos.min(self.tokens.len())]
+                        .iter()
+                        .map(|t| match t.token {
+                            Token::Indent => 1,
+                            Token::Dedent => -1,
+                            _ => 0,
+                        })
+                        .sum();
+                    if depth > 0 {
+                        while depth > 0 && !self.is_at_end() {
+                            match self.peek() {
+                                Token::Indent => depth += 1,
+                                Token::Dedent => depth -= 1,
+                                _ => {}
+                            }
+                            self.pos += 1;
+                        }
+                    } else {
+                        self.sync_to_statement_end();
+                    }
                     // (a block the broken statement left ends here: its end
                     // is no statement of its own)
                     while matches!(self.peek(), Token::Dedent | Token::Newline) {
@@ -615,6 +645,11 @@ impl Parser {
             self.advance();
             let step = self.parse_expr()?;
             steps.push((line, step));
+            // (a step's line ends with it: what follows on the line is the
+            // mistake, said as it is — `then len(x)` a call with `( )`)
+            if !matches!(self.peek(), Token::Newline | Token::Dedent | Token::Eof) {
+                return Err(self.unexpected(None));
+            }
             self.skip_newlines();
         }
         if self.check(&Token::Dedent) {
