@@ -186,11 +186,14 @@ steps on every push and must be green.
   Profile with `sample <pid> 3`: the "Sort by top of stack" list is what
   matters (the release binary has no frame pointers, so call chains are
   blank). And time the right thing: `crow run file.co` is a DEV build by
-  design (the runtime crates optimized, the program crate not — the spec
-  says so), 30× slower than the binary `crow build` makes; the compiled
-  number is `crow build`, then the binary; the interpreter's number is CPU
-  time (`/usr/bin/time -p crow run -i …`): wall time under a running suite
-  was 3× off.
+  design (the program and the runtime crates at opt-level 1, no LTO;
+  `--opt N` says otherwise — the spec says so; until 2026-10-08 the
+  program crate had been at 0, 30× slower than `crow build`'s binary; a
+  level's BUILD cost is measured on a big crate, not on fannkuch: finch's
+  rebuilds after an edit in 14 s at level 1 against 3 s at 0), so
+  the compiled number is `crow build`, then the binary; the interpreter's
+  number is CPU time (`/usr/bin/time -p crow run -i …`): wall time under
+  a running suite was 3× off.
 - A function's body runs on its PREPARED form (`src/ir_interp/prepared.rs`):
   locals in slots decided before the call, the hot shapes mirrored
   (`PStmt`/`PExpr`), everything else an `Ir` node the walker runs with

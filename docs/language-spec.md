@@ -3866,7 +3866,7 @@ Specialization propagates through call chains and works with recursion and struc
 
 The compiler's front end is the source of truth for what a valid program is: it infers a concrete type for every value. Both modes run the same front end (parse → expand → lower → infer → validate) and then the same intermediate form, which the interpreter walks and the Rust backend prints, so they reject the same invalid programs with the same messages.
 
-**The parity promise:** both modes are required to produce identical output. This is enforced mechanically — `crow test --parity` runs `tests/parity/` through both modes and diffs stdout, and `crow test --book` does the same for every code block in the book. A disagreement between the modes is a bug in Crow, never a semantics to learn. Interpret while exploring (instant start, the REPL, `crow test`); compile when shipping (`crow build` produces the binary without running it).
+**The parity promise:** both modes are required to produce identical output. This is enforced mechanically — `crow test --parity` runs `tests/parity/` through both modes and diffs stdout, and `crow test --book` does the same for every code block in the book. A disagreement between the modes is a bug in Crow, never a semantics to learn. Interpret while exploring (instant start, the REPL, `crow test`); compile when shipping (`crow build` produces the binary without running it). `crow run` builds in the dev profile — the program and the runtime crates at optimization level 1, no LTO — so the edit loop stays short; `crow run --opt 3 file.co` raises the level (0 to 3, the runtime crates following above 1) for a run that needs the speed, and `crow build` is the shipped binary, level 3 with LTO. (Until 2026-10-08 the dev build had left the program at level 0: fannkuch ran 30× slower under `crow run` than from `crow build`. Level 1 costs compile time in proportion to the program — nothing measurable for a small one; for a large app, finch's 10,541 lines of generated Rust, a rebuild after an edit takes 14 s of compile against 3 s at level 0, and 26 s against 4 s from scratch. `--opt 0` keeps that loop short, and `crow dev` builds nothing.)
 
 
 ### No `none`
@@ -4041,7 +4041,8 @@ crow build file.co        --- transpile a specific file
 crow build --ir file.co   --- print the program's one typed form, the IR (docs/ir-design.md); nothing is compiled
 crow build --rs file.co   --- print the Rust the program compiles to, printed from the IR; nothing is compiled
 crow run                    --- transpile + compile + run main.co
-crow run file.co          --- transpile + compile + run a specific file (a dev build: the runtime crates optimized, the program not)
+crow run file.co          --- transpile + compile + run a specific file (a dev build: the program and the runtime crates at optimization level 1, no LTO)
+crow run --opt 2 file.co  --- the same, the program at level 2 (0 to 3; the runtime crates follow above 1; crow build is 3 with LTO)
 crow run train              --- run a named job from the crowfile jobs map
 crow run -i file.co       --- run with interpreter (instant start, for exploring)
 crow stop                   --- stop the running app (pidfile, then project binary)
