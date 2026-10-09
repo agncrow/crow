@@ -1,1 +1,3 @@
-d11_if_on_a_number.co: internal error: the lowered program disagrees with itself — a bug in Crow, not in this program: d11_if_on_a_number main: line 4: an if decides on a value of type Int
+d11_if_on_a_number.co:3:4: 'x' is an int, and a condition is true or false — compare it: x gt 0, len[xs] gt 0, s ne ''
+  3 │ if x
+    │    ^

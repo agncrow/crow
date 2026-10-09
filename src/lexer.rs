@@ -125,10 +125,10 @@ impl Lexer {
                         && matches!(name.as_str(), "f" | "r" | "b" | "rb" | "br" | "fr" | "rf")
                     {
                         return Err(format!(
-                            "'{}' string prefixes don't exist in Crow (line {}, col {}) — \
+                            "line {}, col {}: '{}' string prefixes don't exist in Crow — \
                              strings interpolate by default with backticks: 'hello `name`'. \
                              Drop the '{}' prefix.",
-                            name, tok.line, tok.col, name
+                            tok.line, tok.col, name, name
                         ));
                     }
                 }
@@ -196,8 +196,8 @@ impl Lexer {
                 ')' => Token::RParen,
                 _ => {
                     return Err(format!(
-                        "unexpected character '{}' at line {}, col {}",
-                        ch, self.line, self.col
+                        "line {}, col {}: '{}' is not a character Crow writes code with",
+                        self.line, self.col, ch
                     ))
                 }
             };
@@ -242,52 +242,78 @@ impl Lexer {
     /// "unexpected character" error).
     fn python_ism_at(&self, ch: char) -> Option<String> {
         let next = self.peek_at(1);
-        let at = format!("line {}, col {}", self.line, self.col);
+        let at = format!("line {}, col {}:", self.line, self.col);
         let msg = match ch {
             '"' => format!(
-                "Crow strings use single quotes: 'text', not \"text\" ({at}). \
+                "{at} Crow strings use single quotes: 'text', not \"text\". \
                  Nested quotes escape as \\'."
             ),
-            ':' => format!(
-                "Crow has no ':' ({at}) — blocks are defined by indentation, \
-                 not colons. Declare functions with fn name[params] and start \
-                 the body on the next indented line."
+            ':' => format!("{at} {}", self.colon_said()),
+            '{' | '}' => format!(
+                "{at} Crow has no braces — a map is map[key = value], and a block \
+                 is the lines indented under its first line"
             ),
+            '#' => format!("{at} Crow comments start with ---, not #"),
+            ';' => format!("{at} a statement ends with its line — Crow has no ';'"),
+            '+' if next == Some('+') => format!("{at} Crow has no ++: write x = x + 1"),
+            '*' if next == Some('*') => format!("{at} Crow's power is ^: x ^ 2, not x ** 2"),
             '+' | '-' | '*' | '/' | '%' if next == Some('=') => {
                 let op = ch;
                 format!(
-                    "Crow has no augmented assignment ('{op}=') ({at}) — write it \
+                    "{at} Crow has no augmented assignment ('{op}=') — write it \
                      out: x = x {op} 1. (The compiler still optimizes this to an \
                      in-place update.)"
                 )
             }
             '=' if next == Some('=') => format!(
-                "Crow compares with the word 'eq', not '==' ({at}): a eq b."
+                "{at} Crow compares with the word 'eq', not '==': a eq b."
             ),
             '!' if next == Some('=') => format!(
-                "Crow compares with the word 'ne', not '!=' ({at}): a ne b."
+                "{at} Crow compares with the word 'ne', not '!=': a ne b."
             ),
             '<' if next == Some('=') => format!(
-                "Crow uses the word 'lte', not '<=' ({at}): a lte b."
+                "{at} Crow uses the word 'lte', not '<=': a lte b."
             ),
             '>' if next == Some('=') => format!(
-                "Crow uses the word 'gte', not '>=' ({at}): a gte b."
+                "{at} Crow uses the word 'gte', not '>=': a gte b."
             ),
-            '<' => format!("Crow uses the word 'lt', not '<' ({at}): a lt b."),
-            '>' => format!("Crow uses the word 'gt', not '>' ({at}): a gt b."),
+            '<' => format!("{at} Crow uses the word 'lt', not '<': a lt b."),
+            '>' => format!("{at} Crow uses the word 'gt', not '>': a gt b."),
             '&' if next == Some('&') => {
-                format!("Crow uses the word 'and', not '&&' ({at}): a and b.")
+                format!("{at} Crow uses the word 'and', not '&&': a and b.")
             }
             '|' if next == Some('|') => {
-                format!("Crow uses the word 'or', not '||' ({at}): a or b.")
+                format!("{at} Crow uses the word 'or', not '||': a or b.")
             }
             '!' => format!(
-                "Crow uses the word 'not', not '!' ({at}): not a. \
+                "{at} Crow uses the word 'not', not '!': not a. \
                  (And 'ne' for inequality: a ne b.)"
             ),
             _ => return None,
         };
         Some(msg)
+    }
+
+    /// A colon, by what its line is: Python's block header, a slice, a
+    /// dictionary, a lambda, a function's `def`.
+    fn colon_said(&self) -> String {
+        let start = self.source[..self.pos].iter().rposition(|c| *c == '\n').map_or(0, |i| i + 1);
+        let before: String = self.source[start..self.pos].iter().collect();
+        let first = before.split_whitespace().next().unwrap_or("");
+        let parens = if before.contains('(') { " — and calls use square brackets: range[3], not range(3)" } else { "" };
+        if before.split(|c: char| !c.is_alphanumeric() && c != '_').any(|w| w == "lambda") {
+            return "Crow has no lambdas — define a named function with fn name[params] and pass its name (see Design Note: No Lambdas)".to_string();
+        }
+        match first {
+            "def" => "Crow declares functions with fn name[params], not def — its body is the lines indented under it, no ':'".to_string(),
+            "lambda" => "Crow has no lambdas — define a named function with fn name[params] and pass its name (see Design Note: No Lambdas)".to_string(),
+            "for" | "if" | "else" | "elif" | "while" | "fn" | "view" | "test" | "struct" => {
+                format!("a block's body is the lines indented under its first line — no ':' after `{}`{}", before.trim(), parens)
+            }
+            _ if self.bracket_depth > 0 => "Crow has no ':' in an index — a slice is slice[xs, start, end]".to_string(),
+            _ if before.contains('{') => "Crow has no '{…}' maps — a map is map[key = value]".to_string(),
+            _ => "Crow has no ':' — a block is the lines indented under its first line, and a map is map[key = value]".to_string(),
+        }
     }
 
     fn check_str(&self, s: &str) -> bool {
@@ -579,7 +605,9 @@ mod tests {
 
     #[test]
     fn colon_teaches_indentation() {
-        assert!(err("g = lambda x: x").contains("no ':'"));
+        assert!(err("g = lambda x: x").contains("Crow has no lambdas"));
+        assert!(err("for i in range[3]:").contains("no ':' after `for i in range[3]`"));
+        assert!(err("x = xs[1:3]").contains("slice[xs, start, end]"));
     }
 
     #[test]

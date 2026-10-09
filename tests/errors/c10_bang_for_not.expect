@@ -1,3 +1,3 @@
-c10_bang_for_not.co:4:4: Crow uses the word 'not', not '!': not a. (And 'ne' for inequality: a ne b.)
-  4 │ if !a
+c10_bang_for_not.co:3:4: Crow uses the word 'not', not '!': not a. (And 'ne' for inequality: a ne b.)
+  3 │ if !a
     │    ^

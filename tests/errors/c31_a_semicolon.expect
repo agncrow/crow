@@ -1,3 +1,3 @@
-c31_a_semicolon.co:2:6: unexpected character ';'
+c31_a_semicolon.co:2:6: a statement ends with its line — Crow has no ';'
   2 │ x = 1;
     │      ^

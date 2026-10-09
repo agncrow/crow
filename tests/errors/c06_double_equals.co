@@ -1,5 +1,4 @@
 --- == for eq
---- known: names
 x = 1
 if x == 1
     log['one']

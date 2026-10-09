@@ -1,5 +1,4 @@
 --- a body line indented past its block
---- known: names, editor
 fn f[x]
     y = x
      return y

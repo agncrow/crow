@@ -1,5 +1,4 @@
 --- esle for else
---- known: names, editor
 x = 1
 if x gt 0
     log['a']

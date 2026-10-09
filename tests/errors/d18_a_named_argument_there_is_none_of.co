@@ -1,5 +1,4 @@
 --- f[x = 1, y = 2] for f[x]
---- known: editor
 fn f[x]
     return x
 log[f[x = 1, y = 2]]

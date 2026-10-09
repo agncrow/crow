@@ -1,5 +1,4 @@
 --- int['abc'] + 1, logged
 --- runs: the failure is a value the program shows
---- known: place
 x = int['abc']
 log[x + 1]

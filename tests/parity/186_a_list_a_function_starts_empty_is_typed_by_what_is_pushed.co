@@ -1,7 +1,8 @@
 --- A list a function starts empty is typed by what is pushed onto it,
---- whether the push is kept (`xs = push[xs, v]`) or dropped (`push[xs, v]`
---- answers a new list and, as a bare statement, changes nothing) — the
---- compiled program had not built with the bare push, its items unknown.
+--- `xs = push[xs, v]` — the compiled program had not built with a bare
+--- push, its items unknown. A bare push (`push[xs, v]` answers a new list
+--- and, alone, changes nothing) is refused now, in both modes
+--- (tests/errors/c24).
 --- A list of cells read from a loaded file, whose kinds show as the
 --- program runs, joins as text in both modes (compiled, it had not built).
 use frame
@@ -12,19 +13,18 @@ fn kept[]
     xs = push[xs, 1.5]
     return xs
 
-fn dropped[]
-    flags = []
-    push[flags, true]
-    return flags
+fn flags[]
+    marks = []
+    marks = push[marks, true]
+    return marks
 
 fn named[]
     names = []
-    push[names, 'a']
     names = push[names, 'b']
     return names
 
 log[kept[]]
-log[dropped[]]
+log[flags[]]
 log[named[]]
 
 write['cells-note.csv', 'sym,day,px\nAAPL,3,191.5\nMSFT,4,415.2\n']

@@ -4,11 +4,21 @@ use crate::token::{SpannedToken, Token};
 pub struct Parser {
     tokens: Vec<SpannedToken>,
     pos: usize,
+    /// The statement before this one, when it was a name alone on its line
+    /// (`esle`), with its place: a line indented under it, or a second
+    /// statement after it, may be a keyword's slip.
+    lone: Option<(String, usize, usize)>,
+    /// The loops the statement is inside, innermost last: `true` for a
+    /// `while`. `break` and `continue` outside every loop are refused.
+    loops: Vec<bool>,
+    /// How many bodies a `return` may leave the statement is inside (a
+    /// function's, a view's, a derivation's).
+    bodies: usize,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<SpannedToken>) -> Self {
-        Parser { tokens, pos: 0 }
+        Parser { tokens, pos: 0, lone: None, loops: Vec::new(), bodies: 0 }
     }
 
     pub fn parse(&mut self) -> Result<Vec<Stmt>, String> {
@@ -17,7 +27,9 @@ impl Parser {
         while !self.is_at_end() {
             let line = self.current_line();
             stmts.push(Stmt::Line(line));
+            let start = self.pos;
             let parsed = self.parse_stmt()?;
+            self.end_statement(start, &parsed)?;
             stmts.extend(parsed);
             self.skip_newlines();
         }
@@ -35,7 +47,7 @@ impl Parser {
         while !self.is_at_end() {
             let line = self.current_line();
             let checkpoint = self.pos;
-            match self.parse_stmt() {
+            match self.parse_stmt().and_then(|parsed| self.end_statement(checkpoint, &parsed).map(|_| parsed)) {
                 Ok(parsed) => {
                     stmts.push(Stmt::Line(line));
                     stmts.extend(parsed);
@@ -47,6 +59,11 @@ impl Parser {
                         self.pos += 1;
                     }
                     self.sync_to_statement_end();
+                    // (a block the broken statement left ends here: its end
+                    // is no statement of its own)
+                    while matches!(self.peek(), Token::Dedent | Token::Newline) {
+                        self.pos += 1;
+                    }
                 }
             }
             self.skip_newlines();
@@ -138,14 +155,130 @@ impl Parser {
             self.advance();
             Ok(())
         } else {
-            let line = self.current_line();
-            Err(format!(
-                "expected '{}', got '{}' at line {}",
-                expected,
-                self.peek(),
-                line
-            ))
+            Err(self.unexpected(Some(expected)))
         }
+    }
+
+    /// Where the parser is, as a refusal begins: `line N, col M: `.
+    fn at(&self) -> String {
+        let t = self.tokens.get(self.pos).or_else(|| self.tokens.last());
+        match t {
+            Some(t) => format!("line {}, col {}: ", t.line, t.col),
+            None => String::new(),
+        }
+    }
+
+    /// The bracket a closing one would close, where it opened.
+    fn opener(&self, close: &Token) -> Option<&SpannedToken> {
+        let open = match close {
+            Token::RBracket => Token::LBracket,
+            Token::RParen => Token::LParen,
+            _ => return None,
+        };
+        let mut depth = 0usize;
+        for t in self.tokens[..self.pos.min(self.tokens.len())].iter().rev() {
+            if t.token == *close {
+                depth += 1;
+            } else if t.token == open {
+                if depth == 0 {
+                    return Some(t);
+                }
+                depth -= 1;
+            }
+        }
+        None
+    }
+
+    /// What the parser met where it could not go on, and the form the
+    /// program meant, when the place says it: a call written with `(`, a
+    /// bracket never closed, a body not indented, a comprehension, Python's
+    /// `**` and `++` (spec, Error Messages). `expected` is the token the
+    /// grammar wanted, when it wanted one.
+    fn unexpected(&self, expected: Option<&Token>) -> String {
+        let got = self.peek();
+        let back = |n: usize| self.pos.checked_sub(n).and_then(|i| self.tokens.get(i)).map(|t| &t.token);
+        let before = back(1);
+        if let (Token::LParen, Some(Token::Ident(name))) = (got, before) {
+            // a value's method, as Python writes it: the value goes first
+            if let (Some(Token::Dot), Some(Token::Ident(of))) = (back(2), back(3)) {
+                if name == "append" {
+                    return format!("{}a list grows with push, which answers the longer list: {} = push[{}, …]", self.at(), of, of);
+                }
+                return format!("{}{}.{}(…) is {}[{}, …]: a function takes its value first, in square brackets", self.at(), of, name, name, of);
+            }
+            return format!("{}calls use square brackets: {}[…], not {}(…)", self.at(), name, name);
+        }
+        if matches!(got, Token::RBracket | Token::RParen) && self.opener(got).is_none() {
+            return format!("{}this {} closes nothing — no bracket is open before it", self.at(), got.said());
+        }
+        if let Some(close @ (Token::RBracket | Token::RParen)) = expected {
+            let open = if matches!(close, Token::RBracket) { '[' } else { '(' };
+            let shut = if matches!(close, Token::RBracket) { ']' } else { ')' };
+            if let Some(o) = self.opener(close)
+                && (matches!(got, Token::Newline | Token::Eof | Token::Dedent | Token::Indent) || self.current_line() > o.line)
+            {
+                return format!("line {}, col {}: this '{}' is never closed — close it with '{}'; the lines after it are read as part of it until it is", o.line, o.col, open, shut);
+            }
+            if matches!(got, Token::For) {
+                return format!("{}Crow collects with a for block, not inside brackets: ys = for x in xs, its item's expression indented under it", self.at());
+            }
+        }
+        if let (Some(Token::Indent), _) = (expected, got) {
+            let opened = before.map(|_| self.tokens[self.pos.saturating_sub(1)].line).unwrap_or(0);
+            return format!("{}the block opened on line {} has no indented body — indent its lines under it", self.at(), opened.max(1));
+        }
+        if let (Some(Token::LBracket), Token::Newline | Token::Eof, Some(Token::Ident(name))) = (expected, got, before) {
+            let head = match back(2) {
+                Some(k @ (Token::Fn | Token::View | Token::Derive)) => format!("{} {}", k, name),
+                _ => name.clone(),
+            };
+            return format!("{}{} takes its parameters in brackets: {}[] or {}[x]", self.at(), head, head, head);
+        }
+        match (got, before) {
+            (Token::Star, Some(Token::Star)) => return format!("{}Crow's power is ^: x ^ 2, not x ** 2", self.at()),
+            (Token::Plus, Some(Token::Plus)) => return format!("{}Crow has no ++: write x = x + 1", self.at()),
+            (Token::RBracket | Token::RParen, Some(Token::Comma)) => return format!("{}a value is missing after the ','", self.at()),
+            (Token::Else, _) if expected.is_none() => return format!("{}else follows an if's block, at the if's indentation", self.at()),
+            (Token::Indent, _) => return format!("{}this line is indented, but the line above it opens no block", self.at()),
+            _ => {}
+        }
+        match expected {
+            Some(e) => format!("{}expected {}, got {}", self.at(), e.said(), got.said()),
+            None if matches!(got, Token::Newline | Token::Eof | Token::Dedent) => format!("{}a value is missing before {}", self.at(), got.said()),
+            None => format!("{}{} cannot start a value here", self.at(), got.said()),
+        }
+    }
+
+    /// A statement ends with its line. A second one on the line is refused
+    /// (`x = 1 y = 2` had run as two), and a name alone on its line one slip
+    /// from a keyword says which (`retrun x`, `esle`).
+    fn end_statement(&mut self, start: usize, parsed: &[Stmt]) -> Result<(), String> {
+        let layout = |t: &Token| matches!(t, Token::Newline | Token::Indent | Token::Dedent | Token::Eof);
+        let last = self.tokens[start.min(self.pos)..self.pos].iter().rev().find(|t| !layout(&t.token));
+        let lone = match parsed.last() {
+            Some(Stmt::ExprStmt(Expr::Ident(n))) => last.map(|t| (n.clone(), t.line, t.col)),
+            _ => None,
+        };
+        if let (Some(last), Some(next)) = (last, self.tokens.get(self.pos)) {
+            if next.line == last.line && !layout(&next.token) {
+                if let Some((n, line, col)) = &lone
+                    && let Some(k) = keyword_near(n)
+                {
+                    return Err(format!("line {}, col {}: '{}' is not a word Crow knows — did you mean '{}'?", line, col, n, k));
+                }
+                if matches!(next.token, Token::LParen | Token::RBracket | Token::RParen) {
+                    return Err(self.unexpected(None));
+                }
+                return Err(format!(
+                    "line {}, col {}: a line holds one statement — {} starts a second one: put it on a line of its own",
+                    next.line,
+                    next.col,
+                    next.token.said()
+                ));
+            }
+        }
+        self.lone = lone;
+        Ok(())
     }
 
     fn current_line(&self) -> usize {
@@ -173,6 +306,16 @@ impl Parser {
     // --- Statement parsing ---
 
     fn parse_stmt(&mut self) -> Result<Vec<Stmt>, String> {
+        // a line indented under one that opens no block: a keyword's slip on
+        // the line above (`esle`) says which keyword
+        if matches!(self.peek(), Token::Indent) {
+            if let Some((n, line, col)) = &self.lone
+                && let Some(k) = keyword_near(n)
+            {
+                return Err(format!("line {}, col {}: '{}' is not a word Crow knows — did you mean '{}'?", line, col, n, k));
+            }
+            return Err(self.unexpected(None));
+        }
         // Python/JS keyword reflexes in statement position — teach the Crow
         // form rather than letting them fail as stray identifiers. Skip when the
         // name is being assigned to (`from = x`, `print = 5`) — then it's just a
@@ -180,7 +323,7 @@ impl Parser {
         if let Token::Ident(name) = self.peek() {
             if !matches!(self.peek_ahead(1), Token::Assign) {
                 if let Some(hint) = python_keyword_hint(name) {
-                    return Err(hint);
+                    return Err(format!("{}{}", self.at(), hint));
                 }
             }
         }
@@ -208,8 +351,19 @@ impl Parser {
             Token::View => self.parse_fn_decl(true).map(|s| vec![s]),
             Token::Derive => self.parse_derive().map(|s| vec![s]),
             Token::Return => self.parse_return().map(|s| vec![s]),
-            Token::Break => { self.advance(); Ok(vec![Stmt::Break]) }
-            Token::Continue => { self.advance(); Ok(vec![Stmt::Continue]) }
+            Token::Break | Token::Continue => {
+                // a loop's: outside every loop there is no round to skip and
+                // no loop to leave (inside a `for` the spec's Design Note
+                // and the programs written since disagree — Vijay's to
+                // decide, docs/roadmap.md)
+                let word = if matches!(self.peek(), Token::Break) { "break" } else { "continue" };
+                if self.loops.is_empty() {
+                    return Err(format!("{}{} leaves a loop, and this line is in none", self.at(), word));
+                }
+                let stmt = if word == "break" { Stmt::Break } else { Stmt::Continue };
+                self.advance();
+                Ok(vec![stmt])
+            }
             Token::If => self.parse_if().map(|s| vec![s]),
             Token::For => self.parse_for_stmt().map(|s| vec![s]),
             Token::While => self.parse_while().map(|s| vec![s]),
@@ -229,7 +383,7 @@ impl Parser {
         let (params, defaults) = self.parse_param_list()?;
         self.expect(&Token::RBracket)?;
         self.skip_newlines();
-        let mut body = self.parse_block()?;
+        let mut body = self.body(|p| p.parse_block())?;
         // Implicit return: the last expression statement in a function body is
         // the return value. Desugar here so type inference and the lowerings
         // all see the same explicit AST.
@@ -267,7 +421,7 @@ impl Parser {
             self.expect(&Token::RBracket)?;
         }
         self.skip_newlines();
-        let mut body = self.parse_block()?;
+        let mut body = self.body(|p| p.parse_block())?;
         if let Some(last) = body.iter().rposition(|s| !matches!(s, Stmt::Line(_))) {
             if matches!(body[last], Stmt::ExprStmt(_)) {
                 if let Stmt::ExprStmt(e) = body.remove(last) {
@@ -305,6 +459,9 @@ impl Parser {
     }
 
     fn parse_return(&mut self) -> Result<Stmt, String> {
+        if self.bodies == 0 {
+            return Err(format!("{}return leaves a function, and this line is in none — log the value, or put these lines in a fn", self.at()));
+        }
         self.advance(); // skip 'return'
         if matches!(self.peek(), Token::Newline | Token::Eof | Token::Dedent) {
             Ok(Stmt::Return(None))
@@ -348,15 +505,33 @@ impl Parser {
         self.expect(&Token::In)?;
         let iter = self.parse_expr()?;
         self.skip_newlines();
-        let body = self.parse_block()?;
+        let body = self.in_loop(false, |p| p.parse_block())?;
         Ok(Stmt::For { var, iter, body })
+    }
+
+    /// A loop's body, parsed knowing which loop it is in.
+    fn in_loop<T>(&mut self, is_while: bool, f: impl FnOnce(&mut Self) -> Result<T, String>) -> Result<T, String> {
+        self.loops.push(is_while);
+        let out = f(self);
+        self.loops.pop();
+        out
+    }
+
+    /// A body a `return` may leave: no loop of the lines around it is its.
+    fn body<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, String>) -> Result<T, String> {
+        let loops = std::mem::take(&mut self.loops);
+        self.bodies += 1;
+        let out = f(self);
+        self.bodies -= 1;
+        self.loops = loops;
+        out
     }
 
     fn parse_while(&mut self) -> Result<Stmt, String> {
         self.advance(); // skip 'while'
         let condition = self.parse_expr()?;
         self.skip_newlines();
-        let body = self.parse_block()?;
+        let body = self.in_loop(true, |p| p.parse_block())?;
         Ok(Stmt::While { condition, body })
     }
 
@@ -553,7 +728,7 @@ impl Parser {
         self.expect(&Token::In)?;
         let iter = self.parse_expr()?;
         self.skip_newlines();
-        let body = self.parse_block()?;
+        let body = self.in_loop(false, |p| p.parse_block())?;
         Ok(Expr::ForExpr {
             var,
             iter: Box::new(iter),
@@ -573,7 +748,9 @@ impl Parser {
             }
             let line = self.current_line();
             stmts.push(Stmt::Line(line));
+            let start = self.pos;
             let parsed = self.parse_stmt()?;
+            self.end_statement(start, &parsed)?;
             stmts.extend(parsed);
             self.skip_newlines();
         }
@@ -792,7 +969,7 @@ impl Parser {
                 // Python/JS value keywords in expression position (x = None,
                 // flag = True) — teach the Crow form.
                 if let Some(hint) = python_value_hint(&name) {
-                    return Err(hint);
+                    return Err(format!("{}{}", self.at(), hint));
                 }
                 self.advance();
                 Ok(Expr::Ident(name))
@@ -804,11 +981,7 @@ impl Parser {
                 self.expect(&Token::RParen)?;
                 Ok(expr)
             }
-            _ => Err(format!(
-                "unexpected token '{}' at line {}",
-                self.peek(),
-                self.current_line()
-            )),
+            _ => Err(self.unexpected(None)),
         }
     }
 
@@ -851,11 +1024,7 @@ impl Parser {
                 self.advance();
                 Ok(name)
             }
-            _ => Err(format!(
-                "expected identifier, got '{}' at line {}",
-                self.peek(),
-                self.current_line()
-            )),
+            _ => Err(format!("{}a name is wanted here, not {}", self.at(), self.peek().said())),
         }
     }
 
@@ -976,6 +1145,23 @@ fn python_keyword_hint(name: &str) -> Option<String> {
         _ => return None,
     };
     Some(hint.to_string())
+}
+
+/// The keyword a name is one slip from (`esle` → `else`, `retrun` →
+/// `return`), by the rule a refusal's suggestion keeps (lower_ir::slips).
+fn keyword_near(name: &str) -> Option<&'static str> {
+    let limit = match name.chars().count() {
+        0..=2 => return None,
+        3..=5 => 1,
+        _ => 2,
+    };
+    crate::lexer::KEYWORDS
+        .iter()
+        .filter(|k| **k != name)
+        .map(|k| (crate::lower_ir::slips(name, k), *k))
+        .filter(|(d, _)| *d <= limit)
+        .min()
+        .map(|(_, k)| k)
 }
 
 /// Python/JS literal keywords that appear in expression position. Called on

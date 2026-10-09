@@ -1,5 +1,4 @@
 --- push[xs, v] alone: its answer is dropped
---- known: refused
 xs = ['a']
 push[xs, 'b']
 log[xs]

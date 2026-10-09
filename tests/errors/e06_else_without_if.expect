@@ -1,3 +1,3 @@
-e06_else_without_if.co:2:1: unexpected token 'else'
+e06_else_without_if.co:2:1: else follows an if's block, at the if's indentation
   2 │ else
     │ ^^^^

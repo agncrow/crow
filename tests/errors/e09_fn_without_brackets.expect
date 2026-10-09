@@ -1,3 +1,3 @@
-e09_fn_without_brackets.co:3:1: expected '[', got 'NEWLINE'
-  3 │ fn f
-    │ ^^^^
+e09_fn_without_brackets.co:2:4: fn f takes its parameters in brackets: fn f[] or fn f[x]
+  2 │ fn f
+    │    ^

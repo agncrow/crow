@@ -1,1 +1,3 @@
-c01_print_with_parentheses.co: Crow prints with 'log[value]', not 'print(...)'. Brackets are square: log['hello'].
+c01_print_with_parentheses.co:2:1: Crow prints with 'log[value]', not 'print(...)'. Brackets are square: log['hello'].
+  2 │ print('hi')
+    │ ^^^^^

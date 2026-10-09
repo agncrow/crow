@@ -1,0 +1,3 @@
+a15_a_misspelled_use_and_its_calls.co:2:5: no module 'frams' — did you mean 'frame'?
+  2 │ use frams
+    │     ^^^^^

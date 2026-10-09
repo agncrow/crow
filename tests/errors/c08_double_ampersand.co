@@ -1,5 +1,4 @@
 --- && for and
---- known: names
 a = true
 b = false
 if a && b

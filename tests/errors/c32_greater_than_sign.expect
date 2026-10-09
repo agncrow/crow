@@ -1,3 +1,3 @@
-c32_greater_than_sign.co:4:6: Crow uses the word 'gt', not '>': a gt b.
-  4 │ if x > 1
+c32_greater_than_sign.co:3:6: Crow uses the word 'gt', not '>': a gt b.
+  3 │ if x > 1
     │      ^

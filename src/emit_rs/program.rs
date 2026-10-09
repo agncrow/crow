@@ -744,7 +744,7 @@ impl Emitter {
             "}",
             "impl<T: Clone + std::fmt::Display> std::fmt::Display for CrowResult<T> {",
             "    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {",
-            "        if !self.ok { write!(f, \"error: {}\", self.reason) } else { write!(f, \"{}\", self.value) }",
+            "        if !self.ok { write!(f, \"{}\", crow_runtime::display::failed(&self.reason, &self.trace)) } else { write!(f, \"{}\", self.value) }",
             "    }",
             "}",
             "",
@@ -847,8 +847,8 @@ impl Emitter {
         if self.needs_crow_runtime {
             for l in [
                 "impl<T: Clone + crow_runtime::display::CrowDisplay> crow_runtime::display::CrowDisplay for CrowResult<T> {",
-                "    fn crow_repr(&self) -> String { if !self.ok { format!(\"error: {}\", self.reason) } else { self.value.crow_repr() } }",
-                "    fn crow_fmt(&self) -> String { if !self.ok { format!(\"error: {}\", self.reason) } else { self.value.crow_fmt() } }",
+                "    fn crow_repr(&self) -> String { if !self.ok { crow_runtime::display::failed(&self.reason, &self.trace) } else { self.value.crow_repr() } }",
+                "    fn crow_fmt(&self) -> String { if !self.ok { crow_runtime::display::failed(&self.reason, &self.trace) } else { self.value.crow_fmt() } }",
                 "}",
                 // a value that failed encodes as `null`
                 "impl<T: Clone + crow_runtime::json::ToJson> crow_runtime::json::ToJson for CrowResult<T> {",

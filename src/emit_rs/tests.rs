@@ -600,7 +600,7 @@ fn test_var_list_transpile() {
 
 #[test]
 fn test_string_interpolation_transpile() {
-    let rust = transpile("name = 'crow'\nx = 'hello {name}'\n");
+    let rust = transpile("name = 'crow'\nx = 'hello `name`'\n");
     assert!(rust.contains("format!"), "interpolation should use format!\n{}", rust);
 }
 

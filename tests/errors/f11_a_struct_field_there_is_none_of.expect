@@ -1,3 +1,3 @@
-f11_a_struct_field_there_is_none_of.co:4:14: 'P' has no parameter named 'z' (parameters: x, y)
-  4 │ p = P[x = 1, z = 2]
+f11_a_struct_field_there_is_none_of.co:3:14: 'P' has no parameter named 'z' (parameters: x, y)
+  3 │ p = P[x = 1, z = 2]
     │              ^

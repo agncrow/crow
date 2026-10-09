@@ -1,4 +1,3 @@
 --- True for true
---- known: names, place, editor
 a = True
 log[a]

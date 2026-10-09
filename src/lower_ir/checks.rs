@@ -163,6 +163,9 @@ pub(super) struct Checks {
     /// in, and the names it lists so far (a module the program lacks is
     /// named once, where it is first needed).
     pub missing_use: BTreeMap<String, (usize, usize, Vec<String>, String)>,
+    /// The modules a misspelled `use` meant (`use frams` is frame): the
+    /// slip's refusal fixes their calls too, which are not asked again.
+    pub meant: BTreeSet<String>,
     /// Names an imported module makes: its functions and constants.
     pub used: BTreeSet<String>,
     /// The type each of the current function's own variables was first
@@ -239,6 +242,9 @@ impl<'a> Lowerer<'a> {
                         let mut standard: Vec<(String, Option<String>)> = REGISTRY_MODULES.iter().map(|m| (m.to_string(), None)).collect();
                         standard.extend(["db", "web", "ui"].iter().map(|m| (m.to_string(), None)));
                         let near = self.near(path, standard);
+                        if let Some(meant) = near.split("did you mean '").nth(1).and_then(|r| r.split('\'').next()) {
+                            self.v.meant.insert(meant.to_string());
+                        }
                         let file = format!("{}.co", path.replace('.', "/"));
                         if near.is_empty() {
                             self.refuse(format!("no module '{}': there is no {} in the project, and no standard module of the name", path, file));
@@ -1353,7 +1359,8 @@ impl<'a> Lowerer<'a> {
     /// server offers it as a quick fix. `of` says the arguments, when the
     /// core holds the name for others.
     pub(super) fn refuse_missing_use(&mut self, written: &str, module: &str, of: &str) {
-        if self.v.mute > 0 {
+        // (a `use` one slip from the module said it already)
+        if self.v.mute > 0 || self.v.meant.contains(module) {
             return;
         }
         let line = self.v.line;

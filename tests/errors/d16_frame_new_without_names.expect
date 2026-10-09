@@ -1,3 +1,3 @@
-d16_frame_new_without_names.co:4:6: frame.new[] takes its columns as named arguments: frame.new[sym = ['A', 'B'], qty = [1, 2]]
-  4 │ df = frame.new[[1, 2], [3, 4]]
+d16_frame_new_without_names.co:3:6: frame.new[] takes its columns as named arguments: frame.new[sym = ['A', 'B'], qty = [1, 2]]
+  3 │ df = frame.new[[1, 2], [3, 4]]
     │      ^^^^^^^^^

@@ -1,5 +1,4 @@
 --- fn f[x] with its body at the margin
---- known: names, editor
 fn f[x]
 return x
 log[f[1]]

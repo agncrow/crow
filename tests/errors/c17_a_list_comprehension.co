@@ -1,5 +1,4 @@
 --- [x * 2 for x in xs] for a collecting for
---- known: editor
 xs = [1, 2]
 ys = [x * 2 for x in xs]
 log[ys]

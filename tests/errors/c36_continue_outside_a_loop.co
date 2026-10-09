@@ -1,0 +1,5 @@
+--- continue with no loop around it
+x = 1
+if x gt 0
+    continue
+log[x]

@@ -1,3 +1,2 @@
 --- return outside a function
---- known: refused
 return 5

@@ -1,4 +1,3 @@
 --- ** for ^
---- known: editor
 x = 3
 log[x ** 2]

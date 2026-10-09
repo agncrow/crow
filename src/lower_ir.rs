@@ -22,7 +22,7 @@ mod frames;
 pub(crate) mod schema;
 mod shapes;
 pub(crate) mod uses;
-pub(crate) use checks::{is_standard_module, BUILTINS, CORE_RESERVED, UI_RESERVED, WEB_EXTRA_FUNCTIONS, WEB_RESERVED};
+pub(crate) use checks::{is_standard_module, slips, BUILTINS, CORE_RESERVED, UI_RESERVED, WEB_EXTRA_FUNCTIONS, WEB_RESERVED};
 
 /// Lower a whole (expanded, lowered, inferred) program.
 pub fn lower(stmts: &[S], ctx: &mut TypeContext, part_name: &str) -> Result<Program, String> {
@@ -85,6 +85,10 @@ fn lower_checked_as(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: 
     let in_ui = stmts.iter().any(|s| matches!(s, S::Use { path, .. } if path == "ui" || path == "web.ui"));
     let mut l = Lowerer::new(ctx, in_ui);
     l.fragment = fragment;
+    if fragment {
+        // a console cell's last line is shown
+        yields_of(stmts, &mut l.yields);
+    }
     l.scopes[0].extend(known.iter().cloned());
     l.prescan(stmts, known);
     // a column read two ways is the one refusal then: the reads of it
@@ -732,6 +736,10 @@ struct Lowerer<'a> {
     /// A session's fragment (`lower_fragment`): its top-level names
     /// outlive it.
     fragment: bool,
+    /// The expressions whose value a block hands on, by address: a
+    /// collecting loop's yield, a console cell's last line. Their value is
+    /// not dropped, so a statement of one is never refused as dropping it.
+    yields: HashSet<usize>,
     /// The locals that hold a gradient (`g = grad[f]`), by the function
     /// each is of: a call of one types that function's parameters.
     grad_of: HashMap<String, String>,
@@ -796,6 +804,7 @@ impl<'a> Lowerer<'a> {
         Lowerer {
             ctx,
             fragment: false,
+            yields: HashSet::new(),
             grad_of: HashMap::new(),
             pieces: HashMap::new(),
             scopes: vec![HashSet::new()],
@@ -2030,6 +2039,31 @@ impl<'a> Lowerer<'a> {
                 if self.pass == Pass::Settle {
                     self.settled_set(e, &x);
                 }
+                // a builtin that answers a new value of the kind it was
+                // handed — push, set, sort, upper — called as a statement:
+                // the answer is dropped and the value is as it was (a
+                // check's list of results had stayed empty, every test
+                // passing)
+                if self.pass == Pass::Final
+                    && !self.yields.contains(&(e as *const A as usize))
+                    && let Expr::Call { target: Target::Row(row), .. } = &x
+                {
+                    let answers_anew = row.params.first() == Some(&row.ret) && !matches!(row.ret, crate::table::Kind::Unit);
+                    if answers_anew && !crate::ir::is_effect(row.name) && !crate::ir::DRAWS.contains(&row.name) {
+                        let first = match e {
+                            A::Call { args, .. } => match args.first() {
+                                Some(A::Ident(v)) => Some(v.clone()),
+                                _ => None,
+                            },
+                            _ => None,
+                        };
+                        let keep = match first {
+                            Some(v) => format!("{0} = {1}[{0}, …]", v, row.name),
+                            None => format!("x = {}[…]", row.name),
+                        };
+                        self.refuse(format!("{}[] answers {}, and this line drops it — keep it: {}", row.name, row.ret.words(), keep));
+                    }
+                }
                 if let Expr::Effect { answered, .. } = &mut x {
                     *answered = false;
                 }
@@ -2112,7 +2146,20 @@ impl<'a> Lowerer<'a> {
         let e = self.lower_expr(c)?;
         // a parsed value decided on is read as a bool
         let e = self.read_json(e, &Ty::Bool, "decided on");
-        Ok(self.decided(e, Decision::Branch))
+        let e = self.decided(e, Decision::Branch);
+        // a condition is true or false: a number, text or a list decided on
+        // is refused as the program's, in both modes (`if 5` had reached the
+        // verifier as "the lowered program disagrees with itself")
+        let kind = e.ty().payload().clone();
+        if self.pass == Pass::Final && !matches!(kind, Ty::Bool | Ty::Unknown | Ty::Json) && !self.contested(&e) {
+            let words = crate::table::Arg::of_type(&kind).words();
+            let what = match c {
+                A::Ident(n) => format!("'{}' is {}", n, words),
+                _ => format!("this is {}", words),
+            };
+            self.refuse(format!("{}, and a condition is true or false — compare it: x gt 0, len[xs] gt 0, s ne ''", what));
+        }
+        Ok(e)
     }
 
     /// What a decision reads: a value that can fail is refused first when it
@@ -3008,6 +3055,7 @@ impl<'a> Lowerer<'a> {
                     self.fn_lists.push((var.clone(), fns));
                 }
                 self.collecting += 1;
+                yields_of(body, &mut self.yields);
                 let mut b = self.lower_block(body)?;
                 self.collecting -= 1;
                 if listed {
@@ -4367,6 +4415,24 @@ pub(crate) fn words_before_placeholders(sql: &str) -> Vec<String> {
 /// where it is assigned).
 /// The variable an expression reads, through the conversions a read is
 /// wrapped in (a value that can fail is decided before it is indexed).
+/// The expressions a block hands its value on through: its last statement,
+/// and the last of each branch of an `if` that ends it — what a collecting
+/// loop yields, what a console shows.
+fn yields_of(body: &[S], out: &mut HashSet<usize>) {
+    match body.iter().rev().find(|s| !matches!(s, S::Line(_))) {
+        Some(S::ExprStmt(e)) => {
+            out.insert(e as *const A as usize);
+        }
+        Some(S::If { then_body, else_body, .. }) => {
+            yields_of(then_body, out);
+            if let Some(b) = else_body {
+                yields_of(b, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 impl Lowerer<'_> {
     /// A value read from a variable given two kinds, whose reassignment was
     /// refused: its kind here is neither's to judge.

@@ -1,0 +1,4 @@
+--- `use frams`, then frame's calls: the slip is the one mistake
+use frams
+df = frame.new[a = [1.0, 2.0]]
+log[frame.head[df, 1]]

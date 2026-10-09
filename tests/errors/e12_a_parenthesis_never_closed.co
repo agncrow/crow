@@ -1,4 +1,3 @@
 --- x = (1 + 2
---- known: names, editor
 x = (1 + 2
 log[x]

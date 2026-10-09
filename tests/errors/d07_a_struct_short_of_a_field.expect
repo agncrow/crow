@@ -1,3 +1,3 @@
-d07_a_struct_short_of_a_field.co:4:5: missing argument 'speed' in call to 'Bird'
-  4 │ b = Bird['crow']
+d07_a_struct_short_of_a_field.co:3:5: missing argument 'speed' in call to 'Bird'
+  3 │ b = Bird['crow']
     │     ^^^^

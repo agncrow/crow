@@ -1,5 +1,4 @@
 --- if 5: a condition is true or false
---- known: place, internal, editor
 x = 5
 if x
     log['y']

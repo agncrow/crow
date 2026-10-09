@@ -1,5 +1,4 @@
 --- scal = 3 for scale = 3
---- known: editor
 fn f[x, scale = 1]
     return x * scale
 log[f[2, scal = 3]]

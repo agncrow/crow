@@ -1,1 +1,3 @@
-c11_capital_true.co: Crow booleans are lowercase: use 'true', not 'True'.
+c11_capital_true.co:2:5: Crow booleans are lowercase: use 'true', not 'True'.
+  2 │ a = True
+    │     ^^^^

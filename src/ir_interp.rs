@@ -378,7 +378,7 @@ pub fn run_scenario(decls: &[crate::ast::Stmt], label: &str, body: &[crate::ast:
         .iter()
         .filter(|(n, v)| before.get(*n).map_or(true, |b| format!("{}", b.value) != format!("{}", v.value) || b.is_ok() != v.is_ok()))
         .map(|(n, v)| {
-            let text = if v.is_ok() { format!("{}", v.value) } else { format!("error: {}", v.reason()) };
+            let text = if v.is_ok() { format!("{}", v.value) } else { crow_runtime::display::failed(v.reason(), v.trace()) };
             let text: String = if text.chars().count() > 160 { format!("{}…", text.chars().take(160).collect::<String>()) } else { text };
             format!("{} = {}", n, text)
         })

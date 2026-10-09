@@ -215,6 +215,8 @@ if x gt 5
 next_thing[]
 ```
 
+A line holds one statement: `x = 1 y = 2` is refused — the second starts a line of its own (it had run as two). A line is indented only under one that opens a block; one indented under a plain statement is refused, and a block's first line with no indented body under it is too.
+
 
 ## 4. Operators
 
@@ -476,6 +478,8 @@ else
     log['small']
 ```
 
+A condition is true or false. A number, text or a list decided on — `if count`, `while name` — is refused before the program runs: compare it, `count gt 0`, `len[xs] gt 0`, `name ne ''`. (A number had reached the compiled program as "the lowered program disagrees with itself", a bug in Crow's words.) A value that can fail is decided on as Errors in Conditions says.
+
 
 ### Design Note: No Pattern Matching or Sum Types
 
@@ -541,7 +545,7 @@ result = for x in [1, 2, 3, 4, 5]
 --- result eq [30, 40, 50]
 ```
 
-An item that fails is kept, not dropped: `nums = for s in ['1', 'b', '3'] / int[s]` is a list of three whose second item is the error, shown by its reason — `[1, error: cannot convert 'b' to int, 3]` — as a list literal holding a failed value is. The list itself did not fail (`nums.ok` is `true`, see Error Handling); each item's own `.ok` says which did. Handing a failed value to a function is another matter: `push[xs, int['b']]` is that error, by auto-propagation. A list whose items can fail, handed whole to a function that takes numbers (`sum[nums]`, `mean[nums]`), is its numbers, as a column's cells are: a failed item stops the program (`item 1 of the list failed: cannot convert 'b' to int`), in both modes. (Compiled, it did not build.) Compared whole with a tensor or a list of numbers (`nums eq [1, 2]`, each item a map's read or a function's answer that can fail) it is its numbers the same way, and the comparison is one truth (the interpreter had compared the items; the compiled program had not built).
+An item that fails is kept, not dropped: `nums = for s in ['1', 'b', '3'] / int[s]` is a list of three whose second item is the error, shown by its line and reason — `[1, error: line 1: cannot convert 'b' to int, 3]` — as a list literal holding a failed value is. The list itself did not fail (`nums.ok` is `true`, see Error Handling); each item's own `.ok` says which did. Handing a failed value to a function is another matter: `push[xs, int['b']]` is that error, by auto-propagation. A list whose items can fail, handed whole to a function that takes numbers (`sum[nums]`, `mean[nums]`), is its numbers, as a column's cells are: a failed item stops the program (`item 1 of the list failed: cannot convert 'b' to int`), in both modes. (Compiled, it did not build.) Compared whole with a tensor or a list of numbers (`nums eq [1, 2]`, each item a map's read or a function's answer that can fail) it is its numbers the same way, and the comparison is one truth (the interpreter had compared the items; the compiled program had not built).
 
 
 ### while
@@ -572,6 +576,8 @@ while i lt 10
         continue
     total = total + i
 ```
+
+Outside every loop `break` and `continue` are refused: there is no round to skip and no loop to leave.
 
 > **Design Note:** `break` and `continue` are only valid in `while` loops. `for` loops are parallel by default (section 14), and `break`/`continue` are inherently sequential concepts. Using `break` in a parallel loop would silently force sequential execution — a hidden performance trap. Use `if` inside `for` to skip items, `any`/`all`/`find` for searches that should stop early (they early-exit *in parallel* — see the Search Builtins Design Note), or `while` for genuine sequential iteration.
 
@@ -1040,6 +1046,8 @@ doubled = val + val        --- auto-unwraps in arithmetic: 84
 
 When an error-value is used in arithmetic, string interpolation, or `log[]`, the inner value is automatically accessed.
 
+A value that failed, shown — logged, in text, in a list — says the line it failed on and why: `error: line 4: cannot read 'trades.csv': No such file or directory`, the first place its `trace` names (inside a standard module's function, the line of the program's call). It had shown the reason alone, and a program that logged a failed conversion did not say which line had failed. A frame's missing cell and a parsed JSON null, which no line made, show as `error: missing` and `error: null`.
+
 
 ### Explicit Handling
 
@@ -1229,6 +1237,10 @@ A message is held to five rules, which `crow test --errors` checks over a corpus
 3. **One mistake, one message.** A name the program never defines is refused where it is read, once per line however often the line reads it, and what is computed from it is not refused again for being unknown; a module the program lacks is named once, at the first line that needs it, with every name that line calls of it.
 4. **It points at the mistake**: the line and column of the text it is about, not the statement around it or the line after it.
 5. **It is never the compiler's own.** A program refused by Crow is refused as a program; "a bug in Crow" is for Crow's bugs.
+
+The parser speaks in the program's words, never its tokens': `f(1)` says calls use square brackets, a bracket never closed points at where it opened, a line indented under nothing says so, a name one slip from a keyword says which (`esle` — did you mean `else`?), and the habits of other languages are taught their Crow form where they are met — `==`, `&&`, `**`, `++`, `{…}`, `#`, `;`, `:` (after a block's first line, in an index, after `lambda`), `def`, `print`, `None`, `True`, a method call (`df.join(…)` is `join[df, …]`, `xs.append(v)` is `xs = push[xs, v]`).
+
+Some mistakes run quietly unless refused, and are: a builtin that answers a new value of the kind it was handed — `push`, `set`, `sort`, `upper`, `with` — called as a statement of its own (`push[xs, v]` alone answers the longer list and drops it: `xs = push[xs, v]` keeps it; a collecting loop's last line and a console cell's hand their value on, and are not dropped), a `return` outside every function, view and derivation, `break` or `continue` outside every loop, and a `use` of a module there is none of.
 
 The language server offers each fix the message names (an import added, a slip corrected) as a quick fix.
 

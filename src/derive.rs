@@ -447,6 +447,16 @@ pub fn owned_tables(stmts: &[Stmt], fns: &BTreeMap<String, Vec<Stmt>>) -> BTreeS
 
 #[cfg(test)]
 mod tests {
+    /// A body's statements, parsed as the body of a function (a `return`
+    /// is a function's, not the top level's).
+    fn body_of(src: &str) -> Vec<Stmt> {
+        let indented: String = src.lines().map(|l| format!("    {}\n", l)).collect();
+        match crate::build(&format!("fn __body[]\n{}", indented)).unwrap().into_iter().find(|s| matches!(s, Stmt::FnDecl { .. })) {
+            Some(Stmt::FnDecl { body, .. }) => body,
+            _ => Vec::new(),
+        }
+    }
+
     use super::*;
 
     /// A function a derivation calls may name a parameter or a local as the
@@ -465,10 +475,10 @@ mod tests {
                 params.insert(name.clone(), ps.clone());
             }
         }
-        let body = crate::build("w = walk[[1, 2]]\nreturn lots[w]\n").unwrap();
+        let body = body_of("w = walk[[1, 2]]\nreturn lots[w]\n");
         let rs = read_set(&body, &BTreeSet::new(), &derives, &bodies, &params, &BTreeSet::new());
         assert!(rs.derives.is_empty(), "{:?}", rs.derives);
-        let body = crate::build("return reads[]\n").unwrap();
+        let body = body_of("return reads[]\n");
         let rs = read_set(&body, &BTreeSet::new(), &derives, &bodies, &params, &BTreeSet::new());
         assert!(rs.derives.contains("fills"), "a function that reads the derivation still does");
         // a fact a function assigns is written, and its reads are reads
@@ -481,7 +491,7 @@ mod tests {
                 params.insert(name.clone(), ps.clone());
             }
         }
-        let body = crate::build("toggle[]\n").unwrap();
+        let body = body_of("toggle[]\n");
         let rs = read_set(&body, &facts, &BTreeSet::new(), &bodies, &params, &BTreeSet::new());
         assert!(rs.facts.contains("playing"), "{:?}", rs.facts);
     }
@@ -502,7 +512,7 @@ mod tests {
     #[test]
     fn a_derivations_keyed_reads() {
         let facts: BTreeSet<String> = ["board_id".to_string(), "day".to_string()].into_iter().collect();
-        let parse = |src: &str| crate::build(src).unwrap();
+        let parse = body_of;
         let body = parse("rows = query[book, 'SELECT id, title FROM cards WHERE board = ? ORDER BY id', [board_id]]\nreturn rows\n");
         let rs = read_set(&body, &facts, &BTreeSet::new(), &BTreeMap::new(), &BTreeMap::new(), &BTreeSet::new());
         assert_eq!(rs.keys.get("cards"), Some(&("board".to_string(), "board_id".to_string())));

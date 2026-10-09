@@ -1,3 +1,3 @@
-b06_a_slip_in_return.co:3:5: undefined variable 'retrun' — did you mean 'return'?
+b06_a_slip_in_return.co:3:5: 'retrun' is not a word Crow knows — did you mean 'return'?
   3 │     retrun x
     │     ^^^^^^

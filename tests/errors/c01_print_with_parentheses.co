@@ -1,3 +1,2 @@
 --- print(…) for log[…]
---- known: names, place, editor
 print('hi')

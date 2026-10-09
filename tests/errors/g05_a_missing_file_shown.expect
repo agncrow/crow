@@ -1,1 +1,1 @@
-error: cannot read 'no_such_file.txt': No such file or directory (os error 2)
+error: line 3: cannot read 'no_such_file.txt': No such file or directory (os error 2)

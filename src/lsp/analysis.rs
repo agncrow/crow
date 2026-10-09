@@ -51,8 +51,19 @@ pub fn analyze(
 
     // Parse leniently: broken statements become diagnostics, the rest parse.
     let (stmts, parse_errors) = Parser::new(tokens.clone()).parse_lenient();
-    for (line, e) in parse_errors {
-        diagnostics.extend(refusal(text, &e, line));
+    // what each broken statement would have defined: a later read of it is
+    // the same mistake, not a second one (spec, Error Messages, rule 3)
+    let mut unparsed: Vec<String> = Vec::new();
+    // a block with no indented body leaves its lines at the margin: a
+    // `return` among them is the same mistake
+    let unindented = parse_errors.iter().any(|(_, e)| e.contains("has no indented body"));
+    for (line, e) in parse_errors.iter().filter(|(_, e)| !(unindented && e.contains("return leaves a function"))) {
+        diagnostics.extend(refusal(text, e, *line));
+        unparsed.extend(text.lines().nth(line.saturating_sub(1)).map(defined_by).unwrap_or_default());
+        // a name the parser said is a keyword's slip (`esle`)
+        if let Some(slip) = e.split("'").nth(1).filter(|_| e.contains("is not a word Crow knows")) {
+            unparsed.push(slip.to_string());
+        }
     }
 
     // The parts the document uses, by the name it calls them.
@@ -96,12 +107,18 @@ pub fn analyze(
         }
     };
 
-    // Named-argument lowering.
+    // Named-argument lowering. What it refuses is all the terminal says of
+    // the program (its checks need the lowered form), so the editor says
+    // the same: the checks are not run on the unlowered statements, which
+    // hover and completion still read.
+    let mut lowered_whole = true;
     let stmts = match crate::lower::lower_program(&stmts) {
         Ok(s) => s,
         Err(e) => {
-            diagnostics.extend(refusal(text, &e, 1));
-            // Continue with unlowered stmts so hover/completion still work.
+            for entry in e.lines().filter(|l| !l.trim().is_empty()) {
+                diagnostics.extend(refusal(text, entry, 1));
+            }
+            lowered_whole = false;
             stmts
         }
     };
@@ -112,7 +129,7 @@ pub fn analyze(
     // the lowering refuses what is not a program, one "line N: message"
     // entry per error (not while a part it imports fails: its names would
     // all read as undefined)
-    if parts_good && let Err(refused) = crate::lower_ir::check(&stmts, &ctx) {
+    if parts_good && lowered_whole && let Err(refused) = crate::lower_ir::check(&stmts, &ctx) {
         let e = refused.message();
         // (inside multi-line statements, at the line that holds the name)
         let e = crate::refine_error_lines(text, &e);
@@ -154,6 +171,12 @@ pub fn analyze(
         }
     }
 
+    if !unparsed.is_empty() {
+        diagnostics.retain(|d| {
+            let named = |kind: &str| unparsed.iter().any(|n| d.message.starts_with(&format!("undefined {} '{}'", kind, n)));
+            !(named("variable") || named("function"))
+        });
+    }
     Analysis {
         source: text.to_string(),
         stmts,
@@ -162,6 +185,28 @@ pub fn analyze(
         diagnostics,
         parts,
     }
+}
+
+/// The names a statement's first line defines, read from its text: `x =
+/// …`, `fn f[a, b]` (its parameters too: the lines after a broken header
+/// read them), `view v[…]`, `derive d`, `struct S […]`.
+fn defined_by(line: &str) -> Vec<String> {
+    let t = line.trim_start();
+    let word = |s: &str| -> String { s.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect() };
+    for head in ["fn ", "view ", "derive ", "struct "] {
+        if let Some(rest) = t.strip_prefix(head) {
+            let rest = rest.trim_start();
+            let n = word(rest);
+            let mut names: Vec<String> = vec![n.clone()];
+            if let Some(params) = rest[n.len()..].trim_start().strip_prefix('[').and_then(|p| p.split(']').next()) {
+                names.extend(params.split(',').map(|p| word(p.trim())).filter(|p| !p.is_empty()));
+            }
+            return names.into_iter().filter(|n| !n.is_empty()).collect();
+        }
+    }
+    let n = word(t);
+    let after = t[n.len()..].trim_start();
+    if !n.is_empty() && after.starts_with('=') && !after.starts_with("==") { vec![n] } else { Vec::new() }
 }
 
 /// The line of the import a part's error belongs to: the `use` naming the

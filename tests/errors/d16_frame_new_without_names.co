@@ -1,5 +1,4 @@
 --- frame.new[[1, 2], [3, 4]]
---- known: names, editor
 use frame
 df = frame.new[[1, 2], [3, 4]]
 log[df]

@@ -1,5 +1,4 @@
 --- f[1] for a two-parameter f
---- known: editor
 fn f[a, b]
     return a + b
 log[f[1]]

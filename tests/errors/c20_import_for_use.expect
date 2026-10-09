@@ -1,1 +1,3 @@
-c20_import_for_use.co: Crow imports with 'use module' (e.g. 'use math', 'use myapp/utils'), not 'import'.
+c20_import_for_use.co:2:1: Crow imports with 'use module' (e.g. 'use math', 'use myapp/utils'), not 'import'.
+  2 │ import math
+    │ ^^^^^^

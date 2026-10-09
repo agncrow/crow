@@ -1,0 +1,3 @@
+c36_continue_outside_a_loop.co:4:5: continue leaves a loop, and this line is in none
+  4 │     continue
+    │     ^^^^^^^^

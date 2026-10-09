@@ -1,4 +1,3 @@
 --- fn f[x] and nothing under it
---- known: names
 fn f[x]
 log[1]

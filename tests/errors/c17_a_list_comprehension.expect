@@ -1,3 +1,3 @@
-c17_a_list_comprehension.co:4:13: expected ']', got 'for'
-  4 │ ys = [x * 2 for x in xs]
+c17_a_list_comprehension.co:3:13: Crow collects with a for block, not inside brackets: ys = for x in xs, its item's expression indented under it
+  3 │ ys = [x * 2 for x in xs]
     │             ^^^

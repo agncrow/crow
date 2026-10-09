@@ -95,9 +95,17 @@ pub fn record<K: AsRef<str>>(name: &str, fields: impl IntoIterator<Item = (K, St
     format!("{}{}", name, entries(fields))
 }
 
-/// A value that failed, shown in place of its value.
-pub fn failed(reason: &str) -> String {
-    format!("error: {}", reason)
+/// A value that failed, shown in place of its value, in both modes: its
+/// reason, after the line it failed on — the first place its trace names
+/// (`main:4`, or `main.f:9` in a function; a standard module's function
+/// names the program's line of the call) — as a stop names its line
+/// (spec, Error Messages). It had shown the reason alone, and a program
+/// that logged a failed conversion did not say which line had failed.
+pub fn failed(reason: &str, trace: &[String]) -> String {
+    match trace.first().and_then(|t| t.rsplit(':').next()).and_then(|l| l.parse::<usize>().ok()) {
+        Some(line) if line > 0 => format!("error: line {}: {}", line, reason),
+        _ => format!("error: {}", reason),
+    }
 }
 
 /// `log[a, b, …]`: the values as they show, between spaces, a value that
@@ -154,7 +162,7 @@ impl CrowDisplay for serde_json::Value {
     }
     fn crow_fmt(&self) -> String {
         match self {
-            serde_json::Value::Null => failed("null"),
+            serde_json::Value::Null => failed("null", &[]),
             serde_json::Value::Bool(b) => b.crow_repr(),
             serde_json::Value::Number(n) => match n.as_i64() {
                 Some(i) => i.crow_repr(),
@@ -189,7 +197,7 @@ impl CrowDisplay for crate::frame::CrowColumn {
         let parts: Vec<String> = (0..n)
             .map(|i| {
                 if !self.valid[i] {
-                    return failed("missing");
+                    return failed("missing", &[]);
                 }
                 match self.data.as_ref() {
                     Column::Int(v) => v[i].crow_repr(),

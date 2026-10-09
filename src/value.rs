@@ -342,7 +342,7 @@ impl crow_runtime::display::CrowDisplay for CrowValue {
         } else {
             // (a frame's missing cell is an error of reason `missing`, shown
             // as one: it had shown as `nan`, as the display kernel did)
-            crow_runtime::display::failed(&self.reason())
+            crow_runtime::display::failed(self.reason(), self.trace())
         }
     }
     fn crow_fmt(&self) -> String {
@@ -364,7 +364,7 @@ impl fmt::Display for CrowValue {
         if self.is_ok() {
             write!(f, "{}", self.value)
         } else {
-            write!(f, "error: {}", self.reason())
+            write!(f, "{}", crow_runtime::display::failed(self.reason(), self.trace()))
         }
     }
 }

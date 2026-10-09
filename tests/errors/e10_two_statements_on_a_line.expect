@@ -1,1 +1,3 @@
-1
+e10_two_statements_on_a_line.co:2:7: a line holds one statement — 'y' starts a second one: put it on a line of its own
+  2 │ x = 1 y = 2
+    │       ^

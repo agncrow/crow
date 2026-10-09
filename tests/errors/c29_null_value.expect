@@ -1,1 +1,3 @@
-c29_null_value.co: Crow has no null value — a missing or failed value is an error-value (checked with '.ok'), and there is no 'none' (see Design Note: No none).
+c29_null_value.co:2:5: Crow has no null value — a missing or failed value is an error-value (checked with '.ok'), and there is no 'none' (see Design Note: No none).
+  2 │ x = null
+    │     ^^^^

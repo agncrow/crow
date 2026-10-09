@@ -130,6 +130,24 @@ impl std::fmt::Display for Token {
     }
 }
 
+impl Token {
+    /// The token as a refusal names it, in the reader's words: the layout
+    /// tokens as what they are on the page (an indented line, the end of
+    /// the line), never the lexer's names for them.
+    pub fn said(&self) -> String {
+        match self {
+            Token::Indent => "an indented line".to_string(),
+            Token::Dedent => "the end of an indented block".to_string(),
+            Token::Newline => "the end of the line".to_string(),
+            Token::Eof => "the end of the file".to_string(),
+            Token::Str(_) => "text".to_string(),
+            Token::Int(n) => n.to_string(),
+            Token::Float(n) => n.to_string(),
+            other => format!("'{}'", other),
+        }
+    }
+}
+
 /// A token with its position in the source
 #[derive(Debug, Clone)]
 pub struct SpannedToken {

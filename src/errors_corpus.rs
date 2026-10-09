@@ -138,8 +138,12 @@ fn printed(file: &str, out: &str) -> Vec<Entry> {
 /// compiler's own (`'<expression>'`, a token's name).
 fn foreign_names(source: &str, message: &str) -> Vec<String> {
     let code: String = source.lines().map(|l| l.split("---").next().unwrap_or("")).collect::<Vec<_>>().join("\n");
-    let head = message.split(" — ").next().unwrap_or(message).split(": add `use").next().unwrap_or(message).split("did you mean").next().unwrap_or(message);
-    let mut names: Vec<String> = crate::diagnostic::quoted(head).into_iter().map(String::from).collect();
+    // the part of a message about what was written: before its advice (` —
+    // `, `: `, a second sentence, `did you mean`), less the forms it offers
+    // in their place (`the word 'eq', not '=='`)
+    let head = [" — ", ": ", ". ", "did you mean"].iter().fold(message, |h, cut| h.split(cut).next().unwrap_or(h));
+    let offered: Vec<&str> = head.split(", not '").collect::<Vec<_>>().iter().rev().skip(1).filter_map(|before| crate::diagnostic::quoted(before).last().copied()).collect();
+    let mut names: Vec<String> = crate::diagnostic::quoted(head).into_iter().filter(|q| !offered.contains(q)).map(String::from).collect();
     names.extend(crate::diagnostic::subjects(head));
     let word = |c: char| c.is_alphanumeric() || c == '_';
     let mut foreign = Vec::new();
