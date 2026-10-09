@@ -30,6 +30,7 @@ mod classify;
 mod frames;
 pub(crate) use frames::mark_nullable;
 mod rules;
+pub(crate) use rules::key_kind_of;
 pub(crate) mod settle;
 #[cfg(test)]
 use frames::*;
@@ -82,7 +83,7 @@ impl Ty {
     pub fn has_unknown(&self) -> bool {
         match self {
             Ty::Unknown => true,
-            Ty::List(i) | Ty::Map(i) | Ty::Column(i) | Ty::Result(i) | Ty::Tensor(i, _) => i.has_unknown(),
+            Ty::List(i) | Ty::Map(_, i) | Ty::Column(i) | Ty::Result(i) | Ty::Tensor(i, _) => i.has_unknown(),
             Ty::Frame(cols) => cols.as_ref().is_some_and(|c| c.cols.values().any(Ty::has_unknown)),
             Ty::Fn(params, ret) => params.iter().any(Ty::has_unknown) || ret.has_unknown(),
             Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Moment | Ty::Bytes | Ty::Unit | Ty::Markup | Ty::Json
@@ -97,7 +98,7 @@ impl Ty {
         match self {
             Ty::Unknown | Ty::Frame(None) => false,
             Ty::Frame(Some(cols)) => cols.cols.values().all(Ty::is_concrete),
-            Ty::List(i) | Ty::Map(i) | Ty::Column(i) | Ty::Result(i) | Ty::Tensor(i, _) => i.is_concrete(),
+            Ty::List(i) | Ty::Map(_, i) | Ty::Column(i) | Ty::Result(i) | Ty::Tensor(i, _) => i.is_concrete(),
             Ty::Fn(params, ret) => params.iter().all(Ty::is_concrete) && ret.is_concrete(),
             Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Moment | Ty::Bytes | Ty::Unit | Ty::Markup | Ty::Json
             | Ty::Record(_) | Ty::OptRecord(_) | Ty::Db | Ty::Tx | Ty::Sparse | Ty::WebApp | Ty::WebRequest
@@ -113,7 +114,7 @@ impl Ty {
             Ty::Moment => "crow_runtime::moments::Moment".into(),
             Ty::Str | Ty::Markup | Ty::Node => "String".into(),
             Ty::List(inner) => format!("Vec<{}>", inner.to_rust_type()),
-            Ty::Map(inner) => format!("std::collections::BTreeMap<String, {}>", inner.to_rust_type()),
+            Ty::Map(key, inner) => format!("std::collections::BTreeMap<{}, {}>", key.rust(), inner.to_rust_type()),
             Ty::Record(name) => name.clone(),
             Ty::OptRecord(name) => format!("Option<Box<{}>>", name),
             Ty::Fn(params, ret) => {
@@ -152,7 +153,7 @@ impl Ty {
             Ty::Bool => "false".into(),
             Ty::Str | Ty::Markup | Ty::Node => "String::new()".into(),
             Ty::List(inner) => format!("Vec::<{}>::new()", inner.to_rust_type()),
-            Ty::Map(inner) => format!("std::collections::BTreeMap::<String, {}>::new()", inner.to_rust_type()),
+            Ty::Map(key, inner) => format!("std::collections::BTreeMap::<{}, {}>::new()", key.rust(), inner.to_rust_type()),
             // each generated struct has its own default, field by field (a
             // zeroed struct holding a list is undefined, and Rust refuses it)
             Ty::Record(name) => format!("{}::crow_default()", name),
@@ -191,7 +192,7 @@ impl Ty {
         match self {
             Ty::Markup => Ty::Str,
             Ty::List(t) => Ty::List(Box::new(t.text())),
-            Ty::Map(t) => Ty::Map(Box::new(t.text())),
+            Ty::Map(k, t) => Ty::Map(*k, Box::new(t.text())),
             Ty::Result(t) => Ty::Result(Box::new(t.text())),
             Ty::Fn(p, r) => Ty::Fn(p.iter().map(|t| t.text()).collect(), Box::new(r.text())),
             other => other.clone(),
@@ -204,7 +205,7 @@ impl Ty {
     pub fn has_markup(&self) -> bool {
         match self {
             Ty::Markup => true,
-            Ty::List(t) | Ty::Map(t) | Ty::Result(t) => t.has_markup(),
+            Ty::List(t) | Ty::Map(_, t) | Ty::Result(t) => t.has_markup(),
             Ty::Fn(p, r) => p.iter().any(|t| t.has_markup()) || r.has_markup(),
             _ => false,
         }
@@ -235,7 +236,8 @@ impl Ty {
             Ty::Sparse => "sparse".into(),
             Ty::Frame(_) => "frame".into(),
             Ty::Column(_) => "column".into(),
-            Ty::Map(inner) => format!("map[{}]", inner.crow_name()),
+            Ty::Map(crate::ir::Key::Int, inner) => format!("map[int: {}]", inner.crow_name()),
+            Ty::Map(_, inner) => format!("map[{}]", inner.crow_name()),
             Ty::Record(name) => name.clone(),
             Ty::OptRecord(name) => name.clone(),
             Ty::Fn(params, ret) => {
@@ -270,7 +272,7 @@ impl Ty {
             // markup is a string wherever a string is read
             (Ty::Markup, Ty::Str) | (Ty::Str, Ty::Markup) => true,
             (Ty::List(a), Ty::List(b)) => a.compatible(b),
-            (Ty::Map(a), Ty::Map(b)) => a.compatible(b),
+            (Ty::Map(ka, a), Ty::Map(kb, b)) => ka.unify(*kb).is_some() && a.compatible(b),
             // a column keeps its cells' kind in a variable: one of text is
             // one of text, or of cells not known yet
             (Ty::Column(a), Ty::Column(b)) => a.compatible(b),
@@ -328,7 +330,7 @@ impl Ty {
                 }
                 _ => Ty::List(Box::new(a.unify(b))),
             },
-            (Ty::Map(a), Ty::Map(b)) => Ty::Map(Box::new(a.unify(b))),
+            (Ty::Map(ka, a), Ty::Map(kb, b)) => Ty::Map(ka.unify(*kb).unwrap_or(*ka), Box::new(a.unify(b))),
             // a column's cells, as a list's items: known where either knows them
             (Ty::Column(a), Ty::Column(b)) => Ty::Column(Box::new(a.unify(b))),
             // two ways a frame could have come: the columns both give (a
@@ -538,7 +540,7 @@ impl TypeContext {
                 fields: vec![
                     ("status".to_string(), Ty::Int),
                     ("body".to_string(), Ty::Str),
-                    ("headers".to_string(), Ty::Map(Box::new(Ty::Str))),
+                    ("headers".to_string(), Ty::Map(crate::ir::Key::Text, Box::new(Ty::Str))),
                 ],
             },
         );
@@ -550,7 +552,7 @@ impl TypeContext {
                 fields: vec![
                     ("status".to_string(), Ty::Int),
                     ("phrase".to_string(), Ty::Str),
-                    ("headers".to_string(), Ty::Map(Box::new(Ty::Str))),
+                    ("headers".to_string(), Ty::Map(crate::ir::Key::Text, Box::new(Ty::Str))),
                     ("body".to_string(), Ty::Bytes),
                 ],
             },
@@ -766,7 +768,7 @@ impl TypeContext {
     fn declares(&self, t: &Ty) -> bool {
         match t {
             Ty::Record(n) | Ty::OptRecord(n) => self.structs.contains_key(n),
-            Ty::List(e) | Ty::Map(e) | Ty::Result(e) | Ty::Tensor(e, _) => self.declares(e),
+            Ty::List(e) | Ty::Map(_, e) | Ty::Result(e) | Ty::Tensor(e, _) => self.declares(e),
             Ty::Fn(params, ret) => params.iter().all(|p| self.declares(p)) && self.declares(ret),
             _ => true,
         }
@@ -1454,7 +1456,7 @@ mod tests {
             let stmts = crate::lower::lower_program(&stmts).unwrap();
             let mut ctx = TypeContext::new();
             ctx.infer_program(&stmts);
-            assert_eq!(ctx.vars.get("m"), Some(&Ty::Map(Box::new(Ty::Float))));
+            assert_eq!(ctx.vars.get("m"), Some(&Ty::Map(crate::ir::Key::Text, Box::new(Ty::Float))));
         };
         std::thread::Builder::new().stack_size(64 << 20).spawn(infers).unwrap().join().unwrap();
     }

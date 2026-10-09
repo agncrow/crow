@@ -80,7 +80,7 @@ fn kind_word(t: &Ty) -> &'static str {
         Ty::Str | Ty::Markup => "text",
         Ty::Bool => "a bool",
         Ty::List(_) => "a list",
-        Ty::Map(_) => "a map",
+        Ty::Map(..) => "a map",
         Ty::Record(_) | Ty::OptRecord(_) => "a record",
         Ty::Frame(_) => "a frame",
         _ => "a value of a kind grad does not differentiate",

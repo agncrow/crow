@@ -16,7 +16,7 @@ fn every_ty() -> Vec<Ty> {
     let cols = crate::type_infer::Cols::closed(BTreeMap::from([("a".to_string(), Ty::Int)]));
     vec![
         Ty::Int, Ty::Float, Ty::Bool, Ty::Str, Ty::Moment, Ty::Bytes, Ty::Unit, Ty::Markup,
-        Ty::List(Box::new(Ty::Int)), Ty::Map(Box::new(Ty::Str)), Ty::Tensor(Box::new(Ty::Float), None),
+        Ty::List(Box::new(Ty::Int)), Ty::Map(crate::ir::Key::Text, Box::new(Ty::Str)), Ty::Tensor(Box::new(Ty::Float), None),
         Ty::Frame(None), Ty::Frame(Some(cols)), Ty::Column(Box::new(Ty::Int)), Ty::Json,
         Ty::Record("P".to_string()), Ty::OptRecord("P".to_string()), Ty::Result(Box::new(Ty::Int)),
         Ty::Fn(vec![Ty::Int], Box::new(Ty::Bool)), Ty::Db, Ty::Tx, Ty::Sparse, Ty::WebApp, Ty::WebRequest,
@@ -29,7 +29,7 @@ fn every_ty() -> Vec<Ty> {
 fn variant_of(t: &Ty) -> &'static str {
     match t {
         Ty::Int => "Int", Ty::Float => "Float", Ty::Bool => "Bool", Ty::Str => "Str", Ty::Moment => "Moment",
-        Ty::Bytes => "Bytes", Ty::Unit => "Unit", Ty::Markup => "Markup", Ty::List(_) => "List", Ty::Map(_) => "Map",
+        Ty::Bytes => "Bytes", Ty::Unit => "Unit", Ty::Markup => "Markup", Ty::List(_) => "List", Ty::Map(..) => "Map",
         Ty::Tensor(..) => "Tensor", Ty::Frame(_) => "Frame", Ty::Column(_) => "Column", Ty::Json => "Json",
         Ty::Record(_) => "Record", Ty::OptRecord(_) => "OptRecord", Ty::Result(_) => "Result", Ty::Fn(..) => "Fn",
         Ty::Db => "Db", Ty::Tx => "Tx", Ty::Sparse => "Sparse", Ty::WebApp => "WebApp", Ty::WebRequest => "WebRequest",
@@ -84,7 +84,7 @@ fn every_value() -> Vec<Value> {
 fn value_variant(v: &Value) -> &'static str {
     match v {
         Value::Int(_) => "Int", Value::Float(_) => "Float", Value::Str(_) => "Str", Value::Bool(_) => "Bool",
-        Value::Moment(_) => "Moment", Value::Array(_) => "Array", Value::NumArray(_) => "NumArray", Value::Map(_) => "Map",
+        Value::Moment(_) => "Moment", Value::Array(_) => "Array", Value::NumArray(_) => "NumArray", Value::Map(_) | Value::IntMap(_) => "Map",
         Value::Fn(_) => "Fn", Value::StructInstance(_) => "StructInstance", Value::Sparse(_) => "Sparse",
         Value::Frame(_) => "Frame", Value::DbConn(_) => "DbConn", Value::Mailer(_) => "Mailer", Value::Socket(_) => "Socket",
         Value::Bytes(_) => "Bytes", Value::Stream(_) => "Stream", Value::Response(_) => "Response", Value::Json(_) => "Json",

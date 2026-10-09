@@ -171,6 +171,8 @@ pub enum Value {
     // ones (typed-values-design.md §5, B)
     NumArray(Box<CrowTensor>),
     Map(BTreeMap<String, CrowValue>),
+    /// A map keyed by ints: `map[[1, 2], …]`, `set[m, 2, v]` (spec, Maps).
+    IntMap(BTreeMap<i64, CrowValue>),
     Fn(FnValue),
     StructInstance(Box<StructInstance>),
     Sparse(Box<CrowSparse>), // sparse matrix (CSR format)
@@ -248,7 +250,7 @@ impl Value {
             Value::Bool(_) => "bool",
             Value::Array(_) => "array",
             Value::NumArray(_) => "array",
-            Value::Map(_) => "map",
+            Value::Map(_) | Value::IntMap(_) => "map",
             Value::Fn(_) => "fn",
             Value::StructInstance(_) => "struct_instance",
             Value::Sparse(_) => "sparse",
@@ -290,6 +292,10 @@ impl fmt::Display for Value {
             Value::Map(map) => {
                 use crow_runtime::display::CrowDisplay as _;
                 write!(f, "{}", crow_runtime::display::entries(map.iter().map(|(k, v)| (k, v.crow_repr()))))
+            }
+            Value::IntMap(map) => {
+                use crow_runtime::display::CrowDisplay as _;
+                write!(f, "{}", crow_runtime::display::entries(map.iter().map(|(k, v)| (k.to_string(), v.crow_repr()))))
             }
             Value::Fn(func) => write!(f, "<fn {}>", func.name),
             Value::StructInstance(si) => {

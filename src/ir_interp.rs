@@ -1348,7 +1348,15 @@ impl IrInterp {
                     _ => crate::ops::array_literal(vals)?,
                 }
             }
-            Expr::MapLit(pairs, _) => {
+            Expr::MapLit(pairs, ty) => {
+                // (keyed by ints where the literal's keys were ints)
+                if matches!(ty, Ty::Map(crate::ir::Key::Int, _)) {
+                    let mut map = std::collections::BTreeMap::new();
+                    for (k, v) in pairs {
+                        map.insert(k.parse::<i64>().unwrap_or(0), self.eval(v)?);
+                    }
+                    return Ok(CrowValue::ok(Value::IntMap(map)));
+                }
                 let mut map = std::collections::BTreeMap::new();
                 for (k, v) in pairs {
                     map.insert(k.clone(), self.eval(v)?);
@@ -3172,7 +3180,7 @@ fn set_path(root: &mut Value, path: &[PathStep], idx: &[CrowValue], new: CrowVal
             PathStep::Field(f) => match cur {
                 Value::StructInstance(si) => si.fields.get_mut(f).ok_or_else(|| format!("struct '{}' has no field '{}'", si.shown, f)),
                 Value::Map(m) => {
-                    crow_runtime::stops::key(m, f)?;
+                    crow_runtime::stops::key(m, &f.to_string())?;
                     m.get_mut(f).ok_or_else(|| format!("map has no key '{}'", f))
                 }
                 other => Err(format!("cannot assign field '{}' on {}", f, other.type_name())),
@@ -3192,7 +3200,16 @@ fn set_path(root: &mut Value, path: &[PathStep], idx: &[CrowValue], new: CrowVal
                             crow_runtime::stops::key(m, k)?;
                             m.get_mut(k).ok_or_else(|| format!("map has no key '{}'", k))
                         }
-                        _ => Err("map key must be a string".to_string()),
+                        Value::Int(n) => Err(format!("the map's keys are text, not ints: {}", n)),
+                        _ => Err("a map's key is text or an int".to_string()),
+                    },
+                    Value::IntMap(m) => match &i.value {
+                        Value::Int(n) => {
+                            crow_runtime::stops::key(m, n)?;
+                            m.get_mut(n).ok_or_else(|| format!("map has no key '{}'", n))
+                        }
+                        Value::Str(k) => Err(format!("the map's keys are ints, not text: '{}'", k)),
+                        _ => Err("a map's key is text or an int".to_string()),
                     },
                     other => Err(format!("cannot index-assign into {}", other.type_name())),
                 }
@@ -3253,7 +3270,16 @@ fn set_path(root: &mut Value, path: &[PathStep], idx: &[CrowValue], new: CrowVal
                         m.insert(k.clone(), new);
                         Ok(())
                     }
-                    _ => Err("map key must be a string".to_string()),
+                    Value::Int(n) => Err(format!("the map's keys are text, not ints: {}", n)),
+                    _ => Err("a map's key is text or an int".to_string()),
+                },
+                Value::IntMap(m) => match &i.value {
+                    Value::Int(n) => {
+                        m.insert(*n, new);
+                        Ok(())
+                    }
+                    Value::Str(k) => Err(format!("the map's keys are ints, not text: '{}'", k)),
+                    _ => Err("a map's key is text or an int".to_string()),
                 },
                 other => Err(format!("cannot index-assign into {}", other.type_name())),
             }

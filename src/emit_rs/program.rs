@@ -407,7 +407,7 @@ impl Emitter {
             fn has(t: &Ty, want: &dyn std::ops::Fn(&Ty) -> bool) -> bool {
                 want(t)
                     || match t {
-                        Ty::List(i) | Ty::Map(i) | Ty::Result(i) | Ty::Tensor(i, _) | Ty::Column(i) => has(i, want),
+                        Ty::List(i) | Ty::Map(_, i) | Ty::Result(i) | Ty::Tensor(i, _) | Ty::Column(i) => has(i, want),
                         _ => false,
                     }
             }
@@ -595,7 +595,7 @@ impl Emitter {
                     Ty::List(inner) => format!("Vec::<{}>::new()", inner.to_rust_type()),
                     _ => text,
                 }
-            } else if open_map && matches!(ty, Ty::Map(_)) {
+            } else if open_map && matches!(ty, Ty::Map(..)) {
                 ty.default_rust_value()
             } else {
                 text
@@ -869,7 +869,7 @@ impl Emitter {
         fn has(t: &Ty, pred: &dyn std::ops::Fn(&Ty) -> bool) -> bool {
             pred(t)
                 || match t {
-                    Ty::List(i) | Ty::Map(i) | Ty::Result(i) | Ty::Tensor(i, _) | Ty::Column(i) => has(i, pred),
+                    Ty::List(i) | Ty::Map(_, i) | Ty::Result(i) | Ty::Tensor(i, _) | Ty::Column(i) => has(i, pred),
                     Ty::Fn(ps, r) => ps.iter().any(|p| has(p, pred)) || has(r, pred),
                     _ => false,
                 }
@@ -939,7 +939,7 @@ impl Emitter {
         fn records(t: &Ty, out: &mut Vec<String>) {
             match t {
                 Ty::Record(n) | Ty::OptRecord(n) => out.push(n.clone()),
-                Ty::List(i) | Ty::Map(i) | Ty::Result(i) => records(i, out),
+                Ty::List(i) | Ty::Map(_, i) | Ty::Result(i) => records(i, out),
                 _ => {}
             }
         }
@@ -977,7 +977,7 @@ impl Emitter {
             match t {
                 Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) | Ty::Frame(_) | Ty::Column(_) => true,
                 Ty::Sparse => true,
-                Ty::List(i) | Ty::Map(i) | Ty::Result(i) => compares(e, i, seen),
+                Ty::List(i) | Ty::Map(_, i) | Ty::Result(i) => compares(e, i, seen),
                 Ty::Record(n) | Ty::OptRecord(n) => e.record_compares(n, seen),
                 _ => false,
             }
@@ -1044,7 +1044,7 @@ impl Emitter {
         fn jsonable(t: &Ty, ok: &BTreeSet<String>) -> bool {
             match t {
                 Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) => true,
-                Ty::List(i) | Ty::Map(i) | Ty::Result(i) => jsonable(i, ok),
+                Ty::List(i) | Ty::Map(_, i) | Ty::Result(i) => jsonable(i, ok),
                 Ty::Record(n) => ok.contains(n),
                 _ => false,
             }
@@ -1101,7 +1101,7 @@ impl Emitter {
         match t {
             Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) | Ty::Frame(_) | Ty::Column(_) => true,
             Ty::Sparse => true,
-            Ty::List(i) | Ty::Map(i) | Ty::Result(i) => self.ty_shows(i, seen),
+            Ty::List(i) | Ty::Map(_, i) | Ty::Result(i) => self.ty_shows(i, seen),
             Ty::Record(n) | Ty::OptRecord(n) => self.record_is(n, &|e, t, seen| e.ty_shows(t, seen), seen),
             _ => false,
         }
@@ -1111,7 +1111,7 @@ impl Emitter {
     fn ty_encodes(&self, t: &Ty, seen: &mut BTreeSet<String>) -> bool {
         match t {
             Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) => true,
-            Ty::List(i) | Ty::Map(i) | Ty::Result(i) => self.ty_encodes(i, seen),
+            Ty::List(i) | Ty::Map(_, i) | Ty::Result(i) => self.ty_encodes(i, seen),
             Ty::Record(n) | Ty::OptRecord(n) => self.record_is(n, &|e, t, seen| e.ty_encodes(t, seen), seen),
             _ => false,
         }
@@ -1124,8 +1124,8 @@ impl Emitter {
     pub(crate) fn kernel_displayable(&self, ty: &Ty) -> bool {
         match ty {
             // an empty map's values are no type yet
-            Ty::Map(inner) if matches!(inner.as_ref(), Ty::Unknown) => true,
-            Ty::List(inner) | Ty::Map(inner) | Ty::Result(inner) => self.shows_inside(inner),
+            Ty::Map(_, inner) if matches!(inner.as_ref(), Ty::Unknown) => true,
+            Ty::List(inner) | Ty::Map(_, inner) | Ty::Result(inner) => self.shows_inside(inner),
             Ty::Record(n) | Ty::OptRecord(n) => self.struct_kernel_displayable(n),
             _ => false,
         }
@@ -1193,7 +1193,7 @@ impl Emitter {
                     Some(format!("serde_json::to_value(&{}).unwrap_or(serde_json::Value::Null)", v))
                 }
                 Ty::Tensor(..) => Some(format!("crow_runtime::json::ToJson::to_json(&{})", v)),
-                Ty::List(i) | Ty::Map(i) if matches!(i.as_ref(), Ty::Int | Ty::Float | Ty::Str | Ty::Markup | Ty::Bool | Ty::Json) => {
+                Ty::List(i) | Ty::Map(_, i) if matches!(i.as_ref(), Ty::Int | Ty::Float | Ty::Str | Ty::Markup | Ty::Bool | Ty::Json) => {
                     Some(format!("serde_json::to_value(&{}).unwrap_or(serde_json::Value::Null)", v))
                 }
                 Ty::Record(n) if records.contains(n) => Some(format!("crow_runtime::json::ToJson::to_json(&{})", v)),
@@ -1266,7 +1266,7 @@ impl Emitter {
             let params: Vec<(String, Ty)> = self.fns.get(&target).map(|f| f.params.clone()).unwrap_or_default();
             // a list, a tensor, a frame or a record arrives as JSON its own
             // serde reads (a test clicks a handler with one as it clicks any)
-            let by_serde = |t: &Ty| matches!(t, Ty::List(_) | Ty::Map(_) | Ty::Tensor(..) | Ty::Frame(_) | Ty::Record(_) | Ty::OptRecord(_) | Ty::Moment);
+            let by_serde = |t: &Ty| matches!(t, Ty::List(_) | Ty::Map(..) | Ty::Tensor(..) | Ty::Frame(_) | Ty::Record(_) | Ty::OptRecord(_) | Ty::Moment);
             let callable = params.iter().all(|(_, t)| matches!(t, Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Unknown) || by_serde(t));
             if params.is_empty() {
                 self.line(&format!("\"{}\" => {}(state),", h, rust));
@@ -1747,7 +1747,7 @@ impl Emitter {
 fn unknown_inside(t: &Ty) -> bool {
     match t {
         Ty::Unknown => true,
-        Ty::List(i) | Ty::Map(i) | Ty::Result(i) => unknown_inside(i),
+        Ty::List(i) | Ty::Map(_, i) | Ty::Result(i) => unknown_inside(i),
         _ => false,
     }
 }

@@ -486,7 +486,7 @@ impl<'a> Namer<'a> {
             Expr::Array(items) => Expr::Array(items.into_iter().map(|a| self.expr(a)).collect::<Result<Vec<_>, _>>()?),
             // a key is a name (an attribute's, a field's), not a read
             Expr::Map(pairs) => Expr::Map(pairs.into_iter().map(|(k, v)| Ok((k, self.expr(v)?))).collect::<Result<Vec<_>, String>>()?),
-            Expr::Named { name, value } => Expr::Named { name, value: Box::new(self.expr(*value)?) },
+            Expr::Named { name, int_key, value } => Expr::Named { name, int_key, value: Box::new(self.expr(*value)?) },
             Expr::ForExpr { var, iter, body } => {
                 let iter = self.expr(*iter)?;
                 self.open();
@@ -701,7 +701,7 @@ fn narrow_expr(e: Expr, known: &BTreeSet<String>) -> Expr {
         Expr::Array(items) => Expr::Array(items.into_iter().map(|a| narrow_expr(a, known)).collect()),
         // a key is a name (an attribute's, a field's), not a read
         Expr::Map(pairs) => Expr::Map(pairs.into_iter().map(|(k, v)| (k, narrow_expr(v, known))).collect()),
-        Expr::Named { name, value } => Expr::Named { name, value: n(value) },
+        Expr::Named { name, int_key, value } => Expr::Named { name, int_key, value: n(value) },
         Expr::ForExpr { var, iter, body } => {
             let inner = loop_known(known, &body, Some(&var));
             Expr::ForExpr { var, iter: n(iter), body: narrowed(body, &inner) }
@@ -1132,7 +1132,7 @@ impl Lowerer {
                         let mut limit: Option<Expr> = None;
                         for a in args {
                             match a {
-                                Expr::Named { name, value } if name == "limit" => limit = Some(*value),
+                                Expr::Named { name, value, .. } if name == "limit" => limit = Some(*value),
                                 Expr::Named { name, .. } => return Err(self.err(format!("route[] has no option '{}' — its option is limit = n requests a minute", name))),
                                 other => positional.push(other),
                             }
@@ -1303,7 +1303,8 @@ impl Lowerer {
                     }
                 }
             }
-            Expr::Named { name, value } => Expr::Named {
+            Expr::Named { name, int_key, value } => Expr::Named {
+                int_key: *int_key,
                 name: name.clone(),
                 value: Box::new(self.lower_expr(value)?),
             },
@@ -1363,7 +1364,7 @@ impl Lowerer {
         }
         for a in args.into_iter().skip(positional_count) {
             let (name, value) = match a {
-                Expr::Named { name, value } => (name, *value),
+                Expr::Named { name, value, .. } => (name, *value),
                 _ => unreachable!("parser rejects positional after named"),
             };
             let idx = params.iter().position(|p| p == &name).ok_or_else(|| {
@@ -1407,7 +1408,7 @@ impl Lowerer {
         let mut given: Vec<Option<Expr>> = vec![None; options.len()];
         for a in args {
             match a {
-                Expr::Named { name, value } => {
+                Expr::Named { name, value, .. } => {
                     let Some(i) = options.iter().position(|(n, _)| *n == name) else {
                         let names: Vec<&str> = options.iter().map(|(n, _)| *n).collect();
                         return Err(self.err(format!("{}[] has no option '{}' — its options are {}", fn_name, name, names.join(", "))));
@@ -1436,7 +1437,7 @@ impl Lowerer {
         let mut named: Vec<(String, Expr)> = Vec::new();
         for a in args {
             match a {
-                Expr::Named { name, value } => {
+                Expr::Named { name, value, .. } => {
                     if !named_params.contains(&name.as_str()) {
                         return Err(self.err(format!(
                             "'{}' has no named parameter '{}' (named parameters: {})",
@@ -1471,7 +1472,7 @@ impl Lowerer {
         let mut children = Vec::new();
         for a in args {
             match a {
-                Expr::Named { name, value } => attrs.push((Expr::Str(name), *value)),
+                Expr::Named { name, value, .. } => attrs.push((Expr::Str(name), *value)),
                 Expr::Map(pairs) => attrs.extend(pairs),
                 other => children.push(other),
             }
@@ -1494,7 +1495,7 @@ impl Lowerer {
         let mut result = Expr::Call { callee: qualified("new"), args: vec![] };
         for a in args {
             match a {
-                Expr::Named { name, value } => {
+                Expr::Named { name, value, .. } => {
                     result = Expr::Call { callee: qualified("with"), args: vec![result, Expr::Str(name), *value] };
                 }
                 _ => return Err(self.err("frame.new[] takes its columns as named arguments: frame.new[sym = ['A', 'B'], qty = [1, 2]]".to_string())),
@@ -1516,10 +1517,12 @@ impl Lowerer {
         let mut result = empty;
         for a in args {
             match a {
-                Expr::Named { name, value } => {
+                Expr::Named { name, int_key, value } => {
+                    // (an int written as the key is an int key: `map[2 = 'b']`)
+                    let key = if int_key { Expr::Int(name.parse().unwrap_or(0)) } else { Expr::Str(name) };
                     result = Expr::Call {
                         callee: Box::new(Expr::Ident("set".to_string())),
-                        args: vec![result, Expr::Str(name), *value],
+                        args: vec![result, key, *value],
                     };
                 }
                 _ => {

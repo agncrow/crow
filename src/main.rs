@@ -4602,7 +4602,7 @@ fn spelled_as(t: &type_infer::Ty, names: &std::collections::BTreeMap<String, Str
         T::Record(n) => T::Record(named(n)),
         T::OptRecord(n) => T::OptRecord(named(n)),
         T::List(e) => T::List(spelled(e)),
-        T::Map(e) => T::Map(spelled(e)),
+        T::Map(k, e) => T::Map(*k, spelled(e)),
         T::Result(e) => T::Result(spelled(e)),
         T::Tensor(e, dims) => T::Tensor(spelled(e), dims.clone()),
         T::Fn(params, ret) => T::Fn(params.iter().map(|p| spelled_as(p, names)).collect(), spelled(ret)),

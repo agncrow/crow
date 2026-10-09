@@ -33,3 +33,27 @@ log['dog' in at]
 1
 false
 ```
+
+```crow
+scores = map[[7, 3], [0.5, 0.25]]
+log[scores[3]]
+log[keys[scores]]
+log[3 in scores]
+by_id = map[1 = 'a', 2 = 'b']
+log[by_id[2]]
+counts = map[]
+for n in [3, 1, 3]
+    if n in counts
+        counts = set[counts, n, counts[n] + 1]
+    else
+        counts = set[counts, n, 1]
+log[counts]
+```
+
+```text
+0.25
+[3, 7]
+true
+b
+[1 = 1, 3 = 2]
+```

@@ -461,6 +461,14 @@ impl<'r> Case<'r> {
                 self.lines.push(format!("{}{} = concat[[['x'], ['y', 'z']]]", pad, w));
                 self.lines.push(format!("{}log[len[{}]]", pad, w));
                 self.lines.push(format!("{}log[{}[[true, false, true]]]", pad, w));
+                // a map keyed by ints: from two lists, set, in, keys, shown
+                let mi = format!("mi{}", n);
+                self.lines.push(format!("{}{} = map[[{}, {}, {}], ['p', 'q', 'r']]", pad, mi, a, a + 10, a + 20));
+                self.lines.push(format!("{}log[{}[{}]]", pad, mi, a + 10));
+                self.lines.push(format!("{}{} = set[{}, {}, 's']", pad, mi, mi, b + 30));
+                self.lines.push(format!("{}log[{} in {} and {} not in {}]", pad, b + 30, mi, c + 100, mi));
+                self.lines.push(format!("{}log[keys[{}]]", pad, mi));
+                self.lines.push(format!("{}log[{}]", pad, mi));
             }
             // a chain of `then` lines (spec, Then Chaining): the value first
             // where a step is a call, where the step says when it names the

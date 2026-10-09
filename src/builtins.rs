@@ -57,6 +57,7 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
                     Value::Str(_) => "str".to_string(),
                     Value::Bool(_) => "bool".to_string(),
                     Value::Array(_) | Value::NumArray(_) => "array".to_string(),
+                    Value::IntMap(_) => "map".to_string(),
                     Value::Sparse(_) => "sparse".to_string(),
                     Value::Map(_) => "map".to_string(),
                     Value::Fn(_) => "fn".to_string(),
@@ -175,6 +176,7 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
                 Value::Str(s) => !s.is_empty(),
                 Value::Array(l) => !l.is_empty(),
                 Value::Map(m) => !m.is_empty(),
+                Value::IntMap(m) => !m.is_empty(),
                 _ => true,
             };
             if !passed {
@@ -286,6 +288,8 @@ pub fn crow_to_encoded(val: &CrowValue) -> serde_json::Value {
         Value::Json(j) => j.to_json(),
         Value::Array(items) => serde_json::Value::Array(items.iter().map(crow_to_encoded).collect()),
         Value::Map(m) => serde_json::Value::Object(m.iter().map(|(k, v)| (k.clone(), crow_to_encoded(v))).collect()),
+        // (a map keyed by ints encodes its keys as text: JSON's objects have no other kind)
+        Value::IntMap(m) => serde_json::Value::Object(m.iter().map(|(k, v)| (k.to_string(), crow_to_encoded(v))).collect()),
         Value::StructInstance(si) => serde_json::Value::Object(si.fields.iter().map(|(k, v)| (k.clone(), crow_to_encoded(v))).collect()),
         _ => crow_to_json("", val).unwrap_or(serde_json::Value::Null),
     }

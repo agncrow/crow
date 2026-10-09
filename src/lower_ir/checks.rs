@@ -786,8 +786,8 @@ impl<'a> Lowerer<'a> {
         let (Some(holder), Some(item)) = (holder, item) else { return };
         let inner = match holder.ty().payload() {
             // (a map's value is the map's own check's: one mistake, one message)
-            Ty::Map(_) if row.id == "core.set" => return,
-            Ty::List(i) | Ty::Map(i) => (**i).clone(),
+            Ty::Map(..) if row.id == "core.set" => return,
+            Ty::List(i) | Ty::Map(_, i) => (**i).clone(),
             _ => return,
         };
         if let (Some((many, _)), Some((others, one))) = (item_kind(&inner), item_kind(&item.ty()))
@@ -1054,17 +1054,42 @@ impl<'a> Lowerer<'a> {
         // Maps are dictionaries: set[] must not change the map's value type
         // (spec Design Note "Maps Are Dictionaries, Not Records"), said in
         // Crow terms before either backend meets it.
+        // a map's keys are one kind: a key of the other is refused — `m['2']`
+        // of a map keyed by ints, `set[m, 2, v]` of one keyed by text
+        if matches!(name, "set" | "del" | "contains") && argc >= 2 {
+            let map_ty = arg_type(self, 0);
+            let map_ty = if let Ty::Result(i) = map_ty { *i } else { map_ty };
+            if let Ty::Map(key, _) = &map_ty {
+                let given = arg_type(self, 1);
+                let given = if let Ty::Result(i) = given { *i } else { given };
+                let handed = crate::type_infer::key_kind_of(&given);
+                if key.unify(handed).is_none() {
+                    self.refuse(crate::table::wrong_key(*key, &given));
+                }
+            }
+        }
+        // a map's keys are text or ints: `map[[1.5, 2.5], …]` is refused
+        if name == "__map_of" && argc == 2 {
+            let keys = arg_type(self, 0);
+            let item = match &keys {
+                Ty::List(i) | Ty::Tensor(i, _) => Some(i.as_ref().clone()),
+                _ => None,
+            };
+            if matches!(item, Some(Ty::Float)) {
+                self.refuse("a map's keys are text or ints, not floats: `map[[1, 2], …]` keys by ints, `map[['1.5'], …]` by text".to_string());
+            }
+        }
         if name == "set" && argc == 3 {
             let map_ty = arg_type(self, 0);
             let map_ty = if let Ty::Result(i) = map_ty { *i } else { map_ty };
-            if let Ty::Map(inner) = &map_ty {
+            if let Ty::Map(_, inner) = &map_ty {
                 let val_ty = arg_type(self, 2);
                 let val_ty = if let Ty::Result(i) = val_ty { *i } else { val_ty };
                 if !matches!(inner.as_ref(), Ty::Unknown) && !matches!(val_ty, Ty::Unknown | Ty::Unit) && !inner.compatible(&val_ty) {
                     let (held, given) = (crate::table::Arg::of_type(inner).words(), crate::table::Arg::of_type(&val_ty).words());
                     match args.get(1) {
-                        Some(A::Str(key)) => self.refuse(format!("a map holds one kind: '{}' is {}, and its values are {} — a record (struct) holds fields of several kinds", key, given, held)),
-                        _ => self.refuse(format!("a map holds one kind: its values are {}, and this is {} — a record (struct) holds fields of several kinds", held, given)),
+                        Some(A::Str(key)) => self.refuse(format!("a map holds values of one kind: the entry '{}' holds {}, and the map's other values are {} — a record (struct) holds fields of several kinds", key, given, held)),
+                        _ => self.refuse(format!("a map holds values of one kind: the map's values are {}, and this is {} — a record (struct) holds fields of several kinds", held, given)),
                     }
                 }
             }
@@ -1252,7 +1277,7 @@ impl<'a> Lowerer<'a> {
                     Ty::Result(inner) => *inner,
                     other => other,
                 };
-                if !matches!(t, Ty::Map(_) | Ty::Unknown) {
+                if !matches!(t, Ty::Map(..) | Ty::Unknown) {
                     self.refuse(format!("a file field binds a map, which holds the file picked — declare it `name = map[]` (got {})", t.crow_name()));
                 }
             }
@@ -1276,7 +1301,7 @@ impl<'a> Lowerer<'a> {
                     Ty::Result(inner) => *inner,
                     other => other,
                 };
-                if !matches!(&t, Ty::Map(inner) if matches!(inner.as_ref(), Ty::Str | Ty::Unknown)) && !matches!(t, Ty::Unknown) {
+                if !matches!(&t, Ty::Map(_, inner) if matches!(inner.as_ref(), Ty::Str | Ty::Unknown)) && !matches!(t, Ty::Unknown) {
                     self.refuse(format!(
                         "sign_in[] takes the reader as a map of strings — an id, a name, a role: sign_in[map[id = '42', name = 'Ada']] (got {})",
                         t.crow_name()
@@ -1950,15 +1975,34 @@ mod tests {
     #[test]
     fn test_map_hetero_set_rejected_at_compile_time() {
         // Maps are dictionaries: set[] changing value type is refused
-        assert!(check_source("m = map[a = 1]\nm2 = set[m, 'b', 'x']\n").unwrap_err().contains("a map holds one kind: 'b' is text, and its values are an int"));
+        assert!(check_source("m = map[a = 1]\nm2 = set[m, 'b', 'x']\n").unwrap_err().contains("a map holds values of one kind: the entry 'b' holds text, and the map's other values are an int"), "{}", check_source("m = map[a = 1]\nm2 = set[m, 'b', 'x']\n").unwrap_err());
     }
 
     /// A collection builtin given a kind none of its rows takes is refused
     /// before either mode runs, naming the forms it takes (compiled, these
     /// did not build; interpreted, they stopped as they ran).
+    /// A map's keys are one kind: a key of the other, a float key, and the
+    /// dot form on a map keyed by ints are refused before the program runs.
+    #[test]
+    fn a_maps_keys_are_one_kind() {
+        let e = check_source("m = map[[1, 2], ['a', 'b']]\nlog[m['2']]\n").unwrap_err();
+        assert!(e.contains("the map's keys are ints, not text"), "{}", e);
+        let e = check_source("t = map[a = 1]\nt = set[t, 2, 9]\n").unwrap_err();
+        assert!(e.contains("the map's keys are text, not an int"), "{}", e);
+        let e = check_source("m = map[[1, 2], ['a', 'b']]\nlog[m.a]\n").unwrap_err();
+        assert!(e.contains("a map keyed by ints is read by `m[2]`"), "{}", e);
+        let e = check_source("m = map[[1.5, 2.5], ['a', 'b']]\nlog[m]\n").unwrap_err();
+        assert!(e.contains("not floats"), "{}", e);
+        // an open map takes its first key's kind; a literal's int keys key it
+        assert!(check_source("m = map[]\nm = set[m, 7, 'x']\nlog[m[7]]\nlog[2 in m]\n").is_ok());
+        assert!(check_source("m = map[2 = 'b', 1 = 'a']\nlog[keys[m]]\nlog[m[1]]\n").is_ok());
+        assert!(check_source("m = map[[1, 2], ['a', 'b']]\nlog[2 in m]\nlog['2' in m]\n").is_err());
+    }
+
     #[test]
     fn a_collection_given_a_wrong_kind_is_refused() {
-        assert!(check_source("log[1 in map[a = 1]]\n").unwrap_err().contains("`x in xs` takes a list and a value, text and text, numbers and a number or a map and text, got a map and an int"), "{}", check_source("log[1 in map[a = 1]]\n").unwrap_err());
+        // (a key of the other kind than the map's: refused for the kind, not the row)
+        assert!(check_source("log[1 in map[a = 1]]\n").unwrap_err().contains("the map's keys are text, not an int"), "{}", check_source("log[1 in map[a = 1]]\n").unwrap_err());
         assert!(check_source("log[len[5]]\n").unwrap_err().contains("len[] takes a list, text, a map, numbers, a frame or bytes, got an int"));
         let sorted = check_source("struct P [x, y]\nlog[sort[[P[3, 4], P[1, 2]]]]\n").unwrap_err();
         assert!(sorted.contains("sort[] takes a list of ints, a list of numbers, a list of text or numbers, got a list of records"), "{}", sorted);
@@ -2147,7 +2191,7 @@ pub(crate) fn item_kind(t: &Ty) -> Option<(String, String)> {
         Ty::Bool => ("bools".to_string(), "a bool".to_string()),
         Ty::Record(n) | Ty::OptRecord(n) => (format!("{} records", crate::lower::shown(n)), format!("a {} record", crate::lower::shown(n))),
         Ty::List(_) | Ty::Tensor(..) => ("lists".to_string(), "a list".to_string()),
-        Ty::Map(_) => ("maps".to_string(), "a map".to_string()),
+        Ty::Map(..) => ("maps".to_string(), "a map".to_string()),
         Ty::Frame(_) => ("frames".to_string(), "a frame".to_string()),
         _ => return None,
     })
@@ -2165,7 +2209,7 @@ fn order_side(t: &Ty) -> Option<OrderSide> {
             OrderSide::One(k) => OrderSide::Many(k),
             OrderSide::Many(_) => OrderSide::Many("a list"),
         },
-        Ty::Map(_) => OrderSide::One("a map"),
+        Ty::Map(..) => OrderSide::One("a map"),
         Ty::Record(_) | Ty::OptRecord(_) => OrderSide::One("a record"),
         Ty::Frame(_) => OrderSide::One("a frame"),
         Ty::Node => OrderSide::One("markup"),

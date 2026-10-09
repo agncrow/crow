@@ -386,7 +386,7 @@ impl Emitter {
                 let stop = self.stop_check();
                 match in0 {
                     Ty::Frame(_) => format!("{{ match ({}).to_csv() {{ Ok(_t) => state.download(&{}, _t.into_bytes()), Err(_e) => state.stop(format!(\"download: {{}}\", _e)) }} {} }}", a[0], a[1], stop),
-                    Ty::Map(_) => format!(
+                    Ty::Map(..) => format!(
                         "{{ match ({}).get(\"path\").map(|_p| std::fs::read(_p)) {{ Some(Ok(_b)) => state.download(&{}, _b), Some(Err(_e)) => state.stop(format!(\"download: {{}}\", _e)), None => state.stop(\"download: a file to hand on is a picked file, with a path\".to_string()) }} {} }}",
                         a[0], a[1], stop
                     ),
@@ -524,7 +524,7 @@ impl Emitter {
                         Ty::Sparse => "\"sparse\"".to_string(),
                         Ty::Bytes => "\"bytes\"".to_string(),
                         Ty::Stream => "\"stream\"".to_string(),
-                        Ty::Map(_) => "\"map\"".to_string(),
+                        Ty::Map(..) => "\"map\"".to_string(),
                         Ty::Fn(_, _) => "\"fn\"".to_string(),
                         Ty::Unit => "\"none\"".to_string(),
                         Ty::Frame(_) => "\"frame\"".to_string(),

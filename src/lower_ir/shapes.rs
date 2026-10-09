@@ -307,7 +307,7 @@ impl<'a> Lowerer<'a> {
         }
         let walk = match x.ty().payload() {
             Ty::List(_) | Ty::Tensor(..) | Ty::Column(_) | Ty::Json | Ty::Unknown => return,
-            Ty::Map(_) => " — walk keys[m] or values[m]",
+            Ty::Map(..) => " — walk keys[m] or values[m]",
             Ty::Str | Ty::Markup | Ty::Node => " — walk split[s, '']",
             Ty::Frame(_) => " — walk one of its columns",
             _ => "",

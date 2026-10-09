@@ -790,7 +790,7 @@ impl Emitter {
     pub(crate) fn crow_compares(&self, t: &Ty) -> bool {
         match t {
             Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) | Ty::Frame(_) | Ty::Column(_) | Ty::Unknown => true,
-            Ty::List(i) | Ty::Map(i) | Ty::Result(i) => self.crow_compares(i),
+            Ty::List(i) | Ty::Map(_, i) | Ty::Result(i) => self.crow_compares(i),
             Ty::Record(n) => self.record_compares(n, &mut BTreeSet::new()),
             _ => false,
         }
@@ -832,10 +832,10 @@ impl Emitter {
                 PathStep::Field(f) => {
                     let next = match &ty {
                         Ty::Record(s) => self.structs.get(s).and_then(|d| d.fields.iter().find(|(n, _)| n == f).map(|(_, t)| as_inferred(t))).unwrap_or(Ty::Unknown),
-                        Ty::Map(inner) => inner.as_ref().clone(),
+                        Ty::Map(_, inner) => inner.as_ref().clone(),
                         _ => Ty::Unknown,
                     };
-                    obj = if matches!(ty, Ty::Map(_)) {
+                    obj = if matches!(ty, Ty::Map(..)) {
                         format!("(*{}.get_mut(\"{}\").unwrap_or_else(|| crow_stop({}, crow_runtime::stops::no_key(\"{}\"))))", obj, f, self.line_now(), f)
                     } else {
                         format!("{}.{}", obj, Self::rust_field(f))
@@ -845,10 +845,10 @@ impl Emitter {
                 PathStep::Index(i) => {
                     let idx = self.expr(i);
                     let next = match &ty {
-                        Ty::List(inner) | Ty::Map(inner) => inner.as_ref().clone(),
+                        Ty::List(inner) | Ty::Map(_, inner) => inner.as_ref().clone(),
                         _ => Ty::Unknown,
                     };
-                    obj = if matches!(ty, Ty::Map(_)) {
+                    obj = if matches!(ty, Ty::Map(..)) {
                         format!("(*{{ let _k = {i}; {o}.get_mut(&_k).unwrap_or_else(|| crow_stop({l}, crow_runtime::stops::no_key(&_k))) }})", i = idx, o = obj, l = self.line_now())
                     } else {
                         let k = found.len();
@@ -861,7 +861,7 @@ impl Emitter {
         }
         match path.last() {
             Some(PathStep::Field(f)) => {
-                if matches!(ty, Ty::Map(_)) {
+                if matches!(ty, Ty::Map(..)) {
                     self.line_after(&found, &format!("{}.insert(\"{}\".to_string(), {});", obj, f, val));
                 } else {
                     self.line_after(&found, &format!("{}.{} = {};", obj, Self::rust_field(f), val));
@@ -873,7 +873,7 @@ impl Emitter {
                     // the value first, then a copy of the key: `m[k] = m[k] + 1`
                     // reads the key after the insert would have taken it, and
                     // the program may read it again after
-                    Ty::Map(_) => self.line_after(&found, &format!("{{ let _v = {}; {}.insert(({}).to_string(), _v); }}", val, obj, idx)),
+                    Ty::Map(..) => self.line_after(&found, &format!("{{ let _v = {}; {}.insert(({}).to_string(), _v); }}", val, obj, idx)),
                     Ty::Tensor(..) => {
                         self.needs_crow_runtime = true;
                         self.line_after(&found, &format!(

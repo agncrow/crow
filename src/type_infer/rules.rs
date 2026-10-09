@@ -170,7 +170,8 @@ impl TypeContext {
             // an error has no value, only a reason: a failed nothing, which
             // any value it meets decides the type of (unify)
             "error" => Ty::Result(Box::new(Ty::Unit)),
-            "map" => Ty::Map(Box::new(Ty::Unknown)),
+            // (an empty map is open: its first key decides its keys' kind)
+            "map" => Ty::Map(crate::ir::Key::Open, Box::new(Ty::Unknown)),
             "range" => Ty::List(Box::new(Ty::Int)),
             // Math builtins (scalar)
             "abs" => {
@@ -230,7 +231,7 @@ impl TypeContext {
             "__pick_items" => args.first().map(arg_ty).map(Self::walked).unwrap_or(Ty::Unknown),
             "__pick_rows" => picked_rows_type(args.first().map(arg_ty).map(Self::walked)),
             // `map[keys, values]`: a map of the values' kind
-            "__map_of" => map_of_type(args.get(1).map(arg_ty).map(Self::walked)),
+            "__map_of" => map_of_type(args.first().map(arg_ty).map(Self::walked), args.get(1).map(arg_ty).map(Self::walked)),
             // one list: its items joined — chunks of bytes, lists of text
             "concat" if args.len() == 1 => joined_type(Self::walked(arg_ty(&args[0]))),
             "concat" if args.len() >= 2 => {
@@ -273,12 +274,14 @@ impl TypeContext {
                             Ty::Result(inner) => (true, *inner),
                             other => (false, other),
                         };
-                        let existing_inner = if let Ty::Map(inner) = &map_type {
-                            *inner.clone()
+                        let (existing_key, existing_inner) = if let Ty::Map(key, inner) = &map_type {
+                            (*key, *inner.clone())
                         } else {
-                            Ty::Unknown
+                            (crate::ir::Key::Open, Ty::Unknown)
                         };
-                        let out = Ty::Map(Box::new(existing_inner.unify(&val_type)));
+                        // the key's kind, by the key handed (an open map takes it)
+                        let key = existing_key.unify(key_kind_of(&Self::walked(arg_ty(&args[1])))).unwrap_or(existing_key);
+                        let out = Ty::Map(key, Box::new(existing_inner.unify(&val_type)));
                         return if map_fallible || val_fallible { Ty::Result(Box::new(out)) } else { out };
                     }
                     return map_type;
@@ -292,12 +295,15 @@ impl TypeContext {
                 Ty::Unknown
             }
             // Map builtins
-            "keys" => Ty::List(Box::new(Ty::Str)),
+            "keys" => match args.first().map(arg_ty).map(Self::walked) {
+                Some(Ty::Map(key, _)) => Ty::List(Box::new(key.ty())),
+                _ => Ty::List(Box::new(Ty::Str)),
+            },
             "has" => Ty::Bool,
             "values" => {
                 if let Some(arg) = args.first() {
                     let map_type = arg_ty(arg);
-                    if let Ty::Map(inner) = map_type {
+                    if let Ty::Map(_, inner) = map_type {
                         return Ty::List(inner);
                     }
                 }
@@ -342,15 +348,15 @@ impl TypeContext {
             "notice" => Ty::Unit,
             // the page's signed-in reader: a map of strings the runtime
             // provides, set by two effects held to the handler's commit
-            "__reader" => Ty::Map(Box::new(Ty::Str)),
+            "__reader" => Ty::Map(crate::ir::Key::Text, Box::new(Ty::Str)),
             // a read a guard narrowed (lower.rs): the value, never its failure
             "__known" => arg_types.first().cloned().map(Self::walked).unwrap_or(Ty::Unknown),
             "sign_in" | "sign_out" | "download" => Ty::Unit,
             // the files a test's session was handed, as maps of name and text
-            "downloads" => Ty::List(Box::new(Ty::Map(Box::new(Ty::Str)))),
+            "downloads" => Ty::List(Box::new(Ty::Map(crate::ir::Key::Text, Box::new(Ty::Str)))),
             // a message: whether the server took it; and the messages a
             // test's session sent, as maps of to, subject and body
-            "mails" => Ty::List(Box::new(Ty::Map(Box::new(Ty::Str)))),
+            "mails" => Ty::List(Box::new(Ty::Map(crate::ir::Key::Text, Box::new(Ty::Str)))),
             "__notice_text" => Ty::Str,
             "__notice_at" => Ty::Float,
             "env" => Ty::Result(Box::new(Ty::Str)),
@@ -372,7 +378,7 @@ impl TypeContext {
             // a test's app session, and the elements a selector picks from
             // its page: records of text (tag, text, class, each attribute)
             "app" => Ty::App,
-            "elements" => Ty::List(Box::new(Ty::Map(Box::new(Ty::Str)))),
+            "elements" => Ty::List(Box::new(Ty::Map(crate::ir::Key::Text, Box::new(Ty::Str)))),
             // the layout engine's boxes a selector picks: a list, each box
             // read by its field as the program runs
             "box" => Ty::List(Box::new(Ty::Unknown)),
@@ -735,7 +741,7 @@ impl TypeContext {
             // a cell of a column whose type nothing told: dynamic until
             // int[], float[] or str[] reads it (typed frames)
             Ty::Column(_) => Ty::Json,
-            Ty::Map(inner) => *inner,
+            Ty::Map(_, inner) => *inner,
             // a character of text
             Ty::Str | Ty::Markup => Ty::Str,
             // an element can be JSON's null, an error value of reason `null`
@@ -763,8 +769,8 @@ impl TypeContext {
         if matches!(&obj_type, Ty::WebRequest) {
             return match field {
                 "method" | "path" | "body" => Ty::Str,
-                "headers" | "query" | "params" | "form" => Ty::Map(Box::new(Ty::Str)),
-                "files" => Ty::List(Box::new(Ty::Map(Box::new(Ty::Str)))),
+                "headers" | "query" | "params" | "form" => Ty::Map(crate::ir::Key::Text, Box::new(Ty::Str)),
+                "files" => Ty::List(Box::new(Ty::Map(crate::ir::Key::Text, Box::new(Ty::Str)))),
                 _ => Ty::Unknown,
             };
         }
@@ -796,7 +802,7 @@ impl TypeContext {
         // Map dot-access: m.key reads a value of the map's value type
         {
             let inner = match &obj_type { Ty::Result(i) => i.as_ref().clone(), o => o.clone() };
-            if let Ty::Map(v) = inner {
+            if let Ty::Map(_, v) = inner {
                 return *v;
             }
         }
@@ -908,7 +914,7 @@ impl TypeContext {
         for t in values {
             vtype = vtype.unify(&t);
         }
-        Ty::Map(Box::new(vtype))
+        Ty::Map(crate::ir::Key::Text, Box::new(vtype))
     }
 }
 
@@ -923,13 +929,29 @@ fn picked_rows_type(base: Option<Ty>) -> Ty {
     }
 }
 
-/// `map[keys, values]`: a map of the values' kind (a tensor's are floats).
+/// `map[keys, values]`: a map keyed by the keys' kind — text, or ints (a
+/// tensor of them too) — of the values' kind (a tensor's are floats).
 #[inline(never)]
-fn map_of_type(values: Option<Ty>) -> Ty {
+fn map_of_type(keys: Option<Ty>, values: Option<Ty>) -> Ty {
+    let key = match keys {
+        Some(Ty::List(item)) => key_kind_of(&item),
+        Some(Ty::Tensor(item, _)) => key_kind_of(&item),
+        _ => crate::ir::Key::Open,
+    };
     match values {
-        Some(Ty::List(item)) => Ty::Map(item),
-        Some(Ty::Tensor(..)) => Ty::Map(Box::new(Ty::Float)),
-        _ => Ty::Map(Box::new(Ty::Unknown)),
+        Some(Ty::List(item)) => Ty::Map(key, item),
+        Some(Ty::Tensor(..)) => Ty::Map(key, Box::new(Ty::Float)),
+        _ => Ty::Map(key, Box::new(Ty::Unknown)),
+    }
+}
+
+/// The key kind a value of this type is: an int keys by ints, text by
+/// text, anything else decides nothing (open).
+pub(crate) fn key_kind_of(t: &Ty) -> crate::ir::Key {
+    match t {
+        Ty::Int => crate::ir::Key::Int,
+        Ty::Str | Ty::Markup => crate::ir::Key::Text,
+        _ => crate::ir::Key::Open,
     }
 }
 

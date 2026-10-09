@@ -62,12 +62,12 @@ pub fn row(i: i64, rows: usize) -> Result<usize, String> {
 }
 
 /// `m[k]`, `m.k`: the value under a key.
-pub fn key<'a, T>(m: &'a BTreeMap<String, T>, k: &str) -> Result<&'a T, String> {
+pub fn key<'a, K: Ord + std::fmt::Display, T>(m: &'a BTreeMap<K, T>, k: &K) -> Result<&'a T, String> {
     m.get(k).ok_or_else(|| no_key(k))
 }
 
 /// A map without the key a read or a write through it names.
-pub fn no_key(k: &str) -> String {
+pub fn no_key(k: &dyn std::fmt::Display) -> String {
     format!("map has no key '{}'", k)
 }
 
@@ -375,8 +375,8 @@ mod tests {
     fn a_missing_key_is_named() {
         let mut m = BTreeMap::new();
         m.insert("a".to_string(), 1);
-        assert_eq!(key(&m, "a"), Ok(&1));
-        assert_eq!(key(&m, "b"), Err("map has no key 'b'".to_string()));
+        assert_eq!(key(&m, &"a".to_string()), Ok(&1));
+        assert_eq!(key(&m, &"b".to_string()), Err("map has no key 'b'".to_string()));
     }
 
     #[test]

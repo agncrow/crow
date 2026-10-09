@@ -135,11 +135,11 @@ type[error['x']]  --- 'error'
 
 | Function | Description | Example |
 |----------|-------------|---|
-| `keys[m]` | Array of map keys | [Maps](../by-example/maps.md) · [Maps Are Dictionaries](../ch05-02-maps.md) |
+| `keys[m]` | The map's keys as they are — text, or ints in order | [Maps](../by-example/maps.md) · [Maps Are Dictionaries](../ch05-02-maps.md) |
 | `values[m]` | Array of map values | [Maps](../by-example/maps.md) |
 | `has[m, key]` | The row behind `key in m` (see Membership; the name is not written) |  |
-| `set[m, key, value]` | Return new map with entry added/updated; a value of another kind than the map's is refused | [Maps](../by-example/maps.md) · [Maps Are Dictionaries](../ch05-02-maps.md) · [Testing](../ch09-00-testing.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) |
-| `del[m, key]` | Return new map with entry removed | [Maps](../by-example/maps.md) |
+| `set[m, key, value]` | Return new map with entry added/updated; a value of another kind than the map's is refused, as is a key of the other kind (an empty map takes its first key's kind) | [Maps](../by-example/maps.md) · [Maps Are Dictionaries](../ch05-02-maps.md) · [Testing](../ch09-00-testing.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) |
+| `del[m, key]` | Return new map with entry removed (a key of the other kind is refused) | [Maps](../by-example/maps.md) |
 
 **Design Note: one word for joining.** Considered: `gather[chunks]` beside `concat[a, b]` (rejected: two words, and `concat[a, concat[b, concat[c, …]]]` eight brackets deep in the Postgres driver where a list of pieces would do). **Decision (Vijay, 2026-10-08):** `concat` given one list written down joins its items two at a time, in the first lowering, so every kind two pieces join is joined; a list of bytes held in a variable is `concat[chunks]`, the row `gather` was. A list of lists held in a variable is not joined: its items' kind is the lists', which one function over any item kind cannot hold in both modes — write the pieces, or a loop.
 

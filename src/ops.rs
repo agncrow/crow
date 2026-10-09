@@ -281,7 +281,7 @@ fn mask_cell(v: &Value) -> crow_runtime::mask::Cell<'_> {
         Value::Bool(b) => Cell::Bool(*b),
         Value::Moment(m) => Cell::Moment(m.ms),
         Value::Array(_) | Value::NumArray(_) => Cell::Other("a list"),
-        Value::Map(_) => Cell::Other("a map"),
+        Value::Map(_) | Value::IntMap(_) => Cell::Other("a map"),
         Value::StructInstance(_) => Cell::Other("a record"),
         Value::Json(_) => Cell::Other("a JSON value"),
         Value::Frame(_) => Cell::Other("a frame"),
@@ -532,6 +532,7 @@ pub fn values_equal(a: &CrowValue, b: &CrowValue) -> bool {
             x.len() == ys.len() && x.iter().zip(ys.iter()).all(|(a, b)| values_equal(a, b))
         }
         (Value::Map(x), Value::Map(y)) => x.len() == y.len() && x.iter().zip(y.iter()).all(|((ka, va), (kb, vb))| ka == kb && values_equal(va, vb)),
+        (Value::IntMap(x), Value::IntMap(y)) => x.len() == y.len() && x.iter().zip(y.iter()).all(|((ka, va), (kb, vb))| ka == kb && values_equal(va, vb)),
         (Value::StructInstance(x), Value::StructInstance(y)) => {
             x.name == y.name && x.fields.len() == y.fields.len() && x.fields.iter().zip(y.fields.iter()).all(|((ka, va), (kb, vb))| ka == kb && values_equal(va, vb))
         }
@@ -625,17 +626,26 @@ pub fn index(callee: &CrowValue, arg_vals: Vec<CrowValue>) -> Result<CrowValue, 
             _ => Err("string index must be an integer".to_string()),
         }
     }
+    // a map's key is of the map's kind: text, or an int (spec, Maps)
     Value::Map(map) => {
-        // map['key'] - access
         if arg_vals.len() != 1 {
             return Err("map access requires exactly one argument".to_string());
         }
-        let key_val = arg_vals[0].unwrap_or_propagate()?;
-        let key_str = match key_val {
-            Value::Str(s) => s.clone(),
-            other => format!("{}", other),
-        };
-        stops::key(map, &key_str).cloned()
+        match arg_vals[0].unwrap_or_propagate()? {
+            Value::Str(s) => stops::key(map, s).cloned(),
+            Value::Int(n) => Err(format!("the map's keys are text, not ints: {}", n)),
+            other => Err(format!("a map's key is text or an int, got {}", other.type_name())),
+        }
+    }
+    Value::IntMap(map) => {
+        if arg_vals.len() != 1 {
+            return Err("map access requires exactly one argument".to_string());
+        }
+        match arg_vals[0].unwrap_or_propagate()? {
+            Value::Int(n) => stops::key(map, n).cloned(),
+            Value::Str(s) => Err(format!("the map's keys are ints, not text: '{}'", s)),
+            other => Err(format!("a map's key is text or an int, got {}", other.type_name())),
+        }
     }
         _ => Err("not indexable".to_string()),
     }
@@ -849,7 +859,8 @@ pub fn field(obj: CrowValue, field: &str) -> Result<CrowValue, String> {
                 )),
             }
         }
-        Value::Map(m) => stops::key(m, field).cloned(),
+        Value::Map(m) => stops::key(m, &field.to_string()).cloned(),
+        Value::IntMap(_) => Err(format!("a map keyed by ints is read by `m[{}]`: `.{}` names a text key", field, field)),
         _ => Err(format!("cannot access field '{}' on this value", field)),
     }
 }

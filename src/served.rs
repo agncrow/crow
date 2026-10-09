@@ -91,6 +91,17 @@ pub(crate) fn json_to_typed(j: &serde_json::Value, ty: &crate::ir::Ty, template:
             Ok(m) => CrowValue::ok(Value::Moment(m)),
             Err(_) => json_to_fact(j, declared),
         },
+        // a map keyed by ints: its keys were encoded as text (JSON's objects
+        // have no other kind), read back as ints
+        (Ty::Map(crate::ir::Key::Int, item), serde_json::Value::Object(obj)) => {
+            let mut map = std::collections::BTreeMap::new();
+            for (k, v) in obj {
+                if let Ok(n) = k.parse::<i64>() {
+                    map.insert(n, json_to_typed(v, item, template, declared));
+                }
+            }
+            CrowValue::ok(Value::IntMap(map))
+        }
         (Ty::Json, _) => CrowValue::ok(Value::Json(Box::new(j.clone()))),
         _ => json_to_fact(j, declared),
     }

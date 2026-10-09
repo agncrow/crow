@@ -227,7 +227,7 @@ fn canon(e: &Expr, env: &Env) -> String {
             ps.sort();
             format!("map[{}]", ps.join(", "))
         }
-        Expr::Named { name, value } => format!("{} = {}", name, canon(value, env)),
+        Expr::Named { name, value, .. } => format!("{} = {}", name, canon(value, env)),
         Expr::ForExpr { var, iter, body } => {
             let mut inner = env.clone();
             inner.locals.insert(var.clone(), format!("each[{}]", canon(iter, env)));

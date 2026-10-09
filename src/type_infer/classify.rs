@@ -241,7 +241,7 @@ impl TypeContext {
                         for a in args { collect_event_call_handlers(a, fns, out); }
                     }
                     Expr::Array(items) => for i in items { collect_event_call_handlers(i, fns, out); },
-                    Expr::Named { name, value } => {
+                    Expr::Named { name, value, .. } => {
                         if matches!(name.as_str(), "click" | "input" | "submit" | "change" | "seek") {
                             if let Expr::Call { callee, .. } = value.as_ref() {
                                 if let Expr::Ident(f) = callee.as_ref() {

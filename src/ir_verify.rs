@@ -436,7 +436,7 @@ impl<'p> Verifier<'p> {
                             // the calls still left by name, in what can run
                             // (CROW_IR_BY_NAME=1): a value nothing types;
                             // web's `json[map]` is a response, a form of its own
-                            let response = name == "json" && matches!(ts.first(), Some(Ty::Map(_)));
+                            let response = name == "json" && matches!(ts.first(), Some(Ty::Map(..)));
                             if std::env::var_os("CROW_IR_BY_NAME").is_some() && self.runs && !response {
                                 let shown: Vec<String> = ts.iter().map(|t| format!("{:?}", t)).collect();
                                 self.found(format!("by name: {}({})", name, shown.join(", ")));
@@ -659,8 +659,8 @@ impl<'p> Verifier<'p> {
             // (a value that can fail converts as its payload does)
             Convert::IntToFloat => matches!(inner.payload(), Ty::Int | Ty::Unknown) && matches!(ty.payload(), Ty::Float),
             Convert::IntsToFloats => {
-                matches!(ty.payload(), Ty::List(e) | Ty::Map(e) | Ty::Tensor(e, _) if **e == Ty::Float)
-                    && matches!(inner.payload(), Ty::List(e) | Ty::Map(e) | Ty::Tensor(e, _) if **e == Ty::Int || **e == Ty::Unknown)
+                matches!(ty.payload(), Ty::List(e) | Ty::Map(_, e) | Ty::Tensor(e, _) if **e == Ty::Float)
+                    && matches!(inner.payload(), Ty::List(e) | Ty::Map(_, e) | Ty::Tensor(e, _) if **e == Ty::Int || **e == Ty::Unknown)
             }
             // numbers held as a list, a frame's column, or already a tensor
             Convert::ToTensor => matches!(ty.payload(), Ty::Tensor(..)) && matches!(inner.payload(), Ty::List(_) | Ty::Column(_) | Ty::Tensor(..) | Ty::Unknown),
@@ -693,7 +693,7 @@ pub fn fits(v: &Ty, slot: &Ty) -> bool {
         // counts as its float (a parameter one call hands ints and another
         // floats is a tensor of floats)
         (Ty::Tensor(a, _), Ty::Tensor(b, _)) => fits(a, b) || (**a == Ty::Int && **b == Ty::Float),
-        (Ty::List(a), Ty::List(b)) | (Ty::Map(a), Ty::Map(b)) | (Ty::Column(a), Ty::Column(b)) => fits(a, b),
+        (Ty::List(a), Ty::List(b)) | (Ty::Map(_, a), Ty::Map(_, b)) | (Ty::Column(a), Ty::Column(b)) => fits(a, b),
         (Ty::Frame(_), Ty::Frame(_)) => true,
         (Ty::Record(a), Ty::OptRecord(b)) | (Ty::OptRecord(a), Ty::Record(b)) => a == b,
         (Ty::Fn(..), Ty::Fn(..)) => true,
@@ -722,6 +722,9 @@ fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
             Kind::Bytes => *t == Ty::Bytes,
             Kind::Stream => matches!(t, Ty::Stream),
             Kind::Str => matches!(t, Ty::Str | Ty::Markup),
+            // a map's key: text or an int, by its map
+            Kind::Key => matches!(t, Ty::Str | Ty::Markup | Ty::Int),
+            Kind::Keys => matches!(t, Ty::Tensor(..)) || items(t, &|e| matches!(e, Ty::Str | Ty::Markup | Ty::Int)),
             Kind::Tensor => matches!(t, Ty::Tensor(..)) || items(t, &|_| false),
             Kind::Tensors => items(t, &|e| matches!(e, Ty::Tensor(..))),
             Kind::Strs => items(t, &|e| matches!(e, Ty::Str | Ty::Markup)),
@@ -734,7 +737,7 @@ fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
             Kind::Cells => cell(t) || matches!(t, Ty::Tensor(..) | Ty::Column(_)) || items(t, &|e| cell(e)),
             // a collection of anything: its items are the function's own type
             Kind::List | Kind::Seq => matches!(t, Ty::List(_)),
-            Kind::MapOf | Kind::MapRef => matches!(t, Ty::Map(_)),
+            Kind::MapOf | Kind::MapRef => matches!(t, Ty::Map(..)),
             Kind::Ints => items(t, &|e| *e == Ty::Int),
             Kind::Floats => items(t, &|e| *e == Ty::Float),
             Kind::Texts => items(t, &|e| matches!(e, Ty::Str | Ty::Markup)),

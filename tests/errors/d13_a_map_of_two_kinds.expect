@@ -1,3 +1,3 @@
-d13_a_map_of_two_kinds.co:2:20: a map holds one kind: 'qty' is an int, and its values are text — a record (struct) holds fields of several kinds
+d13_a_map_of_two_kinds.co:2:20: a map holds values of one kind: the entry 'qty' holds an int, and the map's other values are text — a record (struct) holds fields of several kinds
   2 │ m = map[sym = 'A', qty = 1]
     │                    ^^^

@@ -39,7 +39,7 @@ pub fn range(start: i64, stop: i64, step: i64) -> Result<Vec<i64>, String> {
 }
 
 /// `m.key` / `m[key]`: the value, or the words both modes stop with.
-pub fn map_key<T: Clone>(m: &std::collections::BTreeMap<String, T>, key: &str) -> Result<T, String> {
+pub fn map_key<K: Ord + std::fmt::Display, T: Clone>(m: &std::collections::BTreeMap<K, T>, key: &K) -> Result<T, String> {
     crate::stops::key(m, key).cloned()
 }
 
@@ -136,13 +136,13 @@ pub fn sort_strs(mut v: Vec<String>) -> Vec<String> {
 }
 
 /// `set[map, key, value]`: the map with the entry added or replaced.
-pub fn map_set<T>(mut m: BTreeMap<String, T>, key: String, value: T) -> BTreeMap<String, T> {
+pub fn map_set<K: Ord, T>(mut m: BTreeMap<K, T>, key: K, value: T) -> BTreeMap<K, T> {
     m.insert(key, value);
     m
 }
 
 /// `del[map, key]`: the map without the entry, unchanged if absent.
-pub fn map_del<T>(mut m: BTreeMap<String, T>, key: &str) -> BTreeMap<String, T> {
+pub fn map_del<K: Ord, T>(mut m: BTreeMap<K, T>, key: &K) -> BTreeMap<K, T> {
     m.remove(key);
     m
 }
@@ -153,8 +153,8 @@ pub fn map_del<T>(mut m: BTreeMap<String, T>, key: &str) -> BTreeMap<String, T> 
 // means one thing to both (docs/bug-classes.md §4).
 
 /// `set[map, key, value]`.
-pub fn set<T>(m: BTreeMap<String, T>, key: &str, value: T) -> BTreeMap<String, T> {
-    map_set(m, key.to_string(), value)
+pub fn set<K: Ord + Clone, T>(m: BTreeMap<K, T>, key: &K, value: T) -> BTreeMap<K, T> {
+    map_set(m, key.clone(), value)
 }
 
 /// `len[list]`.
@@ -168,7 +168,7 @@ pub fn len_text(s: &str) -> i64 {
 }
 
 /// `len[map]`: its entries.
-pub fn len_map<T>(m: &BTreeMap<String, T>) -> i64 {
+pub fn len_map<K, T>(m: &BTreeMap<K, T>) -> i64 {
     m.len() as i64
 }
 
@@ -267,7 +267,7 @@ pub fn pick_items<T: Clone>(v: &[T], mask: &[bool]) -> Result<Vec<T>, String> {
 /// A map from a list of keys and a list of values, in order: `map[keys,
 /// values]` (spec, Maps). Lists of different lengths, or a key that
 /// repeats, stop.
-pub fn map_of<T: Clone>(keys: &[String], values: &[T]) -> Result<BTreeMap<String, T>, String> {
+pub fn map_of<K: Ord + Clone + std::fmt::Display, T: Clone>(keys: &[K], values: &[T]) -> Result<BTreeMap<K, T>, String> {
     if keys.len() != values.len() {
         return Err(format!("map[keys, values] takes lists as long as each other, got {} keys and {} values", keys.len(), values.len()));
     }
@@ -296,17 +296,17 @@ pub fn contains_number(t: &crate::tensor::CrowTensor, x: f64) -> bool {
 }
 
 /// `keys[map]`, in order.
-pub fn keys<T>(m: &BTreeMap<String, T>) -> Vec<String> {
+pub fn keys<K: Clone, T>(m: &BTreeMap<K, T>) -> Vec<K> {
     m.keys().cloned().collect()
 }
 
 /// `values[map]`, in their keys' order.
-pub fn values<T: Clone>(m: &BTreeMap<String, T>) -> Vec<T> {
+pub fn values<K, T: Clone>(m: &BTreeMap<K, T>) -> Vec<T> {
     m.values().cloned().collect()
 }
 
 /// `key in map`.
-pub fn has<T>(m: &BTreeMap<String, T>, key: &str) -> bool {
+pub fn has<K: Ord, T>(m: &BTreeMap<K, T>, key: &K) -> bool {
     m.contains_key(key)
 }
 
@@ -367,7 +367,7 @@ pub fn range_from(start: i64, stop: i64) -> Result<Vec<i64>, String> {
 }
 
 /// `map[]`: an empty map, its values' type what the program puts in it.
-pub fn map_new<T>() -> BTreeMap<String, T> {
+pub fn map_new<K, T>() -> BTreeMap<K, T> {
     BTreeMap::new()
 }
 
@@ -699,8 +699,8 @@ mod tests {
         let m = map_set(m, "a".to_string(), 3);
         assert_eq!(m.get("a"), Some(&3));
         assert_eq!(m.len(), 2);
-        let m = map_del(m, "b");
-        let m = map_del(m, "zz");
+        let m = map_del(m, &"b".to_string());
+        let m = map_del(m, &"zz".to_string());
         assert_eq!(m.len(), 1);
     }
 

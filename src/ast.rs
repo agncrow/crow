@@ -143,6 +143,9 @@ pub enum Expr {
     /// occurrence to a positional argument before execution or codegen.
     Named {
         name: String,
+        /// The key was written as an int (`map[2 = 'b']`): an int key, not
+        /// the text `'2'`.
+        int_key: bool,
         value: Box<Expr>,
     },
     /// For expression (assigned to variable): for x in iter body

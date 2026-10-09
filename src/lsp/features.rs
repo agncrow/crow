@@ -325,7 +325,7 @@ pub fn type_name(ty: &Ty) -> String {
         Ty::Bool => "bool".into(),
         Ty::Str => "str".into(),
         Ty::List(inner) => format!("array of {}", type_name(inner)),
-        Ty::Map(inner) => format!("map of {}", type_name(inner)),
+        Ty::Map(_, inner) => format!("map of {}", type_name(inner)),
         Ty::Record(name) | Ty::OptRecord(name) => name.clone(),
         Ty::Fn(params, ret) => format!(
             "fn[{}] -> {}",

@@ -88,7 +88,7 @@ fn a_collecting_loop_that_can_return_gathers_in_a_loop() {
 fn a_collection_keeps_a_clone_of_a_variable() {
     let rust = transpile("out = []\nfor w in ['a', 'b']\n    out = push[out, w]\nm = map[]\nfor k in ['p', 'q']\n    m = set[m, k, 1]\nlog[out]\nlog[m]\n");
     assert!(rust.contains("crow_runtime::core::push((out), ((w).clone()))"), "{}", rust);
-    assert!(rust.contains("crow_runtime::core::set((m), &*(k), (1_i64))"), "{}", rust);
+    assert!(rust.contains("crow_runtime::core::set((m), &(k), (1_i64))"), "{}", rust);
 }
 
 /// A control renders what it is given, as an element and a view do: a

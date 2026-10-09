@@ -219,9 +219,11 @@ impl<T: ToJson> ToJson for Option<Box<T>> {
         }
     }
 }
-impl<T: ToJson> ToJson for std::collections::BTreeMap<String, T> {
+// (a map keyed by ints encodes its keys as text: JSON's objects have no
+// other kind; the spec, Maps)
+impl<K: std::fmt::Display, T: ToJson> ToJson for std::collections::BTreeMap<K, T> {
     fn to_json(&self) -> serde_json::Value {
-        serde_json::Value::Object(self.iter().map(|(k, v)| (k.clone(), v.to_json())).collect())
+        serde_json::Value::Object(self.iter().map(|(k, v)| (k.to_string(), v.to_json())).collect())
     }
 }
 

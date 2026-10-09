@@ -799,12 +799,12 @@ struct Lowerer<'a> {
     failed: Vec<String>,
 }
 
-/// `map[keys, values]` of a tensor of values: the tensor as a list of
-/// floats, in place of the second argument. (Not inline, as `mask_pick`.)
+/// `map[keys, values]` of a tensor: the tensor as a list of the item kind,
+/// in place of the argument. (Not inline, as `mask_pick`.)
 #[inline(never)]
-fn values_as_list(lowered: &mut Vec<Expr>) {
-    let values = lowered.remove(1);
-    lowered.push(Expr::Convert { how: Convert::ToList, expr: Box::new(values), ty: Ty::List(Box::new(Ty::Float)) });
+fn as_list(lowered: &mut [Expr], i: usize, item: Ty) {
+    let taken = std::mem::replace(&mut lowered[i], Expr::Const(Const::Bool(false), Ty::Bool));
+    lowered[i] = Expr::Convert { how: Convert::ToList, expr: Box::new(taken), ty: Ty::List(Box::new(item)) };
 }
 
 /// A mask picks: the index's own row and the result's type, by the base —
@@ -2613,9 +2613,9 @@ impl<'a> Lowerer<'a> {
     /// value's type, as inference's walk has it.
     fn settled_entry(&mut self, object: &A, value: &Expr) {
         if let A::Ident(var) = object {
-            if let Ty::Map(inner) = self.ctx.ident_type(var).text() {
+            if let Ty::Map(key, inner) = self.ctx.ident_type(var).text() {
                 let joined = inner.unify(&read(value));
-                self.ctx.vars.insert(var.clone(), Ty::Map(Box::new(joined)));
+                self.ctx.vars.insert(var.clone(), Ty::Map(key, Box::new(joined)));
             }
         }
     }
@@ -2635,7 +2635,8 @@ impl<'a> Lowerer<'a> {
             _ => return,
         };
         let existing = self.ctx.vars.get(var).cloned().unwrap_or(Ty::Unknown);
-        self.ctx.vars.insert(var.clone(), existing.unify(&Ty::Map(Box::new(value))));
+        // (open: the variable's own key kind stays, a value settles none)
+        self.ctx.vars.insert(var.clone(), existing.unify(&Ty::Map(crate::ir::Key::Open, Box::new(value))));
     }
 
     /// While a loop's body is lowered, its variable has the element type
@@ -2938,7 +2939,7 @@ impl<'a> Lowerer<'a> {
                         // (a fact's declared value has no statement to stand
                         // in front of: the read itself refuses the value, in
                         // both backends, with the same reason)
-                        let base = if !member && !self.in_fact_default && base.ty().is_result() && matches!(base.ty().payload(), Ty::Frame(_) | Ty::Record(_) | Ty::Map(_) | Ty::Json) {
+                        let base = if !member && !self.in_fact_default && base.ty().is_result() && matches!(base.ty().payload(), Ty::Frame(_) | Ty::Record(_) | Ty::Map(..) | Ty::Json) {
                             self.decided(base, Decision::Read(field.clone()))
                         } else {
                             base
@@ -2971,6 +2972,10 @@ impl<'a> Lowerer<'a> {
                             }
                             _ => ty,
                         };
+                        // a map keyed by ints has no named members: `m[2]`
+                        if let Ty::Map(crate::ir::Key::Int, _) = base.ty().payload() {
+                            self.refuse(format!("a map keyed by ints is read by `m[2]`: `.{}` names a text key", field));
+                        }
                         Expr::Field { base: Box::new(base), name: field.clone(), ty }
                     }
                 }
@@ -3033,15 +3038,21 @@ impl<'a> Lowerer<'a> {
                     }
                     let key = match k {
                         A::Ident(n) | A::Str(n) => n.clone(),
+                        A::Int(n) => n.to_string(),
                         other => format!("{:?}", other),
                     };
                     out.push((key, self.lower_expr(v)?));
                 }
-                let ty = TypeContext::map_type(out.iter().map(|(_, v)| read(v)));
+                // (keys written as ints key the map by ints)
+                let int_keys = !pairs.is_empty() && pairs.iter().all(|(k, _)| matches!(k, A::Int(_)));
+                let ty = match TypeContext::map_type(out.iter().map(|(_, v)| read(v))) {
+                    Ty::Map(_, v) if int_keys => Ty::Map(crate::ir::Key::Int, v),
+                    t => t,
+                };
                 // (each value in the form the map holds its values: a tensor
                 // literal beside an empty list, or a list, is the list)
                 let out = match &ty {
-                    Ty::Map(item) => out.into_iter().map(|(k, v)| (k, held_as(v, item))).collect(),
+                    Ty::Map(_, item) => out.into_iter().map(|(k, v)| (k, held_as(v, item))).collect(),
                     _ => out,
                 };
                 Expr::MapLit(out, ty)
@@ -3227,7 +3238,7 @@ impl<'a> Lowerer<'a> {
             // program had not built; then both had refused it until read)
             if !matches!(base.ty().payload(), Ty::Json) && idx.iter().any(|x| matches!(x.ty().payload(), Ty::Json)) {
                 let what = local_named(&base).unwrap_or_else(|| "the value".to_string());
-                let (kind, how) = if matches!(base.ty().payload(), Ty::Map(_)) { (Ty::Str, format!("a key of {}", what)) } else { (Ty::Int, format!("a position in {}", what)) };
+                let (kind, how) = if let Ty::Map(key, _) = base.ty().payload() { (key.ty(), format!("a key of {}", what)) } else { (Ty::Int, format!("a position in {}", what)) };
                 let mut read_idx = Vec::with_capacity(idx.len());
                 for x in idx {
                     read_idx.push(self.read_json(x, &kind, &how));
@@ -3242,6 +3253,14 @@ impl<'a> Lowerer<'a> {
             {
                 let index = idx.pop().unwrap_or(Expr::Const(Const::Bool(false), Ty::Bool));
                 return Ok(Expr::Call { target: Target::Row(row), args: vec![base, index], ty, propagates: false });
+            }
+            // a map's keys are one kind: an index of the other kind is
+            // refused before the program runs, in both modes
+            if let (Ty::Map(key, _), [index]) = (base.ty().payload(), idx.as_slice()) {
+                let given = index.ty().payload().clone();
+                if key.unify(crate::type_infer::key_kind_of(&given)).is_none() {
+                    self.refuse(crate::table::wrong_key(*key, &given));
+                }
             }
             let arg_types: Vec<Ty> = idx.iter().map(read).collect();
             let full_types: Vec<Ty> = idx.iter().map(full).collect();
@@ -3499,11 +3518,17 @@ impl<'a> Lowerer<'a> {
         }
         // `map[keys, values]` of a tensor of values: its numbers as a list,
         // for a map of floats (the row takes a list of values of one kind)
-        if name == "__map_of" && lowered.len() == 2 && matches!(lowered[1].ty().payload(), Ty::Tensor(..)) && !lowered[1].ty().is_result() {
-            values_as_list(&mut lowered);
-            arg_types[1] = read(&lowered[1]);
-            full_types[1] = full(&lowered[1]);
-            checks[1] = self.checked(&lowered[1]);
+        if name == "__map_of" && lowered.len() == 2 {
+            // (a tensor of keys is a list of ints; a tensor of values a list of floats)
+            for (i, item) in [(0, Ty::Int), (1, Ty::Float)] {
+                let tensor_of_ints = i == 1 || matches!(lowered[0].ty().payload(), Ty::Tensor(e, _) if **e == Ty::Int);
+                if tensor_of_ints && matches!(lowered[i].ty().payload(), Ty::Tensor(..)) && !lowered[i].ty().is_result() {
+                    as_list(&mut lowered, i, item);
+                    arg_types[i] = read(&lowered[i]);
+                    full_types[i] = full(&lowered[i]);
+                    checks[i] = self.checked(&lowered[i]);
+                }
+            }
         }
         self.check_callee(callee, args, &checks);
         self.scan_call(callee, args, &full_types);
@@ -3897,11 +3922,11 @@ impl<'a> Lowerer<'a> {
                 // headers left out)
                 if k == Some(Kind::TextMap) {
                     return match x {
-                        Expr::MapLit(pairs, Ty::Map(e)) if pairs.is_empty() && *e == Ty::Unknown => Expr::MapLit(pairs, Ty::Map(Box::new(Ty::Str))),
+                        Expr::MapLit(pairs, Ty::Map(_, e)) if pairs.is_empty() && *e == Ty::Unknown => Expr::MapLit(pairs, Ty::Map(crate::ir::Key::Text, Box::new(Ty::Str))),
                         // (`map[]` written out is the call that makes one: a
                         // map of text where the row takes one, as the literal
                         // is — compiled, its type had nothing to be read from)
-                        Expr::Call { target: Target::Row(row), args, ty: Ty::Map(e), .. } if row.id == "core.map_new" && args.is_empty() && *e == Ty::Unknown => Expr::MapLit(Vec::new(), Ty::Map(Box::new(Ty::Str))),
+                        Expr::Call { target: Target::Row(row), args, ty: Ty::Map(_, e), .. } if row.id == "core.map_new" && args.is_empty() && *e == Ty::Unknown => Expr::MapLit(Vec::new(), Ty::Map(crate::ir::Key::Text, Box::new(Ty::Str))),
                         other => other,
                     };
                 }
@@ -3951,7 +3976,7 @@ impl<'a> Lowerer<'a> {
                 _ => None,
             }),
             ("set", 3) => (2, match lowered[0].ty().payload() {
-                Ty::Map(item) => Some(item.as_ref().clone()),
+                Ty::Map(_, item) => Some(item.as_ref().clone()),
                 _ => None,
             }),
             _ => (0, None),
@@ -3961,7 +3986,7 @@ impl<'a> Lowerer<'a> {
             lowered.insert(slot, held_as(value, &item));
         }
         let floats = kinds.iter().zip(&lowered).any(|(k, x)| match (k, x.ty().payload()) {
-            (Kind::List | Kind::Seq, Ty::List(e)) | (Kind::MapOf | Kind::MapRef, Ty::Map(e)) => **e == Ty::Float,
+            (Kind::List | Kind::Seq, Ty::List(e)) | (Kind::MapOf | Kind::MapRef, Ty::Map(_, e)) => **e == Ty::Float,
             _ => false,
         });
         lowered
@@ -4184,15 +4209,15 @@ impl<'a> Lowerer<'a> {
     /// not built.)
     fn widen_items(row: &'static crate::table::Row, mut args: Vec<Expr>, ty: Ty) -> (Vec<Expr>, Ty) {
         fn ints(t: &Ty) -> bool {
-            matches!(t.payload(), Ty::List(e) | Ty::Map(e) | Ty::Tensor(e, _) if **e == Ty::Int)
+            matches!(t.payload(), Ty::List(e) | Ty::Map(_, e) | Ty::Tensor(e, _) if **e == Ty::Int)
         }
         fn floats(t: &Ty) -> bool {
-            matches!(t.payload(), Ty::List(e) | Ty::Map(e) | Ty::Tensor(e, _) if **e == Ty::Float)
+            matches!(t.payload(), Ty::List(e) | Ty::Map(_, e) | Ty::Tensor(e, _) if **e == Ty::Float)
         }
         fn of_floats(t: Ty) -> Ty {
             match t {
                 Ty::List(e) if *e == Ty::Int => Ty::List(Box::new(Ty::Float)),
-                Ty::Map(e) if *e == Ty::Int => Ty::Map(Box::new(Ty::Float)),
+                Ty::Map(k, e) if *e == Ty::Int => Ty::Map(k, Box::new(Ty::Float)),
                 // (numbers held as a tensor: its numbers are floats already;
                 // what changes is what the type says of them)
                 Ty::Tensor(e, d) if *e == Ty::Int => Ty::Tensor(Box::new(Ty::Float), d),
@@ -4562,7 +4587,7 @@ fn in_holders_form(name: &str, lowered: &[Expr], ty: Ty) -> Ty {
     };
     let failing = ty.is_result();
     let (held, answered) = match (&holder, ty.payload()) {
-        (Ty::Map(h), Ty::Map(a)) | (Ty::List(h), Ty::List(a)) => (h.as_ref().clone(), a.as_ref().clone()),
+        (Ty::Map(_, h), Ty::Map(_, a)) | (Ty::List(h), Ty::List(a)) => (h.as_ref().clone(), a.as_ref().clone()),
         _ => return ty,
     };
     let item = match (held.payload(), answered.payload()) {
@@ -4571,7 +4596,7 @@ fn in_holders_form(name: &str, lowered: &[Expr], ty: Ty) -> Ty {
         _ => return ty,
     };
     let inner = match holder {
-        Ty::Map(_) => Ty::Map(Box::new(item)),
+        Ty::Map(k, _) => Ty::Map(k, Box::new(item)),
         _ => Ty::List(Box::new(item)),
     };
     if failing {
@@ -5175,7 +5200,7 @@ mod tests {
         assert_eq!(lowered.get("xs"), Some(&Ty::List(Box::new(Ty::Float))));
         assert_eq!(lowered.get("i"), Some(&Ty::Int));
         assert!(!lowered.contains_key("y") && !lowered.contains_key("x"), "{:?}", lowered);
-        assert_eq!(lowered.get("m"), Some(&Ty::Map(Box::new(Ty::Int))));
+        assert_eq!(lowered.get("m"), Some(&Ty::Map(crate::ir::Key::Text, Box::new(Ty::Int))));
         assert_eq!((lowered.get("a"), lowered.get("b")), (Some(&Ty::Int), Some(&Ty::Str)));
         assert_eq!(seen.calls, vec![("half".to_string(), vec![Ty::Float]), ("half".to_string(), vec![Ty::Int])]);
         assert_eq!(seen.returns, vec![Ty::Float, Ty::Float]);
@@ -5285,7 +5310,7 @@ mod tests {
         refused("log[1 in ['a']]\n", "`x in xs` takes a list and an item of its kind: its items are text, not a number");
         refused("xs = push[['a'], 1]\nlog[xs]\n", "push[] takes a list and an item of its kind: its items are text, not a number");
         // (one mistake, one message: the map's own check, not the holder's too)
-        refused("m = set[map[a = 'x'], 'b', 1]\nlog[m]\n", "a map holds one kind: 'b' is an int, and its values are text");
+        refused("m = set[map[a = 'x'], 'b', 1]\nlog[m]\n", "a map holds values of one kind: the entry 'b' holds an int, and the map's other values are text");
         // of one kind, they are compared: text ordered, an int beside a
         // float, two lists whole, a parsed value as the program runs
         assert_eq!(refusal_of(&format!("{}log['b' gt 'a']\nlog[df.name gte 'b']\nlog[1 eq 1.0]\nlog[['a'] eq ['a']]\nj = json['1']\nlog[j eq 'x']\na = float['1.5']\nlog[[a] eq [a]]\nlog['b' in ['a']]\n", df)), "");
@@ -5855,6 +5880,19 @@ mod tests {
     /// decided on, negated or joined with and had run interpreted and not
     /// built compiled.) Two parsed values compare as the program runs, and
     /// a loaded frame's cell as a position or a key is typed by that read.
+    /// The map's type carries its keys' kind: from two lists by the keys,
+    /// from a literal's int keys, from the first `set` of an open map; its
+    /// keys read back as that kind.
+    #[test]
+    fn a_maps_type_carries_its_key_kind() {
+        let ir = ir_of("m = map[[1, 2], ['a', 'b']]\nks = keys[m]\nt = map[a = 1]\no = map[]\no = set[o, 3, 'x']\nl = map[5 = 'q']\nlog[m[1], ks, t, o, l]\n");
+        assert!(ir.contains("let m: Map(Int, Str)"), "{}", ir);
+        assert!(ir.contains("let ks: List(Int)"), "{}", ir);
+        assert!(ir.contains("let t: Map(Int)"), "{}", ir);
+        assert!(ir.contains("let o: Map(Int, Str)"), "{}", ir);
+        assert!(ir.contains("let l: Map(Int, Str)"), "{}", ir);
+    }
+
     #[test]
     fn a_parsed_value_is_read_as_its_use_implies() {
         let ir = ir_of("d = json[args[][0]]\nxs = [10, 20, 30]\nm = map[a = 1]\nlog[xs[d['i']]]\nlog[m[d['k']]]\nlog[d['n'] gt 1]\nlog[d['x'] * 2.0]\ntotal = 0\ntotal = d['n']\nlog[total]\nlog[upper[d['k']]]\nif d['flag']\n    log['yes']\nlog[not d['flag']]\nlog[d['flag'] and true]\n");

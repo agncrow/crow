@@ -375,7 +375,7 @@ impl<'c> Uses<'c> {
                     if module.is_none() && !self.ctx.functions.contains_key(&name) {
                         let takes = match self.ctx.vars.get(&name).map(|t| t.payload().clone()) {
                             Some(Ty::List(_) | Ty::Tensor(..) | Ty::Str) => Some((Ty::Int, "a position in")),
-                            Some(Ty::Map(_)) => Some((Ty::Str, "a key of")),
+                            Some(Ty::Map(..)) => Some((Ty::Str, "a key of")),
                             _ => None,
                         };
                         let first = positional.first().and_then(|a| self.cell_of(a, env));

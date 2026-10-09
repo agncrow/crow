@@ -1165,15 +1165,17 @@ impl Parser {
                 // Named argument: ident = expr, or 'quoted key' = expr for
                 // map[...] keys with special characters (lookahead for the '=')
                 let named_key = match (self.peek(), self.peek_ahead(1)) {
-                    (Token::Ident(name), Token::Assign) => Some(name.clone()),
-                    (Token::Str(s), Token::Assign) => Some(s.clone()),
+                    (Token::Ident(name), Token::Assign) => Some((name.clone(), false)),
+                    (Token::Str(s), Token::Assign) => Some((s.clone(), false)),
+                    // an int key of a map literal: `map[2 = 'b']` (spec, Maps)
+                    (Token::Int(n), Token::Assign) => Some((n.to_string(), true)),
                     _ => None,
                 };
-                if let Some(name) = named_key {
+                if let Some((name, int_key)) = named_key {
                     self.advance(); // key
                     self.advance(); // =
                     let value = self.parse_expr()?;
-                    args.push(Expr::Named { name, value: Box::new(value) });
+                    args.push(Expr::Named { name, int_key, value: Box::new(value) });
                     seen_named = true;
                 } else {
                     if seen_named {

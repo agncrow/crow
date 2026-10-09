@@ -170,6 +170,18 @@ steps on every push and must be green.
   names Rust reserves (`rust_names.rs`) is scoped: a body's names in that
   body, the top level's everywhere — the ClickHouse driver's local
   `where` had renamed every program's `where[…]`.
+- A map's type carries its keys' kind: `Ty::Map(Key, value)` with `Key::{Text,
+  Int, Open}` (open = empty until a first key). Where a map's type is REBUILT
+  from another (settle, held_as, `as_inferred`, the emitter's inner types),
+  carry the key — writing `Key::Text` there made the first assignment of
+  an int-keyed map look like a reassignment ("cannot reassign 'm' from
+  map[str] to map[str]"). The interpreter holds `Value::IntMap` beside
+  `Value::Map`; the eight map rows are `maprow!`s with hand-written
+  bridges (`table::maps`), one branch per key kind, since one closure
+  cannot instantiate a generic runtime function twice; a row answering
+  `Kind::Keys` is typed by the rules (`Kind::generic()` lists it) — a kind
+  not listed there is answered as its `ty()`, Unknown. `Kind::Lists` is a
+  VARIADIC group of lists of text, not a list of lists.
 - `x in xs` / `x not in xs` are desugared by the PARSER (parse_comparison)
   to a call of the row `contains` with the collection first; `contains[`
   and `has[` written in SOURCE are refused there (parse_postfix) — the

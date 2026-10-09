@@ -828,7 +828,20 @@ items = []                               --- empty array
 data = map[]                             --- empty map
 counts = map[crow = 3, raven = 7]        --- map with entries
 headers = map['content-type' = 'json']   --- quoted keys for special characters
+by_id = map[1 = 'a', 2 = 'b']            --- keys written as ints key the map by ints
 ```
+
+**A map's keys are one kind: text, or ints.** `2` and `'2'` are different keys, and a map holds one or the other, as it holds values of one kind. The literal's names and quoted keys are text; a key written as an int, `map[2 = 'b']`, keys the map by ints; `map[keys, values]` keys it by what the keys are (`map[[1, 2, 3], ['a', 'b', 'c']]`, a tensor of ints too); an empty `map[]` is open, and its first `set` decides. A key of the other kind is refused before the program runs, in both modes — `m['2']` of a map keyed by ints: "the map's keys are ints, not text: `m[2]` reads one, `'2'` is text" — as is a float (`map[[1.5], …]`: a map's keys are text or ints, not floats), and the dot form, which names a text key, is refused on a map keyed by ints (`m.a`: "a map keyed by ints is read by `m[2]`"). `keys[m]` answers the keys as they are, ints in order; `in` asks for a key of the map's kind. A parsed value's object has text keys, so a map decoded from JSON is keyed by text, and a map keyed by ints encodes its keys as text, as `json.dumps` does, since JSON's objects have no other kind.
+
+```
+scores = map[[7, 3], [0.5, 0.25]]
+scores[3]                --- 0.25
+keys[scores]             --- [3, 7]
+3 in scores              --- true
+scores['3']              --- refused: the map's keys are ints, not text
+```
+
+**Design Note: a map's keys are typed.** Considered: text keys only, a number used as a key read as its text, as JavaScript's objects and JSON do (rejected, Vijay, 2026-10-08: "2 is different from '2'", and a key put in as a number came back as text from `keys[m]`); keys of any kind in one map, as Lua's tables (rejected: the map's type would say nothing of its keys, and `2` beside `'2'` is a bug waiting). **Decision (Vijay, 2026-10-08):** one key kind per map, text or ints, as Python's `dict` and Go's `map[K]V` are used — the map's type carries it (`Ty::Map(Key, value)`), the compiled program's map is `BTreeMap<String, _>` or `BTreeMap<i64, _>` by it, the interpreter holds the two apart (`Value::Map`, `Value::IntMap`), and the eight map rows bridge both by hand, since one function cannot be instantiated twice in one closure. Floats are not keys, as in Go and for the same reason. JSON stays text-keyed both ways.
 
 `map[key = value, ...]` desugars to a chain of `set[]` calls — it is ordinary Crow, not special syntax. For fully dynamic keys, build with `set[]`:
 
@@ -868,7 +881,7 @@ a value of a different type is an error in both modes:
 ```
 m = map[a = 1]
 m = set[m, 'b', 'x']
---- error: a map holds one kind: 'b' is text, and its values are an int —
+--- error: a map holds values of one kind: the entry 'b' holds text, and the map's other values are an int —
 --- a record (struct) holds fields of several kinds
 ```
 
@@ -1425,11 +1438,11 @@ type[error['x']]  --- 'error'
 
 | Function | Description |
 |----------|-------------|
-| `keys[m]` | Array of map keys |
+| `keys[m]` | The map's keys as they are — text, or ints in order |
 | `values[m]` | Array of map values |
 | `has[m, key]` | The row behind `key in m` (see Membership; the name is not written) |
-| `set[m, key, value]` | Return new map with entry added/updated; a value of another kind than the map's is refused |
-| `del[m, key]` | Return new map with entry removed |
+| `set[m, key, value]` | Return new map with entry added/updated; a value of another kind than the map's is refused, as is a key of the other kind (an empty map takes its first key's kind) |
+| `del[m, key]` | Return new map with entry removed (a key of the other kind is refused) |
 
 **Design Note: one word for joining.** Considered: `gather[chunks]` beside `concat[a, b]` (rejected: two words, and `concat[a, concat[b, concat[c, …]]]` eight brackets deep in the Postgres driver where a list of pieces would do). **Decision (Vijay, 2026-10-08):** `concat` given one list written down joins its items two at a time, in the first lowering, so every kind two pieces join is joined; a list of bytes held in a variable is `concat[chunks]`, the row `gather` was. A list of lists held in a variable is not joined: its items' kind is the lists', which one function over any item kind cannot hold in both modes — write the pieces, or a loop.
 

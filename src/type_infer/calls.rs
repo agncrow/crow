@@ -540,7 +540,7 @@ impl TypeContext {
         for m in &module_vars {
             if let (Some(before), Some(after)) = (saved_vars.get(m), self.vars.get(m)) {
                 let open = matches!(before, Ty::List(inner) if matches!(inner.as_ref(), Ty::Unknown))
-                    || matches!(before, Ty::Map(inner) if matches!(inner.as_ref(), Ty::Unknown))
+                    || matches!(before, Ty::Map(_, inner) if matches!(inner.as_ref(), Ty::Unknown))
                     || matches!(before, Ty::Unknown);
                 if open && before != after {
                     refined.push((m.clone(), before.unify(after)));
@@ -559,7 +559,7 @@ impl TypeContext {
                 if let Some(updated_type) = self.vars.get(pname) {
                     let open = matches!(pty, Ty::Unknown)
                         || matches!(pty, Ty::List(inner) if matches!(inner.as_ref(), Ty::Unknown))
-                        || matches!(pty, Ty::Map(inner) if matches!(inner.as_ref(), Ty::Unknown));
+                        || matches!(pty, Ty::Map(_, inner) if matches!(inner.as_ref(), Ty::Unknown));
                     if matches!(updated_type, Ty::Fn(_, _)) || (open && updated_type != pty && !matches!(updated_type, Ty::Unknown)) {
                         new_params[i].1 = new_params[i].1.unify(updated_type);
                     }

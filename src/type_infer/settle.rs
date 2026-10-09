@@ -48,7 +48,7 @@ pub(crate) fn settle(existing: &Ty, value: Ty, in_body: bool) -> Ty {
             Ty::List(Box::new(item))
         }
         // (a map's values, held either way, keep the map's form too)
-        (Ty::Map(held), Ty::Map(joined)) => Ty::Map(Box::new(settle(held, *joined, false))),
+        (Ty::Map(kh, held), Ty::Map(kj, joined)) => Ty::Map((*kh).unify(kj).unwrap_or(*kh), Box::new(settle(held, *joined, false))),
         (_, joined) => joined,
     }
 }

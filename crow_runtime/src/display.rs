@@ -212,9 +212,9 @@ impl CrowDisplay for crate::frame::CrowColumn {
     }
 }
 
-impl<T: CrowDisplay> CrowDisplay for std::collections::BTreeMap<String, T> {
+impl<K: std::fmt::Display, T: CrowDisplay> CrowDisplay for std::collections::BTreeMap<K, T> {
     fn crow_repr(&self) -> String {
-        entries(self.iter().map(|(k, v)| (k, v.crow_repr())))
+        entries(self.iter().map(|(k, v)| (k.to_string(), v.crow_repr())))
     }
 }
 

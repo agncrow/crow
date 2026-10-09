@@ -100,7 +100,7 @@ impl Emitter {
                         return inner;
                     }
                     let map = match Self::inner(&self.tt(expr)) {
-                        Ty::Map(_) => "into_iter().map(|(k, v)| (k, v as f64)).collect::<std::collections::BTreeMap<String, f64>>()",
+                        Ty::Map(..) => "into_iter().map(|(k, v)| (k, v as f64)).collect::<std::collections::BTreeMap<String, f64>>()",
                         _ => "into_iter().map(|v| v as f64).collect::<Vec<f64>>()",
                     };
                     if matches!(ty, Ty::Result(_)) {
@@ -305,7 +305,7 @@ impl Emitter {
             if Emitter::place_read(base) {
                 let t = self.tt(e);
                 let non_copy = matches!(t, Ty::Result(_))
-                    || matches!(Self::inner(&t), Ty::Tensor(..) | Ty::List(_) | Ty::Map(_) | Ty::Str | Ty::Markup | Ty::Frame(_) | Ty::Record(_) | Ty::OptRecord(_) | Ty::Json);
+                    || matches!(Self::inner(&t), Ty::Tensor(..) | Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Markup | Ty::Frame(_) | Ty::Record(_) | Ty::OptRecord(_) | Ty::Json);
                 if non_copy && !s.ends_with(".clone()") {
                     return format!("{}.clone()", s);
                 }
@@ -324,7 +324,7 @@ impl Emitter {
             }
             let non_copy = matches!(
                 t.text(),
-                Ty::Str | Ty::List(_) | Ty::Tensor(..) | Ty::Map(_) | Ty::Record(_) | Ty::Frame(_) | Ty::Json | Ty::Bytes | Ty::Stream | Ty::Result(_)
+                Ty::Str | Ty::List(_) | Ty::Tensor(..) | Ty::Map(..) | Ty::Record(_) | Ty::Frame(_) | Ty::Json | Ty::Bytes | Ty::Stream | Ty::Result(_)
             );
             if non_copy {
                 return format!("{}.clone()", s);
@@ -342,7 +342,7 @@ impl Emitter {
                 return s;
             }
             let t = self.local_ty(name).unwrap_or_else(|| as_inferred(ty));
-            if matches!(t.text(), Ty::Str | Ty::List(_) | Ty::Tensor(..) | Ty::Map(_) | Ty::Record(_) | Ty::Frame(_) | Ty::Json | Ty::Bytes | Ty::Stream | Ty::Result(_)) {
+            if matches!(t.text(), Ty::Str | Ty::List(_) | Ty::Tensor(..) | Ty::Map(..) | Ty::Record(_) | Ty::Frame(_) | Ty::Json | Ty::Bytes | Ty::Stream | Ty::Result(_)) {
                 return format!("{}.clone()", s);
             }
         }
@@ -876,9 +876,9 @@ impl Emitter {
                 }
                 format!("{{ let _i = {}; let _c = &{}; _c.{}(crow_runtime::stops::item(_i, _c.len()).unwrap_or_else(|e| crow_stop({}, e))) }}", idx, b, getter, line)
             }
-            Ty::Map(_) => {
+            Ty::Map(..) => {
                 self.needs_crow_runtime = true;
-                format!("crow_runtime::core::map_key(&{}, &*({})).unwrap_or_else(|e| crow_stop({}, e))", b, idx_strs.join(", "), self.line_now())
+                format!("crow_runtime::core::map_key(&{}, &({})).unwrap_or_else(|e| crow_stop({}, e))", b, idx_strs.join(", "), self.line_now())
             }
             // an element of a JSON value: JSON's null is an error value of
             // reason `null`, as the interpreter reads it
@@ -1000,9 +1000,9 @@ impl Emitter {
                 }
                 return format!("{}.value.{}{}", obj, Self::rust_field(field), suffix);
             }
-            if matches!(inner.as_ref(), Ty::Map(_)) {
+            if matches!(inner.as_ref(), Ty::Map(..)) {
                 self.needs_crow_runtime = true;
-                return format!("crow_runtime::core::map_key(&{}.value, \"{}\").unwrap_or_else(|e| crow_stop({}, e))", obj, field, self.line_now());
+                return format!("crow_runtime::core::map_key(&{}.value, &String::from(\"{}\")).unwrap_or_else(|e| crow_stop({}, e))", obj, field, self.line_now());
             }
         }
         let oinner = Self::inner(&oty);
@@ -1042,9 +1042,9 @@ impl Emitter {
                 _ => format!("{}.col_native(\"{}\").unwrap_or_else(|| crow_stop({}, crow_runtime::stops::no_column(\"{}\")))", f, field, self.line_now(), field),
             };
         }
-        if matches!(oty, Ty::Map(_)) {
+        if matches!(oty, Ty::Map(..)) {
             self.needs_crow_runtime = true;
-            return format!("crow_runtime::core::map_key(&{}, \"{}\").unwrap_or_else(|e| crow_stop({}, e))", obj, field, self.line_now());
+            return format!("crow_runtime::core::map_key(&{}, &String::from(\"{}\")).unwrap_or_else(|e| crow_stop({}, e))", obj, field, self.line_now());
         }
         if let Ty::Record(sname) = &oty {
             if matches!(sname.as_str(), "CrowShell" | "CrowFindResult" | "CrowElapsed" | "CrowReply" | "CrowAnswer") {
@@ -1144,7 +1144,7 @@ impl Emitter {
                             fmt.push_str("{}");
                             args.push(format!("{{ use crow_runtime::display::CrowDisplay as _; ({}).crow_fmt() }}", rust));
                         }
-                        Ty::List(_) | Ty::Map(_) | Ty::Record(_) => {
+                        Ty::List(_) | Ty::Map(..) | Ty::Record(_) => {
                             fmt.push_str("{:?}");
                             args.push(rust);
                         }
@@ -1257,11 +1257,13 @@ impl Emitter {
         if pairs.is_empty() {
             // (typed where nothing else would type it: a map of text a
             // builtin takes whatever its values show as)
-            if matches!(ty, Ty::Map(e) if **e == Ty::Str) {
+            if matches!(ty, Ty::Map(_, e) if **e == Ty::Str) {
                 return "BTreeMap::<String, String>::new()".to_string();
             }
             return "BTreeMap::new()".to_string();
         }
+        let int_keys = matches!(ty, Ty::Map(crate::ir::Key::Int, _));
+        let key_lit = |k: &str| if int_keys { format!("{}_i64", k) } else { rust_str_lit(k) };
         let val_types: Vec<Ty> = pairs.iter().map(|(_, v)| self.tt(v)).collect();
         let mut val_type = Ty::Unknown;
         for t in &val_types {
@@ -1270,7 +1272,7 @@ impl Emitter {
         let mixed = val_types.iter().any(|t| t != &val_type && *t != Ty::Unknown);
         let entries: Vec<String> = if let Ty::Fn(_, _) = &val_type {
             let ft = val_type.to_rust_type();
-            pairs.iter().map(|(k, v)| format!("({}, {} as {})", rust_str_lit(k), self.expr(v), ft)).collect()
+            pairs.iter().map(|(k, v)| format!("({}, {} as {})", key_lit(k), self.expr(v), ft)).collect()
         } else if mixed {
             pairs
                 .iter()
@@ -1278,11 +1280,11 @@ impl Emitter {
                 .map(|((k, v), vt)| {
                     let s = self.expr(v);
                     let s = if matches!(vt, Ty::Str) { s } else { format!("{}.to_string()", s) };
-                    format!("({}, {})", rust_str_lit(k), s)
+                    format!("({}, {})", key_lit(k), s)
                 })
                 .collect()
         } else {
-            pairs.iter().map(|(k, v)| format!("({}, {})", rust_str_lit(k), self.expr(v))).collect()
+            pairs.iter().map(|(k, v)| format!("({}, {})", key_lit(k), self.expr(v))).collect()
         };
         format!("BTreeMap::from([{}])", entries.join(", "))
     }
@@ -1508,7 +1510,7 @@ impl Emitter {
             Target::Module(m, f) => self.registry.type_of_in(m, f, &raw_args.iter().map(|a| self.tt(a)).collect::<Vec<_>>()).map_or(false, |t| matches!(t, Ty::Result(_))),
             // `json[map]` and `json[frame]` answer a response, never a status
             // (the row of the name, `json[text]`, parses and can fail)
-            Target::Runtime(_) if name == "json" && raw_args.first().is_some_and(|a| matches!(Self::inner(&self.tt(a)), Ty::Map(_) | Ty::Frame(_))) => false,
+            Target::Runtime(_) if name == "json" && raw_args.first().is_some_and(|a| matches!(Self::inner(&self.tt(a)), Ty::Map(..) | Ty::Frame(_))) => false,
             Target::Runtime(_) if self.row_for(name, raw_args).is_some() => {
                 matches!(self.row_for(name, raw_args).map(|r| r.fails), Some(crate::table::Fails::Value(_)))
             }
@@ -1717,7 +1719,7 @@ impl Emitter {
                     && local_read
                     && matches!(
                         Self::inner(&self.tt(a)),
-                        Ty::Tensor(..) | Ty::List(_) | Ty::Map(_) | Ty::Str | Ty::Markup | Ty::Frame(_) | Ty::Record(_) | Ty::Bytes | Ty::Stream | Ty::Socket | Ty::Mailer | Ty::Db
+                        Ty::Tensor(..) | Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Markup | Ty::Frame(_) | Ty::Record(_) | Ty::Bytes | Ty::Stream | Ty::Socket | Ty::Mailer | Ty::Db
                     );
                 let s = self.expr(a);
                 arg_strs.push(if needs_clone && !(matches!(a, Expr::Load(n, _) if self.static_handle_vars.contains(n))) { format!("{}.clone()", s) } else { s });
@@ -1795,7 +1797,7 @@ impl Emitter {
                 let inner_expr = self.dispatch(&target, &name, &raw_args, &unwrapped, e);
                 let full = self.tt(e);
                 let inner_type = match Self::inner(&full) {
-                    Ty::Map(v) => Ty::Map(Box::new(Self::inner(&v))),
+                    Ty::Map(k, v) => Ty::Map(k, Box::new(Self::inner(&v))),
                     Ty::List(v) => Ty::List(Box::new(Self::inner(&v))),
                     o => o,
                 };
@@ -2128,7 +2130,7 @@ impl Emitter {
         let mut strs = arg_strs.to_vec();
         if let Some(kinds) = crate::table::kinds_of(row.params, strs.len()) {
             let items = kinds.iter().zip(args).find_map(|(k, a)| match (k, Self::inner(&self.tt(a))) {
-                (Kind::List | Kind::Seq, Ty::List(it)) | (Kind::MapOf | Kind::MapRef, Ty::Map(it)) => Some(*it),
+                (Kind::List | Kind::Seq, Ty::List(it)) | (Kind::MapOf | Kind::MapRef, Ty::Map(_, it)) => Some(*it),
                 _ => None,
             });
             let gathered = matches!(whole, Expr::Call { propagates: false, .. });

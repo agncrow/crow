@@ -12,6 +12,38 @@ use std::fmt::Write as _;
 
 // ── Types ─────────────────────────────────────────────────────────────
 
+/// A map's keys are one kind: text — the literal's names, JSON's keys —
+/// or ints (`map[[1, 2], …]`, `set[m, 2, v]`); open is an empty map before
+/// its first key, text in the compiled program if it is never keyed.
+/// `2` and `'2'` are different keys, and a map holds one or the other
+/// (spec, Maps).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Key {
+    Text,
+    Int,
+    Open,
+}
+
+impl Key {
+    /// The kind a key of this map is read as: ints or text (an open map's
+    /// first key decides; until then, text).
+    pub fn ty(self) -> Ty {
+        if self == Key::Int { Ty::Int } else { Ty::Str }
+    }
+    /// The two agree where one is open or both are one kind.
+    pub fn unify(self, other: Key) -> Option<Key> {
+        match (self, other) {
+            (Key::Open, k) | (k, Key::Open) => Some(k),
+            (a, b) if a == b => Some(a),
+            _ => None,
+        }
+    }
+    /// The Rust type of the compiled program's key.
+    pub fn rust(self) -> &'static str {
+        if self == Key::Int { "i64" } else { "String" }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Ty {
     Int,
@@ -27,7 +59,8 @@ pub enum Ty {
     /// everywhere a string is read, placed as markup by a view.
     Markup,
     List(Box<Ty>),
-    Map(Box<Ty>),
+    /// A map: its keys' kind and its values' type.
+    Map(Key, Box<Ty>),
     /// A tensor of its element type (Int or Float), with its shape where
     /// the program states it (its dimensions, each a size or unknown; none
     /// where its rank shows only as it runs); the storage is f64 today.
@@ -132,7 +165,8 @@ impl std::fmt::Display for Ty {
             Ty::Markup => write!(f, "Markup"),
             Ty::Unit => write!(f, "Unit"),
             Ty::List(t) => write!(f, "List({})", t),
-            Ty::Map(t) => write!(f, "Map({})", t),
+            Ty::Map(Key::Int, t) => write!(f, "Map(Int, {})", t),
+            Ty::Map(_, t) => write!(f, "Map({})", t),
             Ty::Tensor(t, None) => write!(f, "Tensor({})", t),
             Ty::Tensor(t, Some(dims)) => write!(f, "Tensor({}, {})", t, crate::type_infer::shown_dims(dims)),
             Ty::Frame(None) => write!(f, "Frame"),

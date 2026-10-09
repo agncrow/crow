@@ -30,6 +30,11 @@ use crow_runtime::tensor::CrowTensor;
 /// gives it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Kind {
+    /// A map's key: text or an int, by the map (`set[m, k, v]`, `k in m`);
+    /// the compiled program passes `&K` of the map's type.
+    Key,
+    /// A list of keys of one kind (`map[keys, values]`): `&[K]`.
+    Keys,
     /// `i64`: an int, or a float cut toward zero (as `as i64` does).
     Int,
     /// `i64`: an int only — a row beside a float's row of the same name
@@ -245,8 +250,10 @@ impl Kind {
             Kind::Moment => Ty::Moment,
             Kind::Bool => Ty::Bool,
             Kind::Str => Ty::Str,
+            // (a key is text or an int by its map: the rules say which)
+            Kind::Key | Kind::Keys => Ty::Unknown,
             Kind::Tensor => Ty::tensor(Ty::Float),
-            Kind::FloatMap => Ty::Map(Box::new(Ty::Float)),
+            Kind::FloatMap => Ty::Map(crate::ir::Key::Text, Box::new(Ty::Float)),
             Kind::Sizes => Ty::List(Box::new(Ty::Int)),
             Kind::Tensors | Kind::Groups => Ty::List(Box::new(Ty::tensor(Ty::Float))),
             Kind::Unit => Ty::Unit,
@@ -265,14 +272,14 @@ impl Kind {
             Kind::Bytes => Ty::Bytes,
             Kind::Stream => Ty::Stream,
             Kind::Markup => Ty::Markup,
-            Kind::TextRows => Ty::List(Box::new(Ty::Map(Box::new(Ty::Str)))),
+            Kind::TextRows => Ty::List(Box::new(Ty::Map(crate::ir::Key::Text, Box::new(Ty::Str)))),
             Kind::Shell => Ty::Record("CrowShell".to_string()),
             Kind::Reply => Ty::Record("CrowReply".to_string()),
             Kind::Answer => Ty::Record("CrowAnswer".to_string()),
             Kind::Response => Ty::WebResponse,
             Kind::Socket => Ty::Socket,
             Kind::Mailer => Ty::Mailer,
-            Kind::TextMap => Ty::Map(Box::new(Ty::Str)),
+            Kind::TextMap => Ty::Map(crate::ir::Key::Text, Box::new(Ty::Str)),
             Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn | Kind::Operands | Kind::Operand | Kind::Scalars | Kind::Scalar => Ty::Unknown,
             Kind::JsonList => Ty::List(Box::new(Ty::Json)),
             // what the arguments' items are: inference types the call from
@@ -284,7 +291,8 @@ impl Kind {
     /// Whether the kind is over a collection's items, whatever they are: the
     /// call's type is its arguments', which inference reads.
     pub fn generic(self) -> bool {
-        matches!(self, Kind::List | Kind::Seq | Kind::Item | Kind::ItemRef | Kind::MapOf | Kind::MapRef)
+        // (a map's keys are the map's kind: the rule reads it from the argument)
+        matches!(self, Kind::List | Kind::Seq | Kind::Item | Kind::ItemRef | Kind::MapOf | Kind::MapRef | Kind::Key | Kind::Keys)
     }
 
     /// Whether the function takes the collection itself, to make its
@@ -308,6 +316,12 @@ impl Kind {
                 (None, Some(item)) => format!("&*({})", item),
                 _ => format!("&*({})", arg),
             },
+            // a map's key: `&K` of the map's type (a text literal owned)
+            Kind::Key => match literal_text(arg) {
+                Some(lit) => format!("&String::from({})", lit),
+                None => format!("&({})", arg),
+            },
+            Kind::Keys => format!("&({})[..]", arg),
             Kind::Unit => format!("({})", arg),
             Kind::Strs | Kind::Bools | Kind::Chunks => format!("&({})[..]", arg),
             Kind::Cell => format!("&crow_runtime::cell::Cell::from(({}).clone())", arg),
@@ -350,7 +364,8 @@ impl Kind {
             Kind::Float => "0.0_f64",
             Kind::Moment => "crow_runtime::moments::Moment::default()",
             Kind::Bool => "false",
-            Kind::Str => "String::new()",
+            Kind::Str | Kind::Key => "String::new()",
+            Kind::Keys => "Vec::<String>::new()",
             Kind::Tensor => "crow_runtime::tensor::CrowTensor::from_vec(vec![], vec![0])",
             Kind::FloatMap => "std::collections::BTreeMap::new()",
             Kind::Sizes => "Vec::<i64>::new()",
@@ -1258,6 +1273,21 @@ macro_rules! crow {
     };
 }
 
+/// A core row over a map, keyed by text or by ints: the interpreter's
+/// call and take are written by hand (`maps`), one branch per key kind,
+/// since one closure cannot name two instantiations of the generic
+/// function; the compiled program instantiates it by the map's type.
+macro_rules! maprow {
+    ($id:literal, $name:literal, $f:path, ($($k:ident),*) -> $r:ident, $fails:tt, $call:path, $take:path) => {
+        Row {
+            id: $id, name: $name, module: "", path: stringify!($f),
+            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($fails),
+            call: $call,
+            take: $take,
+        }
+    };
+}
+
 macro_rules! row {
     ($id:literal, $module:literal, $name:literal, $f:path, ($($k:ident),*) -> $r:ident, $($fails:tt)+) => {
         Row {
@@ -1304,7 +1334,7 @@ pub static ROWS: &[Row] = &[
     // did not compare.
     row!("core.len", "", "len", crow_runtime::core::len, (Seq) -> Int, never),
     row!("core.len_text", "", "len", crow_runtime::core::len_text, (Str) -> Int, never),
-    row!("core.len_map", "", "len", crow_runtime::core::len_map, (MapRef) -> Int, never),
+    maprow!("core.len_map", "len", crow_runtime::core::len_map, (MapRef) -> Int, never, maps::len, maps::len_taken),
     row!("core.len_column", "", "len", crow_runtime::core::len_column, (Column) -> Int, never),
     row!("core.len_tensor", "", "len", crow_runtime::core::len_tensor, (Tensor) -> Int, never),
     row!("core.len_frame", "", "len", crow_runtime::core::len_frame, (Frame) -> Int, never),
@@ -1323,7 +1353,7 @@ pub static ROWS: &[Row] = &[
     row!("core.__pick_items", "", "__pick_items", crow_runtime::core::pick_items, (Seq, Bools) -> List, stops),
     row!("core.__pick_rows", "", "__pick_rows", crow_runtime::math::pick_rows, (Tensor, Bools) -> Tensor, stops),
     // `map[keys, values]`: the literal's other form, reached by the lowering
-    row!("core.__map_of", "", "__map_of", crow_runtime::core::map_of, (Strs, Seq) -> MapOf, stops),
+    maprow!("core.__map_of", "__map_of", crow_runtime::core::map_of, (Keys, Seq) -> MapOf, stops, maps::map_of, maps::map_of_taken),
     row!("core.slice", "", "slice", crow_runtime::core::slice, (Seq, Int, Int) -> List, never),
     row!("core.slice_str", "", "slice", crow_runtime::core::slice_str, (Str, Int, Int) -> Str, never),
     row!("core.slice_tensor", "", "slice", crow_runtime::core::slice_tensor, (Tensor, Int, Int) -> Tensor, never),
@@ -1351,14 +1381,14 @@ pub static ROWS: &[Row] = &[
     row!("core.range_to", "", "range", crow_runtime::core::range_to, (Whole) -> Ints, stops),
     row!("core.range_from", "", "range", crow_runtime::core::range_from, (Whole, Whole) -> Ints, stops),
     row!("core.range", "", "range", crow_runtime::core::range, (Whole, Whole, Whole) -> Ints, stops),
-    row!("core.keys", "", "keys", crow_runtime::core::keys, (MapRef) -> Strs, never),
-    row!("core.values", "", "values", crow_runtime::core::values, (MapRef) -> List, never),
-    row!("core.has", "", "has", crow_runtime::core::has, (MapRef, Str) -> Bool, never),
+    maprow!("core.keys", "keys", crow_runtime::core::keys, (MapRef) -> Keys, never, maps::keys, maps::keys_taken),
+    maprow!("core.values", "values", crow_runtime::core::values, (MapRef) -> List, never, maps::values, maps::values_taken),
+    maprow!("core.has", "has", crow_runtime::core::has, (MapRef, Key) -> Bool, never, maps::has, maps::has_taken),
     // `key in m`: the map's membership, the same function (the name `has`
     // is the lowering's own; a program writes the operator)
-    row!("core.contains_key", "", "contains", crow_runtime::core::has, (MapRef, Str) -> Bool, never),
-    row!("core.set", "", "set", crow_runtime::core::set, (MapOf, Str, Item) -> MapOf, never),
-    row!("core.del", "", "del", crow_runtime::core::map_del, (MapOf, Str) -> MapOf, never),
+    maprow!("core.contains_key", "contains", crow_runtime::core::has, (MapRef, Key) -> Bool, never, maps::has, maps::has_taken),
+    maprow!("core.set", "set", crow_runtime::core::set, (MapOf, Key, Item) -> MapOf, never, maps::set, maps::set_taken),
+    maprow!("core.del", "del", crow_runtime::core::map_del, (MapOf, Key) -> MapOf, never, maps::del, maps::del_taken),
     // a parsed JSON object's keys, values and entries: the compiled program
     // holds the parsed value, the interpreter what it parsed to, whose map
     // rows it picks (compiled, these did not build)
@@ -1388,7 +1418,7 @@ pub static ROWS: &[Row] = &[
     // log: the values as they show, one display for both modes (compiled,
     // an error without a value among several did not build)
     row!("display.log", "", "log", crow_runtime::display::log, (Shows) -> Unit, never),
-    row!("core.map_new", "", "map", crow_runtime::core::map_new, () -> MapOf, never),
+    maprow!("core.map_new", "map", crow_runtime::core::map_new, () -> MapOf, never, maps::new, maps::new_taken),
     // a plain number's math (on the dual numbers a function grad
     // differentiates, each keeps the derivative's own form)
     row!("core.abs_int", "", "abs", crow_runtime::core::abs_int, (Whole) -> Int, stops),
@@ -2089,7 +2119,7 @@ impl Arg {
             Ty::Column(_) => Arg::Column,
             Ty::Str | Ty::Markup => Arg::Text,
             Ty::Bool => Arg::Truth,
-            Ty::Map(_) => Arg::Map,
+            Ty::Map(..) => Arg::Map,
             Ty::Record(_) | Ty::OptRecord(_) => Arg::Record,
             Ty::Sparse => Arg::Sparse,
             Ty::Bytes => Arg::Bytes,
@@ -2162,6 +2192,8 @@ impl Kind {
             Kind::Moment => "a moment",
             Kind::Bool => "a bool",
             Kind::Str => "text",
+            Kind::Key => "a key (text or an int)",
+            Kind::Keys => "keys (text or ints)",
             Kind::Tensor => "numbers",
             Kind::Tensors => "a list of tensors",
             Kind::Bytes => "bytes",
@@ -2219,6 +2251,8 @@ impl Kind {
                 Kind::Tensor => matches!(a, Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Column | Arg::FallibleNumbers | Arg::Tensors | Arg::Truths),
                 Kind::Tensors => a == Arg::Tensors,
                 Kind::Str => a == Arg::Text,
+                Kind::Key => matches!(a, Arg::Text | Arg::Int),
+                Kind::Keys => matches!(a, Arg::Texts | Arg::Ints | Arg::Tensor),
                 Kind::Strs | Kind::Texts => a == Arg::Texts,
                 Kind::Chunks => a == Arg::Chunks,
                 Kind::Bool => a == Arg::Truth,
@@ -2352,6 +2386,15 @@ pub fn miscounted(module: &str, name: &str, argc: usize) -> Option<String> {
 /// wrote (`__fmt_time` is `fmt` with a time style).
 fn shown(name: &str) -> &str {
     if name == crate::lower::FMT_TIME { "fmt" } else { name }
+}
+
+/// A key of the other kind than the map's: the refusal, naming both.
+pub fn wrong_key(key: crate::ir::Key, given: &Ty) -> String {
+    let given = Arg::of_type(given).words();
+    match key {
+        crate::ir::Key::Int => format!("the map's keys are ints, not {}: `m[2]` reads one, `'2'` is text", given),
+        _ => format!("the map's keys are text, not {}: `m['k']` reads one — a map keyed by ints is made by `map[[1, 2], …]` or `set[map[], 2, v]`", given),
+    }
 }
 
 /// A row's call as the program writes it, for a refusal: the operator or
@@ -2655,5 +2698,189 @@ mod tests {
         let both: BTreeSet<&str> = core.intersection(&math).copied().collect();
         let listed: BTreeSet<&str> = CORE_AND_MATH.iter().copied().collect();
         assert_eq!(both, listed, "the names core and math both answer");
+    }
+}
+
+
+/// The map rows' bridges: a map is keyed by text or by ints (`Value::Map`,
+/// `Value::IntMap`), an open map — empty — takes its first key's kind.
+pub mod maps {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    enum Keyed<'a> {
+        Text(&'a BTreeMap<String, CrowValue>),
+        Int(&'a BTreeMap<i64, CrowValue>),
+    }
+    enum Owned {
+        Text(BTreeMap<String, CrowValue>),
+        Int(BTreeMap<i64, CrowValue>),
+    }
+    enum K {
+        Text(String),
+        Int(i64),
+    }
+
+    fn map_of_value(v: &CrowValue) -> Result<Keyed<'_>, String> {
+        match &v.value {
+            Value::Map(m) => Ok(Keyed::Text(m)),
+            Value::IntMap(m) => Ok(Keyed::Int(m)),
+            _ => Err(format!("expected a map, got {}", named(v))),
+        }
+    }
+    fn map_taken(v: CrowValue) -> Result<Owned, String> {
+        match v.value {
+            Value::Map(m) => Ok(Owned::Text(m)),
+            Value::IntMap(m) => Ok(Owned::Int(m)),
+            other => Err(format!("expected a map, got {}", other.type_name())),
+        }
+    }
+    fn key_of(v: &CrowValue) -> Result<K, String> {
+        match &v.value {
+            Value::Str(s) => Ok(K::Text(s.clone())),
+            Value::Int(n) => Ok(K::Int(*n)),
+            _ => Err(format!("a map's key is text or an int, got {}", named(v))),
+        }
+    }
+    fn wrong(key: &K, keyed_by_ints: bool) -> String {
+        match key {
+            K::Int(n) if !keyed_by_ints => format!("the map's keys are text, not ints: {}", n),
+            K::Text(t) => format!("the map's keys are ints, not text: '{}'", t),
+            K::Int(n) => format!("the map's keys are text, not ints: {}", n),
+        }
+    }
+    fn text(m: BTreeMap<String, CrowValue>) -> CrowValue {
+        CrowValue::ok(Value::Map(m))
+    }
+    fn ints(m: BTreeMap<i64, CrowValue>) -> CrowValue {
+        CrowValue::ok(Value::IntMap(m))
+    }
+    fn arg<'a>(args: &'a [CrowValue], i: usize, name: &str) -> Result<&'a CrowValue, String> {
+        args.get(i).ok_or_else(|| format!("{}[] is missing its argument {}", name, i + 1))
+    }
+
+    pub fn new(_args: &[CrowValue], _trace: &str) -> Result<CrowValue, String> {
+        Ok(text(BTreeMap::new()))
+    }
+    pub fn new_taken(_args: Vec<CrowValue>, _trace: &str) -> Result<CrowValue, String> {
+        Ok(text(BTreeMap::new()))
+    }
+
+    pub fn set(args: &[CrowValue], _trace: &str) -> Result<CrowValue, String> {
+        let (m, k, v) = (arg(args, 0, "set")?, arg(args, 1, "set")?, arg(args, 2, "set")?);
+        match (map_of_value(m)?, key_of(k)?) {
+            (Keyed::Text(m), K::Text(k)) => Ok(text(crow_runtime::core::set(m.clone(), &k, v.clone()))),
+            (Keyed::Int(m), K::Int(k)) => Ok(ints(crow_runtime::core::set(m.clone(), &k, v.clone()))),
+            // an open map takes its first key's kind
+            (Keyed::Text(m), K::Int(k)) if m.is_empty() => Ok(ints(crow_runtime::core::set(BTreeMap::new(), &k, v.clone()))),
+            (Keyed::Int(_), key) => Err(wrong(&key, true)),
+            (Keyed::Text(_), key) => Err(wrong(&key, false)),
+        }
+    }
+    pub fn set_taken(args: Vec<CrowValue>, _trace: &str) -> Result<CrowValue, String> {
+        let mut it = args.into_iter();
+        let (m, k, v) = (it.next().ok_or("set[] is missing its map")?, it.next().ok_or("set[] is missing its key")?, it.next().ok_or("set[] is missing its value")?);
+        match (map_taken(m)?, key_of(&k)?) {
+            (Owned::Text(m), K::Text(k)) => Ok(text(crow_runtime::core::set(m, &k, v))),
+            (Owned::Int(m), K::Int(k)) => Ok(ints(crow_runtime::core::set(m, &k, v))),
+            (Owned::Text(m), K::Int(k)) if m.is_empty() => Ok(ints(crow_runtime::core::set(BTreeMap::new(), &k, v))),
+            (Owned::Int(_), key) => Err(wrong(&key, true)),
+            (Owned::Text(_), key) => Err(wrong(&key, false)),
+        }
+    }
+
+    pub fn del(args: &[CrowValue], _trace: &str) -> Result<CrowValue, String> {
+        let (m, k) = (arg(args, 0, "del")?, arg(args, 1, "del")?);
+        match (map_of_value(m)?, key_of(k)?) {
+            (Keyed::Text(m), K::Text(k)) => Ok(text(crow_runtime::core::map_del(m.clone(), &k))),
+            (Keyed::Int(m), K::Int(k)) => Ok(ints(crow_runtime::core::map_del(m.clone(), &k))),
+            (Keyed::Int(_), key) => Err(wrong(&key, true)),
+            (Keyed::Text(_), key) => Err(wrong(&key, false)),
+        }
+    }
+    pub fn del_taken(args: Vec<CrowValue>, _trace: &str) -> Result<CrowValue, String> {
+        let mut it = args.into_iter();
+        let (m, k) = (it.next().ok_or("del[] is missing its map")?, it.next().ok_or("del[] is missing its key")?);
+        match (map_taken(m)?, key_of(&k)?) {
+            (Owned::Text(m), K::Text(k)) => Ok(text(crow_runtime::core::map_del(m, &k))),
+            (Owned::Int(m), K::Int(k)) => Ok(ints(crow_runtime::core::map_del(m, &k))),
+            (Owned::Int(_), key) => Err(wrong(&key, true)),
+            (Owned::Text(_), key) => Err(wrong(&key, false)),
+        }
+    }
+
+    pub fn has(args: &[CrowValue], _trace: &str) -> Result<CrowValue, String> {
+        let (m, k) = (arg(args, 0, "in")?, arg(args, 1, "in")?);
+        let found = match (map_of_value(m)?, key_of(k)?) {
+            (Keyed::Text(m), K::Text(k)) => crow_runtime::core::has(m, &k),
+            (Keyed::Int(m), K::Int(k)) => crow_runtime::core::has(m, &k),
+            // (a key of the other kind is in no map of this one — an open
+            // map holds no key yet)
+            _ => false,
+        };
+        Ok(CrowValue::ok(Value::Bool(found)))
+    }
+    pub fn has_taken(args: Vec<CrowValue>, trace: &str) -> Result<CrowValue, String> {
+        has(&args, trace)
+    }
+
+    pub fn keys(args: &[CrowValue], _trace: &str) -> Result<CrowValue, String> {
+        let m = arg(args, 0, "keys")?;
+        let out: Vec<CrowValue> = match map_of_value(m)? {
+            Keyed::Text(m) => crow_runtime::core::keys(m).into_iter().map(|k| CrowValue::ok(Value::Str(k))).collect(),
+            Keyed::Int(m) => crow_runtime::core::keys(m).into_iter().map(|k| CrowValue::ok(Value::Int(k))).collect(),
+        };
+        Ok(CrowValue::ok(Value::Array(out)))
+    }
+    pub fn keys_taken(args: Vec<CrowValue>, trace: &str) -> Result<CrowValue, String> {
+        keys(&args, trace)
+    }
+
+    pub fn values(args: &[CrowValue], _trace: &str) -> Result<CrowValue, String> {
+        let m = arg(args, 0, "values")?;
+        let out = match map_of_value(m)? {
+            Keyed::Text(m) => crow_runtime::core::values(m),
+            Keyed::Int(m) => crow_runtime::core::values(m),
+        };
+        Ok(CrowValue::ok(Value::Array(out)))
+    }
+    pub fn values_taken(args: Vec<CrowValue>, trace: &str) -> Result<CrowValue, String> {
+        values(&args, trace)
+    }
+
+    pub fn len(args: &[CrowValue], _trace: &str) -> Result<CrowValue, String> {
+        let m = arg(args, 0, "len")?;
+        let n = match map_of_value(m)? {
+            Keyed::Text(m) => crow_runtime::core::len_map(m),
+            Keyed::Int(m) => crow_runtime::core::len_map(m),
+        };
+        Ok(CrowValue::ok(Value::Int(n)))
+    }
+    pub fn len_taken(args: Vec<CrowValue>, trace: &str) -> Result<CrowValue, String> {
+        len(&args, trace)
+    }
+
+    /// `map[keys, values]`: text keys make a map keyed by text, ints one
+    /// keyed by ints (a tensor of ints too); mixed keys are refused.
+    pub fn map_of(args: &[CrowValue], _trace: &str) -> Result<CrowValue, String> {
+        let (ks, vs) = (arg(args, 0, "map")?, arg(args, 1, "map")?);
+        let values = read_seq(vs)?;
+        let keys: Vec<CrowValue> = match &ks.value {
+            Value::Array(items) => items.clone(),
+            Value::NumArray(t) => t.to_vec().into_iter().map(|x| CrowValue::ok(Value::Int(x as i64))).collect(),
+            _ => return Err(format!("map[keys, values] takes a list of keys, got {}", named(ks))),
+        };
+        if keys.iter().all(|k| matches!(k.value, Value::Int(_))) {
+            let ks: Vec<i64> = keys.iter().filter_map(|k| if let Value::Int(n) = k.value { Some(n) } else { None }).collect();
+            return Ok(ints(crow_runtime::core::map_of(&ks, values)?));
+        }
+        if keys.iter().all(|k| matches!(k.value, Value::Str(_))) {
+            let ks: Vec<String> = keys.iter().filter_map(|k| if let Value::Str(s) = &k.value { Some(s.clone()) } else { None }).collect();
+            return Ok(text(crow_runtime::core::map_of(&ks, values)?));
+        }
+        Err("map[keys, values] takes keys of one kind: text or ints".to_string())
+    }
+    pub fn map_of_taken(args: Vec<CrowValue>, trace: &str) -> Result<CrowValue, String> {
+        map_of(&args, trace)
     }
 }

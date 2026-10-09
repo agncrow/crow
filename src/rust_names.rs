@@ -486,7 +486,7 @@ mod tests {
         assert!(text.contains("Assign { name: \"loop_\""), "{}", text);
         assert!(text.contains("`loop_` and `m.move`"), "a span's read is renamed, its field is not: {}", text);
         assert!(text.contains("and 'move' `len['loop']`"), "the text outside a name keeps its words: {}", text);
-        assert!(text.contains("Named { name: \"move\", value: Ident(\"loop_\") }"), "a map key keeps its spelling: {}", text);
+        assert!(text.contains("Named { name: \"move\", int_key: false, value: Ident(\"loop_\") }"), "a map key keeps its spelling: {}", text);
         assert_eq!(shown.get("impl_").map(String::as_str), Some("impl"));
         assert_eq!(shown.get("move_").map(String::as_str), Some("move"));
     }
