@@ -1848,8 +1848,10 @@ fn test_web_msgpack_response() {
     let rust = transpile("use web\nfn handler[req]\n    m = map[]\n    return msgpack[m]\n\nroute['/', handler]\n");
     // packed by the row written in Crow (src/modules/web.co), handed the
     // value's JSON, as the interpreter's is
-    assert!(rust.contains("_web_msgpack(&crow_runtime::json::encode("), "the packer written in Crow, lent the value's JSON\n{}", rust);
-    assert!(rust.contains("fn _web_msgpack(value: &String) -> crow_web::core::CrowResponse"), "{}", rust);
+    // (a function a builtin written in Crow is takes its values: its row
+    // calls it with them, and is never lent them)
+    assert!(rust.contains("_web_msgpack(crow_runtime::json::encode("), "the packer written in Crow, handed the value's JSON\n{}", rust);
+    assert!(rust.contains("fn _web_msgpack(value: String) -> crow_web::core::CrowResponse"), "{}", rust);
 }
 
 #[test]
