@@ -81,6 +81,109 @@ impl CrowValue {
         !self.is_error()
     }
 
+    /// The int it is, when it is a plain one (no failure): what a typed
+    /// instruction reads (ir_interp/prepared.rs).
+    #[inline(always)]
+    pub fn plain_int(&self) -> Option<i64> {
+        match &self.value {
+            Value::Int(n) if self.is_ok() => Some(*n),
+            _ => None,
+        }
+    }
+
+    #[inline(always)]
+    pub fn plain_float(&self) -> Option<f64> {
+        match &self.value {
+            Value::Float(x) if self.is_ok() => Some(*x),
+            _ => None,
+        }
+    }
+
+    #[inline(always)]
+    pub fn plain_bool(&self) -> Option<bool> {
+        match &self.value {
+            Value::Bool(b) if self.is_ok() => Some(*b),
+            _ => None,
+        }
+    }
+
+    /// A plain number or truth written over this value: into its payload
+    /// when it is one of the same kind already (nothing dropped, nothing
+    /// built), else replacing it.
+    #[inline(always)]
+    pub fn set_plain(&mut self, v: Value) {
+        match v {
+            Value::Int(n) => self.set_int(n),
+            Value::Float(x) => self.set_float(x),
+            Value::Bool(b) => self.set_bool(b),
+            other => *self = CrowValue::ok(other),
+        }
+    }
+
+    #[inline(always)]
+    pub fn set_int(&mut self, n: i64) {
+        if self.status.is_none()
+            && let Value::Int(d) = &mut self.value
+        {
+            *d = n;
+            return;
+        }
+        *self = CrowValue::ok(Value::Int(n));
+    }
+
+    #[inline(always)]
+    pub fn set_float(&mut self, x: f64) {
+        if self.status.is_none()
+            && let Value::Float(d) = &mut self.value
+        {
+            *d = x;
+            return;
+        }
+        *self = CrowValue::ok(Value::Float(x));
+    }
+
+    #[inline(always)]
+    pub fn set_bool(&mut self, b: bool) {
+        if self.status.is_none()
+            && let Value::Bool(d) = &mut self.value
+        {
+            *d = b;
+            return;
+        }
+        *self = CrowValue::ok(Value::Bool(b));
+    }
+
+    /// A value written over this one: a plain number over a plain number of
+    /// its kind into the payload — the old one has nothing to drop and the
+    /// new one nothing to keep — anything else replacing it (a register's
+    /// write in a tight loop had been a call to the general drop each time).
+    #[inline(always)]
+    pub fn assign(&mut self, v: CrowValue) {
+        let fast = self.status.is_none()
+            && v.status.is_none()
+            && match (&mut self.value, &v.value) {
+                (Value::Int(d), Value::Int(s)) => {
+                    *d = *s;
+                    true
+                }
+                (Value::Float(d), Value::Float(s)) => {
+                    *d = *s;
+                    true
+                }
+                (Value::Bool(d), Value::Bool(s)) => {
+                    *d = *s;
+                    true
+                }
+                _ => false,
+            };
+        if fast {
+            // (a plain number holds nothing to free)
+            std::mem::forget(v);
+        } else {
+            *self = v;
+        }
+    }
+
     /// Its message, "" if it is no error.
     pub fn reason(&self) -> &str {
         self.status.as_ref().map_or("", |s| s.reason.as_str())

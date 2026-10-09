@@ -1904,7 +1904,10 @@ impl IrInterp {
             return crate::autograd_bridge::call(row.name, &vals);
         }
         if row.module.is_empty() {
-            (row.take)(vals, &self.trace_entry()).map(|v| Self::stamp(row.name, v))
+            // (only a row whose failure is a value reads the trace: for the
+            // others it is not built — a string formatted at every call)
+            let trace = if matches!(row.fails, crate::table::Fails::Value(_)) { self.trace_entry() } else { String::new() };
+            (row.take)(vals, &trace).map(|v| Self::stamp(row.name, v))
         } else {
             // a module's error value carries no trace, in either mode
             (row.take)(vals, "").map(|v| Self::stamp(row.name, v))
@@ -2695,18 +2698,14 @@ impl IrInterp {
         if is_view {
             self.in_view += 1;
         }
-        // the body prepared (prepared.rs): its locals in slots, its hot
-        // shapes run without the general dispatch; a traced run keeps the
+        // the body prepared (prepared.rs): instructions over registers,
+        // typed where the IR fixes the operands; a traced run keeps the
         // walker
         let prepared = if self.tracing { None } else { Some(self.prepared_for(&f)) };
         let r = match &prepared {
             Some(p) => {
-                let mut slots = vec![CrowValue::done(); p.n_slots];
-                for (v, s) in args.into_iter().zip(p.params.iter()) {
-                    slots[*s as usize] = v;
-                }
-                self.frames.push(Frame { scopes: Vec::new(), locals: Vec::new(), marks: Vec::new(), fn_name, slots, env: None });
-                self.pexec(&p.body)
+                self.frames.push(Frame { scopes: Vec::new(), locals: Vec::new(), marks: Vec::new(), fn_name, slots: Vec::new(), env: None });
+                self.run_prepared(p, args)
             }
             None => {
                 let mut scope = HashMap::with_capacity_and_hasher(f.params.len(), Names::default());

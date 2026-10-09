@@ -1,0 +1,177 @@
+--- A function's body runs as instructions over registers: typed where the
+--- IR fixes the operands' types, with the general dispatch behind each, and
+--- the walker for everything else. Each case is a shape that compiles to a
+--- typed instruction, a fused decision, a counted or walked loop, a stop, or
+--- a fallback; both modes print the same. The last case stops the program.
+use math
+
+--- ints past 2^53 compare exactly, as the compiled program compares them
+--- (the interpreter's general path had read them as floats)
+fn big_cmp[a, b]
+    log[a gt b]
+    log[a eq b]
+    log[a ne b]
+    log[a lte b]
+    return a gte b
+log[big_cmp[9007199254740993, 9007199254740992]]
+log[9007199254740993 eq 9007199254740992]
+
+fn distinct[a, b]
+    assert[a ne b]
+    return 'distinct'
+log[distinct[9007199254740993, 9007199254740992]]
+
+--- int division and remainder, by the runtime's rules in both modes
+fn divs[a, b]
+    log[a / b]
+    return a % b
+log[divs[7, 2]]
+log[divs[-7, 2]]
+
+--- floats as IEEE says: NaN equals nothing, and differs from everything
+fn nans[x]
+    n = x / x
+    log[n eq n]
+    log[n ne n]
+    log[n lt 1.0]
+    return n gte 1.0
+log[nans[0.0]]
+
+fn poly[x]
+    return x * x * 2.5 - x / 4.0 + x ^ 0.5
+log[poly[2.0]]
+
+fn half[x]
+    return x / 2.0
+log[half[3]]
+
+--- both sides of `and` are evaluated, the left first
+fn noisy[b]
+    log['evaluated']
+    return b
+fn both[a]
+    return a and noisy[false]
+log[both[false]]
+
+fn negs[n, x]
+    log[-n]
+    return -x
+log[negs[5, 2.5]]
+
+--- a while loop with a continue, a nested while, a list grown in place,
+--- and an item set where it lies
+fn sieve[n]
+    flags = []
+    for i in range[n]
+        flags = push[flags, true]
+    count = 0
+    p = 2
+    while p lt n
+        if not flags[p]
+            p = p + 1
+            continue
+        count = count + 1
+        m = p * p
+        while m lt n
+            flags[m] = false
+            m = m + p
+        p = p + 1
+    return count
+log[sieve[100]]
+
+--- a break out of a while, a length measured where it lies
+fn first_over[xs, limit]
+    i = 0
+    found = -1
+    while i lt len[xs]
+        if xs[i] gt limit
+            found = xs[i]
+            break
+        i = i + 1
+    return found
+log[first_over[[3, 9, 27, 81], 10]]
+log[first_over[[3, 9], 10]]
+
+--- loops over a list of text, a tensor of ints, and a map's keys
+fn joined[words]
+    out = ''
+    for w in words
+        out = '`out``w`-'
+    return out
+log[joined[['a', 'b', 'c']]]
+
+fn tsum[t]
+    s = 0
+    for v in t
+        s = s + v
+    return s
+log[tsum[[1, 2, 3, 4]]]
+
+fn key_chars[m]
+    n = 0
+    for k in keys[m]
+        n = n + len[k]
+    return n
+log[key_chars[map[alpha = 1, be = 2]]]
+
+--- a value that failed: soft through an operator, refused at a decision
+fn parsed_double[s]
+    n = int[s]
+    return n * 2
+r1 = parsed_double['21']
+log[r1]
+r2 = parsed_double['x']
+log[r2.ok]
+log[r2.reason]
+
+fn sign_of[s]
+    n = int[s]
+    if n gt 0
+        return 'positive'
+    return 'not positive'
+log[sign_of['5']]
+q = sign_of['nope']
+log[q.ok]
+
+--- recursion, a collecting loop the walker runs over the registers
+fn fact[n]
+    if n lt 2
+        return 1
+    return n * fact[n - 1]
+log[fact[20]]
+
+fn squares[n]
+    base = 10
+    out = for i in range[n]
+        base + i * i
+    return out
+log[squares[4]]
+
+--- a typed read the typed form hands over to the boxed program: a map's
+--- item by an int key, a tensor's item copied into a list, text measured
+fn bump[m, k]
+    return m[k] + 1
+log[bump[map[[1, 2], [10, 20]], 2]]
+
+fn from_tensor[t]
+    xs = push[push[[], 0], 0]
+    xs[1] = t[2]
+    return xs
+log[from_tensor[[5, 6, 7]]]
+
+fn text_len[s]
+    n = 0
+    i = 0
+    while i lt len[s]
+        n = n + 1
+        i = i + 1
+    return n
+log[text_len['hello']]
+
+--- an int past 64 bits stops the program, naming the line it happened on
+fn grow_until_it_stops[n]
+    x = n
+    while true
+        x = x * 1000
+    return x
+log[grow_until_it_stops[7]]

@@ -473,6 +473,59 @@ pub fn groups<'a>(params: &[Kind], args: &'a [CrowValue], name: &str) -> Result<
     Ok(spans(params, args.len(), name)?.into_iter().map(|(a, b)| &args[a..b]).collect())
 }
 
+/// More parameters than any row has (a unit test holds every row to it —
+/// `core.request` has nine; the first bound, eight, had been read off the
+/// `row!` lines and cut its last argument off): the
+/// interpreter's bridges group a call's arguments in a fixed array, so no
+/// call allocates for it — two vectors a call had been, on every builtin
+/// call, and the system allocator's free reads the clock.
+pub const MOST_PARAMS: usize = 12;
+
+/// `spans`, in a fixed array: the groups' bounds and how many there are.
+#[inline]
+fn spans_fixed(params: &[Kind], argc: usize, name: &str) -> Result<([(usize, usize); MOST_PARAMS], usize), String> {
+    let fixed = params.iter().filter(|k| !k.is_rest()).count();
+    let rest = params.iter().any(|k| k.is_rest());
+    if (!rest && argc != fixed) || (rest && argc < fixed) {
+        let wanted = if rest { format!("at least {}", fixed) } else { fixed.to_string() };
+        return Err(miscount(name, &wanted, argc));
+    }
+    let mut out = [(0, 0); MOST_PARAMS];
+    let mut at = 0;
+    for (slot, k) in out.iter_mut().zip(params) {
+        let n = if k.is_rest() { argc - fixed } else { 1 };
+        *slot = (at, at + n);
+        at += n;
+    }
+    Ok((out, params.len().min(MOST_PARAMS)))
+}
+
+/// `groups`, without allocating: the groups in a fixed array (empty past
+/// the row's parameters).
+#[inline]
+pub fn groups_in_place<'a>(params: &[Kind], args: &'a [CrowValue], name: &str) -> Result<[&'a [CrowValue]; MOST_PARAMS], String> {
+    let (spans, n) = spans_fixed(params, args.len(), name)?;
+    let mut out: [&'a [CrowValue]; MOST_PARAMS] = [&[]; MOST_PARAMS];
+    for (slot, (a, b)) in out.iter_mut().zip(spans).take(n) {
+        *slot = &args[a..b];
+    }
+    Ok(out)
+}
+
+/// `groups_mut`, without allocating.
+#[inline]
+pub fn groups_mut_in_place<'a>(params: &[Kind], args: &'a mut [CrowValue], name: &str) -> Result<[&'a mut [CrowValue]; MOST_PARAMS], String> {
+    let (spans, n) = spans_fixed(params, args.len(), name)?;
+    let mut out: [&'a mut [CrowValue]; MOST_PARAMS] = Default::default();
+    let mut rest = args;
+    for (slot, (a, b)) in out.iter_mut().zip(spans).take(n) {
+        let (group, tail) = std::mem::take(&mut rest).split_at_mut(b - a);
+        *slot = group;
+        rest = tail;
+    }
+    Ok(out)
+}
+
 /// The arguments grouped so, each group the function's to keep.
 pub fn groups_mut<'a>(params: &[Kind], args: &'a mut [CrowValue], name: &str) -> Result<Vec<&'a mut [CrowValue]>, String> {
     let spans = spans(params, args.len(), name)?;
@@ -1295,7 +1348,7 @@ macro_rules! row {
             params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($($fails)+),
             call: |args: &[CrowValue], trace: &str| {
                 let _ = trace;
-                let groups = groups(&[$(Kind::$k),*], args, $name)?;
+                let groups = groups_in_place(&[$(Kind::$k),*], args, $name)?;
                 let mut g = groups.into_iter();
                 let mut next = || g.next().unwrap_or(&[]);
                 let _ = &mut next;
@@ -1303,7 +1356,7 @@ macro_rules! row {
             },
             take: |mut args: Vec<CrowValue>, trace: &str| {
                 let _ = trace;
-                let groups = groups_mut(&[$(Kind::$k),*], &mut args, $name)?;
+                let groups = groups_mut_in_place(&[$(Kind::$k),*], &mut args, $name)?;
                 let mut g = groups.into_iter();
                 let mut next = || g.next().unwrap_or(&mut []);
                 let _ = &mut next;
@@ -2456,6 +2509,15 @@ pub const MODULE_TO_MOVE: &[(&str, &str)] = &[];
 
 #[cfg(test)]
 mod tests {
+    /// The interpreter's bridges group a call's arguments in a fixed array
+    /// (`groups_in_place`): no row may have more parameters than it holds.
+    #[test]
+    fn every_row_fits_the_bridges_fixed_grouping() {
+        for row in ROWS {
+            assert!(row.params.len() <= MOST_PARAMS, "{} has {} parameters", row.id, row.params.len());
+        }
+    }
+
     use super::*;
 
     fn int(n: i64) -> CrowValue {

@@ -196,17 +196,26 @@ steps on every push and must be green.
   number is CPU time (`/usr/bin/time -p crow run -i …`): wall time under
   a running suite was 3× off.
 - A function's body runs on its PREPARED form (`src/ir_interp/prepared.rs`):
-  locals in slots decided before the call, the hot shapes mirrored
-  (`PStmt`/`PExpr`), everything else an `Ir` node the walker runs with
-  `Frame::env` set so names resolve to the slots. A new arm in the walker's
-  `eval`/`exec_stmt` that gives a SHAPE its own meaning (as `assert`'s
-  message, a bound input, `len` in place and an in-place `push` have) must
-  be sent to `Ir` by the mirror too (`Prep::expr`'s `own` list,
-  `moves_first`), or the prepared body runs the general path for it and
-  the modes drift. The slots follow the walker's scoping (`declare` reuses
-  a name bound in the current block, `fresh` is a loop variable's): a
-  probe showed `for i` nested in `for i` restores the outer `i` after the
-  inner loop — one slot per NAME would have clobbered it.
+  instructions over registers (`Ins`, compiled on the first call), and a
+  TYPED program (`TIns`, one per `Ins`, at the same positions) keeping int
+  and float registers bare. (1) A new walker arm that gives a SHAPE its own
+  meaning (as `assert`'s message, a bound input, `len` in place and an
+  in-place `push` have) must stay an `Eval`/`Exec` fallback in
+  `Comp::compute` (the `own` list, `moves_first`), or the prepared body runs
+  the general path for it and the modes drift. (2) A new `Ins` needs its
+  mapping in `typed()`: a typed form, or `Boxed { pre, post }` naming EVERY
+  typed register it reads (`pre`) and writes (`post`) — one left out is read
+  stale or written and lost; an instruction that can lend the registers to
+  the walker boxes all of them both ways (`lend()`). (3) A typed instruction
+  checks before it writes, so a hand-over at its own position re-runs it in
+  the boxed program; after a boxed instruction ran, the hand-over is at the
+  next position and skips boxing what it wrote. (4) A register has one kind
+  for the whole function (`RKind`; temporaries from per-kind pools), or a
+  hand-over would box a stale int over a live value. The slots follow the
+  walker's scoping (`declare` reuses a name bound in the current block,
+  `fresh` is a loop variable's): a nested `for i` restores the outer `i`.
+  Measure the interpreter with instructions retired (`/usr/bin/time -l`),
+  which load does not move.
 - A map's type carries its keys' kind: `Ty::Map(Key, value)` with `Key::{Text,
   Int, Open}` (open = empty until a first key). Where a map's type is REBUILT
   from another (settle, held_as, `as_inferred`, the emitter's inner types),

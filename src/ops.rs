@@ -233,6 +233,9 @@ pub fn equality_values(
         (Value::NumArray(t), s) | (s, Value::NumArray(t)) if is_scalar(s) => tensor_mask(t, cmp, s),
         (Value::Json(a), Value::Json(b)) => mask::json_pair(cmp, a, b).map(answer),
         (Value::Json(j), v) | (v, Value::Json(j)) if is_scalar(v) => mask::json_holds(cmp, j, mask_cell(v)).map(answer),
+        // two ints exactly, as the compiled program compares them (a cell
+        // is a float: past 2^53 two ints had compared equal)
+        (Value::Int(a), Value::Int(b)) => Ok(answer((a == b) != negate)),
         (a, b) if is_scalar(a) && is_scalar(b) => mask::holds(cmp, mask_cell(a), true, mask_cell(b)).map(answer),
         _ => {
             whole_kinds(&left.value, &right.value, cmp)?;
@@ -367,6 +370,16 @@ pub fn compare_values(l: &Value, r: &Value, cmp: Cmp) -> Result<CrowValue, Strin
         (Value::Json(a), Value::Json(b)) => crow_runtime::mask::json_pair(cmp, a, b).map(|b| CrowValue::ok(Value::Bool(b))),
         (Value::Json(j), v) if is_scalar(v) => crow_runtime::mask::json_holds(cmp, j, mask_cell(v)).map(|b| CrowValue::ok(Value::Bool(b))),
         (v, Value::Json(j)) if is_scalar(v) => crow_runtime::mask::json_holds(cmp.flipped(), j, mask_cell(v)).map(|b| CrowValue::ok(Value::Bool(b))),
+        // two ints exactly, as the compiled program orders them (a cell is
+        // a float: past 2^53 two ints had ordered as equal)
+        (Value::Int(a), Value::Int(b)) => Ok(CrowValue::ok(Value::Bool(match cmp {
+            Cmp::Eq => a == b,
+            Cmp::Ne => a != b,
+            Cmp::Gt => a > b,
+            Cmp::Lt => a < b,
+            Cmp::Gte => a >= b,
+            Cmp::Lte => a <= b,
+        }))),
         // two values: numbers by value, text by character code; an order
         // between kinds with none is the reason, as the lowering refuses it
         // where it knows both

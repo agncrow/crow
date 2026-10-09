@@ -233,18 +233,26 @@ tensors, frames and strings are pointer bumps. There is no dynamic
 dispatch on the shape of a value: the IR said the shape.
 
 A function's body runs *prepared* (`ir_interp/prepared.rs`, since
-2026-10-08): on its first call the body is walked once, every binding
-given a slot by the walker's own scoping (a `let` binds in its block, a
-loop variable is a new binding of the loop's block), and the hot shapes
-— an assignment, `xs[i] = v`, a branch, a `while`, a `for` over a range
-or a list, a return, a local, a constant, an operator, `xs[i]`,
-`len[xs]`, a call — mirrored over those slots, so a read is an index
-into the frame and two ints or an int index are read where they lie.
-Everything else stays the IR node it is and the walker runs it, finding
-the names in scope at that point through the frame's slot table; the
-main frame, a derivation and a traced run are the walker's throughout.
-The IR itself carries no slots: adding one to `Local` would reach every
-match over `Expr` in the compiler for a fact only the interpreter uses.
+2026-10-08): on its first call the body is compiled into a flat sequence
+of instructions over numbered registers — every binding a register by the
+walker's own scoping (a `let` binds in its block, a loop variable is a new
+binding of the loop's block), control flow as jumps, the hot shapes
+(an operator, a decision on two ints, a counted loop, `xs[i]`, `xs[i] =
+v`, `xs[i] = ys[j]`, `len[xs]`, an in-place append, a call) as
+instructions of their own, the source line a table read where a stop or a
+call needs it. Each register has one kind for the function: an int, a
+float, or any value. The same body is compiled a second time with its int
+and float registers as bare machine values, one instruction for each of
+the first program's at the same position; an instruction with no typed
+form runs as the boxed one with its typed registers boxed around it, and a
+value a typed register cannot hold (a dual number under `grad`, an item
+that is no plain int) hands the run over to the boxed program at the same
+position. Everything else stays the IR node it is and the walker runs it
+over the lent registers, finding names through the frame's slot table;
+the main frame, a derivation and a traced run are the walker's throughout.
+The IR itself carries no registers: adding one to `Local` would reach
+every match over `Expr` in the compiler for a fact only the interpreter
+uses.
 
 ## 6. The Rust backend (`crow run`, `crow build`)
 

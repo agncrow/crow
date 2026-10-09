@@ -4881,7 +4881,7 @@ fn place_moves_in(block: &mut Block, live_after: &HashSet<String>, allowed: Opti
                     place_moves_in(e, &after, Some(&allowed_set));
                 }
             }
-            Stmt::While { body, .. } => {
+            Stmt::While { cond, body } => {
                 // the body repeats: nothing defined outside it moves inside
                 let mut body_reads = HashSet::new();
                 for b in body.iter() {
@@ -4889,6 +4889,8 @@ fn place_moves_in(block: &mut Block, live_after: &HashSet<String>, allowed: Opti
                 }
                 let mut after = live.clone();
                 after.extend(body_reads);
+                // (and the condition is read again after every round)
+                expr_reads(cond, &mut after);
                 let inner_allowed = defined_in(body);
                 place_moves_in(body, &after, Some(&inner_allowed));
             }
@@ -4931,7 +4933,19 @@ fn place_moves_in(block: &mut Block, live_after: &HashSet<String>, allowed: Opti
                 }
                 (l, allowed_set.clone())
             }
-            Stmt::While { body, .. } | Stmt::For { body, .. } => {
+            // a while loop's condition is read again after every round: what
+            // it reads is still to come, and does not move in it (`while i lt
+            // len[s]` had moved `s` on the first round — the interpreter
+            // then measured nothing, the compiled program had read it)
+            Stmt::While { cond, body } => {
+                let mut l = live.clone();
+                expr_reads(cond, &mut l);
+                for b in body.iter() {
+                    stmt_reads(b, &mut l);
+                }
+                (l, allowed_set.clone())
+            }
+            Stmt::For { body, .. } => {
                 let mut l = live.clone();
                 for b in body.iter() {
                     stmt_reads(b, &mut l);
@@ -5163,6 +5177,16 @@ mod tests {
         ctx.infer_program(&stmts);
         let program = lower(&stmts, &mut ctx, "t").unwrap();
         print(&program)
+    }
+
+    /// A while loop's condition runs every round: a variable only it reads
+    /// is never moved there (`while i lt len[s]` had moved `s` on the first
+    /// round, and the interpreter stopped on the second).
+    #[test]
+    fn a_while_condition_moves_nothing_it_reads() {
+        let ir = ir_of("fn text_len[s]\n    n = 0\n    i = 0\n    while i lt len[s]\n        n = n + 1\n        i = i + 1\n    return n\nlog[text_len['hello']]\n");
+        assert!(ir.contains("core.len_text(s)"), "{}", ir);
+        assert!(!ir.contains("move s"), "{}", ir);
     }
 
     /// A function's last line is its value, but a handler's value goes to
