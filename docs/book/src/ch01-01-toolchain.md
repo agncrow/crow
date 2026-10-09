@@ -10,7 +10,7 @@ crow run [-i] [file]             execute: compiled by default, -i interprets
 crow stop                        stop the served app started by crow run
 crow build [file]                compile to a native binary, ./main
 crow check [file]                verify: tests, generated edge cases, contracts, and the app baseline — what changed since the accepted one
-crow fix                         apply the fixes crow check offers
+crow fix [file]                  apply the fixes the error messages name, and those crow check offers
 crow fmt                         format
 crow test [file]                 run the test blocks
 crow test --parity | --book      the two execution modes must agree

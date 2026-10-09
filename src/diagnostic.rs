@@ -326,9 +326,211 @@ pub fn render(file: &str, source: &str, text: &str, read: &dyn Fn(&str) -> Optio
     out.trim_end().to_string()
 }
 
+/// A change a refusal names: its text on one line, from `start` to `end`
+/// (0-based characters), replaced by `with` — which may hold a line break,
+/// or be a whole line inserted (`start` = `end` = 0, `with` ending in one).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fix {
+    /// 1-based.
+    pub line: usize,
+    pub start: usize,
+    pub end: usize,
+    pub with: String,
+    /// What it does, as `crow fix` and the editor's quick fix say it.
+    pub what: String,
+}
+
+/// The fixes a refusal names, read from its messages — the one reading
+/// the editor's quick fixes and `crow fix` share: a slip's nearest name
+/// (`did you mean 'score'?`), a missing import (`add `use math``), and a
+/// habit taught its Crow form where the form is one (`==` is `eq`, `True`
+/// is `true`, `f(1)` is `f[1]`, `**` is `^`, `#` is `---`, `x += 1` is
+/// `x = x + 1`, `push[xs, v]` alone is `xs = push[xs, v]`, two statements
+/// on a line are two lines, a `;` goes). A message with two ways out
+/// (`add `use frame` or `use math``) names no fix: that is the author's.
+pub fn fixes(source: &str, text: &str) -> Vec<Fix> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut out: Vec<Fix> = Vec::new();
+    let mut imports: Vec<String> = Vec::new();
+    for d in parse(text) {
+        if d.file.is_some() {
+            continue;
+        }
+        let Some(line) = d.line else { continue };
+        let Some(line_text) = lines.get(line - 1).copied() else { continue };
+        let chars: Vec<char> = line_text.chars().collect();
+        let m = d.message.as_str();
+        let at = d.col.map(|c| c.saturating_sub(1)).filter(|c| *c < chars.len());
+        let mut fix = |start: usize, end: usize, with: String, what: String| out.push(Fix { line, start, end, with, what });
+
+        // a slip: the name written, every place on its line, the nearest
+        if let Some(near) = m.split("did you mean '").nth(1).and_then(|r| r.split('\'').next()) {
+            for (start, end) in spans(line_text, m) {
+                let written: String = chars[start..end].iter().collect();
+                fix(start, end, near.to_string(), format!("{} → {}", written, near));
+            }
+        }
+        // an import the line needs, once, when the message names one way
+        if !m.contains("` or `use ")
+            && let Some(module) = m.split("add `use ").nth(1).and_then(|r| r.split('`').next())
+            && !imports.iter().any(|i| i == module)
+        {
+            imports.push(module.to_string());
+        }
+        // another language's word, at the place the parser met it
+        let swap = m
+            .split("the word '")
+            .nth(1)
+            .and_then(|r| r.split_once("', not '"))
+            .or_else(|| m.split("use '").nth(1).and_then(|r| r.split_once("', not '")))
+            .map(|(crow, rest)| (crow.to_string(), rest.split('\'').next().unwrap_or("").to_string()));
+        if let (Some((crow, other)), Some(at)) = (swap, at) {
+            let wrote: String = chars[at..].iter().take(other.chars().count()).collect();
+            if !other.is_empty() && wrote == other {
+                let end = at + other.chars().count();
+                let spaced = if crow.chars().all(char::is_alphabetic) && chars.get(end).is_some_and(|c| !c.is_whitespace()) { format!("{} ", crow) } else { crow.clone() };
+                fix(at, end, spaced, format!("{} → {}", other, crow));
+            }
+        }
+        if let Some(at) = at {
+            let here: String = chars[at..].iter().collect();
+            // a call written with parentheses: its own pair, on its line
+            if m.starts_with("calls use square brackets") && chars[at] == '(' {
+                let mut depth = 0i32;
+                if let Some(close) = (at..chars.len()).find(|&k| {
+                    match chars[k] {
+                        '(' => depth += 1,
+                        ')' => depth -= 1,
+                        _ => {}
+                    }
+                    depth == 0
+                }) {
+                    fix(close, close + 1, "]".into(), "( ) → [ ]".into());
+                    fix(at, at + 1, "[".into(), "( ) → [ ]".into());
+                }
+            }
+            if m.contains("Crow comments start with ---") && here.starts_with('#') {
+                fix(at, at + 1, "---".into(), "# → ---".into());
+            }
+            if m.contains("Crow's power is ^") && here.starts_with("**") {
+                fix(at, at + 2, "^".into(), "** → ^".into());
+            }
+            if m.contains("Crow has no ';'") && here.starts_with(';') {
+                fix(at, at + 1, String::new(), "; removed".into());
+            }
+            if m.contains("Crow strings use single quotes")
+                && here.starts_with('"')
+                && let Some(close) = (at + 1..chars.len()).find(|&k| chars[k] == '"')
+                && !chars[at + 1..close].contains(&'\'')
+            {
+                fix(close, close + 1, "'".into(), "\"…\" → '…'".into());
+                fix(at, at + 1, "'".into(), "\"…\" → '…'".into());
+            }
+            // two statements on a line: the second on a line of its own
+            if m.contains("a line holds one statement") {
+                let indent: String = chars.iter().take_while(|c| c.is_whitespace()).collect();
+                let mut start = at;
+                while start > 0 && chars[start - 1] == ' ' {
+                    start -= 1;
+                }
+                fix(start, at, format!("\n{}", indent), "one statement a line".into());
+            }
+        }
+        // `x += 1`, `x++`: written out
+        let indent: String = chars.iter().take_while(|c| c.is_whitespace()).collect();
+        let body = line_text.trim();
+        let ops = ["+", "-", "*", "/", "%"];
+        if m.contains("augmented assignment")
+            && let Some(op) = ops.iter().find(|op| body.contains(&format!("{}=", op)))
+            && let Some((name, value)) = body.split_once(&format!("{}=", op))
+        {
+            let name = name.trim();
+            if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.') {
+                fix(0, chars.len(), format!("{}{} = {} {} {}", indent, name, name, op, value.trim()), format!("{} {}= … → {} = {} {} …", name, op, name, name, op));
+            }
+        }
+        if m.contains("Crow has no ++")
+            && let Some(name) = body.strip_suffix("++")
+            && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+        {
+            fix(0, chars.len(), format!("{}{} = {} + 1", indent, name, name), format!("{}++ → {} = {} + 1", name, name, name));
+        }
+        // a value a statement drops, kept in the variable it was made from
+        if let Some(keep) = m.split("keep it: ").nth(1)
+            && let Some((var, _)) = keep.split_once(" = ")
+            && var != "x"
+            && var.chars().all(|c| c.is_alphanumeric() || c == '_')
+        {
+            let at = chars.iter().take_while(|c| c.is_whitespace()).count();
+            fix(at, at, format!("{} = ", var), format!("keep: {} = …", var));
+        }
+    }
+    // each import below the file's last `use` (or at its top)
+    let below = lines.iter().enumerate().rev().find(|(_, l)| l.starts_with("use ")).map_or(0, |(i, _)| i + 1);
+    for module in imports {
+        out.push(Fix { line: below + 1, start: 0, end: 0, with: format!("use {}\n", module), what: format!("add `use {}`", module) });
+    }
+    out
+}
+
+/// A source with fixes applied: from the end back, so each fix's place is
+/// where it was read; one that overlaps another already applied is left.
+pub fn apply(source: &str, fixes: &[Fix]) -> (String, Vec<Fix>) {
+    let mut lines: Vec<String> = source.split('\n').map(String::from).collect();
+    let mut order: Vec<&Fix> = fixes.iter().collect();
+    order.sort_by(|a, b| (b.line, b.start, b.end).cmp(&(a.line, a.start, a.end)));
+    let mut done: Vec<Fix> = Vec::new();
+    for f in order {
+        let overlaps = done.iter().any(|d| d.line == f.line && f.start < d.end.max(d.start + 1) && d.start < f.end.max(f.start + 1) && !(f.start == f.end && d.start == d.end && f.start == d.start) && f.what != d.what);
+        if overlaps {
+            continue;
+        }
+        let i = f.line - 1;
+        if i > lines.len() {
+            continue;
+        }
+        if f.start == 0 && f.end == 0 && f.with.ends_with('\n') {
+            lines.insert(i, f.with.trim_end_matches('\n').to_string());
+        } else if let Some(l) = lines.get_mut(i) {
+            let chars: Vec<char> = l.chars().collect();
+            if f.end > chars.len() {
+                continue;
+            }
+            *l = format!("{}{}{}", chars[..f.start].iter().collect::<String>(), f.with, chars[f.end..].iter().collect::<String>());
+        }
+        done.push(f.clone());
+    }
+    done.reverse();
+    (lines.join("\n"), done)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The fixes a refusal names, applied: a slip, an import, a habit
+    #[test]
+    fn a_refusals_fixes_are_read_and_applied() {
+        let src = "use frame\nxs = ['a']\nlog[lenn[xs]]\nif xs == 1\n    log[1]\n";
+        let text = "line 3: undefined function 'lenn' — did you mean 'len'?\nline 4, col 7: Crow compares with the word 'eq', not '==': a eq b.\nline 3: abs[] of numbers is math's: add `use math`";
+        let fs = fixes(src, text);
+        let (fixed, done) = apply(src, &fs);
+        assert_eq!(fixed, "use frame\nuse math\nxs = ['a']\nlog[len[xs]]\nif xs eq 1\n    log[1]\n");
+        assert_eq!(done.iter().map(|f| f.what.as_str()).collect::<Vec<_>>(), vec!["add `use math`", "lenn → len", "== → eq"]);
+        // two ways out is no fix
+        assert!(fixes("x = load['a.csv']\n", "line 1: load[] is frame's (a frame) or math's (numbers): add `use frame` or `use math`").is_empty());
+        // a call's parentheses, a dropped push, two statements, `x += 1`
+        let (f, _) = apply("log[len(xs)]\n", &fixes("log[len(xs)]\n", "line 1, col 8: calls use square brackets: len[…], not len(…)"));
+        assert_eq!(f, "log[len[xs]]\n");
+        let (f, _) = apply("    push[xs, 1]\n", &fixes("    push[xs, 1]\n", "line 1: push[] answers a list, and this line drops it — keep it: xs = push[xs, …]"));
+        assert_eq!(f, "    xs = push[xs, 1]\n");
+        let (f, _) = apply("x = 1 y = 2\n", &fixes("x = 1 y = 2\n", "line 1, col 7: a line holds one statement — 'y' starts a second one: put it on a line of its own"));
+        assert_eq!(f, "x = 1\ny = 2\n");
+        let (f, _) = apply("  x += 1\n", &fixes("  x += 1\n", "line 1, col 5: Crow has no augmented assignment ('+=') — write it out: x = x + 1."));
+        assert_eq!(f, "  x = x + 1\n");
+        let (f, _) = apply("if !a\n", &fixes("if !a\n", "line 1, col 4: Crow uses the word 'not', not '!': not a."));
+        assert_eq!(f, "if not a\n");
+    }
 
     #[test]
     fn every_location_format_is_read() {

@@ -1271,7 +1271,7 @@ The parser speaks in the program's words, never its tokens': `f(1)` says calls u
 
 Some mistakes run quietly unless refused, and are: a builtin that answers a new value of the kind it was handed — `push`, `set`, `sort`, `upper`, `with` — called as a statement of its own (`push[xs, v]` alone answers the longer list and drops it: `xs = push[xs, v]` keeps it; a collecting loop's last line and a console cell's hand their value on, and are not dropped), a `return` outside every function, view and derivation, `break` or `continue` outside a `while` loop, and a `use` of a module there is none of.
 
-The language server offers each fix the message names (an import added, a slip corrected) as a quick fix.
+The language server offers each fix the message names (an import added, a slip corrected, a habit in its Crow form) as a quick fix, and `crow fix file.co` applies them all in place, round after round — a parse error hides the mistakes after it — then lists each change at its line and prints what is left for the author: a name the program never defines, a module two ways out of (`add `use frame` or `use math``). One reading of the messages (`diagnostic::fixes`) serves both.
 
 
 ### When a Program Stops
@@ -4063,6 +4063,7 @@ crow check --show [name]    --- the app as a tree: pages, views under their guar
 crow check --db <url>       --- + schema-aware database checks (or db = '…' in the crowfile)
 crow check --record-fixtures --- the scenarios read the real databases, and what each statement answers is kept in .crow/fixtures
 crow check --strict         --- exit 1 on any finding (CI)
+crow fix file.co             --- apply the fixes the program's refusal names (a slip, an import, a habit), then list them
 crow fix file.co --hazard N [--option M]   --- apply a fix from the check report
 crow fmt                    --- format project (uses crowfile; or: crow fmt file.co)
 crow fmt --check            --- check if formatting needed (exit 1 if not)

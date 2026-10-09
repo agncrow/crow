@@ -220,16 +220,24 @@ fn crow_main() {
                     }
                 }
             }
-            // No --hazard: run the check and print the numbered menu, so
-            // the N crow fix asks for is discoverable from crow fix itself.
+            // No --hazard: what the program is refused for is fixed first,
+            // where its messages name the fix; then the check runs and
+            // prints the numbered menu, so the N crow fix asks for is
+            // discoverable from crow fix itself.
             if let (Some(filename), None) = (&file, hazard_n) {
+                if let Some(code) = fix_refusals(filename) {
+                    process::exit(code);
+                }
                 let source = read_file(filename);
                 let url = db_url.clone().or_else(crowfile_db_url);
                 match db_check::run(filename, &source, url.as_deref()) {
                     Ok(result) => {
                         let ordered = db_check::report::ordered(&result.hazards);
                         if ordered.is_empty() {
-                            println!("no fixable hazards — database checks are clean");
+                            // (a program with no database has no hazards to speak of)
+                            if url.is_some() || source.lines().any(|l| l.trim_start().starts_with("use") && l.contains("db")) {
+                                println!("no database hazards to fix");
+                            }
                         } else {
                             println!("hazards in {}:", filename);
                             for (i, h) in ordered.iter().enumerate() {
@@ -3198,6 +3206,28 @@ fn source_of_bytecode(path: &str) -> String {
 }
 
 #[cfg(test)]
+mod fix_tests {
+    /// `crow fix`: the fixes a refusal names, applied round after round (the
+    /// split line lets `totl` be read as `total`'s slip), the file left a
+    /// program; one whose mistakes ask for the author is left refused, as it
+    /// was
+    #[test]
+    fn crow_fix_mends_what_the_messages_name() {
+        let dir = std::env::temp_dir().join(format!("crow_fix_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("a.co");
+        std::fs::write(&file, "xs = ['a']\nif len[xs] == 1\n    log[lenn[xs]]\npush[xs, 'b']\ntotal = 0 n = 1\nlog[totl]\n").unwrap();
+        let path = file.display().to_string();
+        assert_eq!(super::fix_refusals(&path), None);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "xs = ['a']\nif len[xs] eq 1\n    log[len[xs]]\nxs = push[xs, 'b']\ntotal = 0\nn = 1\nlog[total]\n");
+        std::fs::write(&file, "log[missing]\n").unwrap();
+        assert_eq!(super::fix_refusals(&path), Some(1));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "log[missing]\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
 mod extension_tests {
     use super::*;
 
@@ -4386,6 +4416,103 @@ pub fn refine_error_line(source: &str, line_1based: usize, msg: &str) -> usize {
 
 /// Rewrite every `line N:` prefix in a (possibly multi-line) error
 /// message to the refined line.
+/// What a program is refused for, as the front end says it (`crow run`'s
+/// parse, expansion, lowering and checks, on the text given); `None` when
+/// it is a program.
+fn refusal_of(filename: &str, source: &str) -> Option<String> {
+    let stmts = match build(source) {
+        Ok(s) => s,
+        Err(e) => return Some(e),
+    };
+    let dir = std::path::Path::new(filename).parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(std::path::Path::new("."));
+    let mut visited = std::collections::HashSet::new();
+    let stmts = match expand_module_imports_checked(&stmts, dir, &mut visited) {
+        Ok(s) => s,
+        Err(e) => return Some(e),
+    };
+    let lowered = match lower::lower_program(&stmts) {
+        Ok(l) => l,
+        Err(e) => return Some(e),
+    };
+    let name = std::path::Path::new(filename).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+    match infer_and_lower(&lowered, describing(), &name) {
+        Ok(_) => None,
+        Err(e) => Some(refine_error_lines(source, &e)),
+    }
+}
+
+/// `crow fix file.co`: the fixes the program's refusal names, applied in
+/// place — a slip's nearest name, a missing import, another language's
+/// habit in its Crow form (diagnostic::fixes, as the editor's quick fixes
+/// read them) — round after round, since a parse error hides the ones
+/// after it; then what was changed, and what is left for the author.
+/// `Some(exit status)` when the program is still refused; `None` when it is
+/// a program, for the database check to run.
+fn fix_refusals(filename: &str) -> Option<i32> {
+    let original = read_file(filename);
+    let mut source = original.clone();
+    // each change at its line, kept where the lines a later change adds
+    // above it move it
+    let mut changed: Vec<(usize, String)> = Vec::new();
+    for _ in 0..50 {
+        let Some(text) = refusal_of(filename, &source) else { break };
+        let (next, done) = diagnostic::apply(&source, &diagnostic::fixes(&source, &text));
+        if done.is_empty() || next == source {
+            break;
+        }
+        // the lines this round adds: an import inserted before its line,
+        // a statement split after its line
+        let adds: Vec<(usize, bool, usize)> = done
+            .iter()
+            .filter(|f| f.with.contains('\n'))
+            .map(|f| (f.line, f.start == 0 && f.end == 0 && f.with.ends_with('\n'), f.with.matches('\n').count()))
+            .collect();
+        let moved = |line: usize, own: Option<&diagnostic::Fix>| -> usize {
+            line + adds
+                .iter()
+                .filter(|(at, before, _)| if *before { *at <= line } else { *at < line })
+                .filter(|(at, before, _)| own.is_none_or(|f| !(f.line == *at && *before && f.start == 0 && f.end == 0 && f.with.ends_with('\n'))))
+                .map(|(_, _, n)| n)
+                .sum::<usize>()
+        };
+        for c in changed.iter_mut() {
+            c.0 = moved(c.0, None);
+        }
+        changed.extend(done.iter().map(|f| (moved(f.line, Some(f)), f.what.clone())));
+        source = next;
+    }
+    changed.sort();
+    if source != original {
+        if let Err(e) = std::fs::write(filename, &source) {
+            eprintln!("error: cannot write {}: {}", filename, e);
+            return Some(1);
+        }
+        println!("crow fix: {} change{} to {}", changed.len(), if changed.len() == 1 { "" } else { "s" }, filename);
+        for (line, what) in &changed {
+            println!("  {}:{}: {}", filename, line, what);
+        }
+    }
+    match refusal_of(filename, &source) {
+        Some(text) => {
+            if changed.is_empty() {
+                println!("crow fix: nothing in {} it can fix — each mistake below asks for its author", filename);
+            } else {
+                println!("\nleft for you:");
+            }
+            eprintln!("{}", shown_refusal(filename, &source, &text));
+            Some(1)
+        }
+        None => {
+            if changed.is_empty() {
+                println!("crow fix: {} is a program — nothing to fix", filename);
+            } else {
+                println!("{} is a program now", filename);
+            }
+            None
+        }
+    }
+}
+
 /// A refusal, printed the one way every command prints it — the file, line
 /// and column of what the program wrote, the message, the line underlined
 /// (diagnostic.rs; spec, Error Messages) — and the program not run.

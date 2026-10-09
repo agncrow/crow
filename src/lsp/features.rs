@@ -534,18 +534,6 @@ mod param_fill_tests {
     }
 }
 
-/// The text between `open` and the next `close` in `s`.
-fn between<'s>(s: &'s str, open: &str, close: &str) -> Option<&'s str> {
-    let rest = &s[s.find(open)? + open.len()..];
-    Some(&rest[..rest.find(close)?])
-}
-
-/// The source's text in a single-line range, by character columns.
-fn text_in(source: &str, r: Range) -> String {
-    let line = source.lines().nth(r.start.line as usize).unwrap_or("");
-    line.chars().skip(r.start.character as usize).take(r.end.character.saturating_sub(r.start.character) as usize).collect()
-}
-
 /// Quick fixes for the diagnostics the client names: a slip's nearest name
 /// put in its place (`undefined function 'lenn' — did you mean 'len'?`),
 /// where the diagnostic points at the name written; and an import a
@@ -553,28 +541,42 @@ fn text_in(source: &str, r: Range) -> String {
 /// document's last import.
 pub fn code_actions(a: &Analysis, uri: &Uri, diagnostics: &[lsp_types::Diagnostic]) -> Vec<lsp_types::CodeActionOrCommand> {
     use lsp_types::{CodeAction, CodeActionKind, CodeActionOrCommand, TextEdit, WorkspaceEdit};
-    let fix = |title: String, d: &lsp_types::Diagnostic, edit: TextEdit| {
+    let fix = |title: String, d: &lsp_types::Diagnostic, edits: Vec<TextEdit>| {
         CodeActionOrCommand::CodeAction(CodeAction {
             title,
             kind: Some(CodeActionKind::QUICKFIX),
             diagnostics: Some(vec![d.clone()]),
-            edit: Some(WorkspaceEdit { changes: Some(std::collections::HashMap::from([(uri.clone(), vec![edit])])), ..Default::default() }),
+            edit: Some(WorkspaceEdit { changes: Some(std::collections::HashMap::from([(uri.clone(), edits)])), ..Default::default() }),
             is_preferred: Some(true),
             ..Default::default()
         })
     };
+    // each diagnostic's fixes, read as `crow fix` reads them
+    // (crate::diagnostic::fixes): one action per fix, its edits together
     let mut out = Vec::new();
     for d in diagnostics {
-        if let (Some(near), Some(written)) = (between(&d.message, "did you mean '", "'?"), between(&d.message, "'", "'"))
-            && d.range.start.line == d.range.end.line
-            && text_in(&a.source, d.range) == written
-        {
-            out.push(fix(format!("Change to '{}'", near), d, TextEdit { range: d.range, new_text: near.to_string() }));
+        let entry = format!("line {}, col {}: {}", d.range.start.line + 1, d.range.start.character + 1, d.message);
+        let mut by_what: Vec<(String, Vec<TextEdit>)> = Vec::new();
+        for f in crate::diagnostic::fixes(&a.source, &entry) {
+            let start = Position { line: (f.line - 1) as u32, character: f.start as u32 };
+            let end = Position { line: (f.line - 1) as u32, character: f.end as u32 };
+            let edit = TextEdit { range: Range { start, end }, new_text: f.with };
+            match by_what.iter_mut().find(|(w, _)| *w == f.what) {
+                Some((_, edits)) => edits.push(edit),
+                None => by_what.push((f.what, vec![edit])),
+            }
         }
-        if let Some(module) = between(&d.message, "add `use ", "`") {
-            let below = a.source.lines().enumerate().filter(|(_, l)| l.starts_with("use ")).map(|(i, _)| i + 1).last().unwrap_or(0) as u32;
-            let at = Position { line: below, character: 0 };
-            out.push(fix(format!("Add `use {}`", module), d, TextEdit { range: Range { start: at, end: at }, new_text: format!("use {}\n", module) }));
+        for (what, edits) in by_what {
+            // (a slip's fix says the name it puts in place; the others what
+            // they do, from a capital)
+            let title = match what.split_once(" → ") {
+                Some((_, to)) if !what.contains('(') => format!("Change to '{}'", to),
+                _ => {
+                    let mut c = what.chars();
+                    c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+                }
+            };
+            out.push(fix(title, d, edits));
         }
     }
     out

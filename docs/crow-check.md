@@ -191,6 +191,11 @@ are documented as reviewable proposals in `discovered-features.md`.
 
 ## crow fix
 
+Without `--hazard`, `crow fix app.co` first mends what the program is refused
+for, where the refusal names the fix — a slip, a missing import, another
+language's habit (spec, Error Messages) — and lists each change; a program
+that is not refused goes on to its hazards.
+
 Each hazard's menu is executable:
 
 ```
