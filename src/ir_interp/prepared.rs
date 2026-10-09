@@ -348,14 +348,34 @@ pub(super) enum RKind {
     Boxed = 0,
     Int = 1,
     Float = 2,
+    /// A local list of ints a typed run keeps as `Vec<i64>` — where the
+    /// function uses it only through list instructions (`typed`'s rule).
+    IntList = 3,
 }
 
 impl RKind {
+    /// A temporary's kind by its value's type.
     fn of(t: &Ty) -> RKind {
         match t {
             Ty::Int => RKind::Int,
             Ty::Float => RKind::Float,
             _ => RKind::Boxed,
+        }
+    }
+
+    /// A local's: a list of ints may stay bare as well.
+    fn of_local(t: &Ty) -> RKind {
+        match t {
+            Ty::List(e) if **e == Ty::Int => RKind::IntList,
+            other => RKind::of(other),
+        }
+    }
+
+    /// The pool a copy of a register of this kind is drawn from.
+    fn pool(self) -> RKind {
+        match self {
+            RKind::IntList => RKind::Boxed,
+            k => k,
         }
     }
 }
@@ -428,7 +448,7 @@ impl Comp {
     }
 
     fn function(&mut self, f: &Fn) -> Vec<R> {
-        let params = f.params.iter().map(|(name, ty)| self.fresh(name, scalar(ty), RKind::of(ty))).collect();
+        let params = f.params.iter().map(|(name, ty)| self.fresh(name, scalar(ty), RKind::of_local(ty))).collect();
         self.block_stmts(&f.body);
         params
     }
@@ -578,7 +598,7 @@ impl Comp {
                 // register the binding will have
                 let d = self.peek(var);
                 let p = self.expr_place(expr, d);
-                let bound = self.declare(var, scalar(ty), RKind::of(ty));
+                let bound = self.declare(var, scalar(ty), RKind::of_local(ty));
                 debug_assert_eq!(bound, d);
                 self.put(p, d);
             }
@@ -900,8 +920,8 @@ impl Comp {
 
     fn kept(&mut self, o: Opnd, later: &[Expr]) -> Opnd {
         match o {
-            Opnd::R(r) if self.is_slot(r) && later.iter().any(|e| may_write(e)) => {
-                let t = self.temp(self.kind(r));
+            Opnd::R(r) if self.is_slot(r) && later.iter().any(may_write) => {
+                let t = self.temp(self.kind(r).pool());
                 self.emit(Ins::Copy { d: t, s: r });
                 Opnd::R(t)
             }
@@ -911,8 +931,8 @@ impl Comp {
 
     fn kept_place(&mut self, p: Place, later: &[Expr]) -> Place {
         match p {
-            Place::Slot(r) if later.iter().any(|e| may_write(e)) => {
-                let t = self.temp(self.kind(r));
+            Place::Slot(r) if later.iter().any(may_write) => {
+                let t = self.temp(self.kind(r).pool());
                 self.emit(Ins::Copy { d: t, s: r });
                 Place::Temp(t)
             }
@@ -1196,17 +1216,17 @@ impl IrInterp {
             regs[*r as usize] = v;
         }
         if let Some(tc) = &p.typed {
-            let mut ints = vec![0i64; p.n_regs];
-            let mut floats = vec![0f64; p.n_regs];
-            // each typed parameter a plain number of its kind — or the boxed
-            // program runs (a dual number a function `grad` differentiates
-            // computes with, a value the IR could not see)
+            let mut bare = Bare { ints: vec![0i64; p.n_regs], floats: vec![0f64; p.n_regs], lists: vec![Vec::new(); p.n_regs] };
+            // each typed parameter a plain number of its kind (a list of
+            // plain ints) — or the boxed program runs (a dual number a
+            // function `grad` differentiates computes with, a value the IR
+            // could not see)
             for r in p.params.iter() {
-                if !unbox_reg(&p.kinds, &regs, &mut ints, &mut floats, *r) {
+                if !unbox_reg(&tc.kinds, &regs, &mut bare, *r) {
                     return self.run_code(p, &mut regs);
                 }
             }
-            return self.run_typed(p, tc, &mut regs, &mut ints, &mut floats);
+            return self.run_typed(p, tc, &mut regs, &mut bare);
         }
         self.run_code(p, &mut regs)
     }
@@ -1646,6 +1666,24 @@ mod tests {
         assert!(!shown.contains("Eval {") && !shown.contains("Exec {"), "{}", shown);
     }
 
+    /// A list of ints the function uses only through list instructions is
+    /// kept bare in the typed run (`LIndex`, `LCopy`, `LSet`); one it
+    /// answers stays a list of values, converted nowhere in its loop.
+    #[test]
+    fn a_list_of_ints_is_bare_only_where_list_instructions_use_it() {
+        let f = lowered_fn(
+            "fn flip[n]\n    perm = range[n]\n    i = 0\n    j = n - 1\n    while i lt j\n        t = perm[i]\n        perm[i] = perm[j]\n        perm[j] = t\n        i = i + 1\n        j = j - 1\n    return perm[0]\nlog[flip[5]]\n",
+            "flip",
+        );
+        let p = prepare(&f);
+        let shown = format!("{:?}", p.typed.as_ref().map(|tc| &tc.code));
+        assert!(shown.contains("LIndex") && shown.contains("LCopy") && shown.contains("LSet"), "{}", shown);
+        let g = lowered_fn("fn keep[n]\n    xs = range[n]\n    xs[0] = 9\n    return xs\nlog[keep[3]]\n", "keep");
+        let q = prepare(&g);
+        let shown = format!("{:?}", q.typed.as_ref().map(|tc| &tc.code));
+        assert!(!shown.contains("LSet"), "{}", shown);
+    }
+
     /// A counted loop over a range is a counted loop, and a nested one
     /// reusing the name binds a register of its own.
     #[test]
@@ -1704,10 +1742,19 @@ enum TIns {
     IMov { d: R, s: R },
     FMov { d: R, s: R },
     IArith { op: IntOp, d: R, a: TOp, b: TOp },
+    /// `x + k`, `x - k`, `x + y`, `x - y`: the commonest arithmetic, with
+    /// no operand to decode and no operator to choose.
+    IAddK { d: R, a: R, k: i64 },
+    ISubK { d: R, a: R, k: i64 },
+    IAddR { d: R, a: R, b: R },
+    ISubR { d: R, a: R, b: R },
     /// Two ints compared into a truth (a boxed register).
     ICmp { op: IntOp, d: R, a: TOp, b: TOp },
     /// Two ints compared deciding a branch: jumps when it is false.
     IJump { op: IntOp, a: TOp, b: TOp, to: u32 },
+    /// The same, of two registers and of a register and a constant.
+    IJumpR { op: IntOp, a: R, b: R, to: u32 },
+    IJumpK { op: IntOp, a: R, k: i64, to: u32 },
     INeg { d: R, s: R },
     FArith { op: FloatOp, d: R, a: R, b: R },
     FCmp { op: FloatOp, d: R, a: R, b: R },
@@ -1723,24 +1770,44 @@ enum TIns {
     FSet { base: R, idx: TOp, v: R },
     ICopy { dst: R, di: TOp, src: R, si: TOp },
     XLen { d: R, base: R },
+    /// An int list's item, set, copied, measured, appended to, dropped.
+    LIndex { d: R, base: R, idx: TOp },
+    LSet { base: R, idx: TOp, v: R },
+    LCopy { dst: R, di: TOp, src: R, si: TOp },
+    LLen { d: R, base: R },
+    LPush { d: R, v: R },
+    LClear { d: R },
     ForCount { var: R, ctr: R, hi: R, lo: Option<TOp>, top: TOp, end: u32 },
     ForNextCount { var: R, ctr: R, hi: R, body: u32 },
 }
 
 pub(super) struct Typed {
     code: Vec<TIns>,
-    /// The int and the float registers: what a hand-over boxes.
+    /// Each register's kind in the typed run: the compiler's, with a list
+    /// of ints the function uses otherwise than through list instructions
+    /// boxed after all.
+    kinds: Vec<RKind>,
+    /// The int, float and int-list registers: what a hand-over boxes.
     ints: Box<[R]>,
     floats: Box<[R]>,
+    lists: Box<[R]>,
+}
+
+/// The typed run's bare registers.
+pub(super) struct Bare {
+    ints: Vec<i64>,
+    floats: Vec<f64>,
+    lists: Vec<Vec<i64>>,
 }
 
 /// A typed register's value into its boxed register.
 #[inline(always)]
-fn box_reg(kinds: &[RKind], regs: &mut [CrowValue], ints: &[i64], floats: &[f64], r: R) {
+fn box_reg(kinds: &[RKind], regs: &mut [CrowValue], bare: &Bare, r: R) {
     let i = r as usize;
     match kinds[i] {
-        RKind::Int => regs[i].set_int(ints[i]),
-        RKind::Float => regs[i].set_float(floats[i]),
+        RKind::Int => regs[i].set_int(bare.ints[i]),
+        RKind::Float => regs[i].set_float(bare.floats[i]),
+        RKind::IntList => regs[i] = CrowValue::ok(Value::Array(bare.lists[i].iter().map(|n| CrowValue::ok(Value::Int(*n))).collect())),
         RKind::Boxed => {}
     }
 }
@@ -1748,36 +1815,202 @@ fn box_reg(kinds: &[RKind], regs: &mut [CrowValue], ints: &[i64], floats: &[f64]
 /// A boxed register's value into its typed register, when it is a plain
 /// number of that kind (false: it is not, and the run hands over).
 #[inline(always)]
-fn unbox_reg(kinds: &[RKind], regs: &[CrowValue], ints: &mut [i64], floats: &mut [f64], r: R) -> bool {
+fn unbox_reg(kinds: &[RKind], regs: &[CrowValue], bare: &mut Bare, r: R) -> bool {
     let i = r as usize;
     match kinds[i] {
         RKind::Int => match regs[i].plain_int() {
             Some(n) => {
-                ints[i] = n;
+                bare.ints[i] = n;
                 true
             }
             None => false,
         },
         RKind::Float => match regs[i].plain_float() {
             Some(x) => {
-                floats[i] = x;
+                bare.floats[i] = x;
                 true
             }
             None => false,
+        },
+        // a list of plain ints, each item read; any other value hands over
+        RKind::IntList => match &regs[i].value {
+            Value::Array(items) if regs[i].is_ok() => {
+                let mut ns = Vec::with_capacity(items.len());
+                for it in items {
+                    match it.plain_int() {
+                        Some(n) => ns.push(n),
+                        None => return false,
+                    }
+                }
+                bare.lists[i] = ns;
+                true
+            }
+            _ => false,
         },
         RKind::Boxed => true,
     }
 }
 
+/// The registers an instruction reads and writes (an instruction the walker
+/// runs reads and writes the locals its IR names).
+fn reads_writes(ins: &Ins) -> (Vec<R>, Vec<R>) {
+    let rs = |os: &[Opnd]| os.iter().filter_map(|o| if let Opnd::R(r) = o { Some(*r) } else { None }).collect::<Vec<R>>();
+    match ins {
+        Ins::Const { d, .. } => (vec![], vec![*d]),
+        Ins::Copy { d, s } | Ins::Take { d, s } | Ins::Not { d, s } | Ins::Neg { d, s } | Ins::ToFloat { d, s } => (vec![*s], vec![*d]),
+        Ins::Clear { d } => (vec![], vec![*d]),
+        Ins::Int { d, a, b, .. } => (rs(&[*a, *b]), vec![*d]),
+        Ins::Float { d, a, b, .. } | Ins::Logic { d, a, b, .. } | Ins::Bin { d, a, b, .. } => (vec![*a, *b], vec![*d]),
+        Ins::Jump { .. } | Ins::Loop { .. } | Ins::Cancel => (vec![], vec![]),
+        Ins::JumpUnless { c, .. } => (vec![*c], vec![]),
+        Ins::JumpUnlessInt { a, b, .. } => (rs(&[*a, *b]), vec![]),
+        Ins::ForStart { var, ctr, hi, items, src, .. } => {
+            let reads = match &**src {
+                ForSrc::Range { args, .. } => args.to_vec(),
+                ForSrc::Items { it, .. } => vec![*it],
+            };
+            (reads, vec![*var, *ctr, *hi, *items])
+        }
+        Ins::ForNext { var, ctr, hi, items, .. } => (vec![*ctr, *hi, *items], vec![*var, *ctr, *items]),
+        Ins::Index { d, base, idx, .. } => {
+            let mut r = rs(&[*idx]);
+            r.push(*base);
+            (r, vec![*d])
+        }
+        Ins::CopyItem { dst, di, src, si, .. } => {
+            let mut r = rs(&[*di, *si]);
+            r.push(*dst);
+            r.push(*src);
+            (r, vec![*dst])
+        }
+        Ins::SetIndex { base, idx, v, .. } => {
+            let mut r = rs(&[*idx]);
+            r.push(*base);
+            r.push(*v);
+            (r, vec![*base])
+        }
+        Ins::InPlace { d, rest, .. } => {
+            let mut r: Vec<R> = rest.iter().map(|(x, _)| *x).collect();
+            r.push(*d);
+            (r, vec![*d])
+        }
+        Ins::Push { d, v, .. } => (vec![*d, *v], vec![*d]),
+        Ins::Len { d, base, .. } => (vec![*base], vec![*d]),
+        Ins::Call { d, args, .. } => (args.iter().map(|(x, _)| *x).collect(), vec![*d]),
+        Ins::Store { s, .. } | Ins::Do { s } => (vec![*s], vec![]),
+        Ins::Propagate { regs, .. } => (regs.to_vec(), vec![]),
+        Ins::Return { s } => (s.iter().map(|(x, _)| *x).collect(), vec![]),
+        Ins::Eval { d, ir } => {
+            let named = named_regs_expr(&ir.0, &ir.1);
+            (named, vec![*d])
+        }
+        Ins::Exec { ir, .. } => {
+            let named = named_regs_stmt(&ir.0, &ir.1);
+            (named.clone(), named)
+        }
+    }
+}
+
+/// The registers of the locals an expression names.
+fn named_regs_expr(e: &Expr, env: &Env) -> Vec<R> {
+    let mut out = Vec::new();
+    crate::ir::visit_expr(e, &mut |x| {
+        if let Expr::Local(n, _) | Expr::Move(n, _) = x
+            && let Some(r) = env.get(n)
+        {
+            out.push(*r);
+        }
+    });
+    out
+}
+
+/// The registers of the locals a statement names, read or assigned.
+fn named_regs_stmt(s: &Stmt, env: &Env) -> Vec<R> {
+    let mut out = Vec::new();
+    crate::ir::visit_stmt(s, &mut |x| {
+        if let Expr::Local(n, _) | Expr::Move(n, _) = x
+            && let Some(r) = env.get(n)
+        {
+            out.push(*r);
+        }
+    });
+    fn assigned(s: &Stmt, env: &Env, out: &mut Vec<R>) {
+        match s {
+            Stmt::Let { var, .. } | Stmt::Set { var, .. } | Stmt::SetPath { var, .. } => {
+                if let Some(r) = env.get(var) {
+                    out.push(*r);
+                }
+            }
+            Stmt::If { then, els, .. } => {
+                then.iter().for_each(|x| assigned(x, env, out));
+                if let Some(e) = els {
+                    e.iter().for_each(|x| assigned(x, env, out));
+                }
+            }
+            Stmt::While { body, .. } | Stmt::For { body, .. } => body.iter().for_each(|x| assigned(x, env, out)),
+            Stmt::Propagate { values, .. } => out.extend(values.iter().filter_map(|v| env.get(v).copied())),
+            _ => {}
+        }
+    }
+    assigned(s, env, &mut out);
+    out
+}
+
+/// Whether an instruction uses an int-list register `r` only as a list
+/// instruction does — read and set by an int, copied item to item between
+/// two such lists, measured, appended an int, dropped — or only writes it
+/// (its value converted once, where it is made). Anything else reads it as
+/// a value, and the list stays boxed.
+fn list_use_ok(ins: &Ins, r: R, k: &[RKind]) -> bool {
+    let int_op = |o: &Opnd| match o {
+        Opnd::K(_) => true,
+        Opnd::R(x) => k[*x as usize] == RKind::Int,
+    };
+    let ki = |x: &R| k[*x as usize];
+    match ins {
+        Ins::Index { d, base, idx, how } if *base == r => !how.column && ki(d) == RKind::Int && int_op(idx) && *d != r,
+        Ins::CopyItem { dst, di, src, si, .. } if *dst == r || *src == r => ki(dst) == RKind::IntList && ki(src) == RKind::IntList && int_op(di) && int_op(si),
+        Ins::SetIndex { base, idx, v, .. } if *base == r => int_op(idx) && ki(v) == RKind::Int,
+        Ins::Len { d, base, .. } if *base == r => ki(d) == RKind::Int,
+        Ins::Push { d, v, .. } if *d == r => ki(v) == RKind::Int,
+        Ins::Clear { d } if *d == r => true,
+        other => {
+            let (reads, _) = reads_writes(other);
+            !reads.contains(&r)
+        }
+    }
+}
+
 /// The typed program of a prepared body, when it has a typed register.
 fn typed(p: &Prepared) -> Option<Typed> {
-    let k = &p.kinds;
+    // a list of ints stays bare only where every instruction that meets it
+    // is a list instruction or makes it (a list a call takes, a loop walks,
+    // a fallback names or the body answers is boxed: converting it there
+    // would cost a pass over it each time)
+    let mut kinds = p.kinds.clone();
+    loop {
+        let mut demoted = false;
+        for r in 0..kinds.len() as R {
+            if kinds[r as usize] == RKind::IntList && !p.code.iter().all(|ins| list_use_ok(ins, r, &kinds)) {
+                kinds[r as usize] = RKind::Boxed;
+                demoted = true;
+            }
+        }
+        if !demoted {
+            break;
+        }
+    }
+    let k = &kinds;
     let ints: Vec<R> = (0..k.len() as R).filter(|r| k[*r as usize] == RKind::Int).collect();
     let floats: Vec<R> = (0..k.len() as R).filter(|r| k[*r as usize] == RKind::Float).collect();
-    if ints.is_empty() && floats.is_empty() {
+    let lists: Vec<R> = (0..k.len() as R).filter(|r| k[*r as usize] == RKind::IntList).collect();
+    if ints.is_empty() && floats.is_empty() && lists.is_empty() {
         return None;
     }
+    // (the walker reads a lent list's boxed register; no int list is named
+    // by a fallback, by the rule above)
     let all: Box<[R]> = ints.iter().chain(floats.iter()).copied().collect();
+    let lk = |r: R| k[r as usize] == RKind::IntList;
     let ik = |r: R| k[r as usize] == RKind::Int;
     let fk = |r: R| k[r as usize] == RKind::Float;
     let tk = |r: R| k[r as usize] != RKind::Boxed;
@@ -1792,8 +2025,15 @@ fn typed(p: &Prepared) -> Option<Typed> {
         post: writes.iter().copied().filter(|r| tk(*r)).collect(),
     };
     // (an instruction that may lend the registers to the walker, which
-    // reads and writes locals by name: every typed register both ways)
-    let lend = || TIns::Boxed { pre: all.clone(), post: all.clone() };
+    // reads and writes locals by name: every int and float register both
+    // ways, and an int list it makes converted after it — no int list is
+    // read by a fallback, by the rule above)
+    let lend = |ins: &Ins| {
+        let (_, writes) = reads_writes(ins);
+        let mut post = all.to_vec();
+        post.extend(writes.into_iter().filter(|r| k[*r as usize] == RKind::IntList));
+        TIns::Boxed { pre: all.clone(), post: post.into() }
+    };
     let code = p
         .code
         .iter()
@@ -1821,7 +2061,9 @@ fn typed(p: &Prepared) -> Option<Typed> {
                 }
             }
             Ins::Clear { d } => {
-                if tk(*d) {
+                if lk(*d) {
+                    TIns::LClear { d: *d }
+                } else if tk(*d) {
                     TIns::Nop
                 } else {
                     wrap(&[], &[])
@@ -1829,6 +2071,10 @@ fn typed(p: &Prepared) -> Option<Typed> {
             }
             Ins::Int { op, d, a, b } => match (top(*a), top(*b)) {
                 (Some(x), Some(y)) if op.compares() && !tk(*d) => TIns::ICmp { op: *op, d: *d, a: x, b: y },
+                (Some(TOp::R(x)), Some(TOp::K(k))) if matches!(op, IntOp::Add) && ik(*d) => TIns::IAddK { d: *d, a: x, k },
+                (Some(TOp::R(x)), Some(TOp::K(k))) if matches!(op, IntOp::Sub) && ik(*d) => TIns::ISubK { d: *d, a: x, k },
+                (Some(TOp::R(x)), Some(TOp::R(y))) if matches!(op, IntOp::Add) && ik(*d) => TIns::IAddR { d: *d, a: x, b: y },
+                (Some(TOp::R(x)), Some(TOp::R(y))) if matches!(op, IntOp::Sub) && ik(*d) => TIns::ISubR { d: *d, a: x, b: y },
                 (Some(x), Some(y)) if !op.compares() && ik(*d) => TIns::IArith { op: *op, d: *d, a: x, b: y },
                 _ => wrap(&regs_of(&[*a, *b]), &[*d]),
             },
@@ -1864,6 +2110,8 @@ fn typed(p: &Prepared) -> Option<Typed> {
             Ins::Cancel => TIns::Cancel,
             Ins::JumpUnless { c, .. } => wrap(&[*c], &[]),
             Ins::JumpUnlessInt { op, a, b, to } => match (top(*a), top(*b)) {
+                (Some(TOp::R(x)), Some(TOp::R(y))) => TIns::IJumpR { op: *op, a: x, b: y, to: *to },
+                (Some(TOp::R(x)), Some(TOp::K(k))) => TIns::IJumpK { op: *op, a: x, k, to: *to },
                 (Some(x), Some(y)) => TIns::IJump { op: *op, a: x, b: y, to: *to },
                 _ => wrap(&regs_of(&[*a, *b]), &[]),
             },
@@ -1884,16 +2132,19 @@ fn typed(p: &Prepared) -> Option<Typed> {
                 }
             }
             Ins::Index { d, base, idx, how } => match top(*idx) {
+                Some(i) if lk(*base) => TIns::LIndex { d: *d, base: *base, idx: i },
                 Some(i) if ik(*d) && !how.column => TIns::IIndex { d: *d, base: *base, idx: i },
                 Some(i) if fk(*d) && !how.column => TIns::FIndex { d: *d, base: *base, idx: i },
                 Some(i) if !tk(*d) => TIns::XIndex { d: *d, base: *base, idx: i },
-                _ => lend(),
+                _ => lend(ins),
             },
             Ins::CopyItem { dst, di, src, si, .. } => match (top(*di), top(*si)) {
+                (Some(a), Some(b)) if lk(*dst) && lk(*src) => TIns::LCopy { dst: *dst, di: a, src: *src, si: b },
                 (Some(a), Some(b)) => TIns::ICopy { dst: *dst, di: a, src: *src, si: b },
-                _ => lend(),
+                _ => lend(ins),
             },
             Ins::SetIndex { base, idx, v, .. } => match top(*idx) {
+                Some(i) if lk(*base) => TIns::LSet { base: *base, idx: i, v: *v },
                 Some(i) if ik(*v) => TIns::ISet { base: *base, idx: i, v: *v },
                 Some(i) if fk(*v) => TIns::FSet { base: *base, idx: i, v: *v },
                 _ => {
@@ -1903,41 +2154,44 @@ fn typed(p: &Prepared) -> Option<Typed> {
                 }
             },
             Ins::InPlace { d, rest, .. } => wrap(&rest.iter().map(|(r, _)| *r).collect::<Vec<R>>(), &[*d]),
-            Ins::Push { d, v, .. } => wrap(&[*v], &[*d]),
+            Ins::Push { d, v, .. } => {
+                if lk(*d) {
+                    TIns::LPush { d: *d, v: *v }
+                } else {
+                    wrap(&[*v], &[*d])
+                }
+            }
             Ins::Len { d, base, .. } => {
-                if ik(*d) {
+                if lk(*base) {
+                    TIns::LLen { d: *d, base: *base }
+                } else if ik(*d) {
                     TIns::XLen { d: *d, base: *base }
                 } else {
-                    lend()
+                    lend(ins)
                 }
             }
             Ins::Call { d, args, .. } => wrap(&args.iter().map(|(r, _)| *r).collect::<Vec<R>>(), &[*d]),
             Ins::Store { s, .. } | Ins::Do { s } => wrap(&[*s], &[]),
             Ins::Propagate { regs, .. } => wrap(regs, &[]),
             Ins::Return { s } => wrap(&s.iter().map(|(r, _)| *r).collect::<Vec<R>>(), &[]),
-            Ins::Eval { .. } | Ins::Exec { .. } => lend(),
+            Ins::Eval { .. } | Ins::Exec { .. } => lend(ins),
         })
         .collect();
-    Some(Typed { code, ints: ints.into(), floats: floats.into() })
+    Some(Typed { code, kinds, ints: ints.into(), floats: floats.into(), lists: lists.into() })
 }
 
 impl IrInterp {
     /// Every typed register boxed, but those in `skip` (a boxed instruction
     /// has just written their boxed registers).
-    fn box_typed(&self, tc: &Typed, regs: &mut [CrowValue], ints: &[i64], floats: &[f64], skip: &[R]) {
-        for r in tc.ints.iter() {
+    fn box_typed(&self, tc: &Typed, regs: &mut [CrowValue], bare: &Bare, skip: &[R]) {
+        for r in tc.ints.iter().chain(tc.floats.iter()).chain(tc.lists.iter()) {
             if !skip.contains(r) {
-                regs[*r as usize].set_int(ints[*r as usize]);
-            }
-        }
-        for r in tc.floats.iter() {
-            if !skip.contains(r) {
-                regs[*r as usize].set_float(floats[*r as usize]);
+                box_reg(&tc.kinds, regs, bare, *r);
             }
         }
     }
 
-    fn run_typed(&mut self, p: &Prepared, tc: &Typed, regs: &mut Vec<CrowValue>, ints: &mut [i64], floats: &mut [f64]) -> Result<Flow, String> {
+    fn run_typed(&mut self, p: &Prepared, tc: &Typed, regs: &mut Vec<CrowValue>, bare: &mut Bare) -> Result<Flow, String> {
         let code = &tc.code[..];
         let mut pc = 0usize;
         let mut out = None;
@@ -1952,7 +2206,7 @@ impl IrInterp {
         // this instruction, and the rest of the call
         macro_rules! hand_over {
             () => {{
-                self.box_typed(tc, regs, ints, floats, &[]);
+                self.box_typed(tc, regs, bare, &[]);
                 return self.run_code_from(p, regs, pc);
             }};
         }
@@ -1963,17 +2217,17 @@ impl IrInterp {
             match ins {
                 TIns::Boxed { pre, post } => {
                     for r in pre.iter() {
-                        box_reg(&p.kinds, regs, ints, floats, *r);
+                        box_reg(&tc.kinds, regs, bare, *r);
                     }
                     let next = self.step(p, pc, &p.code[pc], regs, &mut out);
                     if next == DONE {
                         return out.take().unwrap_or(Ok(Flow::Next));
                     }
                     for r in post.iter() {
-                        if !unbox_reg(&p.kinds, regs, ints, floats, *r) {
+                        if !unbox_reg(&tc.kinds, regs, bare, *r) {
                             // (the boxed registers this instruction wrote are
                             // already the values)
-                            self.box_typed(tc, regs, ints, floats, post);
+                            self.box_typed(tc, regs, bare, post);
                             return self.run_code_from(p, regs, next);
                         }
                     }
@@ -1997,31 +2251,59 @@ impl IrInterp {
                         stop!(e)
                     }
                 }
-                TIns::IConst { d, n } => ints[*d as usize] = *n,
-                TIns::FConst { d, x } => floats[*d as usize] = *x,
-                TIns::IMov { d, s } => ints[*d as usize] = ints[*s as usize],
-                TIns::FMov { d, s } => floats[*d as usize] = floats[*s as usize],
-                TIns::IArith { op, d, a, b } => match op.arith(iv(ints, *a), iv(ints, *b)) {
-                    Ok(n) => ints[*d as usize] = n,
+                TIns::IConst { d, n } => bare.ints[*d as usize] = *n,
+                TIns::FConst { d, x } => bare.floats[*d as usize] = *x,
+                TIns::IMov { d, s } => bare.ints[*d as usize] = bare.ints[*s as usize],
+                TIns::FMov { d, s } => bare.floats[*d as usize] = bare.floats[*s as usize],
+                TIns::IArith { op, d, a, b } => match op.arith(iv(&bare.ints, *a), iv(&bare.ints, *b)) {
+                    Ok(n) => bare.ints[*d as usize] = n,
                     Err(e) => stop!(e),
                 },
-                TIns::ICmp { op, d, a, b } => regs[*d as usize].set_bool(op.holds(iv(ints, *a), iv(ints, *b))),
-                TIns::IJump { op, a, b, to } => {
-                    if !op.holds(iv(ints, *a), iv(ints, *b)) {
+                TIns::IAddK { d, a, k } => match bare.ints[*a as usize].checked_add(*k) {
+                    Some(n) => bare.ints[*d as usize] = n,
+                    None => stop!(crow_runtime::stops::add(bare.ints[*a as usize], *k).err().unwrap_or_default()),
+                },
+                TIns::ISubK { d, a, k } => match bare.ints[*a as usize].checked_sub(*k) {
+                    Some(n) => bare.ints[*d as usize] = n,
+                    None => stop!(crow_runtime::stops::sub(bare.ints[*a as usize], *k).err().unwrap_or_default()),
+                },
+                TIns::IAddR { d, a, b } => match bare.ints[*a as usize].checked_add(bare.ints[*b as usize]) {
+                    Some(n) => bare.ints[*d as usize] = n,
+                    None => stop!(crow_runtime::stops::add(bare.ints[*a as usize], bare.ints[*b as usize]).err().unwrap_or_default()),
+                },
+                TIns::ISubR { d, a, b } => match bare.ints[*a as usize].checked_sub(bare.ints[*b as usize]) {
+                    Some(n) => bare.ints[*d as usize] = n,
+                    None => stop!(crow_runtime::stops::sub(bare.ints[*a as usize], bare.ints[*b as usize]).err().unwrap_or_default()),
+                },
+                TIns::IJumpR { op, a, b, to } => {
+                    if !op.holds(bare.ints[*a as usize], bare.ints[*b as usize]) {
                         pc = *to as usize;
                         continue;
                     }
                 }
-                TIns::INeg { d, s } => match crow_runtime::stops::neg(ints[*s as usize]) {
-                    Ok(n) => ints[*d as usize] = n,
+                TIns::IJumpK { op, a, k, to } => {
+                    if !op.holds(bare.ints[*a as usize], *k) {
+                        pc = *to as usize;
+                        continue;
+                    }
+                }
+                TIns::ICmp { op, d, a, b } => regs[*d as usize].set_bool(op.holds(iv(&bare.ints, *a), iv(&bare.ints, *b))),
+                TIns::IJump { op, a, b, to } => {
+                    if !op.holds(iv(&bare.ints, *a), iv(&bare.ints, *b)) {
+                        pc = *to as usize;
+                        continue;
+                    }
+                }
+                TIns::INeg { d, s } => match crow_runtime::stops::neg(bare.ints[*s as usize]) {
+                    Ok(n) => bare.ints[*d as usize] = n,
                     Err(e) => stop!(e),
                 },
-                TIns::FArith { op, d, a, b } => floats[*d as usize] = op.farith(floats[*a as usize], floats[*b as usize]),
-                TIns::FCmp { op, d, a, b } => regs[*d as usize].set_bool(op.fholds(floats[*a as usize], floats[*b as usize])),
-                TIns::FNeg { d, s } => floats[*d as usize] = -floats[*s as usize],
-                TIns::I2F { d, s } => floats[*d as usize] = ints[*s as usize] as f64,
+                TIns::FArith { op, d, a, b } => bare.floats[*d as usize] = op.farith(bare.floats[*a as usize], bare.floats[*b as usize]),
+                TIns::FCmp { op, d, a, b } => regs[*d as usize].set_bool(op.fholds(bare.floats[*a as usize], bare.floats[*b as usize])),
+                TIns::FNeg { d, s } => bare.floats[*d as usize] = -bare.floats[*s as usize],
+                TIns::I2F { d, s } => bare.floats[*d as usize] = bare.ints[*s as usize] as f64,
                 TIns::IIndex { d, base, idx } => {
-                    let i = iv(ints, *idx);
+                    let i = iv(&bare.ints, *idx);
                     let b = &regs[*base as usize];
                     let got = match &b.value {
                         Value::Array(items) if b.is_ok() => match crow_runtime::stops::item(i, items.len()) {
@@ -2035,12 +2317,12 @@ impl IrInterp {
                         _ => None,
                     };
                     match got {
-                        Some(n) => ints[*d as usize] = n,
+                        Some(n) => bare.ints[*d as usize] = n,
                         None => hand_over!(),
                     }
                 }
                 TIns::FIndex { d, base, idx } => {
-                    let i = iv(ints, *idx);
+                    let i = iv(&bare.ints, *idx);
                     let b = &regs[*base as usize];
                     let got = match &b.value {
                         Value::Array(items) if b.is_ok() => match crow_runtime::stops::item(i, items.len()) {
@@ -2054,13 +2336,13 @@ impl IrInterp {
                         _ => None,
                     };
                     match got {
-                        Some(x) => floats[*d as usize] = x,
+                        Some(x) => bare.floats[*d as usize] = x,
                         None => hand_over!(),
                     }
                 }
                 TIns::XIndex { d, base, idx } => {
                     let Ins::Index { how, .. } = &p.code[pc] else { hand_over!() };
-                    let i = iv(ints, *idx);
+                    let i = iv(&bare.ints, *idx);
                     let b = &regs[*base as usize];
                     let cell = if !b.is_ok() {
                         None
@@ -2083,8 +2365,8 @@ impl IrInterp {
                     }
                 }
                 TIns::ISet { base, idx, v } => {
-                    let i = iv(ints, *idx);
-                    let n = ints[*v as usize];
+                    let i = iv(&bare.ints, *idx);
+                    let n = bare.ints[*v as usize];
                     let root = &mut regs[*base as usize];
                     let ok = root.is_ok();
                     match &mut root.value {
@@ -2096,8 +2378,8 @@ impl IrInterp {
                     }
                 }
                 TIns::FSet { base, idx, v } => {
-                    let i = iv(ints, *idx);
-                    let x = floats[*v as usize];
+                    let i = iv(&bare.ints, *idx);
+                    let x = bare.floats[*v as usize];
                     let root = &mut regs[*base as usize];
                     let ok = root.is_ok();
                     match &mut root.value {
@@ -2110,7 +2392,7 @@ impl IrInterp {
                 }
                 TIns::ICopy { dst, di, src, si } => {
                     // the value first, as the walker reads it
-                    let s = iv(ints, *si);
+                    let s = iv(&bare.ints, *si);
                     let b = &regs[*src as usize];
                     let new = match &b.value {
                         Value::Array(items) if b.is_ok() => match crow_runtime::stops::item(s, items.len()) {
@@ -2119,7 +2401,7 @@ impl IrInterp {
                         },
                         _ => hand_over!(),
                     };
-                    let di = iv(ints, *di);
+                    let di = iv(&bare.ints, *di);
                     let root = &mut regs[*dst as usize];
                     let ok = root.is_ok();
                     match &mut root.value {
@@ -2130,37 +2412,83 @@ impl IrInterp {
                         _ => hand_over!(),
                     }
                 }
+                TIns::LIndex { d, base, idx } => {
+                    let i = iv(&bare.ints, *idx);
+                    let l = &bare.lists[*base as usize];
+                    match crow_runtime::stops::item(i, l.len()) {
+                        Ok(k) => {
+                            let n = l[k];
+                            bare.ints[*d as usize] = n;
+                        }
+                        Err(e) => stop!(e),
+                    }
+                }
+                TIns::LSet { base, idx, v } => {
+                    let i = iv(&bare.ints, *idx);
+                    let n = bare.ints[*v as usize];
+                    let l = &mut bare.lists[*base as usize];
+                    match crow_runtime::stops::item(i, l.len()) {
+                        Ok(k) => l[k] = n,
+                        Err(e) => stop!(e),
+                    }
+                }
+                TIns::LCopy { dst, di, src, si } => {
+                    // the value first, as the walker reads it
+                    let s = iv(&bare.ints, *si);
+                    let l = &bare.lists[*src as usize];
+                    let n = match crow_runtime::stops::item(s, l.len()) {
+                        Ok(k) => l[k],
+                        Err(e) => stop!(e),
+                    };
+                    let d = iv(&bare.ints, *di);
+                    let l = &mut bare.lists[*dst as usize];
+                    match crow_runtime::stops::item(d, l.len()) {
+                        Ok(k) => l[k] = n,
+                        Err(e) => stop!(e),
+                    }
+                }
+                TIns::LLen { d, base } => {
+                    if self.registry.has_function("len") {
+                        hand_over!()
+                    }
+                    bare.ints[*d as usize] = bare.lists[*base as usize].len() as i64;
+                }
+                TIns::LPush { d, v } => {
+                    let n = bare.ints[*v as usize];
+                    bare.lists[*d as usize].push(n);
+                }
+                TIns::LClear { d } => bare.lists[*d as usize] = Vec::new(),
                 TIns::XLen { d, base } => {
                     let b = &regs[*base as usize];
                     let n = match &b.value {
                         Value::Array(items) if b.is_ok() && !self.registry.has_function("len") => items.len() as i64,
                         _ => hand_over!(),
                     };
-                    ints[*d as usize] = n;
+                    bare.ints[*d as usize] = n;
                 }
                 TIns::ForCount { var, ctr, hi, lo, top, end } => {
                     if let Err(e) = self.check_cancel() {
                         stop!(e)
                     }
-                    let l = lo.map_or(0, |o| iv(ints, o));
-                    let h = iv(ints, *top);
-                    ints[*ctr as usize] = l;
-                    ints[*hi as usize] = h;
+                    let l = lo.map_or(0, |o| iv(&bare.ints, o));
+                    let h = iv(&bare.ints, *top);
+                    bare.ints[*ctr as usize] = l;
+                    bare.ints[*hi as usize] = h;
                     if l >= h {
                         pc = *end as usize;
                         continue;
                     }
-                    ints[*var as usize] = l;
+                    bare.ints[*var as usize] = l;
                 }
                 TIns::ForNextCount { var, ctr, hi, body } => {
                     // (the counter is under the bound: one more cannot pass 64 bits)
-                    let c = ints[*ctr as usize] + 1;
-                    if c < ints[*hi as usize] {
+                    let c = bare.ints[*ctr as usize] + 1;
+                    if c < bare.ints[*hi as usize] {
                         if let Err(e) = self.check_cancel() {
                             stop!(e)
                         }
-                        ints[*ctr as usize] = c;
-                        ints[*var as usize] = c;
+                        bare.ints[*ctr as usize] = c;
+                        bare.ints[*var as usize] = c;
                         pc = *body as usize;
                         continue;
                     }

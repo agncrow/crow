@@ -211,7 +211,12 @@ steps on every push and must be green.
   the boxed program; after a boxed instruction ran, the hand-over is at the
   next position and skips boxing what it wrote. (4) A register has one kind
   for the whole function (`RKind`; temporaries from per-kind pools), or a
-  hand-over would box a stale int over a live value. The slots follow the
+  hand-over would box a stale int over a live value. (5) A list of ints is
+  an `IntList` register only where every instruction that meets it is a list
+  instruction or makes it (`list_use_ok`, `reads_writes`): an instruction
+  that READS one otherwise would convert the whole list each time it runs,
+  so a new `Ins` that reads registers must say so in `reads_writes`. The
+  slots follow the
   walker's scoping (`declare` reuses a name bound in the current block,
   `fresh` is a loop variable's): a nested `for i` restores the outer `i`.
   Measure the interpreter with instructions retired (`/usr/bin/time -l`),

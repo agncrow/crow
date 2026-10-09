@@ -242,8 +242,9 @@ v`, `xs[i] = ys[j]`, `len[xs]`, an in-place append, a call) as
 instructions of their own, the source line a table read where a stop or a
 call needs it. Each register has one kind for the function: an int, a
 float, or any value. The same body is compiled a second time with its int
-and float registers as bare machine values, one instruction for each of
-the first program's at the same position; an instruction with no typed
+and float registers as bare machine values — and a local list of ints the
+function uses only through list instructions as a `Vec<i64>` — one
+instruction for each of the first program's at the same position; an instruction with no typed
 form runs as the boxed one with its typed registers boxed around it, and a
 value a typed register cannot hold (a dual number under `grad`, an item
 that is no plain int) hands the run over to the boxed program at the same

@@ -468,10 +468,6 @@ pub fn kinds_of(params: &[Kind], argc: usize) -> Option<Vec<Kind>> {
     Some(params.iter().zip(spans).flat_map(|(k, (a, b))| std::iter::repeat_n(k.each(), b - a)).collect())
 }
 
-/// The interpreter's arguments grouped by the row's parameters.
-pub fn groups<'a>(params: &[Kind], args: &'a [CrowValue], name: &str) -> Result<Vec<&'a [CrowValue]>, String> {
-    Ok(spans(params, args.len(), name)?.into_iter().map(|(a, b)| &args[a..b]).collect())
-}
 
 /// More parameters than any row has (a unit test holds every row to it —
 /// `core.request` has nine; the first bound, eight, had been read off the
@@ -526,18 +522,6 @@ pub fn groups_mut_in_place<'a>(params: &[Kind], args: &'a mut [CrowValue], name:
     Ok(out)
 }
 
-/// The arguments grouped so, each group the function's to keep.
-pub fn groups_mut<'a>(params: &[Kind], args: &'a mut [CrowValue], name: &str) -> Result<Vec<&'a mut [CrowValue]>, String> {
-    let spans = spans(params, args.len(), name)?;
-    let mut out = Vec::with_capacity(spans.len());
-    let mut rest = args;
-    for (a, b) in spans {
-        let (group, tail) = std::mem::take(&mut rest).split_at_mut(b - a);
-        out.push(group);
-        rest = tail;
-    }
-    Ok(out)
-}
 
 /// The builtins that read the world outside the program: a value one
 /// answers is stamped with its capture moment (`captured[x]`), in both

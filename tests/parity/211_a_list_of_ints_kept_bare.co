@@ -1,0 +1,72 @@
+--- A list of ints a function uses only through list instructions is kept
+--- as bare ints in a typed run; one it hands on, walks or answers stays a
+--- list of values. Both read, set, copy, measure and append alike, a list
+--- a collecting loop makes is taken in as either, and an index past the end
+--- stops the program alike, in both modes. The last case stops it.
+
+--- kept bare: read, set and copied item to item, measured
+fn shuffle[n]
+    xs = range[n]
+    for i in range[n]
+        j = (i * 7 + 3) % n
+        t = xs[i]
+        xs[i] = xs[j]
+        xs[j] = t
+    total = 0
+    for i in range[len[xs]]
+        total = total * 31 % 1000003 + xs[i]
+    return total
+log[shuffle[10]]
+log[shuffle[100]]
+
+--- kept bare: grown by appends, read from the end
+fn grown[n]
+    xs = []
+    for i in range[n]
+        xs = push[xs, i * i]
+    return xs[n - 1] + xs[-1] + len[xs]
+log[grown[20]]
+
+--- made by a collecting loop, then read by an int
+fn collected[n]
+    xs = for i in range[n]
+        i * 3
+    s = 0
+    for i in range[n]
+        s = s + xs[i]
+    return s
+log[collected[6]]
+
+--- handed to a function, walked, answered: a list of values throughout
+fn handed[n]
+    xs = range[n]
+    xs[0] = 42
+    return sum_of[xs]
+fn sum_of[ys]
+    s = 0
+    for y in ys
+        s = s + y
+    return s
+log[handed[5]]
+
+fn answered[n]
+    xs = range[n]
+    xs[1] = 7
+    return xs
+log[answered[4]]
+
+--- a tensor's items copied into a list: the boxed program does it
+fn rotate[t, k]
+    n = len[t]
+    out = range[n]
+    for i in range[n]
+        out[(i + k) % n] = t[i]
+    return out[0] * 100 + out[n - 1]
+log[rotate[[1, 2, 3, 4, 5], 2]]
+
+--- an index past the end stops the program, naming its line
+fn past_the_end[n]
+    xs = range[n]
+    xs[0] = 1
+    return xs[n]
+log[past_the_end[3]]
