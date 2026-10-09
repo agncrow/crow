@@ -1,0 +1,3 @@
+c37_break_in_a_for_loop.co:5:9: break stops a while loop — a for loop's rounds run at once, in no order: loop with while to stop early, or search with find[…], any[…] or all[…]
+  5 │         break
+    │         ^^^^^

@@ -23,7 +23,10 @@ fn dijkstra[g, start]
     done = for i in range[n]
         false
     dist[g.index[start]] = 0.0
-    for step in range[n]
+    --- (a node settled each round, in order, until none is left to reach)
+    settled = 0
+    while settled lt n
+        settled = settled + 1
         best = -1
         for i in range[n]
             if not done[i] and dist[i] gte 0.0

@@ -13,11 +13,11 @@ fn lines_of[whole]
     out = []
     for i in range[len[pieces]]
         piece = pieces[i]
-        if i eq len[pieces] - 1 and len[piece] eq 0
-            break
-        if ends[piece, '\r']
-            piece = slice[piece, 0, len[piece] - 1]
-        out = push[out, piece]
+        --- (the empty piece after the last break is no line)
+        if i lt len[pieces] - 1 or len[piece] gt 0
+            if ends[piece, '\r']
+                piece = slice[piece, 0, len[piece] - 1]
+            out = push[out, piece]
     return out
 
 --- `lines[path]`: a text's lines

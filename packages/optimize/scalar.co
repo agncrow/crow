@@ -235,7 +235,9 @@ fn golden_in[f, bracket_in, xtol = 0.000000014901161193847656]
     f2 = f[x2]
     calls = br.calls + 2
     rounds = 0
-    for i in range[maxiter]
+    --- (narrowed in order, each round from the last, until the bracket
+    --- is small enough)
+    while rounds lt maxiter
         if abs[x3 - x0] lte xtol * (abs[x1] + abs[x2])
             break
         if f2 lt f1

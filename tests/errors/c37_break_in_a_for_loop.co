@@ -1,0 +1,6 @@
+--- break in a for loop: a for loop's rounds run at once, in no order
+xs = [3, 8, 1]
+for x in xs
+    if x gt 5
+        break
+    log[x]

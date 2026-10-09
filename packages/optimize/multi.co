@@ -368,7 +368,10 @@ fn line_search[f, df, xk, pk, gfk, phi0, old_phi0]
     gval = gfk
     calls = 0
     gcalls = 0
-    for i in range[100]
+    --- (stepped in order: each round reads the last, and may stop)
+    tries = 0
+    while tries lt 100
+        tries = tries + 1
         pr = iterate[st, stp, phi1, derphi1, task, c1, c2, xtol, amin, amax]
         st = pr.state
         stp = pr.stp

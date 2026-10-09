@@ -1,5 +1,4 @@
 --- continue in a for loop: while only
---- known: refused
 for i in range[3]
     if i eq 1
         continue

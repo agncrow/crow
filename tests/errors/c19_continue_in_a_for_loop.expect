@@ -1,2 +1,3 @@
-0
-2
+c19_continue_in_a_for_loop.co:4:9: continue skips to a while loop's next round — a for loop's rounds run at once, in no order: skip an item with if, its lines indented under it
+  4 │         continue
+    │         ^^^^^^^^

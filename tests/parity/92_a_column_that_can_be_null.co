@@ -19,8 +19,8 @@ for i in range[len[rows]]
     sym = rows.symbol[i]
     if not pnl.ok
         log['`sym` is open: `pnl.reason`']
-        continue
-    total = total + pnl
+    else
+        total = total + pnl
 log[total]
 px = rows.exit_px[1]
 log[px.ok]

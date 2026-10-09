@@ -187,16 +187,18 @@ fn anova[groups]
 fn ks_p[lam]
     if lam lte 0.0
         return 1.0
+    --- the series, summed in order until a term no longer counts
     total = 0.0
-    for j in range[100]
+    term = 1.0
+    j = 0
+    while j lt 100 and abs[term] gte 0.000000000000001
         jf = float[j + 1]
         sign = 1.0
         if (j + 1) % 2 eq 0
             sign = -1.0
         term = sign * exp[-2.0 * jf * jf * lam * lam]
         total = total + term
-        if abs[term] lt 0.000000000000001
-            break
+        j = j + 1
     v = 2.0 * total
     if v lt 0.0
         v = 0.0

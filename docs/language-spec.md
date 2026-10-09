@@ -577,7 +577,7 @@ while i lt 10
     total = total + i
 ```
 
-Outside every loop `break` and `continue` are refused: there is no round to skip and no loop to leave.
+In a `for` loop and outside every loop `break` and `continue` are refused before the program runs: a `for` loop's rounds run at once, in no order, so there is no round after this one to skip to and none before it that stopping would keep — loop with `while` to stop early or skip in order, skip an item of a `for` with `if`, and search with `find`, `any` or `all`. (They had run in a `for`, the loop quietly made sequential; Vijay, 2026-10-08: "for is parallel, while is for sequential".)
 
 > **Design Note:** `break` and `continue` are only valid in `while` loops. `for` loops are parallel by default (section 14), and `break`/`continue` are inherently sequential concepts. Using `break` in a parallel loop would silently force sequential execution — a hidden performance trap. Use `if` inside `for` to skip items, `any`/`all`/`find` for searches that should stop early (they early-exit *in parallel* — see the Search Builtins Design Note), or `while` for genuine sequential iteration.
 
@@ -1240,7 +1240,7 @@ A message is held to five rules, which `crow test --errors` checks over a corpus
 
 The parser speaks in the program's words, never its tokens': `f(1)` says calls use square brackets, a bracket never closed points at where it opened, a line indented under nothing says so, a name one slip from a keyword says which (`esle` — did you mean `else`?), and the habits of other languages are taught their Crow form where they are met — `==`, `&&`, `**`, `++`, `{…}`, `#`, `;`, `:` (after a block's first line, in an index, after `lambda`), `def`, `print`, `None`, `True`, a method call (`df.join(…)` is `join[df, …]`, `xs.append(v)` is `xs = push[xs, v]`).
 
-Some mistakes run quietly unless refused, and are: a builtin that answers a new value of the kind it was handed — `push`, `set`, `sort`, `upper`, `with` — called as a statement of its own (`push[xs, v]` alone answers the longer list and drops it: `xs = push[xs, v]` keeps it; a collecting loop's last line and a console cell's hand their value on, and are not dropped), a `return` outside every function, view and derivation, `break` or `continue` outside every loop, and a `use` of a module there is none of.
+Some mistakes run quietly unless refused, and are: a builtin that answers a new value of the kind it was handed — `push`, `set`, `sort`, `upper`, `with` — called as a statement of its own (`push[xs, v]` alone answers the longer list and drops it: `xs = push[xs, v]` keeps it; a collecting loop's last line and a console cell's hand their value on, and are not dropped), a `return` outside every function, view and derivation, `break` or `continue` outside a `while` loop, and a `use` of a module there is none of.
 
 The language server offers each fix the message names (an import added, a slip corrected) as a quick fix.
 

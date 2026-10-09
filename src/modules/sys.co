@@ -645,13 +645,15 @@ fn format_sniffed[media, data]
     if len[data] gte 4
         if text[slice[data, 0, 4], '?'] eq 'PAR1'
             return 'parquet'
-    for i in range[len[data]]
+    --- the first byte past the leading space, found in order
+    i = 0
+    while i lt len[data]
         c = byte[data, i]
-        if c eq 32 or c eq 9 or c eq 10 or c eq 13
-            continue
-        if c eq 91 or c eq 123
-            return 'json'
-        return 'csv'
+        if not (c eq 32 or c eq 9 or c eq 10 or c eq 13)
+            if c eq 91 or c eq 123
+                return 'json'
+            return 'csv'
+        i = i + 1
     return 'csv'
 
 --- the protocol's pieces, at known values

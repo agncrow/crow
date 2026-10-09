@@ -270,7 +270,10 @@ fn optimize_constants[t, d]
         cur_l = loss_with[t, d, cur]
         if cur_l ne cur_l
             cur_l = inf
-        for it in range[8]
+        --- (descended in order, each step from the last, until none improves)
+        tries = 0
+        while tries lt 8
+            tries = tries + 1
             g = []
             for i in range[k]
                 h = 0.000001 * (abs[cur[i]] + 1.0)

@@ -19,7 +19,10 @@ fn pagerank[g, damping = 0.85, rounds = 100, tolerance = 0.000001]
         total
     x = for i in range[n]
         1.0 / n
-    for step in range[rounds]
+    --- (iterated in order, each round from the last, until it settles)
+    tries = 0
+    while tries lt rounds
+        tries = tries + 1
         last = x
         x = for i in range[n]
             0.0

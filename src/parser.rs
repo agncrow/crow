@@ -9,7 +9,7 @@ pub struct Parser {
     /// statement after it, may be a keyword's slip.
     lone: Option<(String, usize, usize)>,
     /// The loops the statement is inside, innermost last: `true` for a
-    /// `while`. `break` and `continue` outside every loop are refused.
+    /// `while`. `break` and `continue` are a while loop's alone.
     loops: Vec<bool>,
     /// How many bodies a `return` may leave the statement is inside (a
     /// function's, a view's, a derivation's).
@@ -382,13 +382,28 @@ impl Parser {
             Token::Derive => self.parse_derive().map(|s| vec![s]),
             Token::Return => self.parse_return().map(|s| vec![s]),
             Token::Break | Token::Continue => {
-                // a loop's: outside every loop there is no round to skip and
-                // no loop to leave (inside a `for` the spec's Design Note
-                // and the programs written since disagree — Vijay's to
-                // decide, docs/roadmap.md)
+                // a while loop's: a for loop's rounds run at once, in no
+                // order, so there is no round after this one to skip to and
+                // none before it that stopping would keep (spec, Design
+                // Note: break and continue — Vijay, 2026-10-08: "for is
+                // parallel, while is for sequential"; it had run them, the
+                // loop quietly made sequential)
                 let word = if matches!(self.peek(), Token::Break) { "break" } else { "continue" };
-                if self.loops.is_empty() {
-                    return Err(format!("{}{} leaves a loop, and this line is in none", self.at(), word));
+                match self.loops.last() {
+                    None => return Err(format!("{}{} is a while loop's, and this line is in no loop", self.at(), word)),
+                    Some(false) if word == "break" => {
+                        return Err(format!(
+                            "{}break stops a while loop — a for loop's rounds run at once, in no order: loop with while to stop early, or search with find[…], any[…] or all[…]",
+                            self.at()
+                        ))
+                    }
+                    Some(false) => {
+                        return Err(format!(
+                            "{}continue skips to a while loop's next round — a for loop's rounds run at once, in no order: skip an item with if, its lines indented under it",
+                            self.at()
+                        ))
+                    }
+                    Some(true) => {}
                 }
                 let stmt = if word == "break" { Stmt::Break } else { Stmt::Continue };
                 self.advance();
