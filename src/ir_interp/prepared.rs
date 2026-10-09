@@ -353,6 +353,9 @@ pub(super) struct Body {
     pub(super) recursive: bool,
     /// Its body's first line: where a recursion past the limit stops.
     pub(super) first_line: usize,
+    /// Whether it calls `cpu[…]`: a call puts the caller's count back as it
+    /// returns (crow_runtime::cores).
+    sets_cores: bool,
     /// Whether its typed program runs on bare registers alone: int and
     /// float parameters, and only instructions that read and write bare
     /// registers (`pure`). A typed call of it (`call_typed`) hands over
@@ -486,6 +489,7 @@ pub(super) fn prepare(f: &Fn) -> Prepared {
         view: f.kind == crate::ir::FnKind::View,
         recursive: f.recursive,
         first_line: crate::ir::first_line(&f.body),
+        sets_cores: crate::ir::sets_cores(&f.body),
         pure: false,
     };
     b.typed = typed(&b);
@@ -1214,6 +1218,7 @@ impl IrInterp {
         if p.float_params.len() != n {
             return Err(format!("{}[] expects {} arguments, got {}", name, p.float_params.len(), n));
         }
+        let _cores = p.sets_cores.then(crow_runtime::cores::Restore::new);
         let (mut regs, mut bare) = self.reg_pool.take();
         regs.resize(p.n_regs, CrowValue::done());
         // (`arguments_checked`, as each arrives)

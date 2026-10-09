@@ -3240,7 +3240,7 @@ for x in items
     log[x]             --- in order: output is an effect
 ```
 
-`cpu[1]` runs every loop on one core.
+`cpu[1]` runs every loop that starts after it on one core (Resource Control).
 
 
 ### Design Note: When a Loop Runs in Parallel
@@ -3271,6 +3271,8 @@ gpu[2]                   --- 2 GPUs on this machine
 nodes[4]                 --- 4 machines
 nodes[4, gpu = 2]        --- 4 machines, 2 GPUs each
 ```
+
+`cpu[n]` bounds every parallel loop that starts after it runs — in the code after it and in every function that code calls, whichever was written first — until another `cpu[…]` changes it; written in a function, it holds until the function returns, and the caller's count is back. A loop nested in a bounded loop runs on the same cores. A count below 1 stops the program (`cpu[] requires a positive integer`). Both modes read the count where a loop starts, so the same loops are bounded in both. (The compiled program had applied `cpu[1]` while it wrote the program, so a loop in a function written above the call ran on every core, and `cpu[4]` bounded nothing; the interpreter had sized one pool for the whole process at the first `cpu[…]`, and ignored every later one.)
 
 #### Function-level
 

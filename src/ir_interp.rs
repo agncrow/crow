@@ -535,7 +535,7 @@ impl IrInterp {
             }
             if let Some(n) = part.cpu {
                 if n >= 1 {
-                    let _ = rayon::ThreadPoolBuilder::new().num_threads(n as usize).build_global();
+                    crow_runtime::cores::set_default(n as usize);
                 }
             }
             for fact in &part.facts {
@@ -1828,11 +1828,14 @@ impl IrInterp {
         // the functions the body reaches, prepared once here: each chunk's
         // clone had prepared them again, and dropped what it made
         let reached = self.prepare_reached(body);
-        let threads = rayon::current_num_threads().max(1);
-        let chunk = (items.len() / (threads * 4)).max(1);
         let base = &*self;
         type Chunk = (Result<Vec<CrowValue>, String>, HashMap<String, Arc<prepared::Prepared>, Names>);
-        let chunks: Vec<Chunk> = items
+        // on the cores `cpu[…]` allows where the loop starts
+        // (crow_runtime::cores, as the compiled loop's)
+        let chunks: Vec<Chunk> = crow_runtime::cores::run(|| {
+            let threads = rayon::current_num_threads().max(1);
+            let chunk = (items.len() / (threads * 4)).max(1);
+            items
             .par_chunks(chunk)
             .map(|part| {
                 let mut local = base.clone();
@@ -1865,7 +1868,8 @@ impl IrInterp {
                 let r = run().map(|()| out);
                 (r, std::mem::take(&mut local.prepared))
             })
-            .collect();
+            .collect()
+        });
         let mut results = Vec::with_capacity(if collect { items.len() } else { 0 });
         let mut failed = None;
         for (c, made) in chunks {
@@ -2362,7 +2366,9 @@ impl IrInterp {
                     // one process, rank 0: no connections in the interpreter
                     crow_runtime::distributed::init(1);
                 } else {
-                    let _ = rayon::ThreadPoolBuilder::new().num_threads(n).build_global();
+                    // the loops that start after it, where it runs
+                    // (crow_runtime::cores, as the compiled program's)
+                    crow_runtime::cores::set(n as i64)?;
                 }
                 Ok(CrowValue::done())
             }
@@ -2803,6 +2809,8 @@ impl IrInterp {
     /// A call the walker runs (a traced run).
     fn call_walked(&mut self, name: &str, mut vals: Vec<CrowValue>) -> Result<CrowValue, String> {
         let f = self.function_named(name)?;
+        // (a function that calls cpu[…] puts its caller's count back)
+        let _cores = crate::ir::sets_cores(&f.body).then(crow_runtime::cores::Restore::new);
         let view = f.kind == FnKind::View;
         if let Some(v) = Self::arguments_checked(name, f.params.iter().map(|(_, t)| matches!(t, Ty::Float)), view, &mut vals)? {
             return Ok(v);
@@ -3717,6 +3725,19 @@ mod tests {
         assert!(matches!(r.var("n").unwrap().value, Value::Float(x) if x == 6.5));
         let far = run_script(&parse("struct Bars [c]\nb = Bars[[4.0, 5.0]]\nx = b.c[2]\n"), "t");
         assert!(far.is_err_and(|e| e.contains("index 2 is out of range for an array of 2 items")));
+    }
+
+    /// `cpu[n]` holds from where it runs, in the thread that runs it, and a
+    /// function's count is put back as the function returns — as the
+    /// compiled program's (crow_runtime::cores); one below 1 is refused
+    #[test]
+    fn a_core_count_holds_from_where_it_runs() {
+        let src = "fn inner[]\n    cpu[2]\n    xs = for i in range[4]\n        i * 2\n    return len[xs]\ncpu[3]\nn = inner[]\n";
+        let r = run_script(&parse(src), "t").unwrap();
+        assert!(matches!(r.var("n").unwrap().value, Value::Int(4)));
+        assert_eq!(crow_runtime::cores::get(), 3, "the top level's count holds after the function's is put back");
+        let refused = run_script(&parse("cpu[0]\n"), "t");
+        assert!(refused.is_err_and(|e| e.contains("cpu[] requires a positive integer")));
     }
 }
 

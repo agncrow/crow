@@ -563,14 +563,14 @@ impl Emitter {
                 self.needs_rayon = true;
                 if matches!(in0, Ty::Tensor(..)) {
                     let cast = self.pred_cast(&args[1], &in0);
-                    return Some(format!("{}.to_vec().par_iter().{}(|&_x| {}(_x{}))", a[0], name, a[1], cast));
+                    return Some(Self::on_cores(format!("{}.to_vec().par_iter().{}(|&_x| {}(_x{}))", a[0], name, a[1], cast), true));
                 }
                 let call = match self.pred_cast(&args[1], &in0) {
                     "" if self.pred_takes_ref(&args[1]) => "(_x)".to_string(),
                     "" => "(_x.clone())".to_string(),
                     cast => format!("(*_x{})", cast),
                 };
-                format!("{}.par_iter().{}(|_x| {}{})", a[0], name, a[1], call)
+                Self::on_cores(format!("{}.par_iter().{}(|_x| {}{})", a[0], name, a[1], call), true)
             }
             "find" if n == 2 && matches!(in0, Ty::List(_) | Ty::Tensor(..)) => {
                 self.needs_rayon = true;
@@ -583,7 +583,7 @@ impl Emitter {
                     let cast = if matches!(el, Ty::Int) { " as i64" } else { "" };
                     let call_cast = self.pred_cast(&args[1], &in0);
                     return Some(format!(
-                        "{{ match {}.to_vec().par_iter().copied().find_first(|&_x| {}(_x{})) {{ Some(_v) => CrowResult {{ ok: true, value: _v{}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, None => CrowResult {{ ok: false, value: {}, reason: \"no match\".to_string(), kind: \"find\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
+                        "{{ match crow_runtime::cores::run(|| {}.to_vec().par_iter().copied().find_first(|&_x| {}(_x{}))) {{ Some(_v) => CrowResult {{ ok: true, value: _v{}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, None => CrowResult {{ ok: false, value: {}, reason: \"no match\".to_string(), kind: \"find\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
                         a[0], a[1], call_cast, cast, default
                     ));
                 }
@@ -593,7 +593,7 @@ impl Emitter {
                     cast => format!("(**_x{})", cast),
                 };
                 format!(
-                    "{{ match {}.par_iter().find_first(|_x| {}{}) {{ Some(_v) => CrowResult {{ ok: true, value: _v.clone(), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, None => CrowResult {{ ok: false, value: {}, reason: \"no match\".to_string(), kind: \"find\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
+                    "{{ match crow_runtime::cores::run(|| {}.par_iter().find_first(|_x| {}{}).cloned()) {{ Some(_v) => CrowResult {{ ok: true, value: _v, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, None => CrowResult {{ ok: false, value: {}, reason: \"no match\".to_string(), kind: \"find\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
                     a[0], a[1], call, default
                 )
             }

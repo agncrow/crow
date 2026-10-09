@@ -854,6 +854,19 @@ pub fn call_args(e: &Expr) -> &[Expr] {
 
 /// A call's name as the program wrote it: a runtime table path reads as
 /// its builtin (`core.push` → `push`), an effect as its name.
+/// Whether a body calls `cpu[…]`: its count holds until the function
+/// returns, so a call of it puts the caller's back (both modes;
+/// crow_runtime::cores).
+pub fn sets_cores(b: &[Stmt]) -> bool {
+    let mut found = false;
+    visit_block(b, &mut |e| {
+        if call_name(e).as_deref() == Some("cpu") {
+            found = true;
+        }
+    });
+    found
+}
+
 pub fn call_name(e: &Expr) -> Option<String> {
     match e {
         Expr::Call { target: Target::Runtime(path), .. } => {

@@ -276,7 +276,11 @@ printed leaner than its type (`emit_rs/vectors.rs`): a function's local
 tensor of one axis that the body only reads and sets by index and
 measures — or uses as a value outside every loop — is a plain `Vec<f64>`,
 made from the tensor where the local is made and made back where it is
-used as a value, so a loop's `v[i] = v[i] - dt * a` is one store. The
+used as a value, so a loop's `v[i] = v[i] - dt * a` is one store; and a
+local list of text the body only empties, appends to, joins with one
+constant separator and measures is the text itself and a count
+(`emit_rs/builders.rs`), so an append writes its piece where the text
+lies. The
 generated crate keeps its shape (`.crow_build`, the runtime crates by
 path, `--release` for `crow build`), and the warm-up rule in the
 benchmark stays.

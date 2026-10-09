@@ -365,6 +365,12 @@ steps on every push and must be green.
   handles (`handle`); one reference count every thread wrote on every
   call had made 16 threads run no faster than one (spectral norm).
 - The emitter keeps a function's one-axis float tensor that the body only
-  reads and sets by index as a plain `Vec<f64>` (`emit_rs/vectors.rs`). A
-  new emitter path that prints a local goes through `local()` or
-  `plain_vector`, or it prints a vector where a tensor is expected.
+  reads and sets by index as a plain `Vec<f64>` (`emit_rs/vectors.rs`), and
+  a list of text it only empties, appends to and joins as a `String` and a
+  count (`emit_rs/builders.rs`). A new emitter path that prints a local
+  goes through `local()`, `plain_vector` or the builders' intercepts, or it
+  prints a vector or a text where a tensor or a list is expected.
+- `cpu[n]` is a count both backends read where a parallel loop starts
+  (`crow_runtime::cores`: per thread, the crowfile's the default, a
+  function's put back by `Restore`). A new parallel form — a builtin that
+  runs on rayon — goes through `cores::run`, or `cpu[1]` does not hold it.

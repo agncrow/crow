@@ -1368,9 +1368,9 @@ impl Emitter {
             let walked = self.for_expr(var, &value, body, parallel, whole);
             return format!("{{ let {l} = &({p}); if !{l}.ok {{ {e} }} {w} }}", l = list, p = printed, e = on_error, w = walked);
         }
-        // in parallel as the lowering decided, unless cpu[1] asked for one core
-        let forced_sequential = self.cpu_count.map_or(false, |n| n <= 1);
-        let use_par = !forced_sequential && parallel;
+        // in parallel as the lowering decided, on the cores `cpu[…]` allows
+        // where the loop starts (crow_runtime::cores)
+        let use_par = parallel;
         // a body that can leave the function (a return, an error handed
         // back, a handler's stop) or that yields on some paths only gathers
         // in a loop: a closure can neither return from the function nor
@@ -1409,7 +1409,7 @@ impl Emitter {
                 vt = Ty::Str;
             }
             self.pop_scope();
-            return format!("{}.{}().filter_map({} {{ {}if {} {{ Some({}) }} else {{ None }} }}).collect::<Vec<{}>>()", iter_str, method, param, rebind, c, v, vt.to_rust_type());
+            return Self::on_cores(format!("{}.{}().filter_map({} {{ {}if {} {{ Some({}) }} else {{ None }} }}).collect::<Vec<{}>>()", iter_str, method, param, rebind, c, v, vt.to_rust_type()), use_par);
         }
 
         // a body that yields on some paths only, or from the arms of a
@@ -1444,7 +1444,7 @@ impl Emitter {
             let closure_body = std::mem::replace(&mut self.out, saved_out);
             self.indent = saved_indent;
             let pad = "    ".repeat(self.indent);
-            return format!("{}.{}().flat_map_iter({} {{\n{}{}}}).collect::<{}>()", iter_str, method, param, closure_body, pad, list_ty.to_rust_type());
+            return Self::on_cores(format!("{}.{}().flat_map_iter({} {{\n{}{}}}).collect::<{}>()", iter_str, method, param, closure_body, pad, list_ty.to_rust_type()), use_par);
         }
 
         // the body's statements, then its last value
@@ -1484,7 +1484,13 @@ impl Emitter {
         let closure_body = std::mem::replace(&mut self.out, saved_out);
         self.indent = saved_indent;
         let pad = "    ".repeat(self.indent);
-        format!("{}.{}().map({} {{\n{}{}}}).collect::<Vec<{}>>()", iter_str, method, param, closure_body, pad, last_type.to_rust_type())
+        Self::on_cores(format!("{}.{}().map({} {{\n{}{}}}).collect::<Vec<{}>>()", iter_str, method, param, closure_body, pad, last_type.to_rust_type()), use_par)
+    }
+
+    /// A parallel loop run on the cores `cpu[…]` allows where it starts
+    /// (crow_runtime::cores); a loop in order as it is.
+    pub(crate) fn on_cores(s: String, parallel: bool) -> String {
+        if parallel { format!("crow_runtime::cores::run(|| {})", s) } else { s }
     }
 
     /// A collecting loop as a loop that gathers into a list: each value
@@ -1591,6 +1597,13 @@ impl Emitter {
     }
 
     fn call(&mut self, e: &Expr) -> String {
+        // a text builder's join and its count (builders.rs)
+        if let Some(text) = self.builder_text(e) {
+            return text;
+        }
+        if let Some(x) = builders::measured(e).filter(|x| self.text_builders.contains_key(*x)) {
+            return format!("{x}__count");
+        }
         // a plain vector's length, measured where it lies (vectors.rs)
         if let Expr::Call { target: Target::Row(row), args, .. } = e
             && row.id == "core.len_tensor"

@@ -695,6 +695,9 @@ impl Emitter {
         if let Some(n) = self.part.cpu {
             self.cpu_count = Some(n as usize);
         }
+        if self.cpu_count.is_some() {
+            self.needs_crow_runtime = true;
+        }
 
         // header
         self.line("use std::collections::BTreeMap;");
@@ -1406,7 +1409,11 @@ impl Emitter {
         self.returns_unit = true;
         self.scopes = vec![HashMap::new()];
         self.mutated = Self::mutated_in(&self.part.main.clone());
-        // the part's resources
+        // the part's resources: the crowfile's core count, every thread's
+        // default (crow_runtime::cores)
+        if let Some(n) = self.cpu_count {
+            self.line(&format!("crow_runtime::cores::set_default({});", n));
+        }
         if self.part.gpu.is_some() {
             self.needs_crow_runtime = true;
             self.line("crow_runtime::gpu::set_gpu_enabled(true);");

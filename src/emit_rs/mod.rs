@@ -21,6 +21,7 @@ mod stmts;
 #[cfg(test)]
 mod tests;
 mod ui;
+mod builders;
 mod vectors;
 
 /// What the build needs from the program besides its text: the crates
@@ -168,6 +169,9 @@ pub(crate) struct Emitter {
     pub(crate) static_handle_vars: BTreeSet<String>,
     /// The current function's locals kept as plain `Vec<f64>` (vectors.rs).
     pub(crate) plain_vecs: BTreeSet<String>,
+    /// The current function's lists of text kept as the text they join to,
+    /// each with its separator (builders.rs).
+    pub(crate) text_builders: BTreeMap<String, String>,
     /// facts a `fetch[]`/`poll[]` fills
     pub(crate) data_source_vars: BTreeSet<String>,
     pub(crate) derive_fns: BTreeSet<String>,
@@ -264,6 +268,7 @@ impl Emitter {
             fact_inits: BTreeMap::new(),
             static_handle_vars: BTreeSet::new(),
             plain_vecs: BTreeSet::new(),
+            text_builders: BTreeMap::new(),
             data_source_vars: BTreeSet::new(),
             derive_fns: BTreeSet::new(),
             module_consts: BTreeSet::new(),

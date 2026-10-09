@@ -517,7 +517,11 @@ pub fn cmd_test_mistakes(args: &[String]) -> i32 {
         let base = format!("base_{}.co", s);
         let _ = std::fs::write(dir.join(&base), &source);
         let (base_ok, base_out) = run(&exe, &["run", "-i", &base], &dir);
-        let _ = std::fs::remove_file(dir.join(&base));
+        // (kept with --keep: a program refused as generated is the
+        // generator's slip or the compiler's, and is read to tell which)
+        if !keep {
+            let _ = std::fs::remove_file(dir.join(&base));
+        }
         if !base_ok {
             refused_as_made += 1;
             println!("  --    seed {}: refused as generated ({})", s, base_out.lines().find(|l| l.contains(": ")).unwrap_or("").trim());

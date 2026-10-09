@@ -341,14 +341,48 @@ fn test_scope_for_block() {
     assert!(rust.contains("let") && rust.contains("temp:"), "temp should be declared inside for\n{}", rust);
 }
 
-/// cpu[1] runs the loops that follow in order; with more, a loop that
-/// writes nothing outside it and reaches no effect runs in parallel
+/// A loop that writes nothing outside it and reaches no effect runs in
+/// parallel, on the cores `cpu[n]` allows where it starts: the count is
+/// set where the program runs the call, and a loop in a function written
+/// before it is held to it too (the count had been applied while the
+/// program was printed, and reached only the loops printed after it)
 #[test]
 fn test_cpu_count_wiring() {
     let par = transpile("xs = [1, 2, 3]\nys = for x in xs\n    x * 2\nlog[len[ys]]\n");
-    assert!(par.contains("par_iter"), "{}", par);
-    let seq = transpile("cpu[1]\nxs = [1, 2, 3]\nys = for x in xs\n    x * 2\nlog[len[ys]]\n");
-    assert!(!seq.contains("par_iter"), "{}", seq);
+    assert!(par.contains("crow_runtime::cores::run(|| ") && par.contains("par_iter"), "{}", par);
+    let seq = transpile("fn doubled[n]\n    ys = for x in range[n]\n        x * 2\n    return ys\ncpu[1]\nlog[len[doubled[3]]]\n");
+    assert!(seq.contains("crow_runtime::cores::set((1_i64) as i64)"), "{}", seq);
+    let f = &seq[seq.find("fn doubled(").expect("doubled is emitted")..];
+    assert!(f[..f.find("\n}").unwrap_or(f.len())].contains("crow_runtime::cores::run(|| "), "{}", seq);
+    let own = transpile("fn heavy[n]\n    cpu[2]\n    ys = for x in range[n]\n        x * 2\n    return ys\nlog[len[heavy[3]]]\n");
+    assert!(own.contains("let _cores = crow_runtime::cores::Restore::new();"), "a function's count is put back as it returns: {}", own);
+}
+
+/// A function's list of text that the body only empties, appends to and
+/// joins with one separator is the text itself: an append writes the piece
+/// where the text lies, with no string made for it (fasta's one-character
+/// pieces had been made, copied by the join and freed)
+#[test]
+fn a_list_of_text_built_and_joined_is_text() {
+    let rust = transpile("fn line[syms, n]\n    row = []\n    lines = []\n    k = 0\n    while k lt n\n        row = push[row, syms[k % 2]]\n        k = k + 1\n    lines = push[lines, join[row, '']]\n    row = []\n    lines = push[lines, 'end']\n    out = join[lines, '\\n']\n    return '`out` `len[lines]`'\nlog[line[['a', 'b'], 5]]\n");
+    let f = &rust[rust.find("fn line(").expect("line is emitted")..];
+    let f = &f[..f.find("\n}").unwrap_or(f.len())];
+    assert!(f.contains("let mut row: String = String::new(); let mut row__count: i64 = 0;"), "{}", f);
+    assert!(f.contains("row.push_str({ let _i = "), "an item of a list of text is lent to the append: {}", f);
+    assert!(f.contains("lines.push_str(row.as_str())"), "a builder's text is lent to another's append: {}", f);
+    assert!(f.contains("if lines__count > 0 { lines.push_str(\"\\n\"); }"), "{}", f);
+    assert!(f.contains("row.clear(); row__count = 0;"), "{}", f);
+    assert!(f.contains("lines__count"), "{}", f);
+    assert!(!f.contains("crow_runtime::core::push("), "{}", f);
+}
+
+/// A list of text used otherwise — answered, walked, handed on — stays a
+/// list
+#[test]
+fn a_list_of_text_used_otherwise_stays_a_list() {
+    let rust = transpile("fn words[n]\n    ws = []\n    for i in range[n]\n        ws = push[ws, 'w']\n    return ws\nlog[join[words[3], ' ']]\n");
+    let f = &rust[rust.find("fn words(").expect("words is emitted")..];
+    assert!(!f[..f.find("\n}").unwrap_or(f.len())].contains("String::new()"), "{}", f);
 }
 
 #[test]

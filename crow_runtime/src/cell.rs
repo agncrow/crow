@@ -178,11 +178,20 @@ pub fn float_of_bool(b: bool) -> f64 {
 /// has a missing cell's reason instead, as where numbers are taken.
 pub trait Words {
     fn words(&self) -> Result<Vec<String>, String>;
+    /// The words, lent where the list holds them already: a list of text is
+    /// joined as it is (every item had been copied first, and fasta's
+    /// one-character pieces made twice).
+    fn lent(&self) -> Result<std::borrow::Cow<'_, [String]>, String> {
+        self.words().map(std::borrow::Cow::Owned)
+    }
 }
 
 impl Words for Vec<String> {
     fn words(&self) -> Result<Vec<String>, String> {
         Ok(self.clone())
+    }
+    fn lent(&self) -> Result<std::borrow::Cow<'_, [String]>, String> {
+        Ok(std::borrow::Cow::Borrowed(self.as_slice()))
     }
 }
 impl Words for Vec<i64> {
@@ -251,9 +260,10 @@ impl Words for crate::frame::CrowColumn {
     }
 }
 
-/// The words of a list, for the compiled program's `join`.
-pub fn words<T: Words + ?Sized>(items: &T) -> Result<Vec<String>, String> {
-    items.words()
+/// The words of a list, for the compiled program's `join`: lent where the
+/// list holds them already.
+pub fn words<T: Words + ?Sized>(items: &T) -> Result<std::borrow::Cow<'_, [String]>, String> {
+    items.lent()
 }
 
 #[cfg(test)]
@@ -269,6 +279,6 @@ mod tests {
         assert_eq!(int_of(&Cell::from(serde_json::json!(2.9))), Ok(2));
         assert_eq!(float_of(&Cell::from(serde_json::json!("2.5"))), Ok(2.5));
         assert_eq!(int_of(&Cell::from(serde_json::Value::Null)), Err("cannot convert null to int".to_string()));
-        assert_eq!(words(&vec![2.0, 2.5]), Ok(vec!["2".to_string(), "2.5".to_string()]));
+        assert_eq!(words(&vec![2.0, 2.5]).map(|w| w.into_owned()), Ok(vec!["2".to_string(), "2.5".to_string()]));
     }
 }

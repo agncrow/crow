@@ -126,10 +126,20 @@ impl Emitter {
             }
             self.declare(p, ty);
         }
+        // a function that calls cpu[…] puts its caller's count back as it
+        // returns (crow_runtime::cores)
+        if crate::ir::sets_cores(&f.body) {
+            self.needs_crow_runtime = true;
+            self.line("let _cores = crow_runtime::cores::Restore::new();");
+        }
         // the vectors the body only reads and writes by index, kept plain
         // (vectors.rs); a parameter's is made as the body starts
         let saved_vecs = std::mem::take(&mut self.plain_vecs);
+        let saved_builders = std::mem::take(&mut self.text_builders);
         if !(is_reactive_render || is_reactive_handler || is_live_render || is_live_handle || is_component_view || self.emitting_dual || self.emitting_traced) {
+            // and the lists of text it only builds and joins, kept as text
+            // (builders.rs)
+            self.text_builders = builders::text_builders(f);
             self.plain_vecs = vectors::plain_vectors(f);
             for (p, _) in &f.params {
                 if self.plain_vecs.contains(p) {
@@ -218,6 +228,7 @@ impl Emitter {
         self.cur_fn = cur;
         self.view_mark = mark;
         self.plain_vecs = saved_vecs;
+        self.text_builders = saved_builders;
         self.indent -= 1;
         self.line("}");
         self.line("");
@@ -570,13 +581,17 @@ impl Emitter {
     }
 
     fn emit_do(&mut self, e: &Expr) {
-        // cpu[n] bounds the loops that follow; gpu[] and nodes[n] are the
-        // program's resources
-        if call_name(e).as_deref() == Some("cpu") {
-            if let Some(Expr::Const(Const::Int(n), _)) = super::program::call_args(e).first().map(Emitter::raw) {
-                self.cpu_count = Some(*n as usize);
-                return;
-            }
+        // cpu[n] bounds the loops that start after it, where it runs
+        // (crow_runtime::cores); gpu[] and nodes[n] are the program's
+        // resources
+        if call_name(e).as_deref() == Some("cpu")
+            && let [n] = super::program::call_args(e)
+        {
+            let n = self.expr(n);
+            let line = self.line_now();
+            self.needs_crow_runtime = true;
+            self.line(&format!("crow_runtime::cores::set(({}) as i64).unwrap_or_else(|e| crow_stop({}, e));", n, line));
+            return;
         }
         if call_name(e).as_deref() == Some("gpu") && super::program::call_args(e).len() <= 1 && matches!(e, Expr::Call { target: Target::Runtime(_), .. }) {
             self.needs_crow_runtime = true;
@@ -610,6 +625,11 @@ impl Emitter {
     }
 
     fn emit_let(&mut self, var: &str, ty: &Ty, expr: &Expr) {
+        if self.text_builders.contains_key(var) {
+            self.line(&format!("let mut {var}: String = String::new(); let mut {var}__count: i64 = 0;"));
+            self.declare(var, as_inferred(ty));
+            return;
+        }
         if self.plain_vecs.contains(var) {
             let text = self.owned_expr(expr);
             self.line(&format!("let mut {}: Vec<f64> = ({}).to_vec();", var, text));
@@ -662,6 +682,13 @@ impl Emitter {
     }
 
     fn emit_set(&mut self, var: &str, expr: &Expr) {
+        if let Some(sep) = self.text_builders.get(var).cloned() {
+            match builders::appended(var, expr) {
+                Some(piece) => self.emit_append(var, &sep, piece),
+                None => self.line(&format!("{var}.clear(); {var}__count = 0;")),
+            }
+            return;
+        }
         if self.plain_vecs.contains(var) {
             let text = self.owned_expr(expr);
             self.line(&format!("{} = ({}).to_vec();", var, text));
@@ -1058,19 +1085,19 @@ impl Emitter {
                 [a, b] => (format!("({}) as i64", self.expr(a)), format!("({}) as i64", self.expr(b))),
                 _ => unreachable!("a range row takes one or two bounds"),
             };
-            let forced_sequential = self.cpu_count.map_or(false, |n| n <= 1);
-            let use_par = !forced_sequential && parallel && !self.emitting_traced;
+            let use_par = parallel && !self.emitting_traced;
             self.push_scope();
             if use_par {
                 self.needs_rayon = true;
-                self.line(&format!("({}..{}).into_par_iter().for_each(|{}| {{", lo, hi, var));
+                self.needs_crow_runtime = true;
+                self.line(&format!("crow_runtime::cores::run(|| ({}..{}).into_par_iter().for_each(|{}| {{", lo, hi, var));
                 self.indent += 1;
                 self.declare(var, Ty::Int);
                 self.closure_depth += 1;
                 self.emit_block(body);
                 self.closure_depth -= 1;
                 self.indent -= 1;
-                self.line("});");
+                self.line("}));");
             } else {
                 self.line(&format!("for {} in {}..{} {{", var, lo, hi));
                 self.indent += 1;
@@ -1086,10 +1113,10 @@ impl Emitter {
         let iter_ty = self.tt(iter);
         let (actual, elem) = self.loop_items(iter_str, &iter_ty, iter);
         let is_copy = Self::is_copy_type(&elem);
-        // in parallel as the lowering decided, unless cpu[1] asked for one core
-        let forced_sequential = self.cpu_count.map_or(false, |n| n <= 1);
-        // (a traced copy runs its loops in order: one tape records the run)
-        let use_par = !forced_sequential && parallel && !self.emitting_traced;
+        // in parallel as the lowering decided, on the cores `cpu[…]` allows
+        // where the loop starts (a traced copy runs its loops in order: one
+        // tape records the run)
+        let use_par = parallel && !self.emitting_traced;
         // an item of text, or a parsed value, is the loop's own, as the body
         // reads it (a borrowed one compared with a cell's text did not build)
         let text = matches!(elem, Ty::Str | Ty::Markup | Ty::Json);
@@ -1098,14 +1125,15 @@ impl Emitter {
             self.needs_rayon = true;
             let param = if is_copy { format!("|&{}|", var) } else { format!("|{}|", var) };
             let each = if text { ".cloned()" } else { "" };
-            self.line(&format!("{}.par_iter(){}.for_each({} {{", actual, each, param));
+            self.needs_crow_runtime = true;
+            self.line(&format!("crow_runtime::cores::run(|| {}.par_iter(){}.for_each({} {{", actual, each, param));
             self.indent += 1;
             self.declare(var, elem);
             self.closure_depth += 1;
             self.emit_block(body);
             self.closure_depth -= 1;
             self.indent -= 1;
-            self.line("});");
+            self.line("}));");
         } else {
             let param = if is_copy { format!("&{}", var) } else { var.to_string() };
             let each = if text { ".cloned()" } else { "" };

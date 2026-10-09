@@ -1,0 +1,85 @@
+--- A list of text a function only empties, appends to, joins with one
+--- separator and measures is the text itself in the compiled program: an
+--- append writes the piece where the text lies (fasta's one-character
+--- pieces had each been a string, made, copied by the join and freed, and
+--- the compiled fasta ran five times slower than Rust). It answers what the
+--- list answered. And `cpu[n]` holds from where it runs for every loop that
+--- starts after it, in a function written before it too, and a function's
+--- own count is put back as it returns; one below 1 stops the program.
+
+--- fasta's shape: a row of one-character pieces per line, the lines joined
+fn lines_of[syms, n, width]
+    lines = []
+    done = 0
+    while done lt n
+        w = min[width, n - done]
+        row = []
+        k = 0
+        while k lt w
+            row = push[row, syms[(done + k) % len[syms]]]
+            k = k + 1
+        lines = push[lines, join[row, '']]
+        done = done + w
+    return join[lines, '\n']
+log[lines_of[['a', 'c', 'g', 't', 'é'], 23, 7]]
+
+--- a separator of its own, counted, emptied and built again
+fn listed[n]
+    parts = []
+    out = []
+    for i in range[n]
+        parts = push[parts, 'p`i`']
+        if len[parts] eq 3
+            out = push[out, join[parts, ', ']]
+            parts = []
+    out = push[out, join[parts, ', ']]
+    grouped = join[out, ' | ']
+    return '`grouped` (`len[out]` groups)'
+log[listed[8]]
+
+--- pieces of every kind: a call's text, a local, an interpolation, a
+--- slice; joined twice, and empty
+fn shout[w]
+    return upper[w]
+fn pieces[w]
+    b = []
+    e = []
+    b = push[b, shout[w]]
+    b = push[b, w]
+    b = push[b, 'n=`len[w]`']
+    b = push[b, slice[w, 1, 3]]
+    first = join[b, ' → ']
+    b = push[b, '"q"\\']
+    second = join[b, ' → ']
+    none = join[e, '-']
+    return '`first` / `second` / [`none`] / `len[e]`'
+log[pieces['crow']]
+
+--- a list of text walked, handed on or answered stays a list
+fn kept[n]
+    ws = []
+    for i in range[n]
+        ws = push[ws, 'w`i`']
+    total = 0
+    for w in ws
+        total = total + len[w]
+    shown = join[ws, '+']
+    return '`shown` `total`'
+log[kept[4]]
+
+--- cpu[n]: the loops after it, in a function written before it too
+fn doubled[n]
+    ys = for x in range[n]
+        x * 2
+    return ys
+fn own[n]
+    cpu[2]
+    ys = for x in range[n]
+        x + 1
+    return ys
+cpu[1]
+log[doubled[5]]
+log[own[3]]
+log[doubled[4]]
+cpu[0]
+log['not reached']

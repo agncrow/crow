@@ -24,6 +24,7 @@ pub mod postgres_rows;
 pub mod cell;
 pub mod chart;
 pub mod core;
+pub mod cores;
 pub mod moments;
 pub mod linalg;
 pub mod markdown;

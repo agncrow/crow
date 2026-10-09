@@ -4069,9 +4069,10 @@ fn cmd_run_interpreted() {
         }
     }
     // the crowfile's cpu count bounds the parallel loops, as it does the
-    // compiled program's; its gpu setting turns the device on
+    // compiled program's (crow_runtime::cores); its gpu setting turns the
+    // device on
     if let Some(n) = config.cpu {
-        let _ = rayon::ThreadPoolBuilder::new().num_threads(n).build_global();
+        crow_runtime::cores::set_default(n);
     }
     if config.gpu.is_some() {
         crow_runtime::gpu::set_gpu_enabled(true);
