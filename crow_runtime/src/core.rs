@@ -495,6 +495,8 @@ pub fn sleep_ms(ms: i64) -> Result<(), String> {
     if ms < 0 {
         return Err(format!("sleep[] takes a time that is not negative (got {})", ms));
     }
+    // (what was logged, written before the program waits)
+    crate::display::flush_output();
     std::thread::sleep(std::time::Duration::from_millis(ms as u64));
     Ok(())
 }
@@ -513,6 +515,7 @@ pub fn sleep_secs(s: f64) -> Result<(), String> {
     if s.is_nan() || s < 0.0 || s.is_infinite() {
         return Err(format!("sleep[] takes a time that is not negative (got {})", s));
     }
+    crate::display::flush_output();
     std::thread::sleep(std::time::Duration::from_secs_f64(s));
     Ok(())
 }

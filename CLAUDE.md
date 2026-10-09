@@ -394,9 +394,11 @@ steps on every push and must be green.
   (a Crow-written row's function is excluded: its row calls it with
   values). A register named twice in one call is lent once, never twice.
 - `log` writes a script's output in blocks when stdout is not a terminal
-  (`display::buffer_output`): a new way for a program to end or to wait
-  on its reader (an exit, a stop, a prompt) calls `display::flush_output`
-  first, or what was logged is lost or comes late.
+  (`display::buffer_output`; a thread writes what is held every 100 ms, so
+  a reader watching the pipe or the log sees each line soon — the lost-
+  connection test reacts to them): a new way for a program to end or to
+  wait on its reader (an exit, a stop, a prompt) calls
+  `display::flush_output` first, or what was logged is lost or comes late.
 - A row can grow what it is given (`Row { take: …, ..row!(…) }`: the
   tensor `push`'s bridge pushes in place when nothing else holds the
   storage). The interpreter hands a row its arguments by value only on

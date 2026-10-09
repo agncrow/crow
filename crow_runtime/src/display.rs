@@ -150,17 +150,26 @@ static BLOCKS: AtomicBool = AtomicBool::new(false);
 /// A block of output: what `log` holds before it writes.
 const BLOCK: usize = 64 * 1024;
 
-/// A script's output written in blocks when it goes to a file or a pipe,
-/// as Python writes it: a line at a time had been a write to the system
-/// for every line (revcomp's four million lines, a fifth of its time). A
-/// terminal sees each line as it is logged, and a served program's log —
-/// which does not ask for this — each line as it happens. What is held is
-/// written at the end, before a stop is reported, at `exit`, and before
-/// `input` reads (`flush_output`).
+/// A script's output written in blocks when it goes to a file or a pipe:
+/// a line at a time had been a write to the system for every line
+/// (revcomp's four million lines, a fifth of its time). What is held is
+/// written before the program sleeps, and at least every tenth of a second
+/// whatever else it is doing — waiting on a query, computing — so a reader
+/// watching it (a job's log, a program reading the pipe) sees each line as
+/// a terminal would, or within that (holding it until the end had hidden a
+/// long job's progress, and a test that reacts to the lines as they come
+/// never saw them); and at the end, before a stop is reported, at `exit`,
+/// and before `input` reads (`flush_output`). A terminal sees each line as it is logged, and a
+/// served program — which does not ask for this — each line as it happens.
 pub fn buffer_output() {
     use std::io::IsTerminal;
-    if !std::io::stdout().is_terminal() {
-        BLOCKS.store(true, Ordering::Relaxed);
+    if !std::io::stdout().is_terminal() && !BLOCKS.swap(true, Ordering::Relaxed) {
+        let _ = std::thread::Builder::new().name("crow-output".to_string()).spawn(|| {
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                flush_output();
+            }
+        });
     }
 }
 
