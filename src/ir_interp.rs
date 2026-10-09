@@ -1095,10 +1095,18 @@ impl IrInterp {
                 Ok(Flow::Next)
             }
             Stmt::Propagate { values, at } => {
+                // each value read where it lies, and copied only when it
+                // failed: a top-level loop reading the lines of a file had
+                // copied every line at every round (k-nucleotide's search
+                // for its section: 86 s for 42,000 rounds)
                 for v in values {
-                    let val = self.lookup(v).cloned().ok_or_else(|| format!("undefined variable '{}'", v))?;
-                    if val.is_error() {
-                        return self.refuse(val, at);
+                    match self.lookup(v) {
+                        None => return Err(format!("undefined variable '{}'", v)),
+                        Some(val) if val.is_error() => {
+                            let val = val.clone();
+                            return self.refuse(val, at);
+                        }
+                        Some(_) => {}
                     }
                 }
                 Ok(Flow::Next)
@@ -3725,6 +3733,27 @@ mod tests {
         assert!(matches!(r.var("n").unwrap().value, Value::Float(x) if x == 6.5));
         let far = run_script(&parse("struct Bars [c]\nb = Bars[[4.0, 5.0]]\nx = b.c[2]\n"), "t");
         assert!(far.is_err_and(|e| e.contains("index 2 is out of range for an array of 2 items")));
+    }
+
+    /// A top-level loop reading an item of a list that can fail checks the
+    /// list where it lies at every round: the check had copied the whole
+    /// list each round (k-nucleotide's search for its section took 86 s,
+    /// 42,000 rounds over 83,000 lines)
+    #[test]
+    fn a_list_that_can_fail_is_checked_where_it_lies() {
+        let dir = std::env::temp_dir().join(format!("crow_propagate_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("rows.txt");
+        let text: String = (0..20000).map(|i| format!("row {}\n", i)).collect();
+        std::fs::write(&path, text).unwrap();
+        let src = format!("use io\nrows = lines['{}']\nfirst = 0\nwhile rows[first] ne 'row 19999'\n    first = first + 1\n", path.display());
+        let start = std::time::Instant::now();
+        let r = run_script(&parse(&src), "t").unwrap();
+        let took = start.elapsed();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(matches!(r.var("first").unwrap().value, Value::Int(19999)));
+        // (20,000 copies of 20,000 lines took minutes in a test build)
+        assert!(took.as_secs() < 10, "{:?}", took);
     }
 
     /// `cpu[n]` holds from where it runs, in the thread that runs it, and a
