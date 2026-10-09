@@ -478,6 +478,7 @@ pub fn exit() {
 /// `exit[code]`: the program ends with the code.
 pub fn exit_code(code: i64) {
     use std::io::Write;
+    crate::display::flush_output();
     let _ = std::io::stdout().flush();
     std::process::exit(code as i32)
 }
@@ -623,6 +624,8 @@ pub fn shell(cmd: &str) -> Result<Shell, String> {
 /// ending and nothing else removed; the prompt is written first.
 pub fn read_line(prompt: Option<&str>) -> Result<String, String> {
     use std::io::Write;
+    // (what was logged first, then the prompt)
+    crate::display::flush_output();
     if let Some(p) = prompt {
         print!("{}", p);
         let _ = std::io::stdout().flush();

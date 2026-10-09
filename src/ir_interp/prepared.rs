@@ -298,6 +298,9 @@ enum Ins {
     /// or a length reads (`text_slots`), when the text does not change in
     /// the call.
     Call { d: R, target: Box<Target>, args: Box<[(R, bool)]>, propagates: bool, known: Option<u16> },
+    /// An effect (`log!held`, `fetch!now`) of arguments in registers, run as
+    /// the walker runs one (`IrInterp::effect`).
+    Effect { d: R, how: Box<EffectHow>, args: Box<[(R, bool)]> },
     Store { fact: Box<str>, s: R, take: bool },
     Do { s: R },
     Propagate { regs: Box<[R]>, at: Box<Decision> },
@@ -316,6 +319,15 @@ struct CopyHow {
     ir: Expr,
     env: Env,
     path: Box<[PathStep]>,
+}
+
+/// An effect's own parts (`Ins::Effect`).
+#[derive(Debug)]
+struct EffectHow {
+    name: String,
+    row: Option<&'static crate::table::Row>,
+    propagates: bool,
+    answered: bool,
 }
 
 #[derive(Debug)]
@@ -367,6 +379,9 @@ pub(super) struct Body {
     /// How many texts it reads by position with what is known of their
     /// start (`text_slots`): its frame holds one `Known` each.
     pub(super) n_known: usize,
+    /// Each parameter: whether the body only reads it (`ir::only_reads`),
+    /// so a call may lend it the caller's value and take it back.
+    read_params: Vec<bool>,
     /// Whether its typed program runs on bare registers alone: int and
     /// float parameters, and only instructions that read and write bare
     /// registers (`pure`). A typed call of it (`call_typed`) hands over
@@ -476,7 +491,27 @@ struct Comp {
     loops: Vec<LoopCtx>,
 }
 
+/// A function prepared alone (its calls' lending decided without the rest
+/// of the program): the tests' way in.
+#[cfg(test)]
 pub(super) fn prepare(f: &Fn) -> Prepared {
+    let lend = crate::ir::lendable_params(&[f]);
+    prepare_lent(f, lend.get(&f.name).map(|v| v.as_slice()).unwrap_or(&[]))
+}
+
+/// A function prepared with the parameters a call may lend it
+/// (`ir::lendable_params`, over the whole program): their moves read
+/// where they lie, so the caller's value is whole when it goes back.
+pub(super) fn prepare_lent(f: &Fn, lend: &[bool]) -> Prepared {
+    let lent: Vec<&str> = f.params.iter().zip(lend.iter()).filter(|(_, l)| **l).map(|((p, _), _)| p.as_str()).collect();
+    let read_params: Vec<bool> = f.params.iter().enumerate().map(|(i, _)| lend.get(i).copied().unwrap_or(false)).collect();
+    let rewritten;
+    let f = if lent.is_empty() {
+        f
+    } else {
+        rewritten = Fn { body: crate::ir::reading_lent(&f.body, &lent), ..f.clone() };
+        &rewritten
+    };
     // twice: the first pass counts the locals, so the temporaries of the
     // second sit after them (the numbering is the same both times)
     let mut first = Comp::new([1 << 28, 2 << 28, 3 << 28]);
@@ -504,6 +539,7 @@ pub(super) fn prepare(f: &Fn) -> Prepared {
         first_line: crate::ir::first_line(&f.body),
         sets_cores: crate::ir::sets_cores(&f.body),
         n_known,
+        read_params,
         pure: false,
     };
     b.typed = typed(&b);
@@ -1131,6 +1167,18 @@ impl Comp {
                 }
                 self.eval(e, d)
             }
+            // an effect's arguments computed where they are, as a call's
+            // are (the walker had run the whole effect, copying each local
+            // it was handed: `log[slice[r, i, j]]` copied `r` per line)
+            Expr::Effect { name, row, args, propagates, answered, .. } => {
+                let mut regs = Vec::with_capacity(args.len());
+                for (i, a) in args.iter().enumerate() {
+                    let p = self.expr(a);
+                    let p = self.kept_place(p, &args[i + 1..]);
+                    regs.push(self.owned(p));
+                }
+                self.emit(Ins::Effect { d, how: Box::new(EffectHow { name: name.clone(), row: *row, propagates: *propagates, answered: *answered }), args: regs.into_boxed_slice() });
+            }
             Expr::Call { target, args, propagates, .. } => {
                 if is_len(target)
                     && args.len() == 1
@@ -1242,17 +1290,22 @@ impl IrInterp {
     /// A call of a prepared body whose `n` arguments `arg` hands over one
     /// by one, each into its parameter's register: a call from a prepared
     /// body moves them from its own registers, with no list between.
-    pub(super) fn call_prepared_with(&mut self, name: &str, p: &Prepared, n: usize, mut arg: impl FnMut(usize) -> CrowValue) -> Result<CrowValue, String> {
+    pub(super) fn call_prepared_with(&mut self, name: &str, p: &Prepared, n: usize, args: &mut dyn CallArgs) -> Result<CrowValue, String> {
         if p.float_params.len() != n {
             return Err(format!("{}[] expects {} arguments, got {}", name, p.float_params.len(), n));
         }
         let _cores = p.sets_cores.then(crow_runtime::cores::Restore::new);
         let (mut regs, mut bare) = self.reg_pool.take();
         regs.resize(p.n_regs, CrowValue::done());
-        // (`arguments_checked`, as each arrives)
+        // (`arguments_checked`, as each arrives; a parameter the body only
+        // reads may be lent the caller's value, to go back as the call ends)
         let mut failed = None;
+        let mut lent: u64 = 0;
         for (i, (float, r)) in p.float_params.iter().zip(p.params.iter()).enumerate() {
-            let mut v = arg(i);
+            let (mut v, lends) = args.arg(i, i < 64 && p.read_params.get(i).copied().unwrap_or(false));
+            if lends {
+                lent |= 1 << i;
+            }
             if *float && let Some(k) = v.plain_int() {
                 v = CrowValue::ok(Value::Float(k as f64));
             }
@@ -1261,11 +1314,20 @@ impl IrInterp {
             }
             regs[*r as usize] = v;
         }
+        let give_back = |regs: &mut Vec<CrowValue>, args: &mut dyn CallArgs| {
+            for (i, r) in p.params.iter().enumerate().take(64) {
+                if lent & (1 << i) != 0 {
+                    args.back(i, std::mem::replace(&mut regs[*r as usize], CrowValue::done()));
+                }
+            }
+        };
         if let Some(reason) = failed {
+            give_back(&mut regs, args);
             self.reg_pool.give(regs, bare);
             return Ok(CrowValue::markup(crate::harness::html_escape_text(&crow_web::core::response::failed_in_view(&reason))));
         }
         if p.recursive && let Err(e) = self.deeper(p.first_line) {
+            give_back(&mut regs, args);
             self.reg_pool.give(regs, bare);
             return Err(e);
         }
@@ -1275,6 +1337,7 @@ impl IrInterp {
         }
         self.frames.push(Frame { scopes: Vec::new(), locals: Vec::new(), marks: Vec::new(), fn_name: p.name.clone(), slots: Vec::new(), env: None, texts: (0..p.n_known).map(|_| crow_runtime::text::Known::new()).collect() });
         let r = self.run_body(p, &mut regs, &mut bare);
+        give_back(&mut regs, args);
         self.reg_pool.give(regs, bare);
         self.call_ended(r, p.view, p.recursive, saved_line)
     }
@@ -1360,7 +1423,7 @@ impl IrInterp {
         let scope = self.registry.enter_scope(p.scope);
         let r = match &p.typed {
             Some(ctc) if p.pure && p.params.len() == args.len() && args.iter().zip(p.params.iter()).all(|(a, r)| handed_bare(kinds[*a as usize], ctc.kinds[*r as usize])) => self.call_pure(&p, ctc, kinds, bare, args),
-            _ => self.call_prepared_with(name, &p, args.len(), boxed),
+            _ => self.call_prepared_with(name, &p, args.len(), &mut Given((0..args.len()).map(boxed))),
         };
         self.registry.resume_call(scope);
         r
@@ -1401,10 +1464,7 @@ impl IrInterp {
             None => self.prepare_called(name)?,
         };
         let scope = self.registry.enter_scope(p.scope);
-        let r = self.call_prepared_with(name, &p, args.len(), |i| {
-            let (r, take) = args[i];
-            if take { std::mem::replace(&mut regs[r as usize], CrowValue::done()) } else { copied(&regs[r as usize]) }
-        });
+        let r = self.call_prepared_with(name, &p, args.len(), &mut FromRegs { regs, args });
         self.registry.resume_call(scope);
         r
     }
@@ -1413,7 +1473,8 @@ impl IrInterp {
         if let Some(p) = self.prepared.get(&f.name) {
             return p.clone();
         }
-        let p = Arc::new(prepare(f));
+        let lend = self.lendable.get(&f.name).cloned().unwrap_or_default();
+        let p = Arc::new(prepare_lent(f, &lend));
         self.prepared.insert(f.name.clone(), p.clone());
         p
     }
@@ -1836,6 +1897,22 @@ impl IrInterp {
                     let v = if b.is_error() { b.clone() } else { t!(Self::len_of(target, b, &trace)) };
                     regs[*d as usize].assign(v);
                 }
+                Ins::Effect { d, how, args } => {
+                    let mut vals = Vec::with_capacity(args.len());
+                    for (r, take) in args.iter() {
+                        vals.push(if *take { std::mem::replace(&mut regs[*r as usize], CrowValue::done()) } else { copied(&regs[*r as usize]) });
+                    }
+                    self.line_of(p, pc);
+                    if how.propagates && let Some(err) = self.first_error(&vals) {
+                        regs[*d as usize].assign(err);
+                        return pc + 1;
+                    }
+                    let asked = std::mem::replace(&mut self.answering, how.answered);
+                    let r = self.effect(&how.name, how.row, vals);
+                    self.answering = asked;
+                    let v = t!(r);
+                    regs[*d as usize].assign(v);
+                }
                 Ins::Call { d, target, args, propagates, .. } if !self.tracing && matches!(&**target, Target::User(n) if n != PUT) => {
                     let Target::User(name) = &**target else { return pc + 1 };
                     self.line_of(p, pc);
@@ -2002,6 +2079,31 @@ mod tests {
         assert_eq!(slots.iter().filter(|k| k.is_none()).count(), 1, "t, given new values in the loop: {:?}", slots);
         assert!(p.code.iter().any(|i| matches!(i, Ins::Len { known: Some(_), .. })), "len[seq] reads with seq's slot: {:?}", p.code);
         assert!(!format!("{:?}", p.code).contains("Eval {"), "a length of a slice is no walker fallback: {:?}", p.code);
+    }
+
+    /// An effect's arguments are computed into registers, as a call's are:
+    /// the walker had run the whole effect, copying each local it was
+    /// handed (`log[slice[r, i, j]]` copied `r` for every line it logged).
+    #[test]
+    fn an_effects_arguments_are_registers() {
+        let f = lowered_fn("fn lines_of[r]\n    i = 0\n    while i lt len[r]\n        log[slice[r, i, i + 2]]\n        i = i + 2\n    return i\nlog[lines_of['abcdef']]\n", "lines_of");
+        let p = prepare(&f);
+        assert!(p.code.iter().any(|i| matches!(i, Ins::Effect { .. })), "{:?}", p.code);
+        assert!(!format!("{:?}", p.code).contains("Eval {"), "{:?}", p.code);
+    }
+
+    /// A parameter the body only reads — a move of it at its last read
+    /// borrowing (a loop's list, an index, a builtin that reads it) — is
+    /// lendable; one the body assigns, or hands to a list, is not.
+    #[test]
+    fn a_parameter_only_read_is_lendable() {
+        let stmts = crate::build("fn reads[xs, m]\n    t = 0\n    for x in xs\n        t = t + len[x]\n    return t + len[m]\nfn keeps[xs]\n    ys = [xs]\n    return len[ys]\nfn changes[xs]\n    xs[0] = 'z'\n    return xs\nlog[reads[['a'], 'bc']]\nlog[keeps[['a']]]\nlog[changes[['a']]]\n").expect("parses");
+        let program = crate::ir_interp::prepare(&stmts, "t").expect("lowers").0;
+        let fns: Vec<&Fn> = program.parts[0].fns.iter().collect();
+        let lend = crate::ir::lendable_params(&fns);
+        assert_eq!(lend["reads"], vec![true, true], "{:?}", lend);
+        assert_eq!(lend["keeps"], vec![false], "{:?}", lend);
+        assert_eq!(lend["changes"], vec![false], "{:?}", lend);
     }
 
     /// A counted loop over a range is a counted loop, and a nested one
@@ -2172,6 +2274,57 @@ fn boxed_sized(regs: &mut Vec<CrowValue>, p: &Prepared) {
     }
 }
 
+/// Where a call's arguments come from, and where the ones lent go back.
+pub(super) trait CallArgs {
+    /// The `i`th argument, and whether it is lent — the caller's own value,
+    /// handed over and taken back as the call ends — which it may be when
+    /// the callee only reads the parameter (`read_only`).
+    fn arg(&mut self, i: usize, read_only: bool) -> (CrowValue, bool);
+    /// A lent argument, back where it came from.
+    fn back(&mut self, i: usize, v: CrowValue);
+}
+
+/// Arguments already made (a list a walker built, numbers a typed call
+/// boxed): none lent.
+pub(super) struct Given<I: Iterator<Item = CrowValue>>(pub(super) I);
+
+impl<I: Iterator<Item = CrowValue>> CallArgs for Given<I> {
+    fn arg(&mut self, _: usize, _: bool) -> (CrowValue, bool) {
+        (self.0.next().unwrap_or_else(CrowValue::done), false)
+    }
+    fn back(&mut self, _: usize, _: CrowValue) {}
+}
+
+/// Arguments in a prepared caller's registers: one the callee only reads
+/// and the caller reads again — a large value (a list, a map, a text) named
+/// once in the call — is lent, not copied, and goes back to its register as
+/// the call ends; one taken is moved; any other copied. A long list handed
+/// to a function called once per item had been copied at every call
+/// (revcomp's lines; spectral norm's vector).
+struct FromRegs<'a> {
+    regs: &'a mut [CrowValue],
+    args: &'a [(R, bool)],
+}
+
+impl CallArgs for FromRegs<'_> {
+    fn arg(&mut self, i: usize, read_only: bool) -> (CrowValue, bool) {
+        let (r, take) = self.args[i];
+        let v = &self.regs[r as usize];
+        if take {
+            return (std::mem::replace(&mut self.regs[r as usize], CrowValue::done()), false);
+        }
+        let large = !matches!(v.value, Value::Int(_) | Value::Float(_) | Value::Bool(_) | Value::Moment(_) | Value::Done);
+        let once = self.args.iter().filter(|(q, _)| *q == r).count() == 1;
+        if read_only && large && once {
+            return (std::mem::replace(&mut self.regs[r as usize], CrowValue::done()), true);
+        }
+        (copied(v), false)
+    }
+    fn back(&mut self, i: usize, v: CrowValue) {
+        self.regs[self.args[i].0 as usize] = v;
+    }
+}
+
 /// Whether a row's call lends its arguments rather than copying them: one
 /// a later instruction reads holds a large value (a text, a list, a map, a
 /// tensor, a frame), and none it takes holds one its row could make its
@@ -2294,7 +2447,7 @@ fn reads_writes(ins: &Ins) -> (Vec<R>, Vec<R>) {
         }
         Ins::Push { d, v, .. } => (vec![*d, *v], vec![*d]),
         Ins::Len { d, base, .. } => (vec![*base], vec![*d]),
-        Ins::Call { d, args, .. } => (args.iter().map(|(x, _)| *x).collect(), vec![*d]),
+        Ins::Call { d, args, .. } | Ins::Effect { d, args, .. } => (args.iter().map(|(x, _)| *x).collect(), vec![*d]),
         Ins::Store { s, .. } | Ins::Do { s } => (vec![*s], vec![]),
         Ins::Propagate { regs, .. } => (regs.to_vec(), vec![]),
         Ins::Return { s } => (s.iter().map(|(x, _)| *x).collect(), vec![]),
@@ -2412,7 +2565,7 @@ fn text_slots(code: &mut [Ins], params: &[R]) -> usize {
         Some(_) => false,
     };
     let mut slots: HashMap<R, u16> = HashMap::new();
-    let mut slot_of = |r: R, slots: &mut HashMap<R, u16>| -> Option<u16> {
+    let slot_of = |r: R, slots: &mut HashMap<R, u16>| -> Option<u16> {
         if !steady(r) || slots.len() >= u16::MAX as usize {
             return None;
         }
@@ -2693,7 +2846,7 @@ fn typed(p: &Body) -> Option<Typed> {
                 let Target::User(name) = &**target else { return wrap(&[], &[*d]) };
                 TIns::CallT { d: *d, name: name.as_str().into(), args: args.iter().map(|(r, _)| *r).collect() }
             }
-            Ins::Call { d, args, .. } => wrap(&args.iter().map(|(r, _)| *r).collect::<Vec<R>>(), &[*d]),
+            Ins::Call { d, args, .. } | Ins::Effect { d, args, .. } => wrap(&args.iter().map(|(r, _)| *r).collect::<Vec<R>>(), &[*d]),
             Ins::Store { s, .. } | Ins::Do { s } => wrap(&[*s], &[]),
             Ins::Propagate { regs, .. } => wrap(regs, &[]),
             Ins::Return { s: Some((r, _)) } if ik(*r) => TIns::IRet { s: *r },

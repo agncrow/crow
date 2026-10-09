@@ -106,6 +106,9 @@ pub struct IrInterp {
     /// crow_runtime::stops::DEPTH).
     depth: usize,
     fns: HashMap<String, Arc<Fn>, Names>,
+    /// Each function's parameters a call may lend the caller's value
+    /// (`ir::lendable_params`), decided over the program as it is loaded.
+    lendable: Arc<HashMap<String, Vec<bool>>>,
     /// Each function's body prepared for the walker (prepared.rs), made on
     /// its first call.
     prepared: HashMap<String, Arc<prepared::Prepared>, Names>,
@@ -473,6 +476,7 @@ impl IrInterp {
         IrInterp {
             depth: 0,
             fns: HashMap::default(),
+            lendable: Arc::new(HashMap::new()),
             prepared: HashMap::default(),
             reg_pool: prepared::Pool::default(),
             derives: HashMap::new(),
@@ -583,6 +587,8 @@ impl IrInterp {
                 self.structs.insert(s.name.clone(), Arc::new(s.clone()));
             }
         }
+        let fns: Vec<&Fn> = self.fns.values().map(|f| f.as_ref()).collect();
+        self.lendable = Arc::new(crate::ir::lendable_params(&fns));
         // a program that carries a database driver written in Crow: what
         // a child interpreter is made from, for the driver's calls
         crate::driver::set_template(crate::driver::Template { fns: self.fns.clone(), structs: self.structs.clone(), registry: self.registry.clone(), file: self.file.clone() });
@@ -2814,7 +2820,7 @@ impl IrInterp {
     fn call_prepared(&mut self, name: &str, p: &prepared::Prepared, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
         let n = vals.len();
         let mut given = vals.into_iter();
-        self.call_prepared_with(name, p, n, |_| given.next().unwrap_or_else(CrowValue::done))
+        self.call_prepared_with(name, p, n, &mut prepared::Given(&mut given))
     }
 
     /// A call the walker runs (a traced run).

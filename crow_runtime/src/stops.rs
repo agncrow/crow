@@ -261,6 +261,7 @@ pub struct Stop(pub String);
 pub fn halt(line: usize, why: &str) -> ! {
     let text = if line > 0 { format!("line {}: {}", line, why) } else { why.to_string() };
     if std::thread::current().name() == Some("main") {
+        crate::display::flush_output();
         eprintln!("runtime error: {}", text);
         std::process::exit(1);
     }
@@ -275,7 +276,10 @@ pub fn main_guard(f: impl FnOnce() + Send + 'static) {
     // exits as the main thread's does), with a stack deep enough for the
     // recursion limit
     let run = move || {
-        if let Err(p) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+        // (what the program logged, written before what stopped it)
+        crate::display::flush_output();
+        if let Err(p) = ran {
             if let Some(Stop(text)) = p.downcast_ref::<Stop>() {
                 eprintln!("runtime error: {}", text);
             }
@@ -317,6 +321,7 @@ pub fn install_hook() {
         if GUARDS.load(Ordering::SeqCst) > 0 || info.payload().downcast_ref::<Stop>().is_some() {
             return;
         }
+        crate::display::flush_output();
         let words = panic_words(info.payload());
         match (std::env::var_os("RUST_BACKTRACE"), info.location()) {
             (Some(_), Some(at)) => eprintln!("runtime error: {} (at {}:{})", words, at.file(), at.line()),

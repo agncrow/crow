@@ -258,6 +258,11 @@ impl Emitter {
         if self.plain_vecs.contains(v) {
             return Self::vector_as_tensor(v);
         }
+        // a list, a map or a text the function reads where its caller
+        // holds it: the caller's place
+        if self.lent_here.contains(v) {
+            return format!("(*{})", v);
+        }
         if self.static_handle_vars.contains(v) && !self.declared(v) {
             return format!("__crow_handle_{}.get().unwrap().clone()", v);
         }

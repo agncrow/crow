@@ -1,0 +1,92 @@
+--- A list, a map or a text a function only reads is read where its caller
+--- holds it, in both modes: a call had copied it, so a long list handed to
+--- a function called once per item was quadratic (revcomp's lines were 130
+--- times slower than the same loop without the call). A function that
+--- changes its parameter, or hands it on, still gets its own copy, and the
+--- caller's value is what it was. The last case stops the program.
+
+--- a list read in a function called once per item
+fn second[xs, i]
+    return xs[i]
+fn total_len[xs]
+    t = 0
+    for i in range[len[xs]]
+        t = t + len[second[xs, i]]
+    return t
+words = for i in range[300]
+    'w`i`'
+log[total_len[words]]
+
+--- a map and a text read where they lie
+fn lookup[m, k]
+    if k in m
+        return m[k]
+    return 0
+fn char_count[t, c]
+    n = 0
+    for i in range[len[t]]
+        if slice[t, i, i + 1] eq c
+            n = n + 1
+    return n
+fn tally[m, keys_asked]
+    s = 0
+    for k in keys_asked
+        s = s + lookup[m, k]
+    return s
+prices = map[a = 1, b = 2, c = 40]
+log[tally[prices, ['a', 'c', 'z', 'a']]]
+log[char_count['a→b→a→é', 'a']]
+
+--- a function that changes its parameter gets its own copy
+fn bumped[xs]
+    xs[0] = 'changed'
+    return xs[0]
+log[bumped[words]]
+log[words[0]]
+
+--- one that hands it on, and the caller's value stays
+fn handed[xs]
+    return xs
+ys = handed[words]
+log[len[ys]]
+log[words[1]]
+
+--- the same list twice in one call
+fn both[a, b]
+    return len[a] + len[b] + len[a[0]]
+log[both[words, words]]
+
+--- a list read in a loop every core runs, inside the callee
+fn lens[xs]
+    sizes = for x in xs
+        len[x]
+    t = 0
+    for l in sizes
+        t = t + l
+    return t
+log[lens[words]]
+
+--- recursion over a list, and a list handed on to a function that reads it
+fn count_from[xs, i]
+    if i eq len[xs]
+        return 0
+    return 1 + count_from[xs, i + 1]
+fn via[xs]
+    return count_from[xs, 0] + total_len[xs]
+log[via[words]]
+
+--- a failure in the callee: the caller's list is back for the next call
+fn item_or[xs, i]
+    if i lt len[xs]
+        return xs[i]
+    return error['past the end']
+r = item_or[words, 1000]
+log[r.ok]
+log[len[words]]
+log[item_or[words, 7]]
+
+--- a position past the end stops the program, naming its line
+fn past[xs]
+    return xs[len[xs]]
+log[past[words]]
+log['not reached']

@@ -4136,7 +4136,12 @@ fn cmd_run_file_interpreted(filename: &str) {
         }
         return;
     }
-    if let Err(e) = ir_interp::run(&program, &ctx.registry, &base) {
+    // a script's output in blocks when it goes to a file or a pipe, as the
+    // compiled script's (crow_runtime::display::buffer_output)
+    crow_runtime::display::buffer_output();
+    let ran = ir_interp::run(&program, &ctx.registry, &base);
+    crow_runtime::display::flush_output();
+    if let Err(e) = ran {
         eprintln!("runtime error: {}", e);
         process::exit(1);
     }

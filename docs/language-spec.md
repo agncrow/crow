@@ -1315,7 +1315,7 @@ A builtin handed a number of arguments, or a kind of argument, it does not take 
 
 | Function | Description |
 |----------|-------------|
-| `log[value]` | Print a value to stdout, as it shows: text bare, a number as it displays (a whole float as an int), a list as `[1, 'a']` with its text quoted, a map as `[key = value]`, a record as `Point[x = 1, y = 2]` (its fields in name order; a module's record by the name it was declared by, as `type` names it), a value that failed as `error: reason` — the same in both modes, through one display (`crow_runtime::display`) |
+| `log[value]` | Print a value to stdout, as it shows: text bare, a number as it displays (a whole float as an int), a list as `[1, 'a']` with its text quoted, a map as `[key = value]`, a record as `Point[x = 1, y = 2]` (its fields in name order; a module's record by the name it was declared by, as `type` names it), a value that failed as `error: reason` — the same in both modes, through one display (`crow_runtime::display`). To a terminal, each line as it is logged; a script whose output goes to a file or a pipe writes it in blocks, as Python does — all of it written at the end, before a stop is reported, at `exit` and before `input` reads (a line at a time had been a write to the system per line). A program that serves pages writes each line as it is logged |
 | `range[stop]` | Array of ints from 0 to stop (exclusive); every argument of `range` is an int (`range[2.5]` is refused) |
 | `range[start, stop]` | Array of ints from start to stop (exclusive) |
 | `range[start, stop, step]` | Array of ints with custom step; a negative step counts down (`range[5, 0, -2]` is `[5, 3, 1]`); a zero step is an error |
@@ -1357,6 +1357,8 @@ A builtin handed a number of arguments, or a kind of argument, it does not take 
 | `repeat[s, n]` | Repeat string `n` times |
 | `fmt[x, ...]` | Format a value with named arguments (see Formatting) |
 | `reverse[s]` | Reverse a string |
+
+**A value handed to a function is the function's own, and a function that only reads it is lent the caller's.** A parameter the body never assigns (nor an item of), never binds anew and never hands on — it is indexed, measured, walked, compared, given to a builtin that reads it, or handed to a function that only reads it in turn — reads the caller's list, map or text where the caller holds it, in both modes; any other parameter gets its own copy, so what the function does to it the caller never sees. (A call had copied every list it was handed: a long list given to a function called once per item was quadratic — revcomp's lines ran 130 times slower than the same loop without the call.)
 
 **A text read by position costs what is read.** A slice, a character and a length count characters, and a text holds UTF-8, where a character is one to four bytes. A text a function reads by position — a parameter, or a local it does not give a new text while the call runs — keeps, in both modes, how far its start is known to be ASCII, checked only as far as a read has needed: within that start a character is a byte, so `slice[seq, i, i + k]` reads `k` characters wherever `i` is, and a loop over a long text's windows is linear (each read had walked the text from its start, and counting k-mers by slices was quadratic). Past the ASCII start, a read walks only from where it ends. A slice compared with a text (`slice[seq, i, i + k] eq pat`) is compared where it lies.
 

@@ -132,6 +132,11 @@ pub(crate) struct Emitter {
     /// (spec, db, The schema a program declares); without one, verify.
     pub(crate) schema_mode: Option<crow_db::schema::Mode>,
     pub(crate) by_ref_params: BTreeMap<String, HashSet<String>>,
+    /// The list, map and text parameters among them (`by_ref_params`), each
+    /// read through the reference as the caller's place: printed `(*p)`.
+    pub(crate) lent_params: BTreeMap<String, HashSet<String>>,
+    /// The current function's (`lent_params`).
+    pub(crate) lent_here: HashSet<String>,
     /// An unwrap (by its node's address) printed as the payload the
     /// enclosing call's propagation bound: `list(unwrap push(…))` handed
     /// to a call is printed as the conversion over `_prop_0.value`, the
@@ -255,6 +260,8 @@ impl Emitter {
             cpu_count: None,
             schema_mode: None,
             by_ref_params: BTreeMap::new(),
+            lent_params: BTreeMap::new(),
+            lent_here: HashSet::new(),
             unwrap_as: std::collections::HashMap::new(),
             grad_functions: BTreeSet::new(),
             dual_helpers: BTreeSet::new(),

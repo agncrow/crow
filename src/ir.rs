@@ -8,6 +8,7 @@
 //! prints it. `crow build --ir file.co` shows a program in the printer's
 //! notation, which is the notation of the design record's worked cases.
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -817,6 +818,113 @@ pub fn visit_expr(e: &Expr, f: &mut dyn FnMut(&Expr)) {
     }
 }
 
+/// Every expression in a block, each given to `f` to change before its
+/// own parts are visited (`visit_expr`'s order).
+pub fn visit_block_mut(b: &mut [Stmt], f: &mut dyn FnMut(&mut Expr)) {
+    for s in b {
+        match s {
+            Stmt::Let { expr, .. } | Stmt::Set { expr, .. } | Stmt::Store { expr, .. } | Stmt::Do(expr) => visit_expr_mut(expr, f),
+            Stmt::SetPath { path, expr, .. } => {
+                for p in path.iter_mut() {
+                    if let PathStep::Index(i) = p {
+                        visit_expr_mut(i, f);
+                    }
+                }
+                visit_expr_mut(expr, f);
+            }
+            Stmt::If { cond, then, els } => {
+                visit_expr_mut(cond, f);
+                visit_block_mut(then, f);
+                if let Some(e) = els {
+                    visit_block_mut(e, f);
+                }
+            }
+            Stmt::While { cond, body } => {
+                visit_expr_mut(cond, f);
+                visit_block_mut(body, f);
+            }
+            Stmt::For { iter, body, .. } => {
+                visit_expr_mut(iter, f);
+                visit_block_mut(body, f);
+            }
+            Stmt::Return(Some(e)) => visit_expr_mut(e, f),
+            _ => {}
+        }
+    }
+}
+
+pub fn visit_expr_mut(e: &mut Expr, f: &mut dyn FnMut(&mut Expr)) {
+    f(e);
+    match e {
+        Expr::Call { args, .. } | Expr::Effect { args, .. } | Expr::Deferred { args, .. } => {
+            for a in args.iter_mut() {
+                visit_expr_mut(a, f);
+            }
+        }
+        Expr::Convert { expr, .. } | Expr::Unary { expr, .. } => visit_expr_mut(expr, f),
+        Expr::Binary { l, r, .. } => {
+            visit_expr_mut(l, f);
+            visit_expr_mut(r, f);
+        }
+        Expr::Index { base, indices, .. } => {
+            visit_expr_mut(base, f);
+            for i in indices.iter_mut() {
+                visit_expr_mut(i, f);
+            }
+        }
+        Expr::Field { base, .. } | Expr::Meta { base, .. } => visit_expr_mut(base, f),
+        Expr::Interp(pieces) => {
+            for p in pieces.iter_mut() {
+                if let Piece::Expr(x) = p {
+                    visit_expr_mut(x, f);
+                }
+            }
+        }
+        Expr::ListLit(items, _) => {
+            for i in items.iter_mut() {
+                visit_expr_mut(i, f);
+            }
+        }
+        Expr::MapLit(pairs, _) => {
+            for (_, v) in pairs.iter_mut() {
+                visit_expr_mut(v, f);
+            }
+        }
+        Expr::RecordLit { fields, .. } => {
+            for x in fields.iter_mut() {
+                visit_expr_mut(x, f);
+            }
+        }
+        Expr::Tree { attrs, children, .. } => {
+            for (_, a) in attrs.iter_mut() {
+                visit_expr_mut(a, f);
+            }
+            for c in children.iter_mut() {
+                visit_expr_mut(c, f);
+            }
+        }
+        Expr::ForExpr { iter, body, .. } => {
+            visit_expr_mut(iter, f);
+            visit_block_mut(body, f);
+        }
+        _ => {}
+    }
+}
+
+/// A body whose lent parameters (`lendable_params`) are read where a move
+/// of them stood: a call lends the caller's own value, which goes back.
+pub fn reading_lent(b: &[Stmt], lent: &[&str]) -> Block {
+    let mut out = b.to_vec();
+    visit_block_mut(&mut out, &mut |e| {
+        if let Expr::Move(n, t) = e
+            && lent.contains(&n.as_str())
+        {
+            *e = Expr::Local(n.clone(), t.clone());
+        }
+    });
+    out
+}
+
 /// Every statement in a block, nested blocks included.
 pub fn visit_stmts(b: &[Stmt], f: &mut dyn FnMut(&Stmt)) {
     for s in b {
@@ -854,6 +962,180 @@ pub fn call_args(e: &Expr) -> &[Expr] {
 
 /// A call's name as the program wrote it: a runtime table path reads as
 /// its builtin (`core.push` → `push`), an effect as its name.
+/// The parameters of each function a call may lend the caller's value
+/// instead of a copy, in both backends: ones the body never assigns (nor an
+/// item of), never binds anew (a `let`, a loop's variable), and moves —
+/// the lowering moves a variable at its last read — only where the move
+/// borrows: an index's base, a builtin's argument its row reads where it
+/// lies, a loop's list, or a call's argument the callee may be lent in turn
+/// (decided together, to a fixed point). A lent parameter's move compiles
+/// as a read.
+pub fn lendable_params<'a>(fns: &[&'a Fn]) -> HashMap<String, Vec<bool>> {
+    let mut lend: HashMap<String, Vec<bool>> = fns.iter().map(|f| (f.name.clone(), f.params.iter().map(|(p, _)| never_rebound(&f.body, p)).collect())).collect();
+    loop {
+        let mut changed = false;
+        for f in fns {
+            for (i, (p, _)) in f.params.iter().enumerate() {
+                if lend[&f.name][i] && !moves_borrow(&f.body, p, &lend) {
+                    if let Some(v) = lend.get_mut(&f.name) {
+                        v[i] = false;
+                    }
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            return lend;
+        }
+    }
+}
+
+/// Whether a body never assigns a name, an item of it, or binds it anew.
+fn never_rebound(b: &[Stmt], p: &str) -> bool {
+    let mut never = true;
+    visit_stmts(b, &mut |s| match s {
+        Stmt::Set { var, .. } | Stmt::SetPath { var, .. } | Stmt::Let { var, .. } | Stmt::For { var, .. } if var == p => never = false,
+        _ => {}
+    });
+    visit_block(b, &mut |e| {
+        if matches!(e, Expr::ForExpr { var, .. } if var == p) {
+            never = false;
+        }
+    });
+    never
+}
+
+/// Whether every move of `p` in a body is in a position that borrows.
+fn moves_borrow(b: &[Stmt], p: &str, lend: &HashMap<String, Vec<bool>>) -> bool {
+    let mut w = Borrows { p, lend, ok: true };
+    w.block(b);
+    w.ok
+}
+
+struct Borrows<'a> {
+    p: &'a str,
+    lend: &'a HashMap<String, Vec<bool>>,
+    ok: bool,
+}
+
+impl Borrows<'_> {
+    fn block(&mut self, b: &[Stmt]) {
+        for s in b {
+            self.stmt(s);
+        }
+    }
+
+    fn stmt(&mut self, s: &Stmt) {
+        match s {
+            Stmt::Let { expr, .. } | Stmt::Set { expr, .. } | Stmt::Store { expr, .. } | Stmt::Do(expr) | Stmt::Return(Some(expr)) => self.expr(expr, false),
+            Stmt::SetPath { path, expr, .. } => {
+                for step in path {
+                    if let PathStep::Index(i) = step {
+                        self.expr(i, false);
+                    }
+                }
+                self.expr(expr, false);
+            }
+            Stmt::If { cond, then, els } => {
+                self.expr(cond, false);
+                self.block(then);
+                if let Some(e) = els {
+                    self.block(e);
+                }
+            }
+            Stmt::While { cond, body } => {
+                self.expr(cond, false);
+                self.block(body);
+            }
+            Stmt::For { iter, body, .. } => {
+                self.expr(iter, true);
+                self.block(body);
+            }
+            _ => {}
+        }
+    }
+
+    /// An expression in a position that borrows (`borrowing`) or one that
+    /// may keep what it is given.
+    fn expr(&mut self, e: &Expr, borrowing: bool) {
+        match e {
+            Expr::Move(n, _) if n == self.p => self.ok &= borrowing,
+            Expr::Convert { how: Convert::Unwrap | Convert::Known, expr, .. } => self.expr(expr, borrowing),
+            // (an index's key is read too: `m[k]`)
+            Expr::Index { base, indices, .. } => {
+                self.expr(base, true);
+                for i in indices {
+                    self.expr(i, true);
+                }
+            }
+            Expr::Call { target: Target::Row(row), args, .. } => {
+                for (k, a) in args.iter().enumerate() {
+                    let reads = row.params.get(k).is_some_and(|kind| !kind.owned() && !kind.is_rest() && !matches!(kind, crate::table::Kind::Item));
+                    self.expr(a, reads);
+                }
+            }
+            // a comparison reads both sides
+            Expr::Binary { op, l, r, .. } if matches!(op.as_str(), "eq" | "ne") => {
+                self.expr(l, true);
+                self.expr(r, true);
+            }
+            Expr::Call { target: Target::User(c), args, .. } => {
+                for (k, a) in args.iter().enumerate() {
+                    let lent = self.lend.get(c).and_then(|v| v.get(k)).copied().unwrap_or(false);
+                    self.expr(a, lent);
+                }
+            }
+            Expr::Call { args, .. } | Expr::Effect { args, .. } | Expr::Deferred { args, .. } => {
+                for a in args {
+                    self.expr(a, false);
+                }
+            }
+            Expr::ForExpr { iter, body, .. } => {
+                self.expr(iter, true);
+                self.block(body);
+            }
+            Expr::Convert { expr, .. } | Expr::Unary { expr, .. } => self.expr(expr, false),
+            Expr::Binary { l, r, .. } => {
+                self.expr(l, false);
+                self.expr(r, false);
+            }
+            Expr::Field { base, .. } | Expr::Meta { base, .. } => self.expr(base, false),
+            // text made of pieces reads each
+            Expr::Interp(pieces) => {
+                for piece in pieces {
+                    if let Piece::Expr(x) = piece {
+                        self.expr(x, true);
+                    }
+                }
+            }
+            Expr::ListLit(items, _) => {
+                for x in items {
+                    self.expr(x, false);
+                }
+            }
+            Expr::MapLit(pairs, _) => {
+                for (_, x) in pairs {
+                    self.expr(x, false);
+                }
+            }
+            Expr::RecordLit { fields, .. } => {
+                for x in fields {
+                    self.expr(x, false);
+                }
+            }
+            Expr::Tree { attrs, children, .. } => {
+                for (_, x) in attrs {
+                    self.expr(x, false);
+                }
+                for x in children {
+                    self.expr(x, false);
+                }
+            }
+            Expr::Local(..) | Expr::Move(..) | Expr::Const(..) | Expr::Load(..) | Expr::Derived(..) | Expr::Constant(..) | Expr::FnRef(..) => {}
+        }
+    }
+}
+
 /// Whether a body calls `cpu[…]`: its count holds until the function
 /// returns, so a call of it puts the caller's back (both modes;
 /// crow_runtime::cores).

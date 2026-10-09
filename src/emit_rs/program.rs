@@ -408,6 +408,17 @@ impl Emitter {
         // assigns a field or an item of — passes by reference (a handler's
         // are its own: it may be sent them as an event's arguments, so it
         // takes them by value, and so do its callers)
+        // and a list, a map or a text a plain function never changes nor
+        // hands on — no assignment, no move, no binding of its name — is
+        // read where its caller holds it, printed `(*p)` (a call had copied
+        // it: a long list handed to a function called once per item was
+        // quadratic, revcomp's lines and k-nucleotide's chunks)
+        let as_values = self.functions_as_values();
+        let all: Vec<&Fn> = self.fns.values().collect();
+        let lendable = crate::ir::lendable_params(&all);
+        // (a function a builtin written in Crow is — `_frame_load`, a
+        // driver's `ch_open` — is called through its row too, with values)
+        let rows_of: HashSet<String> = crate::table::ROWS.iter().filter(|r| r.is_crow()).map(crate::table::crow_fn_name).collect();
         let names: Vec<String> = self.fns.keys().cloned().collect();
         for n in names {
             if self.reactive_event_handlers.contains(&n) || self.live_handle_fns.contains(&n) {
@@ -416,15 +427,32 @@ impl Emitter {
             let f = self.fns.get(&n).unwrap().clone();
             let changed = Self::mutated_in(&f.body);
             let mut refs = HashSet::new();
-            for (p, t) in &f.params {
+            let mut lent = HashSet::new();
+            let plain = !(as_values.contains(&n)
+                || rows_of.contains(n.split("__").next().unwrap_or(&n))
+                || self.reactive_render_fns.contains(&n)
+                || self.live_render_fns.contains(&n)
+                || self.views.contains(&n)
+                || self.web_handlers.contains(&n)
+                || self.traced_functions.contains(&n)
+                || self.grad_functions.contains(&n)
+                || self.dual_helpers.contains(&n)
+                || f.kind == FnKind::Handler);
+            for (i, (p, t)) in f.params.iter().enumerate() {
                 if let Ty::Record(s) = t {
                     if !self.struct_is_copy(s) && !changed.contains(p) {
                         refs.insert(p.clone());
                     }
+                } else if plain && matches!(as_inferred(t), Ty::List(_) | Ty::Map(..) | Ty::Str) && lendable.get(&n).and_then(|v| v.get(i)).copied().unwrap_or(false) {
+                    refs.insert(p.clone());
+                    lent.insert(p.clone());
                 }
             }
             if !refs.is_empty() {
-                self.by_ref_params.insert(n, refs);
+                self.by_ref_params.insert(n.clone(), refs);
+            }
+            if !lent.is_empty() {
+                self.lent_params.insert(n, lent);
             }
         }
 
@@ -1401,6 +1429,12 @@ impl Emitter {
             self.line("}");
             self.line("");
             self.line("fn __crow_main() {");
+            // a script's output in blocks when it goes to a file or a pipe
+            // (crow_runtime::display::buffer_output; `main_guard` writes it
+            // out as the program ends)
+            if !self.test_control {
+                self.line("    crow_runtime::display::buffer_output();");
+            }
         }
         self.needs_crow_runtime = true;
         self.indent += 1;
@@ -1542,6 +1576,27 @@ impl Emitter {
     }
 
     /// The locals a block rebinds or changes in place: they are `mut`.
+    /// The functions a program uses as values (`any[xs, f]`, `grad[f]`, a
+    /// route's handler): their parameters are what the value's caller hands.
+    fn functions_as_values(&self) -> HashSet<String> {
+        let mut out = HashSet::new();
+        for b in self.all_blocks() {
+            visit_block(&b, &mut |e| {
+                if let Expr::FnRef(n, _) = e {
+                    out.insert(n.clone());
+                }
+            });
+        }
+        for f in self.fns.values() {
+            visit_block(&f.body, &mut |e| {
+                if let Expr::FnRef(n, _) = e {
+                    out.insert(n.clone());
+                }
+            });
+        }
+        out
+    }
+
     pub(crate) fn mutated_in(block: &[Stmt]) -> HashSet<String> {
         let mut out = HashSet::new();
         visit_stmts(block, &mut |s| match s {
@@ -1788,3 +1843,4 @@ fn unknown_inside(t: &Ty) -> bool {
         _ => false,
     }
 }
+

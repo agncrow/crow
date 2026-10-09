@@ -386,3 +386,14 @@ steps on every push and must be green.
   arguments first into `_tN`, then the call takes `x` moved. A backend
   that copies such a collection is missing that split, not a rule of its
   own.
+- A parameter the body only reads is lent (`ir::lendable_params`, both
+  backends): compiled `p: &T` read as `(*p)`, interpreted moved into the
+  callee and back (`CallArgs`/`FromRegs`), its moves compiled as reads
+  (`ir::reading_lent`). A new way to call a user function from generated
+  code must pass `by_ref_params` by reference, or exclude the function
+  (a Crow-written row's function is excluded: its row calls it with
+  values). A register named twice in one call is lent once, never twice.
+- `log` writes a script's output in blocks when stdout is not a terminal
+  (`display::buffer_output`): a new way for a program to end or to wait
+  on its reader (an exit, a stop, a prompt) calls `display::flush_output`
+  first, or what was logged is lost or comes late.

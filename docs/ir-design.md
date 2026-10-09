@@ -257,8 +257,13 @@ prepared function is a handle on its shared body; a call clones the handle
 it runs, so each chunk of a parallel loop gets handles of its own on the
 bodies it reaches, and no reference count is written by two threads (one
 shared count had made sixteen threads run no faster than one).
-A builtin's row given a large value a later instruction reads (a long
-text, a list, a map) is lent the value where it lies, through the row's
+A user function's parameter the body only reads (`ir::lendable_params`,
+one rule for both backends) is lent the caller's value — moved into the
+callee's register and back as the call returns, its moves in the body
+compiled as reads (`ir::reading_lent`) — and an effect's arguments are
+registers, as a call's are. A builtin's row given a large value a later
+instruction reads (a long text, a list, a map) is lent the value where it
+lies, through the row's
 call that reads arguments in place, not handed a copy; and a text a body
 reads by position whose register does not change while the call runs (a
 parameter, a local written once outside every loop) has a slot in the
@@ -289,7 +294,9 @@ constant separator and measures is the text itself and a count
 (`emit_rs/builders.rs`), so an append writes its piece where the text
 lies; and a text local the body slices, indexes or measures keeps a
 `crow_runtime::text::Known` beside it (`emit_rs/texts.rs`), made where the
-local is bound and reset where it is given a new text. The
+local is bound and reset where it is given a new text; a list, map or
+text parameter the body only reads (`ir::lendable_params`) is passed by
+reference and read as the caller's place, `(*p)`. The
 generated crate keeps its shape (`.crow_build`, the runtime crates by
 path, `--release` for `crow build`), and the warm-up rule in the
 benchmark stays.

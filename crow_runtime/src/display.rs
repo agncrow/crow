@@ -10,6 +10,9 @@
 //!
 //! Part of the shared semantics kernel (see docs/design-review.md, pushback 6).
 
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 /// Crow's canonical value formatting.
 ///
 /// `crow_fmt` is the top-level form (strings bare); `crow_repr` is the
@@ -19,6 +22,11 @@ pub trait CrowDisplay {
     fn crow_repr(&self) -> String;
     fn crow_fmt(&self) -> String {
         self.crow_repr()
+    }
+    /// What `crow_fmt` shows, written onto `out` (text as it is, not made
+    /// anew first).
+    fn crow_write(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.crow_fmt().as_bytes());
     }
 }
 
@@ -52,6 +60,9 @@ impl CrowDisplay for String {
     }
     fn crow_fmt(&self) -> String {
         self.clone()
+    }
+    fn crow_write(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.as_bytes());
     }
 }
 
@@ -111,8 +122,60 @@ pub fn failed(reason: &str, trace: &[String]) -> String {
 /// `log[a, b, …]`: the values as they show, between spaces, a value that
 /// failed as its reason — one line, in both modes.
 pub fn log(items: &[&dyn CrowDisplay]) {
-    let line: Vec<String> = items.iter().map(|x| x.crow_fmt()).collect();
-    println!("{}", line.join(" "));
+    use std::io::Write;
+    let mut held = OUT.lock().unwrap_or_else(|e| e.into_inner());
+    for (i, x) in items.iter().enumerate() {
+        if i > 0 {
+            held.push(b' ');
+        }
+        x.crow_write(&mut held);
+    }
+    held.push(b'\n');
+    // a line at a time, unless a script's output goes to a file or a pipe
+    // (`buffer_output`): then a block at a time
+    if !BLOCKS.load(Ordering::Relaxed) || held.len() >= BLOCK {
+        let mut out = std::io::stdout().lock();
+        let _ = out.write_all(&held);
+        let _ = out.flush();
+        held.clear();
+    }
+}
+
+/// What `log` has written and not yet handed to stdout.
+static OUT: Mutex<Vec<u8>> = Mutex::new(Vec::new());
+
+/// Whether `log` writes in blocks (`buffer_output`).
+static BLOCKS: AtomicBool = AtomicBool::new(false);
+
+/// A block of output: what `log` holds before it writes.
+const BLOCK: usize = 64 * 1024;
+
+/// A script's output written in blocks when it goes to a file or a pipe,
+/// as Python writes it: a line at a time had been a write to the system
+/// for every line (revcomp's four million lines, a fifth of its time). A
+/// terminal sees each line as it is logged, and a served program's log —
+/// which does not ask for this — each line as it happens. What is held is
+/// written at the end, before a stop is reported, at `exit`, and before
+/// `input` reads (`flush_output`).
+pub fn buffer_output() {
+    use std::io::IsTerminal;
+    if !std::io::stdout().is_terminal() {
+        BLOCKS.store(true, Ordering::Relaxed);
+    }
+}
+
+/// What `log` holds, written out now.
+pub fn flush_output() {
+    use std::io::Write;
+    // (a panic inside `log` leaves its lock to this thread: none is taken
+    // twice)
+    let Ok(mut held) = OUT.try_lock() else { return };
+    if !held.is_empty() {
+        let mut out = std::io::stdout().lock();
+        let _ = out.write_all(&held);
+        let _ = out.flush();
+        held.clear();
+    }
 }
 
 /// What a failed `assert[left op right]` says: the comparison and both

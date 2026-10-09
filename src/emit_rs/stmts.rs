@@ -20,6 +20,7 @@ impl Emitter {
     pub(crate) fn emit_function(&mut self, f: &Fn) {
         let name = f.name.clone();
         let refs = self.by_ref_params.get(&name).cloned().unwrap_or_default();
+        let saved_lent = std::mem::replace(&mut self.lent_here, self.lent_params.get(&name).cloned().unwrap_or_default());
         let is_live_render = self.live_render_fns.contains(&name);
         let is_live_handle = self.live_handle_fns.contains(&name);
         let is_reactive_render = self.reactive_render_fns.contains(&name);
@@ -239,6 +240,7 @@ impl Emitter {
         self.view_mark = mark;
         self.plain_vecs = saved_vecs;
         self.text_builders = saved_builders;
+        self.lent_here = saved_lent;
         self.indexed_texts = saved_texts;
         self.indent -= 1;
         self.line("}");
@@ -489,7 +491,7 @@ impl Emitter {
     /// The program stops on a refused error, naming the line and the reason.
     fn halt_at(&self, v: &str, at: &Decision) -> String {
         format!(
-            "{{ eprintln!(\"runtime error: line {}: {} — {{}}\", {v}.reason); std::process::exit(1); }}",
+            "{{ crow_runtime::display::flush_output(); eprintln!(\"runtime error: line {}: {} — {{}}\", {v}.reason); std::process::exit(1); }}",
             self.line_now(),
             at.refusal(),
             v = v
