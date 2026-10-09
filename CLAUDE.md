@@ -170,6 +170,19 @@ steps on every push and must be green.
   names Rust reserves (`rust_names.rs`) is scoped: a body's names in that
   body, the top level's everywhere — the ClickHouse driver's local
   `where` had renamed every program's `where[…]`.
+- Performance of the compiled program is decided by what the emitter writes
+  per operation, not by the toolchain (opt-level 3 + fat LTO already): a
+  `for` over `range[n]`/`range[a, b]` is a counted loop (`emit_for`), and
+  `stops::item`/`char_at` take their common case first (`#[inline(always)]`,
+  the slow path `#[cold]`). Measure by rewriting the generated main.rs by
+  hand one change at a time ($S/fk/exp.py did) before touching the emitter.
+  The interpreter: block scopes come from a pool (`push_scope`/`pop_scope`),
+  a `for` runs its rounds in ONE scope (the variable rebound, the round's
+  bindings `retain`ed away), `xs[i]` and `xs[i] = v` of a local have fast
+  paths before the general in-place path, and `Expr::ty_ref` lends a type
+  where `ty()` would clone a boxed one. Profile with `sample <pid> 3`: the
+  "Sort by top of stack" list is what matters (the release binary has no
+  frame pointers, so call chains are blank).
 - A map's type carries its keys' kind: `Ty::Map(Key, value)` with `Key::{Text,
   Int, Open}` (open = empty until a first key). Where a map's type is REBUILT
   from another (settle, held_as, `as_inferred`, the emitter's inner types),

@@ -47,12 +47,35 @@ fn count(n: usize, one: &str, many: &str) -> String {
 
 /// `xs[i]` of an array — a list, a flat tensor, a frame's column: the
 /// position it reads.
+#[inline(always)]
 pub fn item(i: i64, len: usize) -> Result<usize, String> {
+    // the common case first — a position in range — as one compare (a
+    // negative index is a large unsigned one, so it takes the slow path);
+    // the compiled fannkuch spent a third of its time in the slow one
+    if (i as u64) < (len as u64) {
+        return Ok(i as usize);
+    }
+    item_slow(i, len)
+}
+
+#[cold]
+#[inline(never)]
+fn item_slow(i: i64, len: usize) -> Result<usize, String> {
     resolve(i, len).ok_or_else(|| format!("index {} is out of range for an array of {}", i, count(len, "item", "items")))
 }
 
 /// `s[i]` of a string, counted in characters.
+#[inline(always)]
 pub fn char_at(i: i64, len: usize) -> Result<usize, String> {
+    if (i as u64) < (len as u64) {
+        return Ok(i as usize);
+    }
+    char_at_slow(i, len)
+}
+
+#[cold]
+#[inline(never)]
+fn char_at_slow(i: i64, len: usize) -> Result<usize, String> {
     resolve(i, len).ok_or_else(|| format!("index {} is out of range for a string of {}", i, count(len, "character", "characters")))
 }
 

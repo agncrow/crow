@@ -1,0 +1,32 @@
+--- A loop over `range[n]` or `range[a, b]` counts without building the
+--- list; the bounds are read as ints, an empty range runs no round, a
+--- nested loop may reuse the name, and a range held in a variable is the
+--- list it is. Both modes print the same.
+n = 4
+total = 0
+for i in range[n]
+    total = total + i
+log[total]
+for j in range[2, n]
+    total = total + j * 10
+log[total]
+for k in range[5, 2]
+    log['never']
+xs = range[n]
+for k in xs
+    total = total + k
+log[total]
+fn tri[m]
+    s = 0
+    for a in range[m]
+        for b in range[a, m]
+            s = s + 1
+    return s
+log[tri[5]]
+log[tri[0]]
+--- the bound computed, and a float that is whole read as the int it is
+half = 6 / 2
+count = 0
+for i in range[half]
+    count = count + 1
+log[count]

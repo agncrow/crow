@@ -550,6 +550,17 @@ pub enum Expr {
 }
 
 impl Expr {
+    /// The type as stored on the node, borrowed — for the interpreter's
+    /// hot paths, where `ty()`'s clone of a boxed type was an allocation
+    /// per read; `None` for the few variants that compute theirs.
+    pub fn ty_ref(&self) -> Option<&Ty> {
+        match self {
+            Expr::Const(_, t) | Expr::Local(_, t) | Expr::Move(_, t) | Expr::Load(_, t) | Expr::Derived(_, t) | Expr::Constant(_, t) | Expr::FnRef(_, t) => Some(t),
+            Expr::Call { ty, .. } | Expr::Effect { ty, .. } | Expr::Convert { ty, .. } | Expr::Binary { ty, .. } | Expr::Unary { ty, .. } | Expr::Index { ty, .. } | Expr::Field { ty, .. } | Expr::ListLit(_, ty) | Expr::MapLit(_, ty) | Expr::ForExpr { ty, .. } => Some(ty),
+            _ => None,
+        }
+    }
+
     pub fn ty(&self) -> Ty {
         match self {
             Expr::Const(_, t)

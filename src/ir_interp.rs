@@ -91,6 +91,8 @@ pub struct IrInterp {
     structs: HashMap<String, Arc<crate::ir::StructDef>>,
     registry: ModuleRegistry,
     frames: Vec<Frame>,
+    /// Scopes blocks left behind, for the next block (see `push_scope`).
+    scope_pool: Vec<Scope>,
     line: usize,
     file: String,
     /// The value of the last expression statement, what a collecting loop yields.
@@ -450,6 +452,7 @@ impl IrInterp {
             structs: HashMap::new(),
             registry: registry.clone(),
             frames: vec![Frame { scopes: vec![Arc::new(HashMap::default())], fn_name: String::new() }],
+            scope_pool: Vec::new(),
             line: 0,
             file,
             last_value: None,
@@ -717,17 +720,34 @@ impl IrInterp {
 
     // ── scopes ──────────────────────────────────────────────────────
 
+    /// A block's scope: one from the pool where a block left one behind
+    /// (a loop's body entered a scope every round, and each round had
+    /// allocated it), else a new one.
     fn push_scope(&mut self) {
-        self.frames.last_mut().unwrap().scopes.push(Arc::new(HashMap::default()));
+        let scope = self.scope_pool.pop().unwrap_or_else(|| Arc::new(HashMap::default()));
+        self.frames.last_mut().unwrap().scopes.push(scope);
     }
 
     fn pop_scope(&mut self) {
-        self.frames.last_mut().unwrap().scopes.pop();
+        if let Some(mut scope) = self.frames.last_mut().unwrap().scopes.pop() {
+            // (a scope nothing else holds goes back to the pool, emptied
+            // but keeping its table)
+            if let Some(m) = Arc::get_mut(&mut scope) {
+                m.clear();
+                if self.scope_pool.len() < 64 {
+                    self.scope_pool.push(scope);
+                }
+            }
+        }
     }
 
     fn lookup(&self, name: &str) -> Option<&CrowValue> {
         let frame = self.frames.last().unwrap();
         for scope in frame.scopes.iter().rev() {
+            // (a block that bound nothing is skipped without hashing)
+            if scope.is_empty() {
+                continue;
+            }
             if let Some(v) = scope.get(name) {
                 return Some(v);
             }
@@ -738,6 +758,9 @@ impl IrInterp {
     fn slot(&mut self, name: &str) -> Option<&mut CrowValue> {
         let frame = self.frames.last_mut().unwrap();
         for scope in frame.scopes.iter_mut().rev() {
+            if scope.is_empty() {
+                continue;
+            }
             if scope.contains_key(name) {
                 return Arc::make_mut(scope).get_mut(name);
             }
@@ -746,7 +769,13 @@ impl IrInterp {
     }
 
     fn bind(&mut self, name: &str, v: CrowValue) {
-        Arc::make_mut(self.frames.last_mut().unwrap().scopes.last_mut().unwrap()).insert(name.to_string(), v);
+        let scope = Arc::make_mut(self.frames.last_mut().unwrap().scopes.last_mut().unwrap());
+        // (a name bound again — a loop's variable each round — keeps its key)
+        if let Some(slot) = scope.get_mut(name) {
+            *slot = v;
+        } else {
+            scope.insert(name.to_string(), v);
+        }
     }
 
     fn assign(&mut self, name: &str, v: CrowValue) {
@@ -839,6 +868,22 @@ impl IrInterp {
             }
             Stmt::SetPath { var, path, expr } => {
                 let new = self.eval(expr)?;
+                // the common case — `xs[i] = v` of a local list — set where it
+                // lies, with no list of indexes
+                if let [PathStep::Index(i)] = path.as_slice() {
+                    let at = self.eval(i)?;
+                    let root = self.slot(var).ok_or_else(|| format!("undefined variable '{}'", var))?;
+                    if root.is_error() {
+                        return Err(format!("cannot set an item of an error value — {}", root.reason()));
+                    }
+                    if let (Value::Array(items), Value::Int(n)) = (&mut root.value, &at.value) {
+                        let k = crow_runtime::stops::item(*n, items.len())?;
+                        items[k] = new;
+                        return Ok(Flow::Next);
+                    }
+                    set_path(&mut root.value, path, &[at], new)?;
+                    return Ok(Flow::Next);
+                }
                 let mut idx = Vec::new();
                 for p in path {
                     if let PathStep::Index(i) = p {
@@ -900,19 +945,34 @@ impl IrInterp {
                     self.run_parallel(&items, var, body, false)?;
                     return Ok(Flow::Next);
                 }
+                // one scope for every round: the variable rebound in place,
+                // and what a round bound dropped after it (a scope per round
+                // had allocated the map and the name each time)
+                self.push_scope();
+                let mut flow = Flow::Next;
                 for item in items {
-                    self.check_cancel()?;
-                    self.push_scope();
+                    if let Err(e) = self.check_cancel() {
+                        self.pop_scope();
+                        return Err(e);
+                    }
                     self.bind(var, item);
                     let r = self.exec_stmts(body);
-                    self.pop_scope();
-                    match r? {
-                        Flow::Break => break,
-                        Flow::Return(v) => return Ok(Flow::Return(v)),
-                        Flow::Next | Flow::Continue => {}
+                    Arc::make_mut(self.frames.last_mut().unwrap().scopes.last_mut().unwrap()).retain(|k, _| k == var);
+                    match r {
+                        Err(e) => {
+                            self.pop_scope();
+                            return Err(e);
+                        }
+                        Ok(Flow::Break) => break,
+                        Ok(Flow::Return(v)) => {
+                            flow = Flow::Return(v);
+                            break;
+                        }
+                        Ok(Flow::Next | Flow::Continue) => {}
                     }
                 }
-                Ok(Flow::Next)
+                self.pop_scope();
+                Ok(flow)
             }
             Stmt::Return(None) => Ok(Flow::Return(CrowValue::done())),
             Stmt::Return(Some(e)) => {
@@ -1185,6 +1245,30 @@ impl IrInterp {
                 crate::ops::unaryop(&o, &v)?
             }
             Expr::Index { base, indices, ty } => {
+                // the common case — `xs[i]` of a local by a local or a
+                // constant — read where it lies, with no walk over the index,
+                // no list for it and one lookup (the interpreted fannkuch
+                // spent its time here)
+                if let [index] = indices.as_slice()
+                    && let Expr::Local(v, _) = unwrapped(base)
+                    && matches!(index, Expr::Local(..) | Expr::Const(..))
+                {
+                    let at = self.eval(index)?;
+                    if let Some(b) = self.lookup(v)
+                        && b.is_ok()
+                    {
+                        let column = matches!(base.ty_ref(), Some(Ty::Column(_)));
+                        if let (Value::Array(items), Value::Int(n)) = (&b.value, &at.value) {
+                            let k = crow_runtime::stops::item(*n, items.len())?;
+                            let cell = items[k].clone();
+                            return Ok(if column { placeholder(cell, ty) } else { cell });
+                        }
+                        if matches!(b.value, Value::NumArray(_) | Value::Map(_) | Value::IntMap(_) | Value::Str(_) | Value::Frame(_)) {
+                            let cell = Self::index_value(b, vec![at], ty)?;
+                            return Ok(if column { placeholder(cell, ty) } else { cell });
+                        }
+                    }
+                }
                 // a local list, map, text or frame is indexed where it lies:
                 // reading it copied it first, and a loop over a growing list
                 // was quadratic (its indices cannot touch it, so they go first)
@@ -1204,7 +1288,7 @@ impl IrInterp {
                         }
                         let b = self.lookup(v).ok_or_else(|| format!("undefined variable '{}'", v))?;
                         let cell = Self::index_value(b, idx, ty)?;
-                        return Ok(if matches!(base.ty(), Ty::Column(_)) { placeholder(cell, ty) } else { cell });
+                        return Ok(if matches!(base.ty_ref(), Some(Ty::Column(_))) { placeholder(cell, ty) } else { cell });
                     }
                 }
                 // a local's field indexed where it lies too — a frame's column
@@ -1228,7 +1312,7 @@ impl IrInterp {
                             Value::Map(m) => Self::index_value(&m[name], vec![at], ty)?,
                             _ => unreachable!(),
                         };
-                        return Ok(if matches!(base.ty(), Ty::Column(_)) { placeholder(cell, ty) } else { cell });
+                        return Ok(if matches!(base.ty_ref(), Some(Ty::Column(_))) { placeholder(cell, ty) } else { cell });
                     }
                 }
                 let b = self.eval(base)?;

@@ -84,6 +84,17 @@ fn a_collecting_loop_that_can_return_gathers_in_a_loop() {
 /// push[] (set[]'s key is read, and kept by the runtime), so the variable
 /// stays usable and a loop's borrowed variable becomes a value; the
 /// collection the statement assigns is moved into the call, not copied
+/// `for i in range[n]` is a counted loop, no list built; `range[a, b]`
+/// too; a range held in a variable is walked as the list it is.
+#[test]
+fn a_loop_over_a_range_is_counted() {
+    let rust = transpile("n = 4\ntotal = 0\nfor i in range[n]\n    total = total + i\nfor j in range[2, n]\n    total = total + j\nxs = range[n]\nfor k in xs\n    total = total + k\nlog[total]\n");
+    assert!(rust.contains("for i in 0_i64..(n) as i64 {"), "{}", rust);
+    assert!(rust.contains("for j in (2_i64) as i64..(n) as i64 {"), "{}", rust);
+    assert!(rust.contains("for &k in xs.iter()"), "{}", rust);
+    assert!(!rust.contains("range_to((n) as i64).unwrap_or_else(|e| crow_stop(3"), "the loop builds no list: {}", rust);
+}
+
 #[test]
 fn a_collection_keeps_a_clone_of_a_variable() {
     let rust = transpile("out = []\nfor w in ['a', 'b']\n    out = push[out, w]\nm = map[]\nfor k in ['p', 'q']\n    m = set[m, k, 1]\nlog[out]\nlog[m]\n");

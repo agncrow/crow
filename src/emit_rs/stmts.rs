@@ -1007,6 +1007,42 @@ impl Emitter {
     }
 
     fn emit_for(&mut self, var: &str, iter: &Expr, body: &[Stmt], parallel: bool) {
+        // `for i in range[n]` and `range[a, b]`: a counted loop, no list
+        // built — the compiled fannkuch spent two thirds of its time building
+        // one per permutation (a stepped range keeps its list)
+        if let Expr::Call { target: crate::ir::Target::Row(row), args, ty, .. } = iter
+            && matches!(row.id, "core.range_to" | "core.range_from")
+            && !ty.is_result()
+        {
+            let (lo, hi) = match args.as_slice() {
+                [n] => ("0_i64".to_string(), format!("({}) as i64", self.expr(n))),
+                [a, b] => (format!("({}) as i64", self.expr(a)), format!("({}) as i64", self.expr(b))),
+                _ => unreachable!("a range row takes one or two bounds"),
+            };
+            let forced_sequential = self.cpu_count.map_or(false, |n| n <= 1);
+            let use_par = !forced_sequential && parallel && !self.emitting_traced;
+            self.push_scope();
+            if use_par {
+                self.needs_rayon = true;
+                self.line(&format!("({}..{}).into_par_iter().for_each(|{}| {{", lo, hi, var));
+                self.indent += 1;
+                self.declare(var, Ty::Int);
+                self.closure_depth += 1;
+                self.emit_block(body);
+                self.closure_depth -= 1;
+                self.indent -= 1;
+                self.line("});");
+            } else {
+                self.line(&format!("for {} in {}..{} {{", var, lo, hi));
+                self.indent += 1;
+                self.declare(var, Ty::Int);
+                self.emit_block(body);
+                self.indent -= 1;
+                self.line("}");
+            }
+            self.pop_scope();
+            return;
+        }
         let iter_str = self.expr(iter);
         let iter_ty = self.tt(iter);
         let (actual, elem) = self.loop_items(iter_str, &iter_ty, iter);
