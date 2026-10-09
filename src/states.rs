@@ -192,10 +192,13 @@ fn idents(t: &str) -> BTreeSet<String> {
 }
 
 /// A guard's text as the machine reads it: `ne` as the language writes it,
-/// and the page's reader signed in (the lowered `has[__reader[], 'name']`)
-/// as the pseudo-fact `reader`, which `sign_in` and `sign_out` write.
+/// and the page's reader signed in (`'name' in reader`, lowered to
+/// `contains[__reader[], 'name']`; `has[…]` before `in` was the language's
+/// way) as the pseudo-fact `reader`, which `sign_in` and `sign_out` write.
+/// (Read as `has` only, the reader had dropped out of every page's states
+/// when `in` came, and a signed-in button showed as always offered.)
 fn normalize(t: &str) -> String {
-    t.replace(" neq ", " ne ").replace("has[__reader[], 'name']", "(reader eq 'someone')")
+    t.replace(" neq ", " ne ").replace("contains[__reader[], 'name']", "(reader eq 'someone')").replace("has[__reader[], 'name']", "(reader eq 'someone')")
 }
 
 /// A handler's parameters, `$1 … $n`, replaced by the arguments a control
@@ -895,8 +898,8 @@ mod tests {
         views.insert(
             "door".to_string(),
             vec![
-                (vec!["has[__reader[], 'name']".to_string()], "button[click → log_out] 'Sign out'".to_string()),
-                (vec!["(not has[__reader[], 'name'])".to_string()], "button[click → log_in] 'Sign in'".to_string()),
+                (vec!["contains[__reader[], 'name']".to_string()], "button[click → log_out] 'Sign out'".to_string()),
+                (vec!["(not contains[__reader[], 'name'])".to_string()], "button[click → log_in] 'Sign in'".to_string()),
             ],
         );
         let p = Program { initial: &initial, handlers: &handlers, views: &views };

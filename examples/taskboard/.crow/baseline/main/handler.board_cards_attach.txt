@@ -1,8 +1,8 @@
 handler board_cards_attach (board/cards.co)
   wired: board_cards_card_view button 'Attach'
-  when (not has[board_cards_upload, 'path']):
+  when (not contains[board_cards_upload, 'path']):
     effect notice 'pick a file first'
-  when has[board_cards_upload, 'path']:
+  when contains[board_cards_upload, 'path']:
     reads v1 = query[board_cards_book, 'INSERT INTO attachments (card, name, path) VALUES (?, ?, ?) RETURNING id', [board_cards_card_id, board_cards_upload.name, '']]
     board_cards_upload := map[]
     effect exec board_cards_book 'UPDATE attachments SET path = ? WHERE id = ?' ['files/attachment-`v1.id[0]`', v1.id[0]]

@@ -821,7 +821,7 @@ fn test_negative_index_transpile() {
 #[test]
 fn test_negative_index_assign_transpile() {
     let rust = transpile("nums = [10, 20, 30]\nnums[-1] = 99\n");
-    assert!(rust.contains("crow_runtime::stops::item(_i, _tmp.len()).unwrap_or_else(|e| crow_stop(2, e))"), "should resolve the assigned index through the runtime\n{}", rust);
+    assert!(rust.contains("crow_runtime::core::set_flat_at(&mut nums, _i, _v).unwrap_or_else(|e| crow_stop(2, e))"), "should resolve the assigned index through the runtime, where the tensor lies\n{}", rust);
 }
 
 #[test]

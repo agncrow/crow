@@ -1,11 +1,11 @@
 view board_page_render (board/page.co)
   composed on: page /
   reads: board_audit_entries, board_cards_boards, board_cards_card, board_cards_card_id, board_cards_cards, board_cards_comment, board_cards_files, board_cards_new_board, board_cards_new_card, board_cards_talk, board_cards_upload, board_door_name, board_door_password, reader
-  when (not has[__reader[], 'name']):
+  when (not contains[__reader[], 'name']):
     stack[gap = 'l', pad = 'l']
       h1[] 'Task board'
       @board_door_door[]
-  when has[__reader[], 'name']:
+  when contains[__reader[], 'name']:
     stack[gap = 'l', pad = 'l']
       h1[] 'Task board'
       stack[gap = 'l']
