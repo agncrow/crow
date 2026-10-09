@@ -24,17 +24,30 @@ pub(super) fn is_vector(t: &Ty) -> bool {
 }
 
 /// The locals of a function kept as plain vectors: parameters and bindings
-/// of a vector type whose every use is a read or a write of one number by
-/// index, its length, or — outside every loop — a use as a value.
+/// of a vector type the body writes — a number set by index, a number
+/// pushed (`x = push[x, n]`) — whose every use is a read or a write of one
+/// number by index, a push, its length, or — outside every loop — a use as
+/// a value. (One the body only reads stays the tensor it is: making the
+/// vector had copied it at every call, and pidigits' comparisons read one
+/// or two limbs of numbers thousands long.)
 pub(super) fn plain_vectors(f: &Fn) -> BTreeSet<String> {
     let mut ok: HashMap<String, bool> = HashMap::new();
     for (p, t) in &f.params {
         ok.insert(p.clone(), is_vector(t));
     }
     bindings(&f.body, &mut ok);
-    let mut w = Walk { ok };
+    let mut w = Walk { ok, written: BTreeSet::new() };
     w.block(&f.body, 0);
-    w.ok.into_iter().filter(|(_, keep)| *keep).map(|(n, _)| n).collect()
+    let written = w.written;
+    w.ok.into_iter().filter(|(n, keep)| *keep && written.contains(n)).map(|(n, _)| n).collect()
+}
+
+/// `push[x, n]` of the local `x` onto its numbers: the number.
+pub(super) fn pushed<'e>(x: &str, e: &'e Expr) -> Option<&'e Expr> {
+    match unwrapped(e) {
+        Expr::Call { target: Target::Row(row), args, .. } if row.id == "core.push_number" && args.len() == 2 && matches!(unwrapped(&args[0]), Expr::Local(v, _) | Expr::Move(v, _) if v == x) => Some(&args[1]),
+        _ => None,
+    }
 }
 
 /// Every name a body binds, kept only while each of its bindings is of a
@@ -61,6 +74,8 @@ fn bindings(b: &[Stmt], ok: &mut HashMap<String, bool>) {
 
 struct Walk {
     ok: HashMap<String, bool>,
+    /// The locals the body writes: by index, or by a push.
+    written: BTreeSet<String>,
 }
 
 impl Walk {
@@ -85,11 +100,19 @@ impl Walk {
 
     fn stmt(&mut self, s: &Stmt, depth: usize) {
         match s {
+            // a number pushed onto the local: a push onto the vector
+            Stmt::Set { var, expr } if self.kept(var) && pushed(var, expr).is_some() => {
+                self.written.insert(var.clone());
+                if let Some(n) = pushed(var, expr) {
+                    self.expr(n, depth);
+                }
+            }
             Stmt::Let { expr, .. } | Stmt::Set { expr, .. } | Stmt::Store { expr, .. } | Stmt::Do(expr) => self.expr(expr, depth),
             Stmt::SetPath { var, path, expr } => {
                 if self.kept(var) && !matches!(path.as_slice(), [PathStep::Index(_)]) {
                     self.ok.insert(var.clone(), false);
                 }
+                self.written.insert(var.clone());
                 for p in path {
                     if let PathStep::Index(i) = p {
                         self.expr(i, depth);

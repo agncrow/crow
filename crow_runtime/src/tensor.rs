@@ -1365,6 +1365,26 @@ impl CrowTensor {
         Ok(Self::from_vec(data, vec![n]))
     }
 
+    /// `push[t, x]` given the tensor: the number appended where the tensor
+    /// lies when nothing else holds its storage and the storage is this
+    /// vector's alone, a new tensor otherwise (`push_scalar`). A loop
+    /// building a vector by pushes had copied it at every push — pidigits'
+    /// limbs, quadratic in their count.
+    pub fn push_scalar_in_place(&mut self, v: f64) -> Result<(), String> {
+        if self.shape.len() == 1 && self.strides.first() == Some(&1) && self.offset == 0 {
+            let n = self.shape[0];
+            if let Some(TensorStorage::Cpu(d)) = Arc::get_mut(&mut self.data)
+                && d.len() == n
+            {
+                d.push(v);
+                self.shape[0] = n + 1;
+                return Ok(());
+            }
+        }
+        *self = self.push_scalar(v)?;
+        Ok(())
+    }
+
     /// push[m, row] on a rank-N tensor: append one element along axis 0.
     /// The row's shape must equal the tensor's inner shape.
     pub fn push_row(&self, row: &CrowTensor) -> Result<CrowTensor, String> {
@@ -1616,6 +1636,24 @@ pub fn numbers_equal<A: Numbers, B: Numbers>(a: &A, b: &B) -> bool {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    /// A number pushed onto a vector nothing else holds grows it where it
+    /// lies; one another value shares is copied first, so that value never
+    /// sees the push; a matrix is refused as `push_scalar` refuses it.
+    #[test]
+    fn a_number_pushed_onto_a_vector_nothing_else_holds_grows_it_where_it_lies() {
+        let mut t = CrowTensor::from_vec(vec![1.0, 2.0], vec![2]);
+        let before = Arc::as_ptr(&t.data);
+        t.push_scalar_in_place(3.0).expect("a vector");
+        assert_eq!(t.to_vec(), vec![1.0, 2.0, 3.0]);
+        assert!(std::ptr::eq(before, Arc::as_ptr(&t.data)), "grown where it lies");
+        let shared = t.clone();
+        t.push_scalar_in_place(4.0).expect("a vector");
+        assert_eq!(shared.to_vec(), vec![1.0, 2.0, 3.0]);
+        assert_eq!(t.to_vec(), vec![1.0, 2.0, 3.0, 4.0]);
+        let mut m = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        assert!(m.push_scalar_in_place(5.0).is_err());
+    }
+
 
     /// An index outside, and tensors that do not join, are the reason —
     /// the kernels asserted them, a panic in both modes.

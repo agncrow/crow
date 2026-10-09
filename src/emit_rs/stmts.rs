@@ -720,6 +720,12 @@ impl Emitter {
             return;
         }
         if self.plain_vecs.contains(var) {
+            // a number pushed: onto the vector (vectors.rs)
+            if let Some(n) = vectors::pushed(var, expr) {
+                let val = self.expr(n);
+                self.line(&format!("{{ let _v = ({}) as f64; {}.push(_v); }}", val, var));
+                return;
+            }
             let text = self.owned_expr(expr);
             self.line(&format!("{} = ({}).to_vec();", var, text));
             return;

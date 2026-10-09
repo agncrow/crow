@@ -1396,7 +1396,8 @@ pub static ROWS: &[Row] = &[
     row!("core.slice_tensor", "", "slice", crow_runtime::core::slice_tensor, (Tensor, Int, Int) -> Tensor, never),
     row!("core.push", "", "push", crow_runtime::core::push, (List, Item) -> List, never),
     row!("core.push_row", "", "push", crow_runtime::core::push_row, (Tensor, Tensor) -> Tensor, stops),
-    row!("core.push_number", "", "push", crow_runtime::core::push_number, (Tensor, Float) -> Tensor, stops),
+    // (given the tensor — `x = push[move x, n]` — it grows where it lies)
+    Row { take: tensors::push_number_taken, ..row!("core.push_number", "", "push", crow_runtime::core::push_number, (Tensor, Float) -> Tensor, stops) },
     row!("core.pop", "", "pop", crow_runtime::core::pop, (List) -> List, never),
     row!("core.pop_tensor", "", "pop", crow_runtime::core::pop_tensor, (Tensor) -> Tensor, never),
     // numbers ascending with NaN last, text by its characters; a list of
@@ -2750,6 +2751,29 @@ mod tests {
 
 /// The map rows' bridges: a map is keyed by text or by ints (`Value::Map`,
 /// `Value::IntMap`), an open map — empty — takes its first key's kind.
+/// A tensor row's own bridge, given its arguments to keep.
+pub mod tensors {
+    use super::*;
+
+    /// `push[t, x]` given the tensor: the number appended where the tensor
+    /// lies when nothing else holds it (crow_runtime::core::push_number_taken);
+    /// anything else, the row's own call, with its conversions and refusals.
+    pub fn push_number_taken(mut args: Vec<CrowValue>, trace: &str) -> Result<CrowValue, String> {
+        if let [t, x] = args.as_mut_slice()
+            && t.is_ok()
+            && x.is_ok()
+            && let (Value::NumArray(tensor), Some(n)) = (&mut t.value, x.plain_float().or_else(|| x.plain_int().map(|i| i as f64)))
+        {
+            tensor.push_scalar_in_place(n)?;
+            return Ok(std::mem::replace(t, CrowValue::done()));
+        }
+        match ROWS.iter().find(|r| r.id == "core.push_number") {
+            Some(row) => (row.call)(&args, trace),
+            None => Err("a bug in Crow: the row core.push_number is gone".to_string()),
+        }
+    }
+}
+
 pub mod maps {
     use super::*;
     use std::collections::BTreeMap;

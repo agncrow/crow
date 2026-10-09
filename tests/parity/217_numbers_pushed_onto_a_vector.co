@@ -1,0 +1,89 @@
+--- Numbers pushed onto a vector one at a time grow it where it lies, in
+--- both modes, and a function returning a literal list of ints beside one
+--- it builds answers ints: big numbers written as limbs (pidigits) had
+--- copied every limb list at every push — quadratic in its length — and
+--- `return [0]` beside `out = push[out, x]` had been refused as a list of
+--- floats ("the lowered program disagrees with itself"). A vector is still
+--- a value: one pushed onto is not the one it was copied from. The last
+--- case stops the program.
+
+--- a literal list of ints returned beside a list the body builds
+fn digits_of[n]
+    if n eq 0
+        return [0]
+    out = []
+    m = n
+    while m gt 0
+        out = push[out, m % 10]
+        m = m / 10
+    return out
+log[digits_of[0]]
+log[digits_of[9071]]
+
+--- big numbers as base-10^9 limbs, least significant first
+fn big_mul[a, s]
+    if s eq 0
+        return [0]
+    n = len[a]
+    out = slice[[0], 0, 0]
+    carry = 0
+    i = 0
+    while i lt n
+        v = a[i] * s + carry
+        out = push[out, v % 1000000000]
+        carry = v / 1000000000
+        i = i + 1
+    while carry gt 0
+        out = push[out, carry % 1000000000]
+        carry = carry / 1000000000
+    return out
+fn big_add[a, b]
+    n = max[len[a], len[b]]
+    out = slice[[0], 0, 0]
+    carry = 0
+    i = 0
+    while i lt n
+        v = carry
+        if i lt len[a]
+            v = v + a[i]
+        if i lt len[b]
+            v = v + b[i]
+        out = push[out, v % 1000000000]
+        carry = v / 1000000000
+        i = i + 1
+    if carry gt 0
+        out = push[out, carry]
+    return out
+fn shown[a]
+    s = str[a[len[a] - 1]]
+    i = len[a] - 2
+    while i gte 0
+        limb = fmt[a[i], width = 9, fill = '0']
+        s = '`s``limb`'
+        i = i - 1
+    return s
+--- 2^200 and 3^100 + 2^200, by doubling and tripling
+p = [1]
+for i in range[200]
+    p = big_mul[p, 2]
+log[shown[p]]
+t = [1]
+for i in range[100]
+    t = big_mul[t, 3]
+log[shown[big_add[p, t]]]
+
+--- a vector is a value: pushing onto a copy leaves the original
+a = slice[[1, 2, 3], 0, 3]
+b = a
+b = push[b, 4]
+log[a]
+log[b]
+fn grown[v]
+    v = push[v, 9]
+    return len[v]
+log[grown[a]]
+log[a]
+
+--- a position past the end of a grown vector stops the program
+log[b[10]]
+log['not reached']

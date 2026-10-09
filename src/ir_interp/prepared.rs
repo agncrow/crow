@@ -736,7 +736,12 @@ impl Comp {
                     }
                     return;
                 }
-                if moves_first(var, expr) {
+                // (a call the IR names a row or a function for takes the
+                // variable as an ordinary call does — the walker had run
+                // the statement, `out = push[move out, n]` once per limb;
+                // any other target is the walker's in-place path's)
+                let named = matches!(expr, Expr::Call { target: Target::Row(row), .. } if !row.is_crow()) || matches!(expr, Expr::Call { target: Target::User(_), .. });
+                if moves_first(var, expr) && !named {
                     return self.exec(s);
                 }
                 match self.resolve(var) {

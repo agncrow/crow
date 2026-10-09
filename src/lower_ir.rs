@@ -2051,18 +2051,27 @@ impl<'a> Lowerer<'a> {
                         Ty::Result(inner) => matches!(inner.as_ref(), Ty::Tensor(..)),
                         t => matches!(t, Ty::Tensor(..)),
                     });
-                let list = self.pass == Pass::Final
-                    && self.ctx.functions.get(&self.current_fn).is_some_and(|sig| match &sig.return_type {
-                        Ty::Result(inner) => matches!(inner.as_ref(), Ty::List(i) if matches!(i.as_ref(), Ty::Int | Ty::Float)),
-                        t => matches!(t, Ty::List(i) if matches!(i.as_ref(), Ty::Int | Ty::Float)),
-                    });
+                // (the list's items, ints or floats, as the function answers
+                // them)
+                let list_item = if self.pass == Pass::Final {
+                    self.ctx.functions.get(&self.current_fn).and_then(|sig| match sig.return_type.payload() {
+                        Ty::List(i) if matches!(i.as_ref(), Ty::Int | Ty::Float) => Some(i.as_ref().clone()),
+                        _ => None,
+                    })
+                } else {
+                    None
+                };
+                let list = list_item.is_some();
                 let mut x = if tensor && !x.ty().is_result() && matches!(x.ty(), Ty::List(item) if matches!(item.payload(), Ty::Int | Ty::Float)) {
                     let ty = Ty::Tensor(Box::new(Ty::Float), shapes::stacked_dims(&x.ty()));
                     Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty }
                 } else if list && !x.ty().is_result() && matches!(x.ty(), Ty::Tensor(..)) {
                     // (and the other way: a literal list of numbers, a tensor,
-                    // returned where the function answers a list)
-                    let ty = Ty::List(Box::new(Ty::Float));
+                    // returned where the function answers a list — of ints
+                    // where its items are ints: `return [0]` beside
+                    // `out = push[out, x]` had been refused as a list of
+                    // floats, "the lowered program disagrees with itself")
+                    let ty = Ty::List(Box::new(list_item.clone().unwrap_or(Ty::Float)));
                     Expr::Convert { how: Convert::ToList, expr: Box::new(x), ty }
                 } else {
                     x

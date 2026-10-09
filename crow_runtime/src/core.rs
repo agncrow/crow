@@ -360,6 +360,13 @@ pub fn push_number(t: &crate::tensor::CrowTensor, x: f64) -> Result<crate::tenso
     t.push_scalar(x)
 }
 
+/// `push[t, x]` given the tensor (`x = push[x, n]`): appended where it
+/// lies when nothing else holds it (`CrowTensor::push_scalar_in_place`).
+pub fn push_number_taken(mut t: crate::tensor::CrowTensor, x: f64) -> Result<crate::tensor::CrowTensor, String> {
+    t.push_scalar_in_place(x)?;
+    Ok(t)
+}
+
 /// `push[matrix, row]`: a row onto a matrix.
 pub fn push_row(t: &crate::tensor::CrowTensor, row: &crate::tensor::CrowTensor) -> Result<crate::tensor::CrowTensor, String> {
     t.push_row(row)

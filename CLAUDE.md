@@ -397,3 +397,8 @@ steps on every push and must be green.
   (`display::buffer_output`): a new way for a program to end or to wait
   on its reader (an exit, a stop, a prompt) calls `display::flush_output`
   first, or what was logged is lost or comes late.
+- A row can grow what it is given (`Row { take: …, ..row!(…) }`: the
+  tensor `push`'s bridge pushes in place when nothing else holds the
+  storage). The interpreter hands a row its arguments by value only on
+  its `take` path (a moved argument): a new in-place row needs that bridge,
+  or it copies at every call.
