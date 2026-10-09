@@ -1,0 +1,3 @@
+c15_plus_equals.co:3:3: Crow has no augmented assignment ('+=') — write it out: x = x + 1. (The compiler still optimizes this to an in-place update.)
+  3 │ x += 1
+    │   ^^

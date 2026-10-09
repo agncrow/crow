@@ -1,0 +1,3 @@
+h04_len_as_a_method.co:3:5: xs.len[] is len[xs]: a function takes its value first
+  3 │ log[xs.len[]]
+    │     ^^^^^^

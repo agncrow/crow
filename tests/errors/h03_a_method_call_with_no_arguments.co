@@ -1,0 +1,4 @@
+--- df.max[] for max[df.n]
+use frame, math
+df = frame.new[n = [1.0, 2.0]]
+log[df.max[]]

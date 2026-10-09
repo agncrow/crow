@@ -1,0 +1,3 @@
+c21_double_quotes.co:3:5: Crow strings use single quotes: 'text', not "text". Nested quotes escape as \'.
+  3 │ x = "hi"
+    │     ^

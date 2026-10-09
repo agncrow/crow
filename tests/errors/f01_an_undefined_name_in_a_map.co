@@ -1,0 +1,3 @@
+--- map[a = zz]
+m = map[a = zz]
+log[m]

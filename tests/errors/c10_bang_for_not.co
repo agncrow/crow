@@ -1,0 +1,5 @@
+--- ! for not
+--- known: names
+a = true
+if !a
+    log['x']

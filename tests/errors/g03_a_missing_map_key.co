@@ -1,0 +1,3 @@
+--- m['b'] of map[a = 1]
+m = map[a = 1]
+log[m['b']]

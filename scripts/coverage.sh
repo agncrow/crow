@@ -38,7 +38,7 @@ if [ $quick = 0 ]; then
   # the instrumented binary, run as the gate runs it; the programs it
   # compiles link an instrumented runtime, so both modes count
   run() { cargo llvm-cov run --release --no-report --bin crow -- "$@" 2>&1 | tail -1; }
-  for suite in --docs --parity --packages --served; do run test $suite; done
+  for suite in --docs --errors --parity --packages --served; do run test $suite; done
   CROW_BOOK_JOBS=2 run test --book
   run test --fuzz 20
   for f in tests/layout/conformance.co examples/layout_dashboard.co src/modules/*.co; do run test $f; done

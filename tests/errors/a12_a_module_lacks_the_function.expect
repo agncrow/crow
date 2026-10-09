@@ -1,0 +1,3 @@
+a12_a_module_lacks_the_function.co:4:11: frame has no 'nosuch'
+  4 │ log[frame.nosuch[df]]
+    │           ^^^^^^

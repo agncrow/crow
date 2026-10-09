@@ -1,0 +1,3 @@
+--- sum of a list of text, math not imported
+xs = ['a', 'b']
+log[sum[xs]]

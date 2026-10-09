@@ -12,10 +12,7 @@ use lsp_types::{
 
 use super::analysis::Analysis;
 
-const KEYWORDS: &[&str] = &[
-    "fn", "view", "struct", "if", "else", "for", "while", "return", "use", "in", "and", "or",
-    "not", "true", "false",
-];
+use crate::lexer::KEYWORDS;
 
 pub fn completions(a: &Analysis) -> Vec<CompletionItem> {
     let mut items: Vec<CompletionItem> = Vec::new();

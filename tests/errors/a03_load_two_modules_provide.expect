@@ -1,0 +1,3 @@
+a03_load_two_modules_provide.co:2:6: load[] is frame's (a frame) or math's (numbers): add `use frame` or `use math`
+  2 │ df = load['a.csv']
+    │      ^^^^

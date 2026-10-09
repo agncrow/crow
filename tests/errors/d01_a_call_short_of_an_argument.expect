@@ -1,0 +1,3 @@
+d01_a_call_short_of_an_argument.co:5:5: missing argument 'b' in call to 'f'
+  5 │ log[f[1]]
+    │     ^

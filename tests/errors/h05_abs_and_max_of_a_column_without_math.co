@@ -1,0 +1,4 @@
+--- abs and max of a column without `use math`
+use frame
+df = frame.new[a = [1.0, -2.0], b = [0.5, 0.5]]
+log[max[abs[df.a - df.b]]]

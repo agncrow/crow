@@ -720,6 +720,11 @@ impl ModuleRegistry {
         self.providers(name).into_iter().map(|i| self.modules[i].name()).collect()
     }
 
+    /// The functions a loaded module provides, by its name (`math.stats`).
+    pub fn functions_of(&self, module: &str) -> Vec<&str> {
+        self.modules.iter().filter(|m| m.name() == module).flat_map(|m| m.functions().iter().copied()).collect()
+    }
+
     /// Which loaded module provides this function (for reservation messages).
     /// Returns the first provider when several do.
     pub fn module_name_of(&self, name: &str) -> Option<&str> {

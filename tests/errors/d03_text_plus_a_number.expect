@@ -1,0 +1,3 @@
+d03_text_plus_a_number.co:2:9: cannot use '+' with strings — interpolate to combine ('`a` `b`'), or collect parts and join[parts, sep] to build
+  2 │ x = 'a' + 1
+    │         ^

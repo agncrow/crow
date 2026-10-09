@@ -1,0 +1,4 @@
+--- if x gt 1: — no colon
+x = 2
+if x gt 1:
+    log['big']

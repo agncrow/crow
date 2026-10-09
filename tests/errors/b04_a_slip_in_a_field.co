@@ -1,0 +1,4 @@
+--- b.nme for b.name
+struct Bird [name, speed]
+b = Bird['crow', 50]
+log[b.nme]

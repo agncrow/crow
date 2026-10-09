@@ -1,0 +1,3 @@
+--- lenn for len
+xs = ['a', 'b']
+log[lenn[xs]]

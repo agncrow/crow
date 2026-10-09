@@ -1,0 +1,1 @@
+c12_none_value.co: Crow has no null value — a missing or failed value is an error-value (checked with '.ok'), and there is no 'none' (see Design Note: No none).

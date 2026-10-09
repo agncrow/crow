@@ -1,0 +1,3 @@
+a08_use_of_a_module_there_is_none_of.co:2:5: no module 'maths' — did you mean 'math'?
+  2 │ use maths
+    │     ^^^^^

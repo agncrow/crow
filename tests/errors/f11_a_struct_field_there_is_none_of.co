@@ -1,0 +1,5 @@
+--- P[x = 1, z = 2] for P[x, y]
+--- known: editor
+struct P [x, y]
+p = P[x = 1, z = 2]
+log[p]

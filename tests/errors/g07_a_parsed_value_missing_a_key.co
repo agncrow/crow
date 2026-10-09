@@ -1,0 +1,4 @@
+--- j.b of {"a": 1}
+--- runs: the failure is a value the program shows
+j = json['{"a": 1}']
+log[j.b + 1]

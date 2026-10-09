@@ -1,0 +1,5 @@
+--- for x in xs with upper[zz]
+xs = ['a', 'b']
+ys = for x in xs
+    upper[zz]
+log[ys]

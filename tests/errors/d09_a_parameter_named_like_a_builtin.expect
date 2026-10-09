@@ -1,0 +1,3 @@
+d09_a_parameter_named_like_a_builtin.co:2:6: 'values' is a core builtin — pick another name for this parameter
+  2 │ fn f[values]
+    │      ^^^^^^

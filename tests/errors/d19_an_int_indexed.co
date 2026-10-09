@@ -1,0 +1,4 @@
+--- x[2] of an int
+x = 1
+y = x[2]
+log[y]

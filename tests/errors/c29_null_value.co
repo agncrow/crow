@@ -1,0 +1,4 @@
+--- null: Crow has no null
+--- known: place, editor
+x = null
+log[x]

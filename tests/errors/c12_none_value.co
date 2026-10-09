@@ -1,0 +1,4 @@
+--- None: Crow has no null
+--- known: place, editor
+a = None
+log[a]

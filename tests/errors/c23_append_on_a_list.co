@@ -1,0 +1,4 @@
+--- xs.append(…) for xs = push[xs, …]
+xs = ['a']
+xs.append('b')
+log[xs]

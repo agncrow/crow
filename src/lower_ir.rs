@@ -22,7 +22,7 @@ mod frames;
 pub(crate) mod schema;
 mod shapes;
 pub(crate) mod uses;
-pub(crate) use checks::{BUILTINS, CORE_RESERVED, UI_RESERVED, WEB_EXTRA_FUNCTIONS, WEB_RESERVED};
+pub(crate) use checks::{is_standard_module, BUILTINS, CORE_RESERVED, UI_RESERVED, WEB_EXTRA_FUNCTIONS, WEB_RESERVED};
 
 /// Lower a whole (expanded, lowered, inferred) program.
 pub fn lower(stmts: &[S], ctx: &mut TypeContext, part_name: &str) -> Result<Program, String> {
@@ -2865,7 +2865,7 @@ impl<'a> Lowerer<'a> {
                         } else {
                             base
                         };
-                        if !member {
+                        if !member && !self.contested(&base) {
                             self.check_field(&read(&base), field);
                         }
                         let ty = self.ctx.field_type(object, read(&base), field);
@@ -3116,6 +3116,26 @@ impl<'a> Lowerer<'a> {
             if self.pass == Pass::Final && matches!(base.ty().payload(), Ty::Frame(_)) {
                 let name = local_named(&base).unwrap_or_else(|| "frame".to_string());
                 self.refuse(format!("a frame is not indexed: read a column as `{0}.name`, its cell as `{0}.name[i]`, and columns with select[{0}, ['name']]", name));
+            }
+            // a number or a bool has no items (`x[0]` of an int had stopped
+            // the interpreter as it ran — `not indexable` — and the compiled
+            // program had not built); a builtin's name read as a method,
+            // `xs.len[]`, is the call it means, the value first
+            if self.pass == Pass::Final && matches!(base.ty().payload(), Ty::Int | Ty::Float | Ty::Bool) && !self.contested(&base) {
+                let words = crate::table::Arg::of_type(base.ty().payload()).words();
+                match callee {
+                    A::FieldAccess { object, field } if checks::BUILTINS.contains(&field.as_str()) => {
+                        let of = match object.as_ref() {
+                            A::Ident(n) => n.clone(),
+                            _ => "…".to_string(),
+                        };
+                        self.refuse(format!("{0}.{1}[] is {1}[{0}]: a function takes its value first", of, field));
+                    }
+                    _ => {
+                        let name = local_named(&base).map(|n| format!("'{}'", n)).unwrap_or_else(|| "this".to_string());
+                        self.refuse(format!("{} is {}, which has no items — `[…]` reads an item of a list, a map, text or a column", name, words));
+                    }
+                }
             }
             let mut idx = Vec::new();
             for a in args {
@@ -4347,6 +4367,14 @@ pub(crate) fn words_before_placeholders(sql: &str) -> Vec<String> {
 /// where it is assigned).
 /// The variable an expression reads, through the conversions a read is
 /// wrapped in (a value that can fail is decided before it is indexed).
+impl Lowerer<'_> {
+    /// A value read from a variable given two kinds, whose reassignment was
+    /// refused: its kind here is neither's to judge.
+    fn contested(&self, e: &Expr) -> bool {
+        local_named(e).is_some_and(|n| self.v.contested.contains(&n))
+    }
+}
+
 fn local_named(e: &Expr) -> Option<String> {
     match e {
         Expr::Local(v, _) | Expr::Move(v, _) | Expr::Load(v, _) => Some(v.clone()),
@@ -5132,7 +5160,8 @@ mod tests {
         refused("a = float['1.5']\nxs = [a, a]\nlog[xs eq 1.5]\n", "eq of a list of values that can fail is a mask, and a mask decides every row: guard each value with .ok");
         refused("log[contains[['a'], 1]]\n", "contains[] takes a list and an item of its kind: its items are text, not a number");
         refused("xs = push[['a'], 1]\nlog[xs]\n", "push[] takes a list and an item of its kind: its items are text, not a number");
-        refused("m = set[map[a = 'x'], 'b', 1]\nlog[m]\n", "set[] takes a map, a key and a value of its kind: its values are text, not a number");
+        // (one mistake, one message: the map's own check, not the holder's too)
+        refused("m = set[map[a = 'x'], 'b', 1]\nlog[m]\n", "a map holds one kind: 'b' is an int, and its values are text");
         // of one kind, they are compared: text ordered, an int beside a
         // float, two lists whole, a parsed value as the program runs
         assert_eq!(refusal_of(&format!("{}log['b' gt 'a']\nlog[df.name gte 'b']\nlog[1 eq 1.0]\nlog[['a'] eq ['a']]\nj = json['1']\nlog[j eq 'x']\na = float['1.5']\nlog[[a] eq [a]]\nlog[contains[['a'], 'b']]\n", df)), "");

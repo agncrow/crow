@@ -37,14 +37,7 @@ pub fn analyze(
     let tokens = match Lexer::new(text).tokenize() {
         Ok(t) => t,
         Err(e) => {
-            let (line, col) = extract_line_col(&e);
-            diagnostics.push(diag(
-                line,
-                col,
-                text,
-                strip_location(&e),
-                DiagnosticSeverity::ERROR,
-            ));
+            diagnostics.extend(refusal(text, &e, 1));
             return Analysis {
                 source: text.to_string(),
                 stmts: Vec::new(),
@@ -59,13 +52,7 @@ pub fn analyze(
     // Parse leniently: broken statements become diagnostics, the rest parse.
     let (stmts, parse_errors) = Parser::new(tokens.clone()).parse_lenient();
     for (line, e) in parse_errors {
-        diagnostics.push(diag(
-            line,
-            0,
-            text,
-            strip_location(&e),
-            DiagnosticSeverity::ERROR,
-        ));
+        diagnostics.extend(refusal(text, &e, line));
     }
 
     // The parts the document uses, by the name it calls them.
@@ -102,15 +89,18 @@ pub fn analyze(
                 }
             }
         }
-        None => stmts,
+        None => {
+            // (no expansion ran: no import of this document's is unresolved)
+            crate::UNRESOLVED_USES.with(|u| u.borrow_mut().clear());
+            stmts
+        }
     };
 
     // Named-argument lowering.
     let stmts = match crate::lower::lower_program(&stmts) {
         Ok(s) => s,
         Err(e) => {
-            let (line, _) = extract_line_col(&e);
-            diagnostics.push(diag(line, 0, text, strip_location(&e), DiagnosticSeverity::ERROR));
+            diagnostics.extend(refusal(text, &e, 1));
             // Continue with unlowered stmts so hover/completion still work.
             stmts
         }
@@ -122,19 +112,19 @@ pub fn analyze(
     // the lowering refuses what is not a program, one "line N: message"
     // entry per error (not while a part it imports fails: its names would
     // all read as undefined)
-    if parts_good && let Err(refusal) = crate::lower_ir::check(&stmts, &ctx) {
-        let e = refusal.message();
+    if parts_good && let Err(refused) = crate::lower_ir::check(&stmts, &ctx) {
+        let e = refused.message();
+        // (inside multi-line statements, at the line that holds the name)
+        let e = crate::refine_error_lines(text, &e);
+        let mut seen: Vec<(Option<usize>, String)> = Vec::new();
         for entry in e.lines().filter(|l| !l.trim().is_empty()) {
-            let (line, _) = extract_line_col(entry);
-            // Point inside multi-line statements at the actual line.
-            let line = crate::refine_error_line(text, line, entry);
-            diagnostics.push(diag(
-                line,
-                0,
-                text,
-                strip_location(entry),
-                DiagnosticSeverity::ERROR,
-            ));
+            let d = crate::diagnostic::parse(entry).remove(0);
+            // the same message on the same line once (spec, Error Messages)
+            if seen.contains(&(d.line, d.message.clone())) {
+                continue;
+            }
+            seen.push((d.line, d.message.clone()));
+            diagnostics.extend(refusal(text, entry, 1));
         }
     }
 
@@ -196,30 +186,36 @@ fn import_line(stmts: &[crate::ast::Stmt], error: &str) -> usize {
     first.unwrap_or(1)
 }
 
-/// Where on its line a message points: the first name it quotes
-/// (`undefined function 'lenn'`) or calls (`msgpack[] is web's`) that the
-/// line holds as a whole word, as character columns.
-fn narrowed(line: &str, message: &str) -> Option<(u32, u32)> {
-    let mut names: Vec<&str> = message.split('\'').skip(1).step_by(2).collect();
-    if let Some(call) = message.split("[]").next().filter(|c| message.contains("[]") && c.chars().all(|ch| ch.is_alphanumeric() || ch == '_' || ch == '.')) {
-        names.push(call);
-    }
-    let chars: Vec<char> = line.chars().collect();
-    let word = |c: char| c.is_alphanumeric() || c == '_';
-    for name in names.into_iter().filter(|n| !n.is_empty() && n.chars().all(|c| word(c) || c == '.')) {
-        let want: Vec<char> = name.chars().collect();
-        let mut i = 0;
-        while i + want.len() <= chars.len() {
-            let at_word = chars[i..i + want.len()] == want[..]
-                && (i == 0 || !word(chars[i - 1]))
-                && chars.get(i + want.len()).is_none_or(|c| !word(*c));
-            if at_word {
-                return Some((i as u32, (i + want.len()) as u32));
-            }
-            i += 1;
-        }
-    }
-    None
+/// A refusal's entry as the editor shows it: read as the terminal reads it
+/// (crate::diagnostic), at its line (or `fallback`, 1-based, when it names
+/// none), one diagnostic for each place its line holds what it is about.
+fn refusal(text: &str, entry: &str, fallback: usize) -> Vec<Diagnostic> {
+    let d = crate::diagnostic::parse(entry).into_iter().next().unwrap_or(crate::diagnostic::Diagnostic {
+        file: None,
+        line: None,
+        col: None,
+        message: entry.to_string(),
+    });
+    let line = d.line.unwrap_or(fallback).max(1);
+    let line0 = (line - 1) as u32;
+    let line_text = text.lines().nth(line0 as usize).unwrap_or("");
+    let message = match &d.file {
+        Some(part) => format!("{}: {}", part, d.message),
+        None => d.message.clone(),
+    };
+    crate::diagnostic::underline(line_text, &d)
+        .into_iter()
+        .map(|(start, end)| Diagnostic {
+            range: Range {
+                start: Position { line: line0, character: start as u32 },
+                end: Position { line: line0, character: end as u32 },
+            },
+            severity: Some(DiagnosticSeverity::ERROR),
+            source: Some("crow".into()),
+            message: message.clone(),
+            ..Default::default()
+        })
+        .collect()
 }
 
 /// Build a diagnostic. Lines are 1-based on the Crow side, 0-based in LSP.
@@ -236,7 +232,10 @@ fn diag(
     let line_text = text.lines().nth(line0 as usize).unwrap_or("");
     let line_len = line_text.chars().count() as u32;
     let indent = line_text.chars().take_while(|c| c.is_whitespace()).count() as u32;
-    let (start, end) = narrowed(line_text, &message).unwrap_or((col_0based.max(indent).min(line_len), line_len.max(col_0based + 1)));
+    let (start, end) = crate::diagnostic::spans(line_text, &message)
+        .first()
+        .map(|&(s, e)| (s as u32, e as u32))
+        .unwrap_or((col_0based.max(indent).min(line_len), line_len.max(col_0based + 1)));
     Diagnostic {
         range: Range {
             start: Position {
@@ -253,41 +252,6 @@ fn diag(
         message,
         ..Default::default()
     }
-}
-
-/// Pull "line N" (and optionally "col M") out of an error message.
-fn extract_line_col(msg: &str) -> (usize, u32) {
-    let mut line = 1usize;
-    let mut col = 0u32;
-    if let Some(pos) = msg.find("line ") {
-        let rest = &msg[pos + 5..];
-        let num: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if let Ok(n) = num.parse() {
-            line = n;
-        }
-    }
-    if let Some(pos) = msg.find("col ") {
-        let rest = &msg[pos + 4..];
-        let num: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if let Ok(n) = num.parse::<u32>() {
-            col = n.saturating_sub(1); // 1-based → 0-based
-        }
-    }
-    (line, col)
-}
-
-/// Editors show the location themselves — drop a leading "line N: " prefix
-/// so messages aren't doubled up.
-fn strip_location(msg: &str) -> String {
-    let trimmed = msg.trim();
-    if let Some(rest) = trimmed.strip_prefix("line ") {
-        if let Some(colon) = rest.find(':') {
-            if rest[..colon].chars().all(|c| c.is_ascii_digit()) {
-                return rest[colon + 1..].trim().to_string();
-            }
-        }
-    }
-    trimmed.to_string()
 }
 
 #[cfg(test)]
@@ -405,6 +369,6 @@ mod tests {
         let at = |line: u32| a.diagnostics.iter().find(|d| d.range.start.line == line).map(|d| (d.range.start.character, d.range.end.character));
         assert_eq!(at(1), Some((4, 8)), "{:?}", a.diagnostics);
         assert_eq!(at(3), Some((15, 18)), "{:?}", a.diagnostics);
-        assert_eq!(narrowed("    s = x + y", "no name here"), None);
+        assert!(crate::diagnostic::spans("    s = x + y", "no name here").is_empty());
     }
 }

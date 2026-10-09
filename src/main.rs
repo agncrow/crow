@@ -23,6 +23,8 @@ mod states;
 mod checker;
 mod db_check;
 mod derive;
+mod diagnostic;
+mod errors_corpus;
 mod dev;
 mod lsp;
 mod kernel;
@@ -273,7 +275,7 @@ fn crow_main() {
             // the harnesses check every program's IR before running it
             // (ir_verify): a lowering that disagrees with itself fails its
             // program as the bug it is, in whichever suite reaches it
-            if args.iter().any(|a| matches!(a.as_str(), "--parity" | "--served" | "--book" | "--bench" | "--packages" | "--fuzz")) && std::env::var_os("CROW_IR_VERIFY").is_none() {
+            if args.iter().any(|a| matches!(a.as_str(), "--parity" | "--served" | "--book" | "--bench" | "--packages" | "--fuzz" | "--errors")) && std::env::var_os("CROW_IR_VERIFY").is_none() {
                 // Rust 2024: the environment is process-global; nothing else
                 // runs yet
                 unsafe { std::env::set_var("CROW_IR_VERIFY", "strict") };
@@ -283,6 +285,11 @@ fn crow_main() {
                 // names hold one of the words
                 let only: Vec<String> = args[2..].iter().filter(|a| !a.starts_with("--")).cloned().collect();
                 cmd_test_parity(&only);
+            } else if args.iter().any(|a| a == "--errors") {
+                // `crow test --errors [--bless] [words]`: the wrong programs
+                // of tests/errors, their refusals held to what was reviewed
+                // and to the rules every message keeps
+                process::exit(errors_corpus::cmd_test_errors(&args[2..]));
             } else if args.iter().any(|a| a == "--served") {
                 // `crow test --served formats`: only the pages whose paths
                 // hold one of the words
@@ -1820,13 +1827,7 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     let release = release && !debuginfo && std::env::var("CROW_BUILD_PROFILE").map(|v| v != "dev").unwrap_or(true);
     let profile_dir = if release { "release" } else if debuginfo { "debuginfo" } else { "debug" };
     let source = read_file(entry);
-    let stmts = match build(&source) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("{}", e);
-            process::exit(1);
-        }
-    };
+    let stmts = build(&source).unwrap_or_else(|e| refuse(entry, &source, &e));
 
     // Expand module imports before type inference so call sites inform param types
     let source_dir = std::path::Path::new(entry)
@@ -1836,10 +1837,7 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     let stmts = expand_module_imports(&stmts, source_dir, &mut visited);
 
     // Resolve named arguments to positional form (shared with the interpreter)
-    let stmts = lower::lower_program(&stmts).unwrap_or_else(|e| {
-        eprintln!("error: {}", e);
-        process::exit(1);
-    });
+    let stmts = lower::lower_program(&stmts).unwrap_or_else(|e| refuse(entry, &source, &e));
 
     let entry_file = std::path::Path::new(entry).file_name()
         .map(|f| f.to_string_lossy().to_string())
@@ -1849,10 +1847,7 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     // which refuses what is not a program. The compiler may ask the
     // program's databases what each literal query returns, so frame cells
     // are typed natively.
-    let (ctx, program) = infer_and_lower(&stmts, describing(), &name).unwrap_or_else(|e| {
-        eprintln!("{}", refine_error_lines(&source, &e));
-        process::exit(1);
-    });
+    let (ctx, program) = infer_and_lower(&stmts, describing(), &name).unwrap_or_else(|e| refuse(entry, &source, &e));
     // A name Rust reserves (`move`, `impl`) is a Crow name like any other:
     // the compiled program renames each one it declares, after the gate has
     // spoken in the program's own names, and prints the program's name
@@ -1860,10 +1855,7 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     let (ctx, program, shown) = match rust_names::rename_rust_keywords(&stmts) {
         None => (ctx, program, std::collections::BTreeMap::new()),
         Some((renamed, shown)) => {
-            let (ctx, program) = infer_and_lower(&renamed, describing(), &name).unwrap_or_else(|e| {
-                eprintln!("{}", refine_error_lines(&source, &e));
-                process::exit(1);
-            });
+            let (ctx, program) = infer_and_lower(&renamed, describing(), &name).unwrap_or_else(|e| refuse(entry, &source, &e));
             (ctx, program, shown)
         }
     };
@@ -2168,10 +2160,7 @@ fn cmd_build() {
         let file = args.iter().skip(2).find(|a| !a.starts_with('-')).cloned().unwrap_or_else(|| parse_crowfile().entry);
         match types_of_file(&file, describing()) {
             Ok(text) => print!("{}", text),
-            Err(e) => {
-                eprintln!("{}", e);
-                process::exit(1);
-            }
+            Err(e) => refuse(&file, &read_file(&file), &e),
         }
         return;
     }
@@ -2181,10 +2170,7 @@ fn cmd_build() {
         let file = args.iter().skip(2).find(|a| !a.starts_with('-')).cloned().unwrap_or_else(|| parse_crowfile().entry);
         match ir_of_file(&file, describing()) {
             Ok(text) => print!("{}", text),
-            Err(e) => {
-                eprintln!("{}", e);
-                process::exit(1);
-            }
+            Err(e) => refuse(&file, &read_file(&file), &e),
         }
         return;
     }
@@ -2970,10 +2956,7 @@ mod derive_fix_tests {
 /// `crow test` — run only the authored test blocks in a file.
 fn cmd_test_blocks(filename: &str) {
     let source = read_file(filename);
-    let stmts = match build(&source) {
-        Ok(s) => s,
-        Err(e) => { eprintln!("{}", e); process::exit(1); }
-    };
+    let stmts = build(&source).unwrap_or_else(|e| refuse(filename, &source, &e));
     // A part's tests run with the parts it imports inlined, exactly as the
     // run, build and check paths see the program
     let source_dir = std::path::Path::new(filename)
@@ -2981,15 +2964,11 @@ fn cmd_test_blocks(filename: &str) {
         .unwrap_or(std::path::Path::new("."));
     let mut visited = std::collections::HashSet::new();
     let stmts = expand_module_imports(&stmts, source_dir, &mut visited);
-    let lowered = match lower::lower_program(&stmts) {
-        Ok(s) => s,
-        Err(e) => { eprintln!("{}", e); process::exit(1); }
-    };
+    let lowered = lower::lower_program(&stmts).unwrap_or_else(|e| refuse(filename, &source, &e));
     // The validator gates the harness as it gates run and build: a part
     // whose tests pass is a part the program accepts
     if let Err(e) = infer_and_validate(&lowered, describing()) {
-        eprintln!("{}", refine_error_lines(&source, &e));
-        process::exit(1);
+        refuse(filename, &source, &e);
     }
     // `crow test --compiled`: the apps the blocks open are the compiled
     // program (compiled_harness.rs); the blocks themselves run here
@@ -3400,13 +3379,7 @@ fn attribute_to_parts(errors: &[(String, Option<String>)]) -> String {
 
 fn run_check_pipeline(filename: &str) -> checker::CheckResult {
     let source = read_file(filename);
-    let stmts = match build(&source) {
-        Ok(stmts) => stmts,
-        Err(e) => {
-            eprintln!("{}", e);
-            process::exit(1);
-        }
-    };
+    let stmts = build(&source).unwrap_or_else(|e| refuse(filename, &source, &e));
     // User modules are inlined exactly as the run and build paths do, so a
     // multi-file app is checked whole and a module prefix is a known name
     let source_dir = std::path::Path::new(filename)
@@ -3420,12 +3393,9 @@ fn run_check_pipeline(filename: &str) -> checker::CheckResult {
     let (lowered, lctx, program) = match lower::lower_program(&stmts) {
         Ok(lowered) => match infer_and_lower(&lowered, describing(), "check") {
             Ok((lctx, program)) => (lowered, lctx, program),
-            Err(e) => {
-                eprintln!("{}", refine_error_lines(&source, &e));
-                process::exit(1);
-            }
+            Err(e) => refuse(filename, &source, &e),
         },
-        Err(e) => { eprintln!("error: {}", e); process::exit(1); }
+        Err(e) => refuse(filename, &source, &e),
     };
     let mut ctx = type_infer::TypeContext::new();
     ctx.infer_program(&stmts);
@@ -4034,13 +4004,7 @@ fn cmd_run_file_interpreted(filename: &str) {
         (stmts, String::new())
     } else {
         let source = read_file(filename);
-        let stmts = match build(&source) {
-            Ok(stmts) => stmts,
-            Err(e) => {
-                eprintln!("{}", e);
-                process::exit(1);
-            }
-        };
+        let stmts = build(&source).unwrap_or_else(|e| refuse(filename, &source, &e));
         // Expand user-module imports exactly as the compiled path does — the
         // lowerer needs the prefixed fns to resolve qualified named-arg calls
         let source_dir = std::path::Path::new(filename)
@@ -4051,13 +4015,7 @@ fn cmd_run_file_interpreted(filename: &str) {
     };
     // Lower + validate exactly as the compiled path does — the two modes
     // must reject the same programs (reservation, scope, ui rules)
-    let lowered = match lower::lower_program(&stmts) {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!("error: {}", e);
-            process::exit(1);
-        }
-    };
+    let lowered = lower::lower_program(&stmts).unwrap_or_else(|e| refuse(filename, &source, &e));
     let serves = serve_line(&lowered).is_some();
     // then the one typed form (ir-design.md), walked by the interpreter
     let base = source_of_bytecode(filename);
@@ -4065,13 +4023,7 @@ fn cmd_run_file_interpreted(filename: &str) {
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| base.clone());
-    let (ctx, program) = match infer_and_lower(&lowered, describing(), &name) {
-        Ok(lowered_once) => lowered_once,
-        Err(e) => {
-            eprintln!("{}", refine_error_lines(&source, &e));
-            process::exit(1);
-        }
-    };
+    let (ctx, program) = infer_and_lower(&lowered, describing(), &name).unwrap_or_else(|e| refuse(filename, &source, &e));
     if serves {
         // a program that serves pages: its main runs, then the interpreter
         // renders and handles for the live runtime's sessions
@@ -4194,10 +4146,7 @@ fn cmd_db(args: &[String]) {
         process::exit(1);
     }
     let file = args.iter().skip(1).find(|a| !a.starts_with('-')).cloned().unwrap_or_else(|| parse_crowfile().entry);
-    let program = program_of_file(&file, false).unwrap_or_else(|e| {
-        eprintln!("{}", e);
-        process::exit(1);
-    });
+    let program = program_of_file(&file, false).unwrap_or_else(|e| refuse(&file, &read_file(&file), &e));
     let plan = lower_ir::schema::plan(&program);
     if plan.is_empty() {
         println!("-- {} declares no tables on its connections", file);
@@ -4419,6 +4368,24 @@ pub fn refine_error_line(source: &str, line_1based: usize, msg: &str) -> usize {
 
 /// Rewrite every `line N:` prefix in a (possibly multi-line) error
 /// message to the refined line.
+/// A refusal, printed the one way every command prints it — the file, line
+/// and column of what the program wrote, the message, the line underlined
+/// (diagnostic.rs; spec, Error Messages) — and the program not run.
+fn refuse(entry: &str, source: &str, err: &str) -> ! {
+    eprintln!("{}", shown_refusal(entry, source, err));
+    process::exit(1);
+}
+
+/// A refusal's text as `refuse` prints it: its lines refined into the
+/// statement, a part's excerpt read from the part's file.
+fn shown_refusal(entry: &str, source: &str, err: &str) -> String {
+    let refined = refine_error_lines(source, err);
+    let dir = std::path::Path::new(entry).parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(std::path::Path::new("."));
+    let root = project_root(dir);
+    let read = |part: &str| std::fs::read_to_string(root.join(part)).or_else(|_| std::fs::read_to_string(dir.join(part))).ok();
+    diagnostic::render(entry, source, &refined, &read)
+}
+
 pub fn refine_error_lines(source: &str, err: &str) -> String {
     err.lines()
         .map(|entry| {
@@ -4494,7 +4461,10 @@ fn expand_module_imports(
     visited: &mut std::collections::HashSet<String>,
 ) -> Vec<ast::Stmt> {
     expand_module_imports_checked(stmts, source_dir, visited).unwrap_or_else(|e| {
-        eprintln!("{}", e);
+        // a part's refusal names the part, whose text it is read from
+        let root = project_root(source_dir);
+        let read = |part: &str| std::fs::read_to_string(root.join(part)).or_else(|_| std::fs::read_to_string(source_dir.join(part))).ok();
+        eprintln!("{}", diagnostic::render("", "", &e, &read));
         process::exit(1);
     })
 }
@@ -4587,6 +4557,8 @@ pub(crate) fn expand_module_imports_checked(
     let is_ui = |s: &ast::Stmt| matches!(s, ast::Stmt::Use { path, .. } if path == "ui" || path == "web.ui");
     let plain = !stmts.iter().any(is_ui) && out.iter().any(is_ui);
     PLAIN_ENTRY.with(|p| p.set(plain));
+    // (set last, after each part validated alone set its own)
+    UNRESOLVED_USES.with(|u| *u.borrow_mut() = ex.unresolved);
     Ok(out)
 }
 
@@ -5089,6 +5061,18 @@ struct ModuleExpansion {
     written: std::collections::BTreeMap<std::path::PathBuf, std::path::PathBuf>,
     /// every module's prefixed declarations, in dependency order
     hoisted: Vec<ast::Stmt>,
+    /// how deep in the parts the expansion is: the entry is 0
+    depth: usize,
+    /// the entry's imports of a module there is no file and no standard
+    /// module for, with the line of each
+    unresolved: Vec<(usize, String)>,
+}
+
+thread_local! {
+    /// The entry's imports the expansion found nothing for: the checks
+    /// refuse each where the program's other refusals are made (spec,
+    /// Error Messages). Set when a program is expanded.
+    pub(crate) static UNRESOLVED_USES: std::cell::RefCell<Vec<(usize, String)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 fn expand_into(
@@ -5101,15 +5085,20 @@ fn expand_into(
     // how this file spells each module it imports (the last segment or the
     // alias), with the module's names
     let mut imported: Vec<(String, std::collections::BTreeMap<String, String>)> = Vec::new();
+    let mut line = 0usize;
     for stmt in stmts {
+        if let ast::Stmt::Line(n) = stmt {
+            line = *n;
+        }
         let ast::Stmt::Use { path, alias } = stmt else {
             expanded.push(stmt.clone());
             continue;
         };
         // Built-in modules: skip file lookup (the standard library's own
         // sources, src/modules/*.co, are inlined by the lowering, never
-        // read as a module of the program's — a file beside them would be)
-        if path == "math" || path.starts_with("math.") || path == "web" || path.starts_with("web.") || matches!(path.as_str(), "io" | "frame" | "doc" | "chart" | "db" | "sys" | "ui") {
+        // read as a module of the program's — a file beside them would be;
+        // a `web.` module the web has none of is the checks' to refuse)
+        if lower_ir::is_standard_module(path) || path.starts_with("web.") {
             expanded.push(stmt.clone());
             continue;
         }
@@ -5143,6 +5132,11 @@ fn expand_into(
             candidates.push(source_dir.join(format!("{}.co", file_rel)));
         }
         let Some(file_path) = candidates.iter().find(|p| p.exists()).cloned() else {
+            // no file and no standard module: the entry's import is refused
+            // with its line (a part's is the part's, validated alone)
+            if ex.depth == 0 {
+                ex.unresolved.push((line, path.clone()));
+            }
             expanded.push(stmt.clone());
             continue;
         };
@@ -5197,7 +5191,9 @@ fn expand_into(
                 }
             }
         }
+        ex.depth += 1;
         let mod_stmts = expand_into(&mod_stmts, mod_dir, ex, in_progress);
+        ex.depth -= 1;
         in_progress.remove(&key);
 
         // The prefix is the module's path: unique per file, the same from
@@ -5723,7 +5719,7 @@ mod validation_gate_tests {
         let src = "use web, ui\nn = 1\nderive cfg\n    return n + 1\nfn band[]\n    c = cfg\n    return c * 2\nview render[]\n    return p['`band[]`']\npage['/', render]\n";
         let lowered = lower::lower_program(&build(src).expect("parses")).expect("lowers");
         let err = infer_and_validate(&lowered, false).unwrap_err();
-        assert!(err.contains("derivations are not visible inside functions"), "{}", err);
+        assert!(err.contains("'cfg' is a derivation, which a function does not see"), "{}", err);
         let fine = "use web, ui\nn = 1\nderive cfg\n    return n + 1\nderive band\n    c = cfg\n    return c * 2\nview render[]\n    return p['`band`']\npage['/', render]\n";
         let lowered = lower::lower_program(&build(fine).unwrap()).unwrap();
         assert!(infer_and_validate(&lowered, false).is_ok());

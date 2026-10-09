@@ -169,10 +169,12 @@ fn crow_dev_reloads_a_program_as_its_file_changes() {
     // its pages are told why
     std::fs::write(dir.join("app.co"), program("third").replace("stack[p[", "stack[pp[")).unwrap();
     until("the refusal", || log().contains("refused"));
-    assert!(log().contains("app.co: line 10: undefined function 'pp'"), "{}", log());
+    // (the refusal as every command prints it: file, line and column, the
+    // line underlined — spec, Error Messages)
+    assert!(log().contains("app.co:10:18: undefined function 'pp'"), "{}", log());
     assert!(get(port, "/").contains("<p>second 0</p>"), "the last good program serves: {}", log());
     let words = socket_words(port);
-    assert!(words.iter().any(|w| w.contains("\"type\":\"dev\"") && w.contains("app.co: line 10: undefined function 'pp'")), "a page is told the refusal: {:?}\n{}", words, log());
+    assert!(words.iter().any(|w| w.contains("\"type\":\"dev\"") && w.contains("app.co:10:18: undefined function 'pp'")), "a page is told the refusal: {:?}\n{}", words, log());
     // only the crow dev that started the program speaks to its pages
     assert!(post(port, "/_dev/reload").starts_with("HTTP/1.1 403"), "a word without the token is refused");
     std::fs::write(dir.join("app.co"), program("fourth")).unwrap();

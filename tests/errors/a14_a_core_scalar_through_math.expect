@@ -1,0 +1,3 @@
+a14_a_core_scalar_through_math.co:2:10: math has no 'sqrt' — sqrt is the core's: sqrt[…]
+  2 │ x = math.sqrt[2.0]
+    │          ^^^^

@@ -1,0 +1,3 @@
+--- x = 1; — no semicolons
+x = 1;
+log[x]

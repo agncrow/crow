@@ -1,0 +1,3 @@
+d17_sum_of_text.co:3:5: sum[] is math's: add `use math`
+  3 │ log[sum[xs]]
+    │     ^^^

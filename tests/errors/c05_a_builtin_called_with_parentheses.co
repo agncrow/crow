@@ -1,0 +1,3 @@
+--- len(xs) for len[xs]
+xs = ['a']
+log[len(xs)]

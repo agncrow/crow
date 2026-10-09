@@ -1,0 +1,3 @@
+--- lambda: Crow has none
+f = lambda x: x
+log[f[1]]

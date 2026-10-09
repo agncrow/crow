@@ -1,0 +1,4 @@
+--- len[['a'] — the outer [ never closed
+x = len[['a']
+y = 2
+log[y]

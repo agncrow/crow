@@ -1,0 +1,3 @@
+c28_a_colon_after_if.co:3:10: Crow has no ':' — blocks are defined by indentation, not colons. Declare functions with fn name[params] and start the body on the next indented line.
+  3 │ if x gt 1:
+    │          ^

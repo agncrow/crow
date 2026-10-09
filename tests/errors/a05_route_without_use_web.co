@@ -1,0 +1,4 @@
+--- route without `use web`
+fn home[req]
+    return 'hi'
+route['/', home]

@@ -1,0 +1,3 @@
+d12_text_compared_with_a_number.co:2:1: gt compares numbers with numbers or text with text, not text with a number
+  2 │ log['a' gt 1]
+    │ ^^^^^^^^^^^^^

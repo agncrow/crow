@@ -1,0 +1,3 @@
+f08_a_missing_column_in_a_filter.co:4:19: frame has no property or column 'b' — its columns are 'a'
+  4 │ log[filter[df, df.b gt 1.0]]
+    │                   ^

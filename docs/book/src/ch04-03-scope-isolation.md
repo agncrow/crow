@@ -11,8 +11,8 @@ Here is the rule, and it is stricter than Python's:
 count = 5
 
 fn bad[]
-    return count + 1    --- error: module variables are not visible
-                        --- inside functions — pass 'count' as a parameter
+    return count + 1    --- error: 'count' is a module variable, which a
+                        --- function does not see — pass it as a parameter
 ```
 
 The fix is always the same shape:

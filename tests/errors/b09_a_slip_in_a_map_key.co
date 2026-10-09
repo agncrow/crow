@@ -1,0 +1,3 @@
+--- m.nmae for m.name
+m = map[name = 'a']
+log[m.nmae]

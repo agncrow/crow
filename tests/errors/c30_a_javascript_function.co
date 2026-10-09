@@ -1,0 +1,5 @@
+--- function f(x) { for fn f[x]
+function f(x) {
+    return x
+}
+log[f[1]]

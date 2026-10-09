@@ -1,0 +1,3 @@
+c16_a_dict_literal.co:2:5: unexpected character '{'
+  2 │ m = {'a': 1}
+    │     ^

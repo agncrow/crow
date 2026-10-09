@@ -1,0 +1,4 @@
+--- frame.lod for frame.load
+use frame
+df = frame.lod['a.csv']
+log[df]

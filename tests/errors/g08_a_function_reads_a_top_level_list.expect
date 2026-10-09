@@ -1,0 +1,3 @@
+g08_a_function_reads_a_top_level_list.co:4:12: in f: 'xs' is a module variable, which a function does not see — pass it as a parameter, or wire the function as a handler
+  4 │     return xs[i]
+    │            ^^

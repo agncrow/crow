@@ -1,0 +1,4 @@
+--- "text" for 'text'
+--- known: names
+x = "hi"
+log[x]

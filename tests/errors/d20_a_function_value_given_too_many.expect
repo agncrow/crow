@@ -1,0 +1,3 @@
+d20_a_function_value_given_too_many.co:5:5: 'g' expects 1 argument, got 2
+  5 │ log[g[1, 2]]
+    │     ^

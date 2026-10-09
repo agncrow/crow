@@ -1,0 +1,3 @@
+f09_sort_by_a_missing_column.co:4:1: sort: column 'b' not found — the frame's columns are 'a'
+  4 │ log[sort[df, 'b']]
+    │ ^^^^^^^^^^^^^^^^^^

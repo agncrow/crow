@@ -1,0 +1,3 @@
+a09_a_function_through_the_wrong_module.co:4:11: frame has no 'mean' — mean[] is math's: add `use math`
+  4 │ x = frame.mean[df.a]
+    │           ^^^^

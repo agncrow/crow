@@ -162,6 +162,14 @@ pub struct Lowerer {
     /// functions are invisible — a local of the module's named like one
     /// is indexed, not called
     current_fn: String,
+    /// The modules the program imports, by the name it calls each (`frame`,
+    /// or `f` for `use frame as f`): a module's forms are rewritten only
+    /// when the program has the module, and a call into one it lacks is
+    /// left for the checks to say the import
+    imports: BTreeMap<String, String>,
+    /// Each statement's refusal, so one mistake does not hide the next
+    /// statement's (spec, Error Messages)
+    errors: Vec<String>,
 }
 
 thread_local! {
@@ -184,8 +192,14 @@ pub fn lower_program(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
     let web = stmts.iter().any(|s| matches!(s, Stmt::Use { path, alias: None } if path == "web" || path.starts_with("web.")));
     PROGRAM_WEB.with(|w| w.set(web));
     let mut l = Lowerer::new(web);
+    for s in stmts {
+        if let Stmt::Use { path, alias } = s {
+            l.imports.insert(alias.clone().unwrap_or_else(|| path.clone()), path.clone());
+        }
+    }
     l.collect_sigs(stmts);
     PROGRAM_SIGS.with(|p| *p.borrow_mut() = (l.fns.clone(), l.structs.clone()));
+    PROGRAM_IMPORTS.with(|p| *p.borrow_mut() = l.imports.clone());
     l.finish(stmts)
 }
 
@@ -200,17 +214,21 @@ pub fn lower_fragment(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
         l.fns = fns.clone();
         l.structs = structs.clone();
     });
+    l.imports = PROGRAM_IMPORTS.with(|p| p.borrow().clone());
     l.collect_sigs(stmts);
     l.finish(stmts)
 }
 
 impl Lowerer {
     fn new(web: bool) -> Self {
-        Lowerer { fns: BTreeMap::new(), structs: BTreeMap::new(), current_line: 0, in_view: false, web, current_fn: String::new() }
+        Lowerer { fns: BTreeMap::new(), structs: BTreeMap::new(), current_line: 0, in_view: false, web, current_fn: String::new(), imports: BTreeMap::new(), errors: Vec::new() }
     }
 
     fn finish(mut self, stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
         let lowered = self.lower_stmts(stmts)?;
+        if !self.errors.is_empty() {
+            return Err(self.errors.join("\n"));
+        }
         let scoped = scoped(lowered)?;
         Ok(narrowed(scoped, &BTreeSet::new()))
     }
@@ -245,6 +263,17 @@ fn scoped(stmts: Vec<Stmt>) -> Result<Vec<Stmt>, String> {
     }
     let mut namer = Namer::new(&globals, &[]);
     namer.block(stmts, false)
+}
+
+/// Whether a name is a function the language has — a builtin, or any
+/// standard module's — as a method-style call (`df.join[…]`) means it.
+fn is_function_name(name: &str) -> bool {
+    crate::lower_ir::BUILTINS.contains(&name) || crate::modules::ModuleRegistry::with_stdlib().has_function(name)
+}
+
+thread_local! {
+    /// The modules the program being lowered imports, for its fragments.
+    static PROGRAM_IMPORTS: std::cell::RefCell<BTreeMap<String, String>> = const { std::cell::RefCell::new(BTreeMap::new()) };
 }
 
 /// The suffix a renamed binding carries, and the name a message prints.
@@ -764,8 +793,28 @@ impl Lowerer {
         }
     }
 
+    /// A body's statements, each lowered on its own: a statement that is
+    /// refused is kept as its refusal and the next one lowered, so the
+    /// program hears every refusal at once.
     fn lower_stmts(&mut self, stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
-        stmts.iter().map(|s| self.lower_stmt(s)).collect()
+        let mut out = Vec::with_capacity(stmts.len());
+        for s in stmts {
+            match self.lower_stmt(s) {
+                Ok(lowered) => out.push(lowered),
+                Err(e) => {
+                    if !self.errors.contains(&e) {
+                        self.errors.push(e);
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Whether a name the program calls through is one of its imports, of
+    /// the standard module given (`frame`, or `f` for `use frame as f`).
+    fn imports_module(&self, name: &str, module: &str) -> bool {
+        self.imports.get(name).is_some_and(|p| p == module)
     }
 
     fn lower_stmt(&mut self, stmt: &Stmt) -> Result<Stmt, String> {
@@ -863,8 +912,11 @@ impl Lowerer {
                 // named — the `with` chain over the empty frame both backends
                 // already hold, typed column by column (spec, frame: new);
                 // under an alias (`use frame as f`) the chain is the alias's
+                // (only when the program has frame: without it the call is
+                // left as written, for the checks to say the import — the
+                // chain's `with` calls had been refused as if written)
                 if let Expr::FieldAccess { object, field } = &callee {
-                    if field == "new" && !args.is_empty() && matches!(object.as_ref(), Expr::Ident(_)) && self.fns.get(&format!("{}_new", module_of(object))).is_none() {
+                    if field == "new" && !args.is_empty() && matches!(object.as_ref(), Expr::Ident(m) if self.imports_module(m, "frame")) && self.fns.get(&format!("{}_new", module_of(object))).is_none() {
                         return self.lower_frame_literal(object.as_ref().clone(), args);
                     }
                 }
@@ -1190,9 +1242,38 @@ impl Lowerer {
                     }
                     _ => {
                         if has_named {
-                            let target = callee_name.unwrap_or_else(|| "<expression>".to_string());
+                            if let Expr::FieldAccess { object, field } = &callee
+                                && let Expr::Ident(m) = object.as_ref()
+                            {
+                                {
+                                    // a module the program does not import: the call is
+                                    // left as written, its values without their names,
+                                    // for the checks to say the import
+                                    let standard = crate::lower_ir::is_standard_module(m) || crate::modules::ModuleRegistry::with_stdlib().functions_of(m).contains(&field.as_str());
+                                    if standard && !self.imports.contains_key(m) {
+                                        let values = args.into_iter().map(|a| match a {
+                                            Expr::Named { value, .. } => *value,
+                                            other => other,
+                                        }).collect();
+                                        return Ok(Expr::Call { callee: Box::new(callee), args: values });
+                                    }
+                                    // a function written as a value's method, as
+                                    // pandas writes it: Crow hands the value first
+                                    if !self.imports.contains_key(m) && is_function_name(field) {
+                                        return Err(self.err(format!("{0}.{1}[] is {1}[{0}, …]: a function takes its value first", m, field)));
+                                    }
+                                }
+                            }
+                            let target = match (&callee_name, &callee) {
+                                (Some(n), _) => format!("'{}'", n),
+                                (None, Expr::FieldAccess { object, field }) => match object.as_ref() {
+                                    Expr::Ident(m) => format!("{}.{}[…]", m, field),
+                                    _ => format!("….{}[…]", field),
+                                },
+                                _ => "this call".to_string(),
+                            };
                             return Err(self.err(format!(
-                                "'{}' does not accept named arguments (named arguments require a known function, struct, builtin with named parameters, or ui element)",
+                                "{} takes no named arguments — a function, a struct, a builtin with named parameters or a ui element does",
                                 target
                             )));
                         }
@@ -1585,7 +1666,7 @@ mod tests {
     #[test]
     fn test_indirect_call_named_arg_errors() {
         let err = lower_src("r = unknown_fn[1, a = 2]\n").unwrap_err();
-        assert!(err.contains("does not accept named arguments"), "{}", err);
+        assert!(err.contains("'unknown_fn' takes no named arguments"), "{}", err);
     }
 
     /// The narrowed reads of a lowered body, as the names they read.

@@ -1,0 +1,4 @@
+--- def f(x): for fn f[x]
+def f(x):
+    return x
+log[f[1]]

@@ -1,0 +1,4 @@
+--- frame.nosuch with `use frame`
+use frame
+df = frame.new[a = [1.0]]
+log[frame.nosuch[df]]

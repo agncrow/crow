@@ -1,0 +1,13 @@
+x01_ex1_as_first_written.co:3:8: frame.new[] is frame's: add `use frame`
+  3 │ ours = frame.new[node = keys[m], value = values[m]]
+    │        ^^^^^^^^^
+x01_ex1_as_first_written.co:3:30: undefined variable 'm'
+  3 │ ours = frame.new[node = keys[m], value = values[m]]
+    │                              ^                  ^
+x01_ex1_as_first_written.co:4:19: undefined variable 'table'
+  4 │ both = join[ours, table, 'node']
+    │                   ^^^^^
+x01_ex1_as_first_written.co:5:6: abs[] and max[] of numbers are math's: add `use math`
+  5 │ pr = max[abs[both.value - both.pagerank]]
+    │      ^^^ ^^^
+4 mistakes · 2 fixed by adding a line: use frame, use math

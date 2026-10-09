@@ -1,5 +1,13 @@
 use crate::token::{SpannedToken, Token};
 
+/// The words the language keeps for itself — every one lexes as its own
+/// token, never a name (a test holds the two to each other). The language
+/// server completes them, and a refusal of a name one slip from one says it.
+pub const KEYWORDS: &[&str] = &[
+    "fn", "view", "derive", "return", "if", "else", "for", "in", "while", "struct", "use", "break", "continue", "true", "false",
+    "eq", "ne", "gt", "lt", "gte", "lte", "and", "or", "not", "then",
+];
+
 pub struct Lexer {
     source: Vec<char>,
     pos: usize,
@@ -526,6 +534,18 @@ impl Lexer {
     }
 }
 
+
+#[cfg(test)]
+mod keyword_tests {
+    /// Every keyword the list names lexes as a keyword, not a name.
+    #[test]
+    fn every_keyword_is_one() {
+        for k in super::KEYWORDS {
+            let tokens = super::Lexer::new(k).tokenize().unwrap();
+            assert!(!matches!(tokens[0].token, crate::token::Token::Ident(_)), "{} lexes as a name", k);
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

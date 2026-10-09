@@ -1,0 +1,3 @@
+a02_frame_load_without_its_use.co:2:6: frame.load[] is frame's: add `use frame`
+  2 │ df = frame.load['a.csv']
+    │      ^^^^^^^^^^

@@ -1,0 +1,3 @@
+a13_a_core_function_through_a_module.co:2:8: io has no 'read' — read is the core's: read[…]
+  2 │ x = io.read['a.txt']
+    │        ^^^^

@@ -1,0 +1,3 @@
+--- xs[1:3]: no colon slices
+xs = [1, 2, 3, 4]
+log[xs[1:3]]

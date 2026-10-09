@@ -1,0 +1,5 @@
+--- Bird['crow'] for Bird[name, speed]
+--- known: editor
+struct Bird [name, speed]
+b = Bird['crow']
+log[b]

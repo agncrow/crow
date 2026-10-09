@@ -1,0 +1,3 @@
+--- `nme` for `name` in a string
+name = 'a'
+log['hi `nme`']

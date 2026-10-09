@@ -22,6 +22,7 @@ them by number. The short version:
 ```
 cargo test --workspace
 cargo clippy --workspace --all-features
+./target/release/crow test --errors
 ./target/release/crow test --parity
 ./target/release/crow test --packages
 ./target/release/crow test --fuzz 20

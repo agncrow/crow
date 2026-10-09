@@ -1,0 +1,6 @@
+--- || for or
+--- known: names
+a = true
+b = false
+if a || b
+    log['x']

@@ -1,0 +1,5 @@
+--- pass: an empty block
+--- known: place, editor
+fn f[x]
+    pass
+log[f[1]]

@@ -1,0 +1,5 @@
+--- xs read inside fn f
+xs = ['a']
+fn f[i]
+    return xs[i]
+log[f[5]]

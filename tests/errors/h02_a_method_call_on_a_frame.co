@@ -1,0 +1,6 @@
+--- df.join[other, on = 'k'] for join[df, other, 'k']
+--- known: editor
+use frame
+a = frame.new[k = ['x'], n = [1]]
+b = frame.new[k = ['x'], p = [2]]
+log[a.join[b, on = 'k']]

@@ -649,8 +649,8 @@ fn scaled[n]
     return count          ---     unrelated to the module variable
 
 fn bad[x]
-    return x + count      --- error: module variables are not visible
-                          --- inside functions — pass 'count' as a parameter
+    return x + count      --- error: 'count' is a module variable, which a
+                          --- function does not see — pass it as a parameter
 
 count = 6                 --- ok: top-level code mutates top-level state freely
 log[scaled[count]]        --- 12: pass it in
@@ -846,8 +846,8 @@ a value of a different type is an error in both modes:
 ```
 m = map[a = 1]
 m = set[m, 'b', 'x']
---- error: map values must all be the same type — this map holds int values,
---- cannot add str (use a struct for mixed named data)
+--- error: a map holds one kind: 'b' is text, and its values are an int —
+--- a record (struct) holds fields of several kinds
 ```
 
 #### Design Note: Maps Are Dictionaries, Not Records
@@ -1208,14 +1208,29 @@ Errors also propagate through operators (`+`, `-`, etc.) and unary operations. I
 
 ### Error Messages
 
-Errors include line numbers. What is not a program — an undefined name, a builtin's name taken, a call with the wrong number of arguments — is refused before anything runs, every such error at once; what fails while the program runs stops it with the line it failed on:
+What is not a program — an undefined name, a builtin's name taken, a call with the wrong number of arguments — is refused before anything runs, every such error at once. Each is printed as the file, line and column of what the program wrote, the message, and the line with that text underlined:
 
 ```
-line 3: undefined variable 'z'
-runtime error: line 7: assertion failed: expected positive
+ex1.co:1:8: frame.new[] is frame's: add `use frame`
+  1 │ ours = frame.new[node = keys[m], value = values[m]]
+    │        ^^^^^^^^^
+ex1.co:1:30: undefined variable 'm'
+  1 │ ours = frame.new[node = keys[m], value = values[m]]
+    │                              ^                  ^
+2 mistakes
 ```
 
-An undefined name one slip from a name in view says which — `undefined function 'lenn' — did you mean 'len'?`, `undefined variable 'totl' — did you mean 'total'?` (one edit in a name of up to five characters, two in a longer one) — and a function a module provides that the program does not import says what to import: ``mean[] is math's: add `use math` ``. The language server offers each as a quick fix.
+A refusal is the same in both modes (it is printed before either runs) and in the language server, which underlines the same text and offers the fix. What fails while the program runs stops it with the line it failed on, `runtime error: line 7: assertion failed: expected positive` (When a Program Stops).
+
+A message is held to five rules, which `crow test --errors` checks over a corpus of wrong programs (`tests/errors/`), in both modes and in the language server:
+
+1. **It names what the program wrote**, or what to write instead — never a form the compiler made. `frame.new[…]` and `map[…]` are rewritten before they are checked; a mistake in one is refused as written.
+2. **It says the fix.** A function a module provides that the program does not import, called bare or through the module's name, says what to import (``frame.new[] is frame's: add `use frame` ``); one a different module provides says which (``frame has no 'mean' — mean[] is math's: add `use math` ``); a name two modules provide names both, with what each answers; a name the core has whose form for this kind of value is a module's says that module (``abs[] of a column is math's: add `use math` ``). A name one slip from a name in view — one edit in a name of up to five characters, two in a longer one, a swapped pair counting as one — says which, whether the name is the program's, a keyword or any module's: `undefined function 'scroe' — did you mean 'score'?`. A `use` of a module that does not exist is refused.
+3. **One mistake, one message.** A name the program never defines is refused where it is read, once per line however often the line reads it, and what is computed from it is not refused again for being unknown; a module the program lacks is named once, at the first line that needs it, with every name that line calls of it.
+4. **It points at the mistake**: the line and column of the text it is about, not the statement around it or the line after it.
+5. **It is never the compiler's own.** A program refused by Crow is refused as a program; "a bug in Crow" is for Crow's bugs.
+
+The language server offers each fix the message names (an import added, a slip corrected) as a quick fix.
 
 
 ### When a Program Stops

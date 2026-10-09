@@ -1,0 +1,5 @@
+--- the first ex1.co: four mistakes
+--- mistakes: 4
+ours = frame.new[node = keys[m], value = values[m]]
+both = join[ours, table, 'node']
+pr = max[abs[both.value - both.pagerank]]

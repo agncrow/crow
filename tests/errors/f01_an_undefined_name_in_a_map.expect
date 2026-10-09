@@ -1,0 +1,3 @@
+f01_an_undefined_name_in_a_map.co:2:13: undefined variable 'zz'
+  2 │ m = map[a = zz]
+    │             ^^

@@ -82,6 +82,56 @@ pub(crate) static BUILTINS: std::sync::LazyLock<Vec<&'static str>> = std::sync::
 /// The modules whose functions and constants a bare `use` makes names.
 const REGISTRY_MODULES: &[&str] = &["math", "math.stats", "math.nn", "io", "frame", "doc", "chart", "sys"];
 
+/// Whether a `use` names a standard module: one the registry loads, one
+/// written in Crow (src/modules/*.co), or db, ui and web.ui, which the
+/// compiler holds itself.
+pub(crate) fn is_standard_module(path: &str) -> bool {
+    !path.is_empty() && (REGISTRY_MODULES.contains(&path) || crate::modules::crow_source(path).is_some() || matches!(path, "db" | "ui" | "web.ui"))
+}
+
+/// The edits between two names, a swapped pair of neighbours counting as
+/// one (the optimal string alignment distance): `scroe` is one slip from
+/// `score`, as `lenn` is from `len`.
+pub(crate) fn slips(a: &str, b: &str) -> usize {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let mut d = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+    for (i, row) in d.iter_mut().enumerate() {
+        row[0] = i;
+    }
+    for (j, cell) in d[0].iter_mut().enumerate() {
+        *cell = j;
+    }
+    for i in 1..=a.len() {
+        for j in 1..=b.len() {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            d[i][j] = (d[i - 1][j] + 1).min(d[i][j - 1] + 1).min(d[i - 1][j - 1] + cost);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                d[i][j] = d[i][j].min(d[i - 2][j - 2] + 1);
+            }
+        }
+    }
+    d[a.len()][b.len()]
+}
+
+/// The standard modules providing a function, imported or not.
+fn stdlib_providers(name: &str) -> Vec<String> {
+    crate::modules::ModuleRegistry::with_stdlib().providers_of(name).into_iter().map(String::from).collect()
+}
+
+/// What a module's function answers, as a refusal names a kind.
+fn answers(module: &str, name: &str) -> Option<&'static str> {
+    crate::table::ROWS.iter().find(|r| r.module == module && r.name == name).map(|r| r.ret.words())
+}
+
+/// `a`, `a and b`, `a, b and c`.
+fn listed(items: &[String], last: &str) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        _ => format!("{} {} {}", items[..items.len() - 1].join(", "), last, items[items.len() - 1]),
+    }
+}
+
 /// What the checks keep while the program is lowered.
 #[derive(Default)]
 pub(super) struct Checks {
@@ -105,6 +155,14 @@ pub(super) struct Checks {
     pub prefix_lines: BTreeMap<String, usize>,
     /// A `use ui` program.
     pub ui_mode: bool,
+    /// Variables given two kinds (their reassignment refused): what the
+    /// program reads of them is not judged by either kind, so the one
+    /// mistake is told once (spec, Error Messages, rule 3).
+    pub contested: BTreeSet<String>,
+    /// The imports asked for, by module: the line and the refusal each is
+    /// in, and the names it lists so far (a module the program lacks is
+    /// named once, where it is first needed).
+    pub missing_use: BTreeMap<String, (usize, usize, Vec<String>, String)>,
     /// Names an imported module makes: its functions and constants.
     pub used: BTreeSet<String>,
     /// The type each of the current function's own variables was first
@@ -172,6 +230,21 @@ impl<'a> Lowerer<'a> {
                 S::Use { path, alias } => {
                     if path == "ui" {
                         self.v.ui_mode = true;
+                    }
+                    // a module there is no file for and no standard module
+                    // of (the expansion found nothing at this line): the
+                    // nearest standard module, if one is a slip away
+                    if crate::UNRESOLVED_USES.with(|u| u.borrow().iter().any(|(l, p)| *l == line && p == path)) {
+                        self.v.line = line;
+                        let mut standard: Vec<(String, Option<String>)> = REGISTRY_MODULES.iter().map(|m| (m.to_string(), None)).collect();
+                        standard.extend(["db", "web", "ui"].iter().map(|m| (m.to_string(), None)));
+                        let near = self.near(path, standard);
+                        let file = format!("{}.co", path.replace('.', "/"));
+                        if near.is_empty() {
+                            self.refuse(format!("no module '{}': there is no {} in the project, and no standard module of the name", path, file));
+                        } else {
+                            self.refuse(format!("no module '{}'{}", path, near));
+                        }
                     }
                     if let Some(sub) = path.strip_prefix("web.")
                         && !WEB_MODULES.contains(&sub)
@@ -317,39 +390,53 @@ impl<'a> Lowerer<'a> {
         if self.defined(name) || BUILTINS.contains(&name) {
             return;
         }
+        if self.out_of_view(name) {
+            return;
+        }
+        // the names in view: this body's, and the program's where a plain
+        // function sees them; and the language's own words (`retrun`)
+        let plain_fn = matches!(self.at, Where::In(_)) && !self.v.reactive;
+        let hidden = plain_fn || (self.at == Where::Test && self.v.attached_test);
+        let mut seen: Vec<String> = self.scopes.iter().skip(1).flat_map(|s| s.iter().cloned()).collect();
+        seen.extend(self.v.stored.iter().cloned());
+        if !hidden {
+            seen.extend(self.scopes[0].iter().cloned());
+            seen.extend(self.v.module_vars.iter().cloned());
+        }
+        let mut candidates: Vec<(String, Option<String>)> = seen.into_iter().map(|n| (n, None)).collect();
+        candidates.extend(crate::lexer::KEYWORDS.iter().map(|k| (k.to_string(), None)));
+        let near = self.near(name, candidates);
+        self.refuse(format!("undefined variable '{}'{}", name, near));
+    }
+
+    /// A name a body cannot see, though the program has it — a derivation
+    /// or a module variable read inside a function — said the one way,
+    /// whether the body reads it (`xs`) or indexes it (`xs[i]`). Whether it
+    /// was said.
+    fn out_of_view(&mut self, name: &str) -> bool {
         let in_fn = self.in_fn();
         let prefix = in_fn.as_ref().map(|f| format!("in {}: ", f)).unwrap_or_default();
         if in_fn.is_some() && self.ctx.derives.contains(name) {
             self.refuse(format!(
-                "{}derivations are not visible inside functions — read '{}' in a view or handler, or make this function a derivation",
+                "{}'{}' is a derivation, which a function does not see — read it in a view or handler, or make this function a derivation",
                 prefix, name
             ));
         } else if in_fn.as_ref().is_some_and(|f| self.v.route_handlers.contains(f)) && self.v.module_vars.contains(name) {
             // a route calls its handler with the request alone, so no
             // parameter can carry the variable in
             self.refuse(format!(
-                "{}module variables are not visible inside functions — a route's handler is handed its request alone: open what it needs inside it (every connect to one URL in a program is one handle, so a handler that connects shares one pool)",
-                prefix
+                "{}'{}' is a module variable, which a route's handler does not see — the route hands it its request alone: open what it needs inside it (every connect to one URL in a program is one handle, so a handler that connects shares one pool)",
+                prefix, name
             ));
         } else if in_fn.is_some() && self.v.module_vars.contains(name) {
             self.refuse(format!(
-                "{}module variables are not visible inside functions — pass '{}' as a parameter, or wire the function as a handler",
+                "{}'{}' is a module variable, which a function does not see — pass it as a parameter, or wire the function as a handler",
                 prefix, name
             ));
         } else {
-            // the names in view: this body's, and the program's where a
-            // plain function sees them
-            let plain_fn = matches!(self.at, Where::In(_)) && !self.v.reactive;
-            let hidden = plain_fn || (self.at == Where::Test && self.v.attached_test);
-            let mut seen: Vec<String> = self.scopes.iter().skip(1).flat_map(|s| s.iter().cloned()).collect();
-            seen.extend(self.v.stored.iter().cloned());
-            if !hidden {
-                seen.extend(self.scopes[0].iter().cloned());
-                seen.extend(self.v.module_vars.iter().cloned());
-            }
-            let near = self.nearest(name, seen.iter().map(String::as_str));
-            self.refuse(format!("undefined variable '{}'{}", name, near));
+            return false;
         }
+        true
     }
 
     /// Reservation: a user definition (variable, fn, struct, param, loop var)
@@ -457,6 +544,8 @@ impl<'a> Lowerer<'a> {
             } else {
                 "variable type cannot change"
             };
+            // (known in the passes before the one that speaks)
+            self.v.contested.insert(name.to_string());
             self.refuse(format!("cannot reassign '{}' from {} to {} — {}", name, existing_ty.crow_name(), new_ty.crow_name(), why));
         }
     }
@@ -663,6 +752,8 @@ impl<'a> Lowerer<'a> {
         };
         let (Some(holder), Some(item)) = (holder, item) else { return };
         let inner = match holder.ty().payload() {
+            // (a map's value is the map's own check's: one mistake, one message)
+            Ty::Map(_) if row.id == "core.set" => return,
             Ty::List(i) | Ty::Map(i) => (**i).clone(),
             _ => return,
         };
@@ -687,6 +778,17 @@ impl<'a> Lowerer<'a> {
                 _ => "a record's",
             };
             self.refuse(format!("a list has no field '{}': `.{}` is {} — index an item for its own", field, field, owner));
+            return;
+        }
+        // a number or a bool has no fields (`x.name` of an int had stopped
+        // the interpreter as it ran and the compiled program had not built)
+        if matches!(obj_type, Ty::Int | Ty::Float | Ty::Bool) {
+            let words = crate::table::Arg::of_type(obj_type).words();
+            if BUILTINS.contains(&field) {
+                self.refuse(format!("{} has no field '{}' — a function takes its value first: {}[…]", words, field, field));
+            } else {
+                self.refuse(format!("{} has no field '{}'", words, field));
+            }
             return;
         }
         if let Ty::Record(name) = obj_type {
@@ -718,18 +820,51 @@ impl<'a> Lowerer<'a> {
         }
         let registry_module = REGISTRY_MODULES.contains(&real.as_str()) || real == "db";
         let registry_module = registry_module && self.ctx.registry.has_function(field);
-        if !registry_module && !self.ctx.functions.contains_key(&prefixed) && !self.ctx.structs.contains_key(&prefixed) && !self.defined(module) {
-            // (a module that is one, asked for what it does not have — the
-            // core's `read` through `io` — is told so, not that it is none)
-            let known = REGISTRY_MODULES.contains(&real.as_str()) || real == "db";
-            if known && CORE_RESERVED.contains(&field) {
-                self.refuse(format!("{} has no '{}' — {} is the core's: {}[…]", module, field, field, field));
-            } else if known {
-                self.refuse(format!("{} has no '{}'", module, field));
-            } else {
-                self.refuse(format!("undefined module or variable '{}'", module));
-            }
+        if registry_module || self.ctx.functions.contains_key(&prefixed) || self.ctx.structs.contains_key(&prefixed) || self.defined(module) {
+            return;
         }
+        let known = REGISTRY_MODULES.contains(&real.as_str()) || real == "db";
+        let providers = stdlib_providers(field);
+        if known {
+            if CORE_RESERVED.contains(&field) {
+                // the core's name (`read`, `sqrt`) is called bare, whether
+                // or not a module has a form of its own
+                self.refuse(format!("{} has no '{}' — {} is the core's: {}[…]", module, field, field, field));
+            } else if providers.contains(&real) {
+                // the module has it: the program does not import the module
+                self.refuse_missing_use(&format!("{}.{}", module, field), &real, "");
+            } else if let Some(m) = providers.first() {
+                // another module has it
+                let imported = self.ctx.registry.providers_of(field).iter().any(|p| p == m);
+                if imported {
+                    self.refuse(format!("{} has no '{}' — {}[] is {}'s: call it {}[…]", module, field, field, m, field));
+                } else {
+                    self.refuse(format!("{} has no '{}' — {}[] is {}'s: add `use {}`", module, field, field, m, m));
+                }
+            } else {
+                // a slip in one of the module's own names
+                let registry = crate::modules::ModuleRegistry::with_stdlib();
+                let own: Vec<(String, Option<String>)> = registry.functions_of(&real).into_iter().map(|f| (f.to_string(), None)).collect();
+                let near = self.near(field, own);
+                self.refuse(format!("{} has no '{}'{}", module, field, near));
+            }
+            return;
+        }
+        // not a module the program has: the last name of one whose functions
+        // are called by their own (`stats.mean` for math.stats's), or a slip
+        // in a module's name
+        if let Some(full) = REGISTRY_MODULES.iter().find(|m| m.contains('.') && m.rsplit('.').next() == Some(module)) {
+            match providers.first() {
+                Some(m) if m == full => self.refuse(format!("'{}' is {}, whose functions are called by their own names: add `use {}`, then {}[…]", module, full, full, field)),
+                Some(m) => self.refuse(format!("{}[] is {}'s, called by its own name: add `use {}`, then {}[…]", field, m, m, field)),
+                None => self.refuse(format!("'{}' is {}, whose functions are called by their own names: add `use {}`", module, full, full)),
+            }
+            return;
+        }
+        let mut names: Vec<(String, Option<String>)> = REGISTRY_MODULES.iter().map(|m| (m.to_string(), None)).collect();
+        names.extend(["db", "web", "ui"].iter().map(|m| (m.to_string(), None)));
+        let near = self.near(module, names);
+        self.refuse(format!("undefined module or variable '{}'{}", module, near));
     }
 
     /// A call by name, its arguments already lowered and checked.
@@ -751,6 +886,17 @@ impl<'a> Lowerer<'a> {
         let mut modules: Vec<&str> = vec![""];
         modules.extend(providers.iter().map(String::as_str));
         if let Some(e) = crate::table::refusal(&modules, name, &kinds) {
+            // the form for these arguments may be a module's the program does
+            // not import: it says that module (`abs` of a column is math's —
+            // it had said abs[] takes an int or a number)
+            for m in stdlib_providers(name) {
+                let has_rows = crate::table::ROWS.iter().any(|r| r.module == m && r.name == name);
+                if !providers.contains(&m) && has_rows && crate::table::refusal(&["", m.as_str()], name, &kinds).is_none() {
+                    let words: Vec<String> = kinds.iter().map(|k| k.words().to_string()).collect();
+                    self.refuse_missing_use(name, &m, &format!(" of {}", listed(&words, "and")));
+                    return;
+                }
+            }
             self.refuse(e);
         }
     }
@@ -882,11 +1028,11 @@ impl<'a> Lowerer<'a> {
                 let val_ty = arg_type(self, 2);
                 let val_ty = if let Ty::Result(i) = val_ty { *i } else { val_ty };
                 if !matches!(inner.as_ref(), Ty::Unknown) && !matches!(val_ty, Ty::Unknown | Ty::Unit) && !inner.compatible(&val_ty) {
-                    self.refuse(format!(
-                        "map values must all be the same type — this map holds {} values, cannot add {} (use a struct for mixed named data)",
-                        inner.crow_name(),
-                        val_ty.crow_name()
-                    ));
+                    let (held, given) = (crate::table::Arg::of_type(inner).words(), crate::table::Arg::of_type(&val_ty).words());
+                    match args.get(1) {
+                        Some(A::Str(key)) => self.refuse(format!("a map holds one kind: '{}' is {}, and its values are {} — a record (struct) holds fields of several kinds", key, given, held)),
+                        _ => self.refuse(format!("a map holds one kind: its values are {}, and this is {} — a record (struct) holds fields of several kinds", held, given)),
+                    }
                 }
             }
         }
@@ -1163,33 +1309,94 @@ impl<'a> Lowerer<'a> {
             return;
         }
 
-        // a stdlib module's function the program does not import says which;
-        // a name near one in view says that one
-        match crate::modules::ModuleRegistry::with_stdlib().module_name_of(name) {
-            Some(m) => self.refuse(format!("{}[] is {}'s: add `use {}`", name, m, m)),
-            None => {
-                let near = self.nearest(name, BUILTINS.iter().copied().chain(self.v.used.iter().map(String::as_str)).chain(self.ctx.functions.keys().map(String::as_str)));
+        // what the body cannot see, said as a read of it is (`xs[i]` of a
+        // module variable inside a function had been "undefined function")
+        if self.out_of_view(name) {
+            return;
+        }
+        // a stdlib module's function the program does not import says which
+        // — both, when two provide it, with what each answers; a name near
+        // one in view, or near any module's, says that one
+        let providers = stdlib_providers(name);
+        match providers.as_slice() {
+            [] => {
+                let mut candidates: Vec<(String, Option<String>)> = BUILTINS.iter().map(|n| (n.to_string(), None)).collect();
+                candidates.extend(self.v.used.iter().map(|n| (n.clone(), None)));
+                candidates.extend(self.ctx.functions.keys().filter(|f| self.calls_fn(f)).map(|f| (f.clone(), None)));
+                let registry = crate::modules::ModuleRegistry::with_stdlib();
+                for module in REGISTRY_MODULES {
+                    if self.v.bare_import_lines.contains_key(*module) {
+                        continue;
+                    }
+                    candidates.extend(registry.functions_of(module).into_iter().map(|f| (f.to_string(), Some(module.to_string()))));
+                }
+                let near = self.near(name, candidates);
                 self.refuse(format!("undefined function '{}'{}", name, near));
+            }
+            [m] => self.refuse_missing_use(name, m, ""),
+            many => {
+                let mut many = many.to_vec();
+                many.sort();
+                let each: Vec<String> = many.iter().map(|m| match answers(m, name) {
+                    Some(a) => format!("{}'s ({})", m, a),
+                    None => format!("{}'s", m),
+                }).collect();
+                let uses: Vec<String> = many.iter().map(|m| format!("`use {}`", m)).collect();
+                self.refuse(format!("{}[] is {}: add {}", name, listed(&each, "or"), listed(&uses, "or")));
             }
         }
     }
 
+    /// A function the program calls from a module it does not import: the
+    /// import is asked for once per line, whatever the line calls of the
+    /// module (`abs[] and max[] of numbers are math's`), and the language
+    /// server offers it as a quick fix. `of` says the arguments, when the
+    /// core holds the name for others.
+    pub(super) fn refuse_missing_use(&mut self, written: &str, module: &str, of: &str) {
+        if self.v.mute > 0 {
+            return;
+        }
+        let line = self.v.line;
+        if let Some((first_line, at, names, first_of)) = self.v.missing_use.get_mut(module) {
+            // (another line's call of the module is fixed by the same line)
+            if *first_line == line && !names.iter().any(|n| n == written) {
+                names.push(written.to_string());
+                let calls: Vec<String> = names.iter().map(|n| format!("{}[]", n)).collect();
+                let of = if first_of.as_str() == of { of } else { "" };
+                let message = format!("line {}: {}{} are {}'s: add `use {}`", line, listed(&calls, "and"), of, module, module);
+                if let Some(e) = self.v.errors.get_mut(*at) {
+                    e.0 = message;
+                }
+            }
+            return;
+        }
+        self.refuse(format!("{}[]{} is {}'s: add `use {}`", written, of, module, module));
+        let at = self.v.errors.len() - 1;
+        self.v.missing_use.insert(module.to_string(), (line, at, vec![written.to_string()], of.to_string()));
+    }
+
     /// ` — did you mean 'len'?` for the name among `candidates` nearest the
     /// one written, when it is near enough to be a slip (one edit in a name
-    /// of up to five characters, two in a longer one; none for a name of one
-    /// or two); empty otherwise.
-    fn nearest<'n>(&self, name: &str, candidates: impl Iterator<Item = &'n str>) -> String {
+    /// of up to five characters, two in a longer one, a swapped pair one;
+    /// none for a name of one or two); a module's name the program does not
+    /// import says the import (` (math's: add `use math`)`). Empty
+    /// otherwise. A name in view wins a tie with a module's.
+    fn near(&self, name: &str, candidates: Vec<(String, Option<String>)>) -> String {
         let limit = match name.chars().count() {
             0..=2 => return String::new(),
             3..=5 => 1,
             _ => 2,
         };
         candidates
-            .filter(|c| *c != name && !c.starts_with("__"))
-            .map(|c| (crate::db_check::catalog::levenshtein(name, c), c))
-            .filter(|(d, _)| *d <= limit)
+            .into_iter()
+            .filter(|(c, _)| c != name && !c.starts_with("__"))
+            .map(|(c, m)| (slips(name, &c), m.is_some(), c, m))
+            .filter(|(d, ..)| *d <= limit)
             .min()
-            .map(|(_, c)| format!(" — did you mean '{}'?", c))
+            .map(|(_, _, c, m)| match m {
+                Some(m) => format!(" — did you mean '{}'? ({}'s: add `use {}`)", c, m, m),
+                None => format!(" — did you mean '{}'?", c),
+            })
             .unwrap_or_default()
     }
 }
@@ -1311,7 +1518,7 @@ mod tests {
     #[test]
     fn a_function_reading_a_derivation_is_told_to_derive() {
         let err = check_source("use web, ui\nn = 1\nderive cfg\n    return n + 1\nfn band[]\n    return cfg * 2\nview render[]\n    return p['`band[]`']\npage['/', render]\n").unwrap_err();
-        assert!(err.contains("in band: derivations are not visible inside functions — read 'cfg' in a view or handler"), "{}", err);
+        assert!(err.contains("in band: 'cfg' is a derivation, which a function does not see — read it in a view or handler"), "{}", err);
     }
 
     /// A list holds one kind (spec, Arrays): a literal with text beside a
@@ -1694,7 +1901,7 @@ mod tests {
 
     #[test]
     fn test_fn_module_var_read_rejected_with_hint() {
-        assert!(check_source("base = 10\nfn f[x]\n    return x + base\nr = f[1]\n").unwrap_err().contains("pass 'base' as a parameter"));
+        assert!(check_source("base = 10\nfn f[x]\n    return x + base\nr = f[1]\n").unwrap_err().contains("'base' is a module variable, which a function does not see — pass it as a parameter"));
     }
 
     #[test]
@@ -1706,7 +1913,7 @@ mod tests {
     #[test]
     fn test_map_hetero_set_rejected_at_compile_time() {
         // Maps are dictionaries: set[] changing value type is refused
-        assert!(check_source("m = map[a = 1]\nm2 = set[m, 'b', 'x']\n").unwrap_err().contains("map values must all be the same type"));
+        assert!(check_source("m = map[a = 1]\nm2 = set[m, 'b', 'x']\n").unwrap_err().contains("a map holds one kind: 'b' is text, and its values are an int"));
     }
 
     /// A collection builtin given a kind none of its rows takes is refused
@@ -1767,7 +1974,7 @@ mod tests {
         let err = check_source("log['total: `totl`']\n").unwrap_err();
         assert!(err.contains("line 1: undefined variable 'totl'"), "{}", err);
         let err = check_source("amount = 3\nfn show[]\n    return 'amount is `amount`'\nlog[show[]]\n").unwrap_err();
-        assert!(err.contains("in show: module variables are not visible inside functions — pass 'amount'"), "{}", err);
+        assert!(err.contains("in show: 'amount' is a module variable, which a function does not see — pass it as a parameter"), "{}", err);
     }
 
     /// A route's handler is handed its request alone, so the advice for a
@@ -1777,7 +1984,7 @@ mod tests {
     fn a_route_handler_reading_a_module_variable_is_told_to_open_it_itself() {
         let src = "use web, db\nconn = connect['sqlite://app.db']\nfn count[req]\n    q = query[conn, 'SELECT 1 AS one']\n    return text['one']\nroute['/count', count]\nroute['/n', 'GET', count, 3]\nserve[3000]\n";
         let err = check_source(src).unwrap_err();
-        assert!(err.contains("in count: module variables are not visible inside functions — a route's handler is handed its request alone: open what it needs inside it"), "{}", err);
+        assert!(err.contains("in count: 'conn' is a module variable, which a route's handler does not see — the route hands it its request alone: open what it needs inside it"), "{}", err);
         assert!(!err.contains("wire the function as a handler"), "{}", err);
         let ok = "use web, db\nfn count[req]\n    conn = connect['sqlite://app.db']\n    q = query[conn, 'SELECT 1 AS one']\n    return text['one']\nroute['/count', count]\nserve[3000]\n";
         assert!(check_source(ok).is_ok(), "{:?}", check_source(ok));

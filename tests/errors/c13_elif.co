@@ -1,0 +1,7 @@
+--- elif for else then if
+--- known: place, editor
+x = 2
+if x eq 1
+    log['a']
+elif x eq 2
+    log['b']

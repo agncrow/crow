@@ -141,6 +141,27 @@ impl TypeContext {
                 return t;
             }
         }
+        // a module's function the program does not import, called bare where
+        // nothing in scope takes this many arguments (`join[a, b, 'k']`
+        // without `use frame`): the program is refused for the import, and
+        // the call is typed as the module's, so what the program does with
+        // the value is judged in the same run (spec, Error Messages, rule 3)
+        if !self.registry.has_function(name) && !self.functions.contains_key(name) && !self.vars.contains_key(name) {
+            let core_takes = crate::table::ROWS.iter().any(|r| {
+                let fixed = r.params.iter().filter(|k| !k.is_rest()).count();
+                r.module.is_empty() && r.name == name && (r.params.len() == args.len() || (r.params.iter().any(|k| k.is_rest()) && args.len() >= fixed))
+            });
+            if !core_takes {
+                let stdlib = crate::modules::ModuleRegistry::with_stdlib();
+                let providers = stdlib.providers_of(name);
+                let full: Vec<Ty> = args.iter().map(arg_ty).collect();
+                if let Some(m) = crate::table::module_of_bare(name, &providers, &kinds)
+                    && let Some(t) = stdlib.type_of_in(&m, name, &full)
+                {
+                    return t;
+                }
+            }
+        }
 
         // Builtins (check before vars to prevent builtins from being shadowed by Fn inference)
         match name {
@@ -659,6 +680,18 @@ impl TypeContext {
                     return Some(Ty::Result(Box::new(t)));
                 }
                 return Some(t);
+            }
+        }
+        // a standard module the program does not import, called through its
+        // name, is refused (add `use m`): the call is typed as the module's,
+        // so what the program goes on to do with the value is judged in the
+        // same run (spec, Error Messages, rule 3)
+        if matches!(real.as_str(), "math" | "io" | "frame" | "db" | "doc" | "chart" | "math.stats" | "math.nn") && !self.registry.has_function(field) {
+            let stdlib = crate::modules::ModuleRegistry::with_stdlib();
+            if stdlib.providers_of(field).contains(&real.as_str()) {
+                if let Some(t) = stdlib.type_of_in(&real, field, arg_types) {
+                    return Some(t);
+                }
             }
         }
         let prefixed = format!("{}_{}", module, field);

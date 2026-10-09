@@ -1,0 +1,3 @@
+a05_route_without_use_web.co:4:1: route[] is web's: add `use web`
+  4 │ route['/', home]
+    │ ^^^^^

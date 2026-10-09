@@ -1,0 +1,5 @@
+--- frame.load of a file there is none of
+--- known: refused
+use frame
+df = frame.load['no_such.csv']
+log[df]

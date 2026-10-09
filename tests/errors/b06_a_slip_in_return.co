@@ -1,0 +1,4 @@
+--- retrun for return
+fn f[x]
+    retrun x
+log[f[1]]

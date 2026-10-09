@@ -1,0 +1,3 @@
+f02_an_undefined_name_in_a_collecting_for.co:4:11: undefined variable 'zz'
+  4 │     upper[zz]
+    │           ^^

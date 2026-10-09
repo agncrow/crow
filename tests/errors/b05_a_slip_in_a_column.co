@@ -1,0 +1,4 @@
+--- df.qyt for df.qty
+use frame
+df = frame.new[qty = [1, 2]]
+log[df.qyt]

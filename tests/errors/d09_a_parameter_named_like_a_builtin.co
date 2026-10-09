@@ -1,0 +1,4 @@
+--- fn f[values]
+fn f[values]
+    return values
+log[f[1]]

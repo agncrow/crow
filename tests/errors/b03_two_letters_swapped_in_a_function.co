@@ -1,0 +1,4 @@
+--- scroe for score
+fn score[x]
+    return x * 2
+log[scroe[1]]

@@ -1,0 +1,3 @@
+d04_upper_of_a_number.co:2:5: upper[] takes text, got an int
+  2 │ log[upper[5]]
+    │     ^^^^^

@@ -1,0 +1,3 @@
+b03_two_letters_swapped_in_a_function.co:4:5: undefined function 'scroe' — did you mean 'score'?
+  4 │ log[scroe[1]]
+    │     ^^^^^

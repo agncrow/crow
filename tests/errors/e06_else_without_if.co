@@ -1,0 +1,3 @@
+--- else with no if before it
+else
+    log['x']

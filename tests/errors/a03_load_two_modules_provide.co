@@ -1,0 +1,3 @@
+--- load without an import: frame and math both provide it
+df = load['a.csv']
+log[df]

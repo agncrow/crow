@@ -1,0 +1,3 @@
+d06_a_field_of_a_number.co:3:7: an int has no field 'name'
+  3 │ log[x.name]
+    │       ^^^^

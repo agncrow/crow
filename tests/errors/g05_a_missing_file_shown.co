@@ -1,0 +1,5 @@
+--- read of a file there is none of, logged
+--- runs: the failure is a value the program shows
+--- known: place
+x = read['no_such_file.txt']
+log[upper[x]]

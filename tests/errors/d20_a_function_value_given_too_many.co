@@ -1,0 +1,5 @@
+--- g[1, 2] for g = f, f[x]
+fn f[x]
+    return x
+g = f
+log[g[1, 2]]

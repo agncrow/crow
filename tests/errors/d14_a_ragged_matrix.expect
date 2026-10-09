@@ -1,0 +1,3 @@
+d14_a_ragged_matrix.co:2:1: all inner arrays must be the same length: a nested literal of numbers is a matrix — a list of lists of other lengths is built with push[…]
+  2 │ xs = [[1, 2], [3]]
+    │ ^^^^^^^^^^^^^^^^^^

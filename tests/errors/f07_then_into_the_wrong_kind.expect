@@ -1,0 +1,3 @@
+f07_then_into_the_wrong_kind.co:3:12: upper[] takes text, got an int
+  3 │ y = x then upper
+    │            ^^^^^

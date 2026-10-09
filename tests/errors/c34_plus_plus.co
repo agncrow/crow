@@ -1,0 +1,6 @@
+--- x++ for x = x + 1
+--- known: editor
+x = 1
+while x lt 3
+    x++
+log[x]

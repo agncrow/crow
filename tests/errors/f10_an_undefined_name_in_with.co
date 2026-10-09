@@ -1,0 +1,5 @@
+--- with[df, 'c', zz]
+use frame
+df = frame.new[a = [1.0, 2.0]]
+g = with[df, 'c', zz]
+log[g]

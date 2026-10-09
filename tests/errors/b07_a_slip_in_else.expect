@@ -1,0 +1,3 @@
+b07_a_slip_in_else.co:7:5: unexpected token 'INDENT'
+  7 │     log['b']
+    │     ^^^^^^^^

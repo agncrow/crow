@@ -1,0 +1,3 @@
+c26_double_star_power.co:4:7: unexpected token '*'
+  4 │ log[x ** 2]
+    │       ^^

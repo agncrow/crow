@@ -42,6 +42,8 @@ jobs:
         run: cargo build --release
       - name: Docs cover the compiler (and nothing more)
         run: ./target/release/crow test --docs
+      - name: Wrong programs are refused as reviewed (both modes and the language server)
+        run: ./target/release/crow test --errors
       - name: Parity corpus (both execution modes must agree)
         run: ./target/release/crow test --parity && df -h / | tail -1
       - name: Served pages match across both modes

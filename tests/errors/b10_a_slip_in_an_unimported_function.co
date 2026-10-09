@@ -1,0 +1,3 @@
+--- summ for sum, math not imported
+xs = [1, 2]
+log[summ[xs]]

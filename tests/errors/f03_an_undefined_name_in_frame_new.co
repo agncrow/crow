@@ -1,0 +1,4 @@
+--- frame.new[a = zz]
+use frame
+df = frame.new[a = zz]
+log[df]

@@ -1,0 +1,3 @@
+a10_stats_called_through_its_name.co:2:11: mean[] is math's, called by its own name: add `use math`, then mean[…]
+  2 │ x = stats.mean[[1.0, 2.0]]
+    │           ^^^^

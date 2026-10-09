@@ -1,0 +1,3 @@
+--- frame.new without `use frame`
+ours = frame.new[node = ['a'], value = [1.0]]
+log[ours]

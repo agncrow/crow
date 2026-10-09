@@ -1,0 +1,3 @@
+--- m.keys for keys[m]
+m = map[a = 1]
+log[m.keys]

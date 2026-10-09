@@ -1,0 +1,3 @@
+c30_a_javascript_function.co:2:15: unexpected character '{'
+  2 │ function f(x) {
+    │               ^
