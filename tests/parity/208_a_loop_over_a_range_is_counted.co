@@ -30,3 +30,17 @@ count = 0
 for i in range[half]
     count = count + 1
 log[count]
+--- a return from inside the counted loop leaves the function, and the
+--- bound may be what a call answers
+fn first_square_over[limit]
+    for i in range[100]
+        if i * i gt limit
+            return i
+    return -1
+log[first_square_over[50]]
+log[first_square_over[1000000]]
+names = ['a', 'b', 'c']
+seen = 0
+for i in range[len[names]]
+    seen = seen + i
+log[seen]

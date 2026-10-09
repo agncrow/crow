@@ -179,10 +179,16 @@ steps on every push and must be green.
   The interpreter: block scopes come from a pool (`push_scope`/`pop_scope`),
   a `for` runs its rounds in ONE scope (the variable rebound, the round's
   bindings `retain`ed away), `xs[i]` and `xs[i] = v` of a local have fast
-  paths before the general in-place path, and `Expr::ty_ref` lends a type
-  where `ty()` would clone a boxed one. Profile with `sample <pid> 3`: the
-  "Sort by top of stack" list is what matters (the release binary has no
-  frame pointers, so call chains are blank).
+  paths before the general in-place path, `for` over `range[…]` counts
+  without building the list (`counted_for`, the emitter's twin: any bound
+  that is not an int goes to the row call the list path makes), and
+  `Expr::ty_ref` lends a type where `ty()` would clone a boxed one.
+  Profile with `sample <pid> 3`: the "Sort by top of stack" list is what
+  matters (the release binary has no frame pointers, so call chains are
+  blank). And time the right thing: `crow run file.co` is a DEV build by
+  design (the runtime crates optimized, the program crate not — the spec
+  says so), 30× slower than the binary `crow build` makes; the compiled
+  number is `crow build`, then the binary.
 - A map's type carries its keys' kind: `Ty::Map(Key, value)` with `Key::{Text,
   Int, Open}` (open = empty until a first key). Where a map's type is REBUILT
   from another (settle, held_as, `as_inferred`, the emitter's inner types),

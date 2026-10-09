@@ -989,7 +989,34 @@ impl IrInterp {
                 Ok(Flow::Next)
             }
             Stmt::For { var, iter, body, parallel } => {
-                let it = self.eval(iter)?;
+                // `for i in range[n]` and `range[a, b]`: a counted loop, no
+                // list built — the emitter's twin (stmts.rs emit_for): the
+                // interpreted fannkuch built one per permutation too. A
+                // parallel loop keeps its list (its rounds are handed out as
+                // items), as does a stepped range.
+                let it = if !(*parallel && !self.tracing)
+                    && let Expr::Call { target: Target::Row(row), args, propagates, ty, .. } = iter
+                    && matches!(row.id, "core.range_to" | "core.range_from")
+                    && !ty.is_result()
+                {
+                    let vals = self.eval_args(args)?;
+                    let bound = |v: &CrowValue| if v.is_ok() && let Value::Int(n) = &v.value { Some(*n) } else { None };
+                    let bounds = match vals.as_slice() {
+                        [n] => bound(n).map(|hi| (0, hi)),
+                        [a, b] => bound(a).zip(bound(b)),
+                        _ => None,
+                    };
+                    if let Some((lo, hi)) = bounds {
+                        return self.counted_for(var, lo, hi, body);
+                    }
+                    // what the call would have answered from these values
+                    match (*propagates, self.first_error(&vals)) {
+                        (true, Some(err)) => err,
+                        _ => self.row_call(row, vals)?,
+                    }
+                } else {
+                    self.eval(iter)?
+                };
                 // a list that failed is refused like a condition (the
                 // lowering refuses a typed one first; this is one it could
                 // not see)
@@ -1661,6 +1688,39 @@ impl IrInterp {
     /// where the compiled program went by the type, so `type[x]` and a loop
     /// over a matrix typed by nothing differed between the modes. Any other
     /// value walks its items.
+    /// `for i in range[lo, hi]` counted: the rounds of the list path
+    /// (`core::range` walks `lo..hi` by one) without the list, the
+    /// variable rebound in place each round.
+    fn counted_for(&mut self, var: &str, lo: i64, hi: i64, body: &[Stmt]) -> Result<Flow, String> {
+        self.push_scope();
+        let mut flow = Flow::Next;
+        let mut i = lo;
+        while i < hi {
+            if let Err(e) = self.check_cancel() {
+                self.pop_scope();
+                return Err(e);
+            }
+            self.bind(var, CrowValue::ok(Value::Int(i)));
+            let r = self.exec_stmts(body);
+            self.end_round(var);
+            match r {
+                Err(e) => {
+                    self.pop_scope();
+                    return Err(e);
+                }
+                Ok(Flow::Break) => break,
+                Ok(Flow::Return(v)) => {
+                    flow = Flow::Return(v);
+                    break;
+                }
+                Ok(Flow::Next | Flow::Continue) => {}
+            }
+            i += 1;
+        }
+        self.pop_scope();
+        Ok(flow)
+    }
+
     fn walked_items(it: &CrowValue, iter: &Expr) -> Result<Vec<CrowValue>, String> {
         if let (Value::NumArray(t), Ty::Tensor(e, dims)) = (&it.value, iter.ty().payload()) {
             return Ok(match Ty::tensor_item(e, dims) {
