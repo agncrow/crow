@@ -1,0 +1,3 @@
+--- connect and query without `use db`: refused for the import, not stopped as it runs
+c = connect['sqlite://:memory:']
+log[query[c, 'SELECT 1 AS n'].n[0]]

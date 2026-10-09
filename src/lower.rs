@@ -832,8 +832,21 @@ impl Lowerer {
 
     /// Whether a name the program calls through is one of its imports, of
     /// the standard module given (`frame`, or `f` for `use frame as f`).
+    /// Each file's imports are its own: in the entry's code a module only a
+    /// part imports is not imported (the entry's `frame.new[…]` had been
+    /// rewritten into its `with` chain on the part's import, and refused
+    /// as `with`); inside a part's function the part's own import serves.
     fn imports_module(&self, name: &str, module: &str) -> bool {
-        self.imports.get(name).is_some_and(|p| p == module)
+        self.imports.get(name).is_some_and(|p| p == module) && self.module_imported(name)
+    }
+
+    /// Whether a name the program calls through is an import of the file
+    /// whose code this is: in the entry's code a module only a part imports
+    /// is not imported; inside a part's function the part's own serves.
+    fn module_imported(&self, name: &str) -> bool {
+        let Some(path) = self.imports.get(name) else { return false };
+        let in_part = crate::part_prefix_of_declaration(&self.current_fn).is_some();
+        in_part || !crate::PART_ONLY_IMPORTS.with(|p| p.borrow().iter().any(|m| m == path))
     }
 
     fn lower_stmt(&mut self, stmt: &Stmt) -> Result<Stmt, String> {
@@ -934,11 +947,15 @@ impl Lowerer {
                 // named — the `with` chain over the empty frame both backends
                 // already hold, typed column by column (spec, frame: new);
                 // under an alias (`use frame as f`) the chain is the alias's
-                // (only when the program has frame: without it the call is
-                // left as written, for the checks to say the import — the
-                // chain's `with` calls had been refused as if written)
+                // (whether or not the file imports frame: the literal's
+                // columns are typed by its chain, and the checks refuse the
+                // import once, at `new`, passing the chain's own `with` steps
+                // by — a literal left unrewritten in a file lacking the
+                // import had been typed as a frame of no columns, and every
+                // read of a column after it refused too)
                 if let Expr::FieldAccess { object, field } = &callee {
-                    if field == "new" && !args.is_empty() && matches!(object.as_ref(), Expr::Ident(m) if self.imports_module(m, "frame")) && self.fns.get(&format!("{}_new", module_of(object))).is_none() {
+                    let names_frame = matches!(object.as_ref(), Expr::Ident(m) if self.imports.get(m).is_some_and(|p| p == "frame") || (m == "frame" && !self.imports.contains_key(m)));
+                    if field == "new" && !args.is_empty() && names_frame && !self.fns.contains_key(&format!("{}_new", module_of(object))) {
                         return self.lower_frame_literal(object.as_ref().clone(), args);
                     }
                 }
@@ -1272,7 +1289,7 @@ impl Lowerer {
                                     // left as written, its values without their names,
                                     // for the checks to say the import
                                     let standard = crate::lower_ir::is_standard_module(m) || crate::modules::ModuleRegistry::with_stdlib().functions_of(m).contains(&field.as_str());
-                                    if standard && !self.imports.contains_key(m) {
+                                    if standard && !self.module_imported(m) {
                                         let values = args.into_iter().map(|a| match a {
                                             Expr::Named { value, .. } => *value,
                                             other => other,
@@ -1281,7 +1298,7 @@ impl Lowerer {
                                     }
                                     // a function written as a value's method, as
                                     // pandas writes it: Crow hands the value first
-                                    if !self.imports.contains_key(m) && is_function_name(field) {
+                                    if !self.module_imported(m) && is_function_name(field) {
                                         return Err(self.err(format!("{0}.{1}[] is {1}[{0}, …]: a function takes its value first", m, field)));
                                     }
                                 }

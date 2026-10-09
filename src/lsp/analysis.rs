@@ -101,8 +101,10 @@ pub fn analyze(
             }
         }
         None => {
-            // (no expansion ran: no import of this document's is unresolved)
+            // (no expansion ran: no import of this document's is unresolved,
+            // and no part's import stands beside its own)
             crate::UNRESOLVED_USES.with(|u| u.borrow_mut().clear());
+            crate::PART_ONLY_IMPORTS.with(|p| p.borrow_mut().clear());
             stmts
         }
     };

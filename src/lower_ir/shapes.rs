@@ -363,7 +363,7 @@ impl<'a> Lowerer<'a> {
         let (Some(a), Some(b)) = (l.ty().tensor_dims().cloned(), r.ty().tensor_dims().cloned()) else { return };
         // where a parameter's shape came from: the calls handing it
         let handed = match [self.handed_as(l), self.handed_as(r)] {
-            [Some((f, p)), Some((_, q))] if p != q => format!(" (the tensors {}[] is handed as `{}` and `{}`)", f, p, q),
+            [Some((f, p)), Some((_, q))] if p != q => format!(" (the tensors {}[] is handed as `{}` and `{}`)", super::checks::plain_name(&f), super::checks::plain_name(&p), super::checks::plain_name(&q)),
             [Some((f, p)), _] | [None, Some((f, p))] => format!(" (the tensor {}[] is handed as `{}`)", f, p),
             [None, None] => String::new(),
         };

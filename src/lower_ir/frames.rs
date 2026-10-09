@@ -419,7 +419,7 @@ impl<'a> Lowerer<'a> {
     /// own copy's, so the call to look at is one handing these).
     pub(super) fn handed(&self, value: &Expr, what: &str) -> String {
         match self.handed_as(value) {
-            Some((f, p)) => format!(" (the {} {}[] is handed as `{}`)", what, f, p),
+            Some((f, p)) => format!(" (the {} {}[] is handed as `{}`)", what, super::checks::plain_name(&f), super::checks::plain_name(&p)),
             None => String::new(),
         }
     }

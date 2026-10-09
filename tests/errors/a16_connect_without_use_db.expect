@@ -1,0 +1,3 @@
+a16_connect_without_use_db.co:2:5: connect[] is db's: add `use db`
+  2 │ c = connect['sqlite://:memory:']
+    │     ^^^^^^^

@@ -467,16 +467,20 @@ fn plantable(lines: &[String]) -> Vec<(Vec<String>, Planted)> {
         }
     }
     // a module's import left out, where the program calls it: its calls
-    // say the import, once (db: the generated part imports math and
-    // frame, and a part's imports are the program's)
+    // say the import, once — frame, which the generated part imports too
+    // (each file's imports are its own), and db where the program connects
     let calls_db = lines.iter().any(|l| l.contains("connect[") || l.contains("query["));
-    if let Some((i, l)) = lines.iter().enumerate().find(|(_, l)| l.starts_with("use "))
-        && calls_db
-        && l.contains(" db,")
-    {
-        let mut mutated = lines.to_vec();
-        mutated[i] = l.replacen(" db,", "", 1);
-        out.push((mutated, Planted { what: "use db left out".into(), line: None, teaches: "add `use db`".into() }));
+    if let Some((i, l)) = lines.iter().enumerate().find(|(_, l)| l.starts_with("use ")) {
+        if l.contains(" frame,") {
+            let mut mutated = lines.to_vec();
+            mutated[i] = l.replacen(" frame,", "", 1);
+            out.push((mutated, Planted { what: "use frame left out".into(), line: None, teaches: "add `use frame`".into() }));
+        }
+        if calls_db && l.contains(" db,") {
+            let mut mutated = lines.to_vec();
+            mutated[i] = l.replacen(" db,", "", 1);
+            out.push((mutated, Planted { what: "use db left out".into(), line: None, teaches: "add `use db`".into() }));
+        }
     }
     out
 }

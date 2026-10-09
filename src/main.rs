@@ -4646,6 +4646,9 @@ pub(crate) fn expand_module_imports_checked(
     SCHEMA_DIR.with(|d| *d.borrow_mut() = Some(project_root(source_dir).join(".crow").join("schema")));
     let mut ex = ModuleExpansion::default();
     let mut body = expand_into(stmts, source_dir, &mut ex, visited);
+    if !ex.refused.is_empty() {
+        return Err(ex.refused.join("\n"));
+    }
     separate_part_locals(&mut body, &mut ex.hoisted);
     let hoisted = ex.hoisted.len();
     let mut all = ex.hoisted;
@@ -4704,6 +4707,23 @@ pub(crate) fn expand_module_imports_checked(
     PLAIN_ENTRY.with(|p| p.set(plain));
     // (set last, after each part validated alone set its own)
     UNRESOLVED_USES.with(|u| *u.borrow_mut() = ex.unresolved);
+    // the standard modules only a part imports: the entry's own imports
+    // are what its names resolve against
+    let entry_has: std::collections::BTreeSet<String> = stmts
+        .iter()
+        .filter_map(|s| if let ast::Stmt::Use { path, .. } = s { Some(path) } else { None })
+        .flat_map(|p| modules_of_import(p))
+        .collect();
+    let part_only: Vec<String> = out
+        .iter()
+        .filter_map(|s| if let ast::Stmt::Use { path, .. } = s { Some(path) } else { None })
+        .filter(|p| lower_ir::is_standard_module(p) || p.starts_with("web."))
+        .flat_map(|p| modules_of_import(p))
+        .filter(|m| !entry_has.contains(m))
+        .collect::<std::collections::BTreeSet<String>>()
+        .into_iter()
+        .collect();
+    PART_ONLY_IMPORTS.with(|p| *p.borrow_mut() = part_only);
     Ok(out)
 }
 
@@ -5211,6 +5231,10 @@ struct ModuleExpansion {
     /// the entry's imports of a module there is no file and no standard
     /// module for, with the line of each
     unresolved: Vec<(usize, String)>,
+    /// the parts that do not lex or parse, each with its own refusal (a
+    /// part dropped silently had left its names undefined in the entry:
+    /// "undefined variable 'sim'" for a `contains[…]` in views/sim.co)
+    refused: Vec<String>,
 }
 
 thread_local! {
@@ -5218,6 +5242,25 @@ thread_local! {
     /// refuse each where the program's other refusals are made (spec,
     /// Error Messages). Set when a program is expanded.
     pub(crate) static UNRESOLVED_USES: std::cell::RefCell<Vec<(usize, String)>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// The standard modules the entry's parts import and the entry does
+    /// not: each file's imports are its own (spec, Modules), so a name the
+    /// entry reaches only through a part's import is refused for the
+    /// import, as it would be with no import at all. Set when a program is
+    /// expanded (the program still links every module its parts import).
+    pub(crate) static PART_ONLY_IMPORTS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The standard modules an import makes names from: its own, and `math`
+/// for `use math.stats`, `web` for `use web.auth`.
+fn modules_of_import(path: &str) -> Vec<String> {
+    let mut out = vec![path.to_string()];
+    if path.starts_with("math.") {
+        out.push("math".to_string());
+    }
+    if path.starts_with("web.") {
+        out.push("web".to_string());
+    }
+    out
 }
 
 fn expand_into(
@@ -5307,16 +5350,30 @@ fn expand_into(
                 continue;
             }
         };
-        // Parse the module
+        // Parse the module: one that does not is the program's refusal,
+        // named by the part's file
+        let shown_part = std::fs::canonicalize(&file_path)
+            .ok()
+            .zip(std::fs::canonicalize(&root).ok())
+            .and_then(|(c, r)| c.strip_prefix(&r).ok().map(|p| p.display().to_string()))
+            .unwrap_or_else(|| file_path.display().to_string());
         let mut lexer = Lexer::new(&source);
         let tokens = match lexer.tokenize() {
             Ok(t) => t,
-            Err(_) => continue,
+            Err(e) => {
+                ex.refused.push(format!("{}: {}", shown_part, e));
+                expanded.push(stmt.clone());
+                continue;
+            }
         };
         let mut parser = Parser::new(tokens);
         let mod_stmts = match parser.parse() {
             Ok(s) => s,
-            Err(_) => continue,
+            Err(e) => {
+                ex.refused.push(format!("{}: {}", shown_part, e));
+                expanded.push(stmt.clone());
+                continue;
+            }
         };
         // The module's own imports are hoisted first and its references to
         // them rewritten
@@ -5930,6 +5987,55 @@ mod module_parts_tests {
     /// A part that never imports web may name a parameter `close`: the
     /// whole program carries the entry's imports, and a part is held to its
     /// own (finch's pattern parts were refused through a ui app)
+    /// Each file's imports are its own: the entry reaches a module only
+    /// through its own `use`, not a part's — bare (`join`), qualified
+    /// (`frame.new`), a core name whose form for these arguments is the
+    /// module's (`max` of a column), and web's `route` — while the part's
+    /// own functions keep their own import, and what the part declares is
+    /// reached qualified as before
+    #[test]
+    fn a_parts_import_does_not_serve_the_entry() {
+        let dir = std::env::temp_dir().join(format!("crow_parts_imports_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'parts'\n").unwrap();
+        std::fs::write(dir.join("lib/helpers.co"), "use frame, math\n\nfn table_of[xs]\n    return frame.new[x = xs]\n\nfn spread[df]\n    return max[abs[df.x]]\n").unwrap();
+        let check = |src: &str| -> Result<(), String> {
+            let stmts = build(src).unwrap();
+            let mut visited = std::collections::HashSet::new();
+            let stmts = expand_module_imports_checked(&stmts, &dir, &mut visited)?;
+            let lowered = lower::lower_program(&stmts).map_err(|e| format!("error: {}", e))?;
+            infer_and_validate(&lowered, false).map(|_| ())
+        };
+        let leaking = "use lib.helpers\n\ndf = frame.new[node = ['a'], value = [1.0]]\nlog[len[helpers.table_of[[3.0]]]]\nlog[len[join[df, df, 'node']]]\nlog[max[abs[df.value - 1.0]]]\nlog[helpers.spread[helpers.table_of[[2.0]]]]\n";
+        let err = check(leaking).unwrap_err();
+        assert!(err.contains("line 3: frame.new[] is frame's: add `use frame`"), "{}", err);
+        assert!(err.contains("line 6: abs[] and max[] of numbers are math's: add `use math`"), "{}", err);
+        // (asked once per module: join's line adds nothing)
+        assert_eq!(err.matches("add `use frame`").count(), 1, "{}", err);
+        assert!(!err.contains("with"), "the entry's own form, not its rewrite: {}", err);
+        let own = leaking.replacen("use lib.helpers\n", "use lib.helpers, frame, math\n", 1);
+        assert!(check(&own).is_ok(), "{:?}", check(&own).err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A part that does not parse is the program's refusal, named by the
+    /// part's file and line (it had been dropped silently, and the entry
+    /// told its name was undefined)
+    #[test]
+    fn a_part_that_does_not_parse_is_refused_by_its_own_file() {
+        let dir = std::env::temp_dir().join(format!("crow_parts_parse_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("views")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'parts'\n").unwrap();
+        std::fs::write(dir.join("views/sim.co"), "fn render[]\n    return 1 y = 2\n").unwrap();
+        let stmts = build("use views.sim\nlog[sim.render[]]\n").unwrap();
+        let mut visited = std::collections::HashSet::new();
+        let err = expand_module_imports_checked(&stmts, &dir, &mut visited).unwrap_err();
+        assert!(err.starts_with("views/sim.co: line 2, col 14: a line holds one statement"), "{}", err);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn a_part_is_not_held_to_the_entrys_reservations() {
         let dir = std::env::temp_dir().join(format!("crow_parts_resv_{}", std::process::id()));

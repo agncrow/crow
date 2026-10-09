@@ -1797,6 +1797,8 @@ Dot-separated paths map to directories: `use views.home` loads `views/home.co`, 
 
 Comma-separated imports expand at parse time: `use web, ui` is equivalent to writing `use web` and `use ui` on separate lines.
 
+**Each file's imports are its own.** A file sees the modules it imports and no other: a part's `use frame` serves the part, not the file that uses the part, so an entry that calls `frame.new[…]` or `join[…]` with no `use frame` of its own is refused for the import (``frame.new[] is frame's: add `use frame` ``), whatever its parts import — as every file is when it is checked alone. (The entry had reached a module through a part's import, and lost it when the part's import went; found in October 2026, writing the error corpus.) The program still links every module its parts import; only each file's names resolve against its own imports. What the part declares is reached as before, qualified: `helpers.table_of[…]`. A part that does not parse is refused by its own file and line (`views/sim.co: line 60, col 5: …`), as a part that fails its checks is; it had been dropped, and the entry told its name was undefined.
+
 #### Aliased Imports: `use X as y`
 
 Any import may take an alias. **An aliased import is qualified-only under its alias** — exactly Python's `import pandas as pd`: nothing enters your bare namespace except the alias itself.

@@ -140,6 +140,20 @@ pub(super) fn without_echoes(errors: Vec<(String, Option<String>)>) -> Vec<(Stri
     kept
 }
 
+/// A name as the program wrote it: a part's function without the prefix
+/// the expansion gave it (`helpers_spread` is `spread`), a part's local
+/// without its suffix (`df__helpers` is `df`).
+pub(crate) fn plain_name(name: &str) -> String {
+    let unprefixed = match crate::part_prefix_of_declaration(name) {
+        Some(prefix) => name[prefix.len()..].to_string(),
+        None => name.to_string(),
+    };
+    match unprefixed.find("__") {
+        Some(i) if i > 0 => unprefixed[..i].to_string(),
+        _ => unprefixed,
+    }
+}
+
 /// The standard modules providing a function, imported or not.
 fn stdlib_providers(name: &str) -> Vec<String> {
     crate::modules::ModuleRegistry::with_stdlib().providers_of(name).into_iter().map(String::from).collect()
@@ -853,6 +867,11 @@ impl<'a> Lowerer<'a> {
         }
         let registry_module = REGISTRY_MODULES.contains(&real.as_str()) || real == "db";
         let registry_module = registry_module && self.ctx.registry.has_function(field);
+        // the module's names reach the entry only through a part's import
+        if registry_module && !self.ctx.functions.contains_key(&prefixed) && self.only_a_part_imports(&real) {
+            self.refuse_missing_use(&format!("{}.{}", module, field), &real, "");
+            return;
+        }
         if registry_module || self.ctx.functions.contains_key(&prefixed) || self.ctx.structs.contains_key(&prefixed) || self.defined(module) {
             return;
         }
@@ -915,7 +934,8 @@ impl<'a> Lowerer<'a> {
         if name == "json" && web && matches!(kinds.first(), Some(crate::table::Arg::Map | crate::table::Arg::Frame)) {
             return;
         }
-        let providers: Vec<String> = self.ctx.registry.providers_of(name).into_iter().map(str::to_string).collect();
+        // (a module only a part imports is not the entry's to resolve by)
+        let providers: Vec<String> = self.ctx.registry.providers_of(name).into_iter().map(str::to_string).filter(|m| !self.only_a_part_imports(m)).collect();
         let mut modules: Vec<&str> = vec![""];
         modules.extend(providers.iter().map(String::as_str));
         if let Some(e) = crate::table::refusal(&modules, name, &kinds) {
@@ -993,10 +1013,22 @@ impl<'a> Lowerer<'a> {
         let argc = args.len();
         let own = self.ctx.functions.contains_key(name);
 
+        // db's own forms — connect, query, exec — are db's: without a `use
+        // db` of the file's own, neither mode has them (the interpreter had
+        // stopped as it ran, "does not run 'connect' yet"; the drivers
+        // written in Crow carry their own import)
+        if !own && matches!(name, "connect" | "query" | "exec") && !self.declared(name) && !crate::modules::is_crow_fn(&self.current_fn) {
+            let imported = (self.ctx.bare_modules.iter().any(|m| m == "db") && !self.only_a_part_imports("db")) || self.ctx.module_aliases.values().any(|m| m == "db");
+            if !imported {
+                self.refuse_missing_use(name, "db", "");
+                return;
+            }
+        }
+
         // a route and its responses are web's: without `use web` neither
         // mode has them (the interpreter had answered msgpack, arrow, bytes
         // and stream with a map that only looked like a response)
-        let web_program = self.ctx.bare_modules.iter().any(|m| m == "web" || m.starts_with("web."));
+        let web_program = self.ctx.bare_modules.iter().any(|m| (m == "web" || m.starts_with("web.")) && !self.only_a_part_imports(m));
         // (a module imported bare that provides the name answers it: `bytes`
         // under `use sys` is the standard library's, not a response)
         // (inside a standard module written in Crow, the registry's scope is
@@ -1348,6 +1380,15 @@ impl<'a> Lowerer<'a> {
             return;
         }
 
+        // a name an imported module provides, reaching the entry only
+        // through a part's import
+        if self.v.used.contains(name) && !self.scopes.iter().skip(1).any(|s| s.contains(name)) && !self.v.stored.contains(name) {
+            let providers: Vec<String> = self.ctx.registry.providers_of(name).into_iter().map(String::from).collect();
+            if !providers.is_empty() && providers.iter().all(|m| self.only_a_part_imports(m)) {
+                self.refuse_missing_use(name, &providers[0], "");
+                return;
+            }
+        }
         // A variable holding a function, a list or a map
         if self.defined(name) {
             if let Some(Ty::Fn(params, _)) = self.ctx.vars.get(name).cloned() {
@@ -1406,6 +1447,23 @@ impl<'a> Lowerer<'a> {
                 self.refuse(format!("{}[] is {}: add {}", name, listed(&each, "or"), listed(&uses, "or")));
             }
         }
+    }
+
+    /// Whether the code being checked is a part's — a declaration or a
+    /// function the expansion prefixed with the part's path — and not the
+    /// entry's own. (A part's own mistakes are refused when it is validated
+    /// alone, under its own imports.)
+    fn in_part(&self) -> bool {
+        let of = |n: &str| crate::part_prefix_of_declaration(n).is_some();
+        self.v.decl.as_deref().is_some_and(of) || of(&self.current_fn)
+    }
+
+    /// Whether a module's names reach this code only through a part's
+    /// import: the entry does not import it, a part does, and this is the
+    /// entry's own code — then they are refused for the import, as with no
+    /// import at all (spec, Modules: each file's imports are its own).
+    pub(super) fn only_a_part_imports(&self, module: &str) -> bool {
+        !self.in_part() && crate::PART_ONLY_IMPORTS.with(|p| p.borrow().iter().any(|m| m == module))
     }
 
     /// A function the program calls from a module it does not import: the

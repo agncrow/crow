@@ -4122,6 +4122,11 @@ impl<'a> Lowerer<'a> {
             A::Ident(n) => self.check_call(n, args, types),
             A::FieldAccess { object, field } => {
                 if let A::Ident(m) = object.as_ref() {
+                    // a frame literal's own `with` steps (its rewrite, not the
+                    // program's words): the import was asked at its `new`
+                    if field == "with" && args.first().is_some_and(|a| literal_step(a, m)) {
+                        return;
+                    }
                     self.check_module_call(m, field);
                 }
             }
@@ -4488,6 +4493,20 @@ pub(crate) fn words_before_placeholders(sql: &str) -> Vec<String> {
 /// where it is assigned).
 /// The variable an expression reads, through the conversions a read is
 /// wrapped in (a value that can fail is decided before it is indexed).
+/// Whether an expression is a frame literal's chain — `m.new[]`, or
+/// `m.with[<chain>, …]` down to it — the rewrite of `m.new[k = v, …]`.
+fn literal_step(e: &A, module: &str) -> bool {
+    match e {
+        A::Call { callee, args } => match callee.as_ref() {
+            A::FieldAccess { object, field } if matches!(object.as_ref(), A::Ident(m) if m == module) => {
+                (field == "new" && args.is_empty()) || (field == "with" && args.first().is_some_and(|a| literal_step(a, module)))
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
 /// Whether a value was read out of a tensor whose rank is not known: its
 /// kind, a number, is the lowering's guess, not the program's (an index
 /// into it is the rank's refusal, not a number's).
