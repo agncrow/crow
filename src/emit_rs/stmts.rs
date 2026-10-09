@@ -136,10 +136,20 @@ impl Emitter {
         // (vectors.rs); a parameter's is made as the body starts
         let saved_vecs = std::mem::take(&mut self.plain_vecs);
         let saved_builders = std::mem::take(&mut self.text_builders);
+        let saved_texts = std::mem::take(&mut self.indexed_texts);
         if !(is_reactive_render || is_reactive_handler || is_live_render || is_live_handle || is_component_view || self.emitting_dual || self.emitting_traced) {
             // and the lists of text it only builds and joins, kept as text
             // (builders.rs)
             self.text_builders = builders::text_builders(f);
+            // and the texts it reads by position, each with what is known
+            // of its start (texts.rs)
+            self.indexed_texts = texts::indexed_texts(&f.params, &f.body);
+            for (p, _) in &f.params {
+                if self.indexed_texts.contains(p) {
+                    self.needs_crow_runtime = true;
+                    self.line(&format!("let {p}__known = crow_runtime::text::Known::new();"));
+                }
+            }
             self.plain_vecs = vectors::plain_vectors(f);
             for (p, _) in &f.params {
                 if self.plain_vecs.contains(p) {
@@ -229,6 +239,7 @@ impl Emitter {
         self.view_mark = mark;
         self.plain_vecs = saved_vecs;
         self.text_builders = saved_builders;
+        self.indexed_texts = saved_texts;
         self.indent -= 1;
         self.line("}");
         self.line("");
@@ -625,6 +636,15 @@ impl Emitter {
     }
 
     fn emit_let(&mut self, var: &str, ty: &Ty, expr: &Expr) {
+        self.emit_let_value(var, ty, expr);
+        // a text read by position: what is known of its start, none yet
+        if self.indexed_texts.contains(var) {
+            self.needs_crow_runtime = true;
+            self.line(&format!("let {var}__known = crow_runtime::text::Known::new();"));
+        }
+    }
+
+    fn emit_let_value(&mut self, var: &str, ty: &Ty, expr: &Expr) {
         if self.text_builders.contains_key(var) {
             self.line(&format!("let mut {var}: String = String::new(); let mut {var}__count: i64 = 0;"));
             self.declare(var, as_inferred(ty));
@@ -682,6 +702,14 @@ impl Emitter {
     }
 
     fn emit_set(&mut self, var: &str, expr: &Expr) {
+        self.emit_set_value(var, expr);
+        // a text read by position given a new text: nothing known of it
+        if self.indexed_texts.contains(var) {
+            self.line(&format!("{var}__known.reset();"));
+        }
+    }
+
+    fn emit_set_value(&mut self, var: &str, expr: &Expr) {
         if let Some(sep) = self.text_builders.get(var).cloned() {
             match builders::appended(var, expr) {
                 Some(piece) => self.emit_append(var, &sep, piece),

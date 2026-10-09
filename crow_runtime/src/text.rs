@@ -4,6 +4,127 @@
 //! invalid pattern is an error with the reason the regex crate gives, and
 //! only the caller decides whether that stops the program.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// What is known of a text's start: how many of its first bytes are ASCII —
+/// each one character, so a position among them is a byte offset. A text
+/// read by position many times (a loop over a sequence's windows) keeps one
+/// beside it — both backends do, for a local whose text does not change
+/// while they hold it — and each read extends it only as far as the read
+/// needs: the first read checks the text up to where it reads, and a read
+/// within what is known is a byte offset. (A slice had walked the text
+/// character by character from its start, so a loop over a long text's
+/// windows was quadratic: k-nucleotide's 125 million bases could not be
+/// counted by slices.) One made for a single read costs what the read
+/// costs: the text checked up to where it reads.
+#[derive(Debug, Default)]
+pub struct Known(AtomicUsize);
+
+impl Known {
+    pub const fn new() -> Known {
+        Known(AtomicUsize::new(0))
+    }
+
+    /// A new text: nothing known of it.
+    pub fn reset(&self) {
+        self.0.store(0, Ordering::Relaxed);
+    }
+
+    /// The ASCII bytes the text starts with, checked at least `need` bytes
+    /// in, or as far as a byte that is not ASCII.
+    fn ascii(&self, s: &str, need: usize) -> usize {
+        let known = self.0.load(Ordering::Relaxed).min(s.len());
+        let need = need.min(s.len());
+        if need <= known {
+            return known;
+        }
+        let p = known + first_non_ascii(&s.as_bytes()[known..need]);
+        self.0.fetch_max(p, Ordering::Relaxed);
+        p
+    }
+}
+
+impl Clone for Known {
+    fn clone(&self) -> Known {
+        Known(AtomicUsize::new(self.0.load(Ordering::Relaxed)))
+    }
+}
+
+/// Where the first byte that is not ASCII is (the length when none is),
+/// checked 32 bytes at a time.
+fn first_non_ascii(b: &[u8]) -> usize {
+    let mut i = 0;
+    while i + 32 <= b.len() && b[i..i + 32].is_ascii() {
+        i += 32;
+    }
+    i + b[i..].iter().position(|c| !c.is_ascii()).unwrap_or(b.len() - i)
+}
+
+/// `slice[text, from, to]` by character — both clamped to the text, empty
+/// when `from` is not before `to` — read with what is known of its start.
+pub fn slice_known(s: &str, known: &Known, start: i64, end: i64) -> String {
+    let st = start.max(0) as usize;
+    let en = end.max(0) as usize;
+    if st >= en {
+        return String::new();
+    }
+    let p = known.ascii(s, en);
+    if en <= p {
+        return s[st..en].to_string();
+    }
+    if p == s.len() {
+        return if st >= p { String::new() } else { s[st..].to_string() };
+    }
+    // past the ASCII start: its characters one byte each, the rest walked
+    let mut out = String::new();
+    if st < p {
+        out.push_str(&s[st..p]);
+        out.extend(s[p..].chars().take(en - p));
+    } else {
+        out.extend(s[p..].chars().skip(st - p).take(en - st));
+    }
+    out
+}
+
+/// `slice[text, from, to] eq other`, the slice compared where it lies
+/// within what is known of the text's start (and made only past it).
+pub fn slice_is(s: &str, known: &Known, start: i64, end: i64, other: &str) -> bool {
+    let st = start.max(0) as usize;
+    let en = end.max(0) as usize;
+    if st >= en {
+        return other.is_empty();
+    }
+    let p = known.ascii(s, en);
+    if en <= p {
+        return &s[st..en] == other;
+    }
+    if p == s.len() {
+        return if st >= p { other.is_empty() } else { &s[st..] == other };
+    }
+    slice_known(s, known, start, end) == other
+}
+
+/// `len[text]`: its characters, counted with what is known of its start.
+pub fn len_known(s: &str, known: &Known) -> i64 {
+    let p = known.ascii(s, s.len());
+    (p + s[p..].chars().count()) as i64
+}
+
+/// `text[i]`: the character at a position, counted from the end when
+/// negative, or why there is none.
+pub fn char_at_known(s: &str, known: &Known, i: i64) -> Result<String, String> {
+    if i >= 0 {
+        let k = i as usize;
+        if k < known.ascii(s, k.saturating_add(1)) {
+            return Ok(s[k..k + 1].to_string());
+        }
+    }
+    let n = len_known(s, known) as usize;
+    let k = crate::stops::char_at(i, n)?;
+    let p = known.ascii(s, k + 1);
+    Ok(if k < p { s[k..k + 1].to_string() } else { s[p..].chars().nth(k - p).map(String::from).unwrap_or_default() })
+}
+
 /// `split[text, separator]`: the pieces between each separator. A
 /// separator of one character is searched as a character (the byte
 /// search), where the substring search cost a parser four times as much.
@@ -235,6 +356,39 @@ pub fn decode_as(text: &str, scheme: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    /// A slice, a length and a position read with what is known of a
+    /// text's start answer what the character walk answered, for ASCII
+    /// text, text that is not, and text that starts as one and goes on as
+    /// the other; a read within what is known is a byte offset.
+    #[test]
+    fn a_text_read_with_what_is_known_answers_what_the_walk_answered() {
+        fn walk(s: &str, a: i64, b: i64) -> String {
+            let (st, en) = (a.max(0) as usize, b.max(0) as usize);
+            if st >= en { String::new() } else { s.chars().skip(st).take(en - st).collect() }
+        }
+        for s in ["", "acgt", "héllo wörld", "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJ→é", "→ab", "ab\u{1F600}cd"] {
+            let k = Known::new();
+            let n = s.chars().count() as i64;
+            assert_eq!(len_known(s, &k), n, "{}", s);
+            for a in -2..n + 3 {
+                for b in -1..n + 4 {
+                    assert_eq!(slice_known(s, &k, a, b), walk(s, a, b), "{} [{}, {}]", s, a, b);
+                    assert_eq!(slice_known(s, &Known::new(), a, b), walk(s, a, b), "{} [{}, {}] fresh", s, a, b);
+                    assert!(slice_is(s, &k, a, b, &walk(s, a, b)), "{} [{}, {}] is", s, a, b);
+                    assert_eq!(slice_is(s, &k, a, b, "zz"), walk(s, a, b) == "zz");
+                }
+                let want = if a >= -n && a < n { Ok(s.chars().nth(if a < 0 { (n + a) as usize } else { a as usize }).map(String::from).unwrap_or_default()) } else { Err(()) };
+                assert_eq!(char_at_known(s, &k, a).map_err(|_| ()), want, "{} [{}]", s, a);
+            }
+        }
+        let long: String = "acgt".repeat(10_000);
+        let k = Known::new();
+        assert_eq!(slice_known(&long, &k, 39_996, 40_000), "acgt");
+        assert_eq!(k.0.load(Ordering::Relaxed), 40_000, "checked once, as far as the read went");
+        k.reset();
+        assert_eq!(k.0.load(Ordering::Relaxed), 0);
+    }
+
     use super::*;
 
     /// A separator of one character, of several, and of none split as the

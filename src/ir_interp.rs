@@ -95,6 +95,9 @@ struct Frame {
     /// While the walker runs an IR node of a prepared body: the names in
     /// scope there, each to its slot.
     env: Option<prepared::Env>,
+    /// What is known of the start of each text a prepared body reads by
+    /// position (prepared.rs, `text_slots`): one per such text, none yet.
+    texts: Vec<crow_runtime::text::Known>,
 }
 
 #[derive(Clone)]
@@ -475,7 +478,7 @@ impl IrInterp {
             derives: HashMap::new(),
             structs: HashMap::new(),
             registry: registry.clone(),
-            frames: vec![Frame { scopes: vec![Arc::new(HashMap::default())], locals: Vec::new(), marks: Vec::new(), fn_name: Arc::from(""), slots: Vec::new(), env: None }],
+            frames: vec![Frame { scopes: vec![Arc::new(HashMap::default())], locals: Vec::new(), marks: Vec::new(), fn_name: Arc::from(""), slots: Vec::new(), env: None, texts: Vec::new() }],
             scope_pool: Vec::new(),
             line: 0,
             file,
@@ -2834,7 +2837,7 @@ impl IrInterp {
         for ((p, _), v) in f.params.iter().zip(vals) {
             scope.insert(p.clone(), v);
         }
-        self.frames.push(Frame { scopes: vec![Arc::new(scope)], locals: Vec::new(), marks: Vec::new(), fn_name: Arc::from(name), slots: Vec::new(), env: None });
+        self.frames.push(Frame { scopes: vec![Arc::new(scope)], locals: Vec::new(), marks: Vec::new(), fn_name: Arc::from(name), slots: Vec::new(), env: None, texts: Vec::new() });
         let r = self.exec_stmts(&f.body);
         self.call_ended(r, view, f.recursive, saved_line)
     }
@@ -2875,7 +2878,7 @@ impl IrInterp {
         let d = self.derives.get(name).cloned().ok_or_else(|| format!("unknown derivation '{}'", name))?;
         // the reader's line is still the line reading it
         let saved_line = self.line;
-        self.frames.push(Frame { scopes: vec![Arc::new(HashMap::default())], locals: Vec::new(), marks: Vec::new(), fn_name: Arc::from(name), slots: Vec::new(), env: None });
+        self.frames.push(Frame { scopes: vec![Arc::new(HashMap::default())], locals: Vec::new(), marks: Vec::new(), fn_name: Arc::from(name), slots: Vec::new(), env: None, texts: Vec::new() });
         let r = self.exec_stmts(&d.body);
         let r = self.returned(r).map_err(|e| self.with_line(e));
         self.frames.pop();

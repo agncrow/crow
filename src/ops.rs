@@ -631,11 +631,9 @@ pub fn index(callee: &CrowValue, arg_vals: Vec<CrowValue>) -> Result<CrowValue, 
         }
         let index_val = arg_vals[0].unwrap_or_propagate()?;
         match index_val {
-            Value::Int(idx) => {
-                let idx = *idx;
-                let chars: Vec<char> = s.chars().collect();
-                Ok(CrowValue::ok(Value::Str(chars[stops::char_at(idx, chars.len())?].to_string())))
-            }
+            // (read with the runtime's one walk: every character had been
+            // collected first, for each position read)
+            Value::Int(idx) => Ok(CrowValue::ok(Value::Str(crow_runtime::text::char_at_known(s, &crow_runtime::text::Known::new(), *idx)?))),
             _ => Err("string index must be an integer".to_string()),
         }
     }

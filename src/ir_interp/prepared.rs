@@ -289,10 +289,15 @@ enum Ins {
     /// temporary.
     SetIndex { base: R, idx: Opnd, v: R, take: bool, path: Box<[PathStep]> },
     /// `len[xs]` of a local, measured where it lies.
-    Len { d: R, base: R, how: Box<(Target, Expr, Env)> },
+    /// `known`: the slot of what is known of the start of a measured text
+    /// (`text_slots`).
+    Len { d: R, base: R, how: Box<(Target, Expr, Env)>, known: Option<u16> },
     /// A call: each argument cloned from its register, or taken from a
     /// temporary.
-    Call { d: R, target: Box<Target>, args: Box<[(R, bool)]>, propagates: bool },
+    /// `known`: the slot of what is known of the start of the text a slice
+    /// or a length reads (`text_slots`), when the text does not change in
+    /// the call.
+    Call { d: R, target: Box<Target>, args: Box<[(R, bool)]>, propagates: bool, known: Option<u16> },
     Store { fact: Box<str>, s: R, take: bool },
     Do { s: R },
     Propagate { regs: Box<[R]>, at: Box<Decision> },
@@ -319,6 +324,9 @@ struct IndexHow {
     column: bool,
     ir: Expr,
     env: Env,
+    /// The slot of what is known of the start of an indexed text
+    /// (`text_slots`), when the text does not change in the call.
+    known: Option<u16>,
 }
 
 pub(super) struct Prepared {
@@ -356,6 +364,9 @@ pub(super) struct Body {
     /// Whether it calls `cpu[…]`: a call puts the caller's count back as it
     /// returns (crow_runtime::cores).
     sets_cores: bool,
+    /// How many texts it reads by position with what is known of their
+    /// start (`text_slots`): its frame holds one `Known` each.
+    pub(super) n_known: usize,
     /// Whether its typed program runs on bare registers alone: int and
     /// float parameters, and only instructions that read and write bare
     /// registers (`pure`). A typed call of it (`call_typed`) hands over
@@ -478,11 +489,13 @@ pub(super) fn prepare(f: &Fn) -> Prepared {
     kinds.extend(std::iter::repeat_n(RKind::Boxed, mb as usize));
     kinds.extend(std::iter::repeat_n(RKind::Int, mi as usize));
     kinds.extend(std::iter::repeat_n(RKind::Float, mf as usize));
+    let mut code = c.code;
+    let n_known = text_slots(&mut code, &params);
     let mut b = Body {
         n_regs: kinds.len(),
         kinds,
         params,
-        code: c.code,
+        code,
         lines: c.lines,
         typed: None,
         float_params: f.params.iter().map(|(_, t)| matches!(t, Ty::Float)).collect(),
@@ -490,6 +503,7 @@ pub(super) fn prepare(f: &Fn) -> Prepared {
         recursive: f.recursive,
         first_line: crate::ir::first_line(&f.body),
         sets_cores: crate::ir::sets_cores(&f.body),
+        n_known,
         pure: false,
     };
     b.typed = typed(&b);
@@ -1112,7 +1126,7 @@ impl Comp {
                     let column = matches!(base.ty_ref(), Some(Ty::Column(_)));
                     let env = self.env();
                     let idx = self.opnd(index);
-                    self.emit(Ins::Index { d, base: b, idx, how: Box::new(IndexHow { ty: ty.clone(), column, ir: e.clone(), env }) });
+                    self.emit(Ins::Index { d, base: b, idx, how: Box::new(IndexHow { ty: ty.clone(), column, ir: e.clone(), env, known: None }) });
                     return;
                 }
                 self.eval(e, d)
@@ -1123,7 +1137,21 @@ impl Comp {
                     && let Expr::Local(v, _) = unwrapped(&args[0])
                     && let Some(b) = self.resolve(v)
                 {
-                    self.emit(Ins::Len { d, base: b, how: Box::new((target.clone(), e.clone(), self.env())) });
+                    self.emit(Ins::Len { d, base: b, how: Box::new((target.clone(), e.clone(), self.env())), known: None });
+                    return;
+                }
+                // the length of what a call makes (`len[slice[seq, i, j]]`):
+                // the call into a register of its own, then its length, by the
+                // row the IR names — the walker had run the whole expression,
+                // copying each of the call's arguments
+                if let Target::Row(_) = target
+                    && is_len(target)
+                    && args.len() == 1
+                    && matches!(unwrapped(&args[0]), Expr::Call { .. })
+                {
+                    let p = self.expr(&args[0]);
+                    let (b, _) = self.owned(p);
+                    self.emit(Ins::Len { d, base: b, how: Box::new((target.clone(), e.clone(), self.env())), known: None });
                     return;
                 }
                 // the shapes the walker's own arms give a meaning of their
@@ -1145,7 +1173,7 @@ impl Comp {
                     let p = self.kept_place(p, &args[i + 1..]);
                     regs.push(self.owned(p));
                 }
-                self.emit(Ins::Call { d, target: Box::new(target.clone()), args: regs.into_boxed_slice(), propagates: *propagates });
+                self.emit(Ins::Call { d, target: Box::new(target.clone()), args: regs.into_boxed_slice(), propagates: *propagates, known: None });
             }
             _ => self.eval(e, d),
         }
@@ -1245,10 +1273,65 @@ impl IrInterp {
         if p.view {
             self.in_view += 1;
         }
-        self.frames.push(Frame { scopes: Vec::new(), locals: Vec::new(), marks: Vec::new(), fn_name: p.name.clone(), slots: Vec::new(), env: None });
+        self.frames.push(Frame { scopes: Vec::new(), locals: Vec::new(), marks: Vec::new(), fn_name: p.name.clone(), slots: Vec::new(), env: None, texts: (0..p.n_known).map(|_| crow_runtime::text::Known::new()).collect() });
         let r = self.run_body(p, &mut regs, &mut bare);
         self.reg_pool.give(regs, bare);
         self.call_ended(r, p.view, p.recursive, saved_line)
+    }
+
+    /// A slice or a length of a text read with what is known of its start
+    /// (the frame's slot `k`): the text and its positions read where they
+    /// lie. None when they are not plain (a failure, a dual number): the
+    /// row's own call decides.
+    fn text_known(&self, row: &'static crate::table::Row, regs: &[CrowValue], args: &[(R, bool)], k: u16) -> Option<CrowValue> {
+        let s = match &regs[args[0].0 as usize] {
+            v if v.is_ok() => match &v.value {
+                Value::Str(s) => s,
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let known = &self.frames.last()?.texts.get(k as usize)?;
+        match (row.id, args.len()) {
+            ("core.slice_str", 3) => {
+                let a = regs[args[1].0 as usize].plain_int()?;
+                let b = regs[args[2].0 as usize].plain_int()?;
+                Some(CrowValue::ok(Value::Str(crow_runtime::text::slice_known(s, known, a, b))))
+            }
+            ("core.len_text", 1) => Some(CrowValue::ok(Value::Int(crow_runtime::text::len_known(s, known)))),
+            _ => None,
+        }
+    }
+
+    /// A builtin's row called with its arguments lent: each moved out of its
+    /// register (a register named twice is copied for the second), the row
+    /// read through its call that reads arguments where they lie, and each
+    /// moved back — a taken one dropped. A row called with a long text and a
+    /// position had copied the text at every call (k-nucleotide's windows,
+    /// a slice of 250,000 characters each). The row's answer is the one the
+    /// copying call gave: both are the same function read two ways.
+    fn row_lent(&mut self, row: &'static crate::table::Row, regs: &mut [CrowValue], args: &[(R, bool)]) -> Result<CrowValue, String> {
+        let mut lent: [CrowValue; LENT] = std::array::from_fn(|_| CrowValue::done());
+        let mut moved = [false; LENT];
+        for (i, (r, take)) in args.iter().enumerate() {
+            // (a register named twice — `stack[f, f]` — copies what the first
+            // naming lent: the register holds nothing while it is lent)
+            lent[i] = match args[..i].iter().position(|(q, _)| q == r) {
+                Some(j) => lent[j].clone(),
+                None => {
+                    moved[i] = !*take;
+                    std::mem::replace(&mut regs[*r as usize], CrowValue::done())
+                }
+            };
+        }
+        let trace = if row.module.is_empty() && matches!(row.fails, crate::table::Fails::Value(_)) { self.trace_entry() } else { String::new() };
+        let v = (row.call)(&lent[..args.len()], &trace).map(|v| Self::stamp(row.name, v));
+        for (i, (r, _)) in args.iter().enumerate() {
+            if moved[i] {
+                regs[*r as usize] = std::mem::replace(&mut lent[i], CrowValue::done());
+            }
+        }
+        v
     }
 
     /// A user function called from a typed body with int and float
@@ -1303,7 +1386,7 @@ impl IrInterp {
             return Err(e);
         }
         let saved_line = self.line;
-        self.frames.push(Frame { scopes: Vec::new(), locals: Vec::new(), marks: Vec::new(), fn_name: p.name.clone(), slots: Vec::new(), env: None });
+        self.frames.push(Frame { scopes: Vec::new(), locals: Vec::new(), marks: Vec::new(), fn_name: p.name.clone(), slots: Vec::new(), env: None, texts: Vec::new() });
         let r = self.run_typed(p, tc, &mut regs, &mut callee);
         self.reg_pool.give(regs, callee);
         self.call_ended(r, false, p.recursive, saved_line)
@@ -1649,6 +1732,11 @@ impl IrInterp {
                             regs[*d as usize].assign(if how.column { placeholder(cell, &how.ty) } else { cell });
                             return pc + 1;
                         }
+                        if let (Value::Str(s), Some(k), Some(n)) = (&b.value, how.known, at) {
+                            let c = t!(crow_runtime::text::char_at_known(s, &self.frames[self.frames.len() - 1].texts[k as usize], n));
+                            regs[*d as usize].assign(CrowValue::ok(Value::Str(c)));
+                            return pc + 1;
+                        }
                         if matches!(b.value, Value::NumArray(_) | Value::Map(_) | Value::IntMap(_) | Value::Str(_) | Value::Frame(_)) {
                             let at = value_at(regs, *idx);
                             let cell = t!(Self::index_value(&regs[*base as usize], vec![at], &how.ty));
@@ -1724,9 +1812,11 @@ impl IrInterp {
                     let at = int_at(regs, *di);
                     t!(self.store_item(p, pc, regs, *dst, *di, at, new, &how.path));
                 }
-                Ins::Len { d, base, how } => {
+                Ins::Len { d, base, how, known } => {
                     let (target, ir, env) = &**how;
-                    if self.registry.has_function("len") {
+                    // (a length the IR names a row for is that row's, as the
+                    // walker reads it; a module's own `len` takes the rest)
+                    if !matches!(target, Target::Row(_)) && self.registry.has_function("len") {
                         self.line_of(p, pc);
                         let v = t!(self.lend(regs, env, |it| it.eval(ir)));
                         regs[*d as usize].assign(v);
@@ -1738,10 +1828,15 @@ impl IrInterp {
                         _ => self.trace_entry(),
                     };
                     let b = &regs[*base as usize];
+                    if let (Value::Str(s), Some(k), true) = (&b.value, known, b.is_ok()) {
+                        let n = crow_runtime::text::len_known(s, &self.frames[self.frames.len() - 1].texts[*k as usize]);
+                        regs[*d as usize].assign(CrowValue::ok(Value::Int(n)));
+                        return pc + 1;
+                    }
                     let v = if b.is_error() { b.clone() } else { t!(Self::len_of(target, b, &trace)) };
                     regs[*d as usize].assign(v);
                 }
-                Ins::Call { d, target, args, propagates } if !self.tracing && matches!(&**target, Target::User(n) if n != PUT) => {
+                Ins::Call { d, target, args, propagates, .. } if !self.tracing && matches!(&**target, Target::User(n) if n != PUT) => {
                     let Target::User(name) = &**target else { return pc + 1 };
                     self.line_of(p, pc);
                     if *propagates && let Some(err) = args.iter().find(|(r, _)| regs[*r as usize].is_error()) {
@@ -1753,7 +1848,27 @@ impl IrInterp {
                     let v = t!(self.call_user_from(name, regs, args));
                     regs[*d as usize].assign(v);
                 }
-                Ins::Call { d, target, args, propagates } => {
+                // a builtin's row given a large value a later instruction
+                // reads: lent where it lies, not copied (`rows_lent`)
+                Ins::Call { d, target, args, propagates, known } if matches!(&**target, Target::Row(row) if !row.is_crow()) && lends(regs, args) => {
+                    let Target::Row(row) = &**target else { return pc + 1 };
+                    self.line_of(p, pc);
+                    if *propagates && let Some((r, _)) = args.iter().find(|(r, _)| regs[*r as usize].is_error()) {
+                        let mut err = regs[*r as usize].clone();
+                        err.append_trace(&self.trace_entry());
+                        regs[*d as usize].assign(err);
+                        return pc + 1;
+                    }
+                    // a slice or a length of a text that keeps what is known
+                    // of its start (`text_slots`)
+                    if let Some(v) = known.and_then(|k| self.text_known(row, regs, args, k)) {
+                        regs[*d as usize].assign(v);
+                        return pc + 1;
+                    }
+                    let v = t!(self.row_lent(row, regs, args));
+                    regs[*d as usize].assign(v);
+                }
+                Ins::Call { d, target, args, propagates, .. } => {
                     let mut vals = Vec::with_capacity(args.len());
                     for (r, take) in args.iter() {
                         vals.push(if *take { std::mem::replace(&mut regs[*r as usize], CrowValue::done()) } else { copied(&regs[*r as usize]) });
@@ -1868,6 +1983,25 @@ mod tests {
         let q = prepare(&g);
         let shown = format!("{:?}", q.typed.as_ref().map(|tc| &tc.code));
         assert!(!shown.contains("LSet"), "{}", shown);
+    }
+
+    /// A text the body reads by position keeps what is known of its start
+    /// where it does not change while the call runs — a parameter, a local
+    /// bound once outside every loop — and a text given new values in a
+    /// loop gets none (another text could lie where the first did).
+    #[test]
+    fn a_steady_text_read_by_position_has_a_slot() {
+        let f = lowered_fn(
+            "fn windows[seq, k]\n    n = 0\n    once = 'acgt'\n    t = 'ab'\n    for i in range[len[seq] - k + 1]\n        w = slice[seq, i, i + k]\n        a = slice[once, 0, 2]\n        b = slice[t, 0, 1]\n        n = n + len[w] + len[a] + len[b] + len[slice[seq, i, i + 1]]\n        t = 'xy'\n    return n\nlog[windows['acgtacgt', 3]]\n",
+            "windows",
+        );
+        let p = prepare(&f);
+        assert_eq!(p.n_known, 2, "seq and once: {:?}", p.code);
+        let slots: Vec<Option<u16>> = p.code.iter().filter_map(|i| match i { Ins::Call { target, known, .. } if matches!(&**target, Target::Row(r) if r.id == "core.slice_str") => Some(*known), _ => None }).collect();
+        assert_eq!(slots.iter().filter(|k| k.is_some()).count(), 3, "{:?}", slots);
+        assert_eq!(slots.iter().filter(|k| k.is_none()).count(), 1, "t, given new values in the loop: {:?}", slots);
+        assert!(p.code.iter().any(|i| matches!(i, Ins::Len { known: Some(_), .. })), "len[seq] reads with seq's slot: {:?}", p.code);
+        assert!(!format!("{:?}", p.code).contains("Eval {"), "a length of a slice is no walker fallback: {:?}", p.code);
     }
 
     /// A counted loop over a range is a counted loop, and a nested one
@@ -2037,6 +2171,32 @@ fn boxed_sized(regs: &mut Vec<CrowValue>, p: &Prepared) {
         regs.resize_with(p.n_regs, CrowValue::done);
     }
 }
+
+/// Whether a row's call lends its arguments rather than copying them: one
+/// a later instruction reads holds a large value (a text, a list, a map, a
+/// tensor, a frame), and none it takes holds one its row could make its
+/// answer of (`push[xs, v]` with `xs` dead grows `xs` where it lies), and
+/// none is a dual number or a traced tensor (their rows are the kernels').
+fn lends(regs: &[CrowValue], args: &[(R, bool)]) -> bool {
+    let large = |v: &CrowValue| !matches!(v.value, Value::Int(_) | Value::Float(_) | Value::Bool(_) | Value::Moment(_) | Value::Done);
+    let mut kept_large = false;
+    for (r, take) in args {
+        let v = &regs[*r as usize];
+        if matches!(v.value, Value::Dual(..) | Value::Traced(_)) {
+            return false;
+        }
+        if large(v) {
+            if *take {
+                return false;
+            }
+            kept_large = true;
+        }
+    }
+    kept_large && args.len() <= LENT
+}
+
+/// The most arguments a row's call lends (a call with more copies them).
+const LENT: usize = 6;
 
 /// A typed register's value into its boxed register.
 #[inline(always)]
@@ -2220,6 +2380,62 @@ fn list_use_ok(ins: &Ins, r: R, k: &[RKind]) -> bool {
 }
 
 /// The typed program of a prepared body, when it has a typed register.
+/// The slots of what is known of the start of each text the body reads by
+/// position — a slice's or a length's text, an indexed text — where the
+/// text does not change while the call runs: a parameter no instruction
+/// writes, or a local one instruction writes outside every loop (a block's
+/// end dropping it is no write: nothing reads it after). The slots are
+/// numbered into the instructions; the count is the frame's (`Frame::texts`).
+/// A text written again could be another text at the same address, which
+/// what is known of the first would misread — so it gets none.
+fn text_slots(code: &mut [Ins], params: &[R]) -> usize {
+    let mut writes: HashMap<R, Vec<usize>> = HashMap::new();
+    let mut loops: Vec<(usize, usize)> = Vec::new();
+    for (pc, ins) in code.iter().enumerate() {
+        if !matches!(ins, Ins::Clear { .. }) {
+            for w in reads_writes(ins).1 {
+                writes.entry(w).or_default().push(pc);
+            }
+        }
+        let back = match ins {
+            Ins::Loop { to } | Ins::Jump { to } | Ins::JumpUnless { to, .. } | Ins::JumpUnlessInt { to, .. } => Some(*to as usize),
+            Ins::ForNext { body, .. } => Some(*body as usize),
+            _ => None,
+        };
+        if let Some(to) = back.filter(|to| *to <= pc) {
+            loops.push((to, pc));
+        }
+    }
+    let steady = |r: R| match writes.get(&r).map(|w| w.as_slice()) {
+        None => params.contains(&r),
+        Some([pc]) => !params.contains(&r) && !loops.iter().any(|(a, b)| (*a..=*b).contains(pc)),
+        Some(_) => false,
+    };
+    let mut slots: HashMap<R, u16> = HashMap::new();
+    let mut slot_of = |r: R, slots: &mut HashMap<R, u16>| -> Option<u16> {
+        if !steady(r) || slots.len() >= u16::MAX as usize {
+            return None;
+        }
+        let n = slots.len() as u16;
+        Some(*slots.entry(r).or_insert(n))
+    };
+    for ins in code.iter_mut() {
+        match ins {
+            Ins::Call { target, args, known, .. } if matches!(&**target, Target::Row(row) if matches!(row.id, "core.slice_str" | "core.len_text")) && !args.is_empty() => {
+                *known = slot_of(args[0].0, &mut slots);
+            }
+            Ins::Index { base, how, .. } if matches!(&how.ir, Expr::Index { base: b, .. } if matches!(b.ty().payload(), Ty::Str)) => {
+                how.known = slot_of(*base, &mut slots);
+            }
+            Ins::Len { base, how, known, .. } if matches!(&how.0, Target::Row(row) if row.id == "core.len_text") => {
+                *known = slot_of(*base, &mut slots);
+            }
+            _ => {}
+        }
+    }
+    slots.len()
+}
+
 /// Whether a typed program runs on bare registers alone: each parameter
 /// an int or a float, and every instruction one that reads and writes bare
 /// registers only. Its one way back to the boxed program is a typed call
@@ -2414,7 +2630,27 @@ fn typed(p: &Body) -> Option<Typed> {
                 Some(i) if ik(*d) && !how.column => TIns::IIndex { d: *d, base: *base, idx: i },
                 Some(i) if fk(*d) && !how.column => TIns::FIndex { d: *d, base: *base, idx: i },
                 Some(i) if !tk(*d) => TIns::XIndex { d: *d, base: *base, idx: i },
-                _ => lend(ins),
+                // a key that is no int (`counts[w]`): the boxed read, with the
+                // registers it reads boxed — the walker it may lend to reads
+                // only what the expression names — and its answer unboxed
+                // (every typed register boxed both ways had cost more than
+                // the read)
+                _ => {
+                    let mut reads = vec![*base];
+                    reads.extend(regs_of(&[*idx]));
+                    crate::ir::visit_expr(&how.ir, &mut |e| {
+                        if let Expr::Local(n, _) | Expr::Move(n, _) = e
+                            && let Some(r) = how.env.get(n.as_str())
+                        {
+                            reads.push(*r);
+                        }
+                    });
+                    if reads.iter().any(|r| lk(*r)) {
+                        lend(ins)
+                    } else {
+                        wrap(&reads, &[*d])
+                    }
+                }
             },
             Ins::CopyItem { dst, di, src, si, .. } => match (top(*di), top(*si)) {
                 (Some(a), Some(b)) if lk(*dst) && lk(*src) => TIns::LCopy { dst: *dst, di: a, src: *src, si: b },
@@ -2641,6 +2877,11 @@ impl IrInterp {
                             Ok(k) => Some(copied(&items[k])),
                             Err(e) => stop!(e),
                         }
+                    } else if let (Value::Str(s), Some(k)) = (&b.value, how.known) {
+                        match crow_runtime::text::char_at_known(s, &self.frames[self.frames.len() - 1].texts[k as usize], i) {
+                            Ok(c) => Some(CrowValue::ok(Value::Str(c))),
+                            Err(e) => stop!(e),
+                        }
                     } else if matches!(b.value, Value::NumArray(_) | Value::Map(_) | Value::IntMap(_) | Value::Str(_) | Value::Frame(_)) {
                         match Self::index_value(b, vec![CrowValue::ok(Value::Int(i))], &how.ty) {
                             Ok(c) => Some(c),
@@ -2762,11 +3003,23 @@ impl IrInterp {
                 TIns::LClear { d } => bare.lists[*d as usize] = Vec::new(),
                 TIns::XLen { d, base } => {
                     let b = &regs[*base as usize];
+                    let Ins::Len { how, known, .. } = &p.code[pc] else { hand_over!() };
+                    let row_named = matches!(how.0, Target::Row(_));
+                    // any value its row measures, read where it lies (a text
+                    // had handed the call over to the boxed program, which
+                    // ran the rest of it: k-nucleotide's counting loop ran
+                    // boxed after `len[seq]` at its top); a failure, or a
+                    // module's own `len`, the boxed program's
                     let n = match &b.value {
-                        Value::Array(items) if b.is_ok() && !self.registry.has_function("len") => items.len() as i64,
-                        _ => hand_over!(),
+                        _ if !b.is_ok() || (!row_named && self.registry.has_function("len")) => None,
+                        Value::Array(items) => Some(items.len() as i64),
+                        Value::Str(s) if known.is_some() => known.map(|k| crow_runtime::text::len_known(s, &self.frames[self.frames.len() - 1].texts[k as usize])),
+                        _ => Self::len_of(&how.0, b, "").ok().and_then(|v| v.plain_int()),
                     };
-                    bare.ints[*d as usize] = n;
+                    match n {
+                        Some(n) => bare.ints[*d as usize] = n,
+                        None => hand_over!(),
+                    }
                 }
                 TIns::ForCount { var, ctr, hi, lo, top, end } => {
                     if let Err(e) = self.check_cancel() {

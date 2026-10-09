@@ -1358,6 +1358,8 @@ A builtin handed a number of arguments, or a kind of argument, it does not take 
 | `fmt[x, ...]` | Format a value with named arguments (see Formatting) |
 | `reverse[s]` | Reverse a string |
 
+**A text read by position costs what is read.** A slice, a character and a length count characters, and a text holds UTF-8, where a character is one to four bytes. A text a function reads by position — a parameter, or a local it does not give a new text while the call runs — keeps, in both modes, how far its start is known to be ASCII, checked only as far as a read has needed: within that start a character is a byte, so `slice[seq, i, i + k]` reads `k` characters wherever `i` is, and a loop over a long text's windows is linear (each read had walked the text from its start, and counting k-mers by slices was quadratic). Past the ASCII start, a read walks only from where it ends. A slice compared with a text (`slice[seq, i, i + k] eq pat`) is compared where it lies.
+
 ### Formatting
 
 `fmt[value, ...]` formats numbers and strings using named arguments — plain Crow, no format mini-language:

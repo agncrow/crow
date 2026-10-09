@@ -240,6 +240,25 @@ fn a_helper_of_a_gradient_has_a_dual_version() {
     assert!(rust.contains("_dual_sq(x)"), "{}", rust);
 }
 
+/// A text a function reads by position keeps what is known of its start
+/// beside it: made where it is bound, reset where it is given a new text,
+/// and every slice, length, character and compared slice reads with it
+/// (a slice had walked the text from its start, so a loop over a long
+/// text's windows was quadratic)
+#[test]
+fn a_text_read_by_position_keeps_what_is_known_of_its_start() {
+    let rust = transpile("fn count[seq, pat]\n    k = len[pat]\n    c = 0\n    i = 0\n    while i lt len[seq] - k + 1\n        if slice[seq, i, i + k] eq pat\n            c = c + 1\n        i = i + 1\n    first = seq[0]\n    return c\nfn renamed[n]\n    t = 'abc'\n    out = 0\n    for i in range[n]\n        out = out + len[slice[t, 0, 2]]\n        t = 'xyz'\n    return out\nlog[count['acgtacgt', 'gt']]\nlog[renamed[2]]\n");
+    let f = &rust[rust.find("fn count(").expect("count is emitted")..];
+    let f = &f[..f.find("\n}").unwrap_or(f.len())];
+    assert!(f.contains("let seq__known = crow_runtime::text::Known::new();"), "{}", f);
+    assert!(f.contains("crow_runtime::text::len_known(&seq, &seq__known)"), "{}", f);
+    assert!(f.contains("crow_runtime::text::slice_is(&seq, &seq__known, (i) as i64,"), "a compared slice is compared where it lies: {}", f);
+    assert!(f.contains("crow_runtime::text::char_at_known(&seq, &seq__known, (0_i64) as i64)"), "{}", f);
+    let g = &rust[rust.find("fn renamed(").expect("renamed is emitted")..];
+    let g = &g[..g.find("\n}").unwrap_or(g.len())];
+    assert!(g.contains("let t__known = crow_runtime::text::Known::new();") && g.contains("t__known.reset();"), "a text given a new value knows nothing of it: {}", g);
+}
+
 /// Helper: parse Crow source, infer, lower to the IR, emit Rust
 fn transpile(source: &str) -> String {
     let mut lexer = Lexer::new(source);
@@ -879,13 +898,14 @@ fn test_type_builtin_array_transpile() {
 #[test]
 fn test_string_index_transpile() {
     let rust = transpile("s = 'hello'\nx = s[0]\n");
-    assert!(rust.contains(".chars().collect()"), "string indexing should use chars()\n{}", rust);
+    assert!(rust.contains("crow_runtime::text::char_at_known(&s, &s__known, (0_i64) as i64)"), "a character read with what is known of the text's start\n{}", rust);
+    assert!(!rust.contains(".chars().collect()"), "no character collected first\n{}", rust);
 }
 
 #[test]
 fn test_string_negative_index_transpile() {
     let rust = transpile("s = 'hello'\nx = s[-1]\n");
-    assert!(rust.contains("crow_runtime::stops::char_at(_i, _s.len())"), "should handle negative string index\n{}", rust);
+    assert!(rust.contains("crow_runtime::text::char_at_known(&s, &s__known, ((-1_i64)) as i64)"), "a negative position counts from the end, in the runtime's read\n{}", rust);
 }
 
 // ===== NumArray tests =====

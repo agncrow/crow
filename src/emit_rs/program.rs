@@ -1427,6 +1427,8 @@ impl Emitter {
             self.line("let mut __crow_app = CrowApp::new();");
         }
         let main = self.part.main.clone();
+        // the top level's texts read by position (texts.rs)
+        self.indexed_texts = super::texts::indexed_texts(&[], &main);
         if self.has_page_routes {
             self.line("let mut __crow_app = CrowApp::new();");
             self.line("let mut __crow_state = CrowLiveState::new();");

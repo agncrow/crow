@@ -1811,6 +1811,9 @@ impl<'a> Lowerer<'a> {
                 if matches!(stmt, Stmt::Store { .. }) {
                     self.v.stored.insert(name.clone());
                 }
+                if self.pass == Pass::Final {
+                    return Ok(self.taken_in_place(stmt));
+                }
                 vec![stmt]
             }
             S::MultiAssign { names, values } if self.pass == Pass::Settle => self.settled_multi(names, values)?,
@@ -2674,6 +2677,45 @@ impl<'a> Lowerer<'a> {
                 self.ctx.vars.remove(var);
             }
         }
+    }
+
+    /// `x = set[x, k, v]` (or another builtin that answers the collection
+    /// it takes, `ast::IN_PLACE_BUILTINS`) whose later arguments read `x`
+    /// (`counts = set[counts, w, counts[w] + 1]`): those arguments computed
+    /// first, in order, into temporaries, so the call takes `x` where it
+    /// lies in both backends — reading a variable has no effect, so the
+    /// order is the program's. The map had been copied at every update of
+    /// an entry it held (k-nucleotide's counts, four times per window).
+    fn taken_in_place(&mut self, stmt: Stmt) -> Vec<Stmt> {
+        let Stmt::Set { var, expr: Expr::Call { target: Target::Row(row), args, ty, propagates } } = &stmt else { return vec![stmt] };
+        let reads_var = |e: &Expr| {
+            let mut found = false;
+            crate::ir::visit_expr(e, &mut |x| found |= matches!(x, Expr::Local(n, _) | Expr::Move(n, _) if n == var));
+            found
+        };
+        let takes_var = matches!(args.first(), Some(Expr::Local(n, _) | Expr::Move(n, _)) if n == var);
+        if !(row.module.is_empty() && crate::ast::IN_PLACE_BUILTINS.contains(&row.name) && row.params.first().is_some_and(|k| k.owned()) && takes_var && args[1..].iter().any(reads_var)) {
+            return vec![stmt];
+        }
+        let mut out = Vec::with_capacity(args.len() + 1);
+        let mut taken = vec![args[0].clone()];
+        for a in &args[1..] {
+            // (a variable or a constant has no effect to keep in order, and
+            // stays: copying it would cost what the hoist saves)
+            if matches!(a, Expr::Const(..)) || matches!(a, Expr::Local(n, _) | Expr::Move(n, _) if n != var) {
+                taken.push(a.clone());
+                continue;
+            }
+            let t = self.fresh();
+            let at = a.ty();
+            out.push(Stmt::Let { var: t.clone(), ty: at.clone(), expr: a.clone() });
+            if let Some(scope) = self.scopes.last_mut() {
+                scope.insert(t.clone());
+            }
+            taken.push(Expr::Local(t, at));
+        }
+        out.push(Stmt::Set { var: var.clone(), expr: Expr::Call { target: Target::Row(row), args: taken, ty: ty.clone(), propagates: *propagates } });
+        out
     }
 
     fn fresh(&mut self) -> String {
@@ -5186,6 +5228,17 @@ mod tests {
         ctx.infer_program(&stmts);
         let program = lower(&stmts, &mut ctx, "t").unwrap();
         print(&program)
+    }
+
+    /// `counts = set[counts, w, counts[w] + 1]`: the value read first, into
+    /// a temporary, so the call takes the map where it lies in both
+    /// backends (it had been copied at every update of an entry it held).
+    #[test]
+    fn an_update_from_its_own_entry_takes_the_map_where_it_lies() {
+        let ir = ir_of("fn counts_of[t]\n    counts = map[]\n    for i in range[len[t]]\n        w = slice[t, i, i + 1]\n        if w in counts\n            counts = set[counts, w, counts[w] + 1]\n        else\n            counts = set[counts, w, 1]\n    return counts\nlog[counts_of['abca']]\n");
+        assert!(ir.contains(": Int = (counts[w] add 1)"), "the value first, into a temporary: {}", ir);
+        assert!(ir.contains("counts = core.set(move counts, w, _t"), "the map taken where it lies, the key as it is: {}", ir);
+        assert!(!ir.contains("core.set(counts,"), "{}", ir);
     }
 
     /// A while loop's condition runs every round: a variable only it reads

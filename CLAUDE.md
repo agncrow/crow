@@ -374,3 +374,15 @@ steps on every push and must be green.
   (`crow_runtime::cores`: per thread, the crowfile's the default, a
   function's put back by `Restore`). A new parallel form — a builtin that
   runs on rayon — goes through `cores::run`, or `cpu[1]` does not hold it.
+- A text read by position keeps a `crow_runtime::text::Known` (how far
+  its start is checked ASCII): beside a local in the compiled program
+  (`emit_rs/texts.rs`, reset at every assignment) and in a frame slot in
+  the interpreter only for a register no instruction writes twice
+  (`text_slots`): another text can lie where a freed one did, and a
+  `Known` of the first would misread it. A new read of text by position
+  (a builtin over characters) takes the `Known`, or it is quadratic again.
+- `x = set[x, k, f[x]]` (any `IN_PLACE_BUILTINS` call whose later
+  arguments read `x`) is split by the lowering (`taken_in_place`): the
+  arguments first into `_tN`, then the call takes `x` moved. A backend
+  that copies such a collection is missing that split, not a rule of its
+  own.

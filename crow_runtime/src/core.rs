@@ -88,9 +88,7 @@ pub fn slice_tensor(t: &crate::tensor::CrowTensor, start: i64, end: i64) -> crat
 /// `slice[text, start, end]` counts characters, so a slice never lands
 /// inside a glyph and both modes agree on `'héllo'`.
 pub fn slice_str(s: &str, start: i64, end: i64) -> String {
-    let st = start.max(0) as usize;
-    let en = end.max(0) as usize;
-    if st >= en { String::new() } else { s.chars().skip(st).take(en - st).collect() }
+    crate::text::slice_known(s, &crate::text::Known::new(), start, end)
 }
 
 /// `sort[arr]` with the caller's ordering (the interpreter orders its
@@ -153,8 +151,16 @@ pub fn map_del<K: Ord, T>(mut m: BTreeMap<K, T>, key: &K) -> BTreeMap<K, T> {
 // means one thing to both (docs/bug-classes.md §4).
 
 /// `set[map, key, value]`.
-pub fn set<K: Ord + Clone, T>(m: BTreeMap<K, T>, key: &K, value: T) -> BTreeMap<K, T> {
-    map_set(m, key.clone(), value)
+pub fn set<K: Ord + Clone, T>(mut m: BTreeMap<K, T>, key: &K, value: T) -> BTreeMap<K, T> {
+    // (an entry the map holds takes the value where it lies: the key had
+    // been copied for every update, a string made per count)
+    match m.get_mut(key) {
+        Some(slot) => *slot = value,
+        None => {
+            m.insert(key.clone(), value);
+        }
+    }
+    m
 }
 
 /// `len[list]`.
@@ -164,7 +170,7 @@ pub fn len<T>(v: &[T]) -> i64 {
 
 /// `len[text]`, in characters.
 pub fn len_text(s: &str) -> i64 {
-    s.chars().count() as i64
+    crate::text::len_known(s, &crate::text::Known::new())
 }
 
 /// `len[map]`: its entries.

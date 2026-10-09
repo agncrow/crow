@@ -1,0 +1,100 @@
+--- A text read by position — a slice, a character, its length — is read
+--- with what is known of its start: within its ASCII start a character is
+--- a byte, so a loop over a long text's windows reads each window in the
+--- window's time (a slice had walked the text from its start, and counting
+--- k-mers by slices was quadratic in both modes). It answers what the walk
+--- answered: for text that is not ASCII, that starts as ASCII and goes on
+--- otherwise, and a text given a new value. A map updated from its own
+--- entry is updated where it lies. The last case stops the program.
+
+--- every window of a text, as a slice
+fn windows[t, k]
+    out = []
+    n = len[t] - k + 1
+    i = 0
+    while i lt n
+        out = push[out, slice[t, i, i + k]]
+        i = i + 1
+    return join[out, '|']
+log[windows['acgtacgt', 3]]
+log[windows['héllo→wörld', 4]]
+log[windows['abc😀def', 2]]
+log[windows['plain ASCII first, then é and → and more', 9]]
+
+--- every character, from the start and from the end
+fn letters[t]
+    s = []
+    i = 0
+    while i lt len[t]
+        s = push[s, t[i]]
+        i = i + 1
+    back = []
+    j = -1
+    while j gte 0 - len[t]
+        back = push[back, t[j]]
+        j = j - 1
+    forth = join[s, ' ']
+    rev = join[back, '']
+    return '`forth` / `rev`'
+log[letters['crow→é']]
+log[letters['ab😀c']]
+
+--- a text given new values: each read is of the value it holds then
+fn renamed[n]
+    t = 'abcdefgh'
+    out = []
+    for i in range[n]
+        out = push[out, slice[t, 1, 4]]
+        t = 'é→`t`'
+    return join[out, ' ']
+log[renamed[3]]
+
+--- a long text handed twice to one builtin: lent once, read twice
+long = repeat['acgt→', 50]
+log[starts[long, long]]
+log[len[replace[long, long, 'x']]]
+
+--- clamped and empty slices, a length
+log[slice['abc', -2, 99]]
+empty = slice['abc', 2, 1]
+log['[`empty`] `len[empty]`']
+log[len['naïve→ok']]
+
+--- a slice compared where it lies, in a loop over a long text
+fn occurrences[seq, pat]
+    k = len[pat]
+    c = 0
+    i = 0
+    while i lt len[seq] - k + 1
+        if slice[seq, i, i + k] eq pat
+            c = c + 1
+        if slice[seq, i, i + k] ne pat
+            c = c + 0
+        i = i + 1
+    return c
+seq = repeat['GGTATTTTAATTTATAGT', 200]
+log[occurrences[seq, 'GGTA']]
+log[occurrences[seq, 'TTTAA']]
+log[occurrences['é→éé→é', 'é→']]
+
+--- counts in a map, an entry updated from its own value where it lies
+fn counts_of[t, k]
+    counts = map[]
+    i = 0
+    while i lt len[t] - k + 1
+        w = slice[t, i, i + k]
+        if w in counts
+            counts = set[counts, w, counts[w] + 1]
+        else
+            counts = set[counts, w, 1]
+        i = i + 1
+    return counts
+c2 = counts_of[seq, 2]
+log[c2]
+log[counts_of['ééa→ééa', 2]]
+
+--- a position past the end stops the program, naming its line
+fn past[t]
+    return t[len[t]]
+log[past['acgt']]
+log['not reached']

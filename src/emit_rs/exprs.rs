@@ -414,6 +414,10 @@ impl Emitter {
             if let Some(s) = self.optbox_comparison(left, op, right) {
                 return s;
             }
+            // a slice of text compared, where it lies (texts.rs)
+            if let Some(s) = self.slice_compared(left, right).or_else(|| self.slice_compared(right, left)) {
+                return if op == "ne" { format!("!{}", s) } else { s };
+            }
         }
         let l = self.operand(left);
         let r = self.operand(right);
@@ -871,8 +875,16 @@ impl Emitter {
                 let suffix = if Self::is_copy_type(el) { "" } else { ".clone()" };
                 format!("{{ let _i = {}; let _v = &{}; _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop({}, e))]{} }}", idx, b, self.line_now(), suffix)
             }
+            // a character, read with what is known of the text's start (a
+            // text read by position keeps it; every character had been
+            // collected first, for each position read)
             Ty::Str | Ty::Markup => {
-                format!("{{ let _s: Vec<char> = {}.chars().collect(); let _i = {}; _s[crow_runtime::stops::char_at(_i, _s.len()).unwrap_or_else(|e| crow_stop({}, e))].to_string() }}", b, idx, self.line_now())
+                self.needs_crow_runtime = true;
+                let line = self.line_now();
+                match self.indexed_text(base) {
+                    Some(x) => format!("crow_runtime::text::char_at_known(&{x}, &{x}__known, ({idx}) as i64).unwrap_or_else(|e| crow_stop({line}, e))"),
+                    None => format!("crow_runtime::text::char_at_known(&{b}, &crow_runtime::text::Known::new(), ({idx}) as i64).unwrap_or_else(|e| crow_stop({line}, e))"),
+                }
             }
             Ty::Column(_) => {
                 let getter = Self::cell_getter(&Self::inner(&self.tt(whole)));
@@ -1599,6 +1611,10 @@ impl Emitter {
     fn call(&mut self, e: &Expr) -> String {
         // a text builder's join and its count (builders.rs)
         if let Some(text) = self.builder_text(e) {
+            return text;
+        }
+        // a slice or a length of a text read by position (texts.rs)
+        if let Some(text) = self.text_read(e) {
             return text;
         }
         if let Some(x) = builders::measured(e).filter(|x| self.text_builders.contains_key(*x)) {
