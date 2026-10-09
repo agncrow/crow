@@ -756,7 +756,7 @@ fn test_string_split_transpile() {
 
 #[test]
 fn test_contains_transpile() {
-    let rust = transpile("x = [1, 2, 3]\ny = contains[x, 2]\n");
+    let rust = transpile("x = [1, 2, 3]\ny = 2 in x\n");
     assert!(rust.contains("contains") || rust.contains("any"), "should check contains\n{}", rust);
 }
 
@@ -876,7 +876,7 @@ fn test_numarray_sort_transpile() {
 
 #[test]
 fn test_numarray_contains_transpile() {
-    let rust = transpile("a = [1, 2, 3]\nb = contains[a, 2]\n");
+    let rust = transpile("a = [1, 2, 3]\nb = 2 in a\n");
     assert!(rust.contains("crow_runtime::core::contains_number(&(a), (2_i64) as f64)"), "a tensor's contains is its row\n{}", rust);
 }
 
@@ -2151,7 +2151,7 @@ fn len_of_a_result_frame_compares_cleanly() {
 /// handler's own facts are written through before the call
 #[test]
 fn a_helper_sees_what_its_caller_wrote_so_far() {
-    let rust = transpile("use web, ui\nskipped = ['']\nsym = 'A'\nstatus = ''\nfn hop[]\n    if contains[skipped, sym]\n        status = 'skipped'\n    else\n        status = 'kept'\nfn skip[]\n    skipped = concat[skipped, [sym]]\n    hop[]\nview render[]\n    return stack[p[status], button['Skip', click = skip], button['Hop', click = hop]]\npage['/', render]\n");
+    let rust = transpile("use web, ui\nskipped = ['']\nsym = 'A'\nstatus = ''\nfn hop[]\n    if sym in skipped\n        status = 'skipped'\n    else\n        status = 'kept'\nfn skip[]\n    skipped = concat[skipped, [sym]]\n    hop[]\nview render[]\n    return stack[p[status], button['Skip', click = skip], button['Hop', click = hop]]\npage['/', render]\n");
     // one copy of the session's facts: the caller's write is in it when
     // the helper reads it
     let skip = &rust[rust.find("fn skip(state").expect("skip is a handler")..];

@@ -97,7 +97,7 @@ fn polynomial[x, degree]
 fn labels[names]
     seen = []
     for s in sort[names]
-        if not contains[seen, s]
+        if s not in seen
             seen = push[seen, s]
     return Labels[seen]
 

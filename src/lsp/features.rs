@@ -75,6 +75,10 @@ pub fn completions(a: &Analysis) -> Vec<CompletionItem> {
         );
     }
     for b in crate::lower_ir::BUILTINS.iter() {
+        // the rows behind `x in xs` and `key in m` are written as the operator
+        if matches!(*b, "contains" | "has") {
+            continue;
+        }
         push(b, CompletionItemKind::FUNCTION, Some("builtin".into()), &mut items);
     }
     for k in KEYWORDS {

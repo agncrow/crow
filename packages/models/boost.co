@@ -246,7 +246,7 @@ fn stepped[node, neg_g, prob, share]
 fn labels_of[y]
     seen = []
     for c in y
-        if not contains[seen, c]
+        if c not in seen
             seen = push[seen, c]
     return sort[seen]
 

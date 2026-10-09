@@ -89,12 +89,12 @@ about functions working together. Setup, a sequence of calls, and
 
 ```crow
 fn restock[stock, item, n]
-    if has[stock, item]
+    if item in stock
         return set[stock, item, stock[item] + n]
     return set[stock, item, n]
 
 fn take[stock, item, n]
-    if not has[stock, item]
+    if item not in stock
         return error['no `item` in stock', 'stock']
     if stock[item] lt n
         return error['only `stock[item]` `item` left', 'stock']

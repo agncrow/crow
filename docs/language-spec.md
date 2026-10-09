@@ -366,7 +366,7 @@ if x gt 10
 
 `eq` compares two values whole, in both modes alike: numbers by value (an int beside a float as a float: `1 eq 1.0`), text by its characters, a list item by item, a map entry by entry, and a record field by field — two records are equal when they are the same struct and every field is (`Point[1, 2] eq Point[1, 2]`). An item or a field that failed equals nothing, not even another failure. `contains` compares a list's items the same way. A frame's column compared whole — with a column, a list or a tensor — is compared as a list is, cell by cell, a missing cell equal to nothing. A list compared with a single value is a mask instead (see Arrays). (Compiled, comparing two records did not build, and the interpreter answered `false` for records and maps with equal contents; a column of text with a missing cell had equalled itself, and a column compared with a list had not built.)
 
-**Two values of two kinds are not compared.** Each of the six compares a value with one of its kind: numbers with numbers (an int beside a float as a float), text with text, bools with bools, and lists, maps and records with their own kind. A number is not text, nor a bool either: `'1' eq 1`, `true eq 1`, a list of text with a list of numbers, a column of text with a number (`df.name eq 2`), `contains[['a'], 1]` and `push[['a'], 1]` are refused before the program runs — `eq compares values of one kind, not text with a number` — and where a kind shows only as the program runs — a parsed value, a cell of a file's column — the comparison stops the program with the same words. A parsed value is compared with a value of its kind (`j.status eq 'ok'`), and JSON's null equals nothing. (Both modes had answered `false` for a number and text, and `contains` had too; compiled, `'a' eq 1` had not built; interpreted, a parsed `1` had not equalled `1.0`.)
+**Two values of two kinds are not compared.** Each of the six compares a value with one of its kind: numbers with numbers (an int beside a float as a float), text with text, bools with bools, and lists, maps and records with their own kind. A number is not text, nor a bool either: `'1' eq 1`, `true eq 1`, a list of text with a list of numbers, a column of text with a number (`df.name eq 2`), `1 in ['a']` and `push[['a'], 1]` are refused before the program runs — `eq compares values of one kind, not text with a number` — and where a kind shows only as the program runs — a parsed value, a cell of a file's column — the comparison stops the program with the same words. A parsed value is compared with a value of its kind (`j.status eq 'ok'`), and JSON's null equals nothing. (Both modes had answered `false` for a number and text, and `contains` had too; compiled, `'a' eq 1` had not built; interpreted, a parsed `1` had not equalled `1.0`.)
 
 `gt`, `lt`, `gte` and `lte` order numbers with numbers and text with text, by character code — the order `sort` gives text: `'b' gt 'a'`, `'B' lt 'a'`, and `'10' lt '9'`, text and not numbers. Numbers compare exactly, and NaN is equal to nothing and unordered, so of the six only `ne` holds for it. Bools have no order (`gt compares numbers with numbers or text with text, not a bool with a bool`), nor two lists, and a parsed value is read as the kind the other side says, as arithmetic on one reads it as a number (see JSON). (Compiled, `true gt false` and `'b' gt 'a'` had answered where the interpreter stopped.)
 
@@ -410,6 +410,17 @@ if len[r] eq 0              --- r is known good here
 
 **Decision (Vijay, 2026-09-23):** both sides are evaluated. Every operator treats an error the same way, and `and` and `or` are operators like the rest: an error on either side is the value, and nothing is evaluated conditionally except by `if` and `while`. The guard that must not touch a failed value is written as the `if` it is, and reads the same in both modes. The compiled program had short-circuited plain booleans, so `false and check[x]` ran `check` in the interpreter only; now both modes run it.
 
+
+### Membership
+
+`x in xs` is true where `xs` holds `x`, and `x not in xs` where it does not — the one way to ask, in words: an item of a list, compared as `eq` compares; a number in a tensor; a part of text; a key of a map or of a parsed value; and over a frame's column, cell by cell, a mask (`filter[t, 'AA' in t.sym]`). It binds as a comparison does — tighter than `and`, `or` and `not`, looser than arithmetic — so `n + 1 in [3, 4] and n in [2]` reads as written. A value of another kind than the items is refused before the program runs, in both modes: `1 in ['a']` is "`x in xs` takes a list and an item of its kind: its items are text, not a number".
+
+```
+if node.tag not in ['button', 'input', 'select', 'summary']
+    lines = lay_lines[node, inner_w]
+```
+
+**Design Note: membership is an operator.** Considered: keeping `contains[xs, x]` and `has[m, key]` as functions (rejected: `node.tag ne 'button' and node.tag ne 'input' and …` was written in the layout engine where a list would do, because `not contains[list, node.tag]` reads backwards from how it is said, and `has` beside `contains` was two words for one question); adding `in` beside them (rejected: two ways to write one call). **Decision (Vijay, 2026-10-08):** `in` and `not in`, a pair as `eq` and `ne` are, and the functions retired — `contains[…]` or `has[…]` written in a program is refused with the operator to write. The parser writes the operator as a call of the row named `contains` (a map's and a parsed value's rows are `has`'s functions under that name), so nothing below it knows an operator exists, as with `then`.
 
 ### Then Chaining
 
@@ -742,6 +753,11 @@ Negative indices also work for assignment:
 ```
 numbers[-1] = 99         --- sets last element
 ```
+
+
+**A mask picks.** Where the index is a list of bools — what a comparison over a list or a tensor answers — the result is the items where it is true: `names[labels eq j]`. Of a matrix it is the rows, so `mean[x[labels eq j], 0]` is the centre of the rows labelled `j`; of a vector, the numbers: `v[v gt 25.0]`. A mask of another length than the items stops. Frames keep `filter[df, mask]`, which also reads a column's `.ok`.
+
+**Design Note: a mask picks, and counts.** Considered: `filter[t, mask]` for tensors and lists (rejected: a second verb where the index already picks — `x[i]` one row, `x[mask]` the rows); `any[mask]` and `all[mask]` (rejected: `sum[mask] gt 0` and `sum[mask] eq len[mask]` say it, once a mask counts). **Decision (Vijay, 2026-10-08):** the index takes a mask, and a mask where numbers are asked is numbers — `true` 1, `false` 0 — so `sum[v gt 2.0]` counts, and math's `where[mask, a, b]` takes one as it takes numbers. The k-means centre, a loop with an index and a count, is one line.
 
 Out-of-bounds indices (positive or negative) are a runtime error.
 
@@ -1291,6 +1307,7 @@ A builtin handed a number of arguments, or a kind of argument, it does not take 
 | `range[start, stop]` | Array of ints from start to stop (exclusive) |
 | `range[start, stop, step]` | Array of ints with custom step; a negative step counts down (`range[5, 0, -2]` is `[5, 3, 1]`); a zero step is an error |
 | `map[]` | Create an empty map |
+| `map[keys, values]` | A map from a list of keys and a list of values, in order — the key first, as the literal and `set` write it. Lists of different lengths, or a key that repeats, stop; a tensor of values makes a map of numbers (see Design Note: a map from two lists) |
 | `assert[cond]` | Halt with error if condition is falsy |
 | `assert[cond, msg]` | Halt with custom error message |
 | `error[reason]` | Create an error-value with the given reason |
@@ -1394,11 +1411,11 @@ type[error['x']]  --- 'error'
 | `len[x]` | Length of a list, of text (in characters), of a map (its entries), of a tensor (what a loop walks and an index reads: a vector's numbers, a matrix's rows — `len[flatten[m]]` counts every number), of a frame (its rows), of a frame's column (its cells, a missing one too). `x.len` is the same length; a record's field, a map's key or a frame's column named `len` is its own |
 | `push[arr, value]` | Return new array with value appended; onto a tensor, a number onto a vector or a row onto a matrix. A list holds one kind: an item of another (`push[['a'], 1]`) is refused |
 | `pop[arr]` | Return new array without last element; an empty array stays empty |
-| `concat[a, b]` | Return new array merging two arrays: `a`'s items, then `b`'s. An empty `a` takes its items from `b` (`idx = []`, then `idx = concat[idx, [i]]` makes a list of ints) |
+| `concat[a, b]` | Return new array merging two arrays: `a`'s items, then `b`'s. Given one list written down, `concat[[a, b, c]]`, its items joined in order, whatever two of them join — lists, text, tensors, bytes (see Design Note: one word for joining). An empty `a` takes its items from `b` (`idx = []`, then `idx = concat[idx, [i]]` makes a list of ints) |
 | `concat[a, b, axis]` | Concatenate two tensors along an axis |
 | `sort[arr]` | Return new sorted array: numbers ascending, NaN last; text by character code (`'B'` before `'a'`). A list of anything else — bools, records, lists — has no order, and is refused |
 | `reverse[arr]` | Return new reversed array; text reversed by character |
-| `contains[arr, value]` | Whether an item is `value`, compared as `eq` compares (a record field by field), so a value of another kind than the items is refused; of text, whether it holds the part (`contains['hello', 'ell']`) |
+| `contains[arr, value]` | The row behind `value in arr` (see Membership; the name is not written): whether an item is `value`, compared as `eq` compares (a record field by field), so a value of another kind than the items is refused; of text, whether it holds the part (`'ell' in 'hello'`); of a map or a parsed value, whether it has the key |
 | `any[arr, pred]` | True if any element passes the predicate (parallel, early exit) |
 | `all[arr, pred]` | True if every element passes (parallel, early exit) |
 | `find[arr, pred]` | First element passing the predicate; error-value if none |
@@ -1410,11 +1427,15 @@ type[error['x']]  --- 'error'
 |----------|-------------|
 | `keys[m]` | Array of map keys |
 | `values[m]` | Array of map values |
-| `has[m, key]` | Check if map contains key |
+| `has[m, key]` | The row behind `key in m` (see Membership; the name is not written) |
 | `set[m, key, value]` | Return new map with entry added/updated; a value of another kind than the map's is refused |
 | `del[m, key]` | Return new map with entry removed |
 
-A collection builtin takes the kinds its forms above say — a list, a map, text, a tensor — and any other is refused before the program runs, in both modes, naming the forms it takes: `has[[1, 2], 1]` is `has[] takes a map and text, got numbers and an int`, and `len[5]`, `keys[[1, 2]]` and `contains[m, 'a']` of a map are refused alike. A JSON value's kind shows only as the program runs, so `len` of one that is a number or a bool stops the program with the same words. (Compiled, those calls did not build, where the interpreter stopped as it ran; and `len` of a JSON number was 0.)
+**Design Note: one word for joining.** Considered: `gather[chunks]` beside `concat[a, b]` (rejected: two words, and `concat[a, concat[b, concat[c, …]]]` eight brackets deep in the Postgres driver where a list of pieces would do). **Decision (Vijay, 2026-10-08):** `concat` given one list written down joins its items two at a time, in the first lowering, so every kind two pieces join is joined; a list of bytes held in a variable is `concat[chunks]`, the row `gather` was. A list of lists held in a variable is not joined: its items' kind is the lists', which one function over any item kind cannot hold in both modes — write the pieces, or a loop.
+
+**Design Note: a map from two lists.** Considered: a named form, `map[keys = ks, values = vs]` (rejected: the literal already means a map with a key called `keys`); `zip` (rejected, see No Enumerate or Zip). **Decision (Vijay, 2026-10-08):** `map[keys, values]`, positional, the key first as everywhere a key is written — `map[k = v]`, `set[m, key, value]`. The loop that set one entry per word, in the retrieval package and twenty-four other places, is one line.
+
+A collection builtin takes the kinds its forms above say — a list, a map, text, a tensor — and any other is refused before the program runs, in both modes, naming the forms it takes: `1 in [1, 2]` is `has[] takes a map and text, got numbers and an int`, and `len[5]`, `keys[[1, 2]]` and `'a' in m` of a map are refused alike. A JSON value's kind shows only as the program runs, so `len` of one that is a number or a bool stops the program with the same words. (Compiled, those calls did not build, where the interpreter stopped as it ran; and `len` of a JSON number was 0.)
 
 **All builtins are immutable.** No builtin modifies its arguments. To update a variable, reassign: `nums = push[nums, 4]`. Both modes turn `x = push[x, v]` (and `pop`, `sort`, `reverse`, `concat`, `set`, `del` in the same shape) into an in-place update: the collection is moved into the operation, not copied, when the right-hand side reads `x` exactly once.
 
@@ -1928,7 +1949,7 @@ All reductions except `argmax`/`argmin` accept an optional axis parameter: `sum[
 | `argsort[t]` | The indices that would sort the numbers, ascending: a list of ints, as `range` answers one, so `xs[order[0]]` reads the smallest (it had answered a tensor, whose items read as floats and indexed nothing) |
 | `topk[t, k]` | Top k largest values, sorted descending (NumArray) |
 | `unique[t]` | Unique values, sorted (NumArray) |
-| `where[cond, a, b]` | Element-wise: a where cond≠0, else b (NumArray) |
+| `where[cond, a, b]` | Element-wise: a where cond≠0, else b (NumArray); `cond` a mask too — `where[v gt 15.0, v, 0.0 * v]` — as a mask is numbers where numbers are asked (true 1, false 0; `sum[v gt 15.0]` counts) |
 
 Note: `sort[t]` is a core builtin (not in the math module) that works on both arrays and tensors.
 
@@ -2383,7 +2404,7 @@ Import with `use sys` — **only in a module of the standard library.** `sys` is
 | `send[stream, bytes]` | The bytes written, all of them; the count. An error value of kind `'sys'` on a stream that is closed or broke |
 | `recv[stream, most, seconds]` | Up to `most` bytes as they arrive — none when the other side closed — waiting at most `seconds` (the connection's own wait when 0). The wait ends with a stop — of the work it is in (a derivation nobody waits for any more) or of the program — with the reason `cancelled: nobody waits for this query any more`, which a driver answers by telling its server. An error value of kind `'sys'`: `no data from host:port in 2 s`, `the stream is closed` |
 | `close[stream]` | The connection let go; every call after is refused |
-| `gather[chunks]` | A list of bytes joined in order, as one (what a connection read, piece by piece) |
+| `concat[chunks]` | A list of bytes joined in order, as one (what a connection read, piece by piece), as `concat[[a, b, c]]` joins pieces written down |
 | `file[path]` | A file's bytes, as they are; an error value of kind `'sys'` where it cannot be read |
 | `store[path, bytes]` | The bytes written to a file, as they are; an error value of kind `'sys'` where it cannot be written |
 | `random[n]` | `n` bytes from the operating system's randomness |
@@ -2525,7 +2546,7 @@ for q in df.qty
 Filtering uses ordinary Crow expressions that evaluate to boolean arrays. These operations are vectorized (element-wise):
 
 - `eq ne gt lt gte lte` — column vs scalar → boolean array (the scalar may come first: `50 lt df.age`)
-- `contains[df.note, 'late']`, `starts[df.symbol, 'A']`, `ends[df.note, 'k']` — a text column tested cell by cell → boolean array, a missing cell false
+- `'late' in df.note`, `starts[df.symbol, 'A']`, `ends[df.note, 'k']` — a text column tested cell by cell → boolean array, a missing cell false
 - `and` / `or` — two boolean arrays → boolean array
 - `not` — boolean array → boolean array
 
@@ -2726,13 +2747,13 @@ fn log_out[]
     sign_out[]
 ```
 
-Signing in sets `reader` for the session and gives the browser a cookie, so the reader is signed in on every page and tab they open next — after a restart too — for thirty days, or until they sign out. Signing out clears `reader` and the cookie, and ends that sign-in everywhere: every session holding it, another tab included, is signed out and redrawn at once, and the cookie is refused if it is ever sent again. A tab already open when someone signs in shows it the next time it opens the page. The program never sees the cookie: the runtime reads it when a page opens and fills `reader`. Nothing on the page can write `reader` — no input binds it and no handler assigns it; in a test, `change[a, 'reader', record]` stands for a reader who signed in. Authorization is ordinary code in the handler that needs it: `if reader.role ne 'admin'`. A signed-out reader has no `role`: reading it is an error, and a handler that meets one stops — nothing it did lands, and the reader is told it stopped — so the check fails closed (in a test, `click` reports the error); `has[reader, 'role']` asks first. A derivation that reads `reader` is computed per session; a plain function is handed the reader as a parameter (`is_admin[reader]`), as it is handed a module variable. The record travels in the cookie, so it stays small: at most 1 KB — an id, a name, a role; look the rest up. The cookie is `HttpOnly`, `SameSite=Lax`, and `Secure` when the page came over https through a proxy (`X-Forwarded-Proto: https`). It is signed with the app's secret: `CROW_SECRET` (at least 32 characters) when set, otherwise a key the runtime writes to `.crow/keys/` on first use, a directory that ignores itself in version control. Changing the secret signs everyone out. Passwords are stored as `hash[password, 'password']` and checked with `hash[attempt, stored] eq stored` (### Hashing).
+Signing in sets `reader` for the session and gives the browser a cookie, so the reader is signed in on every page and tab they open next — after a restart too — for thirty days, or until they sign out. Signing out clears `reader` and the cookie, and ends that sign-in everywhere: every session holding it, another tab included, is signed out and redrawn at once, and the cookie is refused if it is ever sent again. A tab already open when someone signs in shows it the next time it opens the page. The program never sees the cookie: the runtime reads it when a page opens and fills `reader`. Nothing on the page can write `reader` — no input binds it and no handler assigns it; in a test, `change[a, 'reader', record]` stands for a reader who signed in. Authorization is ordinary code in the handler that needs it: `if reader.role ne 'admin'`. A signed-out reader has no `role`: reading it is an error, and a handler that meets one stops — nothing it did lands, and the reader is told it stopped — so the check fails closed (in a test, `click` reports the error); `'role' in reader` asks first. A derivation that reads `reader` is computed per session; a plain function is handed the reader as a parameter (`is_admin[reader]`), as it is handed a module variable. The record travels in the cookie, so it stays small: at most 1 KB — an id, a name, a role; look the rest up. The cookie is `HttpOnly`, `SameSite=Lax`, and `Secure` when the page came over https through a proxy (`X-Forwarded-Proto: https`). It is signed with the app's secret: `CROW_SECRET` (at least 32 characters) when set, otherwise a key the runtime writes to `.crow/keys/` on first use, a directory that ignores itself in version control. Changing the secret signs everyone out. Passwords are stored as `hash[password, 'password']` and checked with `hash[attempt, stored] eq stored` (### Hashing).
 
 **A page for signed-in readers** checks `reader` in its view:
 
 ```
 view orders[]
-    if not has[reader, 'id']
+    if 'id' not in reader
         return sign_in_form[]
     return stack[
         table[open_orders, actions = map[Refund = refund]],
@@ -2740,7 +2761,7 @@ view orders[]
     ]
 ```
 
-While the reader is signed out the page draws the sign-in form, and nothing else of the page reaches them: a session accepts only the events a render it sent offered, so `refund` is refused even in a message written by hand, and a derivation is computed only where it is read, so `open_orders` is never queried for them. When `log_in` commits, the same session draws the orders, at the same address, so nothing has to send the reader back. A page for one role checks the role the same way (`reader.role ne 'admin'`, after `has[reader, 'role']`).
+While the reader is signed out the page draws the sign-in form, and nothing else of the page reaches them: a session accepts only the events a render it sent offered, so `refund` is refused even in a message written by hand, and a derivation is computed only where it is read, so `open_orders` is never queried for them. When `log_in` commits, the same session draws the orders, at the same address, so nothing has to send the reader back. A page for one role checks the role the same way (`reader.role ne 'admin'`, after `'role' in reader`).
 
 **Design Note: no `auth` on a page.** Considered: `page['/admin', admin, auth = true]`, sending a signed-out reader to a login page and back once they sign in (ui-framework.md, Authentication). Rejected: the view's check already does all of it and fails closed. It draws the sign-in form in place, offers none of the page's handlers and runs none of its queries, and a second way to guard a page would leave two places to look for why a page is shown. The page keeps its address while the reader signs in, so there is nowhere to send them back to.
 
@@ -3689,7 +3710,7 @@ test refresh_flow[]
     a = app[render]
     click[a, go]
     assert[a.status eq 'updated']
-    assert[contains[html[a], 'count: 1']]
+    assert['count: 1' in html[a]]
 ```
 
 A named test is a scenario and reads the program back: the facts and derivations, as the harness's clicks left them — `assert[session_id gt 0]`, `assert[len[rows] gt 0]`. Each session holds its own facts, as each served page does: the first `app[…]` takes the facts as the test has them, and every later one starts from where the first started. A bare fact name reads the session a verb acted on last, so a one-session test reads its session directly; `a.name` reads any session's — a fact, or a derivation as that session sees it (`len[bob.cards]`). An attached test (`test[p]` after a fn) sees what a caller of that fn sees and nothing of the program's state; its inputs are generated.

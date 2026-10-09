@@ -12,7 +12,7 @@ struct Bayes [classes, means, variances, priors]
 fn classes_of[y]
     out = []
     for c in y
-        if not contains[out, c]
+        if c not in out
             out = push[out, c]
     return out
 

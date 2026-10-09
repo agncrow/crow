@@ -61,7 +61,7 @@ use sys
 
 store['sys-note.txt', bytes['one\ntwo']]
 log[len[file['sys-note.txt']]]
-log[text[gather[[bytes['ab'], bytes['cd']]], '?']]
+log[text[concat[[bytes['ab'], bytes['cd']]], '?']]
 log[hex[bytes['hi']]]
 log[hash[bytes['hello'], 'sha256']]
 log[hex[hmac[bytes['key'], bytes['hello'], 'sha256']]]

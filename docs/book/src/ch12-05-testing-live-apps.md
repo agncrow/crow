@@ -57,10 +57,10 @@ view render[]
 
 test refresh_flow[]
     s = app[render]
-    assert[contains[html[s], 'ready']]
+    assert['ready' in html[s]]
     click[s, go]
     assert[s.status eq 'updated']
-    assert[contains[html[s], 'count: 1']]
+    assert['count: 1' in html[s]]
 
 page['/', render]
 serve[3000]
@@ -159,7 +159,7 @@ view quote[]
 
 test feed_down_is_visible[]
     s = app[quote]
-    assert[contains[elements[s, 'p'][0].text, 'the server\'s log has why']]
+    assert['the server\'s log has why' in elements[s, 'p'][0].text]
     assert[latest_price[].reason eq 'price feed is down']
 
 page['/', quote]
@@ -270,7 +270,7 @@ page renders. Per-user state is the default; shared state is a table.
 | The mistake | How you catch it |
 |---|---|
 | Wrong structure — a button in the wrong panel, a missing heading | `elements[s, sel]` with a nested selector |
-| Wrong content or formatting | `elements[...].text`, or `contains[html[s], …]` |
+| Wrong content or formatting | `elements[...].text`, or `… in html[s]` |
 | A click doesn't change state, or changes the wrong thing | `click[s, handler]` then `s.field` |
 | Typing into a bound field doesn't propagate | `change[s, 'var', value]`, then render again |
 | Wrong `href`, missing `name`, wrong class | attribute keys on element records |

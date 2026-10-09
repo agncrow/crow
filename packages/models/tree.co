@@ -15,7 +15,7 @@ fn gini[y]
     seen = map[]
     for c in y
         key = '`c`'
-        if has[seen, key]
+        if key in seen
             seen[key] = seen[key] + 1
         else
             seen[key] = 1

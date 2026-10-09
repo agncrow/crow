@@ -85,14 +85,14 @@ fn packed[j]
         pieces = [counted[144, n, 220, 221]]
         for item in j
             pieces = push[pieces, packed[item]]
-        return gather[pieces]
+        return concat[pieces]
     names = keys[j]
     vals = values[j]
     pieces = [counted[128, len[names], 222, 223]]
     for i in range[len[names]]
         pieces = push[pieces, packed_text[names[i]]]
         pieces = push[pieces, packed[vals[i]]]
-    return gather[pieces]
+    return concat[pieces]
 
 --- `msgpack[value]`: the value packed, as a response (`application/msgpack`)
 fn msgpack[value]

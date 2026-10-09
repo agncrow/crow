@@ -22,7 +22,7 @@ log['prices: `df.price`, counts: `df.n`, symbols: `df.sym`']
 
 seen = map[]
 for w in ['x', 'y', 'x', 'x']
-    if has[seen, w]
+    if w in seen
         seen[w] = seen[w] + 1
     else
         seen[w] = 1

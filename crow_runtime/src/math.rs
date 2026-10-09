@@ -337,6 +337,35 @@ pub fn unique(t: &CrowTensor) -> CrowTensor {
 }
 
 /// `where[cond, a, b]`: a's value where cond holds, b's elsewhere.
+/// The rows of a matrix, or the numbers of a vector, where the mask is
+/// true: `t[labels eq j]` (spec, Arrays). A mask of another length than the
+/// tensor's first axis stops.
+pub fn pick_rows(t: &CrowTensor, mask: &[bool]) -> Result<CrowTensor, String> {
+    let shape = t.shape().to_vec();
+    let Some(&n) = shape.first() else {
+        return Err("a mask picks from a vector or a matrix, not from a number".to_string());
+    };
+    if mask.len() != n {
+        return Err(format!("a mask of {} picks from {} rows: they must be as long as each other", mask.len(), n));
+    }
+    let row: usize = shape.iter().skip(1).product();
+    let data = t.to_vec();
+    let mut out = Vec::with_capacity(data.len());
+    let mut kept = 0usize;
+    for (i, &m) in mask.iter().enumerate() {
+        if m {
+            let piece = data.get(i * row..(i + 1) * row).ok_or_else(|| "the tensor's data is shorter than its shape".to_string())?;
+            out.extend_from_slice(piece);
+            kept += 1;
+        }
+    }
+    let mut picked = shape;
+    if let Some(first) = picked.first_mut() {
+        *first = kept;
+    }
+    Ok(CrowTensor::from_vec(out, picked))
+}
+
 pub fn where_(cond: &CrowTensor, a: &CrowTensor, b: &CrowTensor) -> Result<CrowTensor, String> {
     if cond.len() != a.len() || cond.len() != b.len() {
         return Err(format!("where: cond, a and b must be one length, got {}, {} and {}", cond.len(), a.len(), b.len()));

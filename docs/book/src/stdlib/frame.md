@@ -28,7 +28,7 @@ Import with `use frame`. Column-oriented DataFrames for tabular data. See `docs/
 | `unpivot[frame, keys, cols]` | The wide frame made long, the reverse of `pivot`: a row per key row and column, the key columns (one name or a list, `[]` for none) repeated, `variable` the column's name and `value` its cell — the columns' cells one kind, ints beside floats floats | [Frames: `use frame`](../by-example/frames.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) |
 | `complete[frame]`, `complete[frame, cols]` | The rows whose every cell is present, or every cell of the named columns (one name or a list): `filter` by `.ok` over all of them | [Frames: `use frame`](../by-example/frames.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) |
 | `sample[frame, n]` | `n` of the rows, drawn without replacement by the seeded generator (see Random Numbers), kept in the frame's order; `n` beyond the rows stops the program | [Frames: `use frame`](../by-example/frames.md) |
-| `where[mask, a, b]` | A column that takes `a`'s cell where the mask is true and `b`'s elsewhere — each a column, a list or one value for every row, both of one kind (ints beside floats floats); a missing cell stays missing. (`math.where` is the same word over tensors.) | [Frames: `use frame`](../by-example/frames.md) · [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) |
+| `where[mask, a, b]` | A column that takes `a`'s cell where the mask is true and `b`'s elsewhere — each a column, a list or one value for every row, both of one kind (ints beside floats floats); a missing cell stays missing. (`math.where` is the same word over tensors.) | [Frames: `use frame`](../by-example/frames.md) · [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: tensors](../by-example/math.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) |
 | `bucket[column, seconds]` | Each moment's bucket start (see Moments, `bucket[t, seconds]`), a column of moments: `group[with[df, 'hour', bucket[df.at, 3600]], ['symbol', 'hour'], ['px', 'first'], ['px', 'max'], ['px', 'min'], ['px', 'last'], ['qty', 'sum']]` is the hourly bars | [Frames: `use frame`](../by-example/frames.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) |
 | `stats[frame]` | Each numeric column's count, mean, population standard deviation, min, lower quartile, median, upper quartile and max, as text | [Frames: `use frame`](../by-example/frames.md) |
 
@@ -77,7 +77,7 @@ for q in df.qty
 Filtering uses ordinary Crow expressions that evaluate to boolean arrays. These operations are vectorized (element-wise):
 
 - `eq ne gt lt gte lte` — column vs scalar → boolean array (the scalar may come first: `50 lt df.age`)
-- `contains[df.note, 'late']`, `starts[df.symbol, 'A']`, `ends[df.note, 'k']` — a text column tested cell by cell → boolean array, a missing cell false
+- `'late' in df.note`, `starts[df.symbol, 'A']`, `ends[df.note, 'k']` — a text column tested cell by cell → boolean array, a missing cell false
 - `and` / `or` — two boolean arrays → boolean array
 - `not` — boolean array → boolean array
 

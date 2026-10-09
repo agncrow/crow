@@ -142,12 +142,12 @@ test one_transaction[]
     a = app[panel]
     click[a, save]
     assert[a.saved eq 1]
-    assert[contains[html[a], 'saved 1']]
+    assert['saved 1' in html[a]]
     r = click[a, broken]
     assert[not r.ok]
     assert[a.saved eq 1]
-    assert[contains[r.reason, 'cannot convert']]
-    assert[contains[html[a], 'broken stopped, and nothing changed']]
+    assert['cannot convert' in r.reason]
+    assert['broken stopped, and nothing changed' in html[a]]
 
 page['/', panel]
 log['panel defined']
@@ -368,7 +368,7 @@ fn log_out[]
     sign_out[]
 
 derive greeting
-    if has[reader, 'name']
+    if 'name' in reader
         return 'hello `reader.name`'
     return 'hello stranger'
 
@@ -437,7 +437,7 @@ view sign_in_form[]
     ]
 
 view orders[]
-    if not has[reader, 'name']
+    if 'name' not in reader
         return sign_in_form[]
     return stack[
         p['orders for `reader.name`, `refunded` refunded'],
@@ -483,7 +483,7 @@ use web, ui, frame
 upload = map[]
 
 derive trades
-    if has[upload, 'path']
+    if 'path' in upload
         return frame.load[upload.path]
     return frame.new[]
 
@@ -505,7 +505,7 @@ test a_file_in_and_out[]
     assert[elements[a, 'th button'][0].text eq 'symbol']
     click[a, export]
     assert[downloads[a][0].name eq 'trades.csv']
-    assert[contains[downloads[a][0].text, 'IMRN,100']]
+    assert['IMRN,100' in downloads[a][0].text]
 
 page['/', desk]
 log['desk defined']
@@ -612,9 +612,9 @@ test rows[]
     s = app[render, width = 1280]
     click[s, load_universe]
     h = html[s]
-    assert[contains[h, 'type="range"']]
-    assert[contains[h, 'data-crow-click="pick"']]
-    assert[contains[h, 'class="marked"']]
+    assert['type="range"' in h]
+    assert['data-crow-click="pick"' in h]
+    assert['class="marked"' in h]
     assert[len[elements[s, 'tr']] eq 4]
     click[s, pick['AOUT']]
     assert[s.focus eq 'AOUT']

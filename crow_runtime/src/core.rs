@@ -253,18 +253,44 @@ pub fn len_json(j: &serde_json::Value) -> Result<i64, String> {
     Err(format!("len[] takes a list, text, a map, numbers, a frame or bytes, got {}", got))
 }
 
-/// `contains[list, x]`: whether an item is `x`, compared as `eq` compares
+/// `x in list`: whether an item is `x`, compared as `eq` compares
 /// (a record field by field, a map entry by entry).
+/// The items where the mask is true: `xs[mask]` (spec, Arrays). A mask of
+/// another length than the list stops.
+pub fn pick_items<T: Clone>(v: &[T], mask: &[bool]) -> Result<Vec<T>, String> {
+    if mask.len() != v.len() {
+        return Err(format!("a mask of {} picks from a list of {}: they must be as long as each other", mask.len(), v.len()));
+    }
+    Ok(v.iter().zip(mask).filter(|(_, m)| **m).map(|(x, _)| x.clone()).collect())
+}
+
+/// A map from a list of keys and a list of values, in order: `map[keys,
+/// values]` (spec, Maps). Lists of different lengths, or a key that
+/// repeats, stop.
+pub fn map_of<T: Clone>(keys: &[String], values: &[T]) -> Result<BTreeMap<String, T>, String> {
+    if keys.len() != values.len() {
+        return Err(format!("map[keys, values] takes lists as long as each other, got {} keys and {} values", keys.len(), values.len()));
+    }
+    let mut m = BTreeMap::new();
+    for (k, v) in keys.iter().zip(values) {
+        if m.insert(k.clone(), v.clone()).is_some() {
+            return Err(format!("map[keys, values]: the key '{}' repeats", k));
+        }
+    }
+    Ok(m)
+}
+
+
 pub fn contains<T: PartialEq>(v: &[T], x: &T) -> bool {
     v.contains(x)
 }
 
-/// `contains[text, part]`.
+/// `part in text`.
 pub fn contains_text(s: &str, part: &str) -> bool {
     s.contains(part)
 }
 
-/// `contains[tensor, x]`.
+/// `x in tensor`.
 pub fn contains_number(t: &crate::tensor::CrowTensor, x: f64) -> bool {
     t.to_vec().contains(&x)
 }
@@ -279,7 +305,7 @@ pub fn values<T: Clone>(m: &BTreeMap<String, T>) -> Vec<T> {
     m.values().cloned().collect()
 }
 
-/// `has[map, key]`.
+/// `key in map`.
 pub fn has<T>(m: &BTreeMap<String, T>, key: &str) -> bool {
     m.contains_key(key)
 }

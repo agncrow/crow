@@ -801,13 +801,13 @@ mod tests {
 
     #[test]
     fn test_contains() {
-        let val = get_var("x = contains[[1, 2, 3], 2]\n", "x");
+        let val = get_var("x = 2 in [1, 2, 3]\n", "x");
         assert!(matches!(val.value, Value::Bool(true)));
     }
 
     #[test]
     fn test_contains_false() {
-        let val = get_var("x = contains[[1, 2, 3], 5]\n", "x");
+        let val = get_var("x = 5 in [1, 2, 3]\n", "x");
         assert!(matches!(val.value, Value::Bool(false)));
     }
 
@@ -895,25 +895,25 @@ mod tests {
 
     #[test]
     fn test_has() {
-        let val = get_var("m = map[a = 1]\nx = has[m, 'a']\n", "x");
+        let val = get_var("m = map[a = 1]\nx = 'a' in m\n", "x");
         assert!(matches!(val.value, Value::Bool(true)));
     }
 
     #[test]
     fn test_has_false() {
-        let val = get_var("m = map[a = 1]\nx = has[m, 'b']\n", "x");
+        let val = get_var("m = map[a = 1]\nx = 'b' in m\n", "x");
         assert!(matches!(val.value, Value::Bool(false)));
     }
 
     #[test]
     fn test_set() {
-        let val = get_var("m = map[a = 1]\nm = set[m, 'b', 2]\nx = has[m, 'b']\n", "x");
+        let val = get_var("m = map[a = 1]\nm = set[m, 'b', 2]\nx = 'b' in m\n", "x");
         assert!(matches!(val.value, Value::Bool(true)));
     }
 
     #[test]
     fn test_del() {
-        let val = get_var("m = map[a = 1, b = 2]\nm = del[m, 'a']\nx = has[m, 'a']\n", "x");
+        let val = get_var("m = map[a = 1, b = 2]\nm = del[m, 'a']\nx = 'a' in m\n", "x");
         assert!(matches!(val.value, Value::Bool(false)));
     }
 
@@ -1199,7 +1199,7 @@ mod tests {
 
     #[test]
     fn test_numarray_contains() {
-        let val = get_var("x = contains[[1, 2, 3], 2]\n", "x");
+        let val = get_var("x = 2 in [1, 2, 3]\n", "x");
         assert!(matches!(val.value, Value::Bool(true)));
     }
 
@@ -3231,7 +3231,7 @@ mod tests {
     /// harness the browser's, so an assertion on a row held in one mode only)
     #[test]
     fn a_pages_html_is_the_browsers_in_both_modes() {
-        let issues = harness_issues("use web, ui, frame\nn = 0\nfn pick[k]\n    n = k\nview v[]\n    f = with[frame.new[], 'k', [4]]\n    return stack[p['`n`'], table[f, click = pick, key = 'k']]\ntest t[]\n    a = app[v]\n    assert[contains[html[a], '<tr data-crow-args=\"[4]\" data-crow-click=\"pick\" tabindex=\"0\"><td class=\"num\">4</td></tr>']]\n");
+        let issues = harness_issues("use web, ui, frame\nn = 0\nfn pick[k]\n    n = k\nview v[]\n    f = with[frame.new[], 'k', [4]]\n    return stack[p['`n`'], table[f, click = pick, key = 'k']]\ntest t[]\n    a = app[v]\n    assert['<tr data-crow-args=\"[4]\" data-crow-click=\"pick\" tabindex=\"0\"><td class=\"num\">4</td></tr>' in html[a]]\n");
         assert!(issues.is_empty(), "{:?}", issues);
     }
 
@@ -3284,7 +3284,7 @@ mod tests {
     /// A page that knows who its reader is: people with stored password
     /// hashes, a sign-in that checks one, an admin-only action, a sign-out,
     /// and a derivation over the reader
-    const SIGN_IN: &str = "use web, ui, db\nbook = db.connect['sqlite://:memory:']\nname = ''\npassword = ''\nwiped = 0\nfn setup[]\n    exec[book, 'CREATE TABLE IF NOT EXISTS people (name TEXT, role TEXT, hash TEXT)']\n    exec[book, 'INSERT INTO people VALUES (?, ?, ?)', ['ada', 'admin', hash['lovelace', 'password']]]\n    exec[book, 'INSERT INTO people VALUES (?, ?, ?)', ['bob', 'member', hash['builder', 'password']]]\nfn log_in[]\n    found = query[book, 'SELECT role, hash FROM people WHERE name = ?', [name]]\n    if len[found] eq 0\n        notice['no one called `name`']\n        return\n    if hash[password, found.hash[0]] ne found.hash[0]\n        notice['wrong password']\n        return\n    sign_in[map[name = name, role = found.role[0]]]\nfn log_out[]\n    sign_out[]\nfn wipe[]\n    if reader.role ne 'admin'\n        notice['admins only']\n        return\n    wiped = wiped + 1\nderive greeting\n    if has[reader, 'name']\n        return 'hello `reader.name`'\n    return 'hello stranger'\nview panel[]\n    return stack[p[greeting], field['Name', name, type = 'text'], field['Password', password, type = 'password'], button['Log in', click = log_in], button['Log out', click = log_out], button['Wipe', click = wipe]]\n";
+    const SIGN_IN: &str = "use web, ui, db\nbook = db.connect['sqlite://:memory:']\nname = ''\npassword = ''\nwiped = 0\nfn setup[]\n    exec[book, 'CREATE TABLE IF NOT EXISTS people (name TEXT, role TEXT, hash TEXT)']\n    exec[book, 'INSERT INTO people VALUES (?, ?, ?)', ['ada', 'admin', hash['lovelace', 'password']]]\n    exec[book, 'INSERT INTO people VALUES (?, ?, ?)', ['bob', 'member', hash['builder', 'password']]]\nfn log_in[]\n    found = query[book, 'SELECT role, hash FROM people WHERE name = ?', [name]]\n    if len[found] eq 0\n        notice['no one called `name`']\n        return\n    if hash[password, found.hash[0]] ne found.hash[0]\n        notice['wrong password']\n        return\n    sign_in[map[name = name, role = found.role[0]]]\nfn log_out[]\n    sign_out[]\nfn wipe[]\n    if reader.role ne 'admin'\n        notice['admins only']\n        return\n    wiped = wiped + 1\nderive greeting\n    if 'name' in reader\n        return 'hello `reader.name`'\n    return 'hello stranger'\nview panel[]\n    return stack[p[greeting], field['Name', name, type = 'text'], field['Password', password, type = 'password'], button['Log in', click = log_in], button['Log out', click = log_out], button['Wipe', click = wipe]]\n";
 
     #[test]
     fn a_reader_signs_in_with_a_password_and_out_again() {
@@ -3340,7 +3340,7 @@ mod tests {
     /// script in every other reader's page)
     #[test]
     fn text_a_reader_types_stays_text() {
-        let src = "use web, ui\nnote = ''\nview card[title, body]\n    return stack[h3[title], body]\nview panel[]\n    held = p['held']\n    parts = for w in ['a', 'b']\n        span[w]\n    return stack[p[note], card['t', note], card['m', p['made']], [note], parts, held]\ntest t[]\n    a = app[panel]\n    change[a, 'note', '<img src=x onerror=alert(1)>']\n    h = html[a]\n    assert[not contains[h, '<img']]\n    assert[contains[h, '&lt;img src=x onerror=alert(1)&gt;']]\n    assert[len[elements[a, 'img']] eq 0]\n    assert[contains[h, '<p>made</p>']]\n    assert[contains[h, '<p>held</p>']]\n    assert[len[elements[a, 'span']] eq 2]\n";
+        let src = "use web, ui\nnote = ''\nview card[title, body]\n    return stack[h3[title], body]\nview panel[]\n    held = p['held']\n    parts = for w in ['a', 'b']\n        span[w]\n    return stack[p[note], card['t', note], card['m', p['made']], [note], parts, held]\ntest t[]\n    a = app[panel]\n    change[a, 'note', '<img src=x onerror=alert(1)>']\n    h = html[a]\n    assert['<img' not in h]\n    assert['&lt;img src=x onerror=alert(1)&gt;' in h]\n    assert[len[elements[a, 'img']] eq 0]\n    assert['<p>made</p>' in h]\n    assert['<p>held</p>' in h]\n    assert[len[elements[a, 'span']] eq 2]\n";
         let issues = harness_issues(src);
         assert!(issues.is_empty(), "harness issues: {:?}", issues);
     }
@@ -3403,7 +3403,7 @@ mod tests {
     #[test]
     fn a_fact_holds_a_moment() {
         let src = "use web, ui\nstamp = moment[0.0]\nfn mark[]\n    stamp = now[]\nview v[]\n    return stack[p['at `stamp`'], button['Mark', click = mark]]\n";
-        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    assert[contains[html[a], 'at 1970-01-01']]\n    change[a, 'now', 1000.5]\n    click[a, mark]\n    assert[a.stamp eq moment[1000.5]]\n    assert[str[a.stamp] eq '1970-01-01T00:16:40.500Z']\n    assert[a.stamp - moment[0.0] eq 1000.5]\n    assert[contains[html[a], 'at 1970-01-01T00:16:40.500Z']]\n", src));
+        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    assert['at 1970-01-01' in html[a]]\n    change[a, 'now', 1000.5]\n    click[a, mark]\n    assert[a.stamp eq moment[1000.5]]\n    assert[str[a.stamp] eq '1970-01-01T00:16:40.500Z']\n    assert[a.stamp - moment[0.0] eq 1000.5]\n    assert['at 1970-01-01T00:16:40.500Z' in html[a]]\n", src));
         assert!(issues.is_empty(), "harness issues: {:?}", issues);
     }
 
@@ -3431,19 +3431,19 @@ mod tests {
     fn a_handler_that_stops_lands_nothing_and_its_click_says_why() {
         // the reader is told it stopped, and an id; the reason is the click's
         // value (and, served, the server's log beside the id)
-        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    r = click[a, buy]\n    assert[not r.ok]\n    assert[r.reason eq 'cannot convert \\'no quote within 2s\\' to float']\n    assert[a.count eq 0]\n    assert[contains[html[a], 'said: buy stopped, and nothing changed — the server\\'s log has why, as ']]\n    assert[not contains[html[a], 'no quote within']]\n", TXN));
+        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    r = click[a, buy]\n    assert[not r.ok]\n    assert[r.reason eq 'cannot convert \\'no quote within 2s\\' to float']\n    assert[a.count eq 0]\n    assert['said: buy stopped, and nothing changed — the server\\'s log has why, as ' in html[a]]\n    assert['no quote within' not in html[a]]\n", TXN));
         assert!(issues.is_empty(), "harness issues: {:?}", issues);
     }
 
     #[test]
     fn a_helper_that_stops_stops_its_handler() {
-        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    r = click[a, outer]\n    assert[a.count eq 0]\n    assert[contains[r.reason, 'cannot convert']]\n    assert[contains[html[a], 'helper_fails stopped, and nothing changed']]\n", TXN));
+        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    r = click[a, outer]\n    assert[a.count eq 0]\n    assert['cannot convert' in r.reason]\n    assert['helper_fails stopped, and nothing changed' in html[a]]\n", TXN));
         assert!(issues.is_empty(), "harness issues: {:?}", issues);
     }
 
     #[test]
     fn a_notice_and_a_schedule_land_when_the_handler_commits() {
-        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    click[a, ok_notice]\n    assert[a.count eq 1]\n    assert[contains[html[a], 'said: saved 1']]\n    click[a, schedules]\n    assert[a.count eq 1002]\n    click[a, schedules_then_stops]\n    assert[a.count eq 1002]\n", TXN));
+        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    click[a, ok_notice]\n    assert[a.count eq 1]\n    assert['said: saved 1' in html[a]]\n    click[a, schedules]\n    assert[a.count eq 1002]\n    click[a, schedules_then_stops]\n    assert[a.count eq 1002]\n", TXN));
         assert!(issues.is_empty(), "harness issues: {:?}", issues);
     }
 
@@ -3459,13 +3459,13 @@ mod tests {
 
     #[test]
     fn an_error_reaching_an_effect_or_a_fact_stops_the_handler() {
-        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    click[a, setup]\n    r = click[a, bad_effect]\n    assert[not r.ok]\n    assert[a.count eq 0]\n    assert[len[rows] eq 0]\n    q = click[a, bad_fact]\n    assert[not q.ok]\n    assert[a.price eq 1.5]\n    assert[a.count eq 0]\n    assert[contains[q.reason, 'cannot convert']]\n    assert[contains[html[a], 'bad_fact stopped, and nothing changed']]\n", REACHES));
+        let issues = harness_issues(&format!("{}test t[]\n    a = app[v]\n    click[a, setup]\n    r = click[a, bad_effect]\n    assert[not r.ok]\n    assert[a.count eq 0]\n    assert[len[rows] eq 0]\n    q = click[a, bad_fact]\n    assert[not q.ok]\n    assert[a.price eq 1.5]\n    assert[a.count eq 0]\n    assert['cannot convert' in q.reason]\n    assert['bad_fact stopped, and nothing changed' in html[a]]\n", REACHES));
         assert!(issues.is_empty(), "harness issues: {:?}", issues);
     }
 
     #[test]
     fn buttons_carry_their_wiring_and_a_confirmed_click_asks_first() {
-        let src = "use web, ui\nended = 0\nn = 0\nfn end_session[]\n    ended = ended + 1\nfn go[]\n    n = n + 1\nfn put[x]\n    n = x\nview v[]\n    return stack[button['End', click = end_session, confirm = 'End this session?'], button['Go', click = go], button['Seven', click = put[7]]]\ntest t[]\n    a = app[v]\n    b = elements[a, 'button']\n    assert[b[0]['data-crow-click'] eq '__ask']\n    assert[contains[b[0]['data-crow-args'], 'End this session?']]\n    assert[b[1]['data-crow-click'] eq 'go']\n    assert[b[2]['data-crow-args'] eq '[7]']\n    click[a, end_session]\n    assert[a.ended eq 1]\n";
+        let src = "use web, ui\nended = 0\nn = 0\nfn end_session[]\n    ended = ended + 1\nfn go[]\n    n = n + 1\nfn put[x]\n    n = x\nview v[]\n    return stack[button['End', click = end_session, confirm = 'End this session?'], button['Go', click = go], button['Seven', click = put[7]]]\ntest t[]\n    a = app[v]\n    b = elements[a, 'button']\n    assert[b[0]['data-crow-click'] eq '__ask']\n    assert['End this session?' in b[0]['data-crow-args']]\n    assert[b[1]['data-crow-click'] eq 'go']\n    assert[b[2]['data-crow-args'] eq '[7]']\n    click[a, end_session]\n    assert[a.ended eq 1]\n";
         let issues = harness_issues(src);
         assert!(issues.is_empty(), "harness issues: {:?}", issues);
     }

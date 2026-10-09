@@ -170,6 +170,25 @@ steps on every push and must be green.
   names Rust reserves (`rust_names.rs`) is scoped: a body's names in that
   body, the top level's everywhere — the ClickHouse driver's local
   `where` had renamed every program's `where[…]`.
+- `x in xs` / `x not in xs` are desugared by the PARSER (parse_comparison)
+  to a call of the row `contains` with the collection first; `contains[`
+  and `has[` written in SOURCE are refused there (parse_postfix) — the
+  rows stay (a map's and a parsed value's `contains` rows are `has`'s
+  functions), the lowering still emits `has` calls by AST (states.rs
+  handles their text), `uses::row_says` reads nothing for an argument a
+  row takes as Json, the docs check lists both under SPEC_ONLY and the
+  LSP skips them in completions. `concat[[a, b, c]]` is folded in lower.rs
+  (a LITERAL list only; a variable list of lists has no row — `Kind::Lists`
+  is a variadic group of lists of text, not a list of lists); bytes held in
+  a variable are `sys.concat_all (Chunks)`. `map[keys, values]` is the hidden
+  row `__map_of` (lower_map_call), a tensor of values converted to a list
+  at the builtin-args site. An index by a mask lowers to `__pick_rows` /
+  `__pick_items` BEFORE check_callee at the index site; `Kind::Tensor`
+  takes `Arg::Truths`, and `Convert::ToTensor` has a bool arm in both
+  backends (true 1, false 0). `table::form(name)` names a hidden row in a
+  refusal as the program writes it (`x in xs`, `map[keys, values]`,
+  `xs[mask]`). The corpus rewriter is in the scratchpad (in/rewrite.py):
+  bracket- and quote-aware, `not contains[a, b]` → `b not in a`.
 - A `then` chain written as lines is desugared by the PARSER (`then_lines`
   in parser.rs): `x = e` then `then f[…]` lines become statements over
   hidden names (`x__then1 = e`, `x__then2 = f[x__then1, …]`, the last

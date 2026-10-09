@@ -68,7 +68,7 @@ for s in [1, 2]
     h = graph.hops[g, '0']
     hops = []
     for n in names
-        if has[h, n]
+        if n in h
             hops = push[hops, h[n]]
         else
             hops = push[hops, -1]
@@ -133,7 +133,7 @@ for s in [1, 2]
     dh = graph.hops[dg, '0']
     dhops = []
     for n in dnames
-        if has[dh, n]
+        if n in dh
             dhops = push[dhops, dh[n]]
         else
             dhops = push[dhops, -1]

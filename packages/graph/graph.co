@@ -22,7 +22,7 @@ fn new[directed]
 
 --- the graph with the node, as it was when it has it already
 fn add_node[g, name]
-    if has[g.index, name]
+    if name in g.index
         return g
     names = push[g.names, name]
     index = set[g.index, name, len[g.names]]
@@ -245,7 +245,7 @@ test walks_a_graph_as_networkx_does[]
     assert[dfs[g, 'a'] eq ['a', 'b', 'd', 'c', 'e']]
     h = hops[g, 'a']
     assert[h['e'] eq 3]
-    assert[not has[h, 'x']]
+    assert['x' not in h]
     c = components[g]
     assert[len[c] eq 2]
     assert[c[1] eq ['x', 'y']]

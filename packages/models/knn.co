@@ -29,7 +29,7 @@ fn classify[m, r]
     votes = map[]
     for i in nearest[m, r]
         key = '`m.y[i]`'
-        if has[votes, key]
+        if key in votes
             votes[key] = votes[key] + 1
         else
             votes[key] = 1

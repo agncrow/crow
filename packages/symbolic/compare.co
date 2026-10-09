@@ -8,7 +8,7 @@ folder = args[][0]
 for name in ['quad_sin', 'nguyen1', 'nguyen5', 'nguyen7']
     f = frame.load['`folder`/bench_`name`.csv']
     feats = ['x0']
-    if contains[f.columns, 'x1']
+    if 'x1' in f.columns
         feats = ['x0', 'x1']
     xs = tensor[select[f, feats]]
     ys = flatten[tensor[select[f, ['y']]]]

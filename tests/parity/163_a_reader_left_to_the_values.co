@@ -7,12 +7,12 @@
 use frame
 
 fn table_of[m]
-    if has[m, 'path']
+    if 'path' in m
         return frame.load[m.path]
     return frame.new[]
 
 fn text_of[m]
-    if has[m, 'path']
+    if 'path' in m
         return read[m.path]
     return ''
 

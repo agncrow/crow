@@ -19,7 +19,7 @@ use sys, frame
 --- user, pass, database and tls
 fn part[parts, name]
     j = json[parts]
-    if not j.ok or not has[j, name]
+    if not j.ok or name not in j
         return ''
     v = str[j[name]]
     if not v.ok
@@ -28,7 +28,7 @@ fn part[parts, name]
 
 fn port_of[parts]
     j = json[parts]
-    if not j.ok or not has[j, 'port']
+    if not j.ok or 'port' not in j
         return 5432
     p = int[j.port]
     if not p.ok
@@ -244,7 +244,7 @@ fn read_answer[s]
         chunks = push[chunks, chunk]
         n = len[chunk]
         if n gte 6 and byte[chunk, n - 6] eq 90 and byte[chunk, n - 5] eq 0 and byte[chunk, n - 4] eq 0 and byte[chunk, n - 3] eq 0 and byte[chunk, n - 2] eq 5
-            whole = gather[chunks]
+            whole = concat[chunks]
             complete = frame_of_postgres[whole]
             if complete.ok or not starts[complete.reason, 'the answer ends early']
                 done = true

@@ -179,6 +179,11 @@ impl Emitter {
                             self.needs_crow_runtime = true;
                             format!("crow_runtime::tensor::CrowTensor::from_elements(&({})){}", inner, self.or_stop())
                         }
+                        // a mask where numbers are taken: true 1, false 0
+                        Ty::List(item) if *item == Ty::Bool => {
+                            self.needs_crow_runtime = true;
+                            format!("{{ let _v: Vec<f64> = ({}).iter().map(|x| if *x {{ 1.0 }} else {{ 0.0 }}).collect(); let _n = _v.len(); crow_runtime::tensor::CrowTensor::from_vec(_v, vec![_n]) }}", inner)
+                        }
                         Ty::List(_) => {
                             self.needs_crow_runtime = true;
                             format!("{{ let _v: Vec<f64> = ({}).iter().map(|x| *x as f64).collect(); let _n = _v.len(); crow_runtime::tensor::CrowTensor::from_vec(_v, vec![_n]) }}", inner)

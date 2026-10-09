@@ -17,7 +17,7 @@ use sys, frame
 --- user, pass, database and tls
 fn part[parts, name]
     j = json[parts]
-    if not j.ok or not has[j, name]
+    if not j.ok or name not in j
         return ''
     v = str[j[name]]
     if not v.ok
@@ -26,7 +26,7 @@ fn part[parts, name]
 
 fn port_of[parts]
     j = json[parts]
-    if not j.ok or not has[j, 'port']
+    if not j.ok or 'port' not in j
         return 8123
     p = int[j.port]
     if not p.ok
@@ -35,7 +35,7 @@ fn port_of[parts]
 
 fn tls_of[parts]
     j = json[parts]
-    if not j.ok or not has[j, 'tls']
+    if not j.ok or 'tls' not in j
         return false
     return encode[j.tls] eq 'true'
 
@@ -93,7 +93,7 @@ fn request_on[parts, s, statement, format, id]
 --- second early) — the handle lets an idle connection go before the
 --- server does, instead of finding it closed under the next statement
 fn kept_until[a]
-    if not a.ok or not has[a.headers, 'keep-alive']
+    if not a.ok or 'keep-alive' not in a.headers
         return ''
     for piece in split[a.headers['keep-alive'], ',']
         kv = split[trim[piece], '=']
@@ -377,7 +377,7 @@ fn sweep[parts, s]
         pieces = split[line, '-']
         if len[pieces] gte 4
             owner = int[pieces[len[pieces] - 2]]
-            if owner.ok and owner ne mine and not alive[owner] and not contains[stopped, owner]
+            if owner.ok and owner ne mine and not alive[owner] and owner not in stopped
                 stopped = push[stopped, owner]
     for owner in stopped
         where = shown[parts]

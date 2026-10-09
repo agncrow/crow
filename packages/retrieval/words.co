@@ -14,7 +14,7 @@ fn tokens[text]
 fn counts[toks]
     m = map[]
     for w in toks
-        if has[m, w]
+        if w in m
             m = set[m, w, m[w] + 1]
         else
             m = set[m, w, 1]
@@ -35,7 +35,7 @@ fn first_seen[docs]
     out = []
     for d in docs
         for w in d
-            if not has[seen, w]
+            if w not in seen
                 seen = set[seen, w, 1]
                 out = push[out, w]
     return out
@@ -45,7 +45,7 @@ fn frequencies[docs]
     df = map[]
     for d in docs
         for w in keys[counts[d]]
-            if has[df, w]
+            if w in df
                 df = set[df, w, df[w] + 1]
             else
                 df = set[df, w, 1]

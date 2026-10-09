@@ -8,7 +8,7 @@ use board.audit
 
 view render[]
     body = door.door[]
-    if has[reader, 'name']
+    if 'name' in reader
         body = stack[door.door[], cards.boards_view[], cards.board_view[], cards.card_view[], audit.log_view[], gap = 'l']
     return stack[h1['Task board'], body, gap = 'l', pad = 'l']
 
@@ -18,11 +18,11 @@ test the_page_is_the_door_until_someone_signs_in[]
     store.setup[store.book]
     a = app[render]
     assert[len[elements[a, 'h2']] eq 0]
-    assert[contains[html[a], 'Password']]
+    assert['Password' in html[a]]
     change[a, 'reader', map[name = 'bob', role = 'member']]
     assert[elements[a, 'h2'][0].text eq 'Boards']
-    assert[contains[html[a], 'What happened']]
-    assert[contains[html[a], 'boards are made by an admin']]
+    assert['What happened' in html[a]]
+    assert['boards are made by an admin' in html[a]]
     click[a, door.log_out]
     assert[len[reader] eq 0]
     assert[len[elements[a, 'h2']] eq 0]

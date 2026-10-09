@@ -154,6 +154,11 @@ pub(crate) fn row_says(name: &str, module: Option<&str>, at: usize, argc: usize)
     for row in crate::table::ROWS.iter().filter(|r| r.name == name && module.is_none_or(|m| r.module == m)) {
         let Some(kinds) = crate::table::kinds_of(row.params, argc) else { continue };
         let Some(k) = kinds.get(at) else { continue };
+        // a row that takes a parsed value there takes it as it is (`key in
+        // j`, `has[j, key]`): nothing is read for it
+        if matches!(k, crate::table::Kind::Json) {
+            return None;
+        }
         // (a row over a column, a list or any value says nothing of a cell)
         let t = k.ty();
         if !definite(&t) {
@@ -649,6 +654,15 @@ mod tests {
     /// one used as a position, or handed to `head`, an int, one a function
     /// reads as text — by its own body — text; a column only shown says
     /// nothing. Each column names the read that decided it.
+    /// A row that takes a parsed value at a position takes it as it is:
+    /// `key in j` reads nothing, as `has[j, key]` did.
+    #[test]
+    fn a_row_that_takes_a_parsed_value_reads_nothing_for_it() {
+        assert_eq!(row_says("contains", None, 0, 2), None);
+        assert_eq!(row_says("has", None, 0, 2), None);
+        assert_eq!(row_says("upper", None, 0, 1), Some(Ty::Str));
+    }
+
     #[test]
     fn the_reads_say_a_loaded_frames_columns() {
         let s = shapes("use frame\nfn label[t]\n    return upper[t]\nfn half[x]\n    return x / 2.0\nname = args[][0]\nnames = ['a', 'b']\ndf = frame.load[name]\nfor t in df.sym\n    log[label[t]]\nfor p in df.px\n    log[half[p]]\nfor q in df.qty\n    if q gt 3\n        log[q]\nfor i in df.idx\n    log[names[i]]\nfor i in df.idx\n    log[i * 1.5]\nfor n in df.n\n    log[head[df, n]]\nlog[df.note]\n");

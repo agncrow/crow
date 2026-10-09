@@ -700,7 +700,7 @@ dual numbers keep their own form), and the emitter prints it.
 - What stays by name, measured on the corpus: 226 calls in 62 files,
   against 5,872 that name their row. They are calls on a value the
   lowering does not type — a harness's answer in a test
-  (`contains[html[a], …]`), a parameter of a function nothing types — and
+  (`… in html[a]`), a parameter of a function nothing types — and
   calls on a parsed JSON value, which the interpreter holds as the value it
   parsed to and the compiled program as JSON, so a JSON row in the
   interpreter would convert the value at every call. Typing a test's

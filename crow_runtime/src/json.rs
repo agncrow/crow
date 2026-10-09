@@ -124,7 +124,7 @@ pub fn values(j: &serde_json::Value) -> Result<Vec<serde_json::Value>, String> {
     }
 }
 
-/// `has[j, key]` of a parsed JSON object.
+/// `key in j` of a parsed JSON object.
 pub fn has(j: &serde_json::Value, key: &str) -> Result<bool, String> {
     match j {
         serde_json::Value::Object(m) => Ok(m.contains_key(key)),

@@ -21,7 +21,7 @@ view sign_in_form[]
     ]
 
 view orders[]
-    if not has[reader, 'name']
+    if 'name' not in reader
         return sign_in_form[]
     return stack[
         p['orders for `reader.name`, `refunded` refunded'],

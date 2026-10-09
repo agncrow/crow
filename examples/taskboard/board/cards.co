@@ -76,7 +76,7 @@ fn post[]
 --- A picked file is the session's until it is attached: the board keeps a
 --- copy under a name of its own, never the name the reader's computer gave.
 fn attach[]
-    if not has[upload, 'path']
+    if 'path' not in upload
         notice['pick a file first']
         return
     row = query[book, 'INSERT INTO attachments (card, name, path) VALUES (?, ?, ?) RETURNING id', [card_id, upload.name, '']]
@@ -142,7 +142,7 @@ test only_an_admin_makes_a_board[]
     click[ada, make_board]
     assert[ada.new_board eq '']
     assert[len[bob.boards] eq before + 1]
-    assert[contains[html[bob], 'Autumn']]
+    assert['Autumn' in html[bob]]
 
 --- Two readers on one board: a card one adds is on the other's page, and
 --- each sees the other move it along.
@@ -162,7 +162,7 @@ test two_readers_share_a_board[]
     change[bob, 'new_card', 'Write the docs']
     click[bob, add_card]
     assert[len[ada.cards] eq 1]
-    assert[contains[html[ada], 'Write the docs']]
+    assert['Write the docs' in html[ada]]
     first = ada.cards.id[0]
     assert[ada.cards.owner[0] eq 'bob']
     click[ada, advance[first]]
@@ -176,7 +176,7 @@ test a_card_keeps_its_talk_and_files[]
     store.setup[store.book]
     ada = app[card_view]
     change[ada, 'reader', map[name = 'ada', role = 'admin']]
-    assert[contains[html[ada], 'open a card']]
+    assert['open a card' in html[ada]]
     change[ada, 'new_board', 'Files']
     click[ada, make_board]
     id = ada.boards.id[len[ada.boards] - 1]

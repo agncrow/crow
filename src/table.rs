@@ -1318,6 +1318,12 @@ pub static ROWS: &[Row] = &[
     row!("core.contains", "", "contains", crow_runtime::core::contains, (Seq, ItemRef) -> Bool, never),
     row!("core.contains_text", "", "contains", crow_runtime::core::contains_text, (Str, Str) -> Bool, never),
     row!("core.contains_number", "", "contains", crow_runtime::core::contains_number, (Tensor, Float) -> Bool, never),
+    // `xs[mask]` and `t[mask]`: the items, the rows, where it is true — the
+    // index's own rows, reached by the lowering, never by name
+    row!("core.__pick_items", "", "__pick_items", crow_runtime::core::pick_items, (Seq, Bools) -> List, stops),
+    row!("core.__pick_rows", "", "__pick_rows", crow_runtime::math::pick_rows, (Tensor, Bools) -> Tensor, stops),
+    // `map[keys, values]`: the literal's other form, reached by the lowering
+    row!("core.__map_of", "", "__map_of", crow_runtime::core::map_of, (Strs, Seq) -> MapOf, stops),
     row!("core.slice", "", "slice", crow_runtime::core::slice, (Seq, Int, Int) -> List, never),
     row!("core.slice_str", "", "slice", crow_runtime::core::slice_str, (Str, Int, Int) -> Str, never),
     row!("core.slice_tensor", "", "slice", crow_runtime::core::slice_tensor, (Tensor, Int, Int) -> Tensor, never),
@@ -1348,6 +1354,9 @@ pub static ROWS: &[Row] = &[
     row!("core.keys", "", "keys", crow_runtime::core::keys, (MapRef) -> Strs, never),
     row!("core.values", "", "values", crow_runtime::core::values, (MapRef) -> List, never),
     row!("core.has", "", "has", crow_runtime::core::has, (MapRef, Str) -> Bool, never),
+    // `key in m`: the map's membership, the same function (the name `has`
+    // is the lowering's own; a program writes the operator)
+    row!("core.contains_key", "", "contains", crow_runtime::core::has, (MapRef, Str) -> Bool, never),
     row!("core.set", "", "set", crow_runtime::core::set, (MapOf, Str, Item) -> MapOf, never),
     row!("core.del", "", "del", crow_runtime::core::map_del, (MapOf, Str) -> MapOf, never),
     // a parsed JSON object's keys, values and entries: the compiled program
@@ -1356,6 +1365,7 @@ pub static ROWS: &[Row] = &[
     row!("json.keys", "", "keys", crow_runtime::json::keys, (Json) -> Strs, stops),
     row!("json.values", "", "values", crow_runtime::json::values, (Json) -> JsonList, stops),
     row!("json.has", "", "has", crow_runtime::json::has, (Json, Str) -> Bool, stops),
+    row!("json.contains_key", "", "contains", crow_runtime::json::has, (Json, Str) -> Bool, stops),
     // a value's display and its JSON: one display (crow_runtime::display)
     // and one encoding (crow_runtime::json::ToJson) that both modes' values
     // follow — the compiled program had shown a record holding a list, or a
@@ -1687,7 +1697,7 @@ pub static ROWS: &[Row] = &[
     row!("sys.find", "sys", "find", crow_runtime::sys::find, (Bytes, Bytes) -> Int, never),
     row!("sys.concat", "sys", "concat", crow_runtime::sys::concat, (Bytes, Bytes) -> Bytes, never),
     row!("sys.byte", "sys", "byte", crow_runtime::sys::byte, (Bytes, Int) -> Int, stops),
-    row!("sys.gather", "sys", "gather", crow_runtime::sys::gather, (Chunks) -> Bytes, never),
+    row!("sys.concat_all", "sys", "concat", crow_runtime::sys::gather, (Chunks) -> Bytes, never),
     row!("sys.file", "sys", "file", crow_runtime::sys::file, (Str) -> Bytes, value "sys"),
     row!("sys.store", "sys", "store", crow_runtime::sys::store, (Str, Bytes) -> Unit, value "sys"),
     row!("sys.random", "sys", "random", crow_runtime::sys::random, (Int) -> Bytes, stops),
@@ -1949,7 +1959,7 @@ pub fn refusal(modules: &[&str], name: &str, args: &[Arg]) -> Option<String> {
         }
     }
     let got = listed(&args.iter().map(|a| a.words().to_string()).collect::<Vec<_>>(), "and");
-    Some(format!("{}[] takes {}, got {}{}", shown(name), listed(&forms, "or"), got, read))
+    Some(format!("{} takes {}, got {}{}", form(name), listed(&forms, "or"), got, read))
 }
 
 /// `a`, `a and b`, `a, b or c`.
@@ -2205,7 +2215,8 @@ impl Kind {
                 Kind::Whole => a == Arg::Int,
                 // numbers held as a list or a column are converted where
                 // they meet the parameter (the lowering's row arguments)
-                Kind::Tensor => matches!(a, Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Column | Arg::FallibleNumbers | Arg::Tensors),
+                // (a mask where numbers are asked is numbers: true 1, false 0)
+                Kind::Tensor => matches!(a, Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Column | Arg::FallibleNumbers | Arg::Tensors | Arg::Truths),
                 Kind::Tensors => a == Arg::Tensors,
                 Kind::Str => a == Arg::Text,
                 Kind::Strs | Kind::Texts => a == Arg::Texts,
@@ -2288,6 +2299,12 @@ pub fn module_of_bare(name: &str, providers: &[&str], kinds: &[Arg]) -> Option<S
     if taking.len() == 1 {
         return Some(taking[0].to_string());
     }
+    // (two modules' rows take: a frame's column anywhere makes the call the
+    // frame's — math's rows take a column only as its numbers, and a mask
+    // beside one is the frame's `where`, not math's)
+    if taking.len() > 1 && kinds.iter().any(|k| matches!(k, Arg::Column)) && taking.iter().any(|m| ***m == *"frame") {
+        return Some("frame".to_string());
+    }
     let by_first = match kinds.first() {
         Some(Arg::Frame | Arg::Column) => "frame",
         Some(Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Tensors | Arg::Texts | Arg::Truths | Arg::Records | Arg::Maps | Arg::Items | Arg::AnyList | Arg::FallibleNumbers | Arg::Fallible) => "math",
@@ -2337,11 +2354,25 @@ fn shown(name: &str) -> &str {
     if name == crate::lower::FMT_TIME { "fmt" } else { name }
 }
 
+/// A row's call as the program writes it, for a refusal: the operator or
+/// the index behind a hidden row, else `name[]`.
+pub fn form(name: &str) -> String {
+    match name {
+        "contains" => "`x in xs`".to_string(),
+        "__map_of" => "map[keys, values]".to_string(),
+        "__pick_items" | "__pick_rows" => "`xs[mask]`".to_string(),
+        _ => format!("{}[]", shown(name)),
+    }
+}
+
 /// `sma[] takes 2 arguments, got 3`, `median[] takes 1 argument, got 2`.
 fn miscount(name: &str, counts: &str, argc: usize) -> String {
-    let name = shown(name);
+    // one list of pieces: joined when written down, or held as bytes
+    if name == "concat" && argc == 1 {
+        return "concat[] takes two pieces, or one list of them written down — `concat[[a, b, c]]` — or a list of bytes held in a variable".to_string();
+    }
     let noun = if counts == "1" || counts == "at least 1" { "argument" } else { "arguments" };
-    format!("{}[] takes {} {}, got {}", name, counts, noun, argc)
+    format!("{} takes {} {}, got {}", form(name), counts, noun, argc)
 }
 
 /// The core names with syntax or state of their own, which no row says: a

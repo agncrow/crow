@@ -2456,7 +2456,7 @@ mod tests {
 
     #[test]
     fn app_harness_click_state_html() {
-        let src = "use web, ui\n\nstatus = 'ready'\n\nfn go[]\n    status = 'loading'\n\nview render[]\n    return div[h1['Book'], p['s: `status`']]\n\ntest refresh_flow[]\n    a = app[render]\n    assert[contains[html[a], 'ready']]\n    click[a, go]\n    assert[a.status eq 'loading']\n    assert[contains[html[a], 'loading']]\n";
+        let src = "use web, ui\n\nstatus = 'ready'\n\nfn go[]\n    status = 'loading'\n\nview render[]\n    return div[h1['Book'], p['s: `status`']]\n\ntest refresh_flow[]\n    a = app[render]\n    assert['ready' in html[a]]\n    click[a, go]\n    assert[a.status eq 'loading']\n    assert['loading' in html[a]]\n";
         let stmts = crate::build(src).unwrap();
         let (issues, counts) = run_test_blocks(&stmts);
         assert!(issues.is_empty(), "harness scenario should pass, got {:?}", issues);

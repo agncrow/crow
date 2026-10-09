@@ -83,6 +83,25 @@ pub fn map_literal_pairs(e: &Expr) -> Option<Vec<(String, Expr)>> {
 }
 
 /// The module a qualified callee names (`frame.new` → `frame`).
+/// `concat[[a, b, c]]`: one list written down is its items joined, two at
+/// a time (spec, Arrays) — whatever kind the two-piece `concat` joins:
+/// lists, text, tensors, bytes. (A helper, not inline: the lowering's
+/// recursive frame is what a 43-entry map literal's chain is measured
+/// against in the debug build, parity 48.)
+#[inline(never)]
+fn joined_pieces(callee: Option<&str>, args: &[Expr]) -> Option<Expr> {
+    if callee != Some("concat") || args.len() != 1 {
+        return None;
+    }
+    let Expr::Array(items) = &args[0] else { return None };
+    let mut it = items.iter().cloned();
+    let mut acc = it.next()?;
+    for item in it {
+        acc = Expr::Call { callee: Box::new(Expr::Ident("concat".to_string())), args: vec![acc, item] };
+    }
+    Some(acc)
+}
+
 fn module_of(object: &Expr) -> String {
     match object {
         Expr::Ident(m) => m.clone(),
@@ -908,6 +927,9 @@ impl Lowerer {
                 let args: Vec<Expr> = args.iter().map(|a| self.lower_expr(a)).collect::<Result<_, _>>()?;
                 let has_named = args.iter().any(|a| matches!(a, Expr::Named { .. }));
                 let callee_name = if let Expr::Ident(n) = &callee { Some(n.clone()) } else { None };
+                if let Some(joined) = joined_pieces(callee_name.as_deref(), &args) {
+                    return Ok(joined);
+                }
                 // `frame.new[k = v, …]`: a frame written down, its columns
                 // named — the `with` chain over the empty frame both backends
                 // already hold, typed column by column (spec, frame: new);
@@ -1482,6 +1504,11 @@ impl Lowerer {
     }
 
     fn lower_map_call(&self, args: Vec<Expr>) -> Result<Expr, String> {
+        // `map[keys, values]`: a map from two lists, in order (spec, Maps) —
+        // the literal's other form, a hidden row both backends hold
+        if args.len() == 2 && !args.iter().any(|a| matches!(a, Expr::Named { .. })) {
+            return Ok(Expr::Call { callee: Box::new(Expr::Ident("__map_of".to_string())), args });
+        }
         let empty = Expr::Call {
             callee: Box::new(Expr::Ident("map".to_string())),
             args: vec![],
@@ -1523,6 +1550,22 @@ mod tests {
     /// `frame.new[k = v, …]` is the `with` chain over the empty frame, in
     /// order, under the module name the call used — an alias's too — and
     /// a positional argument is refused with the form.
+    /// `concat[[a, b, c]]` is the two-piece concat folded over the list
+    /// written down; one item is itself; `map[keys, values]` is the hidden
+    /// row both backends hold.
+    #[test]
+    fn a_list_written_down_is_joined_two_at_a_time_and_a_map_comes_from_two_lists() {
+        let out = lower_src("x = concat[[a, b, c]]\n").expect("lowers");
+        let text = format!("{:?}", out);
+        assert!(text.contains("callee: Ident(\"concat\"), args: [Call { callee: Ident(\"concat\"), args: [Ident(\"a\"), Ident(\"b\")] }, Ident(\"c\")]"), "{}", text);
+        let one = format!("{:?}", lower_src("x = concat[[a]]\n").expect("lowers"));
+        assert!(one.contains("Assign { name: \"x\", value: Ident(\"a\") }"), "{}", one);
+        let m = format!("{:?}", lower_src("m = map[ks, vs]\n").expect("lowers"));
+        assert!(m.contains("callee: Ident(\"__map_of\"), args: [Ident(\"ks\"), Ident(\"vs\")]"), "{}", m);
+        let lit = format!("{:?}", lower_src("m = map[a = 1]\n").expect("lowers"));
+        assert!(lit.contains("Ident(\"set\")"), "{}", lit);
+    }
+
     #[test]
     fn a_frame_written_down_is_the_with_chain() {
         let out = lower_src("use frame\ndf = frame.new[a = [1, 2], k = ['x', 'y']]\n").expect("lowers");

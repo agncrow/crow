@@ -104,7 +104,7 @@ tensor (`*` is matmul, `.*` is element-wise), and a table is a *frame*
 | `print(x)`, `cat` | `log[x]` |
 | `library(x)` | `use x` |
 | `stop("msg")`, `tryCatch` | `return error['msg', kind]`; check `.ok` |
-| `%in%` | `contains[xs, v]` |
+| `%in%` | `v in xs` |
 | `# comment` | `--- comment` |
 | `mean(x)`, `sd(x)` | `mean[x]`, `std[x]` after `use math` |
 

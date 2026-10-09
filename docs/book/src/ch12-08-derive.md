@@ -26,9 +26,9 @@ view render[]
 
 test cost_follows_qty[]
     a = app[render]
-    assert[contains[html[a], 'cost 179']]
+    assert['cost 179' in html[a]]
     click[a, more]
-    assert[contains[html[a], 'cost 358']]
+    assert['cost 358' in html[a]]
 
 page['/', render]
 ```
@@ -75,9 +75,9 @@ view render[]
 test a_write_recomputes_the_query[]
     a = app[render]
     click[a, setup]
-    assert[contains[html[a], 'IMRN: 0 trades']]
+    assert['IMRN: 0 trades' in html[a]]
     click[a, buy]
-    assert[contains[html[a], 'IMRN: 1 trades']]
+    assert['IMRN: 1 trades' in html[a]]
 
 page['/', render]
 ```
@@ -188,10 +188,10 @@ view render[]
 
 test rows_carry_their_identity[]
     a = app[render]
-    assert[contains[html[a], 'id="r-2"']]
+    assert['id="r-2"' in html[a]]
     click[a, drop_middle]
-    assert[not contains[html[a], 'id="r-2"']]
-    assert[contains[html[a], 'id="r-3"']]
+    assert['id="r-2"' not in html[a]]
+    assert['id="r-3"' in html[a]]
 
 page['/', render]
 ```

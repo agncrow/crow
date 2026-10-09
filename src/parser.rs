@@ -847,6 +847,20 @@ impl Parser {
     fn parse_comparison(&mut self) -> Result<Expr, String> {
         let mut left = self.parse_then()?;
         loop {
+            // `x in xs` and `x not in xs` (spec, Membership): the row
+            // `contains`, reached with the collection first — the operator
+            // is the one way to write it
+            if self.check(&Token::In) || (self.check(&Token::Not) && matches!(self.peek_ahead(1), Token::In)) {
+                let negated = self.check(&Token::Not);
+                self.advance();
+                if negated {
+                    self.advance();
+                }
+                let right = self.parse_then()?;
+                let call = Expr::Call { callee: Box::new(Expr::Ident("contains".to_string())), args: vec![right, left] };
+                left = if negated { Expr::UnaryOp { op: UnaryOp::Not, expr: Box::new(call) } } else { call };
+                continue;
+            }
             let op = match self.peek() {
                 Token::Eq => BinOp::Eq,
                 Token::Ne => BinOp::Ne,
@@ -975,6 +989,21 @@ impl Parser {
                 self.advance();
                 let args = self.parse_arg_list()?;
                 self.expect(&Token::RBracket)?;
+                // `contains[xs, x]` is written `x in xs` (spec, Membership)
+                let named = match &expr {
+                    Expr::Ident(n) => Some(n.as_str()),
+                    Expr::FieldAccess { field, .. } => Some(field.as_str()),
+                    _ => None,
+                };
+                if named == Some("contains") {
+                    return Err(format!(
+                        "line {}: `contains[xs, x]` is written `x in xs` — and `x not in xs` for its absence",
+                        self.current_line()
+                    ));
+                }
+                if named == Some("has") {
+                    return Err(format!("line {}: `has[m, key]` is written `key in m`", self.current_line()));
+                }
                 expr = Expr::Call {
                     callee: Box::new(expr),
                     args,
@@ -1273,6 +1302,46 @@ fn span_names_word(span: &str, name: &str) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod membership_tests {
+    use super::*;
+    use crate::lexer::Lexer;
+
+    fn parsed(src: &str) -> String {
+        let tokens = Lexer::new(src).tokenize().expect("lexes");
+        format!("{:?}", Parser::new(tokens).parse().expect("parses"))
+    }
+
+    fn err(src: &str) -> String {
+        let tokens = match Lexer::new(src).tokenize() {
+            Ok(t) => t,
+            Err(e) => return e,
+        };
+        Parser::new(tokens).parse().err().unwrap_or_default()
+    }
+
+    #[test]
+    fn in_is_the_contains_row_with_the_collection_first() {
+        let p = parsed("log[1 in [1, 2]]\n");
+        assert!(p.contains("callee: Ident(\"contains\"), args: [Array([Int(1), Int(2)]), Int(1)]"), "{}", p);
+        let p = parsed("log['z' not in xs]\n");
+        assert!(p.contains("UnaryOp { op: Not, expr: Call { callee: Ident(\"contains\"), args: [Ident(\"xs\"), Str(\"z\")]"), "{}", p);
+        // a comparison's place: tighter than `and`, looser than arithmetic
+        let p = parsed("log[n + 1 in [3] and ok]\n");
+        assert!(p.contains("op: And") && p.contains("args: [Array([Int(3)]), BinOp { left: Ident(\"n\"), op: Add"), "{}", p);
+        // a loop's `in` is the loop's
+        let p = parsed("for v in xs\n    log[v in ys]\n");
+        assert!(p.contains("For {") && p.contains("callee: Ident(\"contains\"), args: [Ident(\"ys\"), Ident(\"v\")]"), "{}", p);
+    }
+
+    #[test]
+    fn the_functions_behind_the_operator_are_not_written() {
+        assert!(err("log[contains[[1], 1]]\n").contains("`contains[xs, x]` is written `x in xs`"));
+        assert!(err("log[frame.contains[t.sym, 'a']]\n").contains("written `x in xs`"));
+        assert!(err("log[has[m, 'a']]\n").contains("`has[m, key]` is written `key in m`"));
+    }
 }
 
 #[cfg(test)]

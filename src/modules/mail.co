@@ -53,7 +53,7 @@ fn ask[s, command, codes, step, patience]
     r = reply_of[s, patience]
     if not r.ok
         return error[r.reason, 'mail']
-    if not contains[codes, r.status]
+    if r.status not in codes
         return error['the server answered `r.status` `r.phrase` at `step`', 'mail']
     return r
 
@@ -160,7 +160,7 @@ fn mail[mailer, to, subject, body]
             if not (host eq 'localhost' or host eq '127.0.0.1' or host eq '::1')
                 close[s]
                 return error['mail to `to` failed: `host` offers no STARTTLS — a password travels only encrypted: port 465, or a server that offers STARTTLS', 'mail']
-    token = base64[gather[[pack[0, 1], bytes[user], pack[0, 1], bytes[pass]]]]
+    token = base64[concat[[pack[0, 1], bytes[user], pack[0, 1], bytes[pass]]]]
     signed = ask[s, 'AUTH PLAIN `token`', [235], 'AUTH', patience]
     if not signed.ok
         close[s]

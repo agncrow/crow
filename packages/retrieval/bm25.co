@@ -44,10 +44,10 @@ fn scores[ix, query]
         s = 0.0
         for q in query
             f = 0.0
-            if has[c, q]
+            if q in c
                 f = float[c[q]]
             w = 0.0
-            if has[ix.idf, q]
+            if q in ix.idf
                 w = ix.idf[q]
             s = s + w * ((f * (ix.k1 + 1.0)) / (f + ix.k1 * ((1.0 - ix.b) + (ix.b * dl) / ix.avgdl)))
         out = push[out, s]
@@ -60,7 +60,7 @@ fn top[vals, n]
     for k in range[min[n, len[vals]]]
         best = -1
         for i in range[len[vals]]
-            if not has[taken, str[i]]
+            if str[i] not in taken
                 if best lt 0
                     best = i
                 else

@@ -30,7 +30,7 @@ fn framed[opcode, payload, key]
             head = concat[concat[head, pack[254, 1]], pack[n, 2]]
         else
             head = concat[concat[head, pack[255, 1]], pack[n, 8]]
-    return gather[[head, key, mask[payload, key]]]
+    return concat[[head, key, mask[payload, key]]]
 
 --- the reason a socket's call failed, in the socket's words
 fn socket_reason[reason]

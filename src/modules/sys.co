@@ -119,7 +119,7 @@ fn read_rest[s, deadline, first]
         if len[got] eq 0
             break
         chunks = push[chunks, got]
-    return gather[chunks]
+    return concat[chunks]
 
 --- the bytes read until the buffer holds `n`, the deadline kept
 fn read_until[s, deadline, buffer, n]
@@ -133,7 +133,7 @@ fn read_until[s, deadline, buffer, n]
             break
         chunks = push[chunks, got]
         have = have + len[got]
-    return gather[chunks]
+    return concat[chunks]
 
 --- a chunked body decoded: each chunk's size in hex on its own line, the
 --- chunk, a line break, and a last chunk of size 0
@@ -165,7 +165,7 @@ fn dechunked[s, deadline, buffer]
             return error['the server closed the connection mid-chunk', 'sys']
         parts = push[parts, slice[rest, 0, size]]
         rest = slice[rest, size + 2, len[rest]]
-    return gather[parts]
+    return concat[parts]
 
 --- `read_head[stream, deadline]`: a connection's answer's head read to
 --- its blank line — the status and its phrase, the headers (their names
@@ -200,7 +200,7 @@ fn read_head[s, deadline]
         if len[pair] gte 2
             name = lower[trim[pair[0]]]
             value = trim[slice[line, len[pair[0]] + 1, len[line]]]
-            if has[headers, name]
+            if name in headers
                 before = headers[name]
                 headers = set[headers, name, '`before`, `value`']
             else
@@ -221,7 +221,7 @@ fn read_answer[s, deadline, method]
     bodiless = method eq 'HEAD' or status eq 204 or status eq 304 or (status gte 100 and status lt 200)
     if not bodiless
         chunked = false
-        if has[headers, 'transfer-encoding']
+        if 'transfer-encoding' in headers
             chunked = len[split[lower[headers['transfer-encoding']], 'chunked']] gt 1
         if chunked
             decoded = dechunked[s, deadline, rest]
@@ -229,7 +229,7 @@ fn read_answer[s, deadline, method]
                 return error[decoded.reason, 'sys']
             body = decoded
         else
-            if has[headers, 'content-length']
+            if 'content-length' in headers
                 length = decimal[headers['content-length']]
                 if length lt 0
                     said = headers['content-length']
@@ -327,7 +327,7 @@ fn upgrade[url, timeout]
         return error['cannot open a socket to `url`: the server answered `got.status` `got.phrase`', 'sys']
     expected = base64[digest[bytes['`key`258EAFA5-E914-47DA-95CA-C5AB0DC85B11'], 'sha1']]
     accepted = ''
-    if has[got.headers, 'sec-websocket-accept']
+    if 'sec-websocket-accept' in got.headers
         accepted = got.headers['sec-websocket-accept']
     if accepted ne expected
         close[s]
@@ -399,7 +399,7 @@ fn get[url, lines, timeout]
             break
         code = got.status
         moved = code eq 301 or code eq 302 or code eq 303 or code eq 307 or code eq 308
-        if not moved or not has[got.headers, 'location']
+        if not moved or 'location' not in got.headers
             break
         full = redirected[full, got.headers['location']]
         hops = hops + 1

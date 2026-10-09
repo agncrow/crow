@@ -12,7 +12,7 @@ log[scores['bob']]
 s2 = set[scores, 'carol', 9]
 log[s2]
 log[keys[s2]]
-log[has[scores, 'alice']]
+log['alice' in scores]
 ```
 
 ```text

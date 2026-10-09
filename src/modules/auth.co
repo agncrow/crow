@@ -20,9 +20,9 @@ fn sign[claims, secret]
         return error['a token\'s claims are a map or a record of them', 'auth']
     issued = int[now[]]
     added = ''
-    if not has[j, 'iat']
+    if 'iat' not in j
         added = '"iat":`issued`'
-    if not has[j, 'exp']
+    if 'exp' not in j
         expires = issued + 3600
         if len[added] gt 0
             added = '`added`,'
@@ -64,7 +64,7 @@ fn verify[token, secret]
     header = part_of[parts[0]]
     if not header.ok
         return error[header.reason, 'auth']
-    if not has[header, 'alg']
+    if 'alg' not in header
         return error['not a token', 'auth']
     if str[header.alg] ne 'HS256'
         return error['the token is not signed with HS256', 'auth']
@@ -77,7 +77,7 @@ fn verify[token, secret]
     claims = part_of[parts[1]]
     if not claims.ok
         return error[claims.reason, 'auth']
-    if has[claims, 'exp']
+    if 'exp' in claims
         if float[claims.exp] lt float[now[]]
             return error['the token has expired', 'auth']
     return claims
@@ -99,7 +99,7 @@ test a_token_is_signed_and_read[]
     assert[sign['{"x":1}', 'short'].reason eq 'a token\'s secret is 32 characters or more (got 5)']
     assert[sign['[1, 2]', secret].reason eq 'a token\'s claims are a map or a record of them']
     bare = sign['{}', secret]
-    assert[has[verify[bare, secret], 'iat']]
+    assert['iat' in verify[bare, secret]]
     known = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c'
     got = verify[known, 'your-256-bit-secret']
     assert[str[got.name] eq 'John Doe']

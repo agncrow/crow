@@ -281,7 +281,7 @@ for i in range[len[toc]]
     path = toc.path[i]
     title = toc.title[i]
     up = ''
-    if contains[path, '/']
+    if '/' in path
         up = '../'
         parts = split[path, '/']
         folder = parts[0]

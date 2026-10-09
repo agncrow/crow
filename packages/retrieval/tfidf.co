@@ -51,7 +51,7 @@ fn products[toks, vocabulary, idfs]
     raw = []
     for i in range[len[vocabulary]]
         w = vocabulary[i]
-        if has[c, w]
+        if w in c
             raw = push[raw, float[c[w]] * idfs[i]]
         else
             raw = push[raw, 0.0]

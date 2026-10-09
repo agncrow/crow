@@ -69,7 +69,7 @@ fn kept[d, month, day]
 --- the days the exchange closed for something no rule names
 fn one_off[d]
     closed = [Day[2001, 9, 11], Day[2001, 9, 12], Day[2001, 9, 13], Day[2001, 9, 14], Day[2004, 6, 11], Day[2007, 1, 2], Day[2012, 10, 29], Day[2012, 10, 30], Day[2018, 12, 5], Day[2025, 1, 9]]
-    return contains[closed, d]
+    return d in closed
 
 --- whether the exchange is closed all of a weekday
 fn holiday[d]

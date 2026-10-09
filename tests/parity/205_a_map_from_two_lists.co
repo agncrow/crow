@@ -1,0 +1,13 @@
+--- `map[keys, values]`: a map from a list of keys and a list of values in
+--- order — the key first, as the literal and `set` write it; a tensor of
+--- values makes a map of numbers. Both modes print the same.
+vocabulary = ['the', 'cat', 'sat']
+at = map[vocabulary, range[len[vocabulary]]]
+log[at]
+log[at['cat']]
+prices = map[['x', 'y'], [10.5, 20.0]]
+log[prices['y'] * 2]
+log['x' in prices]
+fn index_of[words]
+    return map[words, range[len[words]]]
+log[index_of[['b', 'a']]['a']]

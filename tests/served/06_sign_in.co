@@ -34,7 +34,7 @@ fn wipe[]
     notice['wiped']
 
 derive greeting
-    if has[reader, 'name']
+    if 'name' in reader
         return 'hello `reader.name`'
     return 'hello stranger'
 

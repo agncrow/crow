@@ -64,7 +64,7 @@ test structure[]
     click[s, more_alerts]
     assert[s.alerts eq 4]
     change[s, 'min_qty', 25]
-    assert[contains[elements[s, 'row span'][1].text, 'above 25']]
+    assert['above 25' in elements[s, 'row span'][1].text]
 
 --- Geometry: the same engine that laid out the page answers the questions.
 test layout_desktop[]

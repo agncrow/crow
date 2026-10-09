@@ -1,0 +1,11 @@
+--- `concat` given one list written down joins its items, whatever the
+--- two-piece concat joins: lists, text, tensors; a list of bytes held in
+--- a variable too. Both modes print the same.
+use math
+log[concat[[[1, 2], [3], [4, 5]]]]
+log[concat[['ab', 'cd', 'ef']]]
+a = [1.0, 2.0]
+b = [3.0]
+log[concat[[a, b, [4.0]]]]
+log[len[concat[[['x'], ['y', 'z']]]]]
+log[concat[['only']]]

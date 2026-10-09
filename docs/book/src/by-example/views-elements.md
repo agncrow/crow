@@ -29,9 +29,9 @@ test layout[]
     assert[fits[app[page_body, width = 390], 390]]
 
 markup = doc.document['Containers', page_body[]]
-log[contains[markup, 'class="grid"']]
-log[contains[markup, 'data-becomes="stack"']]
-log[contains[markup, 'type="range"']]
+log['class="grid"' in markup]
+log['data-becomes="stack"' in markup]
+log['type="range"' in markup]
 ```
 
 ```text

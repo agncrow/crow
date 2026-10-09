@@ -24,7 +24,7 @@ fn log_out[]
     sign_out[]
 
 view door[]
-    if has[reader, 'name']
+    if 'name' in reader
         return row[span['signed in as `reader.name` (`reader.role`)', color = 'muted'], button['Sign out', click = log_out], gap = 'm', align = 'center']
     return row[
         field['Name', name, type = 'text'],
@@ -52,7 +52,7 @@ test the_door_lets_people_in_and_out[]
     assert[reader.name eq 'ada']
     assert[reader.role eq 'admin']
     assert[a.password eq '']
-    assert[contains[html[a], 'signed in as ada (admin)']]
+    assert['signed in as ada (admin)' in html[a]]
     assert[len[elements[a, 'input']] eq 0]
     click[a, log_out]
     assert[len[reader] eq 0]

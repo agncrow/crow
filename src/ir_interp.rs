@@ -1154,6 +1154,8 @@ impl IrInterp {
                                     Value::Int(n) => data.push(n as f64),
                                     Value::Float(x) => data.push(x),
                                     Value::Bool(_) if column => return Err(crow_runtime::stops::not_numbers("bools")),
+                                    // a mask where numbers are taken: true 1, false 0
+                                    Value::Bool(b) => data.push(if b { 1.0 } else { 0.0 }),
                                     _ if column => return Err(crow_runtime::stops::not_numbers("text")),
                                     _ => return Err(format!("a list of {} is not a list of numbers", item.value.type_name())),
                                 }

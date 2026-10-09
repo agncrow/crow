@@ -793,7 +793,7 @@ impl<'a> Lowerer<'a> {
         if let (Some((many, _)), Some((others, one))) = (item_kind(&inner), item_kind(&item.ty()))
             && many != others
         {
-            self.refuse(format!("{}[] takes {}: its {} are {}, not {}", row.name, takes, what, many, one));
+            self.refuse(format!("{} takes {}: its {} are {}, not {}", crate::table::form(row.name), takes, what, many, one));
         }
     }
 
@@ -1181,7 +1181,10 @@ impl<'a> Lowerer<'a> {
                 // (a kind not known here — a function not yet called with
                 // its frame — settles nothing: the row is picked where the
                 // kinds are known, or by the values as the program runs)
-                if taking == 1 || kinds.contains(&crate::table::Arg::Unknown) {
+                // (the one resolver decides: where it names a module, or the
+                // core's row takes the kinds, nothing is ambiguous)
+                let decided = crate::table::core_row(name, &kinds).is_some() || crate::table::module_of_bare(name, &providers, &kinds).is_some();
+                if taking == 1 || decided || kinds.contains(&crate::table::Arg::Unknown) {
                     return;
                 }
                 let forms: Vec<String> = providers.iter().map(|m| format!("{}.{}[...]", m, name)).collect();
@@ -1955,12 +1958,13 @@ mod tests {
     /// did not build; interpreted, they stopped as they ran).
     #[test]
     fn a_collection_given_a_wrong_kind_is_refused() {
-        assert!(check_source("log[has[[1, 2], 1]]\n").unwrap_err().contains("has[] takes a map and text, got numbers and an int"));
+        assert!(check_source("log[1 in map[a = 1]]\n").unwrap_err().contains("`x in xs` takes a list and a value, text and text, numbers and a number or a map and text, got a map and an int"), "{}", check_source("log[1 in map[a = 1]]\n").unwrap_err());
         assert!(check_source("log[len[5]]\n").unwrap_err().contains("len[] takes a list, text, a map, numbers, a frame or bytes, got an int"));
         let sorted = check_source("struct P [x, y]\nlog[sort[[P[3, 4], P[1, 2]]]]\n").unwrap_err();
         assert!(sorted.contains("sort[] takes a list of ints, a list of numbers, a list of text or numbers, got a list of records"), "{}", sorted);
         assert!(check_source("log[range[2.5]]\n").unwrap_err().contains("range[] takes an int, got a number"));
-        assert!(check_source("m = map[a = 1]\nlog[contains[m, 'a']]\n").is_err());
+        // a map's membership is the operator's (`has` retired into `in`)
+        assert!(check_source("m = map[a = 1]\nlog['a' in m]\n").is_ok());
     }
 
     /// A parsed JSON value is read as one type before a builtin computes

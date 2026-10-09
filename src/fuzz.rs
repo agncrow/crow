@@ -235,7 +235,7 @@ impl<'r> Case<'r> {
                 14 => format!("({} eq bucket[{}, 86400])", self.expr(Kind::Moment, d), self.expr(Kind::Moment, d)),
                 15 => format!("any[{}, p{}]", self.expr(Kind::Ints, d), self.rng.below(2)),
                 16 => format!("all[{}, p{}]", self.expr(Kind::Ints, d), self.rng.below(2)),
-                17 => format!("has[{}, 'a']", self.expr(Kind::Doc, d)),
+                17 => format!("('a' in {})", self.expr(Kind::Doc, d)),
                 10 => format!("(sum[{}] gt sum[{}])", self.expr(Kind::Vec, d), self.expr(Kind::Vec, d)),
                 11 => {
                     let df = self.var_frame(d);
@@ -247,13 +247,13 @@ impl<'r> Case<'r> {
                 }
                 6 => format!("starts[{}, 'a']", self.expr(Kind::Text, d)),
                 7 => format!("ends[{}, 'z']", self.expr(Kind::Text, d)),
-                8 => format!("has[{}, 'a']", self.expr(Kind::Counts, d)),
+                8 => format!("('a' in {})", self.expr(Kind::Counts, d)),
                 9 => format!("int[{}].ok", self.rng.pick(&["'12'", "'x1'", "'-3'", "''"])),
                 0 => format!("({} lt {})", self.expr(Kind::Int, d), self.expr(Kind::Int, d)),
                 1 => format!("({} eq {})", self.expr(Kind::Text, d), self.expr(Kind::Text, d)),
                 2 => format!("({} and {})", self.expr(Kind::Bool, d), self.expr(Kind::Bool, d)),
                 3 => format!("(not {})", self.expr(Kind::Bool, d)),
-                4 => format!("contains[{}, {}]", self.expr(Kind::Ints, d), self.expr(Kind::Int, d)),
+                4 => { let (xs, x) = (self.expr(Kind::Ints, d), self.expr(Kind::Int, d)); format!("({} in {})", x, xs) }
                 _ => format!("({} gte {})", self.expr(Kind::Float, d), self.expr(Kind::Float, d)),
             },
             Kind::Ints => match self.rng.below(6) {
@@ -442,10 +442,26 @@ impl<'r> Case<'r> {
     /// A statement: a binding, a log, a branch, or a bounded loop.
     fn stmt(&mut self, budget: usize) {
         let pad = self.indent();
-        match self.rng.below(if budget > 0 { 27 } else { 3 }) {
+        match self.rng.below(if budget > 0 { 28 } else { 3 }) {
             // a table in a database of the program's own (SQLite in memory):
             // made, filled — a row with NULLs — and queried, its typed cells
             // read, a column walked, a missing cell's .ok
+            // a mask picks and counts, a map from two lists, one list written
+            // down joined, membership of a map (spec, Arrays; Maps; Membership)
+            27 => {
+                let n = self.lines.len();
+                let (v, m, w) = (format!("mk{}", n), format!("mm{}", n), format!("mw{}", n));
+                let (a, b, c) = (self.rng.below(9), self.rng.below(9), self.rng.below(9));
+                self.lines.push(format!("{}{} = [{}.5, {}.5, {}.5]", pad, v, a, b, c));
+                self.lines.push(format!("{}log[{}[{} gt 4.0]]", pad, v, v));
+                self.lines.push(format!("{}log[sum[{} gt 4.0]]", pad, v));
+                self.lines.push(format!("{}{} = map[['a', 'b', 'c'], {}]", pad, m, v));
+                self.lines.push(format!("{}log[{}['b'] + 1.0]", pad, m));
+                self.lines.push(format!("{}log['b' in {} and 'z' not in {}]", pad, m, m));
+                self.lines.push(format!("{}{} = concat[[['x'], ['y', 'z']]]", pad, w));
+                self.lines.push(format!("{}log[len[{}]]", pad, w));
+                self.lines.push(format!("{}log[{}[[true, false, true]]]", pad, w));
+            }
             // a chain of `then` lines (spec, Then Chaining): the value first
             // where a step is a call, where the step says when it names the
             // variable; the kind changes along the chain
@@ -589,7 +605,7 @@ impl<'r> Case<'r> {
                 let df = self.var_frame(2);
                 match self.rng.below(4) {
                     0 => self.lines.push(format!("{}log[upper[{}.k]]", pad, df)),
-                    1 => self.lines.push(format!("{}log[len[filter[{}, contains[{}.g, 'p']]]]", pad, df, df)),
+                    1 => self.lines.push(format!("{}log[len[filter[{}, 'p' in {}.g]]]", pad, df, df)),
                     2 => self.lines.push(format!("{}log[where[{}.a gt 2, {}.a, 0]]", pad, df, df)),
                     _ => self.lines.push(format!("{}log[replace[{}.g, 'p', 'P']]", pad, df)),
                 }

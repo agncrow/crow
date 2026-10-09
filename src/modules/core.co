@@ -19,7 +19,7 @@ fn media_of[path]
     pieces = split[path, '.']
     ext = lower[pieces[len[pieces] - 1]]
     types = map[csv = 'text/csv', json = 'application/json', txt = 'text/plain', md = 'text/plain', html = 'text/html', png = 'image/png', jpg = 'image/jpeg', jpeg = 'image/jpeg', gif = 'image/gif', pdf = 'application/pdf', parquet = 'application/vnd.apache.parquet']
-    if has[types, ext]
+    if ext in types
         return types[ext]
     return 'application/octet-stream'
 
@@ -33,7 +33,7 @@ fn request[url, method, body, headers, queried, fields, files, save, timeout]
     if not (starts[url, 'http://'] or starts[url, 'https://'])
         return error['cannot request \'`url`\': a request goes to an http:// or https:// URL', 'http']
     method = upper[method]
-    if not contains[methods[], method]
+    if method not in methods[]
         listed = join[methods[], ', ']
         return error['\'`method`\' is not an HTTP method — `listed`', 'http']
     if not (timeout gte 0.0)
@@ -74,7 +74,7 @@ fn request[url, method, body, headers, queried, fields, files, save, timeout]
             pieces = push[pieces, data]
             pieces = push[pieces, bytes['\r\n']]
         pieces = push[pieces, bytes['--`boundary`--\r\n']]
-        body_bytes = gather[pieces]
+        body_bytes = concat[pieces]
         if not typed
             lines = push[lines, 'content-type: multipart/form-data; boundary=`boundary`']
     else
@@ -106,7 +106,7 @@ fn request[url, method, body, headers, queried, fields, files, save, timeout]
             break
         code = got.status
         moved = code eq 301 or code eq 302 or code eq 303 or code eq 307 or code eq 308
-        if not moved or not has[got.headers, 'location']
+        if not moved or 'location' not in got.headers
             break
         full = redirected[full, got.headers['location']]
         if code eq 303 or ((code eq 301 or code eq 302) and method eq 'POST')
@@ -168,7 +168,7 @@ fn write[path, content]
 test the_helpers_spell_what_the_wire_needs[]
     assert[media_of['report.csv'] eq 'text/csv' and media_of['x.PNG'] eq 'image/png' and media_of['noext'] eq 'application/octet-stream']
     assert[quoted['a"b\r\nc'] eq 'a%22b%0D%0Ac']
-    assert[contains[methods[], 'PATCH'] and len[methods[]] eq 7]
+    assert['PATCH' in methods[] and len[methods[]] eq 7]
     kept = write['core-note.txt', 'one\ntwo']
     assert[kept.ok and read['core-note.txt'] eq 'one\ntwo']
     assert[not read['no-such-file-here'].ok and read['no-such-file-here'].kind eq 'io']

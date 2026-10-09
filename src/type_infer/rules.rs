@@ -226,6 +226,13 @@ impl TypeContext {
             // the two joined: the first's form (a list, a tensor, text), items
             // from both — an empty `[]` takes its items from what it is
             // joined with
+            // `xs[mask]`, `t[mask]`: the items, the rows, where it is true
+            "__pick_items" => args.first().map(arg_ty).map(Self::walked).unwrap_or(Ty::Unknown),
+            "__pick_rows" => picked_rows_type(args.first().map(arg_ty).map(Self::walked)),
+            // `map[keys, values]`: a map of the values' kind
+            "__map_of" => map_of_type(args.get(1).map(arg_ty).map(Self::walked)),
+            // one list: its items joined — chunks of bytes, lists of text
+            "concat" if args.len() == 1 => joined_type(Self::walked(arg_ty(&args[0]))),
             "concat" if args.len() >= 2 => {
                 let first = Self::walked(arg_ty(&args[0]));
                 let second = Self::walked(arg_ty(&args[1]));
@@ -902,5 +909,39 @@ impl TypeContext {
             vtype = vtype.unify(&t);
         }
         Ty::Map(Box::new(vtype))
+    }
+}
+
+/// `t[mask]`: the tensor's type with its first dimension unknown. (A
+/// helper, not inline: the inference's recursive frame is measured against
+/// a 43-entry map literal in the debug build, parity 48.)
+#[inline(never)]
+fn picked_rows_type(base: Option<Ty>) -> Ty {
+    match base {
+        Some(Ty::Tensor(item, dims)) => Ty::Tensor(item, dims.map(|mut d| { if let Some(first) = d.first_mut() { *first = None; } d })),
+        _ => Ty::tensor(Ty::Float),
+    }
+}
+
+/// `map[keys, values]`: a map of the values' kind (a tensor's are floats).
+#[inline(never)]
+fn map_of_type(values: Option<Ty>) -> Ty {
+    match values {
+        Some(Ty::List(item)) => Ty::Map(item),
+        Some(Ty::Tensor(..)) => Ty::Map(Box::new(Ty::Float)),
+        _ => Ty::Map(Box::new(Ty::Unknown)),
+    }
+}
+
+/// `concat[list]`: the items joined — bytes of chunks, a list of the lists' items.
+#[inline(never)]
+fn joined_type(list: Ty) -> Ty {
+    match list {
+        Ty::List(item) => match *item {
+            Ty::List(inner) => Ty::List(inner),
+            Ty::Bytes => Ty::Bytes,
+            other => Ty::List(Box::new(other)),
+        },
+        t => t,
     }
 }

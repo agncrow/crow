@@ -1819,13 +1819,13 @@ No Chrome, no Playwright, no Selenium, no flaky waits. Tests run at unit test sp
 test 'counter starts at zero'
   page = live.test[app, '/']
   assert page.state.count eq 0
-  assert page.has['h1', 'Count: 0']
+  assert 'Count: 0' in 'h1'
 
 test 'clicking + increments'
   page = live.test[app, '/']
   page.click['button', '+']
   assert page.state.count eq 1
-  assert page.has['h1', 'Count: 1']
+  assert 'Count: 1' in 'h1'
 ```
 
 ### Page object methods
@@ -1837,7 +1837,7 @@ test 'clicking + increments'
 - `page.submit[selector]` — invoke form submit handler
 
 **Queries** — inspect rendered HTML:
-- `page.has[selector, text]` — true if element with matching text exists
+- `text in selector` — true if element with matching text exists
 - `page.count[selector]` — count matching elements
 - `page.text[selector]` — get text content of first matching element
 - `page.attr[selector, name]` — get attribute value of first matching element
@@ -1870,8 +1870,8 @@ test 'dashboard shows positions'
   page.render[]
 
   assert page.count['div.card'] eq 4
-  assert page.has['div.card', 'AAPL']
-  assert page.has['div.card', '200']
+  assert 'AAPL' in 'div.card'
+  assert '200' in 'div.card'
 ```
 
 `page.render[]` re-runs the render function with the current reactive variables, producing fresh HTML. Use it after seeding state to see the result.
@@ -1888,7 +1888,7 @@ test 'positions page with mock db'
 
   page = live.test[app, '/positions', conn = mock_conn]
   assert page.count['tr'] eq 1
-  assert page.has['td', 'AAPL']
+  assert 'AAPL' in 'td'
 ```
 
 `mock.db` takes a list of `[query_pattern, result]` pairs. When the handler calls `query[conn, ...]`, the mock returns the matching result.
@@ -1979,29 +1979,29 @@ test 'initial render'
     page = live.test[app, '/']
     assert page.state.symbol eq 'AAPL'
     assert page.state.count eq 0
-    assert page.has['div.card', 'AAPL']
-    assert page.has['p', 'Count: 0']
+    assert 'AAPL' in 'div.card'
+    assert 'Count: 0' in 'p'
     assert page.has['nav']
-    assert page.has['a', 'Dashboard']
-    assert page.has['a', 'Positions']
+    assert 'Dashboard' in 'a'
+    assert 'Positions' in 'a'
 
 test 'click increments counter'
     page = live.test[app, '/']
     page.click['button', '+']
     assert page.state.count eq 1
-    assert page.has['p', 'Count: 1']
+    assert 'Count: 1' in 'p'
     page.click['button', '+']
     page.click['button', '+']
     assert page.state.count eq 3
-    assert page.has['p', 'Count: 3']
+    assert 'Count: 3' in 'p'
 
 test 'state can be pre-seeded'
     page = live.test[app, '/']
     page.state.symbol = 'TSLA'
     page.state.count = 42
     page.render[]
-    assert page.has['div.card', 'TSLA']
-    assert page.has['p', 'Count: 42']
+    assert 'TSLA' in 'div.card'
+    assert 'Count: 42' in 'p'
 ```
 
 ### What `live.test` covers vs. what it doesn't

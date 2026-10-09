@@ -1,0 +1,27 @@
+--- `x in xs` and `x not in xs`: an item in a list, a number in a tensor,
+--- a part in text, a key in a map or a parsed value, and a cell by cell
+--- mask over a frame's column. The function it reaches is not written.
+--- Both modes print the same.
+use frame
+xs = ['b', 'c', 'a']
+log['c' in xs]
+log['z' in xs]
+log['z' not in xs]
+log['ell' in 'hello']
+log['x' not in 'hello']
+log[2.0 in [1.0, 2.0, 3.0]]
+log[7 in [1, 2, 3]]
+m = map[a = 1, b = 2]
+log['a' in m]
+log['q' not in m]
+j = json['{"name": "crow", "n": 1}']
+log['name' in j]
+log['x' in j]
+t = frame.new[sym = ['AAPL', 'MSFT', 'AA'], qty = [1, 2, 3]]
+log['AA' in t.sym]
+log[len[filter[t, 'AA' in t.sym]]]
+if 'x' not in xs and 'a' in xs
+    log['both']
+--- it binds like a comparison: tighter than and, looser than arithmetic
+n = 2
+log[n + 1 in [3, 4] and n in [2]]

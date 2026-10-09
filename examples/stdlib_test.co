@@ -42,8 +42,8 @@ log[str[3.14]]
 log['=== COLLECTIONS ===']
 items = [3, 1, 4, 1, 5, 9, 2, 6]
 log[len[items]]
-log[contains[items, 5]]
-log[contains[items, 99]]
+log[5 in items]
+log[99 in items]
 
 --- push (immutable)
 nums = [1, 2, 3]
@@ -74,8 +74,8 @@ log[a]
 log[slice[[10, 20, 30, 40, 50], 1, 4]]
 
 --- contains with strings
-log[contains['hello world', 'world']]
-log[contains['hello world', 'xyz']]
+log['world' in 'hello world']
+log['xyz' in 'hello world']
 
 --- len with strings
 log[len['hello']]
@@ -85,13 +85,13 @@ log['=== MAP OPS ===']
 m = map[name = 'crow', age = '3']
 log[keys[m]]
 log[values[m]]
-log[has[m, 'name']]
-log[has[m, 'color']]
+log['name' in m]
+log['color' in m]
 m = set[m, 'color', 'black']
-log[has[m, 'color']]
+log['color' in m]
 log[m['color']]
 m = del[m, 'age']
-log[has[m, 'age']]
+log['age' in m]
 log[keys[m]]
 
 --- word counter example

@@ -26,8 +26,8 @@ log['nums[-1]: `nums[-1]`']
 log['nums[2]: `nums[2]`']
 
 --- builtins
-log['contains 3: `contains[nums, 3]`']
-log['contains 99: `contains[nums, 99]`']
+log['contains 3: `3 in nums`']
+log['contains 99: `99 in nums`']
 log['slice: `slice[nums, 1, 3]`']
 log['sort desc: `sort[[5, 3, 1, 4, 2]]`']
 log['reverse: `reverse[nums]`']

@@ -16,6 +16,7 @@ return  break  continue              flow exits
 true  false                          literals
 eq  ne  gt  lt  gte  lte            comparison (words, not symbols)
 and  or  not  then                   logic and chaining
+in  not in                           membership: an item, a part, a key, a mask over a column
 _                                    discard
 ```
 

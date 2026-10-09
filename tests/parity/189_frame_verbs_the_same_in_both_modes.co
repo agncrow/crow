@@ -82,7 +82,7 @@ log[window[t, 'qty', 'first', n = 2]]
 
 --- text functions keep a missing cell missing, and a mask reads it as false
 log[upper[t.note].ok]
-log[contains[t.note, 'e']]
+log['e' in t.note]
 log[sub[t.note, '^(.)', '[$1]']]
 
 --- a moment's fields over a column keep its zone

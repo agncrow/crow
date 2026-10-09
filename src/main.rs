@@ -863,6 +863,7 @@ fn cmd_test_docs() {
     const SPEC_ONLY: &[&str] = &[
         "test", "today",                                    // keyword / removed name
         "app", "click",                                     // test-harness names (used in test blocks, not run blocks)
+        "contains", "has",                                  // the rows behind `x in xs` and `key in m`: written as the operator
     ];
     // names a program reads as values, not calls: used when read at all
     const READ_AS_VALUES: &[&str] = &["reader"];
@@ -3264,20 +3265,33 @@ fn program_of_file(entry: &str, describe: bool) -> Result<ir::Program, String> {
 mod ir_tests {
     /// The IR must exist for every program the modes are held to agree on,
     /// lowered as every pipeline lowers it: its queries' columns asked of
-    /// its databases.
+    /// its databases. (On a thread with room: the debug build's lowering
+    /// frames are large, and the 43-entry map literal of parity 48 lowers
+    /// as a chain that deep — it overflowed the test thread's 2 MB on
+    /// 2026-10-08 while every release suite passed; the release binary's
+    /// main thread has 8 MB, as `crow run` has.)
     #[test]
     fn every_parity_program_lowers_to_the_ir() {
-        let mut failures = Vec::new();
-        let mut count = 0;
-        for entry in std::fs::read_dir("tests/parity").unwrap() {
-            let p = entry.unwrap().path();
-            if p.extension().map_or(false, |x| x == "co") {
-                count += 1;
-                if let Err(e) = super::ir_of_file(&p.to_string_lossy(), true) {
-                    failures.push(format!("{}: {}", p.display(), e));
+        let lowered = std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(|| {
+                let mut failures = Vec::new();
+                let mut count = 0;
+                for entry in std::fs::read_dir("tests/parity").unwrap() {
+                    let p = entry.unwrap().path();
+                    if p.extension().map_or(false, |x| x == "co") {
+                        count += 1;
+                        if let Err(e) = super::ir_of_file(&p.to_string_lossy(), true) {
+                            failures.push(format!("{}: {}", p.display(), e));
+                        }
+                    }
                 }
-            }
-        }
+                (count, failures)
+            })
+            .expect("a thread for the corpus")
+            .join()
+            .expect("the corpus lowers without a panic");
+        let (count, failures) = lowered;
         assert!(count > 40, "the corpus was not found");
         assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
@@ -6094,7 +6108,7 @@ mod module_parts_tests {
         std::fs::create_dir_all(dir.join("lib")).unwrap();
         std::fs::write(dir.join("crowfile"), "name = 'parts'\n").unwrap();
         std::fs::write(dir.join("lib/calc.co"), "use web, ui\nrate = 1.0\nview show[]\n    return p['`rate`']\n").unwrap();
-        let stmts = build("use web, ui\nuse lib.calc\nview v[]\n    return calc.show[]\npage['/', v]\ntest t[]\n    a = app[v]\n    change[a, 'calc.rate', 2.0]\n    assert[contains[html[a], '2']]\n").unwrap();
+        let stmts = build("use web, ui\nuse lib.calc\nview v[]\n    return calc.show[]\npage['/', v]\ntest t[]\n    a = app[v]\n    change[a, 'calc.rate', 2.0]\n    assert['2' in html[a]]\n").unwrap();
         let mut visited = std::collections::HashSet::new();
         let stmts = expand_module_imports(&stmts, &dir, &mut visited);
         let text = format!("{:?}", stmts);

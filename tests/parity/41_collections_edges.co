@@ -31,7 +31,7 @@ while i lt 4
     i = i + 1
 log[keys[m]]
 log[len[del[m, 'k1']]]
-log[has[m, 'k1']]
+log['k1' in m]
 
 log[sort[[3, 1, 2]]]
 log[sort[[2.5, -1.0, 0.5]]]
@@ -41,8 +41,8 @@ log[range[5]]
 log[range[2, 8, 3]]
 log[range[5, 0, -2]]
 log[concat[[1, 2], [3]]]
-log[contains[xs, 30]]
-log[contains['crow', 'ro']]
+log[30 in xs]
+log['ro' in 'crow']
 
 --- the in-place shape reads the other arguments first, and a variable
 --- read twice on the right is copied, not moved

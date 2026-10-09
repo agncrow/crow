@@ -1,0 +1,24 @@
+--- `t[mask]` is the rows of a matrix, or the numbers of a vector, where
+--- the mask is true; `xs[mask]` the items; a mask where numbers are asked
+--- counts true as 1 and false as 0, so `sum[mask]` counts and math's
+--- `where` takes one. Both modes print the same.
+use math
+labels = [0, 1, 0, 1]
+x = [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0]]
+log[x[labels eq 1]]
+log[mean[x[labels eq 1], 0]]
+v = [10.0, 20.0, 30.0, 40.0]
+log[v[labels eq 0]]
+log[v[v gt 25.0]]
+names = ['p', 'q', 'r', 's']
+log[names[labels eq 1]]
+log[sum[labels eq 1]]
+log[where[v gt 15.0, v, 0.0 * v]]
+log[len[x[labels eq 7]]]
+fn centre_of[rows, which, j]
+    members = rows[which eq j]
+    if len[members] eq 0
+        return [0.0, 0.0]
+    return mean[members, 0]
+log[centre_of[x, labels, 0]]
+log[centre_of[x, labels, 9]]

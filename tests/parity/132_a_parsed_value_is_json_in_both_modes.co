@@ -17,7 +17,7 @@ for x in j.a
 log[encode[j.n]]
 log[encode[j]]
 log[keys[j.m]]
-log[has[j.m, 'k']]
+log['k' in j.m]
 log[str[j.m.k]]
 log[float[j.a[1]] + 1.0]
 log[int[j.n[0]] * 2]

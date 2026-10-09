@@ -30,7 +30,7 @@ serve[3000]
 test the_book_shows_its_trades[]
     a = app[home]
     h = html[a]
-    assert[contains[h, '2 trades, first AAPL, day 2026-01-01']]
+    assert['2 trades, first AAPL, day 2026-01-01' in h]
 "
     )
 }

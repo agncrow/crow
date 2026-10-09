@@ -11,7 +11,7 @@ fn any_live[xs]
             return true
     return false
 
-fn gather[n]
+fn gathered[n]
     made = []
     for i in range[n]
         if not any_live[made]
@@ -20,7 +20,7 @@ fn gather[n]
             made = push[made, Arm['done', i]]
     return made
 
-got = gather[4]
+got = gathered[4]
 log[len[got]]
 log[got[0].status]
 log[got[3].status]

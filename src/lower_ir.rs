@@ -799,6 +799,37 @@ struct Lowerer<'a> {
     failed: Vec<String>,
 }
 
+/// `map[keys, values]` of a tensor of values: the tensor as a list of
+/// floats, in place of the second argument. (Not inline, as `mask_pick`.)
+#[inline(never)]
+fn values_as_list(lowered: &mut Vec<Expr>) {
+    let values = lowered.remove(1);
+    lowered.push(Expr::Convert { how: Convert::ToList, expr: Box::new(values), ty: Ty::List(Box::new(Ty::Float)) });
+}
+
+/// A mask picks: the index's own row and the result's type, by the base —
+/// `__pick_rows` of a tensor (its first dimension unknown after),
+/// `__pick_items` of a list — or none where the index is not a mask, or
+/// either can fail. (A helper, not inline: the lowering's recursive frame is
+/// measured against a 43-entry map literal in the debug build, parity 48.)
+#[inline(never)]
+fn mask_pick(base: &Ty, index: &Ty) -> Option<(&'static crate::table::Row, Ty)> {
+    if !matches!(index.payload(), Ty::List(item) if **item == Ty::Bool) || index.is_result() || base.is_result() {
+        return None;
+    }
+    let base_ty = base.payload().clone();
+    let (row_name, ty) = match &base_ty {
+        Ty::Tensor(item, dims) => (
+            "__pick_rows",
+            Ty::Tensor(item.clone(), dims.as_ref().map(|d| { let mut d = d.clone(); if let Some(first) = d.first_mut() { *first = None; } d })),
+        ),
+        Ty::List(_) => ("__pick_items", base_ty.clone()),
+        _ => return None,
+    };
+    let kinds = [crate::table::Arg::of_type(&base_ty), crate::table::Arg::Truths];
+    crate::table::core_row(row_name, &kinds).map(|row| (row, ty))
+}
+
 impl<'a> Lowerer<'a> {
     fn new(ctx: &'a mut TypeContext, in_ui: bool) -> Self {
         Lowerer {
@@ -3203,6 +3234,15 @@ impl<'a> Lowerer<'a> {
                 }
                 idx = read_idx;
             }
+            // a mask picks: `t[labels eq j]` is the rows (or the numbers)
+            // where it is true, `xs[mask]` the items (spec, Arrays) — the
+            // index's own rows, typed by the base as a position's read is
+            if let [index] = idx.as_slice()
+                && let Some((row, ty)) = mask_pick(&base.ty(), &index.ty())
+            {
+                let index = idx.pop().unwrap_or(Expr::Const(Const::Bool(false), Ty::Bool));
+                return Ok(Expr::Call { target: Target::Row(row), args: vec![base, index], ty, propagates: false });
+            }
             let arg_types: Vec<Ty> = idx.iter().map(read).collect();
             let full_types: Vec<Ty> = idx.iter().map(full).collect();
             self.scan_call(callee, args, &full_types);
@@ -3456,6 +3496,14 @@ impl<'a> Lowerer<'a> {
                 }
             }
             lowered = read_args;
+        }
+        // `map[keys, values]` of a tensor of values: its numbers as a list,
+        // for a map of floats (the row takes a list of values of one kind)
+        if name == "__map_of" && lowered.len() == 2 && matches!(lowered[1].ty().payload(), Ty::Tensor(..)) && !lowered[1].ty().is_result() {
+            values_as_list(&mut lowered);
+            arg_types[1] = read(&lowered[1]);
+            full_types[1] = full(&lowered[1]);
+            checks[1] = self.checked(&lowered[1]);
         }
         self.check_callee(callee, args, &checks);
         self.scan_call(callee, args, &full_types);
@@ -5234,13 +5282,13 @@ mod tests {
         refused("log[['a'] eq [1]]\n", "eq compares values of one kind, not a list of text with a list of numbers");
         refused("xs = ['1', '2']\nlog[xs + 1]\n", "cannot use '+' with array[str] and int");
         refused("a = float['1.5']\nxs = [a, a]\nlog[xs eq 1.5]\n", "eq of a list of values that can fail is a mask, and a mask decides every row: guard each value with .ok");
-        refused("log[contains[['a'], 1]]\n", "contains[] takes a list and an item of its kind: its items are text, not a number");
+        refused("log[1 in ['a']]\n", "`x in xs` takes a list and an item of its kind: its items are text, not a number");
         refused("xs = push[['a'], 1]\nlog[xs]\n", "push[] takes a list and an item of its kind: its items are text, not a number");
         // (one mistake, one message: the map's own check, not the holder's too)
         refused("m = set[map[a = 'x'], 'b', 1]\nlog[m]\n", "a map holds one kind: 'b' is an int, and its values are text");
         // of one kind, they are compared: text ordered, an int beside a
         // float, two lists whole, a parsed value as the program runs
-        assert_eq!(refusal_of(&format!("{}log['b' gt 'a']\nlog[df.name gte 'b']\nlog[1 eq 1.0]\nlog[['a'] eq ['a']]\nj = json['1']\nlog[j eq 'x']\na = float['1.5']\nlog[[a] eq [a]]\nlog[contains[['a'], 'b']]\n", df)), "");
+        assert_eq!(refusal_of(&format!("{}log['b' gt 'a']\nlog[df.name gte 'b']\nlog[1 eq 1.0]\nlog[['a'] eq ['a']]\nj = json['1']\nlog[j eq 'x']\na = float['1.5']\nlog[[a] eq [a]]\nlog['b' in ['a']]\n", df)), "");
     }
 
     /// A group by several keys keeps each key's type; a pivot's rows column

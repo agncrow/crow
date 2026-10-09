@@ -4,7 +4,7 @@
 --- other branch. The lowering declared the list by the type inference
 --- settled on, one that can fail, while the compiled program declared it
 --- plain, and the program did not build.
-fn gather[words]
+fn gathered[words]
     xs = []
     for w in words
         if w eq ''
@@ -13,7 +13,7 @@ fn gather[words]
             xs = push[xs, float[w]]
     return xs
 
-log[gather[['1.5', '', '2']]]
-bad = gather[['1', 'x', '3']]
+log[gathered[['1.5', '', '2']]]
+bad = gathered[['1', 'x', '3']]
 log[bad.ok]
 log[bad.reason]

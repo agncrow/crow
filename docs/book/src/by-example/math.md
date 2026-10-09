@@ -174,3 +174,21 @@ log[concat[[1.0, 2.0], [3.0], 0]]
 ```
 
 Reference: spec section 13 (math → Shape Operations, Combining Ops).
+
+```crow
+use math
+x = [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]
+labels = [0, 1, 0]
+log[x[labels eq 0]]
+log[mean[x[labels eq 0], 0]]
+v = [10.0, 20.0, 30.0]
+log[sum[v gt 15.0]]
+log[where[v gt 15.0, v, 0.0 * v]]
+```
+
+```text
+[[1, 2], [5, 6]]
+[3, 4]
+2
+[0, 20, 30]
+```

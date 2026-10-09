@@ -53,7 +53,7 @@ fn stamp_now[]
 derive symbols
     out = []
     for o in orders
-        if not contains[out, o.symbol]
+        if o.symbol not in out
             out = push[out, o.symbol]
     return out
 
@@ -154,21 +154,21 @@ test a_fact_holds_records[]
     assert[len[orders] eq 2, 'orders `len[orders]`']
     assert[counts eq [2], 'counts `counts`']
     assert[gathered eq 2, 'gathered `gathered`']
-    assert[contains[html[a], '2 orders'], 'the page `html[a]`']
-    assert[contains[html[a], 'placed AB'], 'the page `html[a]`']
+    assert['2 orders' in html[a], 'the page `html[a]`']
+    assert['placed AB' in html[a], 'the page `html[a]`']
 
 test a_click_takes_a_record_and_a_list[]
     a = app[shown]
     click[a, place_all[Order['EF', 5], ['GH', 'IJ'], [7.0, 8.0]]]
     assert[len[orders] eq 3, 'orders `len[orders]`']
     assert[orders[0].symbol eq 'EF' and orders[2].qty eq 7, 'orders `orders`']
-    assert[contains[html[a], 'placed 3'], 'the page `html[a]`']
+    assert['placed 3' in html[a], 'the page `html[a]`']
 
 test a_handler_hands_a_record_to_another[]
     a = app[shown]
     click[a, place_pair]
     assert[len[orders] eq 2 and orders[1].symbol eq 'QR', 'orders `orders`']
-    assert[contains[html[a], 'placed a pair'], 'the page `html[a]`']
+    assert['placed a pair' in html[a], 'the page `html[a]`']
 
 test a_click_takes_the_tests_own_values[]
     a = app[shown]
@@ -181,13 +181,13 @@ test a_function_writes_state_through_another[]
     a = app[shown]
     click[a, relay_click]
     assert[said eq 'relayed', 'said `said`']
-    assert[contains[html[a], 'relayed'], 'the page `html[a]`']
+    assert['relayed' in html[a], 'the page `html[a]`']
 
 test a_click_without_its_arguments_stops[]
     a = app[shown]
     r = click[a, note_it]
     assert[not r.ok, 'the click ran']
-    assert[contains[r.reason, 'note_it[] expects 1 arguments, got 0'], r.reason]
+    assert['note_it[] expects 1 arguments, got 0' in r.reason, r.reason]
     assert[said eq '', 'said `said`']
 
 test a_click_hands_on_what_a_value_that_can_fail_holds[]

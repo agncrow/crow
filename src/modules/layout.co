@@ -139,7 +139,7 @@ fn lay_text_width[text, font_px, bold]
     total = 0.0
     for i in range[len[text]]
         ch = slice[text, i, i + 1]
-        if has[table, ch]
+        if ch in table
             total = total + table[ch]
         else
             total = total + fallback
@@ -181,7 +181,7 @@ fn lay_text_px[node]
         return tw + 35.2 + 8.0
     if lay_has_class[node, 'crow-check']
         return tw + 13.0 + 8.0
-    if node.tag eq 'label' and has[node.attrs, '_radio']
+    if node.tag eq 'label' and '_radio' in node.attrs
         return tw + 13.0 + 8.0
     --- a summary's chevron: 0.4em turned, and the 0.5rem gap before it
     if node.tag eq 'summary'
@@ -189,17 +189,17 @@ fn lay_text_px[node]
     return tw
 
 fn lay_attr[node, name, default]
-    if has[node.attrs, name]
+    if name in node.attrs
         return node.attrs[name]
     return default
 
 fn lay_has_class[node, cls]
-    return contains[split[node.class, ' '], cls]
+    return cls in split[node.class, ' ']
 
 --- the stylesheet's `.card h3` / `.card p` rules reach descendants; the
 --- walk marks a card's children so their own rules can see it
 fn lay_in_card[node]
-    return lay_has_class[node, 'card'] or has[node.attrs, '_card']
+    return lay_has_class[node, 'card'] or '_card' in node.attrs
 
 fn lay_mark_card[kids]
     out = []
@@ -231,9 +231,9 @@ fn lay_font_px[node]
     --- label at the label rule's 0.88rem, a dropdown's summary at 0.92rem
     if lay_has_class[node, 'crow-check']
         return 14.72
-    if node.tag eq 'summary' and has[node.attrs, '_dropdown']
+    if node.tag eq 'summary' and '_dropdown' in node.attrs
         return 14.72
-    if node.tag eq 'label' and has[node.attrs, '_tabs']
+    if node.tag eq 'label' and '_tabs' in node.attrs
         return 14.72
     if node.tag eq 'label'
         return 14.08
@@ -252,7 +252,7 @@ fn lay_is_bold[node]
     if node.tag eq 'h1' or node.tag eq 'h2' or node.tag eq 'h3' or node.tag eq 'th'
         return true
     --- a summary is bold, except a dropdown's (a button face)
-    if node.tag eq 'summary' and not has[node.attrs, '_dropdown']
+    if node.tag eq 'summary' and '_dropdown' not in node.attrs
         return true
     return false
 
@@ -322,12 +322,12 @@ fn lay_pad_v[node]
     if node.tag eq 'details' and not lay_has_class[node, 'dropdown']
         return 9.0
     --- a dropdown's summary is a button face: 0.42rem plus border
-    if node.tag eq 'summary' and has[node.attrs, '_dropdown']
+    if node.tag eq 'summary' and '_dropdown' in node.attrs
         return 7.72
     --- a nav link: 0.35rem; a tab: 0.5rem plus its 2px underline
-    if node.tag eq 'a' and has[node.attrs, '_nav']
+    if node.tag eq 'a' and '_nav' in node.attrs
         return 5.6
-    if node.tag eq 'label' and has[node.attrs, '_tabs']
+    if node.tag eq 'label' and '_tabs' in node.attrs
         return 9.0
     return 0.0
 
@@ -351,11 +351,11 @@ fn lay_pad_h[node]
         return 7.2
     if node.tag eq 'details' and not lay_has_class[node, 'dropdown']
         return 13.0
-    if node.tag eq 'summary' and has[node.attrs, '_dropdown']
+    if node.tag eq 'summary' and '_dropdown' in node.attrs
         return 16.2
-    if node.tag eq 'a' and has[node.attrs, '_nav']
+    if node.tag eq 'a' and '_nav' in node.attrs
         return 9.6
-    if node.tag eq 'label' and has[node.attrs, '_tabs']
+    if node.tag eq 'label' and '_tabs' in node.attrs
         return 14.4
     return 0.0
 
@@ -386,7 +386,7 @@ fn lay_margin_top[node]
         return lay_space[m]
     if lay_in_card[node] and (node.tag eq 'h3' or node.tag eq 'p')
         return 0.0
-    if has[node.attrs, '_details']
+    if '_details' in node.attrs
         return 0.0
     if node.tag eq 'h2'
         return 35.2
@@ -442,7 +442,7 @@ fn lay_explicit_width[node, avail]
 --- hidden at this viewport: the html `hidden` attribute (present until a
 --- script shows the element) or a `hidden_below` rule that applies
 fn lay_hidden[node, viewport]
-    if has[node.attrs, 'hidden']
+    if 'hidden' in node.attrs
         return true
     --- a page's title and metas are its head's: they take no room
     if node.tag eq 'title' or node.tag eq 'meta'
@@ -456,7 +456,7 @@ fn lay_hidden[node, viewport]
 --- the children that take part in layout at this viewport
 fn lay_visible_kids[node, viewport]
     out = []
-    closed = node.tag eq 'details' and not has[node.attrs, 'open']
+    closed = node.tag eq 'details' and 'open' not in node.attrs
     for k in node.kids
         shown = not lay_hidden[k, viewport]
         if closed and k.tag ne 'summary'
@@ -561,7 +561,7 @@ fn lay_node[node, x, y, width, viewport, path]
         lines = 1.0
         --- running text wraps: paragraphs, headings, spans, labels, items;
         --- a card's one-line figures and form controls do not
-        if node.tag ne 'button' and node.tag ne 'input' and node.tag ne 'select' and node.tag ne 'summary' and not lay_in_card[node] and not lay_has_class[node, 'crow-check'] and not has[node.attrs, '_tabs'] and not has[node.attrs, '_radio'] and not has[node.attrs, '_nav']
+        if node.tag ne 'button' and node.tag ne 'input' and node.tag ne 'select' and node.tag ne 'summary' and not lay_in_card[node] and not lay_has_class[node, 'crow-check'] and '_tabs' not in node.attrs and '_radio' not in node.attrs and '_nav' not in node.attrs
             lines = lay_lines[node, inner_w]
         h = lines * lay_line_px[node] + 2.0 * pv
         return [lay_box[node, here, x, top, width, h, false]]

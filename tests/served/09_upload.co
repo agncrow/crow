@@ -6,7 +6,7 @@ use web, ui
 upload = map[]
 
 derive contents
-    if has[upload, 'path']
+    if 'path' in upload
         return '`upload.name` (`upload.size` bytes): `read[upload.path]`'
     return 'no file yet'
 

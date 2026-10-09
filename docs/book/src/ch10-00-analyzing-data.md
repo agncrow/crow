@@ -273,7 +273,7 @@ log[sort[ticks, ['symbol', 'qty'], desc = [false, true]].price]
 log[where[ticks.qty.ok, ticks.qty, 0]]
 log[complete[ticks].price]
 log[unpivot[select[ticks, ['symbol', 'qty', 'price']], 'symbol', ['qty', 'price']]]
-log[filter[ticks, contains[ticks.symbol, 'AA'] and ticks.at.hour eq 9].price]
+log[filter[ticks, 'AA' in ticks.symbol and ticks.at.hour eq 9].price]
 log[window[ticks, 'price', 'mean', span = 3600, on = 'at', by = 'symbol']]
 rm['ticks.csv']
 ```

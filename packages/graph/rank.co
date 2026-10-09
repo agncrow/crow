@@ -52,7 +52,7 @@ fn clustering[g, name]
     i = g.index[name]
     nb = []
     for arc in g.arcs[i]
-        if arc.to ne i and not contains[nb, arc.to]
+        if arc.to ne i and arc.to not in nb
             nb = push[nb, arc.to]
     k = len[nb]
     if k lt 2
@@ -60,7 +60,7 @@ fn clustering[g, name]
     joined = 0
     for a in nb
         for arc in g.arcs[a]
-            if arc.to gt a and contains[nb, arc.to]
+            if arc.to gt a and arc.to in nb
                 joined = joined + 1
     return 2.0 * joined / (k * (k - 1))
 

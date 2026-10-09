@@ -67,9 +67,9 @@ view card[title, body]
     return stack[h3[title], p[body], surface = 'card']
 
 markup = doc.document['Card', card['Hello', 'a paragraph']]
-log[contains[markup, '<div class="stack card"']]
+log['<div class="stack card"' in markup]
 broken = doc.document['Card', card['Hello', read['/nonexistent/notes.md']]]
-log[contains[broken, 'error: the server']]
+log['error: the server' in broken]
 ```
 
 ```text
