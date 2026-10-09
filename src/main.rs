@@ -395,7 +395,7 @@ fn crow_main() {
             // check if it's a .co or .coc file (shortcut)
             if is_source(other) || is_bytecode(other) {
                 let extra_args = args[2..].to_vec();
-                cmd_run_file(other, &extra_args, 1);
+                cmd_run_file(other, &extra_args, 0);
             } else {
                 eprintln!("unknown command: {}", other);
                 print_usage();
@@ -417,7 +417,7 @@ fn print_usage() {
     eprintln!("  crow build file.co   transpile a specific file");
     eprintln!("  crow run               transpile + compile + run main.co");
     eprintln!("  crow run file.co     transpile + compile + run a specific file");
-    eprintln!("  crow run --opt 2 file.co  the same, the program optimized at level 2 (0 to 3; 1 unless said)");
+    eprintln!("  crow run --opt 2 file.co  the same, the program optimized at level 2 (0 to 3; 0 unless said)");
     eprintln!("  crow run train         run a named job from crowfile");
     eprintln!("  crow run -i file.co  run with interpreter (slow, for debugging)");
     eprintln!("  crow stop              stop the running app (pidfile, then project binary)");
@@ -1832,7 +1832,7 @@ fn cmd_install() {
 /// Transpile a .co file to Rust, compile it, and return the path to the binary.
 /// If `quiet` is true, suppress cargo build output (used for `crow run`).
 /// If `release` is true, compile with --release (optimized). Otherwise, use debug mode (fast compile).
-/// `opt` is the dev build's optimization level (`crow run --opt N`; 1 unless
+/// `opt` is the dev build's optimization level (`crow run --opt N`; 0 unless
 /// said); a release build ignores it.
 fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: bool, opt: u8) -> std::path::PathBuf {
     // Verification harnesses (`crow test --book`, `--parity`) set
@@ -2171,7 +2171,7 @@ fn cmd_build() {
     if args.iter().any(|a| a == "--rs") {
         PRINT_RS.store(true, std::sync::atomic::Ordering::SeqCst);
         let file = args.iter().skip(2).find(|a| !a.starts_with('-')).cloned().unwrap_or_else(|| parse_crowfile().entry);
-        transpile_and_compile(&file, true, None, false, 1);
+        transpile_and_compile(&file, true, None, false, 0);
         return;
     }
     // `crow build --types file.co`: every type inference found, each
@@ -2204,7 +2204,7 @@ fn cmd_build() {
         process::exit(1);
     };
 
-    let binary = transpile_and_compile(&entry, false, cpu, true, 1);
+    let binary = transpile_and_compile(&entry, false, cpu, true, 0);
 
     // Copy binary to current directory
     let binary_name = binary.file_name().unwrap().to_string_lossy().to_string();
@@ -2255,7 +2255,7 @@ fn cmd_launch() {
     };
 
     // Build the binary
-    let binary = transpile_and_compile(&entry, true, None, true, 1);
+    let binary = transpile_and_compile(&entry, true, None, true, 0);
 
     let master_addr = "127.0.0.1";
     let master_port = 29500u16;
@@ -2995,7 +2995,7 @@ fn cmd_test_blocks(filename: &str) {
     let compiled = std::env::args().any(|a| a == "--compiled");
     if compiled && compiled_harness::opens_an_app(&lowered) {
         TEST_CONTROL.store(true, std::sync::atomic::Ordering::SeqCst);
-        let binary = transpile_and_compile(filename, true, None, false, 1);
+        let binary = transpile_and_compile(filename, true, None, false, 0);
         compiled_harness::use_binary(std::fs::canonicalize(&binary).unwrap_or(binary));
     }
     // the blocks are prepared from the statements as written: the shared
@@ -3358,13 +3358,12 @@ fn package_name(entry: &str) -> String {
     }
 }
 
-/// The dev build (`crow run`): the program at `opt` — 1 unless `--opt`
-/// says (at 0 fannkuch had run 12× slower; level 1 costs compile time in
-/// proportion to the program — finch's crate rebuilds after an edit in 14 s
-/// against 3 s — which `--opt 0` keeps) —
-/// and the runtime crates at 1 at least, following `opt` above it, so a
-/// higher level reaches the kernels too. The release build (`crow build`)
-/// is level 3 with LTO.
+/// The dev build (`crow run`): the program at `opt` — 0 unless `--opt`
+/// says, so a large program rebuilds quickly after an edit (finch's crate:
+/// 3 s at 0, 14 s at 1), while a program whose own loops are the work runs
+/// many times faster at 1 (fannkuch: 12×) — and the runtime crates at 1 at
+/// least, following `opt` above it, so a higher level reaches the kernels
+/// too. The release build (`crow build`) is level 3 with LTO.
 fn generated_cargo_toml(project_name: &str, deps: &str, opt: u8) -> String {
     let crates = opt.max(1);
     format!(
@@ -3992,7 +3991,7 @@ fn cmd_check(filename: &str, verbose: bool, db_url: Option<String>, strict: bool
 }
 
 /// The flags `crow run` takes ahead of the file or job: `-i` (interpret)
-/// and `--opt N` (the compiled program's optimization level, 0 to 3; 1
+/// and `--opt N` (the compiled program's optimization level, 0 to 3; 0
 /// unless said). Answers whether to interpret, the level, and what
 /// follows — the file or job, then the program's own arguments, untouched.
 fn run_flags(args: &[String]) -> Result<(bool, u8, Vec<String>), String> {
@@ -4010,7 +4009,7 @@ fn run_flags(args: &[String]) -> Result<(bool, u8, Vec<String>), String> {
                         i += 1;
                     }
                     None => {
-                        return Err("crow run --opt takes an optimization level, 0 to 3 — `crow run --opt 2 file.co` (1 unless said; `crow build` makes the fully optimized binary)".to_string());
+                        return Err("crow run --opt takes an optimization level, 0 to 3 — `crow run --opt 2 file.co` (0 unless said; `crow build` makes the fully optimized binary)".to_string());
                     }
                 }
             }
@@ -4021,7 +4020,7 @@ fn run_flags(args: &[String]) -> Result<(bool, u8, Vec<String>), String> {
     if interp && opt.is_some() {
         return Err("crow run -i interprets the program and builds nothing: --opt belongs to the compiled run — `crow run --opt 2 file.co`".to_string());
     }
-    Ok((interp, opt.unwrap_or(1), args[i..].to_vec()))
+    Ok((interp, opt.unwrap_or(0), args[i..].to_vec()))
 }
 
 fn cmd_run(extra_args: &[String], opt: u8) {
@@ -5948,11 +5947,11 @@ mod build_crate_tests {
         assert_eq!(package_name("01_counter.co"), "app_01_counter", "a leading digit is not a crate name");
         assert_eq!(package_name("tests/parity/50_ok.co"), "tests_parity_50_ok");
         assert_eq!(package_name("my app.co"), "my_app");
-        let toml = generated_cargo_toml("main", "[dependencies]\n", 1);
+        let toml = generated_cargo_toml("main", "[dependencies]\n", 0);
         assert!(toml.contains("[profile.dev.package.\"*\"]\nopt-level = 1"), "{}", toml);
-        assert!(toml.contains("[profile.dev]\ndebug = 0\nopt-level = 1\n"), "a dev build carries no debug info and optimizes the program at 1: {}", toml);
-        // `--opt 0` keeps the runtime crates at 1; `--opt 3` lifts them with the program
-        assert!(generated_cargo_toml("main", "", 0).contains("[profile.dev]\ndebug = 0\nopt-level = 0\n\n[profile.dev.package.\"*\"]\nopt-level = 1\n"));
+        assert!(toml.contains("[profile.dev]\ndebug = 0\nopt-level = 0\n"), "a dev build carries no debug info and leaves the program at 0: {}", toml);
+        // `--opt 1` optimizes the program; `--opt 3` lifts the runtime crates with it
+        assert!(generated_cargo_toml("main", "", 1).contains("[profile.dev]\ndebug = 0\nopt-level = 1\n\n[profile.dev.package.\"*\"]\nopt-level = 1\n"));
         assert!(generated_cargo_toml("main", "", 3).contains("[profile.dev]\ndebug = 0\nopt-level = 3\n\n[profile.dev.package.\"*\"]\nopt-level = 3\n"));
         assert!(toml.contains("[profile.debuginfo]\ninherits = \"dev\"\ndebug = true\n\n[profile.debuginfo.package.\"*\"]\nopt-level = 1\n"), "CROW_DEBUGINFO=1 builds dev with debug info: {}", toml);
         assert!(toml.contains("[profile.release]\nopt-level = 3\nlto = true\noverflow-checks = true"), "{}", toml);
@@ -5962,16 +5961,16 @@ mod build_crate_tests {
     #[test]
     fn run_takes_its_flags_ahead_of_the_file() {
         let a = |s: &str| s.split(' ').map(String::from).collect::<Vec<_>>();
-        assert_eq!(run_flags(&a("file.co x y")).unwrap(), (false, 1, a("file.co x y")));
+        assert_eq!(run_flags(&a("file.co x y")).unwrap(), (false, 0, a("file.co x y")));
         assert_eq!(run_flags(&a("--opt 3 file.co")).unwrap(), (false, 3, a("file.co")));
-        assert_eq!(run_flags(&a("-i file.co")).unwrap(), (true, 1, a("file.co")));
+        assert_eq!(run_flags(&a("-i file.co")).unwrap(), (true, 0, a("file.co")));
         assert_eq!(run_flags(&a("--opt 2")).unwrap(), (false, 2, Vec::<String>::new()));
-        assert_eq!(run_flags(&[]).unwrap(), (false, 1, Vec::<String>::new()));
+        assert_eq!(run_flags(&[]).unwrap(), (false, 0, Vec::<String>::new()));
         assert!(run_flags(&a("--opt 4 file.co")).unwrap_err().contains("0 to 3"));
         assert!(run_flags(&a("--opt file.co")).unwrap_err().contains("0 to 3"));
         assert!(run_flags(&a("-i --opt 2 file.co")).unwrap_err().contains("interprets"));
         // the program's own arguments follow the file, untouched
-        assert_eq!(run_flags(&a("file.co --opt 2")).unwrap(), (false, 1, a("file.co --opt 2")));
+        assert_eq!(run_flags(&a("file.co --opt 2")).unwrap(), (false, 0, a("file.co --opt 2")));
     }
 }
 

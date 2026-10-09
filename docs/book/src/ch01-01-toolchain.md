@@ -7,7 +7,7 @@ another.
 ```text
 crow new name [--web --ml --db]  scaffold a project (a Crowfile, main.co, css/)
 crow run [-i] [file]             execute: compiled by default, -i interprets
-crow run --opt N file            the program at optimization level N (0 to 3; 1 unless said, crow build is 3 with LTO)
+crow run --opt N file            the program at optimization level N (0 to 3; 0 unless said, crow build is 3 with LTO)
 crow stop                        stop the served app started by crow run
 crow build [file]                compile to a native binary, ./main
 crow check [file]                verify: tests, generated edge cases, contracts, and the app baseline — what changed since the accepted one
