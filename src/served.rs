@@ -29,7 +29,7 @@ pub(crate) fn fact_to_json(v: &CrowValue) -> serde_json::Value {
     }
     match &v.value {
         Value::Frame(f) => serde_json::to_value(f).unwrap_or(serde_json::Value::Null),
-        Value::StructInstance(si) => serde_json::Value::Object(si.fields.iter().map(|(k, x)| (k.clone(), fact_to_json(x))).collect()),
+        Value::StructInstance(si) => serde_json::Value::Object(si.fields().map(|(k, x)| (k.clone(), fact_to_json(x))).collect()),
         Value::Array(items) => serde_json::Value::Array(items.iter().map(fact_to_json).collect()),
         Value::Map(m) => serde_json::Value::Object(m.iter().map(|(k, x)| (k.clone(), fact_to_json(x))).collect()),
         _ => crate::builtins::crow_to_json("", v).unwrap_or(serde_json::Value::Null),
@@ -73,13 +73,13 @@ pub(crate) fn json_to_typed(j: &serde_json::Value, ty: &crate::ir::Ty, template:
                     let fj = obj.get(field).cloned().unwrap_or(serde_json::Value::Null);
                     fields.insert(field.clone(), json_to_typed(&fj, fty, template, &CrowValue::ok(Value::Done)));
                 }
-                CrowValue::ok(Value::StructInstance(Box::new(crate::value::StructInstance { name: name.clone(), shown: def.shown.clone(), fields })))
+                CrowValue::ok(Value::StructInstance(std::sync::Arc::new(crate::value::StructInstance::new(name.clone(), def.shown.clone(), fields))))
             }
             None => json_to_fact(j, declared),
         },
         (Ty::List(item), serde_json::Value::Array(items)) => {
             let none = CrowValue::ok(Value::Done);
-            CrowValue::ok(Value::Array(items.iter().map(|x| json_to_typed(x, item, template, &none)).collect()))
+            CrowValue::ok(Value::Array(std::sync::Arc::new(items.iter().map(|x| json_to_typed(x, item, template, &none)).collect())))
         }
         (Ty::Tensor(..), serde_json::Value::Array(items)) if items.iter().all(|x| x.is_number()) => {
             let data: Vec<f64> = items.iter().filter_map(|x| x.as_f64()).collect();
@@ -197,7 +197,7 @@ fn route_answer(template: &IrInterp, handler: &str, req: crow_web::core::CrowReq
         ("query".to_string(), pairs(&req.query)),
         ("params".to_string(), pairs(&req.params)),
         ("form".to_string(), pairs(&req.form)),
-        ("files".to_string(), CrowValue::ok(Value::Array(req.files.iter().map(pairs).collect()))),
+        ("files".to_string(), CrowValue::ok(Value::Array(std::sync::Arc::new(req.files.iter().map(pairs).collect())))),
     ]
     .into_iter()
     .collect();

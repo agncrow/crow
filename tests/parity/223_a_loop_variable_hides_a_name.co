@@ -1,0 +1,15 @@
+--- A loop's variable named like a name bound before the loop hides it
+--- inside the loop only: after the loop the name is what it was, in both
+--- modes. (Compiled, a top-level record named like a later loop's variable
+--- had been declared a record or none, and the program did not build.)
+struct P [x, y]
+a = P[1, [10, 20]]
+c = a
+c.y[0] = 99
+log[c.y]
+lens = for c in range[3]
+    c * 2
+log[lens]
+for c in range[2]
+    log[c + 1]
+log[c.x]

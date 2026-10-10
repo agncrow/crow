@@ -1406,6 +1406,9 @@ impl Emitter {
         // a stop carried back from another thread (a parallel loop's) is the
         // program's stop, printed once; any other panic names itself in
         // Crow's words (crow_runtime::stops)
+        self.line("#[global_allocator]");
+        self.line("static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;");
+        self.line("");
         self.line("fn main() {");
         self.line("    crow_runtime::stops::install_hook();");
         if let (true, Some(mode)) = (self.needs_crow_db, self.schema_mode) {

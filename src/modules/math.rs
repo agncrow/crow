@@ -81,7 +81,7 @@ mod tests {
         let cv = r.expect("call_math failed");
         assert!(cv.is_ok(), "CrowValue is error: {}", cv.reason());
         match cv.value {
-            Value::Array(a) => a,
+            Value::Array(a) => std::sync::Arc::unwrap_or_clone(a),
             other => panic!("expected Array, got {:?}", other),
         }
     }
@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn test_tensor_from_array() {
-        let arr = CrowValue::ok(Value::Array(vec![int(1), int(2), int(3)]));
+        let arr = CrowValue::ok(Value::Array(std::sync::Arc::new(vec![int(1), int(2), int(3)])));
         let t = unwrap_tensor(call_math("tensor", &[arr]));
         assert_tensor_eq(&t, &[1.0, 2.0, 3.0]);
     }

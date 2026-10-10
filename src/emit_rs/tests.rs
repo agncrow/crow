@@ -99,7 +99,7 @@ fn a_loop_over_a_range_is_counted() {
 fn a_collection_keeps_a_clone_of_a_variable() {
     let rust = transpile("out = []\nfor w in ['a', 'b']\n    out = push[out, w]\n    log[w]\nm = map[]\nfor k in ['p', 'q']\n    m = set[m, k, 1]\nlog[out]\nlog[m]\n");
     assert!(rust.contains("crow_runtime::core::push((out), ((w).clone()))"), "{}", rust);
-    assert!(rust.contains("crow_runtime::core::set((m), &(k), (1_i64))"), "{}", rust);
+    assert!(rust.contains("crow_runtime::core::set((m), &({k}), (1_i64))"), "{}", rust);
 }
 
 /// A value that can fail, held by a name, is borrowed to be checked and
@@ -820,7 +820,8 @@ fn test_range_transpile() {
 fn test_len_transpile() {
     let rust = transpile("x = [1, 2, 3]\ny = len[x]\n");
     // a numeric literal is a tensor: its row, the one the interpreter calls
-    assert!(rust.contains("crow_runtime::core::len_tensor(&(x))"), "should call the tensor's len\n{}", rust);
+    // (its last read: moved into a temporary the statement frees)
+    assert!(rust.contains("crow_runtime::core::len_tensor(&({x}))"), "should call the tensor's len\n{}", rust);
 }
 
 #[test]
@@ -987,7 +988,7 @@ fn test_numarray_type_builtin_transpile() {
 fn test_numarray_len_field_transpile() {
     // `a.len` is `len[a]`: the one row, a matrix's rows
     let rust = transpile("a = [1, 2, 3]\nn = a.len\n");
-    assert!(rust.contains("crow_runtime::core::len_tensor(&(a))"), "a tensor's .len is len[]'s row\n{}", rust);
+    assert!(rust.contains("crow_runtime::core::len_tensor(&({a}))"), "a tensor's .len is len[]'s row\n{}", rust);
 }
 
 #[test]
@@ -999,7 +1000,7 @@ fn test_numarray_sort_transpile() {
 #[test]
 fn test_numarray_contains_transpile() {
     let rust = transpile("a = [1, 2, 3]\nb = 2 in a\n");
-    assert!(rust.contains("crow_runtime::core::contains_number(&(a), (2_i64) as f64)"), "a tensor's contains is its row\n{}", rust);
+    assert!(rust.contains("crow_runtime::core::contains_number(&({a}), (2_i64) as f64)"), "a tensor's contains is its row\n{}", rust);
 }
 
 #[test]

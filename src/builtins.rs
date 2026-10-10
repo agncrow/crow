@@ -61,7 +61,7 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
                     Value::Sparse(_) => "sparse".to_string(),
                     Value::Map(_) => "map".to_string(),
                     Value::Fn(_) => "fn".to_string(),
-                    Value::StructInstance(si) => si.shown.clone(),
+                    Value::StructInstance(si) => si.shown().to_string(),
                     Value::Dual(_, _) => "float".to_string(),
                     Value::Traced(t) => if t.value.ndim() == 0 { "float" } else { "array" }.to_string(),
                     Value::GradFn(_) => "fn".to_string(),
@@ -262,7 +262,7 @@ pub fn json_to_crow(trace: &str, jval: &serde_json::Value) -> CrowValue {
                 CrowValue::ok(Value::NumArray(Box::new(CrowTensor::from_vec(data, vec![len]))))
             } else {
                 let items: Vec<CrowValue> = arr.iter().map(|v| json_to_crow("", v)).collect();
-                CrowValue::ok(Value::Array(items))
+                CrowValue::ok(Value::Array(std::sync::Arc::new(items)))
             }
         }
         serde_json::Value::Object(obj) => {
@@ -290,7 +290,7 @@ pub fn crow_to_encoded(val: &CrowValue) -> serde_json::Value {
         Value::Map(m) => serde_json::Value::Object(m.iter().map(|(k, v)| (k.clone(), crow_to_encoded(v))).collect()),
         // (a map keyed by ints encodes its keys as text: JSON's objects have no other kind)
         Value::IntMap(m) => serde_json::Value::Object(m.iter().map(|(k, v)| (k.to_string(), crow_to_encoded(v))).collect()),
-        Value::StructInstance(si) => serde_json::Value::Object(si.fields.iter().map(|(k, v)| (k.clone(), crow_to_encoded(v))).collect()),
+        Value::StructInstance(si) => serde_json::Value::Object(si.fields().map(|(k, v)| (k.clone(), crow_to_encoded(v))).collect()),
         _ => crow_to_json("", val).unwrap_or(serde_json::Value::Null),
     }
 }
@@ -324,7 +324,7 @@ pub fn crow_to_json(trace: &str, val: &CrowValue) -> Result<serde_json::Value, S
         // (it had been refused here, and did not build compiled)
         Value::StructInstance(si) => {
             let mut obj = serde_json::Map::new();
-            for (k, v) in &si.fields {
+            for (k, v) in si.fields() {
                 obj.insert(k.clone(), crow_to_json(trace, v)?);
             }
             Ok(serde_json::Value::Object(obj))
@@ -346,7 +346,7 @@ pub fn map_value_kind(v: &Value) -> (String, String) {
         Value::Bool(_) => ("bool".to_string(), "bool".to_string()),
         Value::Array(_) | Value::NumArray(_) => ("array".to_string(), "array".to_string()),
         Value::Map(_) => ("map".to_string(), "map".to_string()),
-        Value::StructInstance(si) => (format!("struct {}", si.shown), format!("struct {}", si.shown)),
+        Value::StructInstance(si) => (format!("struct {}", si.shown()), format!("struct {}", si.shown())),
         Value::Fn(_) | Value::GradFn(_) => ("fn".to_string(), "fn".to_string()),
         other => (other.type_name().to_string(), other.type_name().to_string()),
     }

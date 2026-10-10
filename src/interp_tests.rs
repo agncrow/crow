@@ -245,7 +245,7 @@ mod tests {
     fn test_struct_creation() {
         let val = get_var("struct Bird [name, speed]\nb = Bird['crow', 50]\n", "b");
         if let Value::StructInstance(si) = &val.value {
-            assert_eq!(si.name, "Bird");
+            assert_eq!(si.name(), "Bird");
         } else {
             panic!("expected struct");
         }

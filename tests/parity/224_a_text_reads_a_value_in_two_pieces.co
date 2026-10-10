@@ -1,0 +1,23 @@
+--- A text whose pieces read one value twice, the last piece handing it to a
+--- function, writes every piece in both modes. (Compiled, the last read had
+--- moved the value into the call while an earlier piece still held it, and
+--- the program did not build.)
+struct Day [month, day, early]
+
+fn label[d]
+    if d.early
+        return 'early'
+    return 'full'
+
+fn next_of[d]
+    if d.day gt 30
+        return error['no next day']
+    return Day[d.month, d.day + 1, d.day eq 23]
+
+t = Day[11, 23, false]
+log['`t.month`/`t.day` is `label[t]`']
+n = next_of[t]
+log['next: `n.month`/`n.day`, `label[n]`']
+words = ['a', 'b']
+sep = '-'
+log['`len[words]` words, the first `words[0]`, all `join[words, sep]`']

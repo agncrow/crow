@@ -273,6 +273,19 @@ enum Ins {
     /// `xs[i]` of a local, read where it lies; the walker decides any other
     /// case (a failed local, a kind the in-place read does not take).
     Index { d: R, base: R, idx: Opnd, how: Box<IndexHow> },
+    /// `local.field` of a record: the field's value read where the record
+    /// lies (a record's value is shared: the copy is a count); anything
+    /// else — a map's key, a frame's column, a session's state, a failed
+    /// local — the walker reads, as it always has (`how`: the expression
+    /// and the locals it names). A record's field had been a walker
+    /// fallback, the record copied whole to read it.
+    Field { d: R, base: R, name: Box<str>, how: Box<(Expr, Env)> },
+    /// `Tree[l, r, false]`: a record of its fields' values, computed into
+    /// registers in their declaration's order, each put where the layout
+    /// every value of the record shares holds it (resolved at the first
+    /// run). The literal had been a walker fallback, the calls among its
+    /// fields with it.
+    Record { d: R, name: Box<str>, fields: Box<[(R, bool)]>, shape: Box<std::sync::OnceLock<super::Shape>> },
     /// `xs = push[move xs, v]` and the other builtins that make their
     /// answer of the collection they take (`ast::IN_PLACE_BUILTINS`): the
     /// local taken into the row and its answer put back — the walker's
@@ -1158,6 +1171,24 @@ impl Comp {
                 let s = self.reg(p);
                 self.emit(if neg { Ins::Neg { d, s } } else { Ins::Not { d, s } });
             }
+            Expr::RecordLit { name, fields } => {
+                let mut regs = Vec::with_capacity(fields.len());
+                for (i, f) in fields.iter().enumerate() {
+                    let p = self.expr(f);
+                    let p = self.kept_place(p, &fields[i + 1..]);
+                    regs.push(self.owned(p));
+                }
+                self.emit(Ins::Record { d, name: name.as_str().into(), fields: regs.into_boxed_slice(), shape: Box::default() });
+            }
+            Expr::Field { base, name, .. }
+                if !matches!(name.as_str(), "ok" | "reason" | "kind" | "trace" | "len")
+                    && matches!(unwrapped(base), Expr::Local(..) | Expr::Move(..)) =>
+            {
+                let (Expr::Local(v, _) | Expr::Move(v, _)) = unwrapped(base) else { return self.eval(e, d) };
+                let Some(b) = self.resolve(v) else { return self.eval(e, d) };
+                let env = self.env();
+                self.emit(Ins::Field { d, base: b, name: name.as_str().into(), how: Box::new((e.clone(), env)) });
+            }
             Expr::Index { base, indices, ty } => {
                 if let [index] = indices.as_slice()
                     && let Expr::Local(v, _) = unwrapped(base)
@@ -1524,7 +1555,7 @@ impl IrInterp {
         }
         if let (Value::Array(items), Some(n)) = (&mut root.value, at) {
             let k = crow_runtime::stops::item(n, items.len())?;
-            items[k].assign(new);
+            std::sync::Arc::make_mut(items)[k].assign(new);
             return Ok(());
         }
         let at = match idx {
@@ -1773,7 +1804,7 @@ impl IrInterp {
                     let first = std::mem::replace(&mut list[0], CrowValue::done());
                     regs[*ctr as usize] = CrowValue::ok(Value::Int(0));
                     regs[*hi as usize] = CrowValue::ok(Value::Int(n as i64));
-                    regs[*items as usize] = CrowValue::ok(Value::Array(list));
+                    regs[*items as usize] = CrowValue::ok(Value::Array(std::sync::Arc::new(list)));
                     regs[*var as usize].assign(first);
                 }
                 Ins::ForNext { var, ctr, hi, items, body } => {
@@ -1783,12 +1814,46 @@ impl IrInterp {
                         t!(self.check_cancel());
                         regs[*ctr as usize].set_int(c);
                         let v = match &mut regs[*items as usize].value {
-                            Value::Array(list) => std::mem::replace(&mut list[c as usize], CrowValue::done()),
+                            Value::Array(list) => std::mem::replace(&mut std::sync::Arc::make_mut(list)[c as usize], CrowValue::done()),
                             _ => CrowValue::ok(Value::Int(c)),
                         };
                         regs[*var as usize].assign(v);
                         return *body as usize;
                     }
+                }
+                Ins::Record { d, name, fields, shape } => {
+                    let shape: super::Shape = match shape.get() {
+                        Some(s) => s,
+                        None => match self.layouts.get(&**name).copied() {
+                            Some(s) => {
+                                let _ = shape.set(s);
+                                s
+                            }
+                            None => t!(Err::<super::Shape, String>(format!("unknown struct '{}'", name))),
+                        },
+                    };
+                    if shape.1.len() != fields.len() {
+                        t!(Err::<(), String>(format!("{}[] expects {} fields, got {}", name, shape.1.len(), fields.len())))
+                    }
+                    let mut vals = vec![CrowValue::done(); fields.len()];
+                    for (i, (r, take)) in fields.iter().enumerate() {
+                        vals[shape.1[i]] = if *take { std::mem::replace(&mut regs[*r as usize], CrowValue::done()) } else { copied(&regs[*r as usize]) };
+                    }
+                    regs[*d as usize].assign(CrowValue::ok(Value::StructInstance(Arc::new(crate::value::StructInstance::with_layout(shape.0, vals)))));
+                }
+                Ins::Field { d, base, name, how } => {
+                    let b = &regs[*base as usize];
+                    if b.is_ok()
+                        && let Value::StructInstance(si) = &b.value
+                        && let Some(v) = si.get(name)
+                    {
+                        let v = copied(v);
+                        regs[*d as usize].assign(v);
+                        return pc + 1;
+                    }
+                    self.line_of(p, pc);
+                    let v = t!(self.lend(regs, &how.1, |it| it.eval(&how.0)));
+                    regs[*d as usize].assign(v);
                 }
                 Ins::Index { d, base, idx, how } => {
                     let at = int_at(regs, *idx);
@@ -1851,7 +1916,7 @@ impl IrInterp {
                         && list.is_ok()
                         && let Value::Array(items) = &mut list.value
                     {
-                        items.push(item);
+                        std::sync::Arc::make_mut(items).push(item);
                         return pc + 1;
                     }
                     // a failed item or list: the general call decides, as the
@@ -1934,7 +1999,7 @@ impl IrInterp {
                 }
                 // a builtin's row given a large value a later instruction
                 // reads: lent where it lies, not copied (`rows_lent`)
-                Ins::Call { d, target, args, propagates, known } if matches!(&**target, Target::Row(row) if !row.is_crow()) && lends(regs, args) => {
+                Ins::Call { d, target, args, propagates, known } if matches!(&**target, Target::Row(row) if !row.is_crow() && lends(regs, args, row)) => {
                     let Target::Row(row) = &**target else { return pc + 1 };
                     self.line_of(p, pc);
                     if *propagates && let Some((r, _)) = args.iter().find(|(r, _)| regs[*r as usize].is_error()) {
@@ -2337,16 +2402,20 @@ impl CallArgs for FromRegs<'_> {
 /// tensor, a frame), and none it takes holds one its row could make its
 /// answer of (`push[xs, v]` with `xs` dead grows `xs` where it lies), and
 /// none is a dual number or a traced tensor (their rows are the kernels').
-fn lends(regs: &[CrowValue], args: &[(R, bool)]) -> bool {
+fn lends(regs: &[CrowValue], args: &[(R, bool)], row: &crate::table::Row) -> bool {
     let large = |v: &CrowValue| !matches!(v.value, Value::Int(_) | Value::Float(_) | Value::Bool(_) | Value::Moment(_) | Value::Done);
     let mut kept_large = false;
-    for (r, take) in args {
+    for (i, (r, take)) in args.iter().enumerate() {
         let v = &regs[*r as usize];
         if matches!(v.value, Value::Dual(..) | Value::Traced(_)) {
             return false;
         }
         if large(v) {
-            if *take {
+            // a large value read for the last time goes to the row's take
+            // path only where the row makes its answer of it; elsewhere it
+            // is lent like the rest and dropped after (a call taking one
+            // had copied every other large argument it was handed)
+            if *take && crate::table::keeps_storage(row, i, args.len()) {
                 return false;
             }
             kept_large = true;
@@ -2365,7 +2434,7 @@ fn box_reg(kinds: &[RKind], regs: &mut [CrowValue], bare: &Bare, r: R) {
     match kinds[i] {
         RKind::Int => regs[i].set_int(bare.ints[i]),
         RKind::Float => regs[i].set_float(bare.floats[i]),
-        RKind::IntList => regs[i] = CrowValue::ok(Value::Array(bare.lists[i].iter().map(|n| CrowValue::ok(Value::Int(*n))).collect())),
+        RKind::IntList => regs[i] = CrowValue::ok(Value::Array(std::sync::Arc::new(bare.lists[i].iter().map(|n| CrowValue::ok(Value::Int(*n))).collect()))),
         RKind::Boxed => {}
     }
 }
@@ -2394,7 +2463,7 @@ fn unbox_reg(kinds: &[RKind], regs: &[CrowValue], bare: &mut Bare, r: R) -> bool
         RKind::IntList => match &regs[i].value {
             Value::Array(items) if regs[i].is_ok() => {
                 let mut ns = Vec::with_capacity(items.len());
-                for it in items {
+                for it in items.iter() {
                     match it.plain_int() {
                         Some(n) => ns.push(n),
                         None => return false,
@@ -2435,6 +2504,8 @@ fn reads_writes(ins: &Ins) -> (Vec<R>, Vec<R>) {
             r.push(*base);
             (r, vec![*d])
         }
+        Ins::Field { d, base, .. } => (vec![*base], vec![*d]),
+        Ins::Record { d, fields, .. } => (fields.iter().map(|(r, _)| *r).collect(), vec![*d]),
         Ins::CopyItem { dst, di, src, si, .. } => {
             let mut r = rs(&[*di, *si]);
             r.push(*dst);
@@ -2785,6 +2856,25 @@ fn typed(p: &Body) -> Option<Typed> {
                     wrap(&[], &[*var])
                 }
             }
+            Ins::Record { d, fields, .. } => {
+                let reads: Vec<R> = fields.iter().map(|(r, _)| *r).collect();
+                wrap(&reads, &[*d])
+            }
+            Ins::Field { d, base, how, .. } => {
+                let mut reads = vec![*base];
+                crate::ir::visit_expr(&how.0, &mut |e| {
+                    if let Expr::Local(n, _) | Expr::Move(n, _) = e
+                        && let Some(r) = how.1.get(n.as_str())
+                    {
+                        reads.push(*r);
+                    }
+                });
+                if reads.iter().any(|r| lk(*r)) {
+                    lend(ins)
+                } else {
+                    wrap(&reads, &[*d])
+                }
+            }
             Ins::Index { d, base, idx, how } => match top(*idx) {
                 Some(i) if lk(*base) => TIns::LIndex { d: *d, base: *base, idx: i },
                 Some(i) if ik(*d) && !how.column => TIns::IIndex { d: *d, base: *base, idx: i },
@@ -3062,7 +3152,7 @@ impl IrInterp {
                     let ok = root.is_ok();
                     match &mut root.value {
                         Value::Array(items) if ok => match crow_runtime::stops::item(i, items.len()) {
-                            Ok(k) => items[k].set_int(n),
+                            Ok(k) => std::sync::Arc::make_mut(items)[k].set_int(n),
                             Err(e) => stop!(e),
                         },
                         // a tensor's number, set where it lies (as `set_path`)
@@ -3081,7 +3171,7 @@ impl IrInterp {
                     let ok = root.is_ok();
                     match &mut root.value {
                         Value::Array(items) if ok => match crow_runtime::stops::item(i, items.len()) {
-                            Ok(k) => items[k].set_float(x),
+                            Ok(k) => std::sync::Arc::make_mut(items)[k].set_float(x),
                             Err(e) => stop!(e),
                         },
                         // a tensor's number, set where it lies (as `set_path`)
@@ -3109,7 +3199,7 @@ impl IrInterp {
                     let ok = root.is_ok();
                     match &mut root.value {
                         Value::Array(items) if ok => match crow_runtime::stops::item(di, items.len()) {
-                            Ok(k) => items[k].assign(new),
+                            Ok(k) => std::sync::Arc::make_mut(items)[k].assign(new),
                             Err(e) => stop!(e),
                         },
                         _ => hand_over!(),

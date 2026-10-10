@@ -210,7 +210,7 @@ fn crow_value_to_json_params(v: &CrowValue) -> Result<Vec<serde_json::Value>, St
     match &v.value {
         Value::Array(items) => {
             let mut params = Vec::with_capacity(items.len());
-            for item in items {
+            for item in items.iter() {
                 let json = match &item.value {
                     Value::Int(n) => serde_json::json!(*n),
                     Value::Float(f) => serde_json::json!(*f),

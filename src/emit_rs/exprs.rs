@@ -1788,6 +1788,9 @@ impl Emitter {
                 } else if let Expr::Local(v, _) | Expr::Move(v, _) = a {
                     if self.ref_params.contains(v) {
                         arg_strs.push(v.clone());
+                    } else if self.moved_local(a) {
+                        // (read for the last time: freed as the statement ends)
+                        arg_strs.push(format!("&{{{}}}", v));
                     } else {
                         arg_strs.push(format!("&{}", v));
                     }
@@ -1899,11 +1902,13 @@ impl Emitter {
                 self.pinned_module = saved_pin;
                 // a value a name holds is borrowed to be checked and read; any
                 // other (a call's answer) is bound as it is
+                // (one read for the last time is moved in, and freed with the
+                // block: a file's lines had lived to the end of the program)
                 let held: Vec<bool> = result_idx
                     .iter()
                     .map(|&i| match &through[i] {
-                        Some(_) => self.unwrapped_through(&raw_args[i]).is_none_or(|(_, inner)| !Emitter::fresh_value(inner)),
-                        None => !Emitter::fresh_value(&raw_args[i]),
+                        Some(_) => self.unwrapped_through(&raw_args[i]).is_none_or(|(_, inner)| !Emitter::fresh_value(inner) && !self.moved_local(inner)),
+                        None => !Emitter::fresh_value(&raw_args[i]) && !self.moved_local(&raw_args[i]),
                     })
                     .collect();
                 return self.propagation_block(&result_idx, &orig, &held, &inner_expr, &inner_type, already, stop_as);
@@ -2248,6 +2253,17 @@ impl Emitter {
             self.needs_serde_json = true;
         }
         let mut strs = arg_strs.to_vec();
+        // a local read for the last time, handed where the row only reads
+        // it, goes into a temporary the statement frees (`&({rows})[..]`):
+        // a list of a file's lines had lived on to the end of the program
+        // after its last slice
+        if let Some(kinds) = crate::table::kinds_of(row.params, strs.len()) {
+            for (i, (k, a)) in kinds.iter().zip(args).enumerate() {
+                if k.borrows() && self.moved_local(a) {
+                    strs[i] = format!("{{{}}}", strs[i]);
+                }
+            }
+        }
         if let Some(kinds) = crate::table::kinds_of(row.params, strs.len()) {
             let items = kinds.iter().zip(args).find_map(|(k, a)| match (k, Self::inner(&self.tt(a))) {
                 (Kind::List | Kind::Seq, Ty::List(it)) | (Kind::MapOf | Kind::MapRef, Ty::Map(_, it)) => Some(*it),

@@ -1,0 +1,55 @@
+--- A record and a list are values in both modes: a copy shares what it
+--- copied until one of them is written, then the written one is its own.
+--- (The interpreter holds both behind a count now: a copy had copied every
+--- item and field, a tree's every node for each field read.)
+
+struct P [x, y]
+struct Node [left, right, leaf]
+
+a = P[1, [10, 20]]
+b = a
+b.x = 5
+log['`a.x` `b.x`']
+c = a
+c.y[0] = 99
+log[a.y]
+log[c.y]
+
+xs = [1, 2, 3]
+ys = xs
+ys = push[ys, 4]
+ys[0] = 100
+log[xs]
+log[ys]
+
+--- a list held at the top level, read by a parallel loop's chunks
+words = for i in range[3000]
+    'w`i`'
+lens = for k in range[30]
+    len[slice[words, k * 100, k * 100 + 100]]
+log[len[lens]]
+log[lens[29]]
+
+--- a tree built and walked in functions: its fields read where they lie
+fn make[d]
+    if d eq 0
+        return Node[0, 0, true]
+    return Node[make[d - 1], make[d - 1], false]
+fn count[t]
+    if t.leaf
+        return 1
+    return 1 + count[t.left] + count[t.right]
+fn relabel[t]
+    t.leaf = true
+    return t
+tree = make[6]
+log[count[tree]]
+cut = relabel[tree]
+log[count[cut]]
+log[count[tree]]
+
+--- a list of records, one changed, the others shared
+ps = [P[1, [1]], P[2, [2]]]
+qs = ps
+qs[1].x = 7
+log['`ps[1].x` `qs[1].x`']

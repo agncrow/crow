@@ -89,6 +89,14 @@ fn load_dotenv() {
     }
 }
 
+/// The interpreter's allocator (spec §13, what stays native): the system
+/// allocator on macOS reads the clock in its free path and frees across
+/// threads slowly, and an interpreted program allocates for nearly every
+/// value; mimalloc halved the CPU of revcomp and k-nucleotide run on every
+/// core.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() {
     // the interpreter's frames to the recursion limit need a deeper stack
     // than the main thread's (crow_runtime::stops::STACK); the thread is
@@ -1906,7 +1914,10 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     // Write Cargo.toml; a test build is a binary of its own beside the
     // program's, sharing the dependencies already built
     let project_name = if test_control { format!("{}_test", package_name(entry)) } else { package_name(entry) };
-    let mut dep_list: Vec<String> = Vec::new();
+    // every program allocates with mimalloc, as the interpreter does (spec
+    // §13, what stays native): the system allocator had cost compiled
+    // binarytrees nine times the CPU
+    let mut dep_list: Vec<String> = vec!["mimalloc = { version = \"0.1\", default-features = false }".to_string()];
     if emitted.needs_rayon {
         dep_list.push("rayon = \"1.11\"".to_string());
     }

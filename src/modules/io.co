@@ -7,17 +7,22 @@
 use sys
 
 --- the lines of a text, as a file's are read: split at each line break,
---- a `\r` before it dropped, and no empty line after the last break. Two
---- passes over the whole text, no loop over its lines: a line at a time,
---- each copied, checked and pushed, had cost the interpreter twice the read
+--- a `\r` before it dropped, and no empty line after the last break. A
+--- pass or two over the whole text, no loop over its lines (a line at a
+--- time, each copied, checked and pushed, had cost the interpreter twice
+--- the read), and the text copied without its `\r`s only where it has one
 fn lines_of[whole]
-    pieces = split[replace[whole, '\r\n', '\n'], '\n']
+    if '\r' in whole
+        return lines_split[split[replace[whole, '\r\n', '\n'], '\n']]
+    return lines_split[split[whole, '\n']]
+
+--- the pieces between line breaks as lines: the empty piece after the last
+--- break is no line, and a last line with no break after it drops a `\r`
+fn lines_split[pieces]
     n = len[pieces]
     last = pieces[n - 1]
-    --- (the empty piece after the last break is no line)
     if len[last] eq 0
         return slice[pieces, 0, n - 1]
-    --- (a last line with no break after it drops its `\r` too)
     if ends[last, '\r']
         pieces[n - 1] = slice[last, 0, len[last] - 1]
     return pieces

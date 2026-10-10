@@ -117,6 +117,9 @@ pub struct IrInterp {
     reg_pool: prepared::Pool,
     derives: HashMap<String, Arc<Derive>>,
     structs: HashMap<String, Arc<crate::ir::StructDef>>,
+    /// Each record declaration's layout, shared by its values, and where
+    /// each field in declaration order lies in it (`value::Layout`).
+    layouts: HashMap<String, Shape>,
     registry: ModuleRegistry,
     frames: Vec<Frame>,
     /// Scopes blocks left behind, for the next block (see `push_scope`).
@@ -481,6 +484,7 @@ impl IrInterp {
             reg_pool: prepared::Pool::default(),
             derives: HashMap::new(),
             structs: HashMap::new(),
+            layouts: HashMap::new(),
             registry: registry.clone(),
             frames: vec![Frame { scopes: vec![Arc::new(HashMap::default())], locals: Vec::new(), marks: Vec::new(), fn_name: Arc::from(""), slots: Vec::new(), env: None, texts: Vec::new() }],
             scope_pool: Vec::new(),
@@ -585,6 +589,7 @@ impl IrInterp {
             }
             for s in &part.structs {
                 self.structs.insert(s.name.clone(), Arc::new(s.clone()));
+                self.layouts.insert(s.name.clone(), layout_of(s));
             }
         }
         let fns: Vec<&Fn> = self.fns.values().map(|f| f.as_ref()).collect();
@@ -599,6 +604,7 @@ impl IrInterp {
         let mut it = IrInterp::new(&t.registry, &t.file);
         it.fns = t.fns.clone();
         it.structs = t.structs.clone();
+        it.layouts = t.structs.iter().map(|(n, s)| (n.clone(), layout_of(s))).collect();
         it
     }
 
@@ -671,15 +677,15 @@ impl IrInterp {
         let root = crate::harness::harness_to_lnode(&tree);
         let boxes = self.call_user("crow_layout", vec![root, CrowValue::ok(Value::Float(viewport)), CrowValue::ok(Value::Bool(wide))])?;
         let list = match &boxes.value {
-            Value::Array(items) => items.clone(),
+            Value::Array(items) => items.as_ref().clone(),
             _ => Vec::new(),
         };
         let mut out = Vec::new();
         for b in list {
             if let Value::StructInstance(si) = &b.value {
-                let s = |k: &str| si.fields.get(k).map(|v| format!("{}", v.value)).unwrap_or_default();
+                let s = |k: &str| si.get(k).map(|v| format!("{}", v.value)).unwrap_or_default();
                 let f = |k: &str| {
-                    si.fields.get(k).and_then(|v| match &v.value {
+                    si.get(k).and_then(|v| match &v.value {
                         Value::Float(x) => Some(*x),
                         Value::Int(n) => Some(*n as f64),
                         _ => None,
@@ -693,7 +699,7 @@ impl IrInterp {
                     y: f("y"),
                     width: f("width"),
                     height: f("height"),
-                    overflow: matches!(si.fields.get("overflow").map(|v| &v.value), Some(Value::Bool(true))),
+                    overflow: matches!(si.get("overflow").map(|v| &v.value), Some(Value::Bool(true))),
                 });
             }
         }
@@ -968,7 +974,7 @@ impl IrInterp {
                     }
                     if let (Value::Array(items), Value::Int(n)) = (&mut root.value, &at.value) {
                         let k = crow_runtime::stops::item(*n, items.len())?;
-                        items[k] = new;
+                        std::sync::Arc::make_mut(items)[k] = new;
                         return Ok(Flow::Next);
                     }
                     set_path(&mut root.value, path, &[at], new)?;
@@ -1149,7 +1155,7 @@ impl IrInterp {
             Expr::Deferred { name, args } => {
                 let mut items = vec![self.eval(&Expr::FnRef(name.clone(), Ty::Unknown))?];
                 items.extend(self.eval_args(args)?);
-                CrowValue::ok(Value::Array(items))
+                CrowValue::ok(Value::Array(std::sync::Arc::new(items)))
             }
             Expr::Tree { element, attrs, children } => {
                 let mut map = std::collections::BTreeMap::new();
@@ -1248,7 +1254,7 @@ impl IrInterp {
                 let o = self.place(owner).ok_or_else(|| format!("no field '{}'", field))?;
                 let item = match &o.value {
                     Value::Frame(f) => return Ok(CrowValue::ok(Value::Int(f.nrows() as i64))),
-                    Value::StructInstance(si) => &si.fields[field.as_str()],
+                    Value::StructInstance(si) => si.get(field.as_str()).ok_or_else(|| format!("struct '{}' has no field '{}'", si.shown(), field))?,
                     Value::Map(m) => &m[field.as_str()],
                     _ => unreachable!(),
                 };
@@ -1293,7 +1299,7 @@ impl IrInterp {
                             items.iter().map(|i| match &i.value {
                                 Value::Int(n) if i.is_ok() => CrowValue::ok(Value::Float(*n as f64)),
                                 _ => i.clone(),
-                            }).collect(),
+                            }).collect::<Vec<_>>().into(),
                         )),
                         Value::Map(m) if v.is_ok() => CrowValue::ok(Value::Map(
                             m.iter().map(|(k, i)| (k.clone(), match &i.value {
@@ -1309,7 +1315,7 @@ impl IrInterp {
                         Value::NumArray(t) if v.is_ok() => {
                             let ints = matches!(ty, Ty::List(e) if **e == Ty::Int);
                             CrowValue::ok(Value::Array(
-                                t.to_vec().into_iter().map(|x| CrowValue::ok(if ints { Value::Int(x as i64) } else { Value::Float(x) })).collect(),
+                                t.to_vec().into_iter().map(|x| CrowValue::ok(if ints { Value::Int(x as i64) } else { Value::Float(x) })).collect::<Vec<_>>().into(),
                             ))
                         }
                         _ => v,
@@ -1459,7 +1465,7 @@ impl IrInterp {
                                 let col = f.col_index(name).ok_or_else(|| crow_runtime::stops::no_column(name))?;
                                 crate::ops::frame_cell(f, col, crate::ops::list_position(&at, f.nrows())?)
                             }
-                            Value::StructInstance(si) => Self::index_value(&si.fields[name], vec![at], ty)?,
+                            Value::StructInstance(si) => Self::index_value(si.get(name).ok_or_else(|| format!("struct '{}' has no field '{}'", si.shown(), name))?, vec![at], ty)?,
                             Value::Map(m) => Self::index_value(&m[name], vec![at], ty)?,
                             _ => unreachable!(),
                         };
@@ -1538,7 +1544,7 @@ impl IrInterp {
                 if *which != Meta::Valid && crate::lower_ir::meta_decided(&base.ty()) {
                     return Ok(match which {
                         Meta::Ok => CrowValue::ok(Value::Bool(true)),
-                        Meta::Trace => CrowValue::ok(Value::Array(Vec::new())),
+                        Meta::Trace => CrowValue::ok(Value::Array(std::sync::Arc::new(Vec::new()))),
                         _ => CrowValue::ok(Value::Str(String::new())),
                     });
                 }
@@ -1579,7 +1585,7 @@ impl IrInterp {
                 // as a list literal had been a tensor however the IR typed
                 // them, whose own rows the values then picked)
                 match ty.payload() {
-                    Ty::List(_) => CrowValue::ok(Value::Array(vals)),
+                    Ty::List(_) => CrowValue::ok(Value::Array(std::sync::Arc::new(vals))),
                     _ => crate::ops::array_literal(vals)?,
                 }
             }
@@ -1603,11 +1609,14 @@ impl IrInterp {
                 if def.fields.len() != fields.len() {
                     return Err(format!("{}[] expects {} fields, got {}", name, def.fields.len(), fields.len()));
                 }
-                let mut vals = std::collections::BTreeMap::new();
-                for ((fname, _), e) in def.fields.iter().zip(fields) {
-                    vals.insert(fname.clone(), self.eval(e)?);
+                // the fields evaluated in their declaration's order, each into
+                // its place in the layout every value of the record shares
+                let shape: Shape = self.layouts.get(name).copied().ok_or_else(|| format!("unknown struct '{}'", name))?;
+                let mut vals = vec![CrowValue::done(); fields.len()];
+                for (i, e) in fields.iter().enumerate() {
+                    vals[shape.1[i]] = self.eval(e)?;
                 }
-                CrowValue::ok(Value::StructInstance(Box::new(StructInstance { name: name.clone(), shown: def.shown.clone(), fields: vals })))
+                CrowValue::ok(Value::StructInstance(Arc::new(StructInstance::with_layout(shape.0, vals))))
             }
             Expr::ForExpr { var, iter, body, parallel, ty } => {
                 let as_tensor = matches!(ty.payload(), Ty::Tensor(..));
@@ -1816,7 +1825,7 @@ impl IrInterp {
                     return None;
                 }
                 match &self.place(base)?.value {
-                    Value::StructInstance(si) => si.fields.get(name.as_str()).filter(|b| b.is_ok()),
+                    Value::StructInstance(si) => si.get(name.as_str()).filter(|b| b.is_ok()),
                     Value::Map(m) => m.get(name.as_str()).filter(|b| b.is_ok()),
                     _ => None,
                 }
@@ -1834,7 +1843,7 @@ impl IrInterp {
         let indexable = |v: &CrowValue| v.is_ok() && matches!(v.value, Value::Array(_) | Value::NumArray(_) | Value::Map(_) | Value::Str(_));
         match self.place(owner).map(|o| &o.value) {
             Some(Value::Frame(f)) => !matches!(name, "shape" | "columns" | "dtypes") && f.col_index(name).is_some(),
-            Some(Value::StructInstance(si)) => si.fields.get(name).is_some_and(indexable),
+            Some(Value::StructInstance(si)) => si.get(name).is_some_and(indexable),
             Some(Value::Map(m)) => m.get(name).is_some_and(indexable),
             _ => false,
         }
@@ -2213,7 +2222,7 @@ impl IrInterp {
                     return Ok(match crow_runtime::text::find(s, &pattern) {
                         Ok(Some(groups)) => {
                             let mut map = std::collections::BTreeMap::new();
-                            map.insert("groups".to_string(), CrowValue::ok(Value::Array(groups.into_iter().map(|m| CrowValue::ok(Value::Str(m))).collect())));
+                            map.insert("groups".to_string(), CrowValue::ok(Value::Array(std::sync::Arc::new(groups.into_iter().map(|m| CrowValue::ok(Value::Str(m))).collect()))));
                             CrowValue::ok(Value::Map(map))
                         }
                         Ok(None) => CrowValue::error("no match", &self.trace_entry()),
@@ -2665,7 +2674,7 @@ impl IrInterp {
         if derivatives.len() == 1 {
             Ok(CrowValue::ok(Value::Float(derivatives[0])))
         } else {
-            Ok(CrowValue::ok(Value::Array(derivatives.into_iter().map(|d| CrowValue::ok(Value::Float(d))).collect())))
+            Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(derivatives.into_iter().map(|d| CrowValue::ok(Value::Float(d))).collect()))))
         }
     }
 
@@ -3293,8 +3302,8 @@ impl IrInterp {
                         m.insert("text".to_string(), CrowValue::ok(Value::Str(String::from_utf8_lossy(&bytes).to_string())));
                         CrowValue::ok(Value::Map(m))
                     })
-                    .collect();
-                CrowValue::ok(Value::Array(items))
+                    .collect::<Vec<CrowValue>>();
+                CrowValue::ok(Value::Array(std::sync::Arc::new(items)))
             }
             // mails[a]: the messages the session sent, which a test never sends
             "mails" => {
@@ -3312,8 +3321,8 @@ impl IrInterp {
                         map.insert("body".to_string(), CrowValue::ok(Value::Str(m.body)));
                         CrowValue::ok(Value::Map(map))
                     })
-                    .collect();
-                CrowValue::ok(Value::Array(items))
+                    .collect::<Vec<CrowValue>>();
+                CrowValue::ok(Value::Array(std::sync::Arc::new(items)))
             }
             "html" => {
                 let (f, _, _, id) = vals.first().and_then(app_view).ok_or("html[] takes an app session: html[a]")?;
@@ -3336,7 +3345,7 @@ impl IrInterp {
                 }
                 let mut hits = Vec::new();
                 crate::harness::harness_select(&tree, &steps, 0, &mut hits);
-                CrowValue::ok(Value::Array(hits))
+                CrowValue::ok(Value::Array(std::sync::Arc::new(hits)))
             }
             "change" => {
                 let id = match (vals.len(), &vals.first().map(|v| &v.value)) {
@@ -3439,7 +3448,7 @@ impl IrInterp {
                             out.push(style_tokens(m));
                         }
                     }
-                    return Ok(CrowValue::ok(Value::Array(out)));
+                    return Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(out))));
                 }
                 self.ensure_engine()?;
                 let viewport = if name == "fits" {
@@ -3454,12 +3463,12 @@ impl IrInterp {
                 let root = crate::harness::harness_to_lnode(&tree);
                 let boxes = self.call_user("crow_layout", vec![root, CrowValue::ok(Value::Float(viewport)), CrowValue::ok(Value::Bool(session_wide))])?;
                 let list = match &boxes.value {
-                    Value::Array(items) => items.clone(),
+                    Value::Array(items) => items.as_ref().clone(),
                     _ => Vec::new(),
                 };
                 if name == "fits" {
                     let any_overflow = list.iter().any(|b| match &b.value {
-                        Value::StructInstance(si) => matches!(si.fields.get("overflow").map(|v| &v.value), Some(Value::Bool(true))),
+                        Value::StructInstance(si) => matches!(si.get("overflow").map(|v| &v.value), Some(Value::Bool(true))),
                         _ => false,
                     });
                     return Ok(CrowValue::ok(Value::Bool(!any_overflow)));
@@ -3473,14 +3482,14 @@ impl IrInterp {
                     .into_iter()
                     .filter(|b| {
                         if let Value::StructInstance(si) = &b.value {
-                            let path = si.fields.get("path").map(|v| format!("{}", v.value)).unwrap_or_default();
+                            let path = si.get("path").map(|v| format!("{}", v.value)).unwrap_or_default();
                             crate::harness::harness_path_matches(&path, &steps)
                         } else {
                             false
                         }
                     })
-                    .collect();
-                CrowValue::ok(Value::Array(hits))
+                    .collect::<Vec<CrowValue>>();
+                CrowValue::ok(Value::Array(std::sync::Arc::new(hits)))
             }
             _ => return Err(format!("the IR interpreter does not run '{}' yet", name)),
         })
@@ -3603,7 +3612,12 @@ fn set_path(root: &mut Value, path: &[PathStep], idx: &[CrowValue], new: CrowVal
     fn step<'v>(cur: &'v mut Value, p: &PathStep, idx: &mut std::slice::Iter<'_, CrowValue>) -> Result<&'v mut CrowValue, String> {
         match p {
             PathStep::Field(f) => match cur {
-                Value::StructInstance(si) => si.fields.get_mut(f).ok_or_else(|| format!("struct '{}' has no field '{}'", si.shown, f)),
+                Value::StructInstance(si) => {
+                    // (a record another value shares is copied first: values stay values)
+                    let si = Arc::make_mut(si);
+                    let shown = si.shown().to_string();
+                    si.get_mut(f).ok_or_else(|| format!("struct '{}' has no field '{}'", shown, f))
+                }
                 Value::Map(m) => {
                     crow_runtime::stops::key(m, &f.to_string())?;
                     m.get_mut(f).ok_or_else(|| format!("map has no key '{}'", f))
@@ -3616,7 +3630,7 @@ fn set_path(root: &mut Value, path: &[PathStep], idx: &[CrowValue], new: CrowVal
                     Value::Array(items) => match &i.value {
                         Value::Int(n) => {
                             let at = crow_runtime::stops::item(*n, items.len())?;
-                            Ok(&mut items[at])
+                            Ok(&mut std::sync::Arc::make_mut(items)[at])
                         }
                         _ => Err("array index must be an integer".to_string()),
                     },
@@ -3650,11 +3664,15 @@ fn set_path(root: &mut Value, path: &[PathStep], idx: &[CrowValue], new: CrowVal
     match last {
         PathStep::Field(f) => match cur {
             Value::StructInstance(si) => {
-                if !si.fields.contains_key(f) {
-                    return Err(format!("struct '{}' has no field '{}'", si.shown, f));
+                let si = Arc::make_mut(si);
+                let shown = si.shown().to_string();
+                match si.get_mut(f) {
+                    Some(slot) => {
+                        *slot = new;
+                        Ok(())
+                    }
+                    None => Err(format!("struct '{}' has no field '{}'", shown, f)),
                 }
-                si.fields.insert(f.clone(), new);
-                Ok(())
             }
             Value::Map(m) => {
                 crate::builtins::check_map_homogeneous(m, &new)?;
@@ -3669,7 +3687,7 @@ fn set_path(root: &mut Value, path: &[PathStep], idx: &[CrowValue], new: CrowVal
                 Value::Array(items) => match &i.value {
                     Value::Int(n) => {
                         let at = crow_runtime::stops::item(*n, items.len())?;
-                        items[at] = new;
+                        std::sync::Arc::make_mut(items)[at] = new;
                         Ok(())
                     }
                     _ => Err("array index must be an integer".to_string()),
@@ -3777,6 +3795,28 @@ mod tests {
         let refused = run_script(&parse("cpu[0]\n"), "t");
         assert!(refused.is_err_and(|e| e.contains("cpu[] requires a positive integer")));
     }
+}
+
+/// A record declaration's layout and where each field, in declaration
+/// order, lies in it.
+/// A record declaration's layout and where each field, in declaration order,
+/// lies in it: one per declaration for as long as the process runs, read
+/// with no count to keep (`value::Layout::intern`).
+pub(crate) type Shape = &'static (&'static crate::value::Layout, Vec<usize>);
+
+fn layout_of(s: &crate::ir::StructDef) -> Shape {
+    static SHAPES: std::sync::Mutex<std::collections::BTreeMap<(String, String, Vec<String>), Shape>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+    let declared: Vec<String> = s.fields.iter().map(|(f, _)| f.clone()).collect();
+    let key = (s.name.clone(), s.shown.clone(), declared.clone());
+    let mut shapes = SHAPES.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(found) = shapes.get(&key) {
+        return found;
+    }
+    let layout = crate::value::Layout::intern(s.name.clone(), s.shown.clone(), declared.clone());
+    let slots = declared.iter().map(|f| layout.slot(f).unwrap_or(0)).collect();
+    let shape: Shape = Box::leak(Box::new((layout, slots)));
+    shapes.insert(key, shape);
+    shape
 }
 
 #[cfg(test)]

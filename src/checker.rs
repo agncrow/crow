@@ -1824,27 +1824,27 @@ fn boundary_values(ty: &Ty) -> Option<Vec<CrowValue>> {
         Ty::List(inner) => {
             match inner.as_ref() {
                 Ty::Int => Some(vec![
-                    CrowValue::ok(Value::Array(vec![])),
-                    CrowValue::ok(Value::Array(vec![CrowValue::ok(Value::Int(0))])),
-                    CrowValue::ok(Value::Array(vec![
+                    CrowValue::ok(Value::Array(std::sync::Arc::new(vec![]))),
+                    CrowValue::ok(Value::Array(std::sync::Arc::new(vec![CrowValue::ok(Value::Int(0))]))),
+                    CrowValue::ok(Value::Array(std::sync::Arc::new(vec![
                         CrowValue::ok(Value::Int(1)),
                         CrowValue::ok(Value::Int(2)),
                         CrowValue::ok(Value::Int(3)),
-                    ])),
-                    CrowValue::ok(Value::Array(vec![CrowValue::ok(Value::Int(1))])),
-                    CrowValue::ok(Value::Array(vec![
+                    ]))),
+                    CrowValue::ok(Value::Array(std::sync::Arc::new(vec![CrowValue::ok(Value::Int(1))]))),
+                    CrowValue::ok(Value::Array(std::sync::Arc::new(vec![
                         CrowValue::ok(Value::Int(-1)),
                         CrowValue::ok(Value::Int(0)),
                         CrowValue::ok(Value::Int(1)),
-                    ])),
+                    ]))),
                 ]),
                 Ty::Str => Some(vec![
-                    CrowValue::ok(Value::Array(vec![])),
-                    CrowValue::ok(Value::Array(vec![CrowValue::ok(Value::Str(String::new()))])),
-                    CrowValue::ok(Value::Array(vec![
+                    CrowValue::ok(Value::Array(std::sync::Arc::new(vec![]))),
+                    CrowValue::ok(Value::Array(std::sync::Arc::new(vec![CrowValue::ok(Value::Str(String::new()))]))),
+                    CrowValue::ok(Value::Array(std::sync::Arc::new(vec![
                         CrowValue::ok(Value::Str("a".into())),
                         CrowValue::ok(Value::Str("b".into())),
-                    ])),
+                    ]))),
                 ]),
                 _ => None, // unsupported inner type
             }
@@ -1853,19 +1853,19 @@ fn boundary_values(ty: &Ty) -> Option<Vec<CrowValue>> {
             // Same boundary values as Array but for numeric arrays
             match inner.as_ref() {
                 Ty::Int | Ty::Float => Some(vec![
-                    CrowValue::ok(Value::Array(vec![])),
-                    CrowValue::ok(Value::Array(vec![CrowValue::ok(Value::Int(0))])),
-                    CrowValue::ok(Value::Array(vec![
+                    CrowValue::ok(Value::Array(std::sync::Arc::new(vec![]))),
+                    CrowValue::ok(Value::Array(std::sync::Arc::new(vec![CrowValue::ok(Value::Int(0))]))),
+                    CrowValue::ok(Value::Array(std::sync::Arc::new(vec![
                         CrowValue::ok(Value::Int(1)),
                         CrowValue::ok(Value::Int(2)),
                         CrowValue::ok(Value::Int(3)),
-                    ])),
-                    CrowValue::ok(Value::Array(vec![CrowValue::ok(Value::Int(1))])),
-                    CrowValue::ok(Value::Array(vec![
+                    ]))),
+                    CrowValue::ok(Value::Array(std::sync::Arc::new(vec![CrowValue::ok(Value::Int(1))]))),
+                    CrowValue::ok(Value::Array(std::sync::Arc::new(vec![
                         CrowValue::ok(Value::Int(-1)),
                         CrowValue::ok(Value::Int(0)),
                         CrowValue::ok(Value::Int(1)),
-                    ])),
+                    ]))),
                 ]),
                 _ => None,
             }

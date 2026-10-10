@@ -424,4 +424,23 @@ steps on every push and must be green.
   argument is a moved local, the statement's target or a call's answer) and a
   `texts` take bridge (the interpreter's moved argument): both, or the modes
   copy differently.
+- The interpreter's lists and records are copy-on-write: `Value::Array(Arc<Vec
+  <CrowValue>>)` (write through `Arc::make_mut`, take the items with
+  `Arc::unwrap_or_clone`) and `Value::StructInstance(Arc<StructInstance>)`
+  over an interned `&'static Layout` (`Layout::intern`, the interpreter's
+  `Shape`s). A read of either is a count: the walker's reads had copied a
+  400,000-line list for each chunk of a parallel loop, and a record copied
+  every node below it at each field read (binarytrees: 4.6 GB). A count
+  every thread writes is the spectral-norm trap again: the record's layout
+  had been an `Arc` cloned per record, and sixteen threads ran slower than
+  one — interned, it is read with no count.
+- mimalloc is the allocator of the interpreter and of every generated
+  program (`dep_list`, the `#[global_allocator]` before `fn main`): macOS's
+  allocator reads the clock in `free` (`mach_absolute_time` near the top of
+  a parallel profile is the allocator, not the program).
+- The prepared form compiles a record's field read (`Ins::Field`) and a
+  record literal (`Ins::Record`, its shape resolved at the first run); a
+  row's call lends its large arguments unless the row makes its answer of a
+  moved one (`table::keeps_storage`): a moved list had made every other
+  large argument a copy.
 

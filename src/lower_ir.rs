@@ -1975,7 +1975,12 @@ impl<'a> Lowerer<'a> {
                 self.scopes.push([var.clone()].into_iter().collect());
                 let b = if self.pass != Pass::Final {
                     // inference binds the variable to an item of what the
-                    // loop walks, read as text, and leaves it bound
+                    // loop walks, read as text, and leaves it bound — but a
+                    // name bound before the loop, which the variable hides
+                    // inside it, keeps its own type after (a top-level
+                    // record named like a later loop's variable had been
+                    // declared a record or none, and did not build)
+                    let shadowed = self.ctx.vars.get(var.as_str()).cloned();
                     self.ctx.scan_loop_var(var, walks);
                     let before = self.detailed_in_view();
                     let b = if self.pass == Pass::Scan {
@@ -1985,6 +1990,9 @@ impl<'a> Lowerer<'a> {
                     };
                     let end = self.detailed_now(&before);
                     self.join_detailed(&before, &end);
+                    if let Some(t) = shadowed {
+                        self.ctx.vars.insert(var.clone(), t);
+                    }
                     b
                 } else {
                     self.check_rank_known(&it, "a loop over");
@@ -3158,6 +3166,8 @@ impl<'a> Lowerer<'a> {
                     }
                     _ => None,
                 };
+                // (a name the variable hides keeps its type after the loop)
+                let shadowed = (self.pass == Pass::Scan).then(|| self.ctx.vars.get(var.as_str()).cloned()).flatten();
                 let saved = if self.pass == Pass::Scan {
                     self.ctx.scan_loop_var(var, walked(&it));
                     None
@@ -3181,6 +3191,9 @@ impl<'a> Lowerer<'a> {
                 let ty = TypeContext::for_type(yield_of(&b));
                 if let Some(saved) = saved {
                     self.unbind_loop_var(var, saved);
+                }
+                if let Some(t) = shadowed {
+                    self.ctx.vars.insert(var.clone(), t);
                 }
                 if let Some((vars, assigned)) = outer {
                     self.ctx.vars = vars;
@@ -5145,14 +5158,32 @@ fn move_last_reads(e: &mut Expr, live: &HashSet<String>, allowed: &HashSet<Strin
             move_last_reads(l, live, allowed, seen);
         }
         Expr::Index { base, indices, .. } => {
+            // an indexed base is borrowed, never moved, and both backends read
+            // it after its indices: an index reading it is no last read
+            // (`segments[len[move segments] - 1]` had handed the list away
+            // before it was indexed, compiled)
+            note_reads(base, seen);
             for i in indices.iter_mut().rev() {
                 move_last_reads(i, live, allowed, seen);
             }
-            // an indexed base is borrowed, never moved
-            note_reads(base, seen);
         }
         Expr::Field { base, .. } | Expr::Meta { base, .. } => note_reads(base, seen),
         Expr::Interp(pieces) => {
+            // the pieces of a text are held together while it is written: a
+            // name two pieces read moves in neither (`'`t.feature` is
+            // `classify[t, x]`'` had moved `t` into the call while its field
+            // was still lent to the text, compiled)
+            let mut readers: HashMap<String, usize> = HashMap::new();
+            for p in pieces.iter() {
+                if let Piece::Expr(x) = p {
+                    let mut names = HashSet::new();
+                    expr_reads(x, &mut names);
+                    for n in names {
+                        *readers.entry(n).or_insert(0) += 1;
+                    }
+                }
+            }
+            seen.extend(readers.into_iter().filter(|(_, c)| *c > 1).map(|(n, _)| n));
             for p in pieces.iter_mut().rev() {
                 if let Piece::Expr(x) = p {
                     move_last_reads(x, live, allowed, seen);

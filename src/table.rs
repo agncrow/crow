@@ -346,6 +346,12 @@ impl Kind {
         }
     }
 
+    /// Whether the parameter reads its argument where it lies (printed as a
+    /// reference): a value it is handed is not kept, nor copied.
+    pub fn borrows(self) -> bool {
+        !self.owned() && !matches!(self.each(), Kind::Int | Kind::Whole | Kind::Float | Kind::Moment | Kind::Bool | Kind::Unit | Kind::Cell | Kind::Cells | Kind::Item | Kind::ItemRef)
+    }
+
     /// Whether the parameter takes the rest of the arguments.
     pub fn is_rest(self) -> bool {
         matches!(self, Kind::Sizes | Kind::Groups | Kind::Lists | Kind::Shows | Kind::Operands | Kind::Scalars)
@@ -686,7 +692,7 @@ pub fn write_frame(f: crow_runtime::frame::CrowFrame) -> CrowValue {
 }
 
 pub fn write_tensors(ts: Vec<CrowTensor>) -> CrowValue {
-    CrowValue::ok(Value::Array(ts.into_iter().map(write_tensor).collect()))
+    CrowValue::ok(Value::Array(std::sync::Arc::new(ts.into_iter().map(write_tensor).collect())))
 }
 
 pub fn write_unit(_: ()) -> CrowValue {
@@ -722,16 +728,16 @@ pub fn read_strs(v: &CrowValue) -> Result<Vec<String>, String> {
 /// missing one an error of reason `missing` holding the column's
 /// placeholder, as `df.col` reads them (ops::frame_cell).
 pub fn write_column(c: crow_runtime::frame::CrowColumn) -> CrowValue {
-    CrowValue::ok(Value::Array((0..c.len()).map(|i| crate::ops::column_cell(&c.data, c.valid[i], i)).collect()))
+    CrowValue::ok(Value::Array(std::sync::Arc::new((0..c.len()).map(|i| crate::ops::column_cell(&c.data, c.valid[i], i)).collect())))
 }
 
 /// A mask answered: a list of bools.
 pub fn write_bools(bs: Vec<bool>) -> CrowValue {
-    CrowValue::ok(Value::Array(bs.into_iter().map(|b| CrowValue::ok(Value::Bool(b))).collect()))
+    CrowValue::ok(Value::Array(std::sync::Arc::new(bs.into_iter().map(|b| CrowValue::ok(Value::Bool(b))).collect())))
 }
 
 pub fn write_strs(ss: Vec<String>) -> CrowValue {
-    CrowValue::ok(Value::Array(ss.into_iter().map(write_str).collect()))
+    CrowValue::ok(Value::Array(std::sync::Arc::new(ss.into_iter().map(write_str).collect())))
 }
 
 /// A mask: a list of bools.
@@ -980,7 +986,7 @@ pub fn write_mailer(m: crow_runtime::sys::Mailer) -> CrowValue {
 }
 
 pub fn write_list(items: Vec<CrowValue>) -> CrowValue {
-    CrowValue::ok(Value::Array(items))
+    CrowValue::ok(Value::Array(std::sync::Arc::new(items)))
 }
 
 pub fn write_map_of(m: BTreeMap<String, CrowValue>) -> CrowValue {
@@ -988,11 +994,11 @@ pub fn write_map_of(m: BTreeMap<String, CrowValue>) -> CrowValue {
 }
 
 pub fn write_ints(ns: Vec<i64>) -> CrowValue {
-    CrowValue::ok(Value::Array(ns.into_iter().map(write_int).collect()))
+    CrowValue::ok(Value::Array(std::sync::Arc::new(ns.into_iter().map(write_int).collect())))
 }
 
 pub fn write_floats(xs: Vec<f64>) -> CrowValue {
-    CrowValue::ok(Value::Array(xs.into_iter().map(write_float).collect()))
+    CrowValue::ok(Value::Array(std::sync::Arc::new(xs.into_iter().map(write_float).collect())))
 }
 
 /// A request's answer as the interpreter's record: its status, body and
@@ -1040,7 +1046,7 @@ pub fn write_json(v: serde_json::Value) -> CrowValue {
 }
 
 pub fn write_json_list(vs: Vec<serde_json::Value>) -> CrowValue {
-    CrowValue::ok(Value::Array(vs.into_iter().map(write_json).collect()))
+    CrowValue::ok(Value::Array(std::sync::Arc::new(vs.into_iter().map(write_json).collect())))
 }
 
 pub fn write_markup(s: String) -> CrowValue {
@@ -1048,7 +1054,7 @@ pub fn write_markup(s: String) -> CrowValue {
 }
 
 pub fn write_text_rows(rows: Vec<BTreeMap<String, String>>) -> CrowValue {
-    CrowValue::ok(Value::Array(rows.into_iter().map(|r| CrowValue::ok(Value::Map(r.into_iter().map(|(k, v)| (k, write_str(v))).collect()))).collect()))
+    CrowValue::ok(Value::Array(std::sync::Arc::new(rows.into_iter().map(|r| CrowValue::ok(Value::Map(r.into_iter().map(|(k, v)| (k, write_str(v))).collect()))).collect())))
 }
 
 /// One argument of a group, the group of a single parameter.
@@ -1064,7 +1070,7 @@ pub fn one_taken(group: &mut [CrowValue]) -> Result<CrowValue, String> {
 /// A list the function makes its answer of, moved.
 pub fn take_list(v: CrowValue) -> Result<Vec<CrowValue>, String> {
     match v.value {
-        Value::Array(items) => Ok(items),
+        Value::Array(items) => Ok(std::sync::Arc::unwrap_or_clone(items)),
         other => Err(format!("expected a list, got {}", other.type_name())),
     }
 }
@@ -1274,10 +1280,10 @@ pub fn value_as(kind: Kind, v: &CrowValue) -> Result<CrowValue, String> {
         Kind::Str => CrowValue::ok(Value::Str(read_str(v)?.to_string())),
         Kind::Bool => CrowValue::ok(Value::Bool(read_bool(v)?)),
         Kind::Bytes => CrowValue::ok(Value::Bytes(read_bytes(v)?)),
-        Kind::Chunks => CrowValue::ok(Value::Array(read_chunks(v)?.into_iter().map(write_bytes).collect())),
+        Kind::Chunks => CrowValue::ok(Value::Array(std::sync::Arc::new(read_chunks(v)?.into_iter().map(write_bytes).collect()))),
         Kind::TextMap => CrowValue::ok(Value::Map(read_text_map(v)?.into_iter().map(|(k, t)| (k, CrowValue::ok(Value::Str(t)))).collect())),
         Kind::Frame => CrowValue::ok(Value::Frame(Box::new(read_frame(v)?.clone()))),
-        Kind::Strs => CrowValue::ok(Value::Array(read_strs(v)?.into_iter().map(|t| CrowValue::ok(Value::Str(t))).collect())),
+        Kind::Strs => CrowValue::ok(Value::Array(std::sync::Arc::new(read_strs(v)?.into_iter().map(|t| CrowValue::ok(Value::Str(t))).collect()))),
         // a value JSON can hold reaches the function as its JSON text
         // (`crow_param_type`): the one form a map, a record or a list of
         // either takes in Crow
@@ -1298,7 +1304,7 @@ pub fn crow_arguments(row: &Row, vals: &[CrowValue]) -> Result<Vec<CrowValue>, S
     for (k, (a, b)) in row.params.iter().zip(spans) {
         if k.is_rest() {
             let items: Vec<CrowValue> = vals[a..b].iter().map(|v| value_as(k.each(), v)).collect::<Result<_, _>>()?;
-            handed.push(CrowValue::ok(Value::Array(items)));
+            handed.push(CrowValue::ok(Value::Array(std::sync::Arc::new(items))));
         } else {
             handed.push(value_as(*k, &vals[a])?);
         }
@@ -2731,7 +2737,7 @@ mod tests {
     fn a_collection_is_moved_into_its_row() {
         let push = core_row("push", &[Arg::Ints, Arg::Int]).expect("the generic push");
         assert_eq!(push.id, "core.push");
-        let grown = (push.take)(vec![CrowValue::ok(Value::Array(vec![int(1)])), int(2)], "t:1").expect("a list");
+        let grown = (push.take)(vec![CrowValue::ok(Value::Array(std::sync::Arc::new(vec![int(1)]))), int(2)], "t:1").expect("a list");
         assert_eq!(format!("{}", grown.value), "[1, 2]");
         assert_eq!(core_row("sort", &[Arg::Floats]).map(|r| r.id), Some("core.sort_floats"));
         assert!(core_row("sort", &[Arg::Records]).is_none());
@@ -2797,6 +2803,17 @@ pub fn taken_path(id: &str) -> Option<&'static str> {
         "core.reverse_text" => Some("crow_runtime::core::reverse_text_taken"),
         _ => None,
     }
+}
+
+/// Whether a row's take path makes its answer of the value handed at
+/// position `i` of `argc` (a list it pushes onto, a map it sets, a text it
+/// changes where it lies): a value read for the last time there is moved
+/// into the call; anywhere else the row only reads it, and it is lent.
+pub fn keeps_storage(row: &Row, i: usize, argc: usize) -> bool {
+    if i == 0 && (taken_path(row.id).is_some() || row.id == "core.push_number") {
+        return true;
+    }
+    kinds_of(row.params, argc).and_then(|k| k.get(i).copied()).is_some_and(|k| k.owned())
 }
 
 pub mod texts {
@@ -3013,7 +3030,7 @@ pub mod maps {
             Keyed::Text(m) => crow_runtime::core::keys(m).into_iter().map(|k| CrowValue::ok(Value::Str(k))).collect(),
             Keyed::Int(m) => crow_runtime::core::keys(m).into_iter().map(|k| CrowValue::ok(Value::Int(k))).collect(),
         };
-        Ok(CrowValue::ok(Value::Array(out)))
+        Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(out))))
     }
     pub fn keys_taken(args: Vec<CrowValue>, trace: &str) -> Result<CrowValue, String> {
         keys(&args, trace)
@@ -3025,7 +3042,7 @@ pub mod maps {
             Keyed::Text(m) => crow_runtime::core::values(m),
             Keyed::Int(m) => crow_runtime::core::values(m),
         };
-        Ok(CrowValue::ok(Value::Array(out)))
+        Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(out))))
     }
     pub fn values_taken(args: Vec<CrowValue>, trace: &str) -> Result<CrowValue, String> {
         values(&args, trace)
@@ -3049,7 +3066,7 @@ pub mod maps {
         let (ks, vs) = (arg(args, 0, "map")?, arg(args, 1, "map")?);
         let values = read_seq(vs)?;
         let keys: Vec<CrowValue> = match &ks.value {
-            Value::Array(items) => items.clone(),
+            Value::Array(items) => items.as_ref().clone(),
             Value::NumArray(t) => t.to_vec().into_iter().map(|x| CrowValue::ok(Value::Int(x as i64))).collect(),
             _ => return Err(format!("map[keys, values] takes a list of keys, got {}", named(ks))),
         };

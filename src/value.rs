@@ -269,7 +269,12 @@ pub enum Value {
     Bool(bool),
     /// A moment (crow_runtime::moments::Moment).
     Moment(crow_runtime::moments::Moment),
-    Array(Vec<CrowValue>),
+    /// A list: its items behind an `Arc`, so a copy of a list is a count
+    /// and a write copies the items only when another value shares them
+    /// (`Arc::make_mut`). A list read had been copied item by item: a
+    /// parallel loop's chunks each copied a file's 400,000 lines to slice
+    /// 2,000 of them.
+    Array(std::sync::Arc<Vec<CrowValue>>),
     // the large ones are held apart, so a value is as big as the small
     // ones (typed-values-design.md §5, B)
     NumArray(Box<CrowTensor>),
@@ -277,7 +282,7 @@ pub enum Value {
     /// A map keyed by ints: `map[[1, 2], …]`, `set[m, 2, v]` (spec, Maps).
     IntMap(BTreeMap<i64, CrowValue>),
     Fn(FnValue),
-    StructInstance(Box<StructInstance>),
+    StructInstance(std::sync::Arc<StructInstance>),
     Sparse(Box<CrowSparse>), // sparse matrix (CSR format)
     Frame(Box<CrowFrame>), // column-oriented data frame
     DbConn(DbHandle), // database connection handle
@@ -330,15 +335,99 @@ pub struct FnValue {
     pub name: String,
 }
 
-#[derive(Debug, Clone)]
-pub struct StructInstance {
+/// A record's declaration as every value of it shares it: its names, and
+/// its fields' names in the order a record shows them (by name).
+#[derive(Debug, PartialEq)]
+pub struct Layout {
     /// Its declaration's name in the program, unique (a module's record is
     /// prefixed with the module's path)
     pub name: String,
     /// The name it was declared by, which it shows (`Day`, not
     /// `sessions_Day`)
     pub shown: String,
-    pub fields: BTreeMap<String, CrowValue>,
+    pub fields: Vec<String>,
+}
+
+impl Layout {
+    pub fn new(name: String, shown: String, mut fields: Vec<String>) -> Self {
+        fields.sort();
+        fields.dedup();
+        Layout { name, shown, fields }
+    }
+
+    /// The one layout of these names, for as long as the process runs: a
+    /// record refers to it with no count to keep (a count every thread
+    /// wrote at every record it made had made sixteen threads slower than
+    /// one). There are as many as the programs loaded declare.
+    pub fn intern(name: String, shown: String, fields: Vec<String>) -> &'static Layout {
+        static TABLE: std::sync::Mutex<BTreeMap<(String, String, Vec<String>), &'static Layout>> = std::sync::Mutex::new(BTreeMap::new());
+        let layout = Layout::new(name, shown, fields);
+        let key = (layout.name.clone(), layout.shown.clone(), layout.fields.clone());
+        let mut table = TABLE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(found) = table.get(&key) {
+            return found;
+        }
+        let kept: &'static Layout = Box::leak(Box::new(layout));
+        table.insert(key, kept);
+        kept
+    }
+
+    /// Where a field's value lies in a record of this layout.
+    pub fn slot(&self, field: &str) -> Option<usize> {
+        self.fields.binary_search_by(|f| f.as_str().cmp(field)).ok()
+    }
+}
+
+/// A record: its declaration's layout (`Layout::intern`), and one value per
+/// field in the layout's order. A record value holds it behind an `Arc`
+/// (`Value::StructInstance`), so a copy of a record is a count and a write
+/// copies it only when another value shares it (`Arc::make_mut`): each
+/// record had held its names twice and a map of its fields by name, and a
+/// field read copied the record below it whole (binarytrees: 4.6 GB).
+#[derive(Debug, Clone)]
+pub struct StructInstance {
+    pub layout: &'static Layout,
+    pub values: Vec<CrowValue>,
+}
+
+impl StructInstance {
+    /// A record of these fields, named with their values, in a layout of
+    /// its own (the interpreter shares one per declaration: `with_layout`).
+    pub fn new(name: String, shown: String, fields: BTreeMap<String, CrowValue>) -> Self {
+        let layout = Layout::intern(name, shown, fields.keys().cloned().collect());
+        StructInstance { layout, values: fields.into_values().collect() }
+    }
+
+    /// A record of a shared layout, its values in the layout's order.
+    pub fn with_layout(layout: &'static Layout, values: Vec<CrowValue>) -> Self {
+        StructInstance { layout, values }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.layout.name
+    }
+
+    pub fn shown(&self) -> &str {
+        &self.layout.shown
+    }
+
+    pub fn get(&self, field: &str) -> Option<&CrowValue> {
+        self.layout.slot(field).and_then(|i| self.values.get(i))
+    }
+
+    pub fn get_mut(&mut self, field: &str) -> Option<&mut CrowValue> {
+        let i = self.layout.slot(field)?;
+        self.values.get_mut(i)
+    }
+
+    /// Its fields, by name, as a record shows them.
+    pub fn fields(&self) -> impl Iterator<Item = (&String, &CrowValue)> {
+        self.layout.fields.iter().zip(self.values.iter())
+    }
+
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
 }
 
 impl Value {
@@ -403,7 +492,7 @@ impl fmt::Display for Value {
             Value::Fn(func) => write!(f, "<fn {}>", func.name),
             Value::StructInstance(si) => {
                 use crow_runtime::display::CrowDisplay as _;
-                write!(f, "{}", crow_runtime::display::record(&si.shown, si.fields.iter().map(|(k, v)| (k, v.crow_repr()))))
+                write!(f, "{}", crow_runtime::display::record(si.shown(), si.fields().map(|(k, v)| (k, v.crow_repr()))))
             }
             Value::Sparse(s) => write!(f, "{}", s),
             Value::Frame(frame) => write!(f, "{}", frame),

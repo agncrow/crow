@@ -38,3 +38,10 @@ fn apply[f, rows]
     return out
 use math
 log[apply[twice, [[1.0, 2.0], [3.0, 4.0]]]]
+
+--- a list indexed by an expression that reads it: the list is read after
+--- its index, so the index reads it without taking it
+fn last_of[path]
+    parts = split[path, '/']
+    return parts[len[parts] - 1]
+log[last_of['a/b/c']]

@@ -10,6 +10,7 @@ edition = "2024"
 license-file = "LICENSE"
 
 [dependencies]
+mimalloc = { version = "0.1", default-features = false }
 bincode = "1"
 rayon = "1.11.0"
 rustyline = "17.0.2"

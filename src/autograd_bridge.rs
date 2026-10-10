@@ -137,6 +137,6 @@ pub fn gradient(inputs: Vec<CrowTensor>, run: impl FnOnce(&[Traced]) -> Result<T
     Ok(if grads.len() == 1 {
         CrowValue::ok(Value::NumArray(Box::new(grads.into_iter().next().unwrap_or_else(|| CrowTensor::zeros(vec![0])))))
     } else {
-        CrowValue::ok(Value::Array(grads.into_iter().map(|g| CrowValue::ok(Value::NumArray(Box::new(g)))).collect()))
+        CrowValue::ok(Value::Array(std::sync::Arc::new(grads.into_iter().map(|g| CrowValue::ok(Value::NumArray(Box::new(g)))).collect())))
     })
 }

@@ -312,7 +312,7 @@ fn mask(items: &[CrowValue], cmp: Cmp, value: &Value) -> Result<CrowValue, Strin
         .iter()
         .map(|item| crow_runtime::mask::holds(cmp, mask_cell(&item.value), item.is_ok(), value).map(|b| CrowValue::ok(Value::Bool(b))))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(CrowValue::ok(Value::Array(out)))
+    Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(out))))
 }
 
 /// and/or. Boolean arrays combine element-wise (mask semantics);
@@ -333,21 +333,21 @@ pub fn logical_values(
             let results: Vec<CrowValue> = a.iter().zip(b.iter()).map(|(x, y)| {
                 CrowValue::ok(Value::Bool(op(is_truthy(x), is_truthy(y))))
             }).collect();
-            Ok(CrowValue::ok(Value::Array(results)))
+            Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(results))))
         }
         (Value::Array(a), _) => {
             let s = is_truthy(right);
             let results: Vec<CrowValue> = a.iter().map(|x| {
                 CrowValue::ok(Value::Bool(op(is_truthy(x), s)))
             }).collect();
-            Ok(CrowValue::ok(Value::Array(results)))
+            Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(results))))
         }
         (_, Value::Array(b)) => {
             let s = is_truthy(left);
             let results: Vec<CrowValue> = b.iter().map(|x| {
                 CrowValue::ok(Value::Bool(op(s, is_truthy(x))))
             }).collect();
-            Ok(CrowValue::ok(Value::Array(results)))
+            Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(results))))
         }
         _ => Ok(CrowValue::ok(Value::Bool(op(
             is_truthy(left),
@@ -396,7 +396,7 @@ fn tensor_mask(t: &CrowTensor, cmp: Cmp, s: &Value) -> Result<CrowValue, String>
         .iter()
         .map(|&v| crow_runtime::mask::holds(cmp, crow_runtime::mask::Cell::Number(v), true, s).map(|b| CrowValue::ok(Value::Bool(b))))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(CrowValue::ok(Value::Array(out)))
+    Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(out))))
 }
 
 /// Apply a scalar arithmetic operation element-wise to an Array of CrowValues.
@@ -423,7 +423,7 @@ fn array_scalar_arithmetic(
             CrowValue::ok(Value::Float(val))
         }
     }).collect();
-    Ok(CrowValue::ok(Value::Array(results)))
+    Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(results))))
 }
 
 pub fn unaryop(
@@ -453,7 +453,7 @@ pub fn unaryop(
                 let results: Vec<CrowValue> = items.iter().map(|x| {
                     CrowValue::ok(Value::Bool(!is_truthy(x)))
                 }).collect();
-                Ok(CrowValue::ok(Value::Array(results)))
+                Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(results))))
             }
             _ => Ok(CrowValue::ok(Value::Bool(!is_truthy(val)))),
         },
@@ -486,7 +486,7 @@ fn coerce_numeric_array(v: &Value) -> Value {
     if let Value::Array(items) = v {
         if !items.is_empty() {
             let mut data = Vec::with_capacity(items.len());
-            for item in items {
+            for item in items.iter() {
                 match &item.value {
                     Value::Int(n) => data.push(*n as f64),
                     Value::Float(f) => data.push(*f),
@@ -547,7 +547,7 @@ pub fn values_equal(a: &CrowValue, b: &CrowValue) -> bool {
         (Value::Map(x), Value::Map(y)) => x.len() == y.len() && x.iter().zip(y.iter()).all(|((ka, va), (kb, vb))| ka == kb && values_equal(va, vb)),
         (Value::IntMap(x), Value::IntMap(y)) => x.len() == y.len() && x.iter().zip(y.iter()).all(|((ka, va), (kb, vb))| ka == kb && values_equal(va, vb)),
         (Value::StructInstance(x), Value::StructInstance(y)) => {
-            x.name == y.name && x.fields.len() == y.fields.len() && x.fields.iter().zip(y.fields.iter()).all(|((ka, va), (kb, vb))| ka == kb && values_equal(va, vb))
+            std::sync::Arc::ptr_eq(x, y) || (x.name() == y.name() && x.len() == y.len() && x.fields().zip(y.fields()).all(|((ka, va), (kb, vb))| ka == kb && values_equal(va, vb)))
         }
         (Value::Frame(x), Value::Frame(y)) => x == y,
         (Value::Sparse(x), Value::Sparse(y)) => x == y,
@@ -671,7 +671,7 @@ pub fn valid(obj: CrowValue) -> Result<CrowValue, String> {
     }
     match &obj.value {
         Value::Array(items) => Ok(CrowValue::ok(Value::Array(
-            items.iter().map(|item| CrowValue::ok(Value::Bool(item.is_ok()))).collect(),
+            items.iter().map(|item| CrowValue::ok(Value::Bool(item.is_ok()))).collect::<Vec<_>>().into(),
         ))),
         _ => Ok(CrowValue::ok(Value::Bool(obj.is_ok()))),
     }
@@ -732,7 +732,7 @@ pub fn field(obj: CrowValue, field: &str) -> Result<CrowValue, String> {
             "ok" => CrowValue::ok(Value::Bool(!null)),
             "reason" => CrowValue::ok(Value::Str(if null { "null" } else { "" }.to_string())),
             "kind" => CrowValue::ok(Value::Str(if null { "parse" } else { "" }.to_string())),
-            "trace" => CrowValue::ok(Value::Array(Vec::new())),
+            "trace" => CrowValue::ok(Value::Array(std::sync::Arc::new(Vec::new()))),
             name => CrowValue::ok(Value::Json(Box::new(j.get(name).cloned().unwrap_or(serde_json::Value::Null)))),
         });
     }
@@ -754,7 +754,7 @@ pub fn field(obj: CrowValue, field: &str) -> Result<CrowValue, String> {
             let trace_list: Vec<CrowValue> = obj.trace().iter()
                 .map(|s| CrowValue::ok(Value::Str(s.clone())))
                 .collect();
-            return Ok(CrowValue::ok(Value::Array(trace_list)));
+            return Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(trace_list))));
         }
         _ => {}
     }
@@ -794,7 +794,7 @@ pub fn field(obj: CrowValue, field: &str) -> Result<CrowValue, String> {
                     _ => i.clone(),
                 })
                 .collect();
-            return Ok(CrowValue::ok(Value::Array(out)));
+            return Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(out))));
         }
     }
 
@@ -809,7 +809,7 @@ pub fn field(obj: CrowValue, field: &str) -> Result<CrowValue, String> {
                 let shape_vals: Vec<CrowValue> = t.shape().iter()
                     .map(|&s| CrowValue::ok(Value::Int(s as i64)))
                     .collect();
-                return Ok(CrowValue::ok(Value::Array(shape_vals)));
+                return Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(shape_vals))));
             }
             "dtype" => {
                 return Ok(CrowValue::ok(Value::Str("float".to_string())));
@@ -834,25 +834,25 @@ pub fn field(obj: CrowValue, field: &str) -> Result<CrowValue, String> {
                     CrowValue::ok(Value::Int(frame.nrows() as i64)),
                     CrowValue::ok(Value::Int(frame.ncols() as i64)),
                 ];
-                return Ok(CrowValue::ok(Value::Array(shape)));
+                return Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(shape))));
             }
             "columns" => {
                 let cols: Vec<CrowValue> = frame.columns.iter()
                     .map(|c| CrowValue::ok(Value::Str(c.clone())))
                     .collect();
-                return Ok(CrowValue::ok(Value::Array(cols)));
+                return Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(cols))));
             }
             "dtypes" => {
                 let dtypes: Vec<CrowValue> = frame.dtypes().iter()
                     .map(|d| CrowValue::ok(Value::Str(d.to_string())))
                     .collect();
-                return Ok(CrowValue::ok(Value::Array(dtypes)));
+                return Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(dtypes))));
             }
             _ => {
                 // Try column access by name: df.age returns the column as an array
                 if let Some(idx) = frame.col_index(field) {
                     let vals: Vec<CrowValue> = (0..frame.nrows()).map(|i| frame_cell(frame, idx, i)).collect();
-                    return Ok(CrowValue::ok(Value::Array(vals)));
+                    return Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(vals))));
                 }
                 return Err(stops::no_column(field));
             }
@@ -862,11 +862,11 @@ pub fn field(obj: CrowValue, field: &str) -> Result<CrowValue, String> {
     // struct and module field access
     match &obj.value {
         Value::StructInstance(si) => {
-            match si.fields.get(field) {
+            match si.get(field) {
                 Some(val) => Ok(val.clone()),
                 None => Err(format!(
                     "struct '{}' has no field '{}'",
-                    si.shown, field
+                    si.shown(), field
                 )),
             }
         }
@@ -898,7 +898,7 @@ pub fn array_literal(vals: Vec<CrowValue>) -> Result<CrowValue, String> {
         let stacked = CrowTensor::from_elements(&tensors)?;
         return Ok(CrowValue::ok(Value::NumArray(Box::new(stacked))));
     }
-    Ok(CrowValue::ok(Value::Array(vals)))
+    Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(vals))))
 }
 
 /// What a collecting loop gathers, held as the IR types it: numbers it
@@ -919,14 +919,14 @@ pub fn collect_loop(results: Vec<CrowValue>, as_tensor: bool) -> CrowValue {
         let len = data.len();
         return CrowValue::ok(Value::NumArray(Box::new(CrowTensor::from_vec(data, vec![len]))));
     }
-    CrowValue::ok(Value::Array(filtered))
+    CrowValue::ok(Value::Array(std::sync::Arc::new(filtered)))
 }
 
 /// What a `for` walks: a list's items, a matrix's rows, a vector's numbers
 /// (whole ones as ints).
 pub fn iter_items(iter_val: &CrowValue) -> Result<Vec<CrowValue>, String> {
     match &iter_val.value {
-        Value::Array(items) => Ok(items.clone()),
+        Value::Array(items) => Ok(items.as_ref().clone()),
         // a parsed list's items, each JSON, as the compiled program walks it
         Value::Json(j) => Ok(crow_runtime::json::items(j)?.into_iter().map(|x| CrowValue::ok(Value::Json(Box::new(x)))).collect()),
         Value::NumArray(tensor) => {

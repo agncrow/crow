@@ -247,8 +247,8 @@ pub(crate) fn harness_to_lnode(n: &HNode) -> CrowValue {
     fields.insert("class".to_string(), CrowValue::ok(Value::Str(class)));
     fields.insert("text".to_string(), CrowValue::ok(Value::Str(text)));
     fields.insert("attrs".to_string(), CrowValue::ok(Value::Map(attrs)));
-    fields.insert("kids".to_string(), CrowValue::ok(Value::Array(kids)));
-    CrowValue::ok(Value::StructInstance(Box::new(StructInstance { name: "LNode".to_string(), shown: "LNode".to_string(), fields })))
+    fields.insert("kids".to_string(), CrowValue::ok(Value::Array(std::sync::Arc::new(kids))));
+    CrowValue::ok(Value::StructInstance(std::sync::Arc::new(StructInstance::new("LNode".to_string(), "LNode".to_string(), fields))))
 }
 
 fn crow_space_name(px: &str) -> String {
