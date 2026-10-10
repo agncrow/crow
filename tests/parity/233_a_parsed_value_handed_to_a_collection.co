@@ -1,0 +1,28 @@
+--- A parsed value handed to a collection is read as the collection's
+--- items are: pushed into ints an int, into text a text, and asked of a
+--- list with `in` as its items (read as the number the push rows take, it
+--- had made a list of ints floats, and the lowered program disagreed with
+--- itself). And a builtin reading an item of a parsed value reads the item:
+--- `upper[j.names[1]]` had not built compiled, the read handed the item's
+--- failure mark it does not read.
+j = json['{"ids": [4, 5, 6], "names": ["ada", "bo"], "n": 4}']
+log[upper[j.names[1]]]
+log[abs[j.n]]
+ids = [0]
+ids = pop[ids]
+ids = push[ids, j.ids[0]]
+log[ids]
+names = ['x']
+names = push[names, j.names[1]]
+log[names]
+log[j.ids[0] in ids]
+log[j.names[0] in names]
+
+fn gather[k]
+    out = [0]
+    out = pop[out]
+    for i in range[3]
+        out = push[out, k.ids[i]]
+    return out
+
+log[gather[j]]

@@ -3661,15 +3661,45 @@ impl<'a> Lowerer<'a> {
         // and the function's own body reads it
         if !self.ctx.functions.contains_key(&name) && lowered.iter().any(|x| matches!(x.ty().payload(), Ty::Json)) {
             let argc = lowered.len();
+            // an item handed to a collection is read as its items are
+            // (`push[ids, j.id]` into ints an int, `j.name in names` text):
+            // read as the number the push rows take, it had made a list of
+            // ints floats, and the lowered program disagreed with itself
+            let item_at = match name.as_str() {
+                "push" | "contains" if argc == 2 => Some(1),
+                "set" if argc == 3 => Some(2),
+                _ => None,
+            };
+            let items = item_at.and_then(|_| lowered.first()).and_then(|c| Self::items_kind(&c.ty(), name == "contains"));
             let mut read_args = Vec::with_capacity(argc);
             for (i, x) in lowered.into_iter().enumerate() {
-                let kind = if matches!(x.ty().payload(), Ty::Json) { uses::row_says(&name, module.as_deref(), i, argc) } else { None };
+                let kind = match (matches!(x.ty().payload(), Ty::Json), &items) {
+                    (false, _) => None,
+                    (true, Some(k)) if item_at == Some(i) => Some(k.clone()),
+                    (true, _) => uses::row_says(&name, module.as_deref(), i, argc),
+                };
                 match kind {
                     Some(k) => {
-                        let x = self.read_json(x, &k, &format!("handed to {}", name));
+                        // an argument the call marked (`unwrap x`, x can fail):
+                        // the read takes the value that can fail, and the mark
+                        // moves onto the read — handed the mark, which only a
+                        // call that hands a failure on reads through, the read
+                        // had been given the failed value itself (compiled,
+                        // `upper[j.names[1]]` had not built)
+                        // (typed, as every argument is, before the mark)
+                        let (x, marked) = match x {
+                            Expr::Convert { how: Convert::Unwrap, expr: inner, .. } if inner.ty().is_result() => (self.read_json(*inner, &k, &format!("handed to {}", name)), true),
+                            x => (self.read_json(x, &k, &format!("handed to {}", name)), false),
+                        };
                         arg_types[i] = read(&x);
                         full_types[i] = full(&x);
                         checks[i] = self.checked(&x);
+                        let x = if marked && x.ty().is_result() {
+                            let ty = x.ty().payload().clone();
+                            Expr::Convert { how: Convert::Unwrap, expr: Box::new(x), ty }
+                        } else {
+                            x
+                        };
                         read_args.push(x);
                     }
                     None => read_args.push(x),
@@ -4423,6 +4453,20 @@ impl<'a> Lowerer<'a> {
             return (args, of_floats(ty));
         }
         (args, ty)
+    }
+
+        /// The kind of a collection's items, as a value handed to it is read: a
+    /// list's or a tensor's items, a map's values — or its keys, for `k in
+    /// m` — when they are numbers, text or bools.
+    fn items_kind(t: &Ty, keys: bool) -> Option<Ty> {
+        let kind = match t.payload() {
+            Ty::List(e) | Ty::Tensor(e, _) => (**e).clone(),
+            Ty::Map(Key::Text, _) if keys => Ty::Str,
+            Ty::Map(Key::Int, _) if keys => Ty::Int,
+            Ty::Map(_, v) if !keys => (**v).clone(),
+            _ => return None,
+        };
+        matches!(kind, Ty::Int | Ty::Float | Ty::Str | Ty::Bool).then_some(kind)
     }
 
     /// The pieces a value indexed holds: a decomposition called here, or a
