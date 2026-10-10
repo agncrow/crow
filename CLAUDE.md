@@ -506,3 +506,11 @@ steps on every push and must be green.
   connection under its kinds and text (`statement_sent`, at most 64 names,
   a name never used twice), ClickHouse notes its query id and keep-alive
   apart.
+- The interpreter's walker (the top level, a collecting loop's rounds,
+  what a prepared body hands it) keeps a `Known` per local text only while
+  it runs a loop (`walker_loop`, `loop_text`, keyed by frame and name):
+  `bind`, `assign` and `slot` let a name's go, and a loop's end lets its
+  frame's go however it ends (prepared code may write the name after the
+  walker hands back). A new walker path that reads a text by position
+  takes it from `loop_text`, or a long text is walked from its start at
+  every read (revcomp's pieces had taken 106 s interpreted).

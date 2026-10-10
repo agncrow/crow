@@ -130,6 +130,14 @@ pub struct IrInterp {
     last_value: Option<CrowValue>,
     /// Inside a view being rendered: bound inputs render, elements are markup.
     in_view: usize,
+    /// While the walker runs a loop: what is known of the texts its rounds
+    /// read by position (`slice[s, a, b]`, `s[i]`), by frame and name —
+    /// let go when the name is written, and when the loop ends, however it
+    /// ends. A fresh `Known` at every read had walked a long text from its
+    /// start each time: revcomp's 60-character pieces of a 50 MB sequence
+    /// took 11 trillion instructions.
+    texts_known: Vec<(usize, String, Arc<crow_runtime::text::Known>)>,
+    walker_loops: usize,
     /// Inside a function `grad` differentiates over tensors: its loops run
     /// in order, since one tape records the run.
     tracing: bool,
@@ -492,6 +500,8 @@ impl IrInterp {
             file,
             last_value: None,
             in_view: 0,
+            texts_known: Vec::new(),
+            walker_loops: 0,
             tracing: false,
             tick: 0,
             engine_loaded: false,
@@ -841,6 +851,7 @@ impl IrInterp {
     }
 
     fn slot(&mut self, name: &str) -> Option<&mut CrowValue> {
+        self.forget_text(name);
         let frame = self.frames.last_mut().unwrap();
         if let Some(at) = frame.locals.iter().rposition(|(n, _)| n == name) {
             return Some(&mut frame.locals[at].1);
@@ -860,6 +871,7 @@ impl IrInterp {
     }
 
     fn bind(&mut self, name: &str, v: CrowValue) {
+        self.forget_text(name);
         if self.in_fn_frame() {
             let frame = self.frames.last_mut().unwrap();
             // (a name bound again in the same block — a loop's variable each
@@ -879,6 +891,43 @@ impl IrInterp {
         } else {
             scope.insert(name.to_string(), v);
         }
+    }
+
+    /// A name written: what was known of the text it held is let go.
+    fn forget_text(&mut self, name: &str) {
+        if !self.texts_known.is_empty() {
+            let frame = self.frames.len() - 1;
+            self.texts_known.retain(|(f, n, _)| !(*f == frame && n == name));
+        }
+    }
+
+    /// What is known of the text a local holds, kept while a loop runs
+    /// (none outside one: a read by position there is not repeated).
+    fn loop_text(&mut self, name: &str) -> Option<Arc<crow_runtime::text::Known>> {
+        if self.walker_loops == 0 {
+            return None;
+        }
+        let frame = self.frames.len() - 1;
+        if let Some((_, _, k)) = self.texts_known.iter().find(|(f, n, _)| *f == frame && n == name) {
+            return Some(k.clone());
+        }
+        let k = Arc::new(crow_runtime::text::Known::new());
+        self.texts_known.push((frame, name.to_string(), k.clone()));
+        Some(k)
+    }
+
+    /// A loop the walker runs: what it learns of the texts its rounds read
+    /// by position is kept for them, and let go when it ends — prepared
+    /// code may write those names once the walker hands back.
+    fn walker_loop<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, String>) -> Result<T, String> {
+        let frame = self.frames.len() - 1;
+        self.walker_loops += 1;
+        let r = f(self);
+        self.walker_loops -= 1;
+        if !self.texts_known.is_empty() {
+            self.texts_known.retain(|(f, _, _)| *f < frame);
+        }
+        r
     }
 
     fn assign(&mut self, name: &str, v: CrowValue) {
@@ -1017,93 +1066,25 @@ impl IrInterp {
                     Ok(Flow::Next)
                 }
             }
-            Stmt::While { cond, body } => {
+            Stmt::While { cond, body } => self.walker_loop(|me| {
                 loop {
-                    self.check_cancel()?;
-                    let c = self.eval(cond)?;
+                    me.check_cancel()?;
+                    let c = me.eval(cond)?;
                     if c.is_error() {
-                        return self.refuse(c, &Decision::Branch);
+                        return me.refuse(c, &Decision::Branch);
                     }
                     if !crate::ops::is_truthy(&c) {
                         break;
                     }
-                    match self.exec_block(body)? {
+                    match me.exec_block(body)? {
                         Flow::Break => break,
                         Flow::Return(v) => return Ok(Flow::Return(v)),
                         Flow::Next | Flow::Continue => {}
                     }
                 }
                 Ok(Flow::Next)
-            }
-            Stmt::For { var, iter, body, parallel } => {
-                // `for i in range[n]` and `range[a, b]`: a counted loop, no
-                // list built — the emitter's twin (stmts.rs emit_for): the
-                // interpreted fannkuch built one per permutation too. A
-                // parallel loop keeps its list (its rounds are handed out as
-                // items), as does a stepped range.
-                let it = if !(*parallel && !self.tracing)
-                    && let Expr::Call { target: Target::Row(row), args, propagates, ty, .. } = iter
-                    && matches!(row.id, "core.range_to" | "core.range_from")
-                    && !ty.is_result()
-                {
-                    let vals = self.eval_args(args)?;
-                    let bound = |v: &CrowValue| if v.is_ok() && let Value::Int(n) = &v.value { Some(*n) } else { None };
-                    let bounds = match vals.as_slice() {
-                        [n] => bound(n).map(|hi| (0, hi)),
-                        [a, b] => bound(a).zip(bound(b)),
-                        _ => None,
-                    };
-                    if let Some((lo, hi)) = bounds {
-                        return self.counted_for(var, lo, hi, body);
-                    }
-                    // what the call would have answered from these values
-                    match (*propagates, self.first_error(&vals)) {
-                        (true, Some(err)) => err,
-                        _ => self.row_call(row, vals)?,
-                    }
-                } else {
-                    self.eval(iter)?
-                };
-                // a list that failed is refused like a condition (the
-                // lowering refuses a typed one first; this is one it could
-                // not see)
-                if it.is_error() {
-                    return self.refuse(it, &Decision::Loop);
-                }
-                let items = Self::walked_items(&it, iter)?;
-                if *parallel && items.len() > 1 && !self.tracing {
-                    self.run_parallel(&items, var, body, false)?;
-                    return Ok(Flow::Next);
-                }
-                // one scope for every round: the variable rebound in place,
-                // and what a round bound dropped after it (a scope per round
-                // had allocated the map and the name each time)
-                self.push_scope();
-                let mut flow = Flow::Next;
-                for item in items {
-                    if let Err(e) = self.check_cancel() {
-                        self.pop_scope();
-                        return Err(e);
-                    }
-                    self.bind(var, item);
-                    let r = self.exec_stmts(body);
-                    self.end_round(var);
-                    match r {
-                        Err(e) => {
-                            self.pop_scope();
-                            return Err(e);
-                        }
-                        Ok(Flow::Break) => break,
-                        Ok(Flow::Return(v)) => {
-                            flow = Flow::Return(v);
-                            break;
-                        }
-                        Ok(Flow::Next | Flow::Continue) => {}
-                    }
-                }
-                self.pop_scope();
-                Ok(flow)
-            }
+            }),
+            Stmt::For { var, iter, body, parallel } => self.walker_loop(|me| me.exec_for(var, iter, body, *parallel)),
             Stmt::Return(None) => Ok(Flow::Return(CrowValue::done())),
             Stmt::Return(Some(e)) => {
                 let v = self.eval(e)?;
@@ -1266,6 +1247,26 @@ impl IrInterp {
                     _ => unreachable!(),
                 };
                 Self::len_of(target, item, &trace)?
+            }
+            Expr::Call { target: Target::Row(row), args, propagates, .. }
+                if row.id == "core.slice_str" && args.len() == 3 && matches!(&args[0], Expr::Local(..)) && self.walker_loops > 0 =>
+            {
+                // `slice[s, a, b]` of a local text in a loop: read where it
+                // lies, with what the loop knows of it (`loop_text`)
+                let Expr::Local(name, _) = &args[0] else { unreachable!() };
+                let (a, b) = (self.eval(&args[1])?, self.eval(&args[2])?);
+                let known = self.loop_text(name);
+                let s = self.lookup(name).ok_or_else(|| format!("undefined variable '{}'", name))?;
+                match (&s.value, a.plain_int(), b.plain_int(), known) {
+                    (Value::Str(text), Some(x), Some(y), Some(k)) if s.is_ok() => CrowValue::ok(Value::Str(crow_runtime::text::slice_known(text, &k, x, y))),
+                    _ => {
+                        let vals = vec![s.clone(), a, b];
+                        if *propagates && let Some(err) = self.first_error(&vals) {
+                            return Ok(err);
+                        }
+                        self.row_call(row, vals)?
+                    }
+                }
             }
             Expr::Call { target, args, propagates, .. } => {
                 let vals = self.eval_args(args)?;
@@ -1436,10 +1437,16 @@ impl IrInterp {
                     && matches!(index, Expr::Local(..) | Expr::Const(..))
                 {
                     let at = self.eval(index)?;
+                    // (a text read by position in a loop: with what the loop
+                    // knows of it, not from its start each time)
+                    let known = if self.walker_loops > 0 && matches!(self.lookup(v), Some(b) if matches!(b.value, Value::Str(_))) { self.loop_text(v) } else { None };
                     if let Some(b) = self.lookup(v)
                         && b.is_ok()
                     {
                         let column = matches!(base.ty_ref(), Some(Ty::Column(_)));
+                        if let (Value::Str(s), Value::Int(n), Some(k)) = (&b.value, &at.value, &known) {
+                            return Ok(CrowValue::ok(Value::Str(crow_runtime::text::char_at_known(s, k, *n)?)));
+                        }
                         if let (Value::Array(items), Value::Int(n)) = (&b.value, &at.value) {
                             let k = crow_runtime::stops::item(*n, items.len())?;
                             let cell = items[k].clone();
@@ -1643,48 +1650,7 @@ impl IrInterp {
                 }
                 CrowValue::ok(Value::StructInstance(Arc::new(StructInstance::with_layout(shape.0, vals))))
             }
-            Expr::ForExpr { var, iter, body, parallel, ty } => {
-                let as_tensor = matches!(ty.payload(), Ty::Tensor(..));
-                let it = self.eval(iter)?;
-                // refused like the statement form's; a function hands the
-                // error back from here, as from a return inside the loop
-                if it.is_error() {
-                    return match self.refuse(it, &Decision::Loop)? {
-                        Flow::Return(v) => {
-                            self.returning = Some(v);
-                            Err(RETURN.to_string())
-                        }
-                        _ => Ok(CrowValue::done()),
-                    };
-                }
-                let items = Self::walked_items(&it, iter)?;
-                if *parallel && items.len() > 1 && !self.tracing {
-                    let results = self.run_parallel(&items, var, body, true)?;
-                    return Ok(crate::ops::collect_loop(results, as_tensor));
-                }
-                let mut results = Vec::with_capacity(items.len());
-                for item in items {
-                    self.check_cancel()?;
-                    self.push_scope();
-                    self.bind(var, item);
-                    self.last_value = None;
-                    let r = self.exec_stmts(body);
-                    let yielded = self.last_value.take();
-                    self.pop_scope();
-                    match r? {
-                        // the function returns from here: an expression
-                        // cannot, so the value travels to its call
-                        Flow::Return(v) => {
-                            self.returning = Some(v);
-                            return Err(RETURN.to_string());
-                        }
-                        Flow::Break => break,
-                        _ => {}
-                    }
-                    results.push(yielded.unwrap_or_else(CrowValue::done));
-                }
-                crate::ops::collect_loop(results, as_tensor)
-            }
+            Expr::ForExpr { var, iter, body, parallel, ty } => self.walker_loop(|me| me.collect_for(var, iter, body, *parallel, ty))?,
         })
     }
 
@@ -1795,6 +1761,122 @@ impl IrInterp {
         }
         self.pop_scope();
         Ok(flow)
+    }
+
+    /// A collecting `for`, in the walker: each round's value, gathered.
+    fn collect_for(&mut self, var: &str, iter: &Expr, body: &[Stmt], parallel: bool, ty: &Ty) -> Result<CrowValue, String> {
+        let as_tensor = matches!(ty.payload(), Ty::Tensor(..));
+        let it = self.eval(iter)?;
+        // refused like the statement form's; a function hands the
+        // error back from here, as from a return inside the loop
+        if it.is_error() {
+            return match self.refuse(it, &Decision::Loop)? {
+                Flow::Return(v) => {
+                    self.returning = Some(v);
+                    Err(RETURN.to_string())
+                }
+                _ => Ok(CrowValue::done()),
+            };
+        }
+        let items = Self::walked_items(&it, iter)?;
+        if parallel && items.len() > 1 && !self.tracing {
+            let results = self.run_parallel(&items, var, body, true)?;
+            return Ok(crate::ops::collect_loop(results, as_tensor));
+        }
+        let mut results = Vec::with_capacity(items.len());
+        for item in items {
+            self.check_cancel()?;
+            self.push_scope();
+            self.bind(var, item);
+            self.last_value = None;
+            let r = self.exec_stmts(body);
+            let yielded = self.last_value.take();
+            self.pop_scope();
+            match r? {
+                // the function returns from here: an expression
+                // cannot, so the value travels to its call
+                Flow::Return(v) => {
+                    self.returning = Some(v);
+                    return Err(RETURN.to_string());
+                }
+                Flow::Break => break,
+                _ => {}
+            }
+            results.push(yielded.unwrap_or_else(CrowValue::done));
+        }
+        Ok(crate::ops::collect_loop(results, as_tensor))
+    }
+
+    /// `for var in iter` of a statement, in the walker.
+    fn exec_for(&mut self, var: &str, iter: &Expr, body: &[Stmt], parallel: bool) -> Result<Flow, String> {
+        // `for i in range[n]` and `range[a, b]`: a counted loop, no
+        // list built — the emitter's twin (stmts.rs emit_for): the
+        // interpreted fannkuch built one per permutation too. A
+        // parallel loop keeps its list (its rounds are handed out as
+        // items), as does a stepped range.
+        let it = if !(parallel && !self.tracing)
+            && let Expr::Call { target: Target::Row(row), args, propagates, ty, .. } = iter
+            && matches!(row.id, "core.range_to" | "core.range_from")
+            && !ty.is_result()
+        {
+            let vals = self.eval_args(args)?;
+            let bound = |v: &CrowValue| if v.is_ok() && let Value::Int(n) = &v.value { Some(*n) } else { None };
+            let bounds = match vals.as_slice() {
+                [n] => bound(n).map(|hi| (0, hi)),
+                [a, b] => bound(a).zip(bound(b)),
+                _ => None,
+            };
+            if let Some((lo, hi)) = bounds {
+                return self.counted_for(var, lo, hi, body);
+            }
+            // what the call would have answered from these values
+            match (*propagates, self.first_error(&vals)) {
+                (true, Some(err)) => err,
+                _ => self.row_call(row, vals)?,
+            }
+        } else {
+            self.eval(iter)?
+        };
+        // a list that failed is refused like a condition (the
+        // lowering refuses a typed one first; this is one it could
+        // not see)
+        if it.is_error() {
+            return self.refuse(it, &Decision::Loop);
+        }
+        let items = Self::walked_items(&it, iter)?;
+        if parallel && items.len() > 1 && !self.tracing {
+            self.run_parallel(&items, var, body, false)?;
+            return Ok(Flow::Next);
+        }
+        // one scope for every round: the variable rebound in place,
+        // and what a round bound dropped after it (a scope per round
+        // had allocated the map and the name each time)
+        self.push_scope();
+        let mut flow = Flow::Next;
+        for item in items {
+            if let Err(e) = self.check_cancel() {
+                self.pop_scope();
+                return Err(e);
+            }
+            self.bind(var, item);
+            let r = self.exec_stmts(body);
+            self.end_round(var);
+            match r {
+                Err(e) => {
+                    self.pop_scope();
+                    return Err(e);
+                }
+                Ok(Flow::Break) => break,
+                Ok(Flow::Return(v)) => {
+                    flow = Flow::Return(v);
+                    break;
+                }
+                Ok(Flow::Next | Flow::Continue) => {}
+            }
+        }
+        self.pop_scope();
+        Ok(flow)
+    
     }
 
     fn walked_items(it: &CrowValue, iter: &Expr) -> Result<Vec<CrowValue>, String> {

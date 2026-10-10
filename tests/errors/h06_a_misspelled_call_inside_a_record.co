@@ -1,0 +1,6 @@
+--- a misspelled call inside a record's field: the one slip is told, and
+--- the field's rank, which the slip left unknown, is not refused again
+use math
+struct Bag [t, m]
+g = Bag[cumsum[rveerse[tensor[[2.0, 2.0, 2.0]]]], 1.5]
+log[g.t[1] + g.m]

@@ -196,9 +196,10 @@ pub(super) struct Checks {
     pub prefix_lines: BTreeMap<String, usize>,
     /// A `use ui` program.
     pub ui_mode: bool,
-    /// Variables given two kinds (their reassignment refused): what the
-    /// program reads of them is not judged by either kind, so the one
-    /// mistake is told once (spec, Error Messages, rule 3).
+    /// Variables given two kinds (their reassignment refused), or a value
+    /// whose making was refused: what the program reads of them is not
+    /// judged by either kind, so the one mistake is told once (spec, Error
+    /// Messages, rule 3).
     pub contested: BTreeSet<String>,
     /// The imports asked for, by module: the line and the refusal each is
     /// in, and the names it lists so far (a module the program lacks is

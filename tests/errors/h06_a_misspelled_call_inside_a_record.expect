@@ -1,0 +1,3 @@
+h06_a_misspelled_call_inside_a_record.co:5:16: undefined function 'rveerse' — did you mean 'reverse'?
+  5 │ g = Bag[cumsum[rveerse[tensor[[2.0, 2.0, 2.0]]]], 1.5]
+    │                ^^^^^^^

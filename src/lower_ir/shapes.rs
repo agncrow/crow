@@ -316,7 +316,9 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(super) fn check_rank_known(&mut self, x: &Expr, what: &str) {
-        if self.pass != Pass::Final || !matches!(x.ty().payload(), Ty::Tensor(_, None)) {
+        // (a value whose making was refused — an undefined function's — has
+        // no rank to tell: that mistake is told once)
+        if self.pass != Pass::Final || !matches!(x.ty().payload(), Ty::Tensor(_, None)) || self.rooted_in_contested(x) {
             return;
         }
         // (on a line refused for something else it is that mistake's echo,

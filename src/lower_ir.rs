@@ -1824,7 +1824,13 @@ impl<'a> Lowerer<'a> {
                     self.check_reserved(name, "variable");
                 }
                 self.check_top_write(name);
+                let refused_before = self.v.errors.len();
                 let expr = self.lower_expr(value)?;
+                // (a value whose making was refused: what the program reads
+                // of it is that mistake's echo, not judged again)
+                if self.v.errors.len() > refused_before {
+                    self.v.contested.insert(name.clone());
+                }
                 // a loaded frame held to the columns the program's reads
                 // say, before any pass types the variable by it (uses.rs)
                 let expr = self.held_to_shape(name, expr);
@@ -4679,6 +4685,15 @@ impl Lowerer<'_> {
     /// refused: its kind here is neither's to judge.
     fn contested(&self, e: &Expr) -> bool {
         local_named(e).is_some_and(|n| self.v.contested.contains(&n))
+    }
+
+    /// `contested` of a variable a value is read from, through its fields
+    /// and items (`g21.t` of a `g21` whose making was refused).
+    pub(super) fn rooted_in_contested(&self, e: &Expr) -> bool {
+        match e {
+            Expr::Field { base, .. } | Expr::Index { base, .. } => self.rooted_in_contested(base),
+            other => self.contested(other),
+        }
     }
 }
 
