@@ -97,9 +97,32 @@ fn a_loop_over_a_range_is_counted() {
 
 #[test]
 fn a_collection_keeps_a_clone_of_a_variable() {
-    let rust = transpile("out = []\nfor w in ['a', 'b']\n    out = push[out, w]\nm = map[]\nfor k in ['p', 'q']\n    m = set[m, k, 1]\nlog[out]\nlog[m]\n");
+    let rust = transpile("out = []\nfor w in ['a', 'b']\n    out = push[out, w]\n    log[w]\nm = map[]\nfor k in ['p', 'q']\n    m = set[m, k, 1]\nlog[out]\nlog[m]\n");
     assert!(rust.contains("crow_runtime::core::push((out), ((w).clone()))"), "{}", rust);
     assert!(rust.contains("crow_runtime::core::set((m), &(k), (1_i64))"), "{}", rust);
+}
+
+/// A value that can fail, held by a name, is borrowed to be checked and
+/// read where the call only reads it: `len[rows]` of a file's lines had
+/// copied every line twice
+#[test]
+fn a_value_that_can_fail_is_borrowed_to_be_read() {
+    let rust = transpile("t = read['f.txt']\nn = len[t]\nm = len[t]\nlog[n + m]\n");
+    assert!(rust.contains("let _prop_0 = &(t);"), "{}", rust);
+    assert!(!rust.contains("let _prop_0 = t.clone();"), "{}", rust);
+    assert!(!rust.contains("_prop_0.value.clone()"), "{}", rust);
+}
+
+/// A variable read for the last time moves into the collection that keeps
+/// it — a loop's own item, a local of the loop's body — and a function's
+/// list is returned, not copied (`return out` had copied every line
+/// `lines` read)
+#[test]
+fn a_last_read_moves_into_the_collection_and_out_of_the_function() {
+    let rust = transpile("fn keep[xs]\n    out = []\n    for x in xs\n        y = upper[x]\n        out = push[out, y]\n    return out\nlog[keep[['a', 'b']]]\n");
+    assert!(rust.contains("crow_runtime::core::push((out), (y))"), "{}", rust);
+    assert!(rust.contains("return out;"), "{}", rust);
+    assert!(!rust.contains("return out.clone()"), "{}", rust);
 }
 
 /// A control renders what it is given, as an element and a view do: a
@@ -1528,7 +1551,7 @@ fn a_failed_values_payload_converted_in_a_call_keeps_the_failure() {
     let line = rust.lines().find(|l| l.contains("let v1:")).expect("v1");
     assert!(line.contains("CrowResult<Vec<i64>>"), "v1 can fail\n{}", line);
     assert!(line.contains("CrowResult { ok: true, value: crow_runtime::core::concat("), "the call is lifted\n{}", line);
-    assert!(line.contains("(_prop_1.value.clone()).to_vec()"), "the conversion reads the bound payload\n{}", line);
+    assert!(line.contains("(_prop_1.value).to_vec()"), "the conversion reads the bound payload, moved out of the call's answer\n{}", line);
     assert!(!line.contains("}).value).to_vec()"), "no payload read off a failed block\n{}", line);
 }
 

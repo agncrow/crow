@@ -171,7 +171,11 @@ steps on every push and must be green.
   body, the top level's everywhere — the ClickHouse driver's local
   `where` had renamed every program's `where[…]`.
 - Performance of the compiled program is decided by what the emitter writes
-  per operation, not by the toolchain (opt-level 3 + fat LTO already): a
+  per operation, not by the toolchain (opt-level 3 + fat LTO already) — with
+  one trap: fat LTO re-optimizes the standard library's own byte loops worse
+  (`str::replace` of one ASCII byte ran 3× slower than unlinked; thin LTO
+  cost binarytrees 5–35%), so a runtime kernel over bytes writes its own
+  loop (`text::replace`'s ASCII pair). A
   `for` over `range[n]`/`range[a, b]` is a counted loop (`emit_for`), and
   `stops::item`/`char_at` take their common case first (`#[inline(always)]`,
   the slow path `#[cold]`). Measure by rewriting the generated main.rs by
@@ -404,3 +408,20 @@ steps on every push and must be green.
   storage). The interpreter hands a row its arguments by value only on
   its `take` path (a moved argument): a new in-place row needs that bridge,
   or it copies at every call.
+- The emitter honours the IR's `move` (`moved_local`): a last read prints
+  bare, so it moves. Exceptions copy: a lent parameter (`(*p)`), a handle, a
+  plain vector, a text builder, and a statement loop's item it borrows from
+  what it walks (`Local::borrowed`, `declare_borrowed` in `emit_for`). A new
+  path that keeps a local's value goes through `owned_expr`,
+  `moved_or_cloned` or checks `moved_local`, or it copies every last read
+  again. The move pass (`place_moves_in`) kills an inner block's own names at
+  its end (spec, Scope), but the OUTERMOST block's names are what its caller
+  says is live: a notebook's next cell reads them (moving them had emptied
+  `prices` between cells). A `move` the prepared interpreter does not compile
+  is a walker fallback in a loop's body: `len[move x]` had been one.
+- A text row whose runtime function can change the text where it lies has
+  an entry in `table::taken_path` (the emitter prints it when the first
+  argument is a moved local, the statement's target or a call's answer) and a
+  `texts` take bridge (the interpreter's moved argument): both, or the modes
+  copy differently.
+

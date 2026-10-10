@@ -1164,7 +1164,11 @@ impl Emitter {
             self.needs_crow_runtime = true;
             self.line(&format!("crow_runtime::cores::run(|| {}.par_iter(){}.for_each({} {{", actual, each, param));
             self.indent += 1;
-            self.declare(var, elem);
+            if is_copy || text {
+                self.declare(var, elem);
+            } else {
+                self.declare_borrowed(var, elem);
+            }
             self.closure_depth += 1;
             self.emit_block(body);
             self.closure_depth -= 1;
@@ -1175,7 +1179,11 @@ impl Emitter {
             let each = if text { ".cloned()" } else { "" };
             self.line(&format!("for {} in {}.iter(){} {{", param, actual, each));
             self.indent += 1;
-            self.declare(var, elem);
+            if is_copy || text {
+                self.declare(var, elem);
+            } else {
+                self.declare_borrowed(var, elem);
+            }
             self.emit_block(body);
             self.indent -= 1;
             self.line("}");

@@ -334,8 +334,24 @@ pub fn has<K: Ord, T>(m: &BTreeMap<K, T>, key: &K) -> bool {
     m.contains_key(key)
 }
 
-/// `reverse[text]`, by character.
+/// `reverse[text]`, by character: ASCII text by its bytes.
 pub fn reverse_text(s: &str) -> String {
+    if s.is_ascii() {
+        let mut b = s.as_bytes().to_vec();
+        b.reverse();
+        return String::from_utf8(b).unwrap_or_else(|_| s.chars().rev().collect());
+    }
+    s.chars().rev().collect()
+}
+
+/// `reverse` of a text nothing else holds: ASCII text reversed where it
+/// lies, any other by character.
+pub fn reverse_text_taken(s: String) -> String {
+    if s.is_ascii() {
+        let mut b = s.into_bytes();
+        b.reverse();
+        return String::from_utf8(b).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).chars().rev().collect());
+    }
     s.chars().rev().collect()
 }
 

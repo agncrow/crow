@@ -317,24 +317,32 @@ impl Kind {
                 _ => format!("&*({})", arg),
             },
             // a map's key: `&K` of the map's type (a text literal owned)
-            Kind::Key => match literal_text(arg) {
-                Some(lit) => format!("&String::from({})", lit),
-                None => format!("&({})", arg),
+            Kind::Key => match (literal_text(arg), borrowed_index(arg)) {
+                (Some(lit), _) => format!("&String::from({})", lit),
+                (None, Some(item)) => format!("({})", item),
+                _ => format!("&({})", arg),
             },
-            Kind::Keys => format!("&({})[..]", arg),
+            Kind::Keys => format!("&({})[..]", borrowed_index(arg).unwrap_or_else(|| arg.to_string())),
             Kind::Unit => format!("({})", arg),
-            Kind::Strs | Kind::Bools | Kind::Chunks => format!("&({})[..]", arg),
+            Kind::Strs | Kind::Bools | Kind::Chunks => format!("&({})[..]", borrowed_index(arg).unwrap_or_else(|| arg.to_string())),
             Kind::Cell => format!("&crow_runtime::cell::Cell::from(({}).clone())", arg),
             Kind::Words => format!("&crow_runtime::cell::words(&({})).unwrap_or_else(|e| crow_stop({}, e))[..]", arg, line),
             Kind::Cells => format!("crow_runtime::frames::Cells::from(({}).clone())", arg),
-            Kind::Seq => format!("&({})[..]", arg),
-            Kind::ShownDyn => format!("&({}) as &dyn crow_runtime::display::CrowDisplay", arg),
+            Kind::Seq => format!("&({})[..]", borrowed_index(arg).unwrap_or_else(|| arg.to_string())),
+            Kind::ShownDyn => match borrowed_index(arg) {
+                Some(item) => format!("({}) as &dyn crow_runtime::display::CrowDisplay", item),
+                None => format!("&({}) as &dyn crow_runtime::display::CrowDisplay", arg),
+            },
             Kind::TextMap => format!("&crow_runtime::sources::text_map(&({}))", arg),
             Kind::Operand => format!("crow_runtime::fused::Operand::from(&({}))", arg),
             Kind::Scalar => format!("crow_runtime::mask::Cell::from(&({}))", arg),
             // moved or copied (an item kept) where the call is made
             Kind::List | Kind::MapOf | Kind::Ints | Kind::Floats | Kind::Texts | Kind::Item => format!("({})", arg),
-            _ => format!("&({})", arg),
+            // (an item of a list a name holds, read where it lies)
+            _ => match borrowed_index(arg) {
+                Some(item) => format!("({})", item),
+                None => format!("&({})", arg),
+            },
         }
     }
 
@@ -445,7 +453,8 @@ pub fn literal_text(arg: &str) -> Option<String> {
 /// An indexed read of a list as the emitter prints it — `{ let _i = …;
 /// let _v = &xs; _v[…].clone() }` — with the item referenced instead of
 /// cloned: a parameter that only reads it needs no copy of it. Only of a
-/// list a name holds (a local, a field of one): a list an expression
+/// list a name holds (a local, a field of one, a lent parameter, the
+/// payload of a value that can fail — `place_text`): a list an expression
 /// makes dies with the block, and a reference into it would not build.
 pub fn borrowed_index(arg: &str) -> Option<String> {
     if !arg.starts_with("{ let _i = ") {
@@ -454,10 +463,28 @@ pub fn borrowed_index(arg: &str) -> Option<String> {
     let body = arg.strip_suffix(".clone() }")?;
     let at = body.rfind("; _v[")?;
     let held = body[..at].rfind("; let _v = &").map(|k| &body[k + 12..at])?;
-    if held.is_empty() || !held.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.') {
+    if !place_text(held) {
         return None;
     }
     Some(format!("{}; &_v[{} }}", &body[..at], &body[at + 5..]))
+}
+
+/// Whether printed Rust names a place a name holds: a local, a field of
+/// one, a parameter the caller lends (`(*rows)`), the payload of a value
+/// that can fail (`(rows).value`) — no call, so no temporary, and no name
+/// of the emitter's own (`_t4`: a temporary that can end before the read).
+fn place_text(s: &str) -> bool {
+    let b = s.as_bytes();
+    let base = s.trim_start_matches(['(', '*']);
+    !s.is_empty()
+        && !base.starts_with('_')
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '(' | ')' | '*'))
+        && b.iter().enumerate().all(|(i, &c)| match c {
+            b'(' => i == 0 || !(b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_'),
+            b'*' => i > 0 && b[i - 1] == b'(',
+            _ => true,
+        })
+        && s.matches('(').count() == s.matches(')').count()
 }
 
 /// The kind each of `argc` arguments is read as by these parameters, or
@@ -1357,9 +1384,9 @@ pub static ROWS: &[Row] = &[
     // kind no row takes is refused before the program runs
     row!("text.split", "", "split", crow_runtime::text::split, (Str, Str) -> Strs, never),
     row!("text.trim", "", "trim", crow_runtime::text::trim, (Str) -> Str, never),
-    row!("text.replace", "", "replace", crow_runtime::text::replace, (Str, Str, Str) -> Str, never),
-    row!("text.upper", "", "upper", crow_runtime::text::upper, (Str) -> Str, never),
-    row!("text.lower", "", "lower", crow_runtime::text::lower, (Str) -> Str, never),
+    Row { take: texts::replace_taken, ..row!("text.replace", "", "replace", crow_runtime::text::replace, (Str, Str, Str) -> Str, never) },
+    Row { take: texts::upper_taken, ..row!("text.upper", "", "upper", crow_runtime::text::upper, (Str) -> Str, never) },
+    Row { take: texts::lower_taken, ..row!("text.lower", "", "lower", crow_runtime::text::lower, (Str) -> Str, never) },
     row!("text.starts", "", "starts", crow_runtime::text::starts, (Str, Str) -> Bool, never),
     row!("text.ends", "", "ends", crow_runtime::text::ends, (Str, Str) -> Bool, never),
     row!("core.join", "", "join", crow_runtime::core::join_words, (Words, Str) -> Str, never),
@@ -1408,7 +1435,7 @@ pub static ROWS: &[Row] = &[
     row!("core.sort_strs", "", "sort", crow_runtime::core::sort_strs, (Texts) -> Texts, never),
     row!("core.sort_tensor", "", "sort", crow_runtime::core::sort_tensor, (Tensor) -> Tensor, never),
     row!("core.reverse", "", "reverse", crow_runtime::core::reverse, (List) -> List, never),
-    row!("core.reverse_text", "", "reverse", crow_runtime::core::reverse_text, (Str) -> Str, never),
+    Row { take: texts::reverse_taken, ..row!("core.reverse_text", "", "reverse", crow_runtime::core::reverse_text, (Str) -> Str, never) },
     row!("core.reverse_tensor", "", "reverse", crow_runtime::core::reverse_tensor, (Tensor) -> Tensor, never),
     row!("core.concat", "", "concat", crow_runtime::core::concat, (List, Seq) -> List, never),
     row!("core.concat_text", "", "concat", crow_runtime::core::concat_text, (Str, Str) -> Str, never),
@@ -2634,6 +2661,12 @@ mod tests {
         assert_eq!(borrowed_index("{ let _i = 0_i64; let _v = &crow_runtime::text::split(&*(s), \" \"); _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop(5, e))].clone() }"), None);
         assert_eq!(borrowed_index("{ let _i = 0_i64; let _v = &(_t4).value.names; _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop(5, e))].clone() }"), None);
         assert!(borrowed_index("{ let _i = 0_i64; let _v = &r.names; _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop(5, e))].clone() }").is_some());
+        // a parameter the caller lends and the payload of a held value that can
+        // fail are places a name holds; a call's answer is not
+        assert!(borrowed_index("{ let _i = i; let _v = &(*rows); _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop(6, e))].clone() }").is_some());
+        assert!(borrowed_index("{ let _i = i; let _v = &(rows).value; _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop(6, e))].clone() }").is_some());
+        assert_eq!(borrowed_index("{ let _i = i; let _v = &(rows.clone()); _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop(6, e))].clone() }"), None);
+        assert_eq!(borrowed_index("{ let _i = i; let _v = &f(x); _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop(6, e))].clone() }"), None);
         assert_eq!(Kind::Str.print("\"\\t\".to_string()", "3"), "\"\\t\"");
         assert_eq!(Kind::Str.print(indexed, "3"), format!("&*({})", borrowed));
         assert_eq!(Kind::Str.print("name", "3"), "&*(name)");
@@ -2752,6 +2785,86 @@ mod tests {
 /// The map rows' bridges: a map is keyed by text or by ints (`Value::Map`,
 /// `Value::IntMap`), an open map — empty — takes its first key's kind.
 /// A tensor row's own bridge, given its arguments to keep.
+/// The runtime function a row's call is printed as when its first argument
+/// is a text nothing else holds (`s = replace[s, …]`, or another call's
+/// answer): the text is changed where it lies, as the interpreter's `take`
+/// bridges change it (`texts`). None for a row without one.
+pub fn taken_path(id: &str) -> Option<&'static str> {
+    match id {
+        "text.replace" => Some("crow_runtime::text::replace_taken"),
+        "text.upper" => Some("crow_runtime::text::upper_taken"),
+        "text.lower" => Some("crow_runtime::text::lower_taken"),
+        "core.reverse_text" => Some("crow_runtime::core::reverse_text_taken"),
+        _ => None,
+    }
+}
+
+pub mod texts {
+    use super::*;
+
+    /// The text of the first argument, taken out of it, when every argument
+    /// is a plain text (no failure riding on it); None for anything else.
+    fn texts_taken(args: &mut [CrowValue]) -> Option<(String, Vec<&str>)> {
+        if !args.iter().all(|a| a.is_ok() && matches!(a.value, Value::Str(_))) {
+            return None;
+        }
+        let (first, rest) = args.split_first_mut()?;
+        let Value::Str(s) = &mut first.value else { return None };
+        let taken = std::mem::take(s);
+        let rest: Vec<&str> = rest.iter().filter_map(|a| if let Value::Str(x) = &a.value { Some(x.as_str()) } else { None }).collect();
+        Some((taken, rest))
+    }
+
+    fn by_row(id: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, String> {
+        match ROWS.iter().find(|r| r.id == id) {
+            Some(row) => (row.call)(args, trace),
+            None => Err(format!("a bug in Crow: the row {} is gone", id)),
+        }
+    }
+
+    /// `replace[s, old, new]` given the text: one ASCII character for
+    /// another is written where it lies (crow_runtime::text::replace_taken);
+    /// anything else is the row's own call.
+    pub fn replace_taken(mut args: Vec<CrowValue>, trace: &str) -> Result<CrowValue, String> {
+        if args.len() == 3 {
+            if let Some((s, rest)) = texts_taken(&mut args) {
+                return Ok(write_str(crow_runtime::text::replace_taken(s, rest[0], rest[1])));
+            }
+        }
+        by_row("text.replace", &args, trace)
+    }
+
+    /// `upper[s]` given the text: ASCII raised where it lies.
+    pub fn upper_taken(mut args: Vec<CrowValue>, trace: &str) -> Result<CrowValue, String> {
+        if args.len() == 1 {
+            if let Some((s, _)) = texts_taken(&mut args) {
+                return Ok(write_str(crow_runtime::text::upper_taken(s)));
+            }
+        }
+        by_row("text.upper", &args, trace)
+    }
+
+    /// `reverse[s]` given the text: ASCII reversed where it lies.
+    pub fn reverse_taken(mut args: Vec<CrowValue>, trace: &str) -> Result<CrowValue, String> {
+        if args.len() == 1 {
+            if let Some((s, _)) = texts_taken(&mut args) {
+                return Ok(write_str(crow_runtime::core::reverse_text_taken(s)));
+            }
+        }
+        by_row("core.reverse_text", &args, trace)
+    }
+
+    /// `lower[s]` given the text: ASCII lowered where it lies.
+    pub fn lower_taken(mut args: Vec<CrowValue>, trace: &str) -> Result<CrowValue, String> {
+        if args.len() == 1 {
+            if let Some((s, _)) = texts_taken(&mut args) {
+                return Ok(write_str(crow_runtime::text::lower_taken(s)));
+            }
+        }
+        by_row("text.lower", &args, trace)
+    }
+}
+
 pub mod tensors {
     use super::*;
 

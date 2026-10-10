@@ -143,10 +143,41 @@ pub fn trim(s: &str) -> String {
     s.trim().to_string()
 }
 
-/// `replace[text, old, new]`: every `old` replaced by `new`.
-#[inline]
+/// `replace[text, old, new]`: every `old` replaced by `new`. One ASCII
+/// character for another is a loop over the bytes: the standard library's
+/// own path for it ran three times slower inside a program linked with fat
+/// LTO, the interpreter (linked without) ten times faster on a long text.
 pub fn replace(s: &str, old: &str, new: &str) -> String {
+    if let Some((o, n)) = ascii_pair(old, new) {
+        let bytes: Vec<u8> = s.bytes().map(|b| if b == o { n } else { b }).collect();
+        return String::from_utf8(bytes).unwrap_or_else(|_| s.replace(old, new));
+    }
     s.replace(old, new)
+}
+
+/// The two bytes of a replacement of one ASCII character by another.
+fn ascii_pair(old: &str, new: &str) -> Option<(u8, u8)> {
+    match (old.as_bytes(), new.as_bytes()) {
+        (&[o], &[n]) if o.is_ascii() && n.is_ascii() => Some((o, n)),
+        _ => None,
+    }
+}
+
+/// `replace` of a text nothing else holds (`s = replace[s, …]`, or the
+/// answer of another call): one ASCII character for another is written
+/// where the text lies — an ASCII byte is never part of another
+/// character, so the text stays UTF-8 — and anything else is `replace`'s.
+pub fn replace_taken(s: String, old: &str, new: &str) -> String {
+    if let Some((o, n)) = ascii_pair(old, new) {
+        let mut bytes = s.into_bytes();
+        for b in bytes.iter_mut() {
+            if *b == o {
+                *b = n;
+            }
+        }
+        return String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
+    }
+    replace(&s, old, new)
 }
 
 /// `upper[text]`.
@@ -155,9 +186,29 @@ pub fn upper(s: &str) -> String {
     s.to_uppercase()
 }
 
+/// `upper` of a text nothing else holds: ASCII text is raised where it
+/// lies, any other is `upper`'s.
+pub fn upper_taken(mut s: String) -> String {
+    if s.is_ascii() {
+        s.make_ascii_uppercase();
+        return s;
+    }
+    s.to_uppercase()
+}
+
 /// `lower[text]`.
 #[inline]
 pub fn lower(s: &str) -> String {
+    s.to_lowercase()
+}
+
+/// `lower` of a text nothing else holds: ASCII text is lowered where it
+/// lies, any other is `lower`'s (a final sigma is the context's).
+pub fn lower_taken(mut s: String) -> String {
+    if s.is_ascii() {
+        s.make_ascii_lowercase();
+        return s;
+    }
     s.to_lowercase()
 }
 
@@ -356,6 +407,25 @@ pub fn decode_as(text: &str, scheme: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    /// One ASCII character for another, in place or not, is the standard
+    /// library's replace; so is every other replacement, and upper, lower
+    /// and reverse of a text taken are the copies' (non-ASCII text included)
+    #[test]
+    fn a_replacement_taken_or_copied_is_the_standard_one() {
+        let texts = ["", "ACGT", "aAbBA", "ÄA→A", "naïve café", "A".repeat(1000).as_str(), "ΣΑΣ σας"].map(String::from);
+        for s in &texts {
+            for (o, n) in [("A", "t"), ("a", "Z"), ("A", "→"), ("→", "A"), ("AB", "x"), ("", "x"), ("A", "")] {
+                assert_eq!(replace(s, o, n), s.replace(o, n), "{:?} {} {}", s, o, n);
+                assert_eq!(replace_taken(s.clone(), o, n), s.replace(o, n), "{:?} {} {}", s, o, n);
+            }
+            assert_eq!(upper_taken(s.clone()), s.to_uppercase());
+            assert_eq!(lower_taken(s.clone()), s.to_lowercase());
+            let backwards: String = s.chars().rev().collect();
+            assert_eq!(crate::core::reverse_text(s), backwards);
+            assert_eq!(crate::core::reverse_text_taken(s.clone()), backwards);
+        }
+    }
+
     /// A slice, a length and a position read with what is known of a
     /// text's start answer what the character walk answered, for ASCII
     /// text, text that is not, and text that starts as one and goes on as

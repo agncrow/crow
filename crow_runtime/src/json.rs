@@ -45,13 +45,7 @@ pub fn parse(s: &str) -> Result<serde_json::Value, String> {
 pub fn items(v: &serde_json::Value) -> Result<Vec<serde_json::Value>, String> {
     use serde_json::Value;
     match v {
-        Value::Array(items) if !items.is_empty() && items.iter().all(|i| i.is_number()) => Ok(items
-            .iter()
-            .map(|n| {
-                let f = n.as_f64().unwrap_or(0.0);
-                if f == (f as i64) as f64 && f.is_finite() { serde_json::json!(f as i64) } else { float_to_json(f) }
-            })
-            .collect()),
+        Value::Array(items) if !items.is_empty() && items.iter().all(|i| i.is_number()) => Ok(items.iter().map(whole_or_float).collect()),
         Value::Array(items) => Ok(items.clone()),
         _ => Err("for loop requires an array".to_string()),
     }
@@ -189,15 +183,7 @@ impl ToJson for serde_json::Value {
     fn to_json(&self) -> serde_json::Value {
         use serde_json::Value;
         match self {
-            Value::Array(items) if !items.is_empty() && items.iter().all(|i| i.is_number()) => Value::Array(
-                items
-                    .iter()
-                    .map(|n| {
-                        let f = n.as_f64().unwrap_or(0.0);
-                        if f == (f as i64) as f64 && f.is_finite() { serde_json::json!(f as i64) } else { float_to_json(f) }
-                    })
-                    .collect(),
-            ),
+            Value::Array(items) if !items.is_empty() && items.iter().all(|i| i.is_number()) => Value::Array(items.iter().map(whole_or_float).collect()),
             Value::Array(items) => Value::Array(items.iter().map(|i| i.to_json()).collect()),
             Value::Object(m) => Value::Object(m.iter().map(|(k, v)| (k.clone(), v.to_json())).collect()),
             other => other.clone(),
@@ -299,6 +285,12 @@ pub fn read_int(v: &serde_json::Value, how: &str) -> Result<i64, String> {
 /// an order, a variable holding numbers): a number, or text that reads
 /// as one; else the stop. (`__read_float`.)
 pub fn read_float(v: &serde_json::Value, how: &str) -> Result<f64, String> {
+    // a whole number a float would not hold exactly stops rather than lose
+    // digits, as a frame's column of them does at its load (spec, JSON)
+    let whole = v.as_i64().map(|n| n.unsigned_abs()).or_else(|| v.as_u64()).or_else(|| v.as_str().and_then(|s| s.trim().parse::<i64>().ok()).map(|n| n.unsigned_abs()));
+    if whole.is_some_and(|n| n > 1u64 << 53) {
+        return Err(format!("{}: a float holds a whole number exactly only up to 2^53 — int[…] reads it as it is", not_read(v, "a number", how)));
+    }
     if let Some(x) = v.as_f64() {
         return Ok(x);
     }
@@ -306,6 +298,17 @@ pub fn read_float(v: &serde_json::Value, how: &str) -> Result<f64, String> {
         return Ok(x);
     }
     Err(not_read(v, "a number", how))
+}
+
+/// A parsed number as a list of them walks and encodes it: a whole number
+/// as it is (it had been read through a float, and one past 2^53 lost its
+/// last digits), a float with nothing after the point as an int.
+fn whole_or_float(n: &serde_json::Value) -> serde_json::Value {
+    if n.is_i64() || n.is_u64() {
+        return n.clone();
+    }
+    let f = n.as_f64().unwrap_or(0.0);
+    if f == (f as i64) as f64 && f.is_finite() { serde_json::json!(f as i64) } else { float_to_json(f) }
 }
 
 /// A parsed value read as text, where its use takes text: text itself, a
@@ -342,6 +345,23 @@ pub fn read_moment(v: &serde_json::Value, how: &str) -> Result<crate::moments::M
 
 #[cfg(test)]
 mod read_tests {
+    /// A parsed whole number past 2^53 is walked, encoded and read as an int
+    /// as it is; read as a float it stops rather than lose its last digits
+    #[test]
+    fn a_parsed_whole_number_past_two_to_the_53_keeps_its_digits() {
+        let v: serde_json::Value = serde_json::from_str("[9007199254740993, 1, 2.0, 2.5]").unwrap();
+        let walked = items(&v).unwrap();
+        assert_eq!(walked[0].as_i64(), Some(9007199254740993));
+        assert_eq!(walked[2].as_i64(), Some(2));
+        assert_eq!(walked[3].as_f64(), Some(2.5));
+        assert_eq!(v.to_json().to_string(), "[9007199254740993,1,2,2.5]");
+        assert_eq!(read_int(&walked[0], "").unwrap(), 9007199254740993);
+        assert!(read_float(&walked[0], "met in add").unwrap_err().contains("2^53"));
+        assert_eq!(read_float(&walked[1], "").unwrap(), 1.0);
+        let big: serde_json::Value = serde_json::from_str("18446744073709551615").unwrap();
+        assert!(read_int(&big, "").is_err());
+    }
+
     use super::*;
 
     /// Each read takes what its kind can hold and stops on the rest, naming

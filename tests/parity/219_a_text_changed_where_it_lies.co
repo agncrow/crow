@@ -1,0 +1,56 @@
+--- A text nothing else holds is changed where it lies, in both modes:
+--- `s = replace[s, ...]` of one ASCII character by another, `upper`,
+--- `lower` and `reverse` of a text read for the last time or of another
+--- call's answer. Every other text is copied first, so the text a name
+--- still holds is the one it held; and non-ASCII text, a pattern of more
+--- than one character, a replacement by nothing, take the general way.
+
+fn complement[line]
+    s = upper[line]
+    s = replace[s, 'A', 't']
+    s = replace[s, 'C', 'g']
+    s = replace[s, 'G', 'c']
+    s = replace[s, 'T', 'a']
+    return upper[s]
+
+fn rc_line[line]
+    return reverse[complement[line]]
+
+kept = 'acgtACGTn'
+log[rc_line[kept]]
+log[kept]
+
+--- a text read again after its change is a copy
+t = 'Hello'
+u = replace[t, 'l', 'L']
+log['`t` `u`']
+log[upper[t]]
+log[t]
+
+--- non-ASCII text, longer patterns, a replacement by nothing
+w = 'naïve café'
+w = replace[w, 'a', 'A']
+log[w]
+w = upper[w]
+log[w]
+w = lower[w]
+log[w]
+log[reverse[w]]
+v = replace['abcabc', 'bc', 'X']
+log[v]
+v = replace[v, 'X', '']
+log[v]
+v = replace[v, 'a', 'é']
+log[v]
+
+--- a loop's own text moves into the list that keeps it
+fn shout[words]
+    out = []
+    for x in words
+        y = upper[x]
+        y = replace[y, 'E', '3']
+        out = push[out, y]
+    return out
+names = ['tree', 'eel', 'bee']
+log[shout[names]]
+log[names]

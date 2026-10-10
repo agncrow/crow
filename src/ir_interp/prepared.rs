@@ -1185,9 +1185,11 @@ impl Comp {
                 self.emit(Ins::Effect { d, how: Box::new(EffectHow { name: name.clone(), row: *row, propagates: *propagates, answered: *answered }), args: regs.into_boxed_slice() });
             }
             Expr::Call { target, args, propagates, .. } => {
+                // (a local read for the last time is measured where it lies
+                // too: nothing reads it after, so nothing is taken)
                 if is_len(target)
                     && args.len() == 1
-                    && let Expr::Local(v, _) = unwrapped(&args[0])
+                    && let Expr::Local(v, _) | Expr::Move(v, _) = unwrapped(&args[0])
                     && let Some(b) = self.resolve(v)
                 {
                     self.emit(Ins::Len { d, base: b, how: Box::new((target.clone(), e.clone(), self.env())), known: None });

@@ -126,7 +126,9 @@ impl Emitter {
                     let inner = self.expr(expr);
                     match self.tt(expr) {
                         Ty::Result(p) => {
-                            let reread = matches!(expr.as_ref(), Expr::Local(..) | Expr::Derived(..) | Expr::Load(..));
+                            // (a last read moves the payload only out of a local the
+                            // function owns: a loop's borrowed item is copied)
+                            let reread = matches!(expr.as_ref(), Expr::Local(..) | Expr::Derived(..) | Expr::Load(..)) || (matches!(expr.as_ref(), Expr::Move(..)) && !self.moved_local(expr));
                             if reread && !Self::is_copy_type(&p) {
                                 format!("({}).value.clone()", inner)
                             } else {
@@ -330,6 +332,9 @@ impl Emitter {
             if self.static_handle_vars.contains(name) && !self.declared(name) {
                 return s;
             }
+            if self.moved_local(e) {
+                return s;
+            }
             let mut t = self.local_ty(name).unwrap_or_else(|| as_inferred(ty));
             if matches!(t, Ty::Unknown) && self.reactive_event_handlers.contains(&self.cur_fn) {
                 t = Ty::Str;
@@ -364,10 +369,43 @@ impl Emitter {
     /// The collection argument of an in-place builtin: moved when it is the
     /// variable this statement assigns, cloned otherwise.
     pub(crate) fn moved_or_cloned(&self, arg: &Expr, s: &str) -> String {
-        if matches!(Emitter::raw(arg), Expr::Local(n, _) | Expr::Move(n, _) if self.move_target.as_deref() == Some(n.as_str())) {
+        let raw = Emitter::raw(arg);
+        if matches!(raw, Expr::Local(n, _) | Expr::Move(n, _) if self.move_target.as_deref() == Some(n.as_str())) || self.moved_local(arg) {
+            s.to_string()
+        } else if Emitter::fresh_value(arg) {
+            // a value an expression makes is the call's own: nothing to copy
             s.to_string()
         } else {
             format!("{}.clone()", s)
+        }
+    }
+
+    /// Whether an expression makes a value of its own (a call's answer, a
+    /// literal list, an interpolation, an item copied out): nothing else
+    /// holds it, so it can be moved where it is used. A name's value — a
+    /// local, a fact, a derivation (a local at the top of a view), a field
+    /// of one — is held, and is borrowed or copied.
+    pub(crate) fn fresh_value(e: &Expr) -> bool {
+        !matches!(Emitter::raw(e), Expr::Local(..) | Expr::Move(..) | Expr::Load(..) | Expr::Derived(..) | Expr::Field { .. } | Expr::Constant(..) | Expr::FnRef(..) | Expr::Const(..) | Expr::Meta { .. })
+    }
+
+    /// A local read for the last time (the IR's `move`) that the function
+    /// owns and holds by name: printed bare where a value is kept, it moves
+    /// instead of being copied (`return out` had copied the list it
+    /// returned). A parameter lent by the caller, a handle, a plain vector
+    /// and a text builder are printed as something else, and copy.
+    pub(crate) fn moved_local(&self, e: &Expr) -> bool {
+        match Emitter::raw(e) {
+            Expr::Move(n, _) => {
+                self.declared(n)
+                    && !self.borrowed(n)
+                    && !self.ref_params.contains(n)
+                    && !self.lent_here.contains(n)
+                    && !self.static_handle_vars.contains(n)
+                    && !self.plain_vecs.contains(n)
+                    && !self.text_builders.contains_key(n)
+            }
+            _ => false,
         }
     }
 
@@ -952,7 +990,7 @@ impl Emitter {
                 Ty::Result(t) => as_float(format!("{{ let _ix = &({}); if !_ix.ok {{ crow_stop({}, _ix.reason.clone()); }} _ix.value.clone() }}", s, self.line_now()), &t),
                 // (a tensor a gradient is handed is read: the local, or the
                 // record it is a field of, lives on)
-                Ty::Tensor(..) if matches!(Emitter::raw(a), Expr::Local(..) | Expr::Field { .. }) => format!("{}.clone()", s),
+                Ty::Tensor(..) if (matches!(Emitter::raw(a), Expr::Local(..) | Expr::Field { .. }) || matches!(Emitter::raw(a), Expr::Move(..)) && !self.moved_local(a)) => format!("{}.clone()", s),
                 t => as_float(s, &t),
             });
         }
@@ -1775,7 +1813,8 @@ impl Emitter {
                         Ty::Tensor(..) | Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Markup | Ty::Frame(_) | Ty::Record(_) | Ty::Bytes | Ty::Stream | Ty::Socket | Ty::Mailer | Ty::Db
                     );
                 let s = self.expr(a);
-                arg_strs.push(if needs_clone && !(matches!(a, Expr::Load(n, _) if self.static_handle_vars.contains(n))) { format!("{}.clone()", s) } else { s });
+                let moved = self.moved_local(a);
+                arg_strs.push(if needs_clone && !moved && !(matches!(a, Expr::Load(n, _) if self.static_handle_vars.contains(n))) { format!("{}.clone()", s) } else { s });
             }
         }
 
@@ -1858,7 +1897,16 @@ impl Emitter {
                 const HELD: &[&str] = &["query", "exec", "insert", "transact", "read", "write", "fetch", "shell", "request", "mail", "later", "notice", "sign_in", "download"];
                 let stop_as = (self.reactive_epilogue.is_some() && HELD.contains(&name.as_str())).then(|| self.shown_fn_name());
                 self.pinned_module = saved_pin;
-                return self.propagation_block(&result_idx, &orig, &inner_expr, &inner_type, already, stop_as);
+                // a value a name holds is borrowed to be checked and read; any
+                // other (a call's answer) is bound as it is
+                let held: Vec<bool> = result_idx
+                    .iter()
+                    .map(|&i| match &through[i] {
+                        Some(_) => self.unwrapped_through(&raw_args[i]).is_none_or(|(_, inner)| !Emitter::fresh_value(inner)),
+                        None => !Emitter::fresh_value(&raw_args[i]),
+                    })
+                    .collect();
+                return self.propagation_block(&result_idx, &orig, &held, &inner_expr, &inner_type, already, stop_as);
             }
         }
         let out = self.dispatch(&target, &name, &raw_args, &arg_strs, e);
@@ -1890,7 +1938,8 @@ impl Emitter {
         printed
     }
 
-    fn propagation_block(&self, idx: &[usize], orig: &[String], inner: &str, inner_type: &Ty, already: bool, stop_as: Option<String>) -> String {
+    #[allow(clippy::too_many_arguments)]
+    fn propagation_block(&self, idx: &[usize], orig: &[String], held: &[bool], inner: &str, inner_type: &Ty, already: bool, stop_as: Option<String>) -> String {
         let default_val = inner_type.default_rust_value();
         let trace = self.trace_format_expr();
         let error_result = |i: usize| -> String {
@@ -1904,13 +1953,31 @@ impl Emitter {
                 i = i
             )
         };
+        // the payload read where it lies when the call only reads it (`&x` of
+        // a copy of `x` is `&x`); a value a name holds is borrowed, and its
+        // payload copied only where the call keeps it; a call's answer is
+        // bound as it is and its payload moved into the call (the value is
+        // read once: copying it whole twice had been the price of every
+        // read of a list a file's lines filled)
+        let mut inner = inner.to_string();
+        for (pos, &i) in idx.iter().enumerate() {
+            let copy = format!("_prop_{}.value.clone()", i);
+            for (from, to) in [(format!("&({})", copy), format!("&(_prop_{}.value)", i)), (format!("&*({})", copy), format!("&*(_prop_{}.value)", i)), (format!("&{}", copy), format!("&_prop_{}.value", i))] {
+                inner = inner.replace(&from, &to);
+            }
+            let payload = format!("_prop_{}.value", i);
+            if !held.get(pos).copied().unwrap_or(false) && inner.matches(&copy).count() == 1 && inner.matches(&payload).count() == 1 {
+                inner = inner.replace(&copy, &format!("_prop_{}.value", i));
+            }
+        }
         let mut result = if already {
-            inner.to_string()
+            inner
         } else {
             format!("CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", inner)
         };
         for (pos, &i) in idx.iter().enumerate().rev() {
-            result = format!("{{ let _prop_{i} = {}.clone(); if !_prop_{i}.ok {{ {} }} else {{ {} }} }}", orig[pos], error_result(i), result, i = i);
+            let bound = if held.get(pos).copied().unwrap_or(false) { format!("&({})", orig[pos]) } else { format!("({})", orig[pos]) };
+            result = format!("{{ let _prop_{i} = {}; if !_prop_{i}.ok {{ {} }} else {{ {} }} }}", bound, error_result(i), result, i = i);
         }
         result
     }
@@ -2193,7 +2260,8 @@ impl Emitter {
                     k if k.owned() => self.moved_or_cloned(a, &s),
                     Kind::Item | Kind::ItemRef => {
                         let at = self.tt(a);
-                        let s = if *k == Kind::Item { Self::kept(a, &s) } else { s };
+                        // (a local read for the last time moves into the collection)
+                        let s = if *k == Kind::Item && !self.moved_local(a) { Self::kept(a, &s) } else { s };
                         // a function kept is the collection's function type
                         let s = match &at {
                             Ty::Fn(..) => format!("({} as {})", s, at.to_rust_type()),
@@ -2209,6 +2277,21 @@ impl Emitter {
                     }
                     _ => s,
                 };
+            }
+        }
+        // a text nothing else holds is changed where it lies (table::taken_path,
+        // the interpreter's `take` bridges): the variable the statement
+        // assigns, read for the last time, or another call's answer
+        if let (Some(path), Some(first)) = (crate::table::taken_path(row.id), args.first()) {
+            let raw = Emitter::raw(first);
+            let taken = matches!(raw, Expr::Local(n, _) | Expr::Move(n, _) if self.move_target.as_deref() == Some(n.as_str()))
+                || self.moved_local(first)
+                || matches!(raw, Expr::Call { propagates: false, .. } | Expr::Interp(_));
+            if taken && matches!(self.tt(first), Ty::Str) && row.params.len() == strs.len() {
+                let line = self.line_now();
+                let mut printed = vec![strs[0].clone()];
+                printed.extend(row.params.iter().zip(&strs).skip(1).map(|(k, s)| k.print(s, &line)));
+                return format!("{}({})", path, printed.join(", "));
             }
         }
         let trace = self.trace_format_expr();

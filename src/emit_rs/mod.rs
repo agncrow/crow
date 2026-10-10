@@ -86,6 +86,9 @@ pub fn emit_with(
 #[derive(Clone, Debug)]
 pub(crate) struct Local {
     pub ty: Ty,
+    /// Bound to an item a statement loop borrows from what it walks (`for x
+    /// in xs.iter()`): a last read of it is copied, never moved.
+    pub borrowed: bool,
 }
 
 pub(crate) struct Emitter {
@@ -429,8 +432,20 @@ impl Emitter {
 
     pub(crate) fn declare(&mut self, name: &str, ty: Ty) {
         if let Some(s) = self.scopes.last_mut() {
-            s.insert(name.to_string(), Local { ty });
+            s.insert(name.to_string(), Local { ty, borrowed: false });
         }
+    }
+
+    /// A loop's variable bound to an item it borrows (`Local::borrowed`).
+    pub(crate) fn declare_borrowed(&mut self, name: &str, ty: Ty) {
+        if let Some(s) = self.scopes.last_mut() {
+            s.insert(name.to_string(), Local { ty, borrowed: true });
+        }
+    }
+
+    /// Whether the innermost binding of a name is a borrowed loop item.
+    pub(crate) fn borrowed(&self, name: &str) -> bool {
+        self.scopes.iter().rev().find_map(|s| s.get(name)).is_some_and(|l| l.borrowed)
     }
 
     pub(crate) fn declared(&self, name: &str) -> bool {

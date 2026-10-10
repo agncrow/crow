@@ -7,18 +7,20 @@
 use sys
 
 --- the lines of a text, as a file's are read: split at each line break,
---- a `\r` before it dropped, and no empty line after the last break
+--- a `\r` before it dropped, and no empty line after the last break. Two
+--- passes over the whole text, no loop over its lines: a line at a time,
+--- each copied, checked and pushed, had cost the interpreter twice the read
 fn lines_of[whole]
-    pieces = split[whole, '\n']
-    out = []
-    for i in range[len[pieces]]
-        piece = pieces[i]
-        --- (the empty piece after the last break is no line)
-        if i lt len[pieces] - 1 or len[piece] gt 0
-            if ends[piece, '\r']
-                piece = slice[piece, 0, len[piece] - 1]
-            out = push[out, piece]
-    return out
+    pieces = split[replace[whole, '\r\n', '\n'], '\n']
+    n = len[pieces]
+    last = pieces[n - 1]
+    --- (the empty piece after the last break is no line)
+    if len[last] eq 0
+        return slice[pieces, 0, n - 1]
+    --- (a last line with no break after it drops its `\r` too)
+    if ends[last, '\r']
+        pieces[n - 1] = slice[last, 0, len[last] - 1]
+    return pieces
 
 --- `lines[path]`: a text's lines
 fn lines[path]
@@ -55,6 +57,11 @@ test the_lines_of_a_text[]
     assert[lines_of[''] eq []]
     assert[lines_of['one'] eq ['one']]
     assert[lines_of['\n\n'] eq ['', '']]
+    --- one `\r` before a break goes, and a last line's without one; any other stays
+    assert[lines_of['a\r'] eq ['a']]
+    assert[lines_of['\n\r'] eq ['', '']]
+    assert[lines_of['x\r\r\ny'] eq ['x\r', 'y']]
+    assert[lines_of['a\rb\n'] eq ['a\rb']]
     kept = write['io-note.csv', 'a,b\n1,2\n3,4\n']
     assert[kept.ok]
     assert[lines['io-note.csv'] eq ['a,b', '1,2', '3,4']]

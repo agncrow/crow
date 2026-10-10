@@ -1,0 +1,23 @@
+--- Whole numbers past 2^53 keep every digit, in both modes: a literal list
+--- of them is a list of ints (a tensor, which holds floats, had held
+--- 9007199254740993 as ...992), and a parsed list's numbers are walked and
+--- encoded as they are (they had been read through a float). A parsed
+--- whole number read as a float would lose digits, so it stops; `int[...]`
+--- reads it exactly. The last case stops the program.
+
+xs = [9007199254740993, 1]
+log[xs[0]]
+log[xs[0] + 1]
+log[len[xs]]
+
+j = json['[9007199254740993, 2, 2.5]']
+for x in j
+    log[x]
+log[encode[j]]
+
+k = json['{"id": 9007199254740993}']
+log[int[k.id]]
+log[int[k.id] eq 9007199254740993]
+
+--- read as a float (met in arithmetic): it stops rather than lose digits
+log[k.id + 1]

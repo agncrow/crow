@@ -31,7 +31,16 @@ pub(crate) fn consumed(existing: &Ty, value: Ty, in_body: bool) -> Ty {
 /// first (finch's `ep_start = [0.0]`, given a record's list in a handler,
 /// did not build; nor did `t = map[a = [1.5]]` given a list).
 pub(crate) fn settle(existing: &Ty, value: Ty, in_body: bool) -> Ty {
-    let joined = existing.unify(&consumed(existing, value, in_body));
+    let value = consumed(existing, value, in_body);
+    // whole numbers held as a tensor (a literal, `q = [1]`) given a list of
+    // ints the body builds (`q = big_mul[q, k]`, its limbs pushed one by
+    // one) hold a list of ints from the declaration on: the tensor's form
+    // had converted the numbers to floats and back at every assignment and
+    // every call, and lost an int past 2^53
+    if is_ints(existing) && matches!(&value, Ty::List(item) if matches!(item.as_ref(), Ty::Int)) {
+        return Ty::List(Box::new(Ty::Int));
+    }
+    let joined = existing.unify(&value);
     match (existing, joined) {
         (Ty::Tensor(_, dims), Ty::List(item)) => {
             let elem = match *item {
@@ -51,6 +60,11 @@ pub(crate) fn settle(existing: &Ty, value: Ty, in_body: bool) -> Ty {
         (Ty::Map(kh, held), Ty::Map(kj, joined)) => Ty::Map((*kh).unify(kj).unwrap_or(*kh), Box::new(settle(held, *joined, false))),
         (_, joined) => joined,
     }
+}
+
+/// A tensor of whole numbers, one axis (a literal list of ints).
+pub(crate) fn is_ints(t: &Ty) -> bool {
+    matches!(t, Ty::Tensor(e, dims) if matches!(e.as_ref(), Ty::Int) && dims.as_ref().is_none_or(|d| d.len() <= 1))
 }
 
 /// Whether a variable holding `held` refuses a failed value whose payload

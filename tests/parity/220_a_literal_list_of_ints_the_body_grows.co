@@ -1,0 +1,30 @@
+--- A literal list of whole numbers a function goes on to hold as a list
+--- of ints it builds is a list of ints from its first line, in both modes:
+--- `q = [1]` then `q = grow[q, k]` had held floats, converted to ints and
+--- back at every call and every assignment (pidigits's big numbers). A
+--- literal used as numbers stays a tensor.
+
+fn grow[a, s]
+    out = []
+    for x in a
+        out = push[out, x * s]
+    return out
+
+fn run[n]
+    q = [1]
+    k = 2
+    while k lt n
+        q = grow[q, k]
+        q = push[q, k]
+        k = k + 1
+    return q
+
+r = run[6]
+log[r]
+log[len[r]]
+log[type[r]]
+
+--- a literal used as numbers stays numbers
+m = [1, 2, 3]
+log[m * 2]
+log[type[m]]

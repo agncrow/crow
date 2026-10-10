@@ -3088,6 +3088,20 @@ impl<'a> Lowerer<'a> {
                     Some(dims) => shapes::shaped(ty, Some(dims)),
                     None => ty,
                 };
+                // a tensor holds its numbers as floats, and a float holds a
+                // whole number exactly only up to 2^53: ints past it make a
+                // list of ints, which holds them as they are (a tensor had
+                // held 9007199254740993 as …992, in both modes); a matrix of
+                // them is refused, since a matrix is a tensor
+                let past = |e: &Expr| matches!(e, Expr::Const(Const::Int(v), _) if v.unsigned_abs() > 1u64 << 53);
+                let ty = match &ty {
+                    Ty::Tensor(e, dims) if matches!(e.as_ref(), Ty::Int) && dims.as_ref().is_none_or(|d| d.len() <= 1) && out.iter().any(past) => Ty::List(Box::new(Ty::Int)),
+                    Ty::Tensor(..) if out.iter().any(|row| matches!(row, Expr::ListLit(inner, _) if inner.iter().any(past))) => {
+                        self.refuse("a matrix holds its numbers as floats, which hold a whole number exactly only up to 2^53 (9007199254740992) — a list of ints holds a larger one, built with push[…]".to_string());
+                        ty
+                    }
+                    _ => ty,
+                };
                 Expr::ListLit(out, ty)
             }
             A::Map(pairs) => {
@@ -4692,6 +4706,11 @@ fn declared_as(first: &Ty, settled: Option<&Ty>) -> Ty {
     if *first == Ty::Int && matches!(settled, Some(Ty::Float)) {
         return Ty::Float;
     }
+    // whole numbers first held as a tensor, a list of ints later: a list of
+    // ints from the declaration (type_infer::settle)
+    if crate::type_infer::settle::is_ints(first) && matches!(settled, Some(Ty::List(item)) if matches!(item.as_ref(), Ty::Int)) {
+        return Ty::List(Box::new(Ty::Int));
+    }
     // a variable that settles on a record or none — first 0, the empty
     // sentinel, or a record, and the other later — holds a record or none
     // from its declaration (the Rust backend declares it so)
@@ -4928,7 +4947,14 @@ fn place_moves_in(block: &mut Block, live_after: &HashSet<String>, allowed: Opti
     if let Some(a) = allowed {
         allowed_set.extend(a.iter().cloned());
     }
-    let mut live: HashSet<String> = live_after.clone();
+    // a name an inner block defines is dead after it (spec, Scope: a
+    // variable is scoped to the block it is defined in, and one set again
+    // after the block is another variable): its last read in the block
+    // moves, even where the block is a loop's body and the next round reads
+    // the name — that round binds it afresh (`out = push[out, piece]` had
+    // copied `piece` in both modes). The outermost block's names are what
+    // its caller says is live after it (a notebook's next cell reads them).
+    let mut live: HashSet<String> = if allowed.is_some() { live_after.iter().filter(|n| !defined.contains(*n)).cloned().collect() } else { live_after.clone() };
     for s in block.iter_mut().rev() {
         let mut reads = HashSet::new();
         stmt_reads(s, &mut reads);
@@ -4961,6 +4987,8 @@ fn place_moves_in(block: &mut Block, live_after: &HashSet<String>, allowed: Opti
                 }
                 let mut after = live.clone();
                 after.extend(body_reads);
+                // (the loop's variable is bound afresh each round too)
+                after.remove(var);
                 let mut inner_allowed = defined_in(body);
                 inner_allowed.insert(var.clone());
                 place_moves_in(body, &after, Some(&inner_allowed));
@@ -5014,6 +5042,18 @@ fn place_moves_in(block: &mut Block, live_after: &HashSet<String>, allowed: Opti
             }
             _ => (live.clone(), allowed_set.clone()),
         };
+        // (a name two of the statement's expressions read — an index
+        // assignment's key and its value, `m[k] = m[k] + 1` — moves in
+        // neither: the backends read the value first, then the key)
+        let mut readers: HashMap<String, usize> = HashMap::new();
+        for e in stmt_exprs_mut(s) {
+            let mut names = HashSet::new();
+            expr_reads(e, &mut names);
+            for n in names {
+                *readers.entry(n).or_insert(0) += 1;
+            }
+        }
+        seen.extend(readers.into_iter().filter(|(_, c)| *c > 1).map(|(n, _)| n));
         for e in stmt_exprs_mut(s).into_iter().rev() {
             move_last_reads(e, &live_here, &allowed_here, &mut seen);
         }
@@ -5062,6 +5102,13 @@ fn stmt_exprs_mut(s: &mut Stmt) -> Vec<&mut Expr> {
 /// met for a variable is its last read.
 fn move_last_reads(e: &mut Expr, live: &HashSet<String>, allowed: &HashSet<String>, seen: &mut HashSet<String>) {
     match e {
+        // a move placed before (a collecting loop's body places its own) is
+        // the last read: nothing before it moves again (two moves of one
+        // name in an expression — `label[move t, len[move t]]` — had read
+        // nothing the second time)
+        Expr::Move(v, _) => {
+            seen.insert(v.clone());
+        }
         Expr::Local(v, ty) => {
             if movable(ty) && !live.contains(v) && allowed.contains(v) && !seen.contains(v) {
                 let name = v.clone();
@@ -5073,6 +5120,21 @@ fn move_last_reads(e: &mut Expr, live: &HashSet<String>, allowed: &HashSet<Strin
             }
         }
         Expr::Call { args, .. } | Expr::Effect { args, .. } => {
+            // a name two arguments read moves in neither: the backends do not
+            // evaluate a call's arguments in one order (the emitter computes
+            // one that can fail first, to hand its failure on), so the last
+            // read in one is not the last in the other (`map[path = p, words
+            // = read[p]]` had moved `p` into the read before the map's key
+            // read it, compiled)
+            let mut readers: HashMap<String, usize> = HashMap::new();
+            for a in args.iter() {
+                let mut names = HashSet::new();
+                expr_reads(a, &mut names);
+                for n in names {
+                    *readers.entry(n).or_insert(0) += 1;
+                }
+            }
+            seen.extend(readers.into_iter().filter(|(_, c)| *c > 1).map(|(n, _)| n));
             for a in args.iter_mut().rev() {
                 move_last_reads(a, live, allowed, seen);
             }
@@ -5120,6 +5182,7 @@ fn move_last_reads(e: &mut Expr, live: &HashSet<String>, allowed: &HashSet<Strin
                 move_last_reads(a, live, allowed, seen);
             }
         }
+        // (a collecting loop's body placed its own moves where it was lowered)
         Expr::ForExpr { iter, body, .. } => {
             let mut body_reads = HashSet::new();
             for b in body.iter() {
@@ -5246,7 +5309,7 @@ mod tests {
     fn an_update_from_its_own_entry_takes_the_map_where_it_lies() {
         let ir = ir_of("fn counts_of[t]\n    counts = map[]\n    for i in range[len[t]]\n        w = slice[t, i, i + 1]\n        if w in counts\n            counts = set[counts, w, counts[w] + 1]\n        else\n            counts = set[counts, w, 1]\n    return counts\nlog[counts_of['abca']]\n");
         assert!(ir.contains(": Int = (counts[w] add 1)"), "the value first, into a temporary: {}", ir);
-        assert!(ir.contains("counts = core.set(move counts, w, _t"), "the map taken where it lies, the key as it is: {}", ir);
+        assert!(ir.contains("counts = core.set(move counts, move w, _t"), "the map taken where it lies, the key read for the last time: {}", ir);
         assert!(!ir.contains("core.set(counts,"), "{}", ir);
     }
 
@@ -5319,6 +5382,21 @@ mod tests {
         assert_eq!(seen.calls, vec![("half".to_string(), vec![Ty::Float]), ("half".to_string(), vec![Ty::Int])]);
         assert_eq!(seen.returns, vec![Ty::Float, Ty::Float]);
         assert_eq!(seen.refusals, vec![(Decision::Branch, false)]);
+    }
+
+    /// A loop body's own local, and the loop's variable, move at their last
+    /// read in a round — the next round binds them afresh — in a statement
+    /// loop and a collecting one; what the body reads from outside never
+    /// moves inside it (spec, Scope)
+    #[test]
+    fn a_loop_bodys_own_names_move_at_their_last_read() {
+        let ir = ir_of("fn keep[xs, tag]\n    out = []\n    for x in xs\n        y = upper[x]\n        out = push[out, y]\n        log[tag]\n    ys = for x in xs\n        z = lower[x]\n        push[[tag], z]\n    return [len[out], len[ys]]\nlog[keep[['a', 'b'], 't']]\n");
+        assert!(ir.contains("out = core.push(move out, move y)"), "{}", ir);
+        assert!(ir.contains("text.upper(move x)"), "{}", ir);
+        assert!(ir.contains("text.lower(move x)"), "{}", ir);
+        assert!(!ir.contains("move tag"), "tag is read again next round: {}", ir);
+        assert!(ir.contains("    for x in xs\n"), "xs is walked again by the second loop: {}", ir);
+        assert!(ir.contains("for x in move xs yield"), "the second loop's walk is its last read: {}", ir);
     }
 
     #[test]
@@ -5629,7 +5707,7 @@ mod tests {
     #[test]
     fn a_shaped_matrix_is_walked_by_its_rows() {
         let ir = ir_of("use math\nm = [[1.0, 2.0], [3.0, 4.0]]\nfor c in transpose[m]\n    log[mean[c]]\nz = zeros[2, 3]\nr = z[1]\nlog[r]\n");
-        assert!(ir.contains("math.mean(c)"), "{}", ir);
+        assert!(ir.contains("math.mean(move c)"), "{}", ir);
         assert!(ir.contains("let r: Tensor(Float, [3]) = z[1]"), "{}", ir);
     }
 

@@ -1,0 +1,40 @@
+--- A variable read for the last time moves once, where both modes read it
+--- last: a map's key in an assignment that also reads the entry, a name
+--- two arguments of one call read (one of which can fail, which the
+--- compiled program computes first), a loop's own item handed to a
+--- function held in a variable, and a guard's payload of a loop's item.
+
+fn tally[words]
+    seen = map[]
+    for w in words
+        key = upper[w]
+        if key in seen
+            seen[key] = seen[key] + 1
+        else
+            seen[key] = 1
+    return seen
+log[tally[['a', 'b', 'a', 'A']]]
+
+write['/tmp/crow_parity_moves.txt', 'kept']
+fn entry[p]
+    return map[path = p, words = read[p]]
+log[entry['/tmp/crow_parity_moves.txt']]
+
+fn label[t, n]
+    return '`t`:`n`'
+fn labels[ts]
+    out = []
+    for t in ts
+        out = push[out, label[t, len[t]]]
+    return out
+log[labels[['x', 'yy']]]
+
+fn twice[v]
+    return v * 2.0
+fn apply[f, rows]
+    out = []
+    for r in rows
+        out = push[out, f[r]]
+    return out
+use math
+log[apply[twice, [[1.0, 2.0], [3.0, 4.0]]]]
