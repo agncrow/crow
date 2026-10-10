@@ -556,9 +556,13 @@ impl Emitter {
                 self.needs_crow_runtime = true;
                 format!("CrowResponse::json(crow_runtime::frame::records(&{}))", a[0])
             }
+            // (any other value as `encode` writes it — the interpreter's one
+            // JSON rule: a failed value `null`, an int past 64 bits its
+            // digits as text)
             "json" if n == 1 => {
                 self.needs_serde_json = true;
-                format!("CrowResponse::json(serde_json::to_value(&{}).unwrap())", a[0])
+                self.needs_crow_runtime = true;
+                format!("CrowResponse::json(crow_runtime::json::ToJson::to_json(&{}))", a[0])
             }
             // search: a parallel early exit
             "any" | "all" if n == 2 => {
@@ -645,7 +649,8 @@ impl Emitter {
             ),
             _ => text.to_string(),
         };
-        format!("crow_web::server::CrowHandler::new(\"{}\", {})", name, answer)
+        let quick = fn_named(arg).is_some_and(|f| crate::ir::quick_fns(self.part.fns.iter()).contains(f));
+        format!("crow_web::server::CrowHandler::{}(\"{}\", {})", if quick { "quick" } else { "new" }, name, answer)
     }
 
     /// The web module's builtins, the databases', and the page's.

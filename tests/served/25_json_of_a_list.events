@@ -1,0 +1,12 @@
+[
+  {"get": "/worlds"},
+  {"expect": "200 OK | content-type: application/json | [{\"id\":1,\"randomNumber\":10},{\"id\":2,\"randomNumber\":20},{\"id\":3,\"randomNumber\":30}]"},
+  {"get": "/records"},
+  {"expect": "200 OK | content-type: application/json | [{\"id\":1,\"randomNumber\":0},{\"id\":2,\"randomNumber\":7}]"},
+  {"get": "/one"},
+  {"expect": "200 OK | content-type: application/json | {\"id\":9,\"randomNumber\":90}"},
+  {"get": "/numbers"},
+  {"expect": "200 OK | content-type: application/json | [1.5,2.5]"},
+  {"get": "/failed"},
+  {"expect": "200 OK | content-type: application/json | [4,null,6]"}
+]

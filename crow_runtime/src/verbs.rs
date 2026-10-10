@@ -9,7 +9,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use rayon::prelude::*;
 
 use crate::cell::Cell;
 use crate::frame::{cells_equal, codes, gather_column, merged_keys, order_of, take_rows, take_some_rows, AggFn, Column, CrowColumn, CrowFrame, Roll, Validity};
@@ -341,15 +340,14 @@ impl CrowFrame {
         match agg {
             AggFn::Sum | AggFn::Mean | AggFn::Min | AggFn::Max | AggFn::Median | AggFn::Std | AggFn::Var | AggFn::Percentile(_) => {
                 let xs = numbers.as_deref().unwrap_or(&[]);
-                let parts: Vec<Vec<(usize, f64)>> = members
-                    .par_iter()
-                    .zip(starts.par_iter())
-                    .map(|(rows, st)| match agg {
+                let parts: Vec<Vec<(usize, f64)>> = crate::cores::map_range(members.len(), xs.len(), |g| {
+                    let (rows, st) = (&members[g], &starts[g]);
+                    match agg {
                         AggFn::Min | AggFn::Max => extremes(agg, xs, rows, st),
                         AggFn::Median | AggFn::Percentile(_) => quantiles(agg, xs, rows, st),
                         _ => totals(agg, xs, rows, st),
-                    })
-                    .collect();
+                    }
+                });
                 let mut out = vec![0.0; nrows];
                 for (row, value) in parts.into_iter().flatten() {
                     out[row] = value;
@@ -629,7 +627,7 @@ impl CrowFrame {
         }
         let packed: Vec<Vec<(bool, u64)>> = keys.iter().zip(desc).map(|(k, &d)| self.sort_key(k, d)).collect::<Result<_, _>>()?;
         let mut indices: Vec<usize> = (0..self.nrows()).collect();
-        indices.par_sort_by(|&a, &b| {
+        crate::cores::sort_by(&mut indices, |&a, &b| {
             for key in &packed {
                 let o = key[a].cmp(&key[b]);
                 if o != std::cmp::Ordering::Equal {
@@ -923,9 +921,7 @@ impl CrowFrame {
         }
         let kept = left_indices.len() == self.nrows() && left_indices.iter().enumerate().all(|(i, l)| *l == Some(i));
         let left_holes = left_indices.iter().any(Option::is_none);
-        let gathered: Vec<(Arc<Column>, Arc<Validity>)> = specs
-            .par_iter()
-            .map(|&(is_left, ci)| {
+        let gathered: Vec<(Arc<Column>, Arc<Validity>)> = crate::cores::map_items(&specs, left_indices.len() * specs.len(), |&(is_left, ci)| {
                 if is_left && kept {
                     return (Arc::clone(&self.data[ci]), Arc::clone(&self.validity[ci]));
                 }
@@ -940,8 +936,7 @@ impl CrowFrame {
                     gather_column(other.data[ci].as_ref(), other.validity[ci].as_ref(), right_indices)
                 };
                 (Arc::new(col), Arc::new(valid))
-            })
-            .collect();
+            });
         let (data, validity): (Vec<_>, Vec<_>) = gathered.into_iter().unzip();
         CrowFrame { columns: result_cols, data, validity }
     }

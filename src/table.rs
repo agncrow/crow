@@ -2015,8 +2015,8 @@ pub static ROWS: &[Row] = &[
     row!("sys.gammainc", "sys", "gammainc", crow_runtime::stats::gammainc, (Float, Float) -> Float, never),
     row!("sys.lgamma", "sys", "lgamma", crow_runtime::stats::lgamma, (Float) -> Float, never),
     row!("sys.shaped", "sys", "shaped", crow_runtime::math::shaped, (Tensor, Ints) -> Tensor, stops),
-    row!("sys.note", "sys", "note", crow_runtime::sys::note, (Stream, Str) -> Unit, never),
-    row!("sys.noted", "sys", "noted", crow_runtime::sys::noted, (Stream) -> Str, never),
+    row!("sys.note", "sys", "note", crow_runtime::sys::note, (Stream, Str, Str) -> Unit, never),
+    row!("sys.noted", "sys", "noted", crow_runtime::sys::noted, (Stream, Str) -> Str, never),
     row!("sys.machine", "sys", "machine", crow_runtime::sys::machine, () -> Str, never),
     row!("sys.process", "sys", "process", crow_runtime::sys::process, () -> Int, never),
     row!("sys.alive", "sys", "alive", crow_runtime::sys::alive, (Int) -> Bool, never),
@@ -2322,6 +2322,32 @@ pub enum Arg {
 }
 
 impl Arg {
+    /// What `json[…]` answers as a response (use web) rather than parses:
+    /// a map or a record (an object), a list or a tensor (an array, a failed
+    /// item `null` as `encode` writes it), a frame (its records). Text is
+    /// parsed.
+    pub fn json_response(&self) -> bool {
+        matches!(
+            self,
+            Arg::Map
+                | Arg::Record
+                | Arg::Frame
+                | Arg::Ints
+                | Arg::Floats
+                | Arg::Texts
+                | Arg::Truths
+                | Arg::Records
+                | Arg::Maps
+                | Arg::Items
+                | Arg::Moments
+                | Arg::Tensors
+                | Arg::Tensor
+                | Arg::Fallible
+                | Arg::FallibleNumbers
+                | Arg::AnyList
+        )
+    }
+
     /// What the argument is, as a refusal names it.
     pub fn words(self) -> &'static str {
         match self {

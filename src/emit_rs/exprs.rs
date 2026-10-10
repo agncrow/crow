@@ -1722,7 +1722,7 @@ impl Emitter {
             Target::Module(m, f) => self.registry.type_of_in(m, f, &raw_args.iter().map(|a| self.tt(a)).collect::<Vec<_>>()).map_or(false, |t| matches!(t, Ty::Result(_))),
             // `json[map]` and `json[frame]` answer a response, never a status
             // (the row of the name, `json[text]`, parses and can fail)
-            Target::Runtime(_) if name == "json" && raw_args.first().is_some_and(|a| matches!(Self::inner(&self.tt(a)), Ty::Map(..) | Ty::Frame(_))) => false,
+            Target::Runtime(_) if name == "json" && raw_args.first().is_some_and(|a| crate::table::Arg::of_type(&Self::inner(&self.tt(a))).json_response()) => false,
             Target::Runtime(_) if self.row_for(name, raw_args).is_some() => {
                 matches!(self.row_for(name, raw_args).map(|r| r.fails), Some(crate::table::Fails::Value(_)))
             }
@@ -1949,11 +1949,30 @@ impl Emitter {
                     Expr::Field { base, .. } => matches!(Emitter::raw(base), Expr::Local(..) | Expr::Move(..) | Expr::Load(..)),
                     _ => false,
                 };
+                // (a parsed value, a column and a sparse matrix are no
+                // copies either: `kind_of[p]` then `p.ok` had moved `p`)
                 let needs_clone = user
                     && local_read
                     && matches!(
                         Self::inner(&self.tt(a)),
-                        Ty::Tensor(..) | Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Markup | Ty::Frame(_) | Ty::Record(_) | Ty::Bytes | Ty::Stream | Ty::Socket | Ty::Mailer | Ty::Db | Ty::Big | Ty::Decimal | Ty::Fraction
+                        Ty::Tensor(..)
+                            | Ty::List(_)
+                            | Ty::Map(..)
+                            | Ty::Str
+                            | Ty::Markup
+                            | Ty::Frame(_)
+                            | Ty::Record(_)
+                            | Ty::Bytes
+                            | Ty::Stream
+                            | Ty::Socket
+                            | Ty::Mailer
+                            | Ty::Db
+                            | Ty::Big
+                            | Ty::Decimal
+                            | Ty::Fraction
+                            | Ty::Json
+                            | Ty::Column(_)
+                            | Ty::Sparse
                     );
                 let s = self.expr(a);
                 let moved = self.moved_local(a);

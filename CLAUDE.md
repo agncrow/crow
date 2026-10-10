@@ -485,3 +485,24 @@ steps on every push and must be green.
   runs on its path (`return slice[pieces, 0, n - 1]` in a branch had
   copied every line of a file, because `return pieces` after the branch
   read them).
+- A route's handler that cannot wait (`ir::quick_fns`: no effect, no
+  loop, no recursion, no call through a value, in it or in what it calls)
+  is answered on the server's own thread (`CrowHandler::quick`, both
+  modes); any other goes through `spawn_blocking`, on at most
+  `cores::blocking_threads()` threads (tokio's 512 had let hundreds of
+  handlers wait on one pool, and plaintext ran at a sixth of Rust's). A new
+  builtin that can block (a socket, a sleep, a read) is listed in
+  `ir::EFFECTS`, or a handler calling it stalls the server's thread.
+- A kernel that shares its work across the cores goes through
+  `cores::map_range` / `map_items` / `sort_unstable` / `sort_by`, parallel
+  only past `SHARED_MIN` items: thirteen rows handed to rayon from a
+  handler's thread had waited on the pool at every sort of a frame.
+- The interpreter runs a route's handler on its thread's copy of the
+  program, kept from request to request (`served.rs` `ROUTE_COPY`): a
+  handler writes nothing a later request reads, and a stop drops the copy
+  (a copy per request had prepared the handler again every time).
+- A connection's notes are keyed (`note[s, key, text]`, `noted[s, key]`):
+  the Postgres driver prepares a statement with parameters once per
+  connection under its kinds and text (`statement_sent`, at most 64 names,
+  a name never used twice), ClickHouse notes its query id and keep-alive
+  apart.

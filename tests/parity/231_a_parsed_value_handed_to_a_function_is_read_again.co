@@ -1,0 +1,22 @@
+--- A parsed value handed to a function is the caller's still, and read
+--- again after the call, in both modes (the compiled program had moved it
+--- into the call, and did not build — found in the Postgres driver, whose
+--- parameters are parsed values read once for their kind and once more for
+--- their text).
+fn kind_of[p]
+    if not p.ok
+        return 0
+    if type[p] eq 'int'
+        return 1
+    return 2
+
+given = json['[1, "a", null, 7]']
+total = 0
+shown = ''
+for p in given
+    k = kind_of[p]
+    if p.ok
+        total = total + k
+        shown = '`shown``p`;'
+log[total]
+log[shown]

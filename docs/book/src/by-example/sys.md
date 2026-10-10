@@ -227,15 +227,16 @@ secured = secure[relay, 'smtp.example.com']
 Reference: spec section 13 (sys).
 
 A driver written in Crow keeps a connection and sends statements on it
-(docs/db-in-crow-design.md): a note on the connection for a cancel later,
-one request on the connection already open, kept alive for the next.
+(docs/db-in-crow-design.md): notes on the connection by key — a query's id
+for a cancel later — and one request on the connection already open, kept
+alive for the next.
 
 ```crow,norun
 use sys
 
 s = open['db.example.com', 8123, false, 5.0]
-note[s, 'crow-local-4242-1a2b']
-log[noted[s]]
+note[s, 'query', 'crow-local-4242-1a2b']
+log[noted[s, 'query']]
 a = exchange_on[s, 'db.example.com:8123', 'POST', '/?default_format=TabSeparated', [], bytes['SELECT 1'], now[] + 30.0, true]
 log[a.status]
 ```

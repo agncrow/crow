@@ -2,7 +2,6 @@
 
 use std::fmt;
 use std::sync::Arc;
-use rayon::prelude::*;
 
 pub use crate::textcol::Text;
 pub use crate::validity::Validity;
@@ -501,7 +500,7 @@ pub fn csv_frame(content: &str) -> Result<CrowFrame, String> {
     // the body cut into pieces at line ends, one per core and more, each
     // parsed on its own into parts of the columns
     let pieces = pieces_of(body);
-    let parts: Vec<Part> = pieces.par_iter().map(|piece| parse_piece(piece, quoted, &kinds)).collect();
+    let parts: Vec<Part> = crate::cores::map_items(&pieces, body.len() / 16, |piece| parse_piece(piece, quoted, &kinds));
     let nrows: usize = parts.iter().map(|p| p.rows).sum();
 
     // the parts joined into columns; a column a part could not read in
@@ -1148,9 +1147,8 @@ impl CrowFrame {
         if mask.len() != self.nrows() {
             return Err(format!("filter: mask length {} != row count {}", mask.len(), self.nrows()));
         }
-        let results: Vec<(Column, Validity)> = self.data.par_iter().zip(self.validity.par_iter())
-            .map(|(col, valid)| filter_column(col, valid, mask))
-            .collect();
+        let cols: Vec<usize> = (0..self.data.len()).collect();
+        let results: Vec<(Column, Validity)> = crate::cores::map_items(&cols, mask.len(), |&i| filter_column(&self.data[i], &self.validity[i], mask));
         let (new_data, new_valid): (Vec<_>, Vec<_>) = results.into_iter().unzip();
         Ok(CrowFrame::assembled(self.columns.clone(), new_data, new_valid))
     }
@@ -1172,14 +1170,11 @@ impl CrowFrame {
         // (missing last, key, row): a missing cell sorts after every key,
         // and a descending sort flips the key, never the missing flag
         let keyed = |key: &(dyn Fn(usize) -> Option<u64> + Sync)| -> Vec<usize> {
-            let mut pairs: Vec<(bool, u64, u32)> = (0..n)
-                .into_par_iter()
-                .map(|i| match key(i) {
-                    Some(k) if valid[i] => (false, if descending { u64::MAX - k } else { k }, i as u32),
-                    _ => (true, 0, i as u32),
-                })
-                .collect();
-            pairs.par_sort_unstable();
+            let mut pairs: Vec<(bool, u64, u32)> = crate::cores::map_range(n, n, |i| match key(i) {
+                Some(k) if valid[i] => (false, if descending { u64::MAX - k } else { k }, i as u32),
+                _ => (true, 0, i as u32),
+            });
+            crate::cores::sort_unstable(&mut pairs);
             pairs.iter().map(|p| p.2 as usize).collect()
         };
         let indices: Vec<usize> = match column {
@@ -1206,7 +1201,7 @@ impl CrowFrame {
                 }
                 None => {
                     let mut indices: Vec<usize> = (0..n).collect();
-                    indices.par_sort_by(|&a, &b| match (valid[a], valid[b]) {
+                    crate::cores::sort_by(&mut indices, |&a, &b| match (valid[a], valid[b]) {
                         (false, false) => std::cmp::Ordering::Equal,
                         (false, true) => std::cmp::Ordering::Greater,
                         (true, false) => std::cmp::Ordering::Less,
@@ -1302,9 +1297,9 @@ impl CrowFrame {
         if self.columns != other.columns {
             return Err("stack: column names don't match".to_string());
         }
-        let results: Result<Vec<(Column, Validity)>, String> = (0..self.ncols()).into_par_iter().map(|i| {
+        let results: Result<Vec<(Column, Validity)>, String> = crate::cores::map_range(self.ncols(), self.nrows() + other.nrows(), |i| {
             stack_columns(&self.data[i], &self.validity[i], &other.data[i], &other.validity[i])
-        }).collect();
+        }).into_iter().collect();
         let results = results?;
         let (new_data, new_valid): (Vec<_>, Vec<_>) = results.into_iter().unzip();
         Ok(CrowFrame::assembled(self.columns.clone(), new_data, new_valid))
@@ -1349,8 +1344,8 @@ fn stack_columns(a: &Column, av: &Validity, b: &Column, bv: &Validity) -> Result
 impl CrowFrame {
     /// Reorder rows by given indices (columns processed in parallel).
     pub(crate) fn reorder_rows(&self, indices: &[usize]) -> CrowFrame {
-        let results: Vec<(Column, Validity)> = self.data.par_iter().zip(self.validity.par_iter())
-            .map(|(col, valid)| {
+        let results: Vec<(Column, Validity)> = crate::cores::map_range(self.data.len(), indices.len(), |ci| {
+                let (col, valid) = (&self.data[ci], &self.validity[ci]);
                 let nv = valid.gather(indices);
                 let nc = match col.as_ref() {
                     Column::Int(v) => Column::Int(indices.iter().map(|&i| v[i]).collect()),
@@ -1363,16 +1358,15 @@ impl CrowFrame {
                     ),
                 };
                 (nc, nv)
-            })
-            .collect();
+            });
         let (new_data, new_valid): (Vec<_>, Vec<_>) = results.into_iter().unzip();
         CrowFrame::assembled(self.columns.clone(), new_data, new_valid)
     }
 
     /// Slice rows [start..end). Parallel across columns.
     fn slice_rows(&self, start: usize, end: usize) -> CrowFrame {
-        let results: Vec<(Column, Validity)> = self.data.par_iter().zip(self.validity.par_iter())
-            .map(|(col, valid)| {
+        let results: Vec<(Column, Validity)> = crate::cores::map_range(self.data.len(), end.saturating_sub(start), |ci| {
+                let (col, valid) = (&self.data[ci], &self.validity[ci]);
                 let nv = valid.sliced(start, end);
                 let nc = match col.as_ref() {
                     Column::Int(v) => Column::Int(v[start..end].to_vec()),
@@ -1384,8 +1378,7 @@ impl CrowFrame {
                     ),
                 };
                 (nc, nv)
-            })
-            .collect();
+            });
         let (new_data, new_valid): (Vec<_>, Vec<_>) = results.into_iter().unzip();
         CrowFrame::assembled(self.columns.clone(), new_data, new_valid)
     }
@@ -1501,12 +1494,13 @@ impl CrowFrame {
         let mut result_valid: Vec<Vec<bool>> = vec![vec![true; ngroups]; keys.len()];
 
         // Aggregate columns — process each agg column in parallel
-        let agg_results: Result<Vec<(String, Column, Vec<bool>)>, String> = aggs.par_iter().zip(agg_cols.par_iter()).map(|((col_name, agg_fn), &ci)| {
+        let agg_results: Result<Vec<(String, Column, Vec<bool>)>, String> = crate::cores::map_range(aggs.len(), self.nrows() * aggs.len(), |a| {
+            let ((col_name, agg_fn), ci) = (&aggs[a], agg_cols[a]);
             let agg_name = format!("{}_{}", col_name, agg_fn.word());
             let col_valid = self.validity[ci].as_ref();
             let (data, valid) = aggregate_by_groups(col_name, self.data[ci].as_ref(), col_valid, &group_ids, ngroups, *agg_fn)?;
             Ok((agg_name, data, valid))
-        }).collect();
+        }).into_iter().collect();
 
         for (agg_name, data, valid) in agg_results? {
             result_cols.push(agg_name);
@@ -1935,7 +1929,7 @@ fn aggregate_by_groups(name: &str, col: &Column, valid: &Validity, group_ids: &[
             // (group, code) pairs sorted and deduplicated: a count per group
             let coded = codes(col, valid);
             let mut pairs: Vec<(u32, u32)> = rows.filter(|&(row, _)| present(row)).map(|(row, g)| (g as u32, coded[row])).collect();
-            pairs.par_sort_unstable();
+            crate::cores::sort_unstable(&mut pairs);
             pairs.dedup();
             let mut counts = vec![0i64; ngroups];
             for (g, _) in pairs {
@@ -1959,15 +1953,13 @@ fn aggregate_by_groups(name: &str, col: &Column, valid: &Validity, group_ids: &[
                     per[g].push(value(row));
                 }
             }
-            let out: Vec<f64> = per
-                .par_iter()
-                .map(|values| match agg {
-                    AggFn::Median => crate::verbs::median_of(values),
-                    AggFn::Percentile(p) => crate::verbs::percentile_of(values, p),
-                    AggFn::Var => crate::verbs::welford_var(values),
-                    _ => crate::verbs::welford_var(values).sqrt(),
-                })
-                .collect();
+            let cells: usize = per.iter().map(|v| v.len()).sum();
+            let out: Vec<f64> = crate::cores::map_items(&per, cells, |values| match agg {
+                AggFn::Median => crate::verbs::median_of(values),
+                AggFn::Percentile(p) => crate::verbs::percentile_of(values, p),
+                AggFn::Var => crate::verbs::welford_var(values),
+                _ => crate::verbs::welford_var(values).sqrt(),
+            });
             let valid: Vec<bool> = per.iter().map(|v| !v.is_empty()).collect();
             Ok((Column::Float(out), valid))
         }
@@ -2069,7 +2061,7 @@ impl CrowFrame {
             buf: Vec<u8>,
             offsets: Vec<u32>, // offsets[i] = start of row i in buf; offsets[nrows] = end
         }
-        let col_strings: Vec<ColStrings> = (0..ncols).into_par_iter().map(|ci| {
+        let col_strings: Vec<ColStrings> = crate::cores::map_range(ncols, nrows * ncols, |ci| {
             let valid = self.validity[ci].as_ref();
             let col = self.data[ci].as_ref();
             // Estimate capacity: ~10 bytes per cell
@@ -2121,7 +2113,7 @@ impl CrowFrame {
             }
             offsets.push(buf.len() as u32);
             ColStrings { buf, offsets }
-        }).collect();
+        });
 
         // Phase 2: parallel chunk assembly + sequential write
         // Divide rows into chunks, build each chunk's bytes in parallel, write in order.
@@ -2131,7 +2123,7 @@ impl CrowFrame {
             .map(|i| (i * CHUNK_SIZE, std::cmp::min((i + 1) * CHUNK_SIZE, nrows)))
             .collect();
 
-        let chunks: Vec<Vec<u8>> = chunk_ranges.par_iter().map(|&(start, end)| {
+        let chunks: Vec<Vec<u8>> = crate::cores::map_items(&chunk_ranges, nrows * ncols, |&(start, end)| {
             let chunk_len = end - start;
             let mut out = Vec::with_capacity(chunk_len * 50);
             for row in start..end {
@@ -2145,7 +2137,7 @@ impl CrowFrame {
                 out.push(b'\n');
             }
             out
-        }).collect();
+        });
 
         for chunk in &chunks {
             w.write_all(chunk).map_err(|e| format!("save: {}", e))?;

@@ -1,0 +1,36 @@
+--- A route answers JSON of a list as an array — of maps, of records, of
+--- numbers — and of a record as an object, each value as `encode` writes
+--- it: a value that failed is `null` (spec, Responses). `json[…]` of a list
+--- had been refused as text it could not parse, so a list of rows had to be
+--- built as a frame first. Both modes answer it through the one JSON rule.
+use web
+
+struct World [id, randomNumber]
+
+fn worlds_h[req]
+    rows = for i in range[3]
+        map[id = i + 1, randomNumber = (i + 1) * 10]
+    return json[rows]
+
+fn records_h[req]
+    rows = for i in range[2]
+        World[i + 1, i * 7]
+    return json[rows]
+
+fn one_h[req]
+    return json[World[9, 90]]
+
+fn numbers_h[req]
+    return json[[1.5, 2.5]]
+
+fn failed_h[req]
+    parsed = for s in ['4', 'x', '6']
+        int[s]
+    return json[parsed]
+
+route['/worlds', worlds_h]
+route['/records', records_h]
+route['/one', one_h]
+route['/numbers', numbers_h]
+route['/failed', failed_h]
+serve[3426]

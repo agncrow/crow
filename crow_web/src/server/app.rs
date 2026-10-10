@@ -27,13 +27,25 @@ use super::convert::{request_from_axum, response_to_axum};
 pub struct CrowHandler {
     name: String,
     answer: Arc<dyn Fn(CrowRequest) -> CrowResponse + Send + Sync>,
+    /// Answered on the server's own thread, as the request is read: the
+    /// program shows it neither waits on anything nor loops (crow's
+    /// `ir::quick_fns`). Any other runs off the server's threads, so a slow
+    /// one delays only its own request.
+    quick: bool,
 }
 
 impl CrowHandler {
     /// The handler named `name` (the program's function), answering with
     /// `answer`.
     pub fn new(name: &str, answer: impl Fn(CrowRequest) -> CrowResponse + Send + Sync + 'static) -> Self {
-        Self { name: name.to_string(), answer: Arc::new(answer) }
+        Self { name: name.to_string(), answer: Arc::new(answer), quick: false }
+    }
+
+    /// A handler that neither waits on anything nor loops, answered where
+    /// its request is read (a hop to a blocking thread and back had cost
+    /// more than answering `text['Hello, World!']`).
+    pub fn quick(name: &str, answer: impl Fn(CrowRequest) -> CrowResponse + Send + Sync + 'static) -> Self {
+        Self { name: name.to_string(), answer: Arc::new(answer), quick: true }
     }
 }
 
@@ -309,11 +321,20 @@ fn make_axum_handler(
             }
 
             let files = crow_req.files.clone();
-            let CrowHandler { name, answer } = handler;
-            let crow_resp = match tokio::task::spawn_blocking(move || crow_runtime::stops::guarded(|| answer(crow_req))).await {
-                Ok(Ok(resp)) => resp,
-                Ok(Err(why)) => route_stopped(&name, &why),
-                Err(e) => route_stopped(&name, &e.to_string()),
+            let CrowHandler { name, answer, quick } = handler;
+            // (never on the program's main thread, where a stop ends the
+            // program: a server's connections are its workers')
+            let crow_resp = if quick && std::thread::current().name() != Some("main") {
+                match crow_runtime::stops::guarded(|| answer(crow_req)) {
+                    Ok(resp) => resp,
+                    Err(why) => route_stopped(&name, &why),
+                }
+            } else {
+                match tokio::task::spawn_blocking(move || crow_runtime::stops::guarded(|| answer(crow_req))).await {
+                    Ok(Ok(resp)) => resp,
+                    Ok(Err(why)) => route_stopped(&name, &why),
+                    Err(e) => route_stopped(&name, &e.to_string()),
+                }
             };
             // the request's uploads are its handler's while it runs
             super::uploads::release(&files);

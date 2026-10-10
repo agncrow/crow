@@ -945,10 +945,11 @@ impl<'a> Lowerer<'a> {
             return;
         }
         let kinds: Vec<crate::table::Arg> = (0..argc).map(|i| types.get(i).map_or(crate::table::Arg::Unknown, crate::table::Arg::of_type)).collect();
-        // `json[map]` is web's JSON response (use web), a form of its own;
-        // `json[frame]` answers the frame's records
+        // `json[map]` is web's JSON response (use web), a form of its own, as
+        // a record's and a list's are (an object, an array); `json[frame]`
+        // answers the frame's records
         let web = self.v.bare_import_lines.keys().any(|p| p == "web" || p.starts_with("web."));
-        if name == "json" && web && matches!(kinds.first(), Some(crate::table::Arg::Map | crate::table::Arg::Frame)) {
+        if name == "json" && web && kinds.first().is_some_and(crate::table::Arg::json_response) {
             return;
         }
         // (a module only a part imports is not the entry's to resolve by)

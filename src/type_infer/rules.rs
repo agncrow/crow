@@ -679,8 +679,10 @@ impl TypeContext {
         // holds a failed value in its field, as a module's record does
         // (an element's name is the element inside a view, and a function
         // of the program's elsewhere: `h1[x]` outside a view hands a failed
-        // `x` on as any call does — the fuzzer's helpers are named h1, h2)
-        let element = crate::lower::UI_ELEMENTS.contains(&name) && (self.in_view || !self.calls_fn(name));
+        // `x` on as any call does — the fuzzer's helpers are named h1, h2;
+        // and so is a module's: the frame's `stack[rows, more]` of a frame
+        // that can fail had dropped the failure, read as the element)
+        let element = crate::lower::UI_ELEMENTS.contains(&name) && (self.in_view || (!self.calls_fn(name) && self.registry.providers_of(name).is_empty()));
         let skip = matches!(name, "log" | "assert" | "type" | "cpu" | "gpu" | "error" | "table" | "chart" | "__known")
             || self.structs.contains_key(name)
             || element

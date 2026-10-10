@@ -99,6 +99,28 @@ fn pool(n: usize) -> Option<&'static rayon::ThreadPool> {
 mod tests {
     use super::*;
 
+    /// The helpers answer the same worked where they are as across the
+    /// cores: below the share and above it, in order, sorts stable where
+    /// they say so
+    #[test]
+    fn a_piece_worked_here_or_across_the_cores_is_the_same() {
+        for n in [10, SHARED_MIN + 5] {
+            let squares = map_range(n, n, |i| i * i);
+            assert_eq!(squares, (0..n).map(|i| i * i).collect::<Vec<_>>());
+            let xs: Vec<u64> = (0..n as u64).rev().collect();
+            assert_eq!(map_items(&xs, n, |x| x + 1), xs.iter().map(|x| x + 1).collect::<Vec<_>>());
+            let mut a = xs.clone();
+            sort_unstable(&mut a);
+            assert!(a.windows(2).all(|w| w[0] <= w[1]));
+            // (stable: equal keys keep their order)
+            let mut pairs: Vec<(u64, usize)> = (0..n).map(|i| ((i % 7) as u64, i)).collect();
+            sort_by(&mut pairs, |x, y| x.0.cmp(&y.0));
+            assert!(pairs.windows(2).all(|w| w[0].0 < w[1].0 || (w[0].0 == w[1].0 && w[0].1 < w[1].1)));
+        }
+        assert!(!shared(SHARED_MIN - 1) && shared(SHARED_MIN));
+        assert!(blocking_threads() >= 64);
+    }
+
     /// A count bounds the loops after it, a function's is put back as it
     /// returns, and a loop nested in a bounded one runs on the same pool.
     #[test]
@@ -119,4 +141,50 @@ mod tests {
         assert_eq!(get(), 2, "the function's count is put back as it returns");
         CORES.with(|c| c.set(before));
     }
+}
+
+/// How many items of work are worth sharing across the cores: handing work
+/// to the pool and waiting for it costs about what a few thousand items do,
+/// so a smaller piece is worked where it is — a web handler's frame of a
+/// dozen rows had waited on the pool at every sort, and the handlers' threads
+/// on each other.
+pub const SHARED_MIN: usize = 8192;
+
+/// Whether `n` items of work are worth sharing across the cores.
+pub fn shared(n: usize) -> bool {
+    n >= SHARED_MIN
+}
+
+/// `f` of each of `0..n`, on the cores when `work` items are worth sharing.
+pub fn map_range<R: Send>(n: usize, work: usize, f: impl Fn(usize) -> R + Sync + Send) -> Vec<R> {
+    use rayon::prelude::*;
+    if shared(work) { (0..n).into_par_iter().map(f).collect() } else { (0..n).map(f).collect() }
+}
+
+/// `f` of each item, on the cores when `work` items are worth sharing.
+pub fn map_items<T: Sync, R: Send>(xs: &[T], work: usize, f: impl Fn(&T) -> R + Sync + Send) -> Vec<R> {
+    use rayon::prelude::*;
+    if shared(work) { xs.par_iter().map(f).collect() } else { xs.iter().map(f).collect() }
+}
+
+/// `sort_unstable`, on the cores for a long enough slice.
+pub fn sort_unstable<T: Ord + Send>(v: &mut [T]) {
+    use rayon::prelude::*;
+    if shared(v.len()) { v.par_sort_unstable() } else { v.sort_unstable() }
+}
+
+/// `sort_by` (stable), on the cores for a long enough slice.
+pub fn sort_by<T: Send>(v: &mut [T], cmp: impl Fn(&T, &T) -> std::cmp::Ordering + Sync) {
+    use rayon::prelude::*;
+    if shared(v.len()) { v.par_sort_by(cmp) } else { v.sort_by(cmp) }
+}
+
+/// How many threads a server runs its waiting handlers on at once — a
+/// route's that queries, a page's — four for each core, at least 64; more
+/// requests wait their turn. The async runtime's own default (512) let
+/// hundreds of handlers wait on one pool of connections, and handing each
+/// request to a thread among them cost more than the query.
+pub fn blocking_threads() -> usize {
+    let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    (cores * 4).max(64)
 }

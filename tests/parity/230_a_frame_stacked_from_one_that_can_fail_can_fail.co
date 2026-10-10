@@ -1,0 +1,20 @@
+--- A frame stacked from one that can fail can fail, in both modes: the
+--- frame's `stack` is the module's function outside a view, so a failed
+--- frame handed to it is its value, as with any call (it had been read as
+--- the ui element `stack`, which renders what it is given: the failure was
+--- dropped, the interpreter answered a frame, and the compiled program did
+--- not build). Inside a view `stack` stays the element.
+use frame
+
+fn sorted[path]
+    rows = load[path]
+    added = frame.new[id = [0], message = ['zz']]
+    f = sort[stack[rows, added], 'message']
+    return len[f]
+
+kept = write['parity-230.csv', 'id,message\n2,b\n1,a\n']
+log[kept.ok]
+log[sorted['parity-230.csv']]
+gone = sorted['parity-230-missing.csv']
+log[gone.ok]
+rm['parity-230.csv']

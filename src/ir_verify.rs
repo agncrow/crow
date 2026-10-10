@@ -447,7 +447,7 @@ impl<'p> Verifier<'p> {
                             // the calls still left by name, in what can run
                             // (CROW_IR_BY_NAME=1): a value nothing types;
                             // web's `json[map]` is a response, a form of its own
-                            let response = name == "json" && matches!(ts.first(), Some(Ty::Map(..)));
+                            let response = name == "json" && ts.first().is_some_and(|t| crate::table::Arg::of_type(t).json_response());
                             if std::env::var_os("CROW_IR_BY_NAME").is_some() && self.runs && !response {
                                 let shown: Vec<String> = ts.iter().map(|t| format!("{:?}", t)).collect();
                                 self.found(format!("by name: {}({})", name, shown.join(", ")));

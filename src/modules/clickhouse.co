@@ -78,20 +78,22 @@ fn auth_lines[parts]
     return lines
 
 --- one statement POSTed, its answer: the server's status and body. The
---- query id is noted on the connection for a cancel
+--- query id is noted on the connection for a cancel, and stays noted: a
+--- stop leaves the request with a failed answer, which the cancel then
+--- reads the id for (every request notes its own before it is sent)
 fn request_on[parts, s, statement, format, id]
     database = encode[part[parts, 'database'], 'url']
     path = '/?database=`database`&default_format=`format`&query_id=`id`'
-    note[s, id]
+    note[s, 'query', id]
     deadline = now[] + 600.0
     a = exchange_on[s, shown[parts], 'POST', path, auth_lines[parts], bytes[statement], deadline, true]
-    note[s, kept_until[a]]
+    note[s, 'until', kept_until[a]]
     return a
 
---- the connection's note once a request is answered: until when the
---- server keeps it open for another (its Keep-Alive header's timeout, a
---- second early) — the handle lets an idle connection go before the
---- server does, instead of finding it closed under the next statement
+--- until when the server keeps the connection open for another request,
+--- noted under `until` once a request is answered (its Keep-Alive header's
+--- timeout, a second early) — the handle lets an idle connection go before
+--- the server does, instead of finding it closed under the next statement
 fn kept_until[a]
     if not a.ok or 'keep-alive' not in a.headers
         return ''
@@ -101,17 +103,17 @@ fn kept_until[a]
             secs = float[trim[kv[1]]]
             if secs.ok and secs gt 1.0
                 until = now[] + secs - 1.0
-                return 'until `until`'
+                return '`until`'
     return ''
 
 --- a statement that carries bytes after it (an insert's rows)
 fn request_bytes_on[parts, s, statement, data, id]
     database = encode[part[parts, 'database'], 'url']
     path = '/?database=`database`&query_id=`id`'
-    note[s, id]
+    note[s, 'query', id]
     deadline = now[] + 600.0
     a = exchange_on[s, shown[parts], 'POST', path, auth_lines[parts], concat[bytes['`statement`\n'], data], deadline, true]
-    note[s, kept_until[a]]
+    note[s, 'until', kept_until[a]]
     return a
 
 --- the server's exception, its C++ frames dropped: the message, with the
@@ -336,8 +338,8 @@ fn ch_describe[parts, s, sql]
 --- stopped on the server, by the id noted on it, from a connection of its
 --- own (the one it ran on is in the middle of an answer)
 fn ch_cancel[parts, s]
-    id = noted[s]
-    if len[id] eq 0 or starts[id, 'until ']
+    id = noted[s, 'query']
+    if len[id] eq 0
         return 0
     other = connection[parts]
     if not other.ok

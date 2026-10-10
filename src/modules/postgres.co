@@ -223,7 +223,7 @@ fn pg_open[parts]
         if k eq 75
             pid = u32_at[m, 1]
             key = u32_at[m, 5]
-            note[s, '`pid` `key`']
+            note[s, 'cancel', '`pid` `key`']
         if k eq 90
             ready = true
     return s
@@ -250,8 +250,37 @@ fn read_answer[s]
                 done = true
     return whole
 
---- `?` outside quotes as $1, $2, …
+--- the answer read as `read_answer` reads it, and its rows: the check that
+--- the answer is whole is its decoding, so a query's rows are decoded once
+--- (they had been decoded twice, the second time to answer them)
+fn read_rows[s]
+    chunks = []
+    while true
+        chunk = recv[s, 4194304, 0]
+        if not chunk.ok
+            return error[chunk.reason, 'sys']
+        if len[chunk] eq 0
+            return error['the server closed the connection', 'sys']
+        chunks = push[chunks, chunk]
+        n = len[chunk]
+        if n gte 6 and byte[chunk, n - 6] eq 90 and byte[chunk, n - 5] eq 0 and byte[chunk, n - 4] eq 0 and byte[chunk, n - 3] eq 0 and byte[chunk, n - 2] eq 5
+            rows = frame_of_postgres[concat[chunks]]
+            if rows.ok
+                return rows
+            if not starts[rows.reason, 'the answer ends early']
+                return error[rows.reason, 'db']
+
+--- `?` outside quotes as $1, $2, … — a statement with no quote in it by its
+--- pieces between `?`s (every query had been rebuilt a character at a time)
 fn numbered[sql]
+    if '\'' not in sql
+        pieces = split[sql, '?']
+        whole = pieces[0]
+        k = 1
+        while k lt len[pieces]
+            whole = '`whole`$`k``pieces[k]`'
+            k = k + 1
+        return whole
     out = ''
     n = 0
     in_string = false
@@ -268,10 +297,25 @@ fn numbered[sql]
                     out = '`out``c`'
     return out
 
---- the extended protocol's messages for a statement with parameters:
---- Parse (each parameter typed by its kind: text, int8, float8, bool),
---- Bind (as text, NULL as none), Describe the portal, Execute, Sync
-fn extended[sql, params]
+--- a parameter's type id, by its kind: int8, float8, bool, or text (a
+--- cast like `?::date` is a cast from text)
+fn oid_of[p]
+    if not p.ok
+        return 25
+    kind = type[p]
+    if kind eq 'int'
+        return 20
+    if kind eq 'float'
+        return 701
+    if kind eq 'bool'
+        return 16
+    return 25
+
+--- the extended protocol's messages for a statement with parameters: Parse
+--- (each parameter typed by its kind) when `prepare` — under `name`, or
+--- unnamed — then Bind the statement of that name (each parameter as text,
+--- NULL as none), Describe the portal, Execute, Sync
+fn extended[sql, params, name, prepare]
     given = json[params]
     if not given.ok or type[given] ne 'array'
         return error['SQL params must be an array', 'db']
@@ -279,16 +323,7 @@ fn extended[sql, params]
     types = pack[count, 2]
     bound = pack[count, 2]
     for p in given
-        oid = 25
-        if p.ok
-            kind = type[p]
-            if kind eq 'int'
-                oid = 20
-            if kind eq 'float'
-                oid = 701
-            if kind eq 'bool'
-                oid = 16
-        types = concat[types, pack[oid, 4]]
+        types = concat[types, pack[oid_of[p], 4]]
         if p.ok
             shown = encode[p]
             if type[p] eq 'str'
@@ -298,21 +333,66 @@ fn extended[sql, params]
             bound = concat[bound, concat[pack[len[bytes[shown]], 4], bytes[shown]]]
         else
             bound = concat[bound, pack[-1, 4]]
-    parse = concat[cstr[''], concat[cstr[numbered[sql]], types]]
-    bind = concat[cstr[''], concat[cstr[''], concat[pack[0, 2], concat[bound, pack[0, 2]]]]]
+    parse = bytes['']
+    if prepare
+        parse = message['P', concat[cstr[name], concat[cstr[numbered[sql]], types]]]
+    bind = concat[cstr[''], concat[cstr[name], concat[pack[0, 2], concat[bound, pack[0, 2]]]]]
     describe = concat[bytes['P'], cstr['']]
     execute = concat[cstr[''], pack[0, 4]]
-    return concat[message['P', parse], concat[message['B', bind], concat[message['D', describe], concat[message['E', execute], message['S', bytes['']]]]]]
+    return concat[parse, concat[message['B', bind], concat[message['D', describe], concat[message['E', execute], message['S', bytes['']]]]]]
+
+--- what a statement is prepared under on a connection: its parameters'
+--- kinds and its text
+fn statement_key[sql, params]
+    given = json[params]
+    kinds = ''
+    if given.ok and type[given] eq 'array'
+        for p in given
+            kinds = '`kinds``oid_of[p]`,'
+    return 'statement `kinds` `sql`'
 
 --- a statement sent — a simple query when it has no parameters, the
---- extended protocol when it has
+--- extended protocol when it has — and the name and key of a statement it
+--- prepared now ('' for none). A statement with parameters is prepared the
+--- first time the connection runs it, named, so the server parses and plans
+--- it once, and bound by its name after that (at most 64 a connection: past
+--- that, unnamed and parsed each time); it is noted once its answer comes
+--- back whole (`remember`), and a name is never used twice, so one whose
+--- statement failed is let go
 fn statement_sent[s, sql, params]
     if params eq '[]'
-        return send[s, message['Q', cstr[sql]]]
-    messages = extended[sql, params]
+        sent = send[s, message['Q', cstr[sql]]]
+        if not sent.ok
+            return error[sent.reason, sent.kind]
+        return ''
+    key = statement_key[sql, params]
+    name = noted[s, key]
+    prepare = name eq ''
+    fresh = ''
+    if prepare
+        made = int[noted[s, 'statements']]
+        n = 0
+        if made.ok
+            n = made
+        if n lt 64
+            name = 's`n`'
+            note[s, 'statements', '`n + 1`']
+            fresh = '`name` `key`'
+    messages = extended[sql, params, name, prepare]
     if not messages.ok
-        return messages
-    return send[s, messages]
+        return error[messages.reason, messages.kind]
+    sent = send[s, messages]
+    if not sent.ok
+        return error[sent.reason, sent.kind]
+    return fresh
+
+--- a statement prepared now and answered whole: its name noted under its
+--- key, so the connection's next run of it binds it by name
+fn remember[s, fresh]
+    if fresh ne ''
+        name = split[fresh, ' '][0]
+        note[s, slice[fresh, len[name] + 1, len[fresh]], name]
+    return fresh
 
 --- `pg_query[parts, stream, sql, params]`: the statement run, its rows as
 --- a frame typed as the server names each column
@@ -327,13 +407,11 @@ fn answered[s, sql, params]
     sent = statement_sent[s, sql, params]
     if not sent.ok
         return error['postgres query error: `sent.reason`', sent.kind]
-    whole = read_answer[s]
-    if not whole.ok
-        return error['postgres query error: `whole.reason`', 'sys']
-    f = frame_of_postgres[whole]
-    if not f.ok
-        return error['postgres query error: `f.reason`', 'db']
-    return f
+    rows = read_rows[s]
+    if not rows.ok
+        return error['postgres query error: `rows.reason`', rows.kind]
+    kept = remember[s, sent]
+    return rows
 
 --- the count a command's completion carries (`INSERT 0 3`, `UPDATE 2`)
 fn command_count[whole]
@@ -363,6 +441,7 @@ fn pg_exec[parts, s, sql, params]
     f = frame_of_postgres[whole]
     if not f.ok
         return error['postgres exec error: `f.reason`', 'db']
+    kept = remember[s, sent]
     return command_count[whole]
 
 --- `pg_insert[parts, stream, table, frame]`: the frame's rows copied in
@@ -419,7 +498,7 @@ fn pg_describe[parts, s, sql]
 --- on the server, by the backend's process and key noted at open, from a
 --- connection of its own (the one it ran on is in the middle of an answer)
 fn pg_cancel[parts, s]
-    words = split[noted[s], ' ']
+    words = split[noted[s, 'cancel'], ' ']
     if len[words] ne 2
         return 0
     pid = int[words[0]]
@@ -459,5 +538,5 @@ test the_statements_messages_are_as_the_protocol_says[]
     assert[command_count[message['Z', bytes['I']]] eq 0]
     parts = '{"host":"localhost","port":5433,"user":"u","pass":"","database":"d","tls":false}'
     assert[part[parts, 'user'] eq 'u' and port_of[parts] eq 5433]
-    assert[not extended['SELECT ?', 'nope'].ok]
-    assert[len[extended['SELECT ?', '[1]']] gt 0]
+    assert[not extended['SELECT ?', 'nope', '', true].ok]
+    assert[len[extended['SELECT ?', '[1]', '', true]] gt 0]

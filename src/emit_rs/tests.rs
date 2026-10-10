@@ -593,6 +593,18 @@ fn test_for_loop_sequential_with_cpu_1() {
     assert!(!rust.contains("par_iter"), "cpu[1] should force sequential for loop\n{}", rust);
 }
 
+/// A route whose handler neither waits on anything nor loops is answered
+/// where its request is read (`CrowHandler::quick`), with what it calls;
+/// one that queries, loops, logs or recurses runs off the server's threads
+#[test]
+fn a_handler_that_cannot_wait_is_answered_where_it_is_read() {
+    let rust = transpile("use web, db\nfn shout[s]\n    return upper[s]\nfn plain_h[req]\n    return text[shout['hi']]\nfn rows_h[req]\n    conn = connect['sqlite://t.db']\n    return json[query[conn, 'SELECT 1 AS one']]\nfn loop_h[req]\n    n = 0\n    while n lt 3\n        n = n + 1\n    return text['`n`']\nfn logs_h[req]\n    log['asked']\n    return text['ok']\nroute['/p', plain_h]\nroute['/r', rows_h]\nroute['/l', loop_h]\nroute['/g', logs_h]\nserve[8000]\n");
+    assert!(rust.contains("CrowHandler::quick(\"plain_h\""), "{}", rust);
+    for slow in ["rows_h", "loop_h", "logs_h"] {
+        assert!(rust.contains(&format!("CrowHandler::new(\"{}\"", slow)), "{}\n{}", slow, rust);
+    }
+}
+
 /// A round whose own value holds its failure (`occurs[text, w]` of a text
 /// that can fail answers a count that can fail) runs in parallel; one that
 /// hands its failure out of the function (a condition cannot hold it) keeps
@@ -1682,8 +1694,9 @@ fn test_web_async_main() {
 fn test_web_route_transpile() {
     let rust = transpile("use web\nfn handler[req]\n    return text['hello']\n\nroute['/', handler]\n");
     assert!(rust.contains(".route("), "should emit .route()\n{}", rust);
-    // the handler goes by its name: a stop answers 500 naming it
-    assert!(rust.contains("crow_web::server::CrowHandler::new(\"handler\", handler)"), "should name the handler\n{}", rust);
+    // the handler goes by its name: a stop answers 500 naming it (and one
+    // that cannot wait is answered where its request is read)
+    assert!(rust.contains("crow_web::server::CrowHandler::quick(\"handler\", handler)"), "should name the handler\n{}", rust);
 }
 
 #[test]

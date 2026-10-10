@@ -729,6 +729,48 @@ pub fn is_effect(name: &str) -> bool {
     EFFECTS.contains(&name)
 }
 
+/// The functions that answer without waiting on anything or looping: no
+/// effect, of their own or through what they call (`Fn::effects`: a
+/// query, a read, a sleep, a log), no recursion, and no loop and no call
+/// through a function value in them or in what they call. A route's
+/// handler among them is answered on the server's own thread, as the
+/// request is read; any other runs off the server's threads, so a slow one
+/// delays only its own request (spec, Routes). Both modes ask it.
+pub fn quick_fns<'a>(fns: impl IntoIterator<Item = &'a Fn>) -> std::collections::BTreeSet<String> {
+    let mut own: Vec<(&str, Vec<String>)> = Vec::new();
+    for f in fns {
+        if !f.effects.is_empty() || f.recursive || f.kind != FnKind::Pure {
+            continue;
+        }
+        let mut ok = true;
+        visit_stmts(&f.body, &mut |s| ok &= !matches!(s, Stmt::While { .. } | Stmt::For { .. }));
+        let mut callees = Vec::new();
+        visit_block(&f.body, &mut |e| match e {
+            Expr::ForExpr { .. } | Expr::Effect { .. } | Expr::Deferred { .. } => ok = false,
+            Expr::Index { base, .. } if matches!(base.ty(), Ty::Fn(..)) => ok = false,
+            Expr::Call { target: Target::User(g), .. } | Expr::FnRef(g, _) => callees.push(g.clone()),
+            Expr::Call { .. } if call_name(e).is_some_and(|n| is_effect(&n)) => ok = false,
+            _ => {}
+        });
+        if ok {
+            own.push((f.name.as_str(), callees));
+        }
+    }
+    // the least set closed under calls: quick when everything it calls is
+    let mut quick = std::collections::BTreeSet::new();
+    loop {
+        let before = quick.len();
+        for (name, callees) in &own {
+            if !quick.contains(*name) && callees.iter().all(|c| quick.contains(c)) {
+                quick.insert(name.to_string());
+            }
+        }
+        if quick.len() == before {
+            return quick;
+        }
+    }
+}
+
 /// The builtins that draw from the program's random generator, or seed
 /// it: a seeded program's draws repeat only in the order written, so a
 /// loop that draws runs in order (spec §14, For Loops).

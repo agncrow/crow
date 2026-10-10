@@ -609,6 +609,13 @@ impl IrInterp {
     }
 
     /// A struct's fields and their types, as the program declared it.
+    /// The program's functions that neither wait on anything nor loop
+    /// (`ir::quick_fns`): a route's handler among them is answered on the
+    /// server's own thread, as the compiled program's is.
+    pub(crate) fn quick_fns(&self) -> std::collections::BTreeSet<String> {
+        crate::ir::quick_fns(self.fns.values().map(|f| f.as_ref()))
+    }
+
     pub(crate) fn struct_def(&self, name: &str) -> Option<Arc<crate::ir::StructDef>> {
         self.structs.get(name).cloned()
     }

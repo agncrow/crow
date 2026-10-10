@@ -312,8 +312,8 @@ impl Driven {
 /// Whether an idle connection's note says the server's keep-alive has
 /// run out (`until <epoch seconds>`, as the ClickHouse driver notes it).
 fn expired(s: &CrowStream) -> bool {
-    let note = crow_runtime::sys::noted(s);
-    let Some(until) = note.strip_prefix("until ").and_then(|t| t.trim().parse::<f64>().ok()) else { return false };
+    let note = crow_runtime::sys::noted(s, "until");
+    let Ok(until) = note.trim().parse::<f64>() else { return false };
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
     now >= until
 }

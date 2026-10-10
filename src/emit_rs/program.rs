@@ -1423,7 +1423,7 @@ impl Emitter {
             // the runtime's threads compute a page's derivations and run its
             // handlers: their stacks are sized for that work, not tokio's
             // 2 MiB (a debug build of finch's book walk overflowed it)
-            self.line("    crow_runtime::stops::main_guard(|| tokio::runtime::Builder::new_multi_thread().enable_all().thread_stack_size(64 * 1024 * 1024).build().expect(\"the async runtime\").block_on(__crow_main()));");
+            self.line("    crow_runtime::stops::main_guard(|| tokio::runtime::Builder::new_multi_thread().enable_all().thread_stack_size(64 * 1024 * 1024).max_blocking_threads(crow_runtime::cores::blocking_threads()).build().expect(\"the async runtime\").block_on(__crow_main()));");
             self.line("}");
             self.line("");
             self.line("async fn __crow_main() {");

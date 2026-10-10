@@ -194,10 +194,21 @@ fn page_render(t: Arc<IrInterp>, view_name: String) -> impl Fn(&CrowLiveState) -
     }
 }
 
-/// A route's answer: its handler run on a copy of the program, handed the
-/// request (its method, path, headers, query, body and the path's params),
-/// and what it returns sent as the response. A handler that stops answers
-/// 500 with the reason, as a value that is no response does.
+thread_local! {
+    /// A thread's copy of the program a route's handler runs on, and the
+    /// template it was made from: a handler is a function, which writes
+    /// nothing a later request reads, so the copy is kept from request to
+    /// request with the functions it has prepared (a copy made for every
+    /// request had prepared its handler again each time, and copied every
+    /// function the program holds).
+    static ROUTE_COPY: std::cell::RefCell<Option<(usize, IrInterp)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// A route's answer: its handler run on the thread's copy of the program,
+/// handed the request (its method, path, headers, query, body and the
+/// path's params), and what it returns sent as the response. A handler that
+/// stops answers 500 with the reason, as a value that is no response does,
+/// and the copy it stopped in is let go.
 fn route_answer(template: &IrInterp, handler: &str, req: crow_web::core::CrowRequest) -> crow_web::core::CrowResponse {
     use crow_web::core::CrowResponse;
     let pairs = |m: &std::collections::BTreeMap<String, String>| -> CrowValue {
@@ -216,8 +227,20 @@ fn route_answer(template: &IrInterp, handler: &str, req: crow_web::core::CrowReq
     ]
     .into_iter()
     .collect();
-    let mut it = template.clone();
-    match it.guard(|it| it.call(handler, vec![CrowValue::ok(Value::Map(request))])) {
+    let made_from = template as *const IrInterp as usize;
+    let answered = ROUTE_COPY.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let it = match &mut *slot {
+            Some((from, it)) if *from == made_from => it,
+            _ => &mut slot.insert((made_from, template.clone())).1,
+        };
+        let answered = it.guard(|it| it.call(handler, vec![CrowValue::ok(Value::Map(request))]));
+        if answered.is_err() {
+            *slot = None;
+        }
+        answered
+    });
+    match answered {
         Ok(v) if v.is_error() => crow_web::server::route_stopped(handler, v.reason()),
         Ok(v) => match v.value {
             Value::Response(r) => *r,
@@ -332,12 +355,20 @@ pub fn serve(template: IrInterp) -> Result<(), String> {
     };
 
     // a handler's thread holds the interpreter's frames to the recursion limit
-    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().thread_stack_size(crow_runtime::stops::STACK).build().map_err(|e| format!("cannot start the server: {}", e))?;
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(crow_runtime::stops::STACK)
+        .max_blocking_threads(crow_runtime::cores::blocking_threads())
+        .build()
+        .map_err(|e| format!("cannot start the server: {}", e))?;
     rt.block_on(async move {
         let mut app = crow_web::server::CrowApp::new();
+        let quick = template.quick_fns();
         for (method, path, handler, limit) in template.routes.clone() {
             let t = template.clone();
-            let answer = crow_web::server::CrowHandler::new(&handler.clone(), move |req| route_answer(&t, &handler, req));
+            let name = handler.clone();
+            let answer = move |req| route_answer(&t, &handler, req);
+            let answer = if quick.contains(&name) { crow_web::server::CrowHandler::quick(&name, answer) } else { crow_web::server::CrowHandler::new(&name, answer) };
             app = app.route_limited(&path, &method, answer, limit);
         }
         for (path, view, pairs) in pages {

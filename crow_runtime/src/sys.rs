@@ -521,9 +521,27 @@ struct StreamInner {
     name: String,
     /// The wait `open` gave it, which a read given no seconds goes back to.
     wait: Option<std::time::Duration>,
-    /// What a protocol written in Crow notes on the connection: a query's
-    /// id, a backend's process and key — what a cancel needs later.
-    note: Mutex<String>,
+    /// What a protocol written in Crow notes on the connection, by key: a
+    /// query's id and a backend's process and key (what a cancel needs
+    /// later), how long the server keeps it, the statements prepared on it.
+    notes: Mutex<std::collections::HashMap<String, String>>,
+    /// The read timeout last set on the socket, in microseconds (0: none):
+    /// a read sets it only when it changes, a system call saved per read.
+    timeout_us: std::sync::atomic::AtomicU64,
+}
+
+/// A read timeout in microseconds, as `StreamInner::timeout_us` keeps it.
+fn micros(t: Option<std::time::Duration>) -> u64 {
+    t.map(|d| (d.as_micros() as u64).max(1)).unwrap_or(0)
+}
+
+/// The size a thread's read buffer starts at, and the most it grows to.
+const SCRATCH_START: usize = 64 * 1024;
+const SCRATCH_MOST: usize = 4 * 1024 * 1024;
+
+thread_local! {
+    /// A thread's buffer for what a read takes in, copied out at its size.
+    static SCRATCH: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 impl std::fmt::Debug for CrowStream {
@@ -541,7 +559,7 @@ impl crate::display::CrowDisplay for CrowStream {
 impl CrowStream {
     /// What a failed `open` holds: a stream that is closed.
     pub fn closed() -> Self {
-        CrowStream(Arc::new(StreamInner { conn: Mutex::new(None), name: "closed".to_string(), wait: None, note: Mutex::new(String::new()) }))
+        CrowStream(Arc::new(StreamInner { conn: Mutex::new(None), name: "closed".to_string(), wait: None, notes: Mutex::new(std::collections::HashMap::new()), timeout_us: std::sync::atomic::AtomicU64::new(0) }))
     }
 }
 
@@ -596,7 +614,7 @@ pub fn open(host: &str, port: i64, tls: bool, seconds: f64) -> Result<CrowStream
     } else {
         Conn::plain(tcp)
     };
-    Ok(CrowStream(Arc::new(StreamInner { conn: Mutex::new(Some(conn)), name: format!("{}:{}", host, port), wait: timeout, note: Mutex::new(String::new()) })))
+    Ok(CrowStream(Arc::new(StreamInner { conn: Mutex::new(Some(conn)), name: format!("{}:{}", host, port), wait: timeout, notes: Mutex::new(std::collections::HashMap::new()), timeout_us: std::sync::atomic::AtomicU64::new(micros(timeout)) })))
 }
 
 /// `sys.send[stream, bytes]`: the bytes written, all of them, or the reason.
@@ -624,51 +642,75 @@ pub fn recv(s: &CrowStream, most: i64, seconds: f64) -> Result<Bytes, String> {
     // (a read given no seconds waits as the connection was opened to,
     // whatever the read before it waited)
     let wait = if seconds > 0.0 { Some(std::time::Duration::from_secs_f64(seconds)) } else { s.0.wait };
-    let mut buf = vec![0u8; most as usize];
     // the wait is taken in slices, and ends with a stop: of the work this
     // is in — a derivation's query, whose flag is raised when nobody waits
     // for it any more — or of the program (the driver written in Crow
     // then tells the server; crow_db::driven lets the connection go)
     let deadline = wait.map(|w| std::time::Instant::now() + w);
-    loop {
-        let slice = match deadline {
-            Some(d) => Some(d.saturating_duration_since(std::time::Instant::now()).min(std::time::Duration::from_millis(100)).max(std::time::Duration::from_millis(1))),
-            None => Some(std::time::Duration::from_millis(100)),
-        };
-        conn.tcp().set_read_timeout(slice).map_err(|e| e.to_string())?;
-        let r = match conn {
-            Conn::Plain(t) => t.read(&mut buf),
-            Conn::Tls(t) => t.read(&mut buf),
-        };
-        match r {
-            Ok(n) => {
-                buf.truncate(n);
-                return Ok(Bytes(buf));
+    // what arrives is read into the thread's own buffer and copied out at
+    // its size: a buffer of `most` bytes zeroed for every read (a driver
+    // asks for megabytes, and an answer is often a few hundred bytes) had
+    // cost more than the read, and stayed in the answer, unused. The buffer
+    // grows when a read fills it, up to `most`.
+    SCRATCH.with(|cell| {
+        let mut buf = cell.borrow_mut();
+        let want = (most as usize).min(buf.len().max(SCRATCH_START));
+        if buf.len() < want {
+            buf.resize(want, 0);
+        }
+        loop {
+            let slice = match deadline {
+                Some(d) => Some(d.saturating_duration_since(std::time::Instant::now()).min(std::time::Duration::from_millis(100)).max(std::time::Duration::from_millis(1))),
+                None => Some(std::time::Duration::from_millis(100)),
+            };
+            let us = micros(slice);
+            if s.0.timeout_us.swap(us, std::sync::atomic::Ordering::Relaxed) != us {
+                conn.tcp().set_read_timeout(slice).map_err(|e| e.to_string())?;
             }
-            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
-                if crate::cancel::current_stopped() {
-                    return Err("cancelled: nobody waits for this query any more".to_string());
+            let r = match conn {
+                Conn::Plain(t) => t.read(&mut buf[..want]),
+                Conn::Tls(t) => t.read(&mut buf[..want]),
+            };
+            match r {
+                Ok(n) => {
+                    let got = Bytes(buf[..n].to_vec());
+                    if n == want && want < (most as usize).min(SCRATCH_MOST) {
+                        let grown = (want * 2).min(most as usize).min(SCRATCH_MOST);
+                        buf.resize(grown, 0);
+                    }
+                    return Ok(got);
                 }
-                if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
-                    return Err(format!("no data from {} in {} s", s.0.name, seconds));
+                Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
+                    if crate::cancel::current_stopped() {
+                        return Err("cancelled: nobody waits for this query any more".to_string());
+                    }
+                    if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+                        return Err(format!("no data from {} in {} s", s.0.name, seconds));
+                    }
                 }
+                Err(e) => return Err(format!("cannot read from {}: {}", s.0.name, e)),
             }
-            Err(e) => return Err(format!("cannot read from {}: {}", s.0.name, e)),
+        }
+    })
+}
+
+/// `sys.note[stream, key, text]`: a note kept on the connection under a
+/// key — a query's id, a backend's process and key, a statement prepared
+/// on it — read back by `noted`; empty text lets the key go.
+pub fn note(s: &CrowStream, key: &str, text: &str) {
+    if let Ok(mut n) = s.0.notes.lock() {
+        if text.is_empty() {
+            n.remove(key);
+        } else {
+            n.insert(key.to_string(), text.to_string());
         }
     }
 }
 
-/// `sys.note[stream, text]`: a note kept on the connection — a query's
-/// id, a backend's process and key — read back by `noted`.
-pub fn note(s: &CrowStream, text: &str) {
-    if let Ok(mut n) = s.0.note.lock() {
-        *n = text.to_string();
-    }
-}
-
-/// `sys.noted[stream]`: the note the connection carries.
-pub fn noted(s: &CrowStream) -> String {
-    s.0.note.lock().map(|n| n.clone()).unwrap_or_default()
+/// `sys.noted[stream, key]`: the note the connection carries under a key,
+/// empty when it carries none.
+pub fn noted(s: &CrowStream, key: &str) -> String {
+    s.0.notes.lock().ok().and_then(|n| n.get(key).cloned()).unwrap_or_default()
 }
 
 /// `sys.machine[]`: this machine's name, as a query's tag carries it:

@@ -509,21 +509,58 @@ pub fn connect(url: &str, pool_size: Option<usize>) -> Result<DbHandle, String> 
     // `:memory:` is a new database each time by design.
     static SHARED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<(String, Option<usize>), DbHandle>>> =
         std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    // (and each thread keeps the handles it has asked for: a route that
+    // connects on every request had taken the one lock every handler's
+    // thread waits on, twice a request)
+    if let Some(h) = asked_before(url, pool_size) {
+        return Ok(h);
+    }
     let key = match url.strip_prefix("sqlite://") {
         Some(path) if path.is_empty() || path.contains(":memory:") => None,
         Some(path) => Some(format!("sqlite://{}", std::path::absolute(path).map(|p| p.display().to_string()).unwrap_or_else(|_| path.to_string()))),
         None => Some(url.to_string()),
     };
     if let Some(k) = &key {
-        if let Some(h) = SHARED.lock().unwrap_or_else(|p| p.into_inner()).get(&(k.clone(), pool_size)) {
-            return Ok(h.clone());
+        let found = SHARED.lock().unwrap_or_else(|p| p.into_inner()).get(&(k.clone(), pool_size)).cloned();
+        if let Some(h) = found {
+            remember_asked(url, pool_size, &h);
+            return Ok(h);
         }
     }
     let handle = open_handle(url, pool_size)?;
     if let Some(k) = key {
         SHARED.lock().unwrap_or_else(|p| p.into_inner()).insert((k, pool_size), handle.clone());
     }
+    remember_asked(url, pool_size, &handle);
     Ok(handle)
+}
+
+thread_local! {
+    /// The handles this thread has asked `connect` for (a few at most):
+    /// every handle to a server lives as long as the program does.
+    static ASKED: std::cell::RefCell<Vec<(String, Option<usize>, DbHandle)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The handle this thread asked for before by this URL and pool size; a
+/// sqlite file's is never kept here (its path is resolved each time).
+fn asked_before(url: &str, pool_size: Option<usize>) -> Option<DbHandle> {
+    if url.starts_with("sqlite://") {
+        return None;
+    }
+    ASKED.with(|a| a.borrow().iter().find(|(u, p, _)| u == url && *p == pool_size).map(|(_, _, h)| h.clone()))
+}
+
+/// A handle this thread asked for, kept for its next ask (a few at most).
+fn remember_asked(url: &str, pool_size: Option<usize>, handle: &DbHandle) {
+    if url.starts_with("sqlite://") {
+        return;
+    }
+    ASKED.with(|a| {
+        let mut a = a.borrow_mut();
+        if a.len() < 8 && !a.iter().any(|(u, p, _)| u == url && *p == pool_size) {
+            a.push((url.to_string(), pool_size, handle.clone()));
+        }
+    });
 }
 
 fn open_handle(url: &str, pool_size: Option<usize>) -> Result<DbHandle, String> {
