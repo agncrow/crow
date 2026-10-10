@@ -5293,6 +5293,16 @@ fn move_last_reads(e: &mut Expr, live: &HashSet<String>, allowed: &HashSet<Strin
         }
         Expr::Convert { expr, .. } | Expr::Unary { expr, .. } => move_last_reads(expr, live, allowed, seen),
         Expr::Binary { l, r, .. } => {
+            // a name both sides read moves in neither: the compiled program
+            // holds the left side lent while it computes the right (`v1 *
+            // transpose[v1]`, v1 able to fail, had moved v1 into the right
+            // side while the left still held it, and did not build — fuzz
+            // seed 1791669691)
+            let mut left = HashSet::new();
+            expr_reads(l, &mut left);
+            let mut right = HashSet::new();
+            expr_reads(r, &mut right);
+            seen.extend(left.intersection(&right).cloned());
             move_last_reads(r, live, allowed, seen);
             move_last_reads(l, live, allowed, seen);
         }

@@ -1,0 +1,17 @@
+--- A name both sides of an operator read moves in neither: the compiled
+--- program holds the left side lent while it computes the right, and
+--- `v1 * transpose[v1]` with a v1 that can fail had moved v1 into the right
+--- side while the left still held it, so the program did not build (fuzz
+--- seed 1791669691). The interpreter had run it.
+use math
+
+fn spread[s]
+    v0 = float[s]
+    v1 = [[0.5, -1.0, 2.0], [1.5, 0.0, -2.5]] - v0
+    return round[sum[v1 * transpose[v1]] * 100.0] / 100.0
+
+fn square[m]
+    return sum[m * transpose[m]]
+
+log[spread['1.5']]
+log[square[[[1.0, 2.0], [3.0, 4.0]]]]
