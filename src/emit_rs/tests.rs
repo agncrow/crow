@@ -2352,3 +2352,40 @@ fn test_frame_column_args_are_plain_strings() {
     let rust = transpile("use frame\ndf = load['d.csv']\ns = sort[df, 'age', desc = true]\n");
     assert!(rust.contains("\"age\""), "column name string should appear in codegen\n{}", rust);
 }
+
+/// A route's handler reads the derivations the app holds (spec,
+/// Derivations): a program without a page that declares one holds the app's
+/// state — its facts in the program's struct, held for the routes once they
+/// are set — the handler binds each derivation it reads once, as it starts,
+/// from that state, and what it wrote lands for the app as it ends, a stop
+/// included. Every route that can write takes its writes, so a thread's
+/// record of them no longer grows with each request.
+#[test]
+fn a_route_reads_what_the_app_holds_and_lands_its_writes() {
+    let src = "use web, db\n\nbook = db.connect['sqlite://file:t?mode=memory&cache=shared']\nlimit = 5\n\nderive rows\n    return query[book, 'SELECT id FROM notes LIMIT ?', [limit]]\n\nfn count_h[req]\n    return text['`len[rows]` `len[rows]`']\n\nfn add_h[req]\n    conn = db.connect['sqlite://file:t?mode=memory&cache=shared']\n    exec[conn, 'INSERT INTO notes (id) VALUES (1)']\n    return text['ok']\n\nroute['/count', count_h]\nroute['/add', 'POST', add_h]\nserve[3998]\n";
+    let rust = transpile(src);
+    assert!(rust.contains("struct CrowFacts {") && rust.contains("    limit: i64,"), "the facts a derivation reads, in the program's struct:\n{}", rust);
+    let held = rust.find("crow_web::live::hold_app(&__crow_state);").expect("the app's state held");
+    let routed = rust.find("__crow_app = __crow_app.route(").expect("the routes");
+    assert!(held < routed, "held before the routes are served:\n{}", rust);
+    let start = rust.find("fn count_h(").expect("the handler");
+    let body = &rust[start..start + rust[start..].find("\n}\n").unwrap()];
+    assert!(body.contains("let state: &CrowLiveState = crow_web::live::app();"), "{}", body);
+    assert_eq!(body.matches("__derive_rows(state)").count(), 1, "read once, as the handler starts:\n{}", body);
+    assert!(rust.contains("impl Drop for __CrowWrites {\n    fn drop(&mut self) { crow_web::live::publish_writes(crow_db::take_write_keys()); }"), "{}", rust);
+    assert!(rust.contains("move |__req: crow_web::core::CrowRequest| { let _w = __CrowWrites; add_h(__req) }"), "a route's writes land as it ends:\n{}", rust);
+    let landed = rust.rfind("crow_web::live::publish_writes(crow_db::take_write_keys());\n").expect("the top level's writes landed");
+    let served = rust.find(".serve(3998").expect("served");
+    assert!(landed < served, "the top level's writes land before it serves:\n{}", rust);
+}
+
+/// A route program without derivations still takes each route's writes
+/// as the route ends — the thread's record of them had grown with every
+/// write, nothing taking it — and lands them nowhere.
+#[test]
+fn a_route_without_derivations_lets_its_writes_go() {
+    let src = "use web, db\n\nfn add_h[req]\n    conn = db.connect['sqlite://file:u?mode=memory&cache=shared']\n    exec[conn, 'INSERT INTO notes (id) VALUES (1)']\n    return text['ok']\n\nroute['/add', 'POST', add_h]\nserve[3999]\n";
+    let rust = transpile(src);
+    assert!(rust.contains("impl Drop for __CrowWrites {\n    fn drop(&mut self) { let _ = crow_db::take_write_keys(); }"), "{}", rust);
+    assert!(!rust.contains("crow_web::live::"), "no live runtime for a program without derivations:\n{}", rust);
+}

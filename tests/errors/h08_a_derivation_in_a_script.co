@@ -1,0 +1,8 @@
+--- a derivation lives in a program that serves: a script computes its value
+--- where it needs it
+k = 3
+
+derive tripled
+    return k * 3
+
+log[tripled]

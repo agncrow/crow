@@ -506,6 +506,23 @@ steps on every push and must be green.
   connection under its kinds and text (`statement_sent`, at most 64 names,
   a name never used twice), ClickHouse notes its query id and keep-alive
   apart.
+- A route's handler reads the derivations the app holds (spec,
+  Derivations): the lowering binds each one it names to a local of its
+  name as the handler starts (`route_derived`, `lower_fn`), and both
+  backends keep the values in `crow_web::live` — compiled through the state
+  main holds (`hold_app`, read with `app()`), interpreted through one per
+  served program (`app_state_from`, its specs' names tagged with the
+  program's `app_tag`). A new reader of the app's values goes through
+  `derive`/`derive_bg`/`derive_with` on such a state, never a cache of its
+  own, or the modes keep values by different rules; a shared value computed
+  for a reader who waits is one flight (`FLIGHTS`) for every reader arriving
+  with the same inputs. A route's writes are taken as its handler ends
+  (`__CrowWrites`, `route_answer`) and published (`publish_writes`): crow_db's
+  thread-local record of writes had grown with every write a route made. A
+  `use web` program that declares a derivation holds state (`holds_state`):
+  its top-level names are facts. Who holds a derivation is
+  `derive::read_sets` alone — a fact of a page's address and a data source
+  are the session's (`session_written`; both had been shared).
 - The interpreter's walker (the top level, a collecting loop's rounds,
   what a prepared body hands it) keeps a `Known` per local text only while
   it runs a loop (`walker_loop`, `loop_text`, keyed by frame and name):

@@ -1,0 +1,21 @@
+--- a route's handler reads only what the app holds: a derivation over a
+--- fact a session writes is the session's, and a route has none
+use web, ui
+
+picked = 'a'
+
+derive band
+    return '`picked`!'
+
+fn pick[]
+    picked = 'b'
+
+view render[]
+    return stack[p['`band`'], button['Pick', click = pick]]
+
+fn band_h[req]
+    return text[band]
+
+page['/', render]
+route['/band', band_h]
+serve[3100]

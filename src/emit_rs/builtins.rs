@@ -641,15 +641,20 @@ impl Emitter {
     /// a stop the same way.
     fn route_handler(&self, arg: &Expr, text: &str) -> String {
         let name = fn_named(arg).unwrap_or(text);
+        let quick = fn_named(arg).is_some_and(|f| crate::ir::quick_fns(self.part.fns.iter()).contains(f));
+        // a handler that can write a table lands its writes as it ends, its
+        // stop too (`__CrowWrites`, emit_main)
+        let writes = if self.needs_crow_db && !quick { "let _w = __CrowWrites; " } else { "" };
         let answer = match fn_named(arg) {
             Some(f) if self.fns.get(f).is_some_and(|sig| sig.ret.is_result()) => format!(
-                "move |__req: crow_web::core::CrowRequest| {{ let _r = {}(__req); if _r.ok {{ _r.value }} else {{ crow_web::server::route_stopped(\"{}\", &_r.reason) }} }}",
+                "move |__req: crow_web::core::CrowRequest| {{ {}let _r = {}(__req); if _r.ok {{ _r.value }} else {{ crow_web::server::route_stopped(\"{}\", &_r.reason) }} }}",
+                writes,
                 Self::rust_fn_name(f),
                 f
             ),
+            Some(f) if !writes.is_empty() => format!("move |__req: crow_web::core::CrowRequest| {{ {}{}(__req) }}", writes, Self::rust_fn_name(f)),
             _ => text.to_string(),
         };
-        let quick = fn_named(arg).is_some_and(|f| crate::ir::quick_fns(self.part.fns.iter()).contains(f));
         format!("crow_web::server::CrowHandler::{}(\"{}\", {})", if quick { "quick" } else { "new" }, name, answer)
     }
 

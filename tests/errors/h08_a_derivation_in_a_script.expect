@@ -1,0 +1,3 @@
+h08_a_derivation_in_a_script.co:5:1: derive tripled needs a program that serves — derivations live in a `use ui` program with a page, whose views and handlers read them, or in a `use web` program whose routes read them
+  5 │ derive tripled
+    │ ^^^^^^^^^^^^^^

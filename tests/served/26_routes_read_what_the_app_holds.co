@@ -1,0 +1,37 @@
+--- A route's handler reads a derivation the app holds (spec, Derivations):
+--- computed at its first read, kept while nothing it reads moves, and
+--- computed again after this program writes a table it reads — a route's
+--- write as much as a page's — in both modes. A route has no session, so
+--- what it reads is one value for the app; a derivation over a table had
+--- lived only in a program with a page, and a route that needed the rows
+--- queried them on every request.
+use web, db
+
+--- (one database in memory that every connection shares: a route's
+--- handler opens its own, and `sqlite://:memory:` is a database for each)
+book = db.connect['sqlite://file:served26?mode=memory&cache=shared']
+made = exec[book, 'CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT)']
+
+derive notes
+    return query[book, 'SELECT id, body FROM notes ORDER BY id']
+
+derive bodies
+    return len[notes]
+
+fn count_h[req]
+    return json[map[count = bodies]]
+
+fn add_h[req]
+    conn = db.connect['sqlite://file:served26?mode=memory&cache=shared']
+    exec[conn, 'INSERT INTO notes (body) VALUES (?)', [req.body]]
+    return text['added']
+
+fn last_h[req]
+    if len[notes] eq 0
+        return text['none']
+    return text[notes.body[len[notes] - 1]]
+
+route['/count', count_h]
+route['/add', 'POST', add_h]
+route['/last', last_h]
+serve[3427]

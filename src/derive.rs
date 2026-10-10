@@ -24,6 +24,9 @@ pub struct ReadSet {
     /// value for the whole app, computed once and shared by every session
     /// (derive-design.md §3.5). Set by `mark_shared`.
     pub shared: bool,
+    /// why one held by each session is: the first thing it reads that a
+    /// session moves (`it reads 'picked', which a handler writes`)
+    pub per_session: Option<String>,
     /// the tables it reads only a slice of — every query of the table fixes
     /// one column by a fact (`WHERE board = ?` with `[board_id]`) — each with
     /// that column and fact: a write that says it touched no row of the
@@ -55,9 +58,12 @@ pub fn fact_names(stmts: &[Stmt]) -> BTreeSet<String> {
 }
 
 fn is_handle_or_source(e: &Expr) -> bool {
-    if let Expr::Call { callee, args } = e {
+    if is_source(e) {
+        return true;
+    }
+    if let Expr::Call { callee, .. } = e {
         return match callee.as_ref() {
-            Expr::Ident(n) => n == "connect" || n == "db.connect" || (n == "fetch" && args.len() == 1) || (n == "poll" && args.len() == 2),
+            Expr::Ident(n) => n == "connect" || n == "db.connect",
             Expr::FieldAccess { object, field } => matches!(object.as_ref(), Expr::Ident(m) if m == "db") && field == "connect",
             _ => false,
         };
@@ -130,27 +136,123 @@ pub fn written_facts(fns: &BTreeMap<String, Vec<Stmt>>, facts: &BTreeSet<String>
     out
 }
 
-/// Which derivations every session shares: those that read no written fact
-/// and no derivation that is itself per session — a fixpoint, since a
-/// derivation is per session as soon as anything it reads is. A
-/// derivation over sources, constants and the clock alone is computed once
-/// for the app.
-pub fn mark_shared(specs: &mut BTreeMap<String, ReadSet>, written: &BTreeSet<String>) {
-    // `reader` is written by the runtime, per session, whoever signs in
-    let mut shared: BTreeSet<String> = specs.iter()
-        .filter(|(_, rs)| rs.facts.iter().all(|f| f != "reader" && !written.contains(f)))
-        .map(|(n, _)| n.clone())
-        .collect();
-    loop {
-        let before = shared.len();
-        let keep: BTreeSet<String> = shared.iter()
-            .filter(|n| specs[*n].derives.iter().all(|d| d == *n || shared.contains(d)))
-            .cloned()
-            .collect();
-        shared = keep;
-        if shared.len() == before { break; }
+/// The names the runtime writes for each session, which no handler
+/// assigns: a data source (`fetch`/`poll`), whose answers land in the
+/// session that asked, and a fact a page's address carries — a `:name` of
+/// its path or a name of its `url = […]` — set from the address each reader
+/// opens. A derivation over one is the session's (it had been counted the
+/// app's: one session's address, or the source's first answer, for all).
+pub fn session_written(stmts: &[Stmt], facts: &BTreeSet<String>) -> BTreeMap<String, String> {
+    const ADDRESS: &str = "which a page's address sets";
+    let mut out = BTreeMap::new();
+    for st in stmts {
+        match st {
+            Stmt::Assign { name, value } if is_source(value) => {
+                out.insert(name.clone(), "a source each session's page asks".to_string());
+            }
+            Stmt::ExprStmt(Expr::Call { callee, args }) if matches!(callee.as_ref(), Expr::Ident(n) if n == "page") => {
+                if let Some(Expr::Str(path)) = args.first() {
+                    for segment in path.split('/') {
+                        if let Some(f) = segment.strip_prefix(':').and_then(|n| address_fact(n, facts)) {
+                            out.insert(f, ADDRESS.to_string());
+                        }
+                    }
+                }
+                // `url = […]`, or the list the lowering made of it
+                let listed = args.iter().skip(2).find_map(|a| match a {
+                    Expr::Named { name, value, .. } if name == "url" => Some(value.as_ref()),
+                    a @ Expr::Array(_) => Some(a),
+                    _ => None,
+                });
+                if let Some(Expr::Array(items)) = listed {
+                    for item in items {
+                        if let Expr::Str(n) = item
+                            && let Some(f) = address_fact(n, facts)
+                        {
+                            out.insert(f, ADDRESS.to_string());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
     }
-    for (n, rs) in specs.iter_mut() { rs.shared = shared.contains(n); }
+    out
+}
+
+/// A data source's binding: `fetch[url]` or `poll[url, secs]`.
+fn is_source(e: &Expr) -> bool {
+    matches!(e, Expr::Call { callee, args } if matches!(callee.as_ref(), Expr::Ident(n) if (n == "fetch" && args.len() == 1) || (n == "poll" && args.len() == 2)))
+}
+
+/// The fact an address names — a part's by its path (`session.day`) or its
+/// last name (`:day`) — as the served page resolves it.
+fn address_fact(name: &str, facts: &BTreeSet<String>) -> Option<String> {
+    let flat = name.replace('.', "_");
+    if facts.contains(&flat) {
+        return Some(flat);
+    }
+    let suffix = format!("_{}", flat);
+    let mut found = facts.iter().filter(|f| f.ends_with(&suffix));
+    let first = found.next()?.clone();
+    found.next().is_none().then_some(first)
+}
+
+/// Every derivation's read set, and who holds it: the one analysis the
+/// lowering records for both backends and `crow check` prints. `derives`
+/// names the program's derivations, `fns` and `params` its functions.
+pub fn read_sets(stmts: &[Stmt], derives: &BTreeSet<String>, fns: &BTreeMap<String, Vec<Stmt>>, params: &BTreeMap<String, Vec<String>>) -> BTreeMap<String, ReadSet> {
+    let mut facts = fact_names(stmts);
+    let session = session_written(stmts, &facts);
+    // a source is read as a fact is: each answer that lands moves it
+    facts.extend(session.keys().cloned());
+    let owned = owned_tables(stmts, fns);
+    let mut sets = BTreeMap::new();
+    for st in stmts {
+        if let Stmt::Derive { name, body, .. } = st {
+            sets.insert(name.clone(), read_set(body, &facts, derives, fns, params, &owned));
+        }
+    }
+    let mut written: BTreeMap<String, String> = written_facts(fns, &facts).into_iter().map(|f| (f, "which a session writes".to_string())).collect();
+    written.extend(session);
+    mark_shared(&mut sets, &written);
+    sets
+}
+
+/// Which derivations every session shares: those that read no fact a
+/// session moves (`written`, each with why) and no derivation that is itself
+/// per session — a fixpoint, since a derivation is per session as soon as
+/// anything it reads is. A derivation over constants, tables and the clock
+/// alone is computed once for the app. Each one held per session keeps why.
+pub fn mark_shared(specs: &mut BTreeMap<String, ReadSet>, written: &BTreeMap<String, String>) {
+    let mut why: BTreeMap<String, String> = BTreeMap::new();
+    for (n, rs) in specs.iter() {
+        // `reader` is written by the runtime, per session, whoever signs in
+        if let Some(f) = rs.facts.iter().find(|f| *f == "reader" || written.contains_key(*f)) {
+            let reason = match written.get(f) {
+                Some(w) => format!("it reads '{}', {}", f, w),
+                None => "it reads `reader`, the session's signed-in reader".to_string(),
+            };
+            why.insert(n.clone(), reason);
+        }
+    }
+    loop {
+        let before = why.len();
+        for (n, rs) in specs.iter() {
+            if !why.contains_key(n)
+                && let Some(d) = rs.derives.iter().find(|d| *d != n && why.contains_key(*d))
+            {
+                why.insert(n.clone(), format!("it reads '{}', which each session holds", d));
+            }
+        }
+        if why.len() == before {
+            break;
+        }
+    }
+    for (n, rs) in specs.iter_mut() {
+        rs.per_session = why.get(n).cloned();
+        rs.shared = rs.per_session.is_none();
+    }
 }
 
 /// The read set of a body, given the program's facts, derivations, the
@@ -570,12 +672,31 @@ mod tests {
         specs.insert("latest".into(), rs(&[], &["universe"]));        // reads a shared one: shared
         specs.insert("head".into(), rs(&["base", "speed"], &[]));     // base is written: per session
         specs.insert("rows".into(), rs(&[], &["head", "latest"]));    // reads a per-session one: per session
-        let written: BTreeSet<String> = ["base"].iter().map(|s| s.to_string()).collect();
+        let written: BTreeMap<String, String> = [("base".to_string(), "which a session writes".to_string())].into_iter().collect();
         mark_shared(&mut specs, &written);
         assert!(specs["universe"].shared);
         assert!(specs["latest"].shared);
         assert!(!specs["head"].shared);
         assert!(!specs["rows"].shared);
+        assert_eq!(specs["head"].per_session.as_deref(), Some("it reads 'base', which a session writes"));
+        assert_eq!(specs["rows"].per_session.as_deref(), Some("it reads 'head', which each session holds"));
+        assert_eq!(specs["universe"].per_session, None);
+    }
+
+    /// A fact a page's address carries, and a data source, are moved by each
+    /// session: a derivation over one is the session's, never the app's
+    #[test]
+    fn an_address_or_a_source_makes_a_derivation_the_sessions() {
+        let src = "use web, ui\n\nn = 0\nday = 'd'\nk = 1\nprices = poll['http://127.0.0.1:9/p.json', 5]\n\nderive doubled\n    return n * 2\n\nderive dated\n    return day\n\nderive count\n    return len[prices]\n\nderive plain\n    return k + 1\n\nview render[]\n    return p['`doubled` `dated` `count` `plain`']\n\npage['/', render, url = ['day']]\npage['/n/:n', render]\n";
+        let stmts = crate::build(src).unwrap();
+        let derives: BTreeSet<String> = ["doubled", "dated", "count", "plain"].iter().map(|s| s.to_string()).collect();
+        let fns: BTreeMap<String, Vec<Stmt>> = stmts.iter().filter_map(|s| if let Stmt::FnDecl { name, body, .. } = s { Some((name.clone(), body.clone())) } else { None }).collect();
+        let sets = read_sets(&stmts, &derives, &fns, &BTreeMap::new());
+        assert_eq!(sets["doubled"].per_session.as_deref(), Some("it reads 'n', which a page's address sets"));
+        assert_eq!(sets["dated"].per_session.as_deref(), Some("it reads 'day', which a page's address sets"));
+        assert_eq!(sets["count"].per_session.as_deref(), Some("it reads 'prices', a source each session's page asks"));
+        assert!(sets["count"].facts.contains("prices"), "a source's answers move what reads it");
+        assert!(sets["plain"].shared);
     }
 
     #[test]

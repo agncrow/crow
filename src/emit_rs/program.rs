@@ -403,6 +403,16 @@ impl Emitter {
                 }
             }
         }
+        // a program without a page that declares derivations holds the app's
+        // state: its routes read the derivations the app holds through it
+        if !self.has_page_routes && !self.part.derives.is_empty() {
+            self.app_state = true;
+            self.needs_crow_web = true;
+            self.web_features.insert("live".to_string());
+            if self.reactive_vars.is_empty() && self.static_handle_vars.is_empty() && self.data_source_vars.is_empty() {
+                self.read_facts();
+            }
+        }
 
         // a struct parameter a function never changes — reassigns, or
         // assigns a field or an item of — passes by reference (a handler's
@@ -756,6 +766,9 @@ impl Emitter {
                 self.line("use crow_web::view::CrowVNode;");
                 self.line("#[allow(unused_imports)]");
                 self.line("use crow_web::live::{CrowLiveView, CrowLiveState};");
+            } else if self.app_state {
+                self.line("#[allow(unused_imports)]");
+                self.line("use crow_web::live::CrowLiveState;");
             }
         }
         if self.needs_crow_db {
@@ -870,8 +883,8 @@ impl Emitter {
         }
         let derives: Vec<Derive> = self.part.derives.clone();
         for d in &derives {
-            if !self.needs_ui || !self.has_page_routes {
-                return Err(format!("derive {} needs reactive state — a `use ui` program with a page[] (derive-design.md)", d.name));
+            if !(self.needs_ui && self.has_page_routes) && !self.app_state {
+                return Err(format!("derive {} needs a program that serves — a page's views and handlers read it, or a route's handler (derive-design.md)", d.name));
             }
             self.emit_derive(d);
         }
@@ -1403,6 +1416,18 @@ impl Emitter {
             }
             self.line("");
         }
+        // what a route's handler wrote, landed as it ends — its stop too:
+        // the app's derivations over a table it wrote read it again (the
+        // record of a thread's writes had grown with every write a route
+        // made, nothing taking it)
+        if self.needs_crow_db && !self.web_handlers.is_empty() {
+            let land = if self.part.derives.is_empty() { "let _ = crow_db::take_write_keys();" } else { "crow_web::live::publish_writes(crow_db::take_write_keys());" };
+            self.line("struct __CrowWrites;");
+            self.line("impl Drop for __CrowWrites {");
+            self.line(&format!("    fn drop(&mut self) {{ {} }}", land));
+            self.line("}");
+            self.line("");
+        }
         // a stop carried back from another thread (a parallel loop's) is the
         // program's stop, printed once; any other panic names itself in
         // Crow's words (crow_runtime::stops)
@@ -1466,8 +1491,10 @@ impl Emitter {
         let main = self.part.main.clone();
         // the top level's texts read by position (texts.rs)
         self.indexed_texts = super::texts::indexed_texts(&[], &main);
-        if self.has_page_routes {
-            self.line("let mut __crow_app = CrowApp::new();");
+        if self.has_page_routes || self.app_state {
+            if self.has_page_routes {
+                self.line("let mut __crow_app = CrowApp::new();");
+            }
             self.line("let mut __crow_state = CrowLiveState::new();");
             // the session's facts in the program's own struct, typed field by
             // field (typed-values-design.md §6)
@@ -1528,6 +1555,11 @@ impl Emitter {
             // later top-level assignment set its default above
             let (serve, other): (Vec<Stmt>, Vec<Stmt>) = main.into_iter().partition(|s| matches!(s, Stmt::Do(e) if call_name(e).as_deref() == Some("serve")));
             let other: Vec<Stmt> = other.into_iter().filter(|s| !matches!(s, Stmt::Store { .. })).collect();
+            // the app's own state, as declared: a route's handler reads the
+            // derivations the app holds through it
+            if !self.part.derives.is_empty() {
+                self.line("crow_web::live::hold_app(&__crow_state);");
+            }
             self.in_main = true;
             self.emit_block(&other);
             if self.test_control {
@@ -1538,6 +1570,11 @@ impl Emitter {
                 if serve.is_empty() {
                     self.line("__crow_app.serve(0).await.unwrap();");
                 }
+            }
+            // what the top level wrote lands for the app before anything is
+            // served: a derivation computed before a write reads it again
+            if !self.part.derives.is_empty() && self.needs_crow_db {
+                self.line("crow_web::live::publish_writes(crow_db::take_write_keys());");
             }
             self.emit_block(&serve);
             self.in_main = false;
@@ -1620,7 +1657,7 @@ impl Emitter {
     /// derivations through `__facts` and `__facts_mut`, and as JSON only at
     /// the edges the runtime asks for.
     fn emit_facts_struct(&mut self) {
-        if self.reactive_vars.is_empty() || !self.has_page_routes {
+        if self.reactive_vars.is_empty() || !(self.has_page_routes || self.app_state) {
             return;
         }
         let facts: Vec<(String, Ty)> = self.reactive_vars.iter().map(|(n, (t, _))| (n.clone(), t.clone())).collect();

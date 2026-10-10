@@ -170,6 +170,10 @@ pub(crate) struct Emitter {
     pub(crate) reactive_render_fns: HashSet<String>,
     pub(crate) reactive_event_handlers: BTreeSet<String>,
     pub(crate) has_page_routes: bool,
+    /// A program without a page that declares derivations: it holds the
+    /// app's state, which its routes read the derivations the app holds
+    /// through (crow_web::live::app), its facts in the program's own struct.
+    pub(crate) app_state: bool,
     /// `crow test --compiled`: the program answers the test harness over
     /// HTTP (`crow_web::live::test_control`), a part without a page too.
     pub(crate) test_control: bool,
@@ -284,6 +288,7 @@ impl Emitter {
             reactive_render_fns: HashSet::new(),
             reactive_event_handlers: BTreeSet::new(),
             has_page_routes: false,
+            app_state: false,
             test_control: false,
             has_noapp_web: false,
             reactive_vars: BTreeMap::new(),

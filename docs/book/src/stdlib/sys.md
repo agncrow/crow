@@ -8,7 +8,7 @@ Import with `use sys` — **only in a module of the standard library.** `sys` is
 | Function | Description | Example |
 |----------|-------------|---|
 | `bytes[text]` | The text's UTF-8 as bytes. A bytes value shows as `<n bytes>`, has a `len`, and compares with `eq` and `ne` to another; `type[b]` is `bytes` | [The standard library's layer: `use sys`](../by-example/sys.md) · [Web: responses and submodules](../by-example/web-more.md) |
-| `text[bytes]` | The text the bytes spell in UTF-8; an error value of kind `'parse'` where they spell none | [The standard library's layer: `use sys`](../by-example/sys.md) · [Web: responses and submodules](../by-example/web-more.md) |
+| `text[bytes]` | The text the bytes spell in UTF-8; an error value of kind `'parse'` where they spell none | [The standard library's layer: `use sys`](../by-example/sys.md) · [Web: responses and submodules](../by-example/web-more.md) · [Derivations](../ch12-08-derive.md) |
 | `slice[bytes, from, to]` | The bytes from `from` to `to` (excluded), counted from the end when negative; a span outside stops | [Arrays](../by-example/arrays.md) · [The standard library's layer: `use sys`](../by-example/sys.md) · [Strings and Interpolation](../ch03-03-strings.md) |
 | `find[bytes, needle]` | Where the needle first occurs, or -1 | [Regular expressions](../by-example/regex.md) · [The standard library's layer: `use sys`](../by-example/sys.md) · [Searching with any, all, and find](../ch06-02-search-builtins.md) |
 | `concat[a, b]` | The two in order | [Arrays](../by-example/arrays.md) · [Math: tensors](../by-example/math.md) · [The standard library's layer: `use sys`](../by-example/sys.md) · [Arrays and Tensors](../ch05-01-arrays-and-tensors.md) |
@@ -22,7 +22,7 @@ Import with `use sys` — **only in a module of the standard library.** `sys` is
 | `store[path, bytes]` | The bytes written to a file, as they are; an error value of kind `'sys'` where it cannot be written | [The standard library's layer: `use sys`](../by-example/sys.md) |
 | `random[n]` | `n` bytes from the operating system's randomness | [The standard library's layer: `use sys`](../by-example/sys.md) |
 | `hex[bytes]` | The bytes as lowercase hex, two digits each | [The standard library's layer: `use sys`](../by-example/sys.md) |
-| `text[bytes, fill]` | The text the bytes spell, each run that spells none replaced by `fill` (`'�'`, as a browser shows one) — never an error | [The standard library's layer: `use sys`](../by-example/sys.md) · [Web: responses and submodules](../by-example/web-more.md) |
+| `text[bytes, fill]` | The text the bytes spell, each run that spells none replaced by `fill` (`'�'`, as a browser shows one) — never an error | [The standard library's layer: `use sys`](../by-example/sys.md) · [Web: responses and submodules](../by-example/web-more.md) · [Derivations](../ch12-08-derive.md) |
 | `hash[bytes, algo]` | The digest as lowercase hex: `'sha256'`, `'sha512'`, `'sha1'` or `'md5'` | [The standard library's layer: `use sys`](../by-example/sys.md) · [The system: shell, environment, time, arguments](../by-example/system.md) · [Reactive State and Events](../ch12-02-reactive-state.md) |
 | `digest[bytes, algo]` | The digest as bytes: `'sha1'` (a socket's accept key), `'sha256'`, `'sha512'` or `'md5'` | [The standard library's layer: `use sys`](../by-example/sys.md) |
 | `hmac[key, message, algo]` | The keyed digest as bytes: `'sha256'` (an S3 signature's chain) or `'sha512'` | [The standard library's layer: `use sys`](../by-example/sys.md) |

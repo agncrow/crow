@@ -234,12 +234,20 @@ fn route_answer(template: &IrInterp, handler: &str, req: crow_web::core::CrowReq
             Some((from, it)) if *from == made_from => it,
             _ => &mut slot.insert((made_from, template.clone())).1,
         };
+        it.begin_route();
         let answered = it.guard(|it| it.call(handler, vec![CrowValue::ok(Value::Map(request))]));
+        it.end_route();
         if answered.is_err() {
             *slot = None;
         }
         answered
     });
+    // what the handler wrote is the app's: a derivation over it is computed
+    // again at its next read, and a page that read one renders again
+    let writes = crow_db::take_write_keys();
+    if template.has_derivations() {
+        crow_web::live::publish_writes(writes);
+    }
     match answered {
         Ok(v) if v.is_error() => crow_web::server::route_stopped(handler, v.reason()),
         Ok(v) => match v.value {
@@ -248,6 +256,19 @@ fn route_answer(template: &IrInterp, handler: &str, req: crow_web::core::CrowReq
         },
         Err(e) => crow_web::server::route_stopped(handler, &e),
     }
+}
+
+/// The app's own state, which a route reads the derivations the app holds
+/// through (crow_web::live), made from the program's state as declared; and
+/// what the top level wrote before serving, landed for the app.
+fn hold_app(template: &mut IrInterp, initial: &CrowLiveState) {
+    if !template.has_derivations() {
+        return;
+    }
+    static TAG: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    template.app_tag = TAG.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    template.app_state = Some(Arc::new(crow_web::live::app_state_from(initial)));
+    crow_web::live::publish_writes(crow_db::take_write_keys());
 }
 
 /// Serve the pages and the routes the program's main asked for, from the
@@ -293,6 +314,7 @@ pub fn serve(template: IrInterp) -> Result<(), String> {
     // the runtime draws the toast for a served page
     let mut template = template;
     template.harness_toast = false;
+    hold_app(&mut template, &initial);
     let template = Arc::new(template);
 
     let t = template.clone();
@@ -395,6 +417,32 @@ pub fn serve(template: IrInterp) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::ir::Ty;
+
+    /// A route reads the app's value of a derivation (spec, Derivations):
+    /// kept while nothing it reads moves — a write made outside the program
+    /// is not seen — and computed again once a route of the program writes
+    /// the table it reads.
+    #[test]
+    fn a_route_reads_the_apps_value_until_the_program_writes() {
+        let url = format!("sqlite://file:served_app_{}?mode=memory&cache=shared", std::process::id());
+        let src = format!(
+            "use web, db\n\nbook = db.connect['{u}']\nmade = exec[book, 'CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT)']\n\nderive notes\n    return query[book, 'SELECT id FROM notes']\n\nfn count_h[req]\n    return text['`len[notes]`']\n\nfn add_h[req]\n    conn = db.connect['{u}']\n    exec[conn, 'INSERT INTO notes (body) VALUES (?)', ['ours']]\n    return text['added']\n\nroute['/count', count_h]\nroute['/add', 'POST', add_h]\nserve[3998]\n",
+            u = url
+        );
+        let (program, ctx) = crate::ir_interp::prepare(&crate::build(&src).unwrap(), "app").unwrap();
+        let mut template = crate::ir_interp::run_to_serve(&program, &ctx.registry, "app.co").unwrap();
+        hold_app(&mut template, &CrowLiveState::new());
+        let ask = |handler: &str| route_answer(&template, handler, crow_web::core::CrowRequest::default()).body;
+        assert_eq!(ask("count_h"), "0");
+        // a write the program does not make: its record let go, as another
+        // process's write never reaches it
+        let outside = crow_db::connect(&url, None).unwrap();
+        outside.exec("INSERT INTO notes (body) VALUES ('theirs')", &[]).unwrap();
+        let _ = crow_db::take_write_keys();
+        assert_eq!(ask("count_h"), "0", "kept: nothing the program wrote moved it");
+        assert_eq!(ask("add_h"), "added");
+        assert_eq!(ask("count_h"), "2", "the program's write: computed again, the other write with it");
+    }
 
     /// A value read back from a compiled session is held as the IR types it:
     /// numbers the program holds as a list are a list, a tensor's numbers a

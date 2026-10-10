@@ -1,0 +1,17 @@
+--- a route's handler reads the app's derivations; a function it calls does
+--- not, and is handed what it needs
+use web
+
+k = 3
+
+derive tripled
+    return k * 3
+
+fn shown[]
+    return '`tripled`'
+
+fn h[req]
+    return text[shown[]]
+
+route['/t', h]
+serve[3100]

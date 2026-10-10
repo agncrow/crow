@@ -1,0 +1,3 @@
+h07_a_route_reading_what_each_session_holds.co:17:17: in band_h: 'band' is held by each session, and a route's handler has no session — it reads 'picked', which a session writes: a route reads a derivation the app holds, one over tables, the clock and facts no session moves
+  17 │     return text[band]
+     │                 ^^^^

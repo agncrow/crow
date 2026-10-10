@@ -746,7 +746,8 @@ pub fn quick_fns<'a>(fns: impl IntoIterator<Item = &'a Fn>) -> std::collections:
         visit_stmts(&f.body, &mut |s| ok &= !matches!(s, Stmt::While { .. } | Stmt::For { .. }));
         let mut callees = Vec::new();
         visit_block(&f.body, &mut |e| match e {
-            Expr::ForExpr { .. } | Expr::Effect { .. } | Expr::Deferred { .. } => ok = false,
+            // (a derivation's read can wait on its computation: a query)
+            Expr::ForExpr { .. } | Expr::Effect { .. } | Expr::Deferred { .. } | Expr::Derived(..) => ok = false,
             Expr::Index { base, .. } if matches!(base.ty(), Ty::Fn(..)) => ok = false,
             Expr::Call { target: Target::User(g), .. } | Expr::FnRef(g, _) => callees.push(g.clone()),
             Expr::Call { .. } if call_name(e).is_some_and(|n| is_effect(&n)) => ok = false,
@@ -769,6 +770,19 @@ pub fn quick_fns<'a>(fns: impl IntoIterator<Item = &'a Fn>) -> std::collections:
             return quick;
         }
     }
+}
+
+/// The derivations a block reads, by name: what a view, or a route's
+/// handler, reads once as it starts — the interpreter and the emitter read
+/// them in this order.
+pub fn derivations_read(block: &[Stmt]) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    visit_block(block, &mut |e| {
+        if let Expr::Derived(d, _) = e {
+            out.insert(d.clone());
+        }
+    });
+    out
 }
 
 /// The builtins that draw from the program's random generator, or seed

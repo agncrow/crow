@@ -228,6 +228,10 @@ pub(super) struct Checks {
     /// The functions a top-level `route[…]` answers with: each is handed
     /// its request and nothing else.
     pub route_handlers: BTreeSet<String>,
+    /// Every derivation's read set and who holds it, read once before the
+    /// walk (`derive::read_sets`): a route's handler sees the ones the app
+    /// holds, and the lowering records them for both backends.
+    pub read_sets: BTreeMap<String, crate::derive::ReadSet>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -249,6 +253,14 @@ impl<'a> Lowerer<'a> {
             return;
         }
         let line = self.v.fact_lines.get(name).copied().unwrap_or(0);
+        if !self.v.ui_mode {
+            // a web program's facts, which its derivations read
+            self.refuse(format!(
+                "'{}' is state, declared on line {}: a program with derivations gives each top-level name one value, which its derivations read — give it its whole value where it is declared (a function can build it), or derive it",
+                name, line
+            ));
+            return;
+        }
         self.refuse(format!(
             "'{}' is state, declared on line {}: it gets one value at the top level, which every session starts from, and handlers move it after that — give it its whole value where it is declared (a function can build it), or derive it",
             name, line
@@ -343,6 +355,14 @@ impl<'a> Lowerer<'a> {
                 self.v.route_handlers.insert(h);
             }
         }
+        // what each derivation reads and who holds it: a route's handler
+        // reads the ones the app holds
+        if !self.ctx.derives.is_empty() {
+            let derive_names = self.ctx.derives.clone();
+            let bodies: BTreeMap<String, Vec<S>> = self.ctx.functions.iter().filter(|(n, _)| !derive_names.contains(*n)).map(|(n, sig)| (n.clone(), sig.body.clone())).collect();
+            let params: BTreeMap<String, Vec<String>> = self.ctx.functions.iter().map(|(n, sig)| (n.clone(), sig.params.iter().map(|(p, _)| p.clone()).collect())).collect();
+            self.v.read_sets = crate::derive::read_sets(stmts, &derive_names, &bodies, &params);
+        }
         // the program's own variables, each checked against the names
         // taken where it is first assigned
         self.v.module_vars.extend(known.iter().cloned());
@@ -387,7 +407,7 @@ impl<'a> Lowerer<'a> {
     /// caller of it sees.
     pub(super) fn defined(&self, name: &str) -> bool {
         let plain_fn = matches!(self.at, Where::In(_)) && !self.v.reactive;
-        if self.ctx.functions.contains_key(name) && !(plain_fn && self.ctx.derives.contains(name)) {
+        if self.ctx.functions.contains_key(name) && !(plain_fn && self.ctx.derives.contains(name) && !self.route_reads(name)) {
             return true;
         }
         if self.ctx.structs.contains_key(name) || self.v.used.contains(name) {
@@ -457,6 +477,13 @@ impl<'a> Lowerer<'a> {
         self.refuse(format!("undefined variable '{}'{}", name, near));
     }
 
+    /// Whether the body being lowered is a route's handler reading a
+    /// derivation the app holds: a route has no session, so it reads the
+    /// app's value (spec, Derivations — a route reads what the app holds).
+    pub(super) fn route_reads(&self, name: &str) -> bool {
+        matches!(self.at, Where::In(_)) && self.v.route_handlers.contains(&self.current_fn) && self.v.read_sets.get(name).is_some_and(|rs| rs.shared)
+    }
+
     /// A name a body cannot see, though the program has it — a derivation
     /// or a module variable read inside a function — said the one way,
     /// whether the body reads it (`xs`) or indexes it (`xs[i]`). Whether it
@@ -464,9 +491,15 @@ impl<'a> Lowerer<'a> {
     fn out_of_view(&mut self, name: &str) -> bool {
         let in_fn = self.in_fn();
         let prefix = in_fn.as_ref().map(|f| format!("in {}: ", f)).unwrap_or_default();
-        if in_fn.is_some() && self.ctx.derives.contains(name) {
+        let route = in_fn.as_ref().is_some_and(|f| self.v.route_handlers.contains(f));
+        if route && let Some(why) = self.v.read_sets.get(name).and_then(|rs| rs.per_session.clone()) {
             self.refuse(format!(
-                "{}'{}' is a derivation, which a function does not see — read it in a view or handler, or make this function a derivation",
+                "{}'{}' is held by each session, and a route's handler has no session — {}: a route reads a derivation the app holds, one over tables, the clock and facts no session moves",
+                prefix, name, why
+            ));
+        } else if in_fn.is_some() && self.ctx.derives.contains(name) {
+            self.refuse(format!(
+                "{}'{}' is a derivation, which a function does not see — read it in a view, a handler or a route's handler, or make this function a derivation",
                 prefix, name
             ));
         } else if in_fn.as_ref().is_some_and(|f| self.v.route_handlers.contains(f)) && self.v.module_vars.contains(name) {
@@ -602,8 +635,11 @@ impl<'a> Lowerer<'a> {
     /// computation, so it writes no fact, and it lives in a ui program.
     pub(super) fn check_derive(&mut self, name: &str, body: &[S]) {
         self.check_reserved(name, "derivation");
-        if !self.v.ui_mode {
-            self.refuse(format!("derive {} needs reactive state — derivations live in a `use ui` program with a page", name));
+        if !self.v.ui_mode && self.v.route_handlers.is_empty() {
+            self.refuse(format!(
+                "derive {} needs a program that serves — derivations live in a `use ui` program with a page, whose views and handlers read them, or in a `use web` program whose routes read them",
+                name
+            ));
         }
         fn first_fact_write(stmts: &[S], facts: &BTreeSet<String>) -> Option<String> {
             for s in stmts {
@@ -1660,7 +1696,7 @@ mod tests {
     #[test]
     fn a_function_reading_a_derivation_is_told_to_derive() {
         let err = check_source("use web, ui\nn = 1\nderive cfg\n    return n + 1\nfn band[]\n    return cfg * 2\nview render[]\n    return p['`band[]`']\npage['/', render]\n").unwrap_err();
-        assert!(err.contains("in band: 'cfg' is a derivation, which a function does not see — read it in a view or handler"), "{}", err);
+        assert!(err.contains("in band: 'cfg' is a derivation, which a function does not see — read it in a view, a handler or a route's handler"), "{}", err);
     }
 
     /// A list holds one kind (spec, Arrays): a literal with text beside a

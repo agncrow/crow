@@ -125,15 +125,16 @@ the next line, so a test always reads the landed value.
 ## One value for the app, or one per session
 
 Who holds a derivation is inferred from what it reads. A fact a session
-writes belongs to it — assigned by a handler, or bound to an input the
-reader types into: their own symbol, their play-head — so a derivation
-that reads one is computed per session. A
+writes belongs to it — assigned by a handler, bound to an input the
+reader types into, or carried in the page's address: their own symbol,
+their play-head, the card the URL names — so a derivation that reads one
+is computed per session, and so is one over a data source
+(`fetch`/`poll`), whose answers land in each session that asks. A
 derivation over constants, tables and the clock alone is the same for
 everyone, so it is computed once for the app and every session reads
 it: the day's universe, the latest bar in a table, a scanner's config.
-Database handles are not facts, and neither are `fetch`/`poll`
-bindings, so `query[conn, …]` over a table nobody's handler touches is
-shared. A table write in any session reaches every session's
+Database handles are not facts, so `query[conn, …]` over a table
+nobody's handler touches is shared. A table write in any session reaches every session's
 derivations over that table: when one reader buys, the blotter of
 another reader watching the same book follows at once — the write wakes
 every page that read the table, with no refresh tick and no code.
@@ -153,9 +154,57 @@ slice by its column, so the split is never a guess:
 
 ```text
   derivations — what each reads, and who holds it:
-    bars: reads day, sym · tables bars (external, fresh 300s) — per session
-    cards: reads board_id · tables cards where board = board_id — per session
-    universe: reads day · tables datasets — shared by every session
+    bars: reads day, sym · tables bars (external, fresh 300s) — held by each session (it reads 'sym', which a session writes)
+    cards: reads board_id · tables cards where board = board_id — held by each session (it reads 'board_id', which a session writes)
+    universe: reads day · tables datasets — held by the app
+```
+
+## Routes read what the app holds
+
+A route has no session, so what its handler reads is what the app holds:
+a derivation over tables, the clock and facts no session moves. That is
+the cache a web service keeps — the rows it would otherwise ask the
+database for on every request:
+
+```crow,norun
+use web, db
+
+book = db.connect['sqlite://notes.db']
+made = exec[book, 'CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT)']
+
+derive notes
+    return query[book, 'SELECT id, body FROM notes ORDER BY id']
+
+fn list_h[req]
+    return json[notes]
+
+fn add_h[req]
+    conn = db.connect['sqlite://notes.db']
+    exec[conn, 'INSERT INTO notes (body) VALUES (?)', [req.body]]
+    return text['added']
+
+route['/notes', list_h]
+route['/add', 'POST', add_h]
+serve[8080]
+```
+
+The handler reads `notes` once, as its request begins: the app's value,
+computed by the first request and kept until this program writes the
+table. `/add`'s write lands as its handler ends, so the next request
+reads the new rows — no key to clear, no copy to refresh. Requests that
+arrive together while the rows are computed wait for that one query. A
+table something else writes is read through `fresh`: `derive
+notes[fresh = 60]` keeps its rows a minute, and at `fresh = 0`, as over
+the clock, each request computes its own. A web program that declares a
+derivation holds state as a page program does, so each of its top-level
+names gets one value, which its derivations read; a route's handler
+still sees none of them, and opens its own connection to write.
+
+A route that reads a derivation a session holds is refused before the
+program runs, with what makes it the session's:
+
+```text
+'band' is held by each session, and a route's handler has no session — it reads 'picked', which a session writes: a route reads a derivation the app holds, one over tables, the clock and facts no session moves
 ```
 
 ## Rows that keep their place

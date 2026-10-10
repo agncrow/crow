@@ -6,13 +6,7 @@ use super::*;
 impl Emitter {
     /// The derivations a block reads directly (inside text too).
     pub(crate) fn derivations_read(block: &[Stmt]) -> BTreeSet<String> {
-        let mut out = BTreeSet::new();
-        visit_block(block, &mut |e| {
-            if let Expr::Derived(d, _) = e {
-                out.insert(d.clone());
-            }
-        });
-        out
+        crate::ir::derivations_read(block)
     }
 
     // ── functions ───────────────────────────────────────────────────
@@ -171,6 +165,11 @@ impl Emitter {
         // as it starts
         let saved_facts = self.facts_in_state;
         self.facts_in_state = is_reactive_render || is_reactive_handler;
+        // a route's handler reads the derivations it names as it starts
+        // (the lowering binds each to a local), from the app's values
+        if self.web_handlers.contains(&name) && !is_reactive_render && !is_reactive_handler && !Self::derivations_read(&f.body).is_empty() {
+            self.line("let state: &CrowLiveState = crow_web::live::app();");
+        }
         if is_reactive_render {
             if !self.derive_fns.is_empty() {
                 for d in Self::derivations_read(&f.body) {

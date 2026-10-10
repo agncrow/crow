@@ -801,6 +801,14 @@ struct Lowerer<'a> {
     temp: usize,
     at: Where,
     in_ui: bool,
+    /// The program holds state: a ui program, or a web program that
+    /// declares a derivation, which its routes read — its top level's
+    /// values are facts, each given one value, that its derivations read.
+    holds_state: bool,
+    /// While a route's handler is lowered: the derivations it reads, each
+    /// with its type — bound to a local of its name as the handler starts,
+    /// and read as that local after (`lower_fn`).
+    route_derived: Option<BTreeMap<String, Ty>>,
     /// Names every function in the program reaches, for `Fn.effects`.
     calls: BTreeMap<String, BTreeSet<String>>,
     direct_effects: BTreeMap<String, BTreeSet<String>>,
@@ -874,6 +882,8 @@ fn mask_pick(base: &Ty, index: &Ty) -> Option<(&'static crate::table::Row, Ty)> 
 
 impl<'a> Lowerer<'a> {
     fn new(ctx: &'a mut TypeContext, in_ui: bool) -> Self {
+        let web = ctx.bare_modules.iter().chain(ctx.module_aliases.values()).any(|m| m == "web" || m.starts_with("web."));
+        let holds_state = in_ui || (web && !ctx.derives.is_empty());
         Lowerer {
             ctx,
             fragment: false,
@@ -885,6 +895,8 @@ impl<'a> Lowerer<'a> {
             temp: 0,
             at: Where::Top,
             in_ui,
+            holds_state,
+            route_derived: None,
             in_fact_default: false,
             params_items: None,
             calls: BTreeMap::new(),
@@ -1249,7 +1261,7 @@ impl<'a> Lowerer<'a> {
                     self.v.attached_test = false;
                     part.tests.push(t);
                 }
-                S::Assign { name, value } if self.in_ui && fact_names.contains(name) && !self.declared(name) => {
+                S::Assign { name, value } if self.holds_state && fact_names.contains(name) && !self.declared(name) => {
                     self.at = Where::Top;
                     self.current_fn = self.main_of_part();
                     self.ctx.registry.enter(&self.current_fn);
@@ -1380,7 +1392,6 @@ impl<'a> Lowerer<'a> {
         // each function writes, recorded here so the Rust backend reads the
         // same decisions the interpreter does
         {
-            let facts = crate::derive::fact_names(stmts);
             let derive_names = self.ctx.derives.clone();
             let bodies: BTreeMap<String, Vec<S>> = self
                 .ctx
@@ -1389,16 +1400,8 @@ impl<'a> Lowerer<'a> {
                 .filter(|(n, _)| !derive_names.contains(*n))
                 .map(|(n, sig)| (n.clone(), sig.body.clone()))
                 .collect();
-            let params: BTreeMap<String, Vec<String>> = self.ctx.functions.iter().map(|(n, sig)| (n.clone(), sig.params.iter().map(|(p, _)| p.clone()).collect())).collect();
-            let owned = crate::derive::owned_tables(stmts, &bodies);
-            let mut specs: BTreeMap<String, crate::derive::ReadSet> = BTreeMap::new();
-            for st in stmts {
-                if let S::Derive { name, body, .. } = st {
-                    specs.insert(name.clone(), crate::derive::read_set(body, &facts, &derive_names, &bodies, &params, &owned));
-                }
-            }
-            let written = crate::derive::written_facts(&bodies, &facts);
-            crate::derive::mark_shared(&mut specs, &written);
+            // (read once, before the walk: the checks the walk made read them)
+            let specs = self.v.read_sets.clone();
             for d in &mut part.derives {
                 if let Some(rs) = specs.get(&d.name) {
                     d.spec = rs.clone();
@@ -1459,15 +1462,29 @@ impl<'a> Lowerer<'a> {
         self.v.reactive = self.v.ui_mode && matches!(kind, FnKind::View | FnKind::Handler);
         self.v.local_types.clear();
         self.v.stored.clear();
+        // a route's handler reads each derivation it names once, as its
+        // request begins: the app's value then, bound to a local of the
+        // derivation's name that the body reads (both backends run the one
+        // read, and a read in a loop is a local's, not a copy each round)
+        let route = self.v.route_handlers.contains(name);
+        let saved_route = std::mem::replace(&mut self.route_derived, route.then(BTreeMap::new));
         // lowered once to learn its types: each local settled across its
         // assignments, which a first value of no known type is declared by
         self.provisional(Pass::Settle, Some(params.iter().cloned().collect()), body);
         self.record_env(name, params, body);
+        if let Some(read) = self.route_derived.as_mut() {
+            read.clear();
+        }
         self.scopes.push(params.iter().cloned().collect());
         let block = self.lower_block(body);
         self.scopes.pop();
         self.v.reactive = false;
         let mut block = block?;
+        if let Some(read) = std::mem::replace(&mut self.route_derived, saved_route) {
+            let mut start: Vec<Stmt> = read.into_iter().map(|(d, ty)| Stmt::Let { var: d.clone(), ty: ty.clone(), expr: Expr::Derived(d, ty) }).collect();
+            start.append(&mut block);
+            block = start;
+        }
         self.ctx.leave_body(scope);
         let param_set: HashSet<String> = params.iter().cloned().collect();
         place_moves_in(&mut block, &HashSet::new(), Some(&param_set));
@@ -1788,7 +1805,7 @@ impl<'a> Lowerer<'a> {
     fn is_fact(&self, name: &str) -> bool {
         // (a standard module's function, inlined, has locals of its own:
         // one named like a fact of the program is still its local)
-        self.in_ui && self.ctx.facts.contains(name) && !self.scopes.iter().skip(1).any(|s| s.contains(name)) && !crate::modules::is_crow_fn(&self.current_fn)
+        self.holds_state && self.ctx.facts.contains(name) && !self.scopes.iter().skip(1).any(|s| s.contains(name)) && !crate::modules::is_crow_fn(&self.current_fn)
     }
 
     /// The type a variable takes from a value: a fact a ui program declares
@@ -1797,7 +1814,7 @@ impl<'a> Lowerer<'a> {
     /// facts are set).
     fn held_by_fact(&self, name: &str, ty: Ty) -> Ty {
         match ty {
-            Ty::Result(inner) if self.in_ui && self.at == Where::Top && self.ctx.facts.contains(name) => *inner,
+            Ty::Result(inner) if self.holds_state && self.at == Where::Top && self.ctx.facts.contains(name) => *inner,
             other => other,
         }
     }
@@ -3273,6 +3290,11 @@ impl<'a> Lowerer<'a> {
             return Expr::Load(name.to_string(), ty);
         }
         if self.ctx.derives.contains(name) {
+            // a route's handler reads it as the local it bound as it started
+            if let Some(read) = self.route_derived.as_mut() {
+                read.entry(name.to_string()).or_insert_with(|| ty.clone());
+                return Expr::Local(name.to_string(), ty);
+            }
             return Expr::Derived(name.to_string(), ty);
         }
         if self.calls_fn(name) {

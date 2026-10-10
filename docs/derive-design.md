@@ -145,13 +145,47 @@ inferred from the read set; no annotation.
 
 *As shipped:* a "session fact" is a fact a session writes — assigned by a
 handler or a helper it calls, or bound to an input (`field`, `slider`,
-`checkbox`, `toggle`, `radio`, `tabs`, `select`); a top-level constant, a
-database handle or a `fetch`/`poll` binding does not make a derivation
-per-session. The split is a fixpoint over the read sets (a
+`checkbox`, `toggle`, `radio`, `tabs`, `select`) — or one the runtime
+writes for each session: a fact a page's address carries (a `:name` of
+its path, a name of its `url = […]`) and a `fetch`/`poll` source, whose
+answers land in each session (both had made a derivation the app's until
+October 2026: one session's address, or the source's first answer, for
+all). A top-level constant or a database handle does not make a
+derivation per-session. The split is a fixpoint over the read sets (a
 derivation that reads a per-session one is per-session), computed by
-`derive::mark_shared` for both modes and printed by `crow check`. Table
-versions are app-wide in the compiled runtime, so a write in one session
-invalidates every session's derivations over that table.
+`derive::read_sets` for both modes — each per-session one keeps why — and
+printed by `crow check`. Table versions are app-wide, so a write in one
+session invalidates every session's derivations over that table.
+
+### 3.5a Routes read what the app holds (October 2026)
+
+A route has no session, so its handler reads the derivations the app
+holds and is refused one a session holds (the refusal says what makes it
+the session's). A `use web` program that declares a derivation holds
+state as a ui program does: its top-level names are facts, one value
+each, which its derivations read. The pieces, one per mode where a mode
+needs its own and shared everywhere else:
+
+- *Who reads once.* The lowering binds each derivation a route's handler
+  names to a local of its name as the handler starts (`lower_fn`,
+  `route_derived`); both backends run that one read, and a read inside a
+  loop is a local's.
+- *Where the value lives.* `crow_web::live`: the compiled program holds
+  its state as declared (`hold_app`, after main sets the facts) and a
+  route reads through `app()`; the interpreter keeps one per served
+  program (`app_state_from`), its derivations named with the program's
+  tag. Both read `SHARED_DERIVED` and `TABLE_VERSIONS` by the rules of
+  §3.3, with the app's read a moment of its own: what moves with the
+  clock, or is as fresh as the loop, is computed for each request.
+- *One computation for a burst.* A shared derivation computed for a
+  reader who waits (a handler's read, a route's) is a flight: readers
+  arriving with the same inputs wait for its value (`FLIGHTS`), and a
+  stop is kept by nobody.
+- *A route's writes.* Taken as its handler ends (`__CrowWrites` compiled,
+  `route_answer` interpreted) and published for the app
+  (`publish_writes`), which wakes the pages over the table; a program
+  without derivations lets them go. The thread's record of writes had
+  grown with every write a route made.
 
 ### 3.6 Errors
 

@@ -1,0 +1,17 @@
+[
+  {"get": "/count"},
+  {"expect": "200 OK | content-type: application/json | {\"count\":0}"},
+  {"get": "/last"},
+  {"expect": "200 OK | content-type: text/plain | none"},
+  {"post": "/add", "body": "first"},
+  {"expect": "200 OK | content-type: text/plain | added"},
+  {"get": "/count"},
+  {"expect": "{\"count\":1}"},
+  {"get": "/last"},
+  {"expect": "text/plain | first"},
+  {"post": "/add", "body": "second"},
+  {"get": "/last"},
+  {"expect": "text/plain | second"},
+  {"get": "/count"},
+  {"expect": "{\"count\":2}"}
+]

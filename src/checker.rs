@@ -2144,24 +2144,16 @@ pub fn describe_derivations(stmts: &[Stmt]) -> Vec<String> {
     if derive_names.is_empty() {
         return Vec::new();
     }
-    let facts = crate::derive::fact_names(stmts);
     let bodies: BTreeMap<String, Vec<Stmt>> = stmts.iter()
         .filter_map(|s| if let Stmt::FnDecl { name, body, .. } = s { Some((name.clone(), body.clone())) } else { None })
         .collect();
     let params: BTreeMap<String, Vec<String>> = stmts.iter()
         .filter_map(|s| if let Stmt::FnDecl { name, params, .. } = s { Some((name.clone(), params.clone())) } else { None })
         .collect();
-    let owned = crate::derive::owned_tables(stmts, &bodies);
-    let mut fresh_of: BTreeMap<String, f64> = BTreeMap::new();
-    let mut sets: BTreeMap<String, crate::derive::ReadSet> = BTreeMap::new();
-    for s in stmts {
-        if let Stmt::Derive { name, fresh, body } = s {
-            sets.insert(name.clone(), crate::derive::read_set(body, &facts, &derive_names, &bodies, &params, &owned));
-            fresh_of.insert(name.clone(), *fresh);
-        }
-    }
-    let written = crate::derive::written_facts(&bodies, &facts);
-    crate::derive::mark_shared(&mut sets, &written);
+    let fresh_of: BTreeMap<String, f64> = stmts.iter()
+        .filter_map(|s| if let Stmt::Derive { name, fresh, .. } = s { Some((name.clone(), *fresh)) } else { None })
+        .collect();
+    let sets = crate::derive::read_sets(stmts, &derive_names, &bodies, &params);
     sets.iter().map(|(name, rs)| {
         let mut parts: Vec<String> = Vec::new();
         let mut reads: Vec<String> = rs.facts.iter().chain(rs.derives.iter()).cloned().collect();
@@ -2185,7 +2177,10 @@ pub fn describe_derivations(stmts: &[Stmt]) -> Vec<String> {
             parts.push(format!("tables {}{}", tables, how));
         }
         if parts.is_empty() { parts.push("reads nothing".to_string()); }
-        let holder = if rs.shared { "shared by every session" } else { "per session" };
+        let holder = match &rs.per_session {
+            None => "held by the app".to_string(),
+            Some(why) => format!("held by each session ({})", why),
+        };
         format!("{}: {} — {}", name, parts.join(" · "), holder)
     }).collect()
 }

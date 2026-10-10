@@ -91,9 +91,9 @@ pub struct DeriveSpec {
 pub struct DerivedSlot {
     value: std::sync::Arc<dyn std::any::Any + Send + Sync>,
     version: u64,
-    facts_seen: Vec<(String, u64)>,
-    derives_seen: Vec<(String, u64)>,
-    tables_seen: Vec<(String, u64)>,
+    facts_seen: Vec<(&'static str, u64)>,
+    derives_seen: Vec<(&'static str, u64)>,
+    tables_seen: Vec<(&'static str, u64)>,
     tick_seen: u64,
     computed_at: f64,
     /// when the computation that produced it started, in the app's count:
@@ -113,9 +113,9 @@ impl std::fmt::Debug for DerivedSlot {
 
 /// Where a derivation's inputs stand at a read.
 struct Inputs {
-    facts: Vec<(String, u64)>,
-    tables: Vec<(String, u64)>,
-    derives: Vec<(String, u64)>,
+    facts: Vec<(&'static str, u64)>,
+    tables: Vec<(&'static str, u64)>,
+    derives: Vec<(&'static str, u64)>,
     now: f64,
 }
 
@@ -276,7 +276,7 @@ const NOTICE_SECS: f64 = 4.0;
 /// every session, is stale, and every other session whose page read one is
 /// woken to catch up.
 fn publish_table(table: &str, version: u64, except: u64) {
-    TABLE_VERSIONS.lock().unwrap_or_else(|p| p.into_inner()).insert(table.to_string(), version);
+    TABLE_VERSIONS.write().unwrap_or_else(|p| p.into_inner()).insert(table.to_string(), version);
     wake_sessions(except, |reads| reads.tables.contains(table));
 }
 
@@ -361,7 +361,7 @@ pub struct CrowLiveState {
     /// the derivation cache of this session, shared with its background
     /// recomputes; derivations over sources, constants and the clock alone
     /// live in SHARED_DERIVED instead
-    derived: std::sync::Arc<std::sync::Mutex<HashMap<String, DerivedSlot>>>,
+    derived: std::sync::Arc<std::sync::RwLock<HashMap<String, DerivedSlot>>>,
     /// Registered data sources (fetch/poll).
     pub sources: Vec<DataSource>,
     /// Session-scoped channel delivering later[] state deltas to the live loop.
@@ -417,16 +417,111 @@ pub struct CrowLiveState {
     pub(crate) downloads: Vec<(String, Vec<u8>)>,
     /// the messages the session sent, kept for a test (`mails[a]`)
     pub(crate) mails: Vec<SentMail>,
+    /// the app's own state (`hold_app`), which a route's handler reads the
+    /// derivations the app holds through: no session, and each read a moment
+    /// of its own
+    app: bool,
 }
 
 /// Derivations shared by every session (derive-design.md §3.5): one value
 /// for the app, whichever session computed it.
-static SHARED_DERIVED: std::sync::LazyLock<std::sync::Mutex<HashMap<String, DerivedSlot>>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+static SHARED_DERIVED: std::sync::LazyLock<std::sync::RwLock<HashMap<String, DerivedSlot>>> =
+    std::sync::LazyLock::new(|| std::sync::RwLock::new(HashMap::new()));
 /// Tables this program wrote, versioned app-wide: a write in any session
 /// is a write every session's derivations see.
-static TABLE_VERSIONS: std::sync::LazyLock<std::sync::Mutex<HashMap<String, u64>>> =
+static TABLE_VERSIONS: std::sync::LazyLock<std::sync::RwLock<HashMap<String, u64>>> =
+    std::sync::LazyLock::new(|| std::sync::RwLock::new(HashMap::new()));
+
+/// The app's own state (`hold_app`): the facts as the program declared
+/// them, which no session moves — what a route's handler, which has no
+/// session, reads the derivations the app holds through.
+static APP: std::sync::OnceLock<CrowLiveState> = std::sync::OnceLock::new();
+
+/// Hold the program's state as declared for the app's own reads: a route's
+/// handler reads a derivation the app holds over it. Main holds it once its
+/// facts are set, before anything is served; a later hold changes nothing.
+pub fn hold_app(state: &CrowLiveState) {
+    let _ = APP.set(app_state_from(state));
+}
+
+/// The app's own state made from the program's state as declared: no
+/// session, and each read a moment of its own. The interpreter keeps one
+/// per program it serves; a compiled program holds one (`hold_app`).
+pub fn app_state_from(state: &CrowLiveState) -> CrowLiveState {
+    let mut held = state.snapshot();
+    held.derived = std::sync::Arc::new(std::sync::RwLock::new(HashMap::new()));
+    held.session_id = 0;
+    held.waker = None;
+    held.app = true;
+    held
+}
+
+/// The app's own state: the one main held, or one holding none of the
+/// program's facts (the interpreter's, whose derivations read the program's
+/// own values).
+pub fn app() -> &'static CrowLiveState {
+    APP.get_or_init(|| {
+        let mut held = CrowLiveState::new();
+        held.app = true;
+        held
+    })
+}
+
+/// Writes made where no session is — a route's handler, the program's top
+/// level before it serves — landed for the app: every derivation over a
+/// table they wrote, the app's and every session's, is stale, and every page
+/// that read one is woken to catch up. Each write is logged with what it
+/// says about its rows; each table is published once, at its last write.
+pub fn publish_writes(writes: Vec<crow_runtime::sql::WriteKeys>) {
+    let mut last: Vec<(String, u64)> = Vec::new();
+    for keys in writes {
+        let v = next_version();
+        match last.iter_mut().find(|(t, _)| *t == keys.table) {
+            Some(entry) => entry.1 = v,
+            None => last.push((keys.table.clone(), v)),
+        }
+        log_write(v, keys);
+    }
+    for (table, v) in last {
+        publish_table(&table, v, 0);
+    }
+}
+
+/// A shared derivation being computed for a reader who waits for it — a
+/// handler's read, a route's: a reader arriving with the same inputs waits
+/// for that value instead of computing it again, so a burst of requests,
+/// or the readers after a write, run one query and not one each.
+struct Flight {
+    inputs: u64,
+    /// none while it runs; then its value, or none when it stopped and each
+    /// waiter computes for itself
+    landed: std::sync::Mutex<Option<Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>>>,
+    done: std::sync::Condvar,
+}
+
+static FLIGHTS: std::sync::LazyLock<std::sync::Mutex<HashMap<&'static str, std::sync::Arc<Flight>>>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+
+/// A flight's end, however its computation ends (a stop unwinds through
+/// it): its waiters are handed what it landed, and it leaves the list.
+struct Landing<'a> {
+    name: &'static str,
+    flight: &'a std::sync::Arc<Flight>,
+    value: Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
+}
+
+impl Drop for Landing<'_> {
+    fn drop(&mut self) {
+        {
+            let mut flights = FLIGHTS.lock().unwrap_or_else(|p| p.into_inner());
+            if flights.get(self.name).is_some_and(|f| std::sync::Arc::ptr_eq(f, self.flight)) {
+                flights.remove(self.name);
+            }
+        }
+        *self.flight.landed.lock().unwrap_or_else(|p| p.into_inner()) = Some(self.value.take());
+        self.flight.done.notify_all();
+    }
+}
 
 /// Each table's recent writes, newest last, with what each says about the
 /// rows it touched: what a derivation over a slice of the table asks
@@ -1309,7 +1404,7 @@ impl CrowLiveState {
             versions: HashMap::new(),
             acted: 0,
             tick: 0,
-            derived: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
+            derived: std::sync::Arc::new(std::sync::RwLock::new(HashMap::new())),
             sources: Vec::new(),
             later_tx: None,
             session_id: 0,
@@ -1332,6 +1427,7 @@ impl CrowLiveState {
             sorts_drawn: std::sync::atomic::AtomicUsize::new(0),
             downloads: Vec::new(),
             mails: Vec::new(),
+            app: false,
         }
     }
 
@@ -1699,6 +1795,7 @@ impl CrowLiveState {
             sorts_drawn: std::sync::atomic::AtomicUsize::new(0),
             downloads: Vec::new(),
             mails: Vec::new(),
+            app: false,
         }
     }
 
@@ -1876,17 +1973,17 @@ impl CrowLiveState {
     }
 
     /// Where a derivation's slot lives: this session, or the app.
-    fn cache_for(&self, spec: &DeriveSpec) -> &std::sync::Mutex<HashMap<String, DerivedSlot>> {
+    fn cache_for(&self, spec: &DeriveSpec) -> &std::sync::RwLock<HashMap<String, DerivedSlot>> {
         if spec.shared { &SHARED_DERIVED } else { &*self.derived }
     }
 
     /// The version of a derivation wherever it lives — 0 before its first
     /// computation. Locks are taken one at a time, never nested.
     fn derive_version(&self, name: &str) -> u64 {
-        if let Some(v) = self.derived.lock().unwrap_or_else(|p| p.into_inner()).get(name).map(|s| s.version) {
+        if let Some(v) = self.derived.read().unwrap_or_else(|p| p.into_inner()).get(name).map(|s| s.version) {
             return v;
         }
-        SHARED_DERIVED.lock().unwrap_or_else(|p| p.into_inner()).get(name).map(|s| s.version).unwrap_or(0)
+        SHARED_DERIVED.read().unwrap_or_else(|p| p.into_inner()).get(name).map(|s| s.version).unwrap_or(0)
     }
 
     /// Read a derivation (derive-design.md §3.3): the cached value while
@@ -1900,10 +1997,25 @@ impl CrowLiveState {
         compute: impl Fn(&CrowLiveState) -> T,
         equal: impl Fn(&T, &T) -> bool,
     ) -> T {
+        match self.derive_with(spec, |s| Ok::<T, std::convert::Infallible>(compute(s)), equal) {
+            Ok(v) => v,
+            Err(never) => match never {},
+        }
+    }
+
+    /// `derive` with a computation that can stop instead of answering (the
+    /// interpreter's, whose stops are values): a stop is cached nowhere, and
+    /// the readers waiting for it compute for themselves.
+    pub fn derive_with<T: Clone + Send + Sync + 'static, E>(
+        &self,
+        spec: &'static DeriveSpec,
+        compute: impl FnOnce(&CrowLiveState) -> Result<T, E>,
+        equal: impl Fn(&T, &T) -> bool,
+    ) -> Result<T, E> {
         self.note_read(spec);
         let inputs = self.inputs_now(spec);
         if let Found::Fresh(v) = self.lookup::<T>(spec, &inputs) {
-            return v;
+            return Ok(v);
         }
         self.compute_and_store(spec, inputs, compute, equal)
     }
@@ -1929,11 +2041,11 @@ impl CrowLiveState {
         if let Found::Fresh(v) = found {
             return v;
         }
-        let own_write = {
+        let own_write = || {
             let written = self.tables_written.lock().unwrap_or_else(|p| p.into_inner());
             spec.tables.iter().any(|t| written.contains(*t))
         };
-        if self.rendering() && !own_write {
+        if self.rendering() && !own_write() {
             // the view shows it is catching up while it is behind something
             // the reader did — a value from before their last change, or
             // none yet. One behind only a moving clock is where a query
@@ -1951,73 +2063,135 @@ impl CrowLiveState {
                 return v;
             }
         }
-        self.compute_and_store(spec, inputs, compute, equal)
+        match self.compute_and_store(spec, inputs, |s| Ok::<T, std::convert::Infallible>(compute(s)), equal) {
+            Ok(v) => v,
+            Err(never) => match never {},
+        }
     }
 
     /// Where every input of `spec` stands now: facts in this session,
     /// tables app-wide, derivations wherever each one lives.
     fn inputs_now(&self, spec: &DeriveSpec) -> Inputs {
         let facts = spec.facts.iter()
-            .map(|f| (f.to_string(), self.versions.get(*f).copied().unwrap_or(0))).collect();
+            .map(|f| (*f, self.versions.get(*f).copied().unwrap_or(0))).collect();
         let tables = spec
             .tables
             .iter()
             .map(|t| {
                 // a handler's own writes first: it reads what it wrote
-                let own = self.local_tables.lock().unwrap_or_else(|p| p.into_inner()).get(*t).copied();
-                if let Some(v) = own {
-                    return (t.to_string(), v);
+                if self.copy {
+                    let own = self.local_tables.lock().unwrap_or_else(|p| p.into_inner()).get(*t).copied();
+                    if let Some(v) = own {
+                        return (*t, v);
+                    }
                 }
                 // a slice of the table: the newest write that may touch it
                 let keyed = spec.keys.iter().find(|(kt, _, _)| kt == t).and_then(|(_, column, fact)| self.get(fact).map(|value| keyed_version(t, column, &value)));
-                let v = keyed.unwrap_or_else(|| TABLE_VERSIONS.lock().unwrap_or_else(|p| p.into_inner()).get(*t).copied().unwrap_or(0));
-                (t.to_string(), v)
+                let v = keyed.unwrap_or_else(|| TABLE_VERSIONS.read().unwrap_or_else(|p| p.into_inner()).get(*t).copied().unwrap_or(0));
+                (*t, v)
             })
             .collect();
         let derives = spec.derives.iter().filter(|d| **d != spec.name)
-            .map(|d| (d.to_string(), self.derive_version(d))).collect();
+            .map(|d| (*d, self.derive_version(d))).collect();
         Inputs { facts, tables, derives, now: crow_runtime::moments::now() }
     }
 
     /// The cached value, and whether every input it saw is where it is now.
     fn lookup<T: Clone + 'static>(&self, spec: &DeriveSpec, inputs: &Inputs) -> Found<T> {
         // a shared slot computed during a later render than this session's
-        // is as fresh as this tick
-        let fresh_tick = |seen: u64| if spec.shared { seen >= self.tick } else { seen == self.tick };
-        let same = |seen: &[(String, u64)], now: &[(String, u64)]| now.iter()
+        // is as fresh as this tick; the app's own read (a route's) is a
+        // moment of its own, so what moves with the clock, or is as fresh as
+        // the loop, is computed for it
+        let fresh_tick = |seen: u64| !self.app && if spec.shared { seen >= self.tick } else { seen == self.tick };
+        let same = |seen: &[(&'static str, u64)], now: &[(&'static str, u64)]| now.iter()
             .all(|(n, v)| seen.iter().find(|(m, _)| m == n).map(|(_, s)| s == v).unwrap_or(false));
-        let cache = self.cache_for(spec).lock().unwrap_or_else(|p| p.into_inner());
-        let Some(slot) = cache.get(spec.name) else { return Found::Missing };
-        let Some(v) = slot.value.downcast_ref::<T>() else { return Found::Missing };
-        let valid = same(&slot.facts_seen, &inputs.facts)
-            && same(&slot.derives_seen, &inputs.derives)
-            && same(&slot.tables_seen, &inputs.tables)
-            && (!spec.now || fresh_tick(slot.tick_seen))
-            && (!spec.external || if spec.fresh > 0.0 { inputs.now - slot.computed_at <= spec.fresh } else { fresh_tick(slot.tick_seen) });
-        if valid { Found::Fresh(v.clone()) } else { Found::Stale(v.clone(), slot.acted_seen) }
+        // decided under the lock, which every reader of the app's value
+        // takes; the value is copied after it is let go
+        let (value, valid, acted_seen) = {
+            let cache = self.cache_for(spec).read().unwrap_or_else(|p| p.into_inner());
+            let Some(slot) = cache.get(spec.name) else { return Found::Missing };
+            let valid = same(&slot.facts_seen, &inputs.facts)
+                && same(&slot.derives_seen, &inputs.derives)
+                && same(&slot.tables_seen, &inputs.tables)
+                && (!spec.now || fresh_tick(slot.tick_seen))
+                && (!spec.external || if spec.fresh > 0.0 { inputs.now - slot.computed_at <= spec.fresh } else { fresh_tick(slot.tick_seen) });
+            (slot.value.clone(), valid, slot.acted_seen)
+        };
+        let Some(v) = value.downcast_ref::<T>() else { return Found::Missing };
+        if valid { Found::Fresh(v.clone()) } else { Found::Stale(v.clone(), acted_seen) }
     }
 
-    /// Compute the derivation and cache it with the inputs it saw. Equal
-    /// scalars keep their version (early cutoff); a computation that
-    /// started before the one already cached never replaces it.
-    fn compute_and_store<T: Clone + Send + Sync + 'static>(
+    /// Compute the derivation and cache it with the inputs it saw — once
+    /// for the readers of a shared one arriving together: a reader that
+    /// finds it being computed from the inputs it sees waits for that value.
+    fn compute_and_store<T: Clone + Send + Sync + 'static, E>(
         &self,
         spec: &DeriveSpec,
         inputs: Inputs,
-        compute: impl Fn(&CrowLiveState) -> T,
+        compute: impl FnOnce(&CrowLiveState) -> Result<T, E>,
         equal: impl Fn(&T, &T) -> bool,
-    ) -> T {
+    ) -> Result<T, E> {
+        if !spec.shared {
+            return self.compute_now(spec, inputs, compute, equal);
+        }
+        let signature = inputs.signature();
+        let (flight, leads) = {
+            let mut flights = FLIGHTS.lock().unwrap_or_else(|p| p.into_inner());
+            match flights.get(spec.name) {
+                Some(f) if f.inputs == signature => (f.clone(), false),
+                _ => {
+                    let f = std::sync::Arc::new(Flight { inputs: signature, landed: std::sync::Mutex::new(None), done: std::sync::Condvar::new() });
+                    flights.insert(spec.name, f.clone());
+                    (f, true)
+                }
+            }
+        };
+        if !leads {
+            let landed = {
+                let mut landed = flight.landed.lock().unwrap_or_else(|p| p.into_inner());
+                while landed.is_none() {
+                    landed = flight.done.wait(landed).unwrap_or_else(|p| p.into_inner());
+                }
+                landed.clone().flatten()
+            };
+            if let Some(v) = landed.as_ref().and_then(|v| v.downcast_ref::<T>()) {
+                return Ok(v.clone());
+            }
+            // the computation stopped: this reader computes for itself
+            return self.compute_now(spec, inputs, compute, equal);
+        }
+        let mut landing = Landing { name: spec.name, flight: &flight, value: None };
+        let r = self.compute_now(spec, inputs, compute, equal);
+        if let Ok(v) = &r
+            && !crow_runtime::cancel::current_stopped()
+        {
+            landing.value = Some(std::sync::Arc::new(v.clone()));
+        }
+        drop(landing);
+        r
+    }
+
+    /// Compute the derivation here and cache it with the inputs it saw.
+    /// Equal scalars keep their version (early cutoff); a computation that
+    /// started before the one already cached never replaces it.
+    fn compute_now<T: Clone + Send + Sync + 'static, E>(
+        &self,
+        spec: &DeriveSpec,
+        inputs: Inputs,
+        compute: impl FnOnce(&CrowLiveState) -> Result<T, E>,
+        equal: impl Fn(&T, &T) -> bool,
+    ) -> Result<T, E> {
         let stamp = STAMP.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-        let value = compute(self);
+        let value = compute(self)?;
         // a recompute stopped under its query answers nobody: its value
         // (the query's "cancelled") is never cached
         if crow_runtime::cancel::current_stopped() {
-            return value;
+            return Ok(value);
         }
-        let mut cache = self.cache_for(spec).lock().unwrap_or_else(|p| p.into_inner());
+        let mut cache = self.cache_for(spec).write().unwrap_or_else(|p| p.into_inner());
         if let Some(slot) = cache.get(spec.name) {
             if slot.stamp > stamp {
-                return value;
+                return Ok(value);
             }
         }
         let (old_version, changed) = match cache.get(spec.name) {
@@ -2030,12 +2204,14 @@ impl CrowLiveState {
             facts_seen: inputs.facts,
             derives_seen: inputs.derives,
             tables_seen: inputs.tables,
-            tick_seen: self.tick,
+            // the app's read counts for the render under way: a session at
+            // this tick takes it as its own
+            tick_seen: if self.app { TICK.load(std::sync::atomic::Ordering::SeqCst) } else { self.tick },
             computed_at: inputs.now,
             stamp,
             acted_seen: if spec.shared { u64::MAX } else { self.acted },
         });
-        value
+        Ok(value)
     }
 
     /// Schedule a background fn for this session (skip-if-running). The fn
@@ -2198,7 +2374,7 @@ impl Clone for CrowLiveState {
             versions: self.versions.clone(),
             acted: self.acted,
             tick: self.tick,
-            derived: std::sync::Arc::new(std::sync::Mutex::new(self.derived.lock().unwrap_or_else(|p| p.into_inner()).clone())),
+            derived: std::sync::Arc::new(std::sync::RwLock::new(self.derived.read().unwrap_or_else(|p| p.into_inner()).clone())),
             sources: self.sources.clone(),
             later_tx: self.later_tx.clone(),
             session_id: self.session_id,
@@ -2221,6 +2397,7 @@ impl Clone for CrowLiveState {
             sorts_drawn: std::sync::atomic::AtomicUsize::new(0),
             downloads: Vec::new(),
             mails: Vec::new(),
+            app: false,
         }
     }
 }
@@ -5469,6 +5646,97 @@ mod tests {
         assert_eq!(s1.derive(&SPEC, &compute, |a, b| a == b), 42);
         assert_eq!(s2.derive(&SPEC, &compute, |a, b| a == b), 42);
         assert_eq!(runs.load(SeqCst), 1, "the second session reads the app's value");
+    }
+
+    /// The app's own read — a route's, which has no session — keeps a
+    /// derivation over a table this program writes until a write lands for
+    /// the app (a route's, published as its handler ends), and a session
+    /// reads the value it computed; a derivation over the clock is computed
+    /// for each of its reads, and one over a table outside the program is
+    /// kept for its `fresh` seconds
+    #[test]
+    fn the_apps_read_keeps_a_value_until_a_write_lands() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        static ROWS: DeriveSpec = DeriveSpec { name: "test_app_rows", facts: &[], derives: &[], tables: &["test_app_rows_t"], now: false, external: false, fresh: 0.0, shared: true, keys: &[] };
+        static CLOCK: DeriveSpec = DeriveSpec { name: "test_app_clock", facts: &[], derives: &[], tables: &[], now: true, external: false, fresh: 0.0, shared: true, keys: &[] };
+        static OUTSIDE: DeriveSpec = DeriveSpec { name: "test_app_outside", facts: &[], derives: &[], tables: &["test_app_outside_t"], now: false, external: true, fresh: 60.0, shared: true, keys: &[] };
+        static LOOP: DeriveSpec = DeriveSpec { name: "test_app_loop", facts: &[], derives: &[], tables: &["test_app_loop_t"], now: false, external: true, fresh: 0.0, shared: true, keys: &[] };
+        let mut app = CrowLiveState::new();
+        app.app = true;
+        let runs = AtomicUsize::new(0);
+        let compute = |_: &CrowLiveState| {
+            runs.fetch_add(1, SeqCst);
+            7i64
+        };
+        assert_eq!(app.derive(&ROWS, &compute, |a, b| a == b), 7);
+        app.derive(&ROWS, &compute, |a, b| a == b);
+        assert_eq!(runs.load(SeqCst), 1, "kept: nothing it reads moved");
+        let mut session = CrowLiveState::new();
+        session.next_tick();
+        session.derive(&ROWS, &compute, |a, b| a == b);
+        assert_eq!(runs.load(SeqCst), 1, "a session reads the value the app's read computed");
+        publish_writes(vec![crow_runtime::sql::WriteKeys { table: "test_app_rows_t".to_string(), known: vec![], changed: vec![], exact: false }]);
+        app.derive(&ROWS, &compute, |a, b| a == b);
+        assert_eq!(runs.load(SeqCst), 2, "a write landed for the app: computed again");
+        session.derive(&ROWS, &compute, |a, b| a == b);
+        assert_eq!(runs.load(SeqCst), 2, "and the session reads that value");
+        for spec in [&CLOCK, &LOOP] {
+            let before = runs.load(SeqCst);
+            app.derive(spec, &compute, |a, b| a == b);
+            app.derive(spec, &compute, |a, b| a == b);
+            assert_eq!(runs.load(SeqCst), before + 2, "{}: each read of the app is a moment of its own", spec.name);
+        }
+        let before = runs.load(SeqCst);
+        app.derive(&OUTSIDE, &compute, |a, b| a == b);
+        app.derive(&OUTSIDE, &compute, |a, b| a == b);
+        assert_eq!(runs.load(SeqCst), before + 1, "fresh = 60 keeps it a minute");
+    }
+
+    /// Readers of a shared derivation arriving together — a burst of
+    /// requests after a write — run one computation, and every one of them
+    /// reads its value
+    #[test]
+    fn readers_arriving_together_share_one_computation() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        static SPEC: DeriveSpec = DeriveSpec { name: "test_flight_rows", facts: &[], derives: &[], tables: &["test_flight_t"], now: false, external: false, fresh: 0.0, shared: true, keys: &[] };
+        static RUNS: AtomicUsize = AtomicUsize::new(0);
+        let gate = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let readers: Vec<_> = (0..8)
+            .map(|_| {
+                let gate = gate.clone();
+                std::thread::spawn(move || {
+                    let mut app = CrowLiveState::new();
+                    app.app = true;
+                    gate.wait();
+                    app.derive(
+                        &SPEC,
+                        |_| {
+                            RUNS.fetch_add(1, SeqCst);
+                            std::thread::sleep(std::time::Duration::from_millis(150));
+                            5i64
+                        },
+                        |a, b| a == b,
+                    )
+                })
+            })
+            .collect();
+        for r in readers {
+            assert_eq!(r.join().unwrap(), 5);
+        }
+        assert_eq!(RUNS.load(SeqCst), 1, "one computation for the eight readers");
+    }
+
+    /// A computation that stops is kept by nobody: the next read computes
+    /// it, and a reader that waited for it computes for itself
+    #[test]
+    fn a_stopped_computation_is_kept_by_nobody() {
+        static SPEC: DeriveSpec = DeriveSpec { name: "test_flight_stop", facts: &[], derives: &[], tables: &["test_flight_stop_t"], now: false, external: false, fresh: 0.0, shared: true, keys: &[] };
+        let mut app = CrowLiveState::new();
+        app.app = true;
+        let stopped = app.derive_with(&SPEC, |_| Err::<i64, String>("the query stopped".to_string()), |a, b| a == b);
+        assert_eq!(stopped, Err("the query stopped".to_string()));
+        assert_eq!(app.derive_with(&SPEC, |_| Ok::<i64, String>(3), |a, b| a == b), Ok(3), "computed again, not the stop");
+        assert_eq!(app.derive_with(&SPEC, |_| Ok::<i64, String>(4), |a, b| a == b), Ok(3), "and kept");
     }
 
     #[test]

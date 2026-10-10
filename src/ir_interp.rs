@@ -222,6 +222,14 @@ pub struct IrInterp {
     /// there (compiled_harness.rs).
     remote: Option<Arc<crate::compiled_harness::RemoteApp>>,
     remote_sessions: HashMap<u64, u64>,
+    /// A route's request under way (`begin_route`): the derivations it has
+    /// read, from the app's values — each once for the request.
+    route_reads: Option<HashMap<String, CrowValue>>,
+    /// The app's own state, which a served program's routes read its
+    /// derivations through (crow_web::live), and the program's tag among
+    /// the app's values — two programs a process serves share none.
+    pub(crate) app_state: Option<Arc<crow_web::live::CrowLiveState>>,
+    pub(crate) app_tag: u64,
     /// Whether the effect being run has its answer used (`Effect.answered`):
     /// `sent = mail[…]` sends at once, `mail[…]` waits for the commit.
     answering: bool,
@@ -525,6 +533,9 @@ impl IrInterp {
             session_downloads: HashMap::new(),
             remote: None,
             remote_sessions: HashMap::new(),
+            route_reads: None,
+            app_state: None,
+            app_tag: 0,
             answering: true,
             testing: false,
             session_mails: HashMap::new(),
@@ -628,6 +639,11 @@ impl IrInterp {
 
     pub(crate) fn struct_def(&self, name: &str) -> Option<Arc<crate::ir::StructDef>> {
         self.structs.get(name).cloned()
+    }
+
+    /// Whether the program declares a derivation.
+    pub(crate) fn has_derivations(&self) -> bool {
+        !self.derives.is_empty()
     }
 
     /// A top-level variable or fact, as the crowfile reader and the tools ask.
@@ -2991,12 +3007,61 @@ impl IrInterp {
         }
     }
 
-    /// A derivation, recomputed on every read for now (the memoized,
-    /// versioned form comes with the session layer), stamped with its moment.
+    /// A derivation read: a route's request reads the app's values — the
+    /// ones its handler read as it began, and any other that computing one
+    /// reads; anywhere else it is computed where it is read.
     fn derived(&mut self, name: &str) -> Result<CrowValue, String> {
         if let Some(rid) = self.active_session.and_then(|id| self.remote_sessions.get(&id).copied()) {
             return self.remote_read(rid, name);
         }
+        if let Some(reads) = &self.route_reads {
+            if let Some(v) = reads.get(name) {
+                return Ok(v.clone());
+            }
+            let v = self.app_read(name)?;
+            if let Some(reads) = self.route_reads.as_mut() {
+                reads.insert(name.to_string(), v.clone());
+            }
+            return Ok(v);
+        }
+        self.compute_derived(name)
+    }
+
+    /// A route's request begins: the derivations its handler reads (bound
+    /// as it starts, by the lowering) are read from the app's values, once
+    /// each for the request (spec, Derivations: a route reads what the app
+    /// holds).
+    pub(crate) fn begin_route(&mut self) {
+        self.route_reads = Some(HashMap::new());
+    }
+
+    /// The request ended: its reads are let go.
+    pub(crate) fn end_route(&mut self) {
+        self.route_reads = None;
+    }
+
+    /// A derivation the app holds, from the app's values: its inputs that are
+    /// derivations first, so their versions are current, then its own — the
+    /// value kept while nothing it read moved, else computed here, once for
+    /// the readers arriving together (crow_web::live, as the compiled
+    /// program reads it).
+    fn app_read(&mut self, name: &str) -> Result<CrowValue, String> {
+        let Some(app) = self.app_state.clone() else {
+            return self.compute_derived(name);
+        };
+        let d = self.derives.get(name).cloned().ok_or_else(|| format!("unknown derivation '{}'", name))?;
+        for other in &d.spec.derives {
+            if other != name {
+                self.app_read(other)?;
+            }
+        }
+        let spec = app_spec(self.app_tag, &d);
+        let scalar = matches!(crate::lower_ir::as_inferred(&d.ty), Ty::Int | Ty::Float | Ty::Str | Ty::Bool);
+        app.derive_with(spec, |_| self.compute_derived(name), move |a: &CrowValue, b: &CrowValue| scalar && same_scalar(a, b))
+    }
+
+    /// A derivation's body run now, stamped with its moment.
+    fn compute_derived(&mut self, name: &str) -> Result<CrowValue, String> {
         let d = self.derives.get(name).cloned().ok_or_else(|| format!("unknown derivation '{}'", name))?;
         // the reader's line is still the line reading it
         let saved_line = self.line;
@@ -3826,6 +3891,51 @@ fn set_path(root: &mut Value, path: &[PathStep], idx: &[CrowValue], new: CrowVal
                 other => Err(format!("cannot index-assign into {}", other.type_name())),
             }
         }
+    }
+}
+
+/// A derivation as the app's values know it (crow_web::live::DeriveSpec),
+/// made once per served program: its names carry the program's tag, so two
+/// programs one process serves share no value.
+fn app_spec(tag: u64, d: &Derive) -> &'static crow_web::live::DeriveSpec {
+    type Specs = HashMap<(u64, String), &'static crow_web::live::DeriveSpec>;
+    static SPECS: std::sync::LazyLock<std::sync::Mutex<Specs>> = std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+    fn leak(s: String) -> &'static str {
+        Box::leak(s.into_boxed_str())
+    }
+    fn list(xs: impl Iterator<Item = String>) -> &'static [&'static str] {
+        Box::leak(xs.map(leak).collect::<Vec<_>>().into_boxed_slice())
+    }
+    let mut specs = SPECS.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(spec) = specs.get(&(tag, d.name.clone())) {
+        return spec;
+    }
+    let rs = &d.spec;
+    let spec: &'static crow_web::live::DeriveSpec = Box::leak(Box::new(crow_web::live::DeriveSpec {
+        name: leak(format!("{}#{}", tag, d.name)),
+        facts: list(rs.facts.iter().cloned()),
+        derives: list(rs.derives.iter().map(|n| format!("{}#{}", tag, n))),
+        tables: list(rs.tables.iter().cloned()),
+        now: rs.now,
+        external: rs.external,
+        fresh: d.fresh,
+        shared: rs.shared,
+        keys: Box::leak(rs.keys.iter().map(|(t, (c, f))| (leak(t.clone()), leak(c.clone()), leak(f.clone()))).collect::<Vec<_>>().into_boxed_slice()),
+    }));
+    specs.insert((tag, d.name.clone()), spec);
+    spec
+}
+
+/// Whether two values of a derivation that holds a number, a text or a
+/// bool are the same: its readers keep their values (early cutoff), as the
+/// compiled program's `==` decides.
+fn same_scalar(a: &CrowValue, b: &CrowValue) -> bool {
+    match (&a.value, &b.value) {
+        (Value::Int(x), Value::Int(y)) => x == y,
+        (Value::Float(x), Value::Float(y)) => x == y,
+        (Value::Str(x), Value::Str(y)) => x == y,
+        (Value::Bool(x), Value::Bool(y)) => x == y,
+        _ => false,
     }
 }
 
