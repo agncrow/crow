@@ -836,7 +836,8 @@ impl Emitter {
         // written in place: the value first, then the write, then the
         // fact's version (typed-values-design.md §6)
         let in_facts = self.facts_in_state && self.reactive_vars.contains_key(var);
-        let mut val = self.expr(expr);
+        // (a local read again later is copied in: a growing int is no Copy)
+        let mut val = if matches!(expr, Expr::Local(..)) && matches!(as_inferred(&self.tt(expr)), Ty::Big | Ty::Decimal | Ty::Fraction) { self.owned_expr(expr) } else { self.expr(expr) };
         if in_facts {
             self.line("{");
             self.indent += 1;
@@ -886,7 +887,7 @@ impl Emitter {
     /// Whether values of a type compare in Rust as `eq` compares them.
     pub(crate) fn crow_compares(&self, t: &Ty) -> bool {
         match t {
-            Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) | Ty::Frame(_) | Ty::Column(_) | Ty::Unknown => true,
+            Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) | Ty::Frame(_) | Ty::Column(_) | Ty::Unknown => true,
             Ty::List(i) | Ty::Map(_, i) | Ty::Result(i) => self.crow_compares(i),
             Ty::Record(n) => self.record_compares(n, &mut BTreeSet::new()),
             _ => false,

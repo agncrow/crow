@@ -168,10 +168,19 @@ fn text_len[s]
     return n
 log[text_len['hello']]
 
---- an int past 64 bits stops the program, naming the line it happened on
-fn grow_until_it_stops[n]
+--- an int grows past 64 bits as the body runs, exactly
+fn grow_past[n]
+    x = n
+    k = 0
+    while k lt 30
+        x = x * 1000
+        k = k + 1
+    return x
+log[grow_past[7]]
+--- a stop names the line it happened on
+fn share_until_it_stops[n]
     x = n
     while true
-        x = x * 1000
+        x = x / (x - 1)
     return x
-log[grow_until_it_stops[7]]
+log[share_until_it_stops[7]]

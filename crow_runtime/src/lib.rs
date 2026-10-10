@@ -7,6 +7,9 @@
 pub mod display;
 pub mod distributed;
 pub mod frame;
+pub mod int;
+pub mod decimal;
+pub mod fraction;
 pub mod frames;
 pub mod fused;
 pub mod hash;

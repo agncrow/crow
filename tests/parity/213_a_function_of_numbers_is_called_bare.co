@@ -56,11 +56,18 @@ fn curve[x]
 d = grad[curve]
 log[fmt[d[0.5], decimals = 12]]
 
---- an overflow inside the callee stops at the callee's line
+--- an int that grows inside the callee comes back whole, and a stop inside
+--- it stops at the callee's line
 fn grow[n]
     return n * n * n * n * n
 fn outer[n]
     return grow[n] + 1
 log[outer[10]]
 log[outer[100000]]
+fn share[n, k]
+    return n / k
+fn shared_out[n, k]
+    return share[n, k] + 1
+log[shared_out[10, 2]]
+log[shared_out[10, 0]]
 log['not reached']

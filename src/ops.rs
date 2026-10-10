@@ -26,6 +26,129 @@ pub fn binop(
     let l = &left.value;
     let r = &right.value;
 
+    // two whole numbers: the exact answer, however large it grows (spec,
+    // Numbers That Keep Every Digit) — past 64 bits a `Big`, back in them an
+    // `Int`; a zero divisor and a negative power still stop
+    if let (Some(a), Some(b)) = (Value::int_of(l), Value::int_of(r)) {
+        let n = match op {
+            BinOp::Add => a.add(&b),
+            BinOp::Sub => a.sub(&b),
+            BinOp::Mul => a.mul(&b),
+            BinOp::Div => a.div(&b)?,
+            BinOp::Mod => a.rem(&b)?,
+            BinOp::Pow => a.pow(&b)?,
+            BinOp::Eq => return Ok(CrowValue::ok(Value::Bool(a == b))),
+            BinOp::Ne => return Ok(CrowValue::ok(Value::Bool(a != b))),
+            BinOp::Lt => return Ok(CrowValue::ok(Value::Bool(a < b))),
+            BinOp::Gt => return Ok(CrowValue::ok(Value::Bool(a > b))),
+            BinOp::Lte => return Ok(CrowValue::ok(Value::Bool(a <= b))),
+            BinOp::Gte => return Ok(CrowValue::ok(Value::Bool(a >= b))),
+            _ => return binop_rest(left, op, right),
+        };
+        return Ok(CrowValue::ok(Value::of_int(n)));
+    }
+    // exact numbers: an int meeting a decimal is the decimal it is, an int or
+    // a decimal meeting a fraction the fraction it is (the lowering converts
+    // them the same way; a float beside one it refused, a literal it read)
+    if matches!(l, Value::Decimal(_) | Value::Fraction(_)) || matches!(r, Value::Decimal(_) | Value::Fraction(_)) {
+        return exact_binop(left, op, right);
+    }
+    // a whole number past 64 bits beside anything else is read as the
+    // nearest float there (a tensor's numbers are floats)
+    if matches!(l, Value::Big(_)) || matches!(r, Value::Big(_)) {
+        let as_float = |v: &CrowValue| match &v.value {
+            Value::Big(b) => CrowValue::ok(Value::Float(b.to_f64().value())),
+            _ => v.clone(),
+        };
+        return binop(&as_float(left), op, &as_float(right));
+    }
+    binop_rest(left, op, right)
+}
+
+/// `binop` where a decimal or a fraction is an operand: both read as the
+/// kind the operator computes in, then its exact operation — a quotient's
+/// digits and a zero divisor as the runtime says (crow_runtime::decimal,
+/// crow_runtime::fraction).
+fn exact_binop(left: &CrowValue, op: &BinOp, right: &CrowValue) -> Result<CrowValue, String> {
+    use crow_runtime::decimal::Dec;
+    use crow_runtime::fraction::Frac;
+    let (l, r) = (&left.value, &right.value);
+    let fraction = matches!(l, Value::Fraction(_)) || matches!(r, Value::Fraction(_));
+    let cmp = |o: std::cmp::Ordering| -> Option<bool> {
+        Some(match op {
+            BinOp::Eq => o.is_eq(),
+            BinOp::Ne => o.is_ne(),
+            BinOp::Lt => o.is_lt(),
+            BinOp::Gt => o.is_gt(),
+            BinOp::Lte => o.is_le(),
+            BinOp::Gte => o.is_ge(),
+            _ => return None,
+        })
+    };
+    // a power's exponent is an int
+    if matches!(op, BinOp::Pow) {
+        if let Some(e) = Value::int_of(r) {
+            return Ok(match l {
+                Value::Fraction(f) => crate::table::write_fraction(f.pow(&e)?),
+                _ => crate::table::write_decimal(crate::table::read_decimal(left)?.pow(&e)?),
+            });
+        }
+        return Err(format!("{} ^ {}: an exact number's power is by an int", l, r));
+    }
+    if fraction {
+        let (a, b): (Frac, Frac) = (crate::table::read_fraction(left)?, crate::table::read_fraction(right)?);
+        if let Some(t) = cmp(a.cmp(&b)) {
+            return Ok(CrowValue::ok(Value::Bool(t)));
+        }
+        let q = match op {
+            BinOp::Add => a.add(&b),
+            BinOp::Sub => a.sub(&b),
+            BinOp::Mul => a.mul(&b),
+            BinOp::Div => a.div(&b)?,
+            _ => return Err(format!("cannot use '{}' with fractions", format!("{:?}", op).to_lowercase())),
+        };
+        return Ok(crate::table::write_fraction(q));
+    }
+    let (a, b): (Dec, Dec) = (crate::table::read_decimal(left)?, crate::table::read_decimal(right)?);
+    if let Some(t) = cmp(a.cmp(&b)) {
+        return Ok(CrowValue::ok(Value::Bool(t)));
+    }
+    let d = match op {
+        BinOp::Add => a.add(&b),
+        BinOp::Sub => a.sub(&b),
+        BinOp::Mul => a.mul(&b),
+        BinOp::Div => a.div(&b)?,
+        _ => return Err(format!("cannot use '{}' with decimals", format!("{:?}", op).to_lowercase())),
+    };
+    Ok(crate::table::write_decimal(d))
+}
+
+/// A value handed where 64-bit ints are taken (`Convert::ToSmall`): an int
+/// past 64 bits is refused, naming what took it (spec, Numbers That Keep
+/// Every Digit), and so is a list or a map holding one; anything else is
+/// itself.
+pub fn small_value(v: CrowValue, who: crate::ir::Who) -> Result<CrowValue, String> {
+    small_check(&v.value, who)?;
+    Ok(v)
+}
+
+/// Whether a value holds an int past 64 bits, refused as `small_value`
+/// refuses it.
+pub fn small_check(v: &Value, who: crate::ir::Who) -> Result<(), String> {
+    match v {
+        Value::Big(b) => Err(crow_runtime::int::past_64_bits(&who.text(), &crow_runtime::int::Int::Big(b.clone()).brief())),
+        Value::Array(items) => items.iter().try_for_each(|i| small_check(&i.value, who)),
+        Value::Map(m) => m.values().try_for_each(|i| small_check(&i.value, who)),
+        Value::IntMap(m) => m.values().try_for_each(|i| small_check(&i.value, who)),
+        _ => Ok(()),
+    }
+}
+
+/// `binop` of operands that are not both whole numbers.
+fn binop_rest(left: &CrowValue, op: &BinOp, right: &CrowValue) -> Result<CrowValue, String> {
+    let l = &left.value;
+    let r = &right.value;
+
     // an int meets a float in arithmetic only through the lowering's
     // conversion (spec §1), and the verifier holds the IR to it: a pair here
     // is a bug in Crow, said as one. (The arms that had computed around it
@@ -279,6 +402,9 @@ fn mask_cell(v: &Value) -> crow_runtime::mask::Cell<'_> {
     use crow_runtime::mask::Cell;
     match v {
         Value::Int(n) => Cell::Number(*n as f64),
+        Value::Big(n) => Cell::Number(n.to_f64().value()),
+        Value::Decimal(_) => Cell::Other("a decimal"),
+        Value::Fraction(_) => Cell::Other("a fraction"),
         Value::Float(x) | Value::Dual(x, _) => Cell::Number(*x),
         Value::Str(s) => Cell::Text(s),
         Value::Bool(b) => Cell::Bool(*b),
@@ -380,6 +506,19 @@ pub fn compare_values(l: &Value, r: &Value, cmp: Cmp) -> Result<CrowValue, Strin
             Cmp::Gte => a >= b,
             Cmp::Lte => a <= b,
         }))),
+        // two ints, one past 64 bits: exactly
+        (Value::Int(_) | Value::Big(_), Value::Int(_) | Value::Big(_)) => {
+            let (Some(a), Some(b)) = (Value::int_of(l), Value::int_of(r)) else { return Err("cannot compare these types".to_string()) };
+            let o = a.cmp(&b);
+            Ok(CrowValue::ok(Value::Bool(match cmp {
+                Cmp::Eq => o.is_eq(),
+                Cmp::Ne => o.is_ne(),
+                Cmp::Gt => o.is_gt(),
+                Cmp::Lt => o.is_lt(),
+                Cmp::Gte => o.is_ge(),
+                Cmp::Lte => o.is_le(),
+            })))
+        }
         // two values: numbers by value, text by character code; an order
         // between kinds with none is the reason, as the lowering refuses it
         // where it knows both
@@ -441,7 +580,10 @@ pub fn unaryop(
     }
     match op {
         UnaryOp::Neg => match v {
-            Value::Int(n) => stops::neg(*n).map(|n| CrowValue::ok(Value::Int(n))),
+            Value::Int(n) => Ok(CrowValue::ok(Value::of_int(crow_runtime::int::Int::Small(*n).neg()))),
+            Value::Big(n) => Ok(CrowValue::ok(Value::of_int(crow_runtime::int::Int::Big(n.clone()).neg()))),
+            Value::Decimal(d) => Ok(crate::table::write_decimal(d.neg())),
+            Value::Fraction(f) => Ok(crate::table::write_fraction(f.neg())),
             Value::Float(n) => Ok(CrowValue::ok(Value::Float(-n))),
             Value::Dual(a, da) => Ok(CrowValue::ok(Value::Dual(-a, -da))),
             Value::NumArray(t) => Ok(CrowValue::ok(Value::NumArray(Box::new(t.neg())))),
@@ -516,6 +658,13 @@ pub fn values_equal(a: &CrowValue, b: &CrowValue) -> bool {
         (Value::Json(x), _) => crate::builtins::crow_to_json("", b).is_ok_and(|y| **x == y),
         (_, Value::Json(y)) => crate::builtins::crow_to_json("", a).is_ok_and(|x| x == **y),
         (Value::Int(x), Value::Int(y)) => x == y,
+        // (an int in 64 bits is never `Big`: one of each are unequal)
+        (Value::Big(x), Value::Big(y)) => x == y,
+        // exact numbers by value, with each other and with ints
+        (Value::Decimal(_) | Value::Fraction(_), _) | (_, Value::Decimal(_) | Value::Fraction(_)) => {
+            exact_binop(a, &BinOp::Eq, b).is_ok_and(|v| matches!(v.value, Value::Bool(true)))
+        }
+        (Value::Big(x), Value::Float(y)) | (Value::Float(y), Value::Big(x)) => x.to_f64().value() == *y,
         (Value::Float(x), Value::Float(y)) => x == y,
         (Value::Int(x), Value::Float(y)) => (*x as f64) == *y,
         (Value::Float(x), Value::Int(y)) => *x == (*y as f64),

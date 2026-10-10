@@ -478,6 +478,26 @@ impl TypeContext {
             };
             return if has_result { Ty::Result(Box::new(t)) } else { t };
         }
+        // exact numbers: an int meeting a decimal is the decimal it is, an int
+        // or a decimal meeting a fraction the fraction it is; a float beside
+        // one is typed as the exact kind, the lowering reading a literal as
+        // the number it writes and refusing any other (spec, Numbers That
+        // Keep Every Digit)
+        let exact = |t: &Ty| matches!(t, Ty::Decimal | Ty::Fraction);
+        if exact(&lt_inner) || exact(&rt_inner) {
+            let number = |t: &Ty| matches!(t, Ty::Int | Ty::Big | Ty::Float | Ty::Decimal | Ty::Fraction | Ty::Json);
+            let kind = if matches!(lt_inner, Ty::Fraction) || matches!(rt_inner, Ty::Fraction) { Ty::Fraction } else { Ty::Decimal };
+            let t = match op {
+                _ if !number(&lt_inner) || !number(&rt_inner) => Ty::Unknown,
+                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => kind,
+                // a power of an exact number: by an int its own kind, by a
+                // decimal a decimal
+                BinOp::Pow if exact(&lt_inner) => kind,
+                BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte => Ty::Bool,
+                _ => Ty::Unknown,
+            };
+            return if has_result { Ty::Result(Box::new(t)) } else { t };
+        }
         // Check if either side is a frame column (FrameCol or legacy Array(Str))
         let is_frame_col = |t: &Ty| matches!(t, Ty::Column(_)) || matches!(t, Ty::List(inner) if matches!(inner.as_ref(), Ty::Str));
         let result_type = match op {

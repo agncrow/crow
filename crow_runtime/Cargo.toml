@@ -12,6 +12,11 @@ bytemuck = { version = "1.25.0", features = ["derive"] }
 chrono = "0.4.45"
 chrono-tz = "0.10.4"
 faer = "0.24.0"
+# whole numbers of any size, decimals to any digits, fractions (spec,
+# Numbers That Keep Every Digit)
+dashu-int = "0.6"
+dashu-float = "0.6"
+dashu-ratio = "0.6"
 # erf to the last bit (the A&S approximation was good to 1.5e-7, and gelu
 # is written over erf in Crow)
 libm = "0.2"

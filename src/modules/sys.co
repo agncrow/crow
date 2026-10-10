@@ -18,7 +18,7 @@ fn remote[path]
     return starts[path, 'http://'] or starts[path, 'https://'] or starts[path, 's3://']
 
 --- the value of a decimal number's digits, or -1 where a character is none
-fn decimal[s]
+fn whole_of[s]
     digits = '0123456789'
     t = trim[s]
     if len[t] eq 0
@@ -76,7 +76,7 @@ fn parse_url[url]
     named = split[hostport, ':']
     if len[named] eq 2
         host = named[0]
-        port = decimal[named[1]]
+        port = whole_of[named[1]]
         if port lt 0
             return error['\'`hostport`\' is no host and port', 'sys']
     if len[host] eq 0
@@ -190,7 +190,7 @@ fn read_head[s, deadline]
     status = -1
     phrase = ''
     if len[words] gte 2
-        status = decimal[words[1]]
+        status = whole_of[words[1]]
         phrase = join[slice[words, 2, len[words]], ' ']
     if status lt 0
         return error['the server\'s status line is none: \'`status_line`\'', 'sys']
@@ -230,7 +230,7 @@ fn read_answer[s, deadline, method]
             body = decoded
         else
             if 'content-length' in headers
-                length = decimal[headers['content-length']]
+                length = whole_of[headers['content-length']]
                 if length lt 0
                     said = headers['content-length']
                     return error['the server\'s content-length is none: \'`said`\'', 'sys']
@@ -674,7 +674,7 @@ test a_url_is_taken_apart[]
     assert[redirected['https://h/a/b', 'c'] eq 'https://h/c']
     assert[redirected['http://h/a', 'https://other/x'] eq 'https://other/x']
     assert[hex_value['1A'] eq 26 and hex_value['0'] eq 0 and hex_value['zz'] eq -1 and hex_value[''] eq -1]
-    assert[decimal['204'] eq 204 and decimal[' 7 '] eq 7 and decimal['x'] eq -1 and decimal[''] eq -1]
+    assert[whole_of['204'] eq 204 and whole_of[' 7 '] eq 7 and whole_of['x'] eq -1 and whole_of[''] eq -1]
     assert[unanswered['no data from h:80 in 0.5 s', 0.5] eq 'no answer in 0.5 s']
     assert[unanswered['no data from h:80 in 600 s', 0.0] eq 'no answer in time']
     assert[unanswered['connection refused', 0.5] eq 'connection refused']

@@ -668,18 +668,38 @@ impl<'p> Verifier<'p> {
                 other => agrees(other, ty),
             },
             // (a value that can fail converts as its payload does)
-            Convert::IntToFloat => matches!(inner.payload(), Ty::Int | Ty::Unknown) && matches!(ty.payload(), Ty::Float),
+            Convert::IntToFloat => matches!(inner.payload(), Ty::Int | Ty::Big | Ty::Unknown) && matches!(ty.payload(), Ty::Float),
             Convert::IntsToFloats => {
                 matches!(ty.payload(), Ty::List(e) | Ty::Map(_, e) | Ty::Tensor(e, _) if **e == Ty::Float)
-                    && matches!(inner.payload(), Ty::List(e) | Ty::Map(_, e) | Ty::Tensor(e, _) if **e == Ty::Int || **e == Ty::Unknown)
+                    && matches!(inner.payload(), Ty::List(e) | Ty::Map(_, e) | Ty::Tensor(e, _) if **e == Ty::Int || **e == Ty::Big || **e == Ty::Unknown)
             }
             // numbers held as a list, a frame's column, or already a tensor
             Convert::ToTensor => matches!(ty.payload(), Ty::Tensor(..)) && matches!(inner.payload(), Ty::List(_) | Ty::Column(_) | Ty::Tensor(..) | Ty::Unknown),
             Convert::ToList => matches!(ty.payload(), Ty::List(_)),
+            // an int held as a growing one, or a growing one held in 64 bits:
+            // the int, or a list or a map of them
+            Convert::ToBig => big_shape(inner, ty, true),
+            Convert::ToSmall(_) => big_shape(inner, ty, false),
+            // an int, or a float literal, as the decimal it is; an int or a
+            // decimal as the fraction it is
+            Convert::ToDecimal => matches!(inner.payload(), Ty::Int | Ty::Big | Ty::Float | Ty::Decimal | Ty::Unknown) && matches!(ty.payload(), Ty::Decimal),
+            Convert::ToFraction => matches!(inner.payload(), Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Unknown) && matches!(ty.payload(), Ty::Fraction),
         };
         if !ok {
             self.found(format!("a conversion {:?} of {} claims to give {}", how, inner, ty));
         }
+    }
+}
+
+/// A conversion between an int and a growing one (`to_big`), or back: the
+/// two types alike but for their ints.
+fn big_shape(from: &Ty, to: &Ty, to_big: bool) -> bool {
+    match (from.payload(), to.payload()) {
+        (Ty::Unknown, _) => true,
+        (Ty::Int, Ty::Big) => to_big,
+        (Ty::Big, Ty::Int) => !to_big,
+        (Ty::List(a), Ty::List(b)) | (Ty::Map(_, a), Ty::Map(_, b)) => big_shape(a, b, to_big),
+        (a, b) => a == b,
     }
 }
 
@@ -728,6 +748,9 @@ fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
             Kind::Int | Kind::Float => matches!(t, Ty::Int | Ty::Float),
             Kind::Moment => *t == Ty::Moment,
             Kind::Whole => *t == Ty::Int,
+            Kind::Big => *t == Ty::Big,
+            Kind::Decimal => *t == Ty::Decimal,
+            Kind::Fraction => *t == Ty::Fraction,
             Kind::Words => matches!(t, Ty::Tensor(..) | Ty::Column(_)) || items(t, &|e| matches!(e, Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Moment)),
             Kind::Bool => *t == Ty::Bool,
             Kind::Bytes => *t == Ty::Bytes,
@@ -750,6 +773,7 @@ fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
             Kind::List | Kind::Seq => matches!(t, Ty::List(_)),
             Kind::MapOf | Kind::MapRef => matches!(t, Ty::Map(..)),
             Kind::Ints => items(t, &|e| *e == Ty::Int),
+            Kind::Bigs => items(t, &|e| *e == Ty::Big),
             Kind::Floats => items(t, &|e| *e == Ty::Float),
             Kind::Texts => items(t, &|e| matches!(e, Ty::Str | Ty::Markup)),
             Kind::Json => *t == Ty::Json,

@@ -86,7 +86,7 @@ impl Ty {
             Ty::List(i) | Ty::Map(_, i) | Ty::Column(i) | Ty::Result(i) | Ty::Tensor(i, _) => i.has_unknown(),
             Ty::Frame(cols) => cols.as_ref().is_some_and(|c| c.cols.values().any(Ty::has_unknown)),
             Ty::Fn(params, ret) => params.iter().any(Ty::has_unknown) || ret.has_unknown(),
-            Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Moment | Ty::Bytes | Ty::Unit | Ty::Markup | Ty::Json
+            Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Float | Ty::Bool | Ty::Str | Ty::Moment | Ty::Bytes | Ty::Unit | Ty::Markup | Ty::Json
             | Ty::Record(_) | Ty::OptRecord(_) | Ty::Db | Ty::Tx | Ty::Sparse | Ty::WebApp | Ty::WebRequest
             | Ty::WebResponse | Ty::Mailer | Ty::Socket | Ty::Stream | Ty::App | Ty::Node => false,
         }
@@ -100,7 +100,7 @@ impl Ty {
             Ty::Frame(Some(cols)) => cols.cols.values().all(Ty::is_concrete),
             Ty::List(i) | Ty::Map(_, i) | Ty::Column(i) | Ty::Result(i) | Ty::Tensor(i, _) => i.is_concrete(),
             Ty::Fn(params, ret) => params.iter().all(Ty::is_concrete) && ret.is_concrete(),
-            Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Moment | Ty::Bytes | Ty::Unit | Ty::Markup | Ty::Json
+            Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Float | Ty::Bool | Ty::Str | Ty::Moment | Ty::Bytes | Ty::Unit | Ty::Markup | Ty::Json
             | Ty::Record(_) | Ty::OptRecord(_) | Ty::Db | Ty::Tx | Ty::Sparse | Ty::WebApp | Ty::WebRequest
             | Ty::WebResponse | Ty::Mailer | Ty::Socket | Ty::Stream | Ty::App | Ty::Node => true,
         }
@@ -109,6 +109,9 @@ impl Ty {
     pub fn to_rust_type(&self) -> String {
         match self {
             Ty::Int => "i64".into(),
+            Ty::Big => "crow_runtime::int::Int".into(),
+            Ty::Decimal => "crow_runtime::decimal::Dec".into(),
+            Ty::Fraction => "crow_runtime::fraction::Frac".into(),
             Ty::Float => "f64".into(),
             Ty::Bool => "bool".into(),
             Ty::Moment => "crow_runtime::moments::Moment".into(),
@@ -148,6 +151,9 @@ impl Ty {
     pub fn default_rust_value(&self) -> String {
         match self {
             Ty::Int => "0_i64".into(),
+            Ty::Big => "crow_runtime::int::Int::default()".into(),
+            Ty::Decimal => "crow_runtime::decimal::Dec::default()".into(),
+            Ty::Fraction => "crow_runtime::fraction::Frac::default()".into(),
             Ty::Float => "0.0_f64".into(),
             Ty::Moment => "crow_runtime::moments::Moment::default()".into(),
             Ty::Bool => "false".into(),
@@ -225,7 +231,9 @@ impl Ty {
     /// Human-readable Crow type name for error messages.
     pub fn crow_name(&self) -> String {
         match self {
-            Ty::Int => "int".into(),
+            Ty::Int | Ty::Big => "int".into(),
+            Ty::Decimal => "decimal".into(),
+            Ty::Fraction => "fraction".into(),
             Ty::Float => "float".into(),
             Ty::Moment => "moment".into(),
             Ty::Bool => "bool".into(),

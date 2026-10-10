@@ -15,7 +15,7 @@ fn every_ty() -> Vec<Ty> {
     use std::collections::BTreeMap;
     let cols = crate::type_infer::Cols::closed(BTreeMap::from([("a".to_string(), Ty::Int)]));
     vec![
-        Ty::Int, Ty::Float, Ty::Bool, Ty::Str, Ty::Moment, Ty::Bytes, Ty::Unit, Ty::Markup,
+        Ty::Int, Ty::Big, Ty::Decimal, Ty::Fraction, Ty::Float, Ty::Bool, Ty::Str, Ty::Moment, Ty::Bytes, Ty::Unit, Ty::Markup,
         Ty::List(Box::new(Ty::Int)), Ty::Map(crate::ir::Key::Text, Box::new(Ty::Str)), Ty::Tensor(Box::new(Ty::Float), None),
         Ty::Frame(None), Ty::Frame(Some(cols)), Ty::Column(Box::new(Ty::Int)), Ty::Json,
         Ty::Record("P".to_string()), Ty::OptRecord("P".to_string()), Ty::Result(Box::new(Ty::Int)),
@@ -28,7 +28,7 @@ fn every_ty() -> Vec<Ty> {
 /// added to the enum fails here until `every_ty` names it too.
 fn variant_of(t: &Ty) -> &'static str {
     match t {
-        Ty::Int => "Int", Ty::Float => "Float", Ty::Bool => "Bool", Ty::Str => "Str", Ty::Moment => "Moment",
+        Ty::Int => "Int", Ty::Big => "Big", Ty::Decimal => "Decimal", Ty::Fraction => "Fraction", Ty::Float => "Float", Ty::Bool => "Bool", Ty::Str => "Str", Ty::Moment => "Moment",
         Ty::Bytes => "Bytes", Ty::Unit => "Unit", Ty::Markup => "Markup", Ty::List(_) => "List", Ty::Map(..) => "Map",
         Ty::Tensor(..) => "Tensor", Ty::Frame(_) => "Frame", Ty::Column(_) => "Column", Ty::Json => "Json",
         Ty::Record(_) => "Record", Ty::OptRecord(_) => "OptRecord", Ty::Result(_) => "Result", Ty::Fn(..) => "Fn",
@@ -41,7 +41,7 @@ fn variant_of(t: &Ty) -> &'static str {
 /// One of every class of argument a row's kind is asked about.
 pub(crate) fn every_arg() -> Vec<Arg> {
     vec![
-        Arg::Int, Arg::Float, Arg::Moment, Arg::Moments, Arg::Bytes, Arg::Stream, Arg::Socket, Arg::Mailer, Arg::Chunks,
+        Arg::Int, Arg::Float, Arg::Decimal, Arg::Fraction, Arg::Moment, Arg::Moments, Arg::Bytes, Arg::Stream, Arg::Socket, Arg::Mailer, Arg::Chunks,
         Arg::Json, Arg::Tensor, Arg::Ints, Arg::Floats, Arg::Tensors, Arg::Text, Arg::Texts, Arg::Truth, Arg::Truths,
         Arg::Records, Arg::Maps, Arg::Items, Arg::FallibleNumbers, Arg::Fallible, Arg::Column, Arg::Map, Arg::Record,
         Arg::Sparse, Arg::Frame, Arg::Fn, Arg::AnyList, Arg::Unknown,
@@ -52,7 +52,7 @@ pub(crate) fn every_arg() -> Vec<Arg> {
 /// `every_arg` names it too.
 fn arg_variant(a: Arg) -> &'static str {
     match a {
-        Arg::Int => "Int", Arg::Float => "Float", Arg::Moment => "Moment", Arg::Moments => "Moments", Arg::Bytes => "Bytes",
+        Arg::Int => "Int", Arg::Float => "Float", Arg::Decimal => "Decimal", Arg::Fraction => "Fraction", Arg::Moment => "Moment", Arg::Moments => "Moments", Arg::Bytes => "Bytes",
         Arg::Stream => "Stream", Arg::Socket => "Socket", Arg::Mailer => "Mailer", Arg::Chunks => "Chunks", Arg::Json => "Json",
         Arg::Tensor => "Tensor", Arg::Ints => "Ints", Arg::Floats => "Floats", Arg::Tensors => "Tensors", Arg::Text => "Text",
         Arg::Texts => "Texts", Arg::Truth => "Truth", Arg::Truths => "Truths", Arg::Records => "Records", Arg::Maps => "Maps",
@@ -67,7 +67,7 @@ fn arg_variant(a: Arg) -> &'static str {
 fn every_value() -> Vec<Value> {
     let tensor = crow_runtime::tensor::CrowTensor::from_vec(vec![1.0, 2.0], vec![2]);
     vec![
-        Value::Int(1), Value::Float(1.5), Value::Str("a".into()), Value::Bool(true),
+        Value::Int(1), Value::Big(std::sync::Arc::new(crow_runtime::int::IBig::from(u64::MAX))), Value::Decimal(std::sync::Arc::new(crow_runtime::decimal::Dec::default())), Value::Fraction(std::sync::Arc::new(crow_runtime::fraction::Frac::default())), Value::Float(1.5), Value::Str("a".into()), Value::Bool(true),
         Value::Moment(crow_runtime::moments::Moment::of_seconds(1.5)),
         Value::Array(std::sync::Arc::new(vec![CrowValue::ok(Value::Int(1))])), Value::NumArray(Box::new(tensor.clone())),
         Value::Map(std::collections::BTreeMap::from([("k".to_string(), CrowValue::ok(Value::Int(1)))])),
@@ -83,7 +83,7 @@ fn every_value() -> Vec<Value> {
 /// The variant of a value, by name, with no wildcard.
 fn value_variant(v: &Value) -> &'static str {
     match v {
-        Value::Int(_) => "Int", Value::Float(_) => "Float", Value::Str(_) => "Str", Value::Bool(_) => "Bool",
+        Value::Int(_) => "Int", Value::Big(_) => "Big", Value::Decimal(_) => "Decimal", Value::Fraction(_) => "Fraction", Value::Float(_) => "Float", Value::Str(_) => "Str", Value::Bool(_) => "Bool",
         Value::Moment(_) => "Moment", Value::Array(_) => "Array", Value::NumArray(_) => "NumArray", Value::Map(_) | Value::IntMap(_) => "Map",
         Value::Fn(_) => "Fn", Value::StructInstance(_) => "StructInstance", Value::Sparse(_) => "Sparse",
         Value::Frame(_) => "Frame", Value::DbConn(_) => "DbConn", Value::Mailer(_) => "Mailer", Value::Socket(_) => "Socket",

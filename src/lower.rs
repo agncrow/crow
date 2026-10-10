@@ -1062,6 +1062,15 @@ impl Lowerer {
                             Expr::Call { callee: Box::new(callee), args: resolved[..7].to_vec() }
                         }
                     }
+                    // decimal[x, digits = n]: x as a decimal, rounded to n
+                    // significant digits that every answer it takes part in
+                    // rounds to (a hidden row of two; spec, Numbers That Keep
+                    // Every Digit)
+                    Some("decimal") if !self.fns.contains_key("decimal") && args.iter().any(|a| matches!(a, Expr::Named { .. })) => {
+                        let (positional, options) = self.options("decimal", args, &[("digits", Expr::Int(0))])?;
+                        let made = Expr::Call { callee: Box::new(callee), args: positional };
+                        Expr::Call { callee: Box::new(Expr::Ident("__decimal_digits".to_string())), args: vec![made, options[0].clone()] }
+                    }
                     // moment[text], moment[t, tz = zone], and moment[year,
                     // month, day, hour = 0, minute = 0, second = 0, tz = 'UTC']:
                     // one name, three forms, told apart by their arguments

@@ -120,6 +120,9 @@ fn lower_checked_as(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: 
     fuse::chains(&mut program);
     // each connection opens with the tables the program declares on it
     schema::attach(&mut program);
+    // an int the program may grow past 64 bits held as a growing one
+    // (spec, Numbers That Keep Every Digit)
+    crate::int_width::widen(&mut program);
     // the parts agree before a backend reads them (ir_verify): a lowering
     // that disagrees with itself is refused as the bug in Crow it is, in a
     // debug build and in every harness; a release build checks when asked
@@ -2929,7 +2932,11 @@ impl<'a> Lowerer<'a> {
                 }
                 let ty = shapes::shaped(self.ctx.binop_type(op, read(&l), read(&r)), shapes::binary_dims(op, &l, &r));
                 let arithmetic = matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::Pow | BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte);
-                if arithmetic {
+                if arithmetic && (exact_kind(&l.ty()) || exact_kind(&r.ty())) {
+                    let (el, er) = self.exact_operands(op, l, r);
+                    l = el;
+                    r = er;
+                } else if arithmetic {
                     match (l.ty().payload(), r.ty().payload()) {
                         (Ty::Int, Ty::Float) => l = Expr::Convert { how: Convert::IntToFloat, expr: Box::new(l), ty: Ty::Float },
                         (Ty::Float, Ty::Int) => r = Expr::Convert { how: Convert::IntToFloat, expr: Box::new(r), ty: Ty::Float },
@@ -4092,6 +4099,12 @@ impl<'a> Lowerer<'a> {
                 (Kind::Item | Kind::ItemRef, Ty::Int) if floats && !matches!(x, Expr::Convert { how: Convert::Unwrap, .. }) => {
                     Expr::Convert { how: Convert::IntToFloat, expr: Box::new(x), ty: Ty::Float }
                 }
+                // a whole number of any size where the row takes one
+                // (`decimal[12]`, `fraction[1, 3]`): the int as it grows
+                (Kind::Big, t) if matches!(t.payload(), Ty::Int) => {
+                    let ty = if t.is_result() { Ty::Result(Box::new(Ty::Big)) } else { Ty::Big };
+                    Expr::Convert { how: Convert::ToBig, expr: Box::new(x), ty }
+                }
                 _ => x,
             })
             .collect()
@@ -5228,6 +5241,69 @@ fn move_last_reads(e: &mut Expr, live: &HashSet<String>, allowed: &HashSet<Strin
             }
         }
         _ => {}
+    }
+}
+
+/// A decimal or a fraction (spec, Numbers That Keep Every Digit).
+fn exact_kind(t: &Ty) -> bool {
+    matches!(t.payload(), Ty::Decimal | Ty::Fraction)
+}
+
+impl<'a> Lowerer<'a> {
+    /// The operands of an operator meeting an exact number, each as the
+    /// exact kind the operator computes in: an int meeting a decimal is the
+    /// decimal it is, an int or a decimal meeting a fraction the fraction it
+    /// is; a float written as a literal is the decimal it writes, and any
+    /// other float is refused before the program runs — the exact answer
+    /// would be a guess. `%` takes ints. A power's exponent stays an int.
+    fn exact_operands(&mut self, op: &BinOp, l: Expr, r: Expr) -> (Expr, Expr) {
+        let (lt, rt) = (l.ty().payload().clone(), r.ty().payload().clone());
+        let fraction = matches!(lt, Ty::Fraction) || matches!(rt, Ty::Fraction);
+        let want = if fraction { Ty::Fraction } else { Ty::Decimal };
+        let final_pass = self.pass == Pass::Final;
+        if matches!(op, BinOp::Mod) {
+            if final_pass {
+                self.refuse(format!("`%` takes ints — a {}'s remainder is written out: d - n * int[d / n]", want.crow_name()));
+            }
+            return (l, r);
+        }
+        let literal = |e: &Expr| match e {
+            Expr::Const(Const::Float(_), _) => true,
+            Expr::Unary { op, expr, .. } if op == "neg" => matches!(expr.as_ref(), Expr::Const(Const::Float(_), _)),
+            _ => false,
+        };
+        // a float beside an exact number: a literal is the number it writes
+        let l_float = matches!(lt, Ty::Float) && !literal(&l);
+        let r_float = matches!(rt, Ty::Float) && !literal(&r);
+        if (l_float || r_float) && final_pass {
+            let name = |e: &Expr| match e {
+                Expr::Local(n, _) | Expr::Move(n, _) => n.clone(),
+                _ => "…".to_string(),
+            };
+            let (exact, float) = if l_float { (&r, &l) } else { (&l, &r) };
+            let k = want.crow_name();
+            self.refuse(format!("a {k} and a float: {k}[{}] reads the float as the {k} it shows, float[{}] reads the {k} as a float", name(float), name(exact)));
+        }
+        let to = |e: Expr, me: &Self| -> Expr {
+            let _ = me;
+            let have = e.ty().payload().clone();
+            let fails = e.ty().is_result();
+            let keep = |t: Ty| if fails { Ty::Result(Box::new(t)) } else { t };
+            match (&have, &want) {
+                (Ty::Int | Ty::Big | Ty::Float, Ty::Decimal) => Expr::Convert { how: Convert::ToDecimal, ty: keep(Ty::Decimal), expr: Box::new(e) },
+                (Ty::Int | Ty::Big | Ty::Decimal, Ty::Fraction) => Expr::Convert { how: Convert::ToFraction, ty: keep(Ty::Fraction), expr: Box::new(e) },
+                (Ty::Float, Ty::Fraction) => {
+                    let d = Expr::Convert { how: Convert::ToDecimal, ty: keep(Ty::Decimal), expr: Box::new(e) };
+                    Expr::Convert { how: Convert::ToFraction, ty: keep(Ty::Fraction), expr: Box::new(d) }
+                }
+                _ => e,
+            }
+        };
+        // a power's exponent: an int as it is (`d ^ 2`, `f ^ -1`)
+        if matches!(op, BinOp::Pow) && matches!(rt, Ty::Int | Ty::Big) && exact_kind(&lt) {
+            return (l, r);
+        }
+        (to(l, self), to(r, self))
     }
 }
 

@@ -87,6 +87,21 @@ pub(crate) fn json_to_typed(j: &serde_json::Value, ty: &crate::ir::Ty, template:
             CrowValue::ok(Value::NumArray(Box::new(crow_runtime::tensor::CrowTensor::from_vec(data, vec![n]))))
         }
         (Ty::Float, serde_json::Value::Number(n)) => CrowValue::ok(Value::Float(n.as_f64().unwrap_or(0.0))),
+        // an int the compiled program holds growing: a number, or the text
+        // of its digits past 64 bits (its serde form, crow_runtime::int)
+        (Ty::Big, _) => match crow_runtime::int::Int::of_json(j) {
+            Some(n) => CrowValue::ok(Value::of_int(n)),
+            None => json_to_fact(j, declared),
+        },
+        // an exact number comes back from the text it shows (its serde form)
+        (Ty::Decimal, serde_json::Value::String(s)) => match crow_runtime::decimal::Dec::parse(s) {
+            Some(d) => crate::table::write_decimal(d),
+            None => json_to_fact(j, declared),
+        },
+        (Ty::Fraction, serde_json::Value::String(s)) => match crow_runtime::fraction::Frac::parse(s) {
+            Some(q) => crate::table::write_fraction(q),
+            None => json_to_fact(j, declared),
+        },
         (Ty::Moment, serde_json::Value::String(_)) => match serde_json::from_value::<crow_runtime::moments::Moment>(j.clone()) {
             Ok(m) => CrowValue::ok(Value::Moment(m)),
             Err(_) => json_to_fact(j, declared),

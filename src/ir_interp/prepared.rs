@@ -254,6 +254,9 @@ enum Ins {
     Neg { d: R, s: R },
     /// An int read as a float; any other value as it is (the walker's rule).
     ToFloat { d: R, s: R },
+    /// A value handed where 64-bit ints are taken (`Convert::ToSmall`): an
+    /// int past them is refused, naming what took it.
+    Small { d: R, s: R, who: crate::ir::Who },
     Jump { to: u32 },
     /// A `while` loop's first round begins: the cancellation check.
     Cancel,
@@ -1142,6 +1145,17 @@ impl Comp {
                 let s = self.reg(p);
                 self.emit(Ins::ToFloat { d, s });
             }
+            // the interpreter's ints grow as they run: an int held growing is
+            // the value as it is
+            Expr::Convert { how: Convert::ToBig, expr, .. } => {
+                let p = self.expr_place(expr, d);
+                self.put(p, d);
+            }
+            Expr::Convert { how: Convert::ToSmall(who), expr, .. } => {
+                let p = self.expr(expr);
+                let s = self.reg(p);
+                self.emit(Ins::Small { d, s, who: *who });
+            }
             Expr::Binary { op, l, r, .. } => {
                 let Ok(bop) = binop_of(op) else {
                     return self.eval(e, d);
@@ -1281,7 +1295,8 @@ fn pure_index(e: &Expr) -> bool {
         Expr::Local(..) | Expr::Const(..) => true,
         Expr::Binary { l, r, .. } => pure_index(l) && pure_index(r),
         Expr::Unary { expr, .. } => pure_index(expr),
-        Expr::Convert { how: Convert::Unwrap | Convert::Known | Convert::IntToFloat, expr, .. } => pure_index(expr),
+        // (a refusal past 64 bits comes the same the second time)
+        Expr::Convert { how: Convert::Unwrap | Convert::Known | Convert::IntToFloat | Convert::ToBig | Convert::ToSmall(_), expr, .. } => pure_index(expr),
         _ => false,
     }
 }
@@ -1643,8 +1658,15 @@ impl IrInterp {
                         if op.compares() {
                             regs[*d as usize].set_bool(op.holds(x, y));
                         } else {
-                            let n = t!(op.arith(x, y));
-                            regs[*d as usize].set_int(n);
+                            match op.arith(x, y) {
+                                Ok(n) => regs[*d as usize].set_int(n),
+                                // (past 64 bits the int grows; a zero divisor stops)
+                                Err(_) => {
+                                    self.line_of(p, pc);
+                                    let (x, y) = (value_at(regs, *a), value_at(regs, *b));
+                                    regs[*d as usize].assign(t!(crate::ops::binop(&x, &op.general(), &y)));
+                                }
+                            }
                         }
                     } else {
                         self.line_of(p, pc);
@@ -1689,7 +1711,7 @@ impl IrInterp {
                 Ins::Neg { d, s } => {
                     let x = &regs[*s as usize];
                     let v = if let Some(n) = x.plain_int() {
-                        CrowValue::ok(Value::Int(t!(crow_runtime::stops::neg(n))))
+                        CrowValue::ok(Value::of_int(crow_runtime::int::Int::Small(n).neg()))
                     } else if let Some(f) = x.plain_float() {
                         CrowValue::ok(Value::Float(-f))
                     } else {
@@ -1701,8 +1723,17 @@ impl IrInterp {
                     let x = &regs[*s as usize];
                     let v = match x.plain_int() {
                         Some(n) => CrowValue::ok(Value::Float(n as f64)),
-                        None => x.clone(),
+                        None => match &x.value {
+                            Value::Big(b) => CrowValue::ok(Value::Float(crow_runtime::int::Int::Big(b.clone()).to_f64())),
+                            _ => x.clone(),
+                        },
                     };
+                    regs[*d as usize].assign(v);
+                }
+                Ins::Small { d, s, who } => {
+                    let x = &regs[*s as usize];
+                    t!(crate::ops::small_check(&x.value, *who));
+                    let v = x.clone();
                     regs[*d as usize].assign(v);
                 }
                 Ins::Jump { to } => return *to as usize,
@@ -2484,7 +2515,7 @@ fn reads_writes(ins: &Ins) -> (Vec<R>, Vec<R>) {
     let rs = |os: &[Opnd]| os.iter().filter_map(|o| if let Opnd::R(r) = o { Some(*r) } else { None }).collect::<Vec<R>>();
     match ins {
         Ins::Const { d, .. } => (vec![], vec![*d]),
-        Ins::Copy { d, s } | Ins::Take { d, s } | Ins::Not { d, s } | Ins::Neg { d, s } | Ins::ToFloat { d, s } => (vec![*s], vec![*d]),
+        Ins::Copy { d, s } | Ins::Take { d, s } | Ins::Not { d, s } | Ins::Neg { d, s } | Ins::ToFloat { d, s } | Ins::Small { d, s, .. } => (vec![*s], vec![*d]),
         Ins::Clear { d } => (vec![], vec![*d]),
         Ins::Int { d, a, b, .. } => (rs(&[*a, *b]), vec![*d]),
         Ins::Float { d, a, b, .. } | Ins::Logic { d, a, b, .. } | Ins::Bin { d, a, b, .. } => (vec![*a, *b], vec![*d]),
@@ -2830,6 +2861,7 @@ fn typed(p: &Body) -> Option<Typed> {
                     wrap(&[*s], &[*d])
                 }
             }
+            Ins::Small { d, s, .. } => wrap(&[*s], &[*d]),
             Ins::Jump { to } => TIns::Jump { to: *to },
             Ins::Loop { to } => TIns::Loop { to: *to },
             Ins::Cancel => TIns::Cancel,
@@ -3031,25 +3063,28 @@ impl IrInterp {
                 TIns::FConst { d, x } => bare.floats[*d as usize] = *x,
                 TIns::IMov { d, s } => bare.ints[*d as usize] = bare.ints[*s as usize],
                 TIns::FMov { d, s } => bare.floats[*d as usize] = bare.floats[*s as usize],
+                // (an answer past 64 bits, a zero divisor, a negative power:
+                // the boxed program runs the instruction — it grows the int,
+                // or stops — and the rest of the call)
                 TIns::IArith { op, d, a, b } => match op.arith(iv(&bare.ints, *a), iv(&bare.ints, *b)) {
                     Ok(n) => bare.ints[*d as usize] = n,
-                    Err(e) => stop!(e),
+                    Err(_) => hand_over!(),
                 },
                 TIns::IAddK { d, a, k } => match bare.ints[*a as usize].checked_add(*k) {
                     Some(n) => bare.ints[*d as usize] = n,
-                    None => stop!(crow_runtime::stops::add(bare.ints[*a as usize], *k).err().unwrap_or_default()),
+                    None => hand_over!(),
                 },
                 TIns::ISubK { d, a, k } => match bare.ints[*a as usize].checked_sub(*k) {
                     Some(n) => bare.ints[*d as usize] = n,
-                    None => stop!(crow_runtime::stops::sub(bare.ints[*a as usize], *k).err().unwrap_or_default()),
+                    None => hand_over!(),
                 },
                 TIns::IAddR { d, a, b } => match bare.ints[*a as usize].checked_add(bare.ints[*b as usize]) {
                     Some(n) => bare.ints[*d as usize] = n,
-                    None => stop!(crow_runtime::stops::add(bare.ints[*a as usize], bare.ints[*b as usize]).err().unwrap_or_default()),
+                    None => hand_over!(),
                 },
                 TIns::ISubR { d, a, b } => match bare.ints[*a as usize].checked_sub(bare.ints[*b as usize]) {
                     Some(n) => bare.ints[*d as usize] = n,
-                    None => stop!(crow_runtime::stops::sub(bare.ints[*a as usize], bare.ints[*b as usize]).err().unwrap_or_default()),
+                    None => hand_over!(),
                 },
                 TIns::IJumpR { op, a, b, to } => {
                     if !op.holds(bare.ints[*a as usize], bare.ints[*b as usize]) {
@@ -3072,7 +3107,7 @@ impl IrInterp {
                 }
                 TIns::INeg { d, s } => match crow_runtime::stops::neg(bare.ints[*s as usize]) {
                     Ok(n) => bare.ints[*d as usize] = n,
-                    Err(e) => stop!(e),
+                    Err(_) => hand_over!(),
                 },
                 TIns::FArith { op, d, a, b } => bare.floats[*d as usize] = op.farith(bare.floats[*a as usize], bare.floats[*b as usize]),
                 TIns::FCmp { op, d, a, b } => regs[*d as usize].set_bool(op.fholds(bare.floats[*a as usize], bare.floats[*b as usize])),

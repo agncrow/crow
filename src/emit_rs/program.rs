@@ -1034,7 +1034,7 @@ impl Emitter {
     pub(crate) fn record_compares(&self, name: &str, seen: &mut BTreeSet<String>) -> bool {
         fn compares(e: &Emitter, t: &Ty, seen: &mut BTreeSet<String>) -> bool {
             match t {
-                Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) | Ty::Frame(_) | Ty::Column(_) => true,
+                Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) | Ty::Frame(_) | Ty::Column(_) => true,
                 Ty::Sparse => true,
                 Ty::List(i) | Ty::Map(_, i) | Ty::Result(i) => compares(e, i, seen),
                 Ty::Record(n) | Ty::OptRecord(n) => e.record_compares(n, seen),
@@ -1102,7 +1102,7 @@ impl Emitter {
     fn json_records(&self) -> BTreeSet<String> {
         fn jsonable(t: &Ty, ok: &BTreeSet<String>) -> bool {
             match t {
-                Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) => true,
+                Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) => true,
                 Ty::List(i) | Ty::Map(_, i) | Ty::Result(i) => jsonable(i, ok),
                 Ty::Record(n) => ok.contains(n),
                 _ => false,
@@ -1158,7 +1158,7 @@ impl Emitter {
     /// Whether a value of this type shows through the one display.
     fn ty_shows(&self, t: &Ty, seen: &mut BTreeSet<String>) -> bool {
         match t {
-            Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) | Ty::Frame(_) | Ty::Column(_) => true,
+            Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) | Ty::Frame(_) | Ty::Column(_) => true,
             Ty::Sparse => true,
             Ty::List(i) | Ty::Map(_, i) | Ty::Result(i) => self.ty_shows(i, seen),
             Ty::Record(n) | Ty::OptRecord(n) => self.record_is(n, &|e, t, seen| e.ty_shows(t, seen), seen),
@@ -1169,7 +1169,7 @@ impl Emitter {
     /// Whether a value of this type encodes by the one JSON rule.
     fn ty_encodes(&self, t: &Ty, seen: &mut BTreeSet<String>) -> bool {
         match t {
-            Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) => true,
+            Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) => true,
             Ty::List(i) | Ty::Map(_, i) | Ty::Result(i) => self.ty_encodes(i, seen),
             Ty::Record(n) | Ty::OptRecord(n) => self.record_is(n, &|e, t, seen| e.ty_encodes(t, seen), seen),
             _ => false,
@@ -1192,7 +1192,7 @@ impl Emitter {
 
     /// Whether a value shows inside a list, a map or a record.
     fn shows_inside(&self, t: &Ty) -> bool {
-        matches!(t, Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) | Ty::Frame(_) | Ty::Column(_) | Ty::Sparse)
+        matches!(t, Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) | Ty::Frame(_) | Ty::Column(_) | Ty::Sparse)
             || self.kernel_displayable(t)
     }
 

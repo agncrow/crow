@@ -514,7 +514,9 @@ impl Emitter {
                 let shown: std::collections::BTreeMap<String, String> = self.structs.iter().map(|(n, d)| (n.clone(), d.shown.clone())).collect();
                 fn word(t: &Ty, v: &str, shown: &std::collections::BTreeMap<String, String>) -> String {
                     match t {
-                        Ty::Int => "\"int\"".to_string(),
+                        Ty::Int | Ty::Big => "\"int\"".to_string(),
+                        Ty::Decimal => "\"decimal\"".to_string(),
+                        Ty::Fraction => "\"fraction\"".to_string(),
                         Ty::Float => "\"float\"".to_string(),
                         Ty::Moment => "\"moment\"".to_string(),
                         Ty::Str | Ty::Markup => "\"str\"".to_string(),

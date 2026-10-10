@@ -2707,14 +2707,27 @@ mod tests {
     // === Edge case generation ===
 
     #[test]
-    fn test_edge_case_overflow_detected() {
+    fn test_edge_case_crash_detected() {
+        let src = "fn share[a, b]\n    a / b\nresult = share[1, 2]\n";
+        let (stmts, ctx) = parse_and_infer(src);
+        let pure = find_pure_functions(&ctx);
+        let recursive = find_recursive_functions(&ctx);
+        let (issues, _snapshots) = run_edge_cases(&ctx, &stmts, &pure, &recursive);
+        let crashes: Vec<_> = issues.iter().filter(|i| matches!(i, Issue::EdgeCaseCrash { error, .. } if error.contains("division by zero"))).collect();
+        assert!(!crashes.is_empty(), "share should crash dividing by zero");
+    }
+
+    /// Ints grow: a sum of the largest ints is a whole number past 64 bits,
+    /// no crash (it had stopped with an overflow)
+    #[test]
+    fn test_edge_case_a_sum_of_the_largest_ints_grows() {
         let src = "fn add[a, b]\n    a + b\nresult = add[1, 2]\n";
         let (stmts, ctx) = parse_and_infer(src);
         let pure = find_pure_functions(&ctx);
         let recursive = find_recursive_functions(&ctx);
         let (issues, _snapshots) = run_edge_cases(&ctx, &stmts, &pure, &recursive);
         let crashes: Vec<_> = issues.iter().filter(|i| matches!(i, Issue::EdgeCaseCrash { .. })).collect();
-        assert!(!crashes.is_empty(), "add should crash on overflow with boundary values");
+        assert!(crashes.is_empty(), "{:?}", crashes);
     }
 
     #[test]

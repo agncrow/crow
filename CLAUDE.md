@@ -403,6 +403,22 @@ steps on every push and must be green.
   connection test reacts to them): a new way for a program to end or to
   wait on its reader (an exit, a stop, a prompt) calls
   `display::flush_output` first, or what was logged is lost or comes late.
+- An int is a whole number of any size (2026-10-09): the interpreter grows
+  (`Value::Big`; its typed registers hand over on overflow), the compiled
+  program holds an int in 64 bits where `src/int_width.rs` shows its range
+  fits — an interval per place (local, answer, field, fact, a list's
+  items), flow-sensitive for locals (`cur`, narrowed by `if`/`while`
+  conditions, relations like `done lt count` kept in `rels`), sums bounded
+  by `ROUNDS` = 48 bits of rounds ("no part of a program runs 2^48 times")
+  — and as `Ty::Big` (`crow_runtime::int::Int`) elsewhere. The pass runs on
+  the lowered IR, so both backends see its conversions (`ToBig`,
+  `ToSmall(Who)` — refused past 64 bits in one wording; the interpreter's
+  rows refuse by `table::no_big_taken`). A new expression shape that makes
+  an int needs its range in `iv_of` (else it reads as any 64-bit int), a
+  new write site goes through `write` (else a sum there diverges to Big
+  and the hot loop pays the growing form: fannkuch had run 5× slower), and
+  a builtin that keeps every digit gets a hidden `__…_big` row in
+  `table::big_form`. `CROW_WIDTH_DEBUG=1` prints the settled ranges.
 - A row can grow what it is given (`Row { take: …, ..row!(…) }`: the
   tensor `push`'s bridge pushes in place when nothing else holds the
   storage). The interpreter hands a row its arguments by value only on

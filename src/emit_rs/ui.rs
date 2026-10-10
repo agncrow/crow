@@ -174,13 +174,13 @@ impl Emitter {
         let text = match inner {
             Ty::Markup if fallible => format!("{{ let _c = &({}); if !_c.ok {{ CrowVNode::failed(&_c.reason) }} else {{ CrowVNode::raw(&_c.value) }} }}", s),
             Ty::Str if fallible => format!("{{ let _c = &({}); if !_c.ok {{ CrowVNode::failed(&_c.reason) }} else {{ CrowVNode::text(&_c.value) }} }}", s),
-            Ty::Int | Ty::Float | Ty::Bool if fallible => {
+            Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Float | Ty::Bool if fallible => {
                 format!("{{ let _c = &({}); if !_c.ok {{ CrowVNode::failed(&_c.reason) }} else {{ CrowVNode::text(&format!(\"{{}}\", _c.value)) }} }}", s)
             }
             // markup a view, an element or doc made is markup; a string is text
             Ty::Markup => format!("CrowVNode::raw(&{})", s),
             Ty::Str => format!("CrowVNode::text(&{})", s),
-            Ty::Int | Ty::Float | Ty::Bool => format!("CrowVNode::text(&format!(\"{{}}\", {}))", s),
+            Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Float | Ty::Bool => format!("CrowVNode::text(&format!(\"{{}}\", {}))", s),
             _ => s,
         };
         (text, false)

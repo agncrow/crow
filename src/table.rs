@@ -107,6 +107,17 @@ pub enum Kind {
     TextMap,
     /// `Vec<i64>` taken and given, moved or copied as a list is.
     Ints,
+    /// `&crow_runtime::int::Int` taken, `Int` given: a whole number of any
+    /// size, for the hidden rows that keep every digit (`__abs_big`) the
+    /// width pass calls where an int may grow past 64 bits (int_width).
+    Big,
+    /// `Vec<crow_runtime::int::Int>` taken and given, moved or copied as a
+    /// list is: a list of whole numbers of any size (`__sort_big`).
+    Bigs,
+    /// `&crow_runtime::decimal::Dec` taken, `Dec` given: an exact decimal.
+    Decimal,
+    /// `&crow_runtime::fraction::Frac` taken, `Frac` given: an exact ratio.
+    Fraction,
     /// `Vec<f64>` taken and given, moved or copied as a list is.
     Floats,
     /// `Vec<String>` taken and given, moved or copied as a list is.
@@ -242,10 +253,21 @@ impl Row {
     }
 }
 
+/// How a parameter takes an int past 64 bits (`Kind::takes_big`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TakesBig {
+    AsIs,
+    AsFloat,
+    Refused,
+}
+
 impl Kind {
     pub fn ty(self) -> Ty {
         match self {
             Kind::Int | Kind::Whole => Ty::Int,
+            Kind::Big => Ty::Big,
+            Kind::Decimal => Ty::Decimal,
+            Kind::Fraction => Ty::Fraction,
             Kind::Float => Ty::Float,
             Kind::Moment => Ty::Moment,
             Kind::Bool => Ty::Bool,
@@ -266,6 +288,7 @@ impl Kind {
             Kind::Lists => Ty::List(Box::new(Ty::List(Box::new(Ty::Str)))),
             Kind::Words | Kind::Texts => Ty::List(Box::new(Ty::Str)),
             Kind::Ints => Ty::List(Box::new(Ty::Int)),
+            Kind::Bigs => Ty::List(Box::new(Ty::Big)),
             Kind::Floats => Ty::List(Box::new(Ty::Float)),
             Kind::Json => Ty::Json,
             Kind::Column => Ty::Column(Box::new(Ty::Unknown)),
@@ -299,7 +322,7 @@ impl Kind {
     /// answer of: the compiled program moves the variable the statement
     /// assigns and copies any other.
     pub fn owned(self) -> bool {
-        matches!(self, Kind::List | Kind::MapOf | Kind::Ints | Kind::Floats | Kind::Texts)
+        matches!(self, Kind::List | Kind::MapOf | Kind::Ints | Kind::Bigs | Kind::Floats | Kind::Texts)
     }
 
     /// An argument printed the way the runtime function takes it (each of
@@ -337,7 +360,7 @@ impl Kind {
             Kind::Operand => format!("crow_runtime::fused::Operand::from(&({}))", arg),
             Kind::Scalar => format!("crow_runtime::mask::Cell::from(&({}))", arg),
             // moved or copied (an item kept) where the call is made
-            Kind::List | Kind::MapOf | Kind::Ints | Kind::Floats | Kind::Texts | Kind::Item => format!("({})", arg),
+            Kind::List | Kind::MapOf | Kind::Ints | Kind::Bigs | Kind::Floats | Kind::Texts | Kind::Item => format!("({})", arg),
             // (an item of a list a name holds, read where it lies)
             _ => match borrowed_index(arg) {
                 Some(item) => format!("({})", item),
@@ -350,6 +373,20 @@ impl Kind {
     /// reference): a value it is handed is not kept, nor copied.
     pub fn borrows(self) -> bool {
         !self.owned() && !matches!(self.each(), Kind::Int | Kind::Whole | Kind::Float | Kind::Moment | Kind::Bool | Kind::Unit | Kind::Cell | Kind::Cells | Kind::Item | Kind::ItemRef)
+    }
+
+    /// How the parameter takes an int past 64 bits: as it is where it holds
+    /// or shows any value (a list's item, `str`'s, `log`'s), as its nearest
+    /// float where it takes a number as a float, and refused where it takes
+    /// 64 bits — a count, a position, a size, a key, a cell (spec, Numbers
+    /// That Keep Every Digit). The width pass converts by it (int_width),
+    /// and the interpreter's rows refuse by it (`groups_in_place`).
+    pub fn takes_big(self) -> TakesBig {
+        match self.each() {
+            Kind::Shown | Kind::Encoded | Kind::ShownDyn | Kind::Item | Kind::ItemRef | Kind::List | Kind::Seq | Kind::MapOf | Kind::MapRef | Kind::Big | Kind::Bigs | Kind::Decimal | Kind::Fraction => TakesBig::AsIs,
+            Kind::Float | Kind::Operand | Kind::Tensor | Kind::Floats => TakesBig::AsFloat,
+            _ => TakesBig::Refused,
+        }
     }
 
     /// Whether the parameter takes the rest of the arguments.
@@ -375,6 +412,9 @@ impl Kind {
     pub fn default_rust(self) -> &'static str {
         match self {
             Kind::Int | Kind::Whole => "0_i64",
+            Kind::Big => "crow_runtime::int::Int::default()",
+            Kind::Decimal => "crow_runtime::decimal::Dec::default()",
+            Kind::Fraction => "crow_runtime::fraction::Frac::default()",
             Kind::Float => "0.0_f64",
             Kind::Moment => "crow_runtime::moments::Moment::default()",
             Kind::Bool => "false",
@@ -395,6 +435,7 @@ impl Kind {
             Kind::Lists => "Vec::<Vec<String>>::new()",
             Kind::Words | Kind::Texts => "Vec::<String>::new()",
             Kind::Ints => "Vec::<i64>::new()",
+            Kind::Bigs => "Vec::<crow_runtime::int::Int>::new()",
             Kind::Floats => "Vec::<f64>::new()",
             Kind::Json => "serde_json::Value::Null",
             Kind::Bytes => "crow_runtime::sys::Bytes::default()",
@@ -529,11 +570,38 @@ fn spans_fixed(params: &[Kind], argc: usize, name: &str) -> Result<([(usize, usi
     Ok((out, params.len().min(MOST_PARAMS)))
 }
 
+/// An int past 64 bits handed where a row takes 64 bits, refused where it is
+/// handed in the words the compiled program's conversion says
+/// (`ir::Who::Row`): the interpreter's ints grow anywhere, so its rows meet
+/// what the compiled program converts before the call. A list is looked
+/// into only where its items are ints the row reads as 64 bits.
+#[inline]
+fn no_big_taken(params: &[Kind], spans: &[(usize, usize)], args: &[CrowValue], name: &str) -> Result<(), String> {
+    for (k, (a, b)) in params.iter().zip(spans) {
+        let each = k.each();
+        if each.takes_big() != TakesBig::Refused {
+            continue;
+        }
+        for v in &args[*a..*b] {
+            let big = match &v.value {
+                Value::Big(n) => Some(crow_runtime::int::Int::Big(n.clone())),
+                Value::Array(items) if matches!(each, Kind::Ints | Kind::Cells | Kind::Keys) => items.iter().find_map(|i| if let Value::Big(n) = &i.value { Some(crow_runtime::int::Int::Big(n.clone())) } else { None }),
+                _ => None,
+            };
+            if let Some(n) = big {
+                return Err(crow_runtime::int::past_64_bits(&crate::ir::Who::row_text(name), &n.brief()));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// `groups`, without allocating: the groups in a fixed array (empty past
 /// the row's parameters).
 #[inline]
 pub fn groups_in_place<'a>(params: &[Kind], args: &'a [CrowValue], name: &str) -> Result<[&'a [CrowValue]; MOST_PARAMS], String> {
     let (spans, n) = spans_fixed(params, args.len(), name)?;
+    no_big_taken(params, &spans[..n], args, name)?;
     let mut out: [&'a [CrowValue]; MOST_PARAMS] = [&[]; MOST_PARAMS];
     for (slot, (a, b)) in out.iter_mut().zip(spans).take(n) {
         *slot = &args[a..b];
@@ -545,6 +613,7 @@ pub fn groups_in_place<'a>(params: &[Kind], args: &'a [CrowValue], name: &str) -
 #[inline]
 pub fn groups_mut_in_place<'a>(params: &[Kind], args: &'a mut [CrowValue], name: &str) -> Result<[&'a mut [CrowValue]; MOST_PARAMS], String> {
     let (spans, n) = spans_fixed(params, args.len(), name)?;
+    no_big_taken(params, &spans[..n], args, name)?;
     let mut out: [&'a mut [CrowValue]; MOST_PARAMS] = Default::default();
     let mut rest = args;
     for (slot, (a, b)) in out.iter_mut().zip(spans).take(n) {
@@ -614,6 +683,7 @@ pub fn read_float(v: &CrowValue) -> Result<f64, String> {
     match &v.value {
         Value::Float(f) => Ok(*f),
         Value::Int(n) => Ok(*n as f64),
+        Value::Big(n) => Ok(crow_runtime::int::Int::Big(n.clone()).to_f64()),
         _ => Err(format!("expected a number, got {}", named(v))),
     }
 }
@@ -669,6 +739,42 @@ pub fn read_tensor(v: &CrowValue) -> Result<Cow<'_, CrowTensor>, String> {
 
 pub fn write_int(n: i64) -> CrowValue {
     CrowValue::ok(Value::Int(n))
+}
+
+/// An exact decimal (an int is the decimal it is).
+pub fn read_decimal(v: &CrowValue) -> Result<crow_runtime::decimal::Dec, String> {
+    match &v.value {
+        Value::Decimal(d) => Ok((**d).clone()),
+        other => match Value::int_of(other) {
+            Some(n) => Ok(crow_runtime::decimal::Dec::of_int(&n)),
+            None => Err(format!("expected a decimal, got {}", named(v))),
+        },
+    }
+}
+
+pub fn write_decimal(d: crow_runtime::decimal::Dec) -> CrowValue {
+    CrowValue::ok(Value::Decimal(std::sync::Arc::new(d)))
+}
+
+/// An exact ratio (an int or a decimal is the fraction it is).
+pub fn read_fraction(v: &CrowValue) -> Result<crow_runtime::fraction::Frac, String> {
+    match &v.value {
+        Value::Fraction(q) => Ok((**q).clone()),
+        Value::Decimal(d) => Ok(crow_runtime::fraction::Frac::of_dec(d)),
+        other => match Value::int_of(other) {
+            Some(n) => Ok(crow_runtime::fraction::Frac::of_int(&n)),
+            None => Err(format!("expected a fraction, got {}", named(v))),
+        },
+    }
+}
+
+pub fn write_fraction(q: crow_runtime::fraction::Frac) -> CrowValue {
+    CrowValue::ok(Value::Fraction(std::sync::Arc::new(q)))
+}
+
+/// A whole number of any size.
+pub fn read_big(v: &CrowValue) -> Result<crow_runtime::int::Int, String> {
+    Value::int_of(&v.value).ok_or_else(|| format!("expected an int, got {}", named(v)))
 }
 
 pub fn write_float(f: f64) -> CrowValue {
@@ -993,6 +1099,15 @@ pub fn write_map_of(m: BTreeMap<String, CrowValue>) -> CrowValue {
     CrowValue::ok(Value::Map(m))
 }
 
+/// A list of whole numbers of any size.
+pub fn read_bigs(v: &CrowValue) -> Result<Vec<crow_runtime::int::Int>, String> {
+    read_items(v, "a list of ints", read_big)
+}
+
+pub fn write_bigs(ns: Vec<crow_runtime::int::Int>) -> CrowValue {
+    CrowValue::ok(Value::Array(std::sync::Arc::new(ns.into_iter().map(|n| CrowValue::ok(Value::of_int(n))).collect())))
+}
+
 pub fn write_ints(ns: Vec<i64>) -> CrowValue {
     CrowValue::ok(Value::Array(std::sync::Arc::new(ns.into_iter().map(write_int).collect())))
 }
@@ -1095,6 +1210,7 @@ pub fn read_operands(group: &[CrowValue]) -> Result<Vec<crow_runtime::fused::Ope
         .map(|v| match &v.value {
             Value::NumArray(t) => Ok(crow_runtime::fused::Operand::Tensor(t.as_ref())),
             Value::Int(n) => Ok(crow_runtime::fused::Operand::Number(*n as f64)),
+            Value::Big(n) => Ok(crow_runtime::fused::Operand::Number(crow_runtime::int::Int::Big(n.clone()).to_f64())),
             Value::Float(x) => Ok(crow_runtime::fused::Operand::Number(*x)),
             _ => Err(format!("expected a tensor or a number, got {}", named(v))),
         })
@@ -1120,6 +1236,9 @@ pub fn read_scalars(group: &[CrowValue]) -> Result<Vec<crow_runtime::mask::Cell<
 macro_rules! read {
     (Int, $g:expr) => { read_int(one($g)?)? };
     (Whole, $g:expr) => { read_whole(one($g)?)? };
+    (Big, $g:expr) => { &read_big(one($g)?)? };
+    (Decimal, $g:expr) => { &read_decimal(one($g)?)? };
+    (Fraction, $g:expr) => { &read_fraction(one($g)?)? };
     (Words, $g:expr) => { &read_words(one($g)?)? };
     (Float, $g:expr) => { read_float(one($g)?)? };
     (Moment, $g:expr) => { read_moment(one($g)?)? };
@@ -1147,6 +1266,7 @@ macro_rules! read {
     (MapRef, $g:expr) => { read_map_ref(one($g)?)? };
     (TextMap, $g:expr) => { &read_text_map(one($g)?)? };
     (Ints, $g:expr) => { read_ints(one($g)?)? };
+    (Bigs, $g:expr) => { read_bigs(one($g)?)? };
     (Floats, $g:expr) => { read_floats(one($g)?)? };
     (Texts, $g:expr) => { read_strs(one($g)?)? };
     (Json, $g:expr) => { &*read_json(one($g)?)? };
@@ -1162,6 +1282,9 @@ macro_rules! read {
 /// The value of an answer by its kind.
 macro_rules! answer {
     (Int, $x:expr) => { write_int($x) };
+    (Big, $x:expr) => { CrowValue::ok(Value::of_int($x)) };
+    (Decimal, $x:expr) => { write_decimal($x) };
+    (Fraction, $x:expr) => { write_fraction($x) };
     (Float, $x:expr) => { write_float($x) };
     (Moment, $x:expr) => { write_moment($x) };
     (Bool, $x:expr) => { write_bool($x) };
@@ -1179,6 +1302,7 @@ macro_rules! answer {
     (List, $x:expr) => { write_list($x) };
     (MapOf, $x:expr) => { write_map_of($x) };
     (Ints, $x:expr) => { write_ints($x) };
+    (Bigs, $x:expr) => { write_bigs($x) };
     (Floats, $x:expr) => { write_floats($x) };
     (Texts, $x:expr) => { write_strs($x) };
     (Markup, $x:expr) => { write_markup($x) };
@@ -1277,6 +1401,9 @@ pub fn value_as(kind: Kind, v: &CrowValue) -> Result<CrowValue, String> {
         Kind::Float => CrowValue::ok(Value::Float(read_float(v)?)),
         Kind::Moment => CrowValue::ok(Value::Moment(read_moment(v)?)),
         Kind::Int | Kind::Whole => CrowValue::ok(Value::Int(read_int(v)?)),
+        Kind::Big => CrowValue::ok(Value::of_int(read_big(v)?)),
+        Kind::Decimal => write_decimal(read_decimal(v)?),
+        Kind::Fraction => write_fraction(read_fraction(v)?),
         Kind::Str => CrowValue::ok(Value::Str(read_str(v)?.to_string())),
         Kind::Bool => CrowValue::ok(Value::Bool(read_bool(v)?)),
         Kind::Bytes => CrowValue::ok(Value::Bytes(read_bytes(v)?)),
@@ -1565,10 +1692,56 @@ pub static ROWS: &[Row] = &[
     // trimmed and a JSON bool refused)
     row!("core.int", "", "int", crow_runtime::cell::int_of_int, (Whole) -> Int, never),
     row!("core.int_of_float", "", "int", crow_runtime::cell::int_of_float, (Float) -> Int, never),
+    row!("core.int_of_decimal", "", "int", crow_runtime::decimal::trunc, (Decimal) -> Big, never),
+    row!("core.int_of_fraction", "", "int", crow_runtime::fraction::trunc, (Fraction) -> Big, never),
     row!("core.int_of_bool", "", "int", crow_runtime::cell::int_of_bool, (Bool) -> Int, never),
     row!("core.int_of_moment", "", "int", crow_runtime::cell::int_of_moment, (Moment) -> Int, never),
     row!("core.int_of", "", "int", crow_runtime::cell::int_of, (Cell) -> Int, value "parse"),
+    // every digit kept: the rows the width pass calls in place of `int`,
+    // `floor`, `ceil`, `round`, `abs`, `min` and `max` where an answer may
+    // grow past 64 bits or a whole number past them is handed (int_width,
+    // `big_form`); no program names them
+    row!("core.__int_big", "", "__int_big", crow_runtime::int::int_of, (Cell) -> Big, value "parse"),
+    row!("core.__int_of_float_big", "", "__int_of_float_big", crow_runtime::int::int_of_float, (Float) -> Big, stops),
+    row!("core.__floor_big", "", "__floor_big", crow_runtime::int::floor, (Float) -> Big, stops),
+    row!("core.__ceil_big", "", "__ceil_big", crow_runtime::int::ceil, (Float) -> Big, stops),
+    row!("core.__round_big", "", "__round_big", crow_runtime::int::round, (Float) -> Big, stops),
+    row!("core.__abs_big", "", "__abs_big", crow_runtime::int::abs, (Big) -> Big, never),
+    row!("core.__min_big", "", "__min_big", crow_runtime::int::min, (Big, Big) -> Big, never),
+    row!("core.__max_big", "", "__max_big", crow_runtime::int::max, (Big, Big) -> Big, never),
+    row!("core.__sort_big", "", "__sort_big", crow_runtime::int::sort, (Bigs) -> Bigs, never),
+    // exact numbers (spec, Numbers That Keep Every Digit): a decimal of text,
+    // an int, a float (the text it shows) or itself; with digits, every
+    // answer it takes part in rounds to them; a fraction of two ints in
+    // lowest terms, of an int or a decimal exactly; each read as an int or a
+    // float, rounded, and the math of a decimal to its digits (kind 'math'
+    // where it has no value)
+    row!("core.decimal_of_text", "", "decimal", crow_runtime::decimal::of_text, (Str) -> Decimal, value "parse"),
+    row!("core.decimal_of_int", "", "decimal", crow_runtime::decimal::of_int, (Big) -> Decimal, never),
+    row!("core.decimal_of_float", "", "decimal", crow_runtime::decimal::of_float, (Float) -> Decimal, stops),
+    row!("core.decimal", "", "decimal", crow_runtime::decimal::same, (Decimal) -> Decimal, never),
+    row!("core.__decimal_digits", "", "__decimal_digits", crow_runtime::decimal::with_digits, (Decimal, Whole) -> Decimal, stops),
+    row!("core.fraction", "", "fraction", crow_runtime::fraction::of_parts, (Big, Big) -> Fraction, value "math"),
+    row!("core.fraction_of_int", "", "fraction", crow_runtime::fraction::of_int, (Big) -> Fraction, never),
+    row!("core.fraction_of_decimal", "", "fraction", crow_runtime::fraction::of_dec, (Decimal) -> Fraction, never),
+    row!("core.fraction_same", "", "fraction", crow_runtime::fraction::same, (Fraction) -> Fraction, never),
+    row!("core.round_decimal", "", "round", crow_runtime::decimal::round, (Decimal) -> Big, never),
+    row!("core.round_decimal_places", "", "round", crow_runtime::decimal::round_places, (Decimal, Whole) -> Decimal, never),
+    row!("core.floor_decimal", "", "floor", crow_runtime::decimal::floor, (Decimal) -> Big, never),
+    row!("core.ceil_decimal", "", "ceil", crow_runtime::decimal::ceil, (Decimal) -> Big, never),
+    row!("core.abs_decimal", "", "abs", crow_runtime::decimal::abs, (Decimal) -> Decimal, never),
+    row!("core.min_decimals", "", "min", crow_runtime::decimal::min, (Decimal, Decimal) -> Decimal, never),
+    row!("core.max_decimals", "", "max", crow_runtime::decimal::max, (Decimal, Decimal) -> Decimal, never),
+    row!("core.sqrt_decimal", "", "sqrt", crow_runtime::decimal::sqrt, (Decimal) -> Decimal, value "math"),
+    row!("core.round_fraction", "", "round", crow_runtime::fraction::round, (Fraction) -> Big, never),
+    row!("core.floor_fraction", "", "floor", crow_runtime::fraction::floor, (Fraction) -> Big, never),
+    row!("core.ceil_fraction", "", "ceil", crow_runtime::fraction::ceil, (Fraction) -> Big, never),
+    row!("core.abs_fraction", "", "abs", crow_runtime::fraction::abs, (Fraction) -> Fraction, never),
+    row!("core.min_fractions", "", "min", crow_runtime::fraction::min, (Fraction, Fraction) -> Fraction, never),
+    row!("core.max_fractions", "", "max", crow_runtime::fraction::max, (Fraction, Fraction) -> Fraction, never),
     row!("core.float_of_int", "", "float", crow_runtime::cell::float_of_int, (Whole) -> Float, never),
+    row!("core.float_of_decimal", "", "float", crow_runtime::decimal::to_float, (Decimal) -> Float, never),
+    row!("core.float_of_fraction", "", "float", crow_runtime::fraction::to_float, (Fraction) -> Float, never),
     row!("core.float", "", "float", crow_runtime::cell::float_of_float, (Float) -> Float, never),
     row!("core.float_of_bool", "", "float", crow_runtime::cell::float_of_bool, (Bool) -> Float, never),
     row!("core.float_of_moment", "", "float", crow_runtime::cell::float_of_moment, (Moment) -> Float, never),
@@ -1656,6 +1829,12 @@ pub static ROWS: &[Row] = &[
     row!("math.atan2", "math", "atan2", crow_runtime::math::atan2, (Tensor, Tensor) -> Tensor, stops),
     // element-wise: a number and a tensor share one rule (the number's row
     // first, so a number never reaches the tensor's)
+    row!("math.exp_decimal", "math", "exp", crow_runtime::decimal::exp, (Decimal) -> Decimal, value "math"),
+    row!("math.ln_decimal", "math", "ln", crow_runtime::decimal::ln, (Decimal) -> Decimal, value "math"),
+    row!("math.sin_decimal", "math", "sin", crow_runtime::decimal::sin, (Decimal) -> Decimal, value "math"),
+    row!("math.cos_decimal", "math", "cos", crow_runtime::decimal::cos, (Decimal) -> Decimal, value "math"),
+    row!("math.tan_decimal", "math", "tan", crow_runtime::decimal::tan, (Decimal) -> Decimal, value "math"),
+    row!("math.atan_decimal", "math", "atan", crow_runtime::decimal::atan, (Decimal) -> Decimal, value "math"),
     row!("math.exp_n", "math", "exp", crow_runtime::math::exp_n, (Float) -> Float, never),
     row!("math.exp_t", "math", "exp", crow_runtime::math::exp_t, (Tensor) -> Tensor, never),
     row!("math.ln_n", "math", "ln", crow_runtime::math::ln_n, (Float) -> Float, never),
@@ -2079,6 +2258,9 @@ fn listed(items: &[String], last: &str) -> String {
 pub enum Arg {
     Int,
     Float,
+    /// An exact decimal, and an exact ratio.
+    Decimal,
+    Fraction,
     /// A moment, and a list of them.
     Moment,
     Moments,
@@ -2139,6 +2321,8 @@ impl Arg {
         match self {
             Arg::Int => "an int",
             Arg::Float => "a number",
+            Arg::Decimal => "a decimal",
+            Arg::Fraction => "a fraction",
             Arg::Moment => "a moment",
             Arg::Moments => "a list of moments",
             Arg::Json => "a JSON value",
@@ -2176,8 +2360,10 @@ impl Arg {
             // a value that can fail is handed on as its error before the
             // call: the call takes what it holds
             Ty::Result(inner) => Arg::of_type(inner),
-            Ty::Int => Arg::Int,
+            Ty::Int | Ty::Big => Arg::Int,
             Ty::Float => Arg::Float,
+            Ty::Decimal => Arg::Decimal,
+            Ty::Fraction => Arg::Fraction,
             Ty::Moment => Arg::Moment,
             Ty::Json => Arg::Json,
             Ty::List(inner) => match inner.as_ref() {
@@ -2230,8 +2416,10 @@ impl Arg {
     /// are what they hold.
     pub fn of_value(v: &CrowValue) -> Arg {
         match &v.value {
-            Value::Int(_) => Arg::Int,
+            Value::Int(_) | Value::Big(_) => Arg::Int,
             Value::Float(_) => Arg::Float,
+            Value::Decimal(_) => Arg::Decimal,
+            Value::Fraction(_) => Arg::Fraction,
             Value::NumArray(_) => Arg::Tensor,
             Value::Array(items) => match items.first() {
                 Some(first) => Arg::of_items(Arg::of_value(first)),
@@ -2258,7 +2446,9 @@ impl Kind {
     /// The kind as a refusal names what a parameter takes.
     pub fn words(self) -> &'static str {
         match self {
-            Kind::Int | Kind::Whole => "an int",
+            Kind::Int | Kind::Whole | Kind::Big => "an int",
+            Kind::Decimal => "a decimal",
+            Kind::Fraction => "a fraction",
             Kind::Float => "a number",
             Kind::Moment => "a moment",
             Kind::Bool => "a bool",
@@ -2284,7 +2474,7 @@ impl Kind {
             Kind::Unit => "nothing",
             Kind::List | Kind::Seq => "a list",
             Kind::Item | Kind::ItemRef => "a value",
-            Kind::Ints => "a list of ints",
+            Kind::Ints | Kind::Bigs => "a list of ints",
             Kind::Floats => "a list of numbers",
             Kind::Texts => "a list of text",
             Kind::Json => "a JSON value",
@@ -2315,7 +2505,9 @@ impl Kind {
             || match self.each() {
                 Kind::Int | Kind::Float => matches!(a, Arg::Int | Arg::Float),
                 Kind::Moment => a == Arg::Moment,
-                Kind::Whole => a == Arg::Int,
+                Kind::Whole | Kind::Big => a == Arg::Int,
+                Kind::Decimal => a == Arg::Decimal,
+                Kind::Fraction => a == Arg::Fraction,
                 // numbers held as a list or a column are converted where
                 // they meet the parameter (the lowering's row arguments)
                 // (a mask where numbers are asked is numbers: true 1, false 0)
@@ -2340,7 +2532,7 @@ impl Kind {
                 Kind::List | Kind::Seq => matches!(a, Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Tensors | Arg::Records | Arg::Maps | Arg::Items | Arg::Chunks | Arg::Fallible | Arg::FallibleNumbers | Arg::Moments),
                 Kind::Item | Kind::ItemRef => true,
                 Kind::MapOf | Kind::MapRef | Kind::TextMap => a == Arg::Map,
-                Kind::Ints => a == Arg::Ints,
+                Kind::Ints | Kind::Bigs => a == Arg::Ints,
                 Kind::Floats => a == Arg::Floats,
                 Kind::Json => a == Arg::Json,
                 Kind::Column => a == Arg::Column,
@@ -2809,6 +3001,26 @@ pub fn taken_path(id: &str) -> Option<&'static str> {
 /// position `i` of `argc` (a list it pushes onto, a map it sets, a text it
 /// changes where it lies): a value read for the last time there is moved
 /// into the call; anywhere else the row only reads it, and it is lent.
+/// The row that keeps every digit in place of one that answers 64 bits
+/// (int_width): `int` of text or a float, `floor`, `ceil` and `round` answer
+/// a whole number of any size; `abs`, `min` and `max` keep one handed to
+/// them. None for a row with no such form.
+pub fn big_form(id: &str) -> Option<&'static Row> {
+    let big = match id {
+        "core.int_of" => "core.__int_big",
+        "core.int_of_float" => "core.__int_of_float_big",
+        "core.floor" => "core.__floor_big",
+        "core.ceil" => "core.__ceil_big",
+        "core.round" => "core.__round_big",
+        "core.abs_int" => "core.__abs_big",
+        "core.min_ints" => "core.__min_big",
+        "core.max_ints" => "core.__max_big",
+        "core.sort_ints" => "core.__sort_big",
+        _ => return None,
+    };
+    ROWS.iter().find(|r| r.id == big)
+}
+
 pub fn keeps_storage(row: &Row, i: usize, argc: usize) -> bool {
     if i == 0 && (taken_path(row.id).is_some() || row.id == "core.push_number") {
         return true;

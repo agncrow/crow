@@ -9,6 +9,7 @@ mod appbook;
 mod builtins;
 mod ir;
 mod harness;
+mod int_width;
 #[cfg(test)]
 mod interp_tests;
 mod ir_interp;

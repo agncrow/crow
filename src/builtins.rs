@@ -51,7 +51,9 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
             } else {
                 match &args[0].value {
                     Value::App(..) => "app".to_string(),
-                    Value::Int(_) => "int".to_string(),
+                    Value::Int(_) | Value::Big(_) => "int".to_string(),
+                    Value::Decimal(_) => "decimal".to_string(),
+                    Value::Fraction(_) => "fraction".to_string(),
                     Value::Float(_) => "float".to_string(),
                     Value::Moment(_) => "moment".to_string(),
                     Value::Str(_) => "str".to_string(),
@@ -303,6 +305,12 @@ pub fn crow_to_json(trace: &str, val: &CrowValue) -> Result<serde_json::Value, S
     match &val.value {
         Value::Json(j) => Ok((**j).clone()),
         Value::Int(n) => Ok(serde_json::Value::Number(serde_json::Number::from(*n))),
+        // past 64 bits, the text of its digits (crow_runtime::int)
+        Value::Big(n) => Ok(crow_runtime::int::Int::Big(n.clone()).to_json_value()),
+        // an exact number as the text it shows (JSON's readers hold numbers
+        // as floats, and have no ratio)
+        Value::Decimal(d) => Ok(serde_json::Value::String(d.to_string())),
+        Value::Fraction(q) => Ok(serde_json::Value::String(q.to_string())),
         // JSON has no NaN or infinity: those encode as null (json.rs)
         Value::Float(f) => Ok(crow_runtime::json::float_to_json(*f)),
         Value::Moment(m) => Ok(serde_json::Value::String(m.to_string())),

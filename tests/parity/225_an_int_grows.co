@@ -1,0 +1,67 @@
+--- An int is a whole number of any size, in both modes: arithmetic past 64
+--- bits gives the exact answer, a number back within them is an int as any
+--- other, and one handed where 64 bits are taken is refused there.
+log[2 ^ 100]
+log[2 ^ 64 - 1]
+fn fact[n]
+    r = 1
+    for i in range[2, n + 1]
+        r = r * i
+    return r
+log[fact[25]]
+log[len[str[fact[500]]]]
+
+--- a sum of growing terms in a loop
+a = 0
+b = 1
+for k in range[150]
+    t = a + b
+    a = b
+    b = t
+log[a]
+
+--- back within 64 bits, it compares and indexes as any int
+m = 9223372036854775807
+back = (m + 10) - 10
+log[back eq m]
+xs = [10, 20, 30]
+log[xs[(m + 1) - m]]
+
+--- a quotient rounds toward zero, a remainder has the left's sign
+big = 0 - (fact[22] + 123)
+log[big / 7]
+log[big % 1000]
+log[abs[big]]
+log[max[big, 5]]
+log[min[big, 5]]
+log[fact[21] gt m]
+log[-big]
+
+--- text, JSON and the kind
+n = int['123456789012345678901234567890']
+log[n + 1]
+log[str[n * n]]
+log['`n` has `len[str[n]]` digits']
+log[encode[[n, 1]]]
+log[type[n]]
+
+--- lists, maps and records hold them
+struct Acct [name, cents]
+acc = Acct['a', fact[20] * 100]
+log[acc.cents]
+ns = [fact[22], fact[20], fact[21]]
+log[ns[0] - ns[2]]
+log[sort[ns]]
+log[len[ns]]
+totals = map[x = fact[23]]
+log[totals['x']]
+
+--- a float of one is the nearest; a float past 64 bits is the int it holds
+log[float[fact[25]]]
+log[int[10.0 ^ 30]]
+log[floor[1.5 * 10.0 ^ 20]]
+log[round[-2.5 * 10.0 ^ 19]]
+
+--- a count past 64 bits is refused where it is taken
+log[len[range[fact[21]]]]
+log['not reached']

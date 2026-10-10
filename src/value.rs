@@ -84,6 +84,14 @@ impl CrowValue {
     /// The int it is, when it is a plain one (no failure): what a typed
     /// instruction reads (ir_interp/prepared.rs).
     #[inline(always)]
+    /// A whole number, in 64 bits or past them, of a plain value.
+    pub fn whole(&self) -> Option<crow_runtime::int::Int> {
+        if !self.is_ok() {
+            return None;
+        }
+        Value::int_of(&self.value)
+    }
+
     pub fn plain_int(&self) -> Option<i64> {
         match &self.value {
             Value::Int(n) if self.is_ok() => Some(*n),
@@ -264,6 +272,13 @@ impl PartialEq for CrowValue {
 #[derive(Debug, Clone)]
 pub enum Value {
     Int(i64),
+    /// A whole number past 64 bits (spec, Numbers That Keep Every Digit): an
+    /// int within them is always `Int`, so equal ints are equal values.
+    Big(std::sync::Arc<crow_runtime::int::IBig>),
+    /// An exact base-ten number (spec, Numbers That Keep Every Digit).
+    Decimal(std::sync::Arc<crow_runtime::decimal::Dec>),
+    /// An exact ratio of two ints.
+    Fraction(std::sync::Arc<crow_runtime::fraction::Frac>),
     Float(f64),
     Str(String),
     Bool(bool),
@@ -431,11 +446,30 @@ impl StructInstance {
 }
 
 impl Value {
+    /// An int as the runtime's whole number (in 64 bits or past them).
+    pub fn int_of(v: &Value) -> Option<crow_runtime::int::Int> {
+        match v {
+            Value::Int(n) => Some(crow_runtime::int::Int::Small(*n)),
+            Value::Big(b) => Some(crow_runtime::int::Int::Big(b.clone())),
+            _ => None,
+        }
+    }
+
+    /// The value of a whole number: `Int` where it fits 64 bits.
+    pub fn of_int(n: crow_runtime::int::Int) -> Value {
+        match n {
+            crow_runtime::int::Int::Small(n) => Value::Int(n),
+            crow_runtime::int::Int::Big(b) => Value::Big(b),
+        }
+    }
+
     /// Return the Crow type name for this value
     pub fn type_name(&self) -> &'static str {
         match self {
             Value::App(..) => "app",
-            Value::Int(_) => "int",
+            Value::Int(_) | Value::Big(_) => "int",
+            Value::Decimal(_) => "decimal",
+            Value::Fraction(_) => "fraction",
             Value::Float(_) => "float",
             Value::Moment(_) => "moment",
             Value::Str(_) => "string",
@@ -468,6 +502,9 @@ impl fmt::Display for Value {
         match self {
             Value::App(a) => write!(f, "app[{}]", a.view.name),
             Value::Int(n) => write!(f, "{}", n),
+            Value::Big(n) => write!(f, "{}", n),
+            Value::Decimal(d) => write!(f, "{}", d),
+            Value::Fraction(q) => write!(f, "{}", q),
             Value::Float(n) => write!(f, "{}", n),
             Value::Moment(m) => write!(f, "{}", m),
             Value::Str(s) => write!(f, "{}", s),

@@ -1,0 +1,36 @@
+--- An int that grows past 64 bits meets the rest of the language as any
+--- int does, in both modes: a record's field written and read again, a
+--- collecting loop whose branches yield a big and a small one, a big one
+--- divided by a float, one shown in a record. A function handed as a value
+--- takes and answers ints of 64 bits — what takes it names a function of
+--- them — so a bigger answer is refused where it crosses, alike in both
+--- modes; called by its name it keeps every digit. (Compiled, each of these
+--- had not built.)
+struct Acct [name, cents]
+
+fn grow[n]
+    return n * n * n * n * n
+
+fn apply[f, x]
+    return f[x]
+
+a = Acct['a', 0]
+q = grow[100000]
+a.cents = q
+log[q + 1]
+log[a]
+
+xs = for k in range[4]
+    if k % 2 eq 0
+        grow[100000 + k]
+    else
+        k
+log[xs]
+
+r = int['123456789012345678901234567890']
+log[r / 2.0]
+log[float[r] / 4.0]
+
+log[apply[grow, 10]]
+log[apply[grow, 100000]]
+log['not reached']

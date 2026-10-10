@@ -628,8 +628,8 @@ fn test_auto_propagation_uses_if_else() {
 fn test_auto_propagation_unwraps_args() {
     let src = "fn double[x]\n    return x * 2\nbad = int['hello']\nresult = double[bad]\n";
     let rust = transpile(src);
-    // Function should take i64, not CrowResult<i64>
-    assert!(rust.contains("fn double(x: i64)"), "function param should be base type, not CrowResult\n{}", rust);
+    // Function should take the int (one read from text grows), not CrowResult<…>
+    assert!(rust.contains("fn double(x: crow_runtime::int::Int)"), "function param should be base type, not CrowResult\n{}", rust);
 }
 
 #[test]
@@ -637,7 +637,8 @@ fn test_int_error_message_format() {
     // the message is the runtime's, which both modes call
     let src = "x = int['bad']\n";
     let rust = transpile(src);
-    assert!(rust.contains("crow_runtime::cell::int_of("), "should call the runtime's conversion\n{}", rust);
+    // (an int read from text keeps every digit: the row that grows)
+    assert!(rust.contains("crow_runtime::int::int_of("), "should call the runtime's conversion\n{}", rust);
     assert!(rust.contains("kind: \"parse\""), "{}", rust);
 }
 
@@ -2291,9 +2292,9 @@ fn a_helper_sees_what_its_caller_wrote_so_far() {
 #[test]
 fn an_error_of_another_type_returned_from_a_function_is_converted() {
     let rust = transpile("fn half[s]\n    n = int[s]\n    if not n.ok\n        return n\n    return n / 2.0\nlog[half['8']]\n");
-    // (the error travels; the int it would hold converts to the float the
-    // function answers)
-    assert!(rust.contains("ok: _r.ok, value: (_r.value as f64)"), "{}", rust);
+    // (the error travels; the int it would hold — one read from text grows —
+    // converts to the float the function answers)
+    assert!(rust.contains("value: (_r.value).to_f64()") || rust.contains("ok: _r.ok, value: (_r.value as f64)"), "{}", rust);
 }
 
 /// A frame assigned beside an independent statement keeps its columns'

@@ -1291,19 +1291,35 @@ impl IrInterp {
                 match how {
                     Convert::IntToFloat => match &v.value {
                         Value::Int(n) if v.is_ok() => CrowValue::ok(Value::Float(*n as f64)),
+                        Value::Big(n) if v.is_ok() => CrowValue::ok(Value::Float(n.to_f64().value())),
                         _ => v,
                     },
+                    // an int held as a growing one is the int (the interpreter's
+                    // grow as they run); one handed where 64 bits are taken is
+                    // refused past them
+                    Convert::ToBig => v,
+                    // an int, or a float literal, as the decimal it is; an int
+                    // or a decimal as the fraction it is (an error stays)
+                    Convert::ToDecimal if v.is_ok() => match &v.value {
+                        Value::Float(x) => crate::table::write_decimal(crow_runtime::decimal::of_literal(*x)),
+                        _ => crate::table::write_decimal(crate::table::read_decimal(&v)?),
+                    },
+                    Convert::ToFraction if v.is_ok() => crate::table::write_fraction(crate::table::read_fraction(&v)?),
+                    Convert::ToDecimal | Convert::ToFraction => v,
+                    Convert::ToSmall(who) => crate::ops::small_value(v, *who)?,
                     // a holder of ints as one of floats (an error stays)
                     Convert::IntsToFloats => match &v.value {
                         Value::Array(items) if v.is_ok() => CrowValue::ok(Value::Array(
                             items.iter().map(|i| match &i.value {
                                 Value::Int(n) if i.is_ok() => CrowValue::ok(Value::Float(*n as f64)),
+                                Value::Big(n) if i.is_ok() => CrowValue::ok(Value::Float(n.to_f64().value())),
                                 _ => i.clone(),
                             }).collect::<Vec<_>>().into(),
                         )),
                         Value::Map(m) if v.is_ok() => CrowValue::ok(Value::Map(
                             m.iter().map(|(k, i)| (k.clone(), match &i.value {
                                 Value::Int(n) if i.is_ok() => CrowValue::ok(Value::Float(*n as f64)),
+                                Value::Big(n) if i.is_ok() => CrowValue::ok(Value::Float(n.to_f64().value())),
                                 _ => i.clone(),
                             })).collect(),
                         )),
@@ -1374,10 +1390,12 @@ impl IrInterp {
                 {
                     let (a, b) = (*a, *b);
                     let fast = match bop {
-                        BinOp::Add => Some(Value::Int(crow_runtime::stops::add(a, b)?)),
-                        BinOp::Sub => Some(Value::Int(crow_runtime::stops::sub(a, b)?)),
-                        BinOp::Mul => Some(Value::Int(crow_runtime::stops::mul(a, b)?)),
-                        BinOp::Mod => Some(Value::Int(crow_runtime::stops::rem(a, b)?)),
+                        // (past 64 bits, or a zero divisor: the general way,
+                        // which grows the int or stops)
+                        BinOp::Add => a.checked_add(b).map(Value::Int),
+                        BinOp::Sub => a.checked_sub(b).map(Value::Int),
+                        BinOp::Mul => a.checked_mul(b).map(Value::Int),
+                        BinOp::Mod => a.checked_rem(b).map(Value::Int),
                         BinOp::Eq => Some(Value::Bool(a == b)),
                         BinOp::Ne => Some(Value::Bool(a != b)),
                         BinOp::Gt => Some(Value::Bool(a > b)),

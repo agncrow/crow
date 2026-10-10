@@ -672,7 +672,24 @@ impl<'a> Lowerer<'a> {
         // frame's column as its numbers); a list of text is no numbers (the
         // compiled program had parsed it, where the interpreter made each
         // item an error)
-        let is_num_like = |t: &Ty| matches!(t, Ty::Int | Ty::Float | Ty::Tensor(..) | Ty::Sparse | Ty::Column(_));
+        let is_num_like = |t: &Ty| matches!(t, Ty::Int | Ty::Big | Ty::Float | Ty::Tensor(..) | Ty::Sparse | Ty::Column(_));
+        // an exact number meets ints, floats (refused where the operator is
+        // lowered, a literal read as the number it writes) and its kin
+        let exact = |t: &Ty| matches!(t, Ty::Decimal | Ty::Fraction);
+        if exact(&lt) || exact(&rt) {
+            let scalar = |t: &Ty| matches!(t, Ty::Int | Ty::Big | Ty::Float | Ty::Decimal | Ty::Fraction);
+            if !scalar(&lt) || !scalar(&rt) {
+                let op_str = match op {
+                    BinOp::Add => "+",
+                    BinOp::Sub => "-",
+                    BinOp::Mul => "*",
+                    BinOp::Div => "/",
+                    _ => "%",
+                };
+                self.refuse(format!("cannot use '{}' with {} and {}", op_str, lt.crow_name(), rt.crow_name()));
+            }
+            return;
+        }
         // a moment: on or back by seconds, and the seconds between two
         let moment = |t: &Ty| matches!(t, Ty::Moment);
         if moment(&lt) || moment(&rt) {
@@ -1972,7 +1989,7 @@ mod tests {
     fn test_wrong_arg_count_builtin() {
         assert!(check_source("x = min[1]\n").unwrap_err().contains("min[] takes 2 arguments, got 1"));
         // a kind no row takes is refused before either mode runs
-        assert!(check_source("x = min['a', 'b']\n").unwrap_err().contains("min[] takes an int and an int, a number and a number or a moment and a moment, got text and text"));
+        assert!(check_source("x = min['a', 'b']\n").unwrap_err().contains("min[] takes an int and an int, a number and a number, a decimal and a decimal, a fraction and a fraction or a moment and a moment, got text and text"));
         assert!(check_source("x = trim[3]\n").unwrap_err().contains("trim[] takes text, got an int"));
     }
 
@@ -2247,7 +2264,7 @@ fn many_words(item: &str) -> String {
 /// lists, maps — none where it shows only as the program runs.
 pub(crate) fn item_kind(t: &Ty) -> Option<(String, String)> {
     Some(match t.payload() {
-        Ty::Int | Ty::Float => ("numbers".to_string(), "a number".to_string()),
+        Ty::Int | Ty::Big | Ty::Float | Ty::Decimal | Ty::Fraction => ("numbers".to_string(), "a number".to_string()),
         Ty::Str | Ty::Markup => ("text".to_string(), "text".to_string()),
         Ty::Bool => ("bools".to_string(), "a bool".to_string()),
         Ty::Record(n) | Ty::OptRecord(n) => (format!("{} records", crate::lower::shown(n)), format!("a {} record", crate::lower::shown(n))),
@@ -2260,7 +2277,7 @@ pub(crate) fn item_kind(t: &Ty) -> Option<(String, String)> {
 
 fn order_side(t: &Ty) -> Option<OrderSide> {
     Some(match t {
-        Ty::Int | Ty::Float => OrderSide::One("a number"),
+        Ty::Int | Ty::Big | Ty::Float | Ty::Decimal | Ty::Fraction => OrderSide::One("a number"),
         Ty::Str | Ty::Markup => OrderSide::One("text"),
         Ty::Bool => OrderSide::One("a bool"),
         Ty::Moment => OrderSide::One("a moment"),

@@ -78,8 +78,73 @@ impl Emitter {
             Expr::FnRef(name, _) => self.fn_ref(name),
             Expr::Call { .. } | Expr::Effect { .. } => self.call(e),
             Expr::Convert { how, expr, ty } => match how {
+                // an int held as a growing one, or a growing one handed where
+                // 64 bits are taken (refused past them, as the interpreter
+                // refuses it): item by item in a list or a map
+                Convert::ToBig => {
+                    let inner = self.owned_expr(expr);
+                    let held = self.tt(expr);
+                    let grow = |v: &str| match Self::inner(&held) {
+                        Ty::List(_) => format!("({}).into_iter().map(crow_runtime::int::Int::from).collect::<Vec<crow_runtime::int::Int>>()", v),
+                        Ty::Map(..) => format!("({}).into_iter().map(|(k, v)| (k, crow_runtime::int::Int::from(v))).collect::<std::collections::BTreeMap<_, crow_runtime::int::Int>>()", v),
+                        _ => format!("crow_runtime::int::Int::from({})", v),
+                    };
+                    // (a value that can fail grows as its payload, its failure kept)
+                    if matches!(held, Ty::Result(_)) {
+                        return format!("{{ let _r = &({}); CrowResult {{ ok: _r.ok, value: {}, reason: _r.reason.clone(), kind: _r.kind.clone(), trace: _r.trace.clone(), captured: _r.captured }} }}", inner, grow("_r.value.clone()"));
+                    }
+                    grow(&inner)
+                }
+                // an int, or a float literal, as the decimal it is; an int or a
+                // decimal as the fraction it is (a value that can fail
+                // converts as its payload)
+                Convert::ToDecimal | Convert::ToFraction => {
+                    let inner = self.owned_expr(expr);
+                    let from = Self::inner(&self.tt(expr));
+                    let one = |v: &str| -> String {
+                        match (how, &from) {
+                            (Convert::ToDecimal, Ty::Int) => format!("crow_runtime::decimal::Dec::of_int(&crow_runtime::int::Int::from({}))", v),
+                            (Convert::ToDecimal, Ty::Big) => format!("crow_runtime::decimal::Dec::of_int(&({}))", v),
+                            (Convert::ToDecimal, Ty::Float) => format!("crow_runtime::decimal::of_literal({})", v),
+                            (Convert::ToFraction, Ty::Int) => format!("crow_runtime::fraction::Frac::of_int(&crow_runtime::int::Int::from({}))", v),
+                            (Convert::ToFraction, Ty::Big) => format!("crow_runtime::fraction::Frac::of_int(&({}))", v),
+                            (Convert::ToFraction, Ty::Decimal) => format!("crow_runtime::fraction::Frac::of_dec(&({}))", v),
+                            _ => v.to_string(),
+                        }
+                    };
+                    if matches!(ty, Ty::Result(_)) && matches!(self.tt(expr), Ty::Result(_)) {
+                        format!("{{ let _r = &({}); CrowResult {{ ok: _r.ok, value: {}, reason: _r.reason.clone(), kind: _r.kind.clone(), trace: _r.trace.clone(), captured: _r.captured }} }}", inner, one("_r.value"))
+                    } else {
+                        one(&inner)
+                    }
+                }
+                Convert::ToSmall(who) => {
+                    let inner = self.expr(expr);
+                    let line = self.line_now();
+                    let what = who.text();
+                    let held = self.tt(expr);
+                    let small = |v: &str| match Self::inner(&held) {
+                        Ty::List(_) => format!("({}).iter().map(|i| i.small_for({:?})).collect::<Result<Vec<i64>, String>>().unwrap_or_else(|e| crow_stop({}, e))", v, what, line),
+                        Ty::Map(..) => format!("({}).iter().map(|(k, v)| v.small_for({:?}).map(|v| (k.clone(), v))).collect::<Result<std::collections::BTreeMap<_, i64>, String>>().unwrap_or_else(|e| crow_stop({}, e))", v, what, line),
+                        _ => format!("({}).small_for({:?}).unwrap_or_else(|e| crow_stop({}, e))", v, what, line),
+                    };
+                    // (a value that can fail keeps its failure; a failed one's
+                    // placeholder holds no number past 64 bits)
+                    if matches!(held, Ty::Result(_)) {
+                        return format!("{{ let _r = &({}); CrowResult {{ ok: _r.ok, value: {}, reason: _r.reason.clone(), kind: _r.kind.clone(), trace: _r.trace.clone(), captured: _r.captured }} }}", inner, small("_r.value"));
+                    }
+                    small(&inner)
+                }
                 Convert::IntToFloat => {
                     let inner = self.expr(expr);
+                    // an int that grows: its nearest float
+                    let big = matches!(Self::inner(&self.tt(expr)), Ty::Big);
+                    if big && matches!(ty, Ty::Result(_)) {
+                        return format!("{{ let _r = &({}); CrowResult {{ ok: _r.ok, value: (_r.value).to_f64(), reason: _r.reason.clone(), kind: _r.kind.clone(), trace: _r.trace.clone(), captured: _r.captured }} }}", inner);
+                    }
+                    if big {
+                        return format!("({}).to_f64()", inner);
+                    }
                     if self.emitting_dual {
                         inner
                     } else if self.emitting_traced {
@@ -100,7 +165,9 @@ impl Emitter {
                         return inner;
                     }
                     let map = match Self::inner(&self.tt(expr)) {
+                        Ty::Map(_, v) if matches!(v.as_ref(), Ty::Big) => "into_iter().map(|(k, v)| (k, v.to_f64())).collect::<std::collections::BTreeMap<String, f64>>()",
                         Ty::Map(..) => "into_iter().map(|(k, v)| (k, v as f64)).collect::<std::collections::BTreeMap<String, f64>>()",
+                        Ty::List(i) if matches!(i.as_ref(), Ty::Big) => "into_iter().map(|v| v.to_f64()).collect::<Vec<f64>>()",
                         _ => "into_iter().map(|v| v as f64).collect::<Vec<f64>>()",
                     };
                     if matches!(ty, Ty::Result(_)) {
@@ -185,6 +252,11 @@ impl Emitter {
                         Ty::List(item) if *item == Ty::Bool => {
                             self.needs_crow_runtime = true;
                             format!("{{ let _v: Vec<f64> = ({}).iter().map(|x| if *x {{ 1.0 }} else {{ 0.0 }}).collect(); let _n = _v.len(); crow_runtime::tensor::CrowTensor::from_vec(_v, vec![_n]) }}", inner)
+                        }
+                        // whole numbers that grow: each its nearest float
+                        Ty::List(item) if *item == Ty::Big => {
+                            self.needs_crow_runtime = true;
+                            format!("{{ let _v: Vec<f64> = ({}).iter().map(|x| x.to_f64()).collect(); let _n = _v.len(); crow_runtime::tensor::CrowTensor::from_vec(_v, vec![_n]) }}", inner)
                         }
                         Ty::List(_) => {
                             self.needs_crow_runtime = true;
@@ -315,7 +387,7 @@ impl Emitter {
             if Emitter::place_read(base) {
                 let t = self.tt(e);
                 let non_copy = matches!(t, Ty::Result(_))
-                    || matches!(Self::inner(&t), Ty::Tensor(..) | Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Markup | Ty::Frame(_) | Ty::Record(_) | Ty::OptRecord(_) | Ty::Json);
+                    || matches!(Self::inner(&t), Ty::Tensor(..) | Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Markup | Ty::Frame(_) | Ty::Record(_) | Ty::OptRecord(_) | Ty::Json | Ty::Big | Ty::Decimal | Ty::Fraction);
                 if non_copy && !s.ends_with(".clone()") {
                     return format!("{}.clone()", s);
                 }
@@ -341,7 +413,7 @@ impl Emitter {
             }
             let non_copy = matches!(
                 t.text(),
-                Ty::Str | Ty::List(_) | Ty::Tensor(..) | Ty::Map(..) | Ty::Record(_) | Ty::Frame(_) | Ty::Json | Ty::Bytes | Ty::Stream | Ty::Result(_)
+                Ty::Str | Ty::List(_) | Ty::Tensor(..) | Ty::Map(..) | Ty::Record(_) | Ty::Frame(_) | Ty::Json | Ty::Bytes | Ty::Stream | Ty::Result(_) | Ty::Big | Ty::Decimal | Ty::Fraction
             );
             if non_copy {
                 return format!("{}.clone()", s);
@@ -359,7 +431,7 @@ impl Emitter {
                 return s;
             }
             let t = self.local_ty(name).unwrap_or_else(|| as_inferred(ty));
-            if matches!(t.text(), Ty::Str | Ty::List(_) | Ty::Tensor(..) | Ty::Map(..) | Ty::Record(_) | Ty::Frame(_) | Ty::Json | Ty::Bytes | Ty::Stream | Ty::Result(_)) {
+            if matches!(t.text(), Ty::Str | Ty::List(_) | Ty::Tensor(..) | Ty::Map(..) | Ty::Record(_) | Ty::Frame(_) | Ty::Json | Ty::Bytes | Ty::Stream | Ty::Result(_) | Ty::Big | Ty::Decimal | Ty::Fraction) {
                 return format!("{}.clone()", s);
             }
         }
@@ -504,6 +576,10 @@ impl Emitter {
             let result_type = match op {
                 _ if mask.is_some() => Ty::List(Box::new(Ty::Bool)),
                 "eq" | "ne" | "gt" | "lt" | "gte" | "lte" | "and" | "or" => Ty::Bool,
+                "mod" if matches!(lti, Ty::Big) => Ty::Big,
+                "pow" if matches!(lti, Ty::Decimal | Ty::Fraction) => lti.clone(),
+                // (a growing int beside a float is its nearest float)
+                _ if (matches!(lti, Ty::Big) && rti == Ty::Float) || (lti == Ty::Float && matches!(rti, Ty::Big)) => Ty::Float,
                 "mod" => Ty::Int,
                 // the seconds between two moments; a moment on or back
                 "sub" if matches!((&lti, &rti), (Ty::Moment, Ty::Moment)) => Ty::Float,
@@ -520,10 +596,16 @@ impl Emitter {
                 _ if self.tensor_arith(op, &l_val, &lti, &r_val, &rti).is_some() => self.tensor_arith(op, &l_val, &lti, &r_val, &rti).unwrap_or_default(),
                 (Ty::Int, Ty::Float) => format!("({}) as f64 {} {}", l_val, op_str, r_val),
                 (Ty::Float, Ty::Int) => format!("{} {} ({}) as f64", l_val, op_str, r_val),
+                // (a growing int beside a float: its nearest float)
+                (Ty::Big, Ty::Float) if op != "pow" => format!("({}).to_f64() {} {}", l_val, op_str, r_val),
+                (Ty::Float, Ty::Big) if op != "pow" => format!("{} {} ({}).to_f64()", l_val, op_str, r_val),
                 (Ty::Int, Ty::Int) if self.int_op(op, &l_val, &r_val).is_some() => self.int_op(op, &l_val, &r_val).unwrap_or_default(),
+                (Ty::Big, Ty::Big) if self.big_op(op, &l_val, &r_val).is_some() => self.big_op(op, &l_val, &r_val).unwrap_or_default(),
+                _ if self.exact_op(op, &l_val, &lti, &r_val, &rti).is_some() => self.exact_op(op, &l_val, &lti, &r_val, &rti).unwrap_or_default(),
                 _ if op == "pow" => {
+                    let as_float = |v: &str, t: &Ty| if matches!(t, Ty::Big) { format!("({}).to_f64()", v) } else { format!("(({}) as f64)", v) };
                     if lti == Ty::Float || rti == Ty::Float {
-                        format!("(({}) as f64).powf(({}) as f64)", l_val, r_val)
+                        format!("({}).powf({})", as_float(&l_val, &lti), as_float(&r_val, &rti))
                     } else {
                         format!("({}).pow(({}) as u32)", l_val, r_val)
                     }
@@ -596,6 +678,14 @@ impl Emitter {
             if let Some(checked) = self.int_op(op, &l, &r) {
                 return checked;
             }
+        }
+        if matches!((&lti, &rti), (Ty::Big, Ty::Big)) {
+            if let Some(code) = self.big_op(op, &l, &r) {
+                return code;
+            }
+        }
+        if let Some(code) = self.exact_op(op, &l, &lti, &r, &rti) {
+            return code;
         }
         if op == "pow" {
             if lti == Ty::Float || rti == Ty::Float {
@@ -764,6 +854,57 @@ impl Emitter {
     /// An int operator that can fail — past 64 bits, a division by zero, a
     /// negative power — checked by the runtime, which has the words both
     /// modes stop with (crow_runtime::stops).
+    /// Arithmetic and comparison of exact numbers — two decimals, two
+    /// fractions (the lowering converted an int beside one), a power by an
+    /// int — as the runtime computes them: a quotient's digits and a zero
+    /// divisor stopping in its words. None for any other pair.
+    fn exact_op(&self, op: &str, l: &str, lt: &Ty, r: &str, rt: &Ty) -> Option<String> {
+        let line = self.line_now();
+        let exact = matches!((lt, rt), (Ty::Decimal, Ty::Decimal) | (Ty::Fraction, Ty::Fraction));
+        if op == "pow" && matches!(lt, Ty::Decimal | Ty::Fraction) {
+            let e = match rt {
+                Ty::Int => format!("crow_runtime::int::Int::from({})", r),
+                Ty::Big => format!("({}).clone()", r),
+                _ => return None,
+            };
+            return Some(format!("({}).pow(&{}).unwrap_or_else(|e| crow_stop({}, e))", l, e, line));
+        }
+        if !exact {
+            return None;
+        }
+        Some(match op {
+            "add" | "sub" | "mul" => format!("({}).{}(&({}))", l, op, r),
+            "div" => format!("({}).div(&({})).unwrap_or_else(|e| crow_stop({}, e))", l, r, line),
+            "eq" => format!("(({}).cmp(&({})) == std::cmp::Ordering::Equal)", l, r),
+            "ne" => format!("(({}).cmp(&({})) != std::cmp::Ordering::Equal)", l, r),
+            "gt" => format!("(({}).cmp(&({})) == std::cmp::Ordering::Greater)", l, r),
+            "lt" => format!("(({}).cmp(&({})) == std::cmp::Ordering::Less)", l, r),
+            "gte" => format!("(({}).cmp(&({})) != std::cmp::Ordering::Less)", l, r),
+            "lte" => format!("(({}).cmp(&({})) != std::cmp::Ordering::Greater)", l, r),
+            _ => return None,
+        })
+    }
+
+    /// Arithmetic and comparison of two ints that may grow past 64 bits
+    /// (`Ty::Big`, the width pass's): the runtime's exact operations, a
+    /// quotient's and a remainder's zero and a negative power stopping in
+    /// the words the 64-bit ones use.
+    fn big_op(&self, op: &str, l: &str, r: &str) -> Option<String> {
+        let line = self.line_now();
+        Some(match op {
+            "add" | "sub" | "mul" => format!("({}).{}(&({}))", l, op, r),
+            "div" | "pow" => format!("({}).{}(&({})).unwrap_or_else(|e| crow_stop({}, e))", l, op, r, line),
+            "mod" => format!("({}).rem(&({})).unwrap_or_else(|e| crow_stop({}, e))", l, r, line),
+            "eq" => format!("(({}) == ({}))", l, r),
+            "ne" => format!("(({}) != ({}))", l, r),
+            "gt" => format!("(({}) > ({}))", l, r),
+            "lt" => format!("(({}) < ({}))", l, r),
+            "gte" => format!("(({}) >= ({}))", l, r),
+            "lte" => format!("(({}) <= ({}))", l, r),
+            _ => return None,
+        })
+    }
+
     pub(crate) fn int_op(&self, op: &str, l: &str, r: &str) -> Option<String> {
         let f = match op {
             "add" => "add",
@@ -784,7 +925,7 @@ impl Emitter {
             "neg" => {
                 if self.emitting_traced && matches!(ty, Ty::Float | Ty::Tensor(..)) {
                     format!("crow_runtime::autograd::neg({})", Self::tr(&inner))
-                } else if matches!(ty, Ty::Tensor(..)) {
+                } else if matches!(ty, Ty::Tensor(..) | Ty::Big | Ty::Decimal | Ty::Fraction) {
                     format!("{}.neg()", inner)
                 } else if matches!(ty, Ty::Int) && !matches!(Emitter::raw(e), Expr::Const(..)) && !self.emitting_dual {
                     // only the smallest int has no negation
@@ -1813,7 +1954,7 @@ impl Emitter {
                     && local_read
                     && matches!(
                         Self::inner(&self.tt(a)),
-                        Ty::Tensor(..) | Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Markup | Ty::Frame(_) | Ty::Record(_) | Ty::Bytes | Ty::Stream | Ty::Socket | Ty::Mailer | Ty::Db
+                        Ty::Tensor(..) | Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Markup | Ty::Frame(_) | Ty::Record(_) | Ty::Bytes | Ty::Stream | Ty::Socket | Ty::Mailer | Ty::Db | Ty::Big | Ty::Decimal | Ty::Fraction
                     );
                 let s = self.expr(a);
                 let moved = self.moved_local(a);

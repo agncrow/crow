@@ -1,0 +1,12 @@
+--- An int past 64 bits grows: its digits are exact in both modes. (The
+--- interpreter had wrapped it round silently, `crow build`'s optimized
+--- binary did too, and only `crow run`'s debug build stopped; then both
+--- modes stopped, until ints grew.)
+big = 9223372036854775000
+step = 800
+log[big + step - step]
+fn grow[n]
+    return n * 1000
+log[grow[big / 1000]]
+log[grow[big]]
+log[grow[grow[big]] / 1000000 eq big]

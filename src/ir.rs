@@ -48,11 +48,19 @@ impl Key {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Ty {
     Int,
+    /// An int held as the runtime's growing int (crow_runtime::int::Int):
+    /// one the width pass (int_width) could not bound to 64 bits. The
+    /// language has one int; this is how a backend holds a wide one.
+    Big,
     Float,
     Bool,
     Str,
     /// A moment (crow_runtime::moments::Moment).
     Moment,
+    /// An exact base-ten number (crow_runtime::decimal::Dec).
+    Decimal,
+    /// An exact ratio of two ints (crow_runtime::fraction::Frac).
+    Fraction,
     /// Bytes: what a connection reads and writes (`use sys`).
     Bytes,
     Unit,
@@ -158,6 +166,9 @@ impl std::fmt::Display for Ty {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Ty::Int => write!(f, "Int"),
+            Ty::Big => write!(f, "Big"),
+            Ty::Decimal => write!(f, "Decimal"),
+            Ty::Fraction => write!(f, "Fraction"),
             Ty::Float => write!(f, "Float"),
             Ty::Moment => write!(f, "Moment"),
             Ty::Bool => write!(f, "Bool"),
@@ -472,6 +483,16 @@ pub enum Target {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Convert {
     IntToFloat,
+    /// An int held in 64 bits as a growing one (int_width).
+    ToBig,
+    /// An int as the decimal it is (an int meeting a decimal), or a float
+    /// literal as the decimal it writes.
+    ToDecimal,
+    /// An int or a decimal as the fraction it is (meeting a fraction).
+    ToFraction,
+    /// A growing int handed where a 64-bit one is taken: its 64 bits, or
+    /// refused past them, naming what took it (int_width).
+    ToSmall(Who),
     /// The payload of a result, after a Propagate covered the error.
     Unwrap,
     /// The payload of a result a guard made known good (spec, Errors in
@@ -483,6 +504,38 @@ pub enum Convert {
     /// A list or a map of ints as one of floats: a holder handed a float
     /// holds floats from then on (spec §1).
     IntsToFloats,
+}
+
+/// What took a growing int where 64 bits are taken (`Convert::ToSmall`):
+/// the refusal names it, in one wording for both modes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Who {
+    /// A builtin's argument, by the builtin's name.
+    Row(&'static str),
+    /// A position in a list, a key of a map.
+    Position,
+    /// A place the compiled program holds in 64 bits.
+    Held,
+    /// The answer of a function handed as a value (its signature is the
+    /// function type of what takes it).
+    Handed,
+}
+
+impl Who {
+    /// A builtin's argument, as `Who::Row` says it (the interpreter's rows
+    /// refuse by the name they hold, table::no_big_taken).
+    pub fn row_text(name: &str) -> String {
+        format!("{} takes an int of 64 bits", crate::table::form(name))
+    }
+
+    pub fn text(self) -> String {
+        match self {
+            Who::Row(name) => Who::row_text(name),
+            Who::Position => "a position or a key is an int of 64 bits".to_string(),
+            Who::Held => "an int is held in 64 bits".to_string(),
+            Who::Handed => "a function handed as a value answers an int of 64 bits".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1456,6 +1509,10 @@ pub fn expr(e: &Expr) -> String {
             Convert::ToTensor => format!("tensor({})", expr(inner)),
             Convert::ToList => format!("list({})", expr(inner)),
             Convert::IntsToFloats => format!("floats({})", expr(inner)),
+            Convert::ToBig => format!("big({})", expr(inner)),
+            Convert::ToSmall(_) => format!("small({})", expr(inner)),
+            Convert::ToDecimal => format!("decimal({})", expr(inner)),
+            Convert::ToFraction => format!("fraction({})", expr(inner)),
         },
         Expr::Binary { op, l, r, .. } => format!("({} {} {})", expr(l), op, expr(r)),
         Expr::Unary { op, expr: inner, .. } => format!("({} {})", op, expr(inner)),

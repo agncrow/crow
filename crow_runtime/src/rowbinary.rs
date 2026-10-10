@@ -2,10 +2,12 @@
 //! frame: the kernel a driver written in Crow hands the bytes an HTTP
 //! query answers (`sys.frame_of_rowbinary`). A column is typed by the
 //! header's type name — the integers an int column (a `UInt64` past
-//! i64's range wraps, as the native driver's did), floats and decimals a
-//! float column, `Bool` a bool column, dates and datetimes a datetime
-//! column in UTC milliseconds, strings, enums (by name), UUIDs, IPs,
-//! 128- and 256-bit integers and arrays (as text) a text column; a
+//! i64's range is refused with its column, as an int cell holds 64 bits),
+//! floats and decimals a float column (a decimal as the float nearest its
+//! value, every digit of it read), `Bool` a bool column, dates and
+//! datetimes a datetime column in UTC milliseconds, strings, enums (by
+//! name), UUIDs, IPs, 128- and 256-bit integers (their exact digits) and
+//! arrays (as text) a text column; a
 //! `Nullable` cell that is NULL is a missing cell; `LowCardinality` is
 //! its inner type. A type no frame cell can hold refuses the whole.
 //! The other way, `rowbinary_of_frame` encodes a frame's rows as the
@@ -23,7 +25,7 @@ enum Col {
 
 #[derive(Debug, Clone)]
 enum Ty {
-    U8, I8, U16, I16, U32, I32, U64, I64, Wide(usize), F32, F64, Str, Fixed(usize),
+    U8, I8, U16, I16, U32, I32, U64, I64, Wide(usize, bool), F32, F64, Str, Fixed(usize),
     Date, Date32, DateTime, DateTime64(u32), Decimal(usize, u32), Bool,
     Enum8(Vec<(i64, String)>), Enum16(Vec<(i64, String)>), Uuid, Ipv4, Ipv6,
     Nullable(Box<Ty>), Array(Box<Ty>),
@@ -77,7 +79,7 @@ fn parse_type(s: &str) -> Result<Ty, String> {
     Ok(match s {
         "UInt8" => Ty::U8, "Int8" => Ty::I8, "UInt16" => Ty::U16, "Int16" => Ty::I16,
         "UInt32" => Ty::U32, "Int32" => Ty::I32, "UInt64" => Ty::U64, "Int64" => Ty::I64,
-        "UInt128" | "Int128" => Ty::Wide(16), "UInt256" | "Int256" => Ty::Wide(32),
+        "UInt128" => Ty::Wide(16, false), "Int128" => Ty::Wide(16, true), "UInt256" => Ty::Wide(32, false), "Int256" => Ty::Wide(32, true),
         "Float32" => Ty::F32, "Float64" => Ty::F64, "String" => Ty::Str,
         "Date" => Ty::Date, "Date32" => Ty::Date32, "Bool" => Ty::Bool, "UUID" => Ty::Uuid,
         "IPv4" => Ty::Ipv4, "IPv6" => Ty::Ipv6,
@@ -145,24 +147,26 @@ fn push_cell(r: &mut Reader, t: &Ty, col: &mut Col, valid: &mut Vec<bool>) -> Re
         (Ty::I16, Col::Int(v)) => v.push(i16::from_le_bytes(r.le()?) as i64),
         (Ty::U32, Col::Int(v)) => v.push(u32::from_le_bytes(r.le()?) as i64),
         (Ty::I32, Col::Int(v)) => v.push(i32::from_le_bytes(r.le()?) as i64),
-        (Ty::U64, Col::Int(v)) => v.push(u64::from_le_bytes(r.le()?) as i64),
+        // an int cell holds 64 bits signed: a UInt64 past them is refused, as
+        // wrapping it had made it negative
+        (Ty::U64, Col::Int(v)) => {
+            let u = u64::from_le_bytes(r.le()?);
+            v.push(i64::try_from(u).map_err(|_| format!("{} is past an int cell's 64 bits — CAST it to String in the query to keep its digits", u))?)
+        }
         (Ty::I64, Col::Int(v)) => v.push(i64::from_le_bytes(r.le()?)),
-        (Ty::Wide(n), Col::Str(v)) => { let bytes = r.take(*n)?; v.push(&wide_text(bytes)) }
+        (Ty::Wide(n, signed), Col::Str(v)) => { let bytes = r.take(*n)?; v.push(&le_int(bytes, *signed).to_string()) }
         (Ty::F32, Col::Float(v)) => v.push(f32::from_le_bytes(r.le()?) as f64),
         (Ty::F64, Col::Float(v)) => v.push(f64::from_le_bytes(r.le()?)),
         (Ty::Decimal(width, scale), Col::Float(v)) => {
-            let raw: i128 = match width {
-                4 => i32::from_le_bytes(r.le()?) as i128,
-                8 => i64::from_le_bytes(r.le()?) as i128,
-                16 => i128::from_le_bytes(r.le()?),
-                // a 256-bit decimal's low 128 bits (its high bits are beyond a float's reach)
-                _ => {
-                    let low = i128::from_le_bytes(r.le()?);
-                    r.take(16)?;
-                    low
-                }
+            let x = match width {
+                4 => decimal_float(i32::from_le_bytes(r.le()?) as i128, *scale),
+                8 => decimal_float(i64::from_le_bytes(r.le()?) as i128, *scale),
+                16 => decimal_float(i128::from_le_bytes(r.le()?), *scale),
+                // every one of a 256-bit decimal's bits (its low 128 had been
+                // read alone, and a value past them came back wrong)
+                _ => big_decimal_float(&le_int(r.take(32)?, true), *scale),
             };
-            v.push(raw as f64 / 10f64.powi(*scale as i32))
+            v.push(x)
         }
         (Ty::Str, Col::Str(v)) => v.push(r.str()?),
         (Ty::Fixed(n), Col::Str(v)) => { let b = r.take(*n)?; let end = b.iter().rposition(|&c| c != 0).map_or(0, |p| p + 1); v.push(&String::from_utf8_lossy(&b[..end])) }
@@ -196,10 +200,46 @@ fn push_cell(r: &mut Reader, t: &Ty, col: &mut Col, valid: &mut Vec<bool>) -> Re
     Ok(())
 }
 
-fn wide_text(bytes: &[u8]) -> String {
-    let mut x: u128 = 0;
-    for (k, &b) in bytes.iter().take(16).enumerate() { x |= (b as u128) << (8 * k); }
-    x.to_string()
+/// A little-endian integer of any width, exactly: two's complement where
+/// its type is signed (an `Int128` had shown a negative number as a huge
+/// positive one, and a 256-bit one only its low 128 bits).
+fn le_int(bytes: &[u8], signed: bool) -> crate::int::IBig {
+    let u = crate::int::IBig::from(dashu_int::UBig::from_le_bytes(bytes));
+    if signed && bytes.last().is_some_and(|b| b & 0x80 != 0) {
+        u - (crate::int::IBig::from(1u8) << (8 * bytes.len()))
+    } else {
+        u
+    }
+}
+
+/// Powers of ten a float holds exactly.
+const EXACT_TENS: [f64; 23] = [1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22];
+
+/// The float nearest a decimal's value `raw / 10^scale`: two exact floats
+/// divide to the nearest one (within 2^53 and ten to the 22nd); past that,
+/// the decimal's text read as a float, which rounds once.
+fn decimal_float(raw: i128, scale: u32) -> f64 {
+    if raw.unsigned_abs() < (1u128 << 53) && (scale as usize) < EXACT_TENS.len() {
+        return raw as f64 / EXACT_TENS[scale as usize];
+    }
+    big_decimal_float(&crate::int::IBig::from(raw), scale)
+}
+
+fn big_decimal_float(raw: &crate::int::IBig, scale: u32) -> f64 {
+    let all = raw.to_string();
+    let (sign, digits) = match all.strip_prefix('-') {
+        Some(d) => ("-", d),
+        None => ("", all.as_str()),
+    };
+    let s = scale as usize;
+    let text = if s == 0 {
+        format!("{}{}", sign, digits)
+    } else {
+        let padded = format!("{:0>width$}", digits, width = s + 1);
+        let (int, frac) = padded.split_at(padded.len() - s);
+        format!("{}{}.{}", sign, int, frac)
+    };
+    text.parse::<f64>().unwrap_or(f64::NAN)
 }
 
 /// An array's item, as text: numbers and strings
@@ -248,7 +288,7 @@ fn decode(b: &[u8]) -> Result<(Vec<String>, Vec<Col>, Vec<Vec<bool>>), String> {
     let mut valids: Vec<Vec<bool>> = (0..n).map(|_| Vec::with_capacity(guess)).collect();
     while r.i < b.len() {
         for c in 0..n {
-            push_cell(&mut r, &types[c], &mut cols[c], &mut valids[c])?;
+            push_cell(&mut r, &types[c], &mut cols[c], &mut valids[c]).map_err(|e| if e.contains("past an int cell") { format!("column '{}': {}", names[c], e) } else { e })?;
         }
     }
     Ok((names, cols, valids))
@@ -304,6 +344,72 @@ fn as_int(cell: &Cell, what: &str) -> Result<i64, String> {
     }
 }
 
+/// A cell as the whole number an integer column holds: an int, a float
+/// with no fraction, a bool, a moment's seconds, or text of digits (of any
+/// size: a 128- or 256-bit column's text).
+fn whole(cell: &Cell, what: &str) -> Result<crate::int::IBig, String> {
+    match cell {
+        Cell::Int(n) => Ok(crate::int::IBig::from(*n)),
+        Cell::Float(x) => match crate::int::Int::of_float(*x) {
+            Ok(n) if x.fract() == 0.0 => Ok(n.big()),
+            _ => Err(format!("cannot write {} as {}: not a whole number", x, what)),
+        },
+        Cell::Bool(b) => Ok(crate::int::IBig::from(i64::from(*b))),
+        Cell::Moment(ms) => Ok(crate::int::IBig::from(ms.div_euclid(1000))),
+        Cell::Str(s) => crate::int::Int::parse(s.trim()).map(|n| n.big()).ok_or_else(|| format!("cannot write '{}' as {}", s, what)),
+    }
+}
+
+/// A whole number as `n` little-endian bytes, two's complement where the
+/// type is signed; one the type cannot hold is refused.
+fn le_bytes(v: &crate::int::IBig, n: usize, signed: bool, what: &str) -> Result<Vec<u8>, String> {
+    let one = crate::int::IBig::from(1u8);
+    let bits = 8 * n;
+    let (lo, hi) = if signed { (-(one.clone() << (bits - 1)), one.clone() << (bits - 1)) } else { (crate::int::IBig::from(0u8), one.clone() << bits) };
+    if *v < lo || *v >= hi {
+        return Err(format!("cannot write {} as {}: past its range", v, what));
+    }
+    let u = if *v < crate::int::IBig::from(0u8) { v + (one << bits) } else { v.clone() };
+    let mut bytes = dashu_int::UBig::try_from(u).map_err(|_| format!("cannot write {} as {}", v, what))?.to_le_bytes().to_vec();
+    bytes.resize(n, 0);
+    Ok(bytes)
+}
+
+/// The digits of a decimal's text at a scale, as the whole number a
+/// decimal column holds (`12.345` at scale 2 is 1235, a half away from
+/// zero). None for text that writes no number.
+fn decimal_raw(text: &str, scale: u32) -> Option<crate::int::IBig> {
+    use crate::int::IBig;
+    let t = text.trim();
+    let (neg, t) = match t.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, t.strip_prefix('+').unwrap_or(t)),
+    };
+    let (mant, exp) = match t.find(['e', 'E']) {
+        Some(i) => (&t[..i], t[i + 1..].parse::<i64>().ok()?),
+        None => (t, 0),
+    };
+    let (int, frac) = match mant.find('.') {
+        Some(i) => (&mant[..i], &mant[i + 1..]),
+        None => (mant, ""),
+    };
+    if (int.is_empty() && frac.is_empty()) || !int.bytes().chain(frac.bytes()).all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let digits: IBig = format!("0{}{}", int, frac).parse().ok()?;
+    // the value is digits * 10^shift at the scale
+    let shift = exp - frac.len() as i64 + scale as i64;
+    let ten = |k: u64| IBig::from(10u8).pow(k as usize);
+    let raw = if shift >= 0 {
+        digits * ten(shift as u64)
+    } else {
+        let d = ten((-shift) as u64);
+        let (q, r) = (&digits / &d, &digits % &d);
+        if r * IBig::from(2u8) >= d { q + IBig::from(1u8) } else { q }
+    };
+    Some(if neg { -raw } else { raw })
+}
+
 fn as_float(cell: &Cell, what: &str) -> Result<f64, String> {
     match cell {
         Cell::Int(n) => Ok(*n as f64),
@@ -343,34 +449,31 @@ fn put_cell(out: &mut Vec<u8>, t: &Ty, cell: &Cell, column: &str) -> Result<(), 
             out.push(0);
             return put_cell(out, inner, cell, column);
         }
-        Ty::U8 => out.push(as_int(cell, &what(t))? as u8),
-        Ty::I8 => out.push(as_int(cell, &what(t))? as i8 as u8),
-        Ty::U16 => out.extend_from_slice(&(as_int(cell, &what(t))? as u16).to_le_bytes()),
-        Ty::I16 => out.extend_from_slice(&(as_int(cell, &what(t))? as i16).to_le_bytes()),
-        Ty::U32 => out.extend_from_slice(&(as_int(cell, &what(t))? as u32).to_le_bytes()),
-        Ty::I32 => out.extend_from_slice(&(as_int(cell, &what(t))? as i32).to_le_bytes()),
-        Ty::U64 => out.extend_from_slice(&(as_int(cell, &what(t))? as u64).to_le_bytes()),
-        Ty::I64 => out.extend_from_slice(&as_int(cell, &what(t))?.to_le_bytes()),
-        Ty::Wide(n) => {
-            let v = as_int(cell, &what(t))? as i128;
-            let bytes = v.to_le_bytes();
-            out.extend_from_slice(&bytes);
-            // the high bytes of a 256-bit integer: the sign spread
-            out.extend(std::iter::repeat_n(if v < 0 { 0xff } else { 0 }, n - 16));
-        }
+        // a whole number the column's type holds, its bytes; one past the
+        // type's range, or a float with a fraction, is refused (the bytes had
+        // been cut to the type's width: 300 had written 44)
+        Ty::U8 => out.extend_from_slice(&le_bytes(&whole(cell, &what(t))?, 1, false, &what(t))?),
+        Ty::I8 => out.extend_from_slice(&le_bytes(&whole(cell, &what(t))?, 1, true, &what(t))?),
+        Ty::U16 => out.extend_from_slice(&le_bytes(&whole(cell, &what(t))?, 2, false, &what(t))?),
+        Ty::I16 => out.extend_from_slice(&le_bytes(&whole(cell, &what(t))?, 2, true, &what(t))?),
+        Ty::U32 => out.extend_from_slice(&le_bytes(&whole(cell, &what(t))?, 4, false, &what(t))?),
+        Ty::I32 => out.extend_from_slice(&le_bytes(&whole(cell, &what(t))?, 4, true, &what(t))?),
+        Ty::U64 => out.extend_from_slice(&le_bytes(&whole(cell, &what(t))?, 8, false, &what(t))?),
+        Ty::I64 => out.extend_from_slice(&le_bytes(&whole(cell, &what(t))?, 8, true, &what(t))?),
+        Ty::Wide(n, signed) => out.extend_from_slice(&le_bytes(&whole(cell, &what(t))?, *n, *signed, &what(t))?),
         Ty::F32 => out.extend_from_slice(&(as_float(cell, &what(t))? as f32).to_le_bytes()),
         Ty::F64 => out.extend_from_slice(&as_float(cell, &what(t))?.to_le_bytes()),
+        // a decimal's digits at its scale, a half away from zero: a float as
+        // the shortest text that reads back as it (`x * 10^scale` had rounded
+        // 1.005 to 1.00), text as it is written
         Ty::Decimal(width, scale) => {
-            let raw = (as_float(cell, &what(t))? * 10f64.powi(*scale as i32)).round() as i128;
-            match width {
-                4 => out.extend_from_slice(&(raw as i32).to_le_bytes()),
-                8 => out.extend_from_slice(&(raw as i64).to_le_bytes()),
-                16 => out.extend_from_slice(&raw.to_le_bytes()),
-                _ => {
-                    out.extend_from_slice(&raw.to_le_bytes());
-                    out.extend(std::iter::repeat_n(if raw < 0 { 0xff } else { 0 }, 16));
-                }
-            }
+            let text = match cell {
+                Cell::Float(x) if !x.is_finite() => return Err(format!("cannot write {} as {}", x, what(t))),
+                Cell::Float(x) => x.to_string(),
+                other => as_text(other),
+            };
+            let raw = decimal_raw(&text, *scale).ok_or_else(|| format!("cannot write '{}' as {}", text, what(t)))?;
+            out.extend_from_slice(&le_bytes(&raw, *width, true, &what(t))?);
         }
         Ty::Str => put_str(out, &as_text(cell)),
         Ty::Fixed(n) => {
@@ -476,7 +579,7 @@ mod tests {
     /// them is in the measurement's notes)
     #[test]
     fn every_column_kind_decodes_as_the_frame_holds_it() {
-        let blob = unhex("12016101620163016401650166016701680169016a016b016c016d016e016f0170017101720555496e743805496e74363407466c6f6174363406537472696e670f4e756c6c61626c652855496e743829104e756c6c61626c6528537472696e672904446174650f4461746554696d6528275554432729144461746554696d65363428332c202755544327290e446563696d616c2831382c20322904426f6f6c17456e756d3828277827203d20312c20277927203d203229164c6f7743617264696e616c69747928537472696e672904555549440e4669786564537472696e672833290c41727261792855496e74382907466c6f617433320655496e74363401fbffffffffffffff00000000000004400268690003010c4d257d936503d920c88c010000d2040000000000000101026c63e711b35c04c4f061a0dbd36a00a67b906162000201020000c03fffffffffffffffff");
+        let blob = unhex("12016101620163016401650166016701680169016a016b016c016d016e016f0170017101720555496e743805496e74363407466c6f6174363406537472696e670f4e756c6c61626c652855496e743829104e756c6c61626c6528537472696e672904446174650f4461746554696d6528275554432729144461746554696d65363428332c202755544327290e446563696d616c2831382c20322904426f6f6c17456e756d3828277827203d20312c20277927203d203229164c6f7743617264696e616c69747928537472696e672904555549440e4669786564537472696e672833290c41727261792855496e74382907466c6f617433320655496e74363401fbffffffffffffff00000000000004400268690003010c4d257d936503d920c88c010000d2040000000000000101026c63e711b35c04c4f061a0dbd36a00a67b906162000201020000c03fffffffffffffff7f");
         let f = frame_of_rowbinary(&blob).unwrap();
         assert_eq!(f.columns, ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r"]);
         let col = |name: &str| -> (&Column, Vec<bool>) {
@@ -500,8 +603,57 @@ mod tests {
         assert!(matches!(col("o").0, Column::Str(v) if v.to_vec() == ["ab"]));
         assert!(matches!(col("p").0, Column::Str(v) if v.to_vec() == ["[1, 2]"]));
         assert!(matches!(col("q").0, Column::Float(v) if v == &[1.5]));
-        // a UInt64 past i64's range wraps, as the native driver's did
-        assert!(matches!(col("r").0, Column::Int(v) if v == &[-1]));
+        assert!(matches!(col("r").0, Column::Int(v) if v == &[i64::MAX]));
+    }
+
+    /// A UInt64 past an int cell's 64 bits is refused with its column, where
+    /// wrapping had made it -1; 128- and 256-bit integers keep their digits
+    /// and their sign; a decimal is the float nearest its value, every one
+    /// of a 256-bit decimal's bits read
+    #[test]
+    fn wide_integers_and_decimals_keep_their_digits() {
+        fn blob(types: &[&str], rows: &[u8]) -> Vec<u8> {
+            let mut b = vec![types.len() as u8];
+            for (i, _) in types.iter().enumerate() {
+                let name = format!("c{}", i);
+                b.push(name.len() as u8);
+                b.extend_from_slice(name.as_bytes());
+            }
+            for t in types {
+                b.push(t.len() as u8);
+                b.extend_from_slice(t.as_bytes());
+            }
+            b.extend_from_slice(rows);
+            b
+        }
+        let past = blob(&["UInt64"], &u64::MAX.to_le_bytes());
+        assert_eq!(frame_of_rowbinary(&past).unwrap_err(), "column 'c0': 18446744073709551615 is past an int cell's 64 bits — CAST it to String in the query to keep its digits");
+        let fits = blob(&["UInt64"], &(i64::MAX as u64).to_le_bytes());
+        assert!(matches!(frame_of_rowbinary(&fits).unwrap().data[0].as_ref(), Column::Int(v) if v == &[i64::MAX]));
+        let mut rows = Vec::new();
+        rows.extend_from_slice(&(-5i128).to_le_bytes());
+        rows.extend_from_slice(&u128::MAX.to_le_bytes());
+        // -2^200 as an Int256: two's complement over 32 bytes
+        let mut neg = [0u8; 32];
+        neg[25] = 0xff;
+        neg[26..].fill(0xff);
+        rows.extend_from_slice(&neg);
+        let f = frame_of_rowbinary(&blob(&["Int128", "UInt128", "Int256"], &rows)).unwrap();
+        let text = |i: usize| match f.data[i].as_ref() { Column::Str(v) => v.to_vec()[0].clone(), _ => String::new() };
+        assert_eq!(text(0), "-5");
+        assert_eq!(text(1), u128::MAX.to_string());
+        assert_eq!(text(2), (-(crate::int::IBig::from(1u8) << 200)).to_string());
+        // a Decimal256(2) of 2^130 + 5 hundredths: its high bits count
+        let mut d = [0u8; 32];
+        d[16] = 4;
+        d[0] = 5;
+        let f = frame_of_rowbinary(&blob(&["Decimal256(2)"], &d)).unwrap();
+        let want = "13611294676837538538534984297270728458.29".parse::<f64>().unwrap();
+        assert!(matches!(f.data[0].as_ref(), Column::Float(v) if v[0] == want), "{:?}", f.data[0]);
+        // a Decimal128(10) past a float's 53 bits is the float nearest it
+        let raw: i128 = 123_456_789_012_345_678_901_234_567;
+        let f = frame_of_rowbinary(&blob(&["Decimal128(10)"], &raw.to_le_bytes())).unwrap();
+        assert!(matches!(f.data[0].as_ref(), Column::Float(v) if v[0] == "12345678901234567.8901234567".parse::<f64>().unwrap()));
     }
 
     /// A frame encoded as a table's types, decoded again, is the frame: every
@@ -552,6 +704,22 @@ mod tests {
         let bad = CrowFrame::new(vec!["n".into()], vec![Column::strs(vec!["x".into()])], vec![vec![true]]);
         assert_eq!(rowbinary_of_frame(&bad, &["UInt8".to_string()]).unwrap_err(), "cannot write 'x' as column 'n' (U8)");
         assert_eq!(rowbinary_of_frame(&bad, &[]).unwrap_err(), "0 types for 1 columns");
+        // a number past its type's range, or with a fraction where a whole one
+        // is taken, is refused where its bytes had been cut; a decimal is its
+        // digits at its scale, a half away from zero
+        let n = CrowFrame::new(vec!["n".into()], vec![Column::Int(vec![300])], vec![vec![true]]);
+        assert_eq!(rowbinary_of_frame(&n, &["UInt8".to_string()]).unwrap_err(), "cannot write 300 as column 'n' (U8): past its range");
+        let x = CrowFrame::new(vec!["x".into()], vec![Column::Float(vec![2.5])], vec![vec![true]]);
+        assert_eq!(rowbinary_of_frame(&x, &["Int64".to_string()]).unwrap_err(), "cannot write 2.5 as column 'x' (I64): not a whole number");
+        let d = CrowFrame::new(vec!["d".into()], vec![Column::Float(vec![1.005, -2.345, 0.1])], vec![vec![true; 3]]);
+        let bytes = rowbinary_of_frame(&d, &["Decimal(9, 2)".to_string()]).unwrap();
+        let raws: Vec<i32> = bytes.chunks(4).map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+        assert_eq!(raws, [101, -235, 10]);
+        assert_eq!(decimal_raw("12.345", 2), Some(crate::int::IBig::from(1235)));
+        assert_eq!(decimal_raw("1e3", 1), Some(crate::int::IBig::from(10000)));
+        assert_eq!(decimal_raw("x", 1), None);
+        let w = CrowFrame::new(vec!["w".into()], vec![Column::strs(vec!["-170141183460469231731687303715884105728".into()])], vec![vec![true]]);
+        assert_eq!(rowbinary_of_frame(&w, &["Int128".to_string()]).unwrap(), i128::MIN.to_le_bytes().to_vec());
     }
 
     /// Bytes that end inside a row, and a type no cell holds, are refused
