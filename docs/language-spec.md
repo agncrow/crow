@@ -115,6 +115,8 @@ Strings support escape sequences with backslash:
 | `\'` | Literal single quote |
 | `` \` `` | Literal backtick (not interpolation) |
 
+A backslash before any other character is itself, the backslash kept, so a regular expression's escapes are written as they are: `'\d+'`, `'\.'`, `sub[s, '\|[^|]*\|', '-']`. (Until 2026-10-09 any other character after a backslash was refused as an unknown escape, against strings being inert, and a regex needed `[|]` for `\|`.)
+
 ```
 log['line1\nline2']
 log['col1\tcol2']
@@ -1373,11 +1375,13 @@ A builtin handed a number of arguments, or a kind of argument, it does not take 
 | `split[s, delim]` | Split string into array |
 | `trim[s]` | Remove leading/trailing whitespace |
 | `replace[s, old, new]` | Replace all occurrences |
+| `occurs[s, part]` | How many times `part` occurs in `s`, not overlapping, as Python's `str.count` counts (`occurs['aaaa', 'aa']` is 2; a part that cannot overlap itself counts every place it is). The search reads the text once at the machine's speed, so counting in a long text costs what reading it does — where `len[s] - len[replace[s, part, '']]` had made a new text for every count. An empty part is refused |
+| `translate[s, from, to]` | Each character of `from` in `s` replaced by the character at its place in `to`, all in one pass — `translate[dna, 'ACGT', 'TGCA']` is the complement, where `replace` in turn needs a stand-in letter to keep one replacement from meeting another's (Unix's `tr`, Python's `str.translate`). `from` and `to` have as many characters, or the program stops with both counts |
 | `upper[s]` | Convert to uppercase |
 | `lower[s]` | Convert to lowercase |
 | `starts[s, prefix]` | Check if string starts with prefix |
 | `ends[s, suffix]` | Check if string ends with suffix |
-| `join[arr, sep]` | Join array elements into string: text as it is, a number as it displays, a bool as `true` or `false`; a frame's column's cells too, where a missing cell stops the program, as it does where numbers are taken |
+| `join[arr, sep]` | Join array elements into string: text as it is, a number as it displays, a bool as `true` or `false`; a frame's column's cells too, where a missing cell stops the program, as it does where numbers are taken; a list whose items can fail (a collecting loop's over a value that can) item by item, a failed item stopping the program with its reason — `item 1 of the list failed: cannot convert 'x' to int` |
 | `repeat[s, n]` | Repeat string `n` times |
 | `fmt[x, ...]` | Format a value with named arguments (see Formatting) |
 | `reverse[s]` | Reverse a string |

@@ -1,0 +1,49 @@
+--- Counts that can fail (each read off a text that can) handed, with ints
+--- past 64 bits, to one function: the list grows item by item, each
+--- failure kept, and `float[n]` and `int[n]` of an int that grows and can
+--- fail keep its failure; a sum of counts taken in a collecting loop's
+--- round stays a 64-bit int; and `find` of a text after a `read` is the
+--- regular expression's, not the bytes' search the standard modules call
+--- (the k-nucleotide sample did not build).
+use io
+
+kept = write['parity-228-words.txt', 'ab ab abc b']
+log[kept.ok]
+text = read['parity-228-words.txt']
+words = ['ab', 'b', 'c']
+counts = for w in words
+    occurs[text, w]
+scaled = for c in counts
+    c * 100000000000 * 100000000000
+
+fn share[xs, total]
+    return fmt[100.0 * float[xs[0]] / float[total], 3]
+
+fn second[xs]
+    return int[xs[1]] + 1
+
+log[share[counts, 8]]
+log[share[scaled, 8]]
+log[second[counts]]
+log[second[scaled]]
+
+--- a pair's count less the counts of the pairs beside it
+pairs = for k in range[3]
+    if k eq 1
+        counts[k]
+    else
+        others = 0
+        for o in range[3]
+            if o ne k
+                others = others + counts[o]
+        counts[k] - others
+log[pairs]
+
+m = find[text, 'a(b+)c']
+log[m.groups]
+missing = read['parity-228-missing.txt']
+none = for w in words
+    occurs[missing, w]
+log[none[0].ok]
+log[share[none, 8].ok]
+rm['parity-228-words.txt']

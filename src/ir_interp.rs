@@ -1297,7 +1297,7 @@ impl IrInterp {
                     // an int held as a growing one is the int (the interpreter's
                     // grow as they run); one handed where 64 bits are taken is
                     // refused past them
-                    Convert::ToBig => v,
+                    Convert::ToBig | Convert::Proven => v,
                     // an int, or a float literal, as the decimal it is; an int
                     // or a decimal as the fraction it is (an error stays)
                     Convert::ToDecimal if v.is_ok() => match &v.value {

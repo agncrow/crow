@@ -1147,7 +1147,9 @@ impl Comp {
             }
             // the interpreter's ints grow as they run: an int held growing is
             // the value as it is
-            Expr::Convert { how: Convert::ToBig, expr, .. } => {
+            // (proven arithmetic is the arithmetic: the typed registers' own
+            // check never fires)
+            Expr::Convert { how: Convert::ToBig | Convert::Proven, expr, .. } => {
                 let p = self.expr_place(expr, d);
                 self.put(p, d);
             }
@@ -1296,7 +1298,7 @@ fn pure_index(e: &Expr) -> bool {
         Expr::Binary { l, r, .. } => pure_index(l) && pure_index(r),
         Expr::Unary { expr, .. } => pure_index(expr),
         // (a refusal past 64 bits comes the same the second time)
-        Expr::Convert { how: Convert::Unwrap | Convert::Known | Convert::IntToFloat | Convert::ToBig | Convert::ToSmall(_), expr, .. } => pure_index(expr),
+        Expr::Convert { how: Convert::Unwrap | Convert::Known | Convert::IntToFloat | Convert::ToBig | Convert::ToSmall(_) | Convert::Proven, expr, .. } => pure_index(expr),
         _ => false,
     }
 }

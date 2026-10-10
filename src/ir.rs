@@ -490,6 +490,9 @@ pub enum Convert {
     ToDecimal,
     /// An int or a decimal as the fraction it is (meeting a fraction).
     ToFraction,
+    /// `+`, `-`, `*` or a negation of 64-bit ints the width pass proves
+    /// cannot pass 64 bits (int_width): computed without the check.
+    Proven,
     /// A growing int handed where a 64-bit one is taken: its 64 bits, or
     /// refused past them, naming what took it (int_width).
     ToSmall(Who),
@@ -1513,6 +1516,7 @@ pub fn expr(e: &Expr) -> String {
             Convert::ToSmall(_) => format!("small({})", expr(inner)),
             Convert::ToDecimal => format!("decimal({})", expr(inner)),
             Convert::ToFraction => format!("fraction({})", expr(inner)),
+            Convert::Proven => format!("proven({})", expr(inner)),
         },
         Expr::Binary { op, l, r, .. } => format!("({} {} {})", expr(l), op, expr(r)),
         Expr::Unary { op, expr: inner, .. } => format!("({} {})", op, expr(inner)),

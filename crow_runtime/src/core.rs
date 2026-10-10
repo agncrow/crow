@@ -77,6 +77,20 @@ pub fn slice<T: Clone>(v: &[T], start: i64, end: i64) -> Vec<T> {
     if s >= e { Vec::new() } else { v[s..e].to_vec() }
 }
 
+/// `slice` of a list nothing else holds: cut where it lies, its items
+/// moved, never copied (`lines[path]` drops the empty piece after the last
+/// break of its millions so).
+pub fn slice_taken<T>(mut v: Vec<T>, start: i64, end: i64) -> Vec<T> {
+    let s = start.max(0) as usize;
+    let e = (end.max(0) as usize).min(v.len());
+    if s >= e {
+        return Vec::new();
+    }
+    v.truncate(e);
+    v.drain(..s);
+    v
+}
+
 /// `slice[tensor, start, end]` along the first axis, clamped like the
 /// array form; an empty slice is the empty 1-D tensor.
 pub fn slice_tensor(t: &crate::tensor::CrowTensor, start: i64, end: i64) -> crate::tensor::CrowTensor {

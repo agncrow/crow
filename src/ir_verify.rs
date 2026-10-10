@@ -684,6 +684,8 @@ impl<'p> Verifier<'p> {
             // decimal as the fraction it is
             Convert::ToDecimal => matches!(inner.payload(), Ty::Int | Ty::Big | Ty::Float | Ty::Decimal | Ty::Unknown) && matches!(ty.payload(), Ty::Decimal),
             Convert::ToFraction => matches!(inner.payload(), Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Unknown) && matches!(ty.payload(), Ty::Fraction),
+            // (arithmetic of ints proven within 64 bits)
+            Convert::Proven => matches!(inner, Ty::Int) && matches!(ty, Ty::Int),
         };
         if !ok {
             self.found(format!("a conversion {:?} of {} claims to give {}", how, inner, ty));
@@ -751,7 +753,9 @@ fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
             Kind::Big => *t == Ty::Big,
             Kind::Decimal => *t == Ty::Decimal,
             Kind::Fraction => *t == Ty::Fraction,
-            Kind::Words => matches!(t, Ty::Tensor(..) | Ty::Column(_)) || items(t, &|e| matches!(e, Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Moment)),
+            // (items that can fail are read as words each, a failed one
+            // stopping the program with its reason, in both modes)
+            Kind::Words => matches!(t, Ty::Tensor(..) | Ty::Column(_)) || items(t, &|e| matches!(e.payload(), Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Moment)),
             Kind::Bool => *t == Ty::Bool,
             Kind::Bytes => *t == Ty::Bytes,
             Kind::Stream => matches!(t, Ty::Stream),

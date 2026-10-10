@@ -593,6 +593,18 @@ fn test_for_loop_sequential_with_cpu_1() {
     assert!(!rust.contains("par_iter"), "cpu[1] should force sequential for loop\n{}", rust);
 }
 
+/// A round whose own value holds its failure (`occurs[text, w]` of a text
+/// that can fail answers a count that can fail) runs in parallel; one that
+/// hands its failure out of the function (a condition cannot hold it) keeps
+/// its loop in order (fuzz seed 1791422055)
+#[test]
+fn a_round_holding_its_failure_runs_in_parallel() {
+    let held = transpile("use io\ntext = read['words.txt']\ncounts = for w in ['a', 'b']\n    occurs[text, w]\nlog[counts]\n");
+    assert!(held.contains("par_iter()"), "the counts hold their failures\n{}", held);
+    let leaves = transpile("use io\nfn firsts[ws]\n    text = read['words.txt']\n    out = for w in ws\n        if occurs[text, w] gt 2\n            1\n        else\n            0\n    return out\nlog[firsts[['a', 'b']]]\n");
+    assert!(!leaves.contains("par_iter()"), "a failed condition leaves the function\n{}", leaves);
+}
+
 #[test]
 fn test_for_expr_parallel_by_default() {
     let src = "items = [1, 2, 3]\ndoubled = for x in items\n    x * 2\nlog['{doubled}']\n";
@@ -805,8 +817,9 @@ fn test_logical_operators_transpile() {
 
 #[test]
 fn test_expression_grouping_transpile() {
+    // (proven within 64 bits: the plain operators, grouped as written)
     let rust = transpile("x = (1 + 2) * 3\n");
-    assert!(rust.contains("crow_runtime::stops::mul((crow_runtime::stops::add(1_i64, 2_i64).unwrap_or_else(|e| crow_stop(1, e))), 3_i64)"), "should preserve grouping\n{}", rust);
+    assert!(rust.contains("((1_i64 + 2_i64) * 3_i64)"), "should preserve grouping\n{}", rust);
 }
 
 // ===== Builtins =====

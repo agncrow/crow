@@ -81,20 +81,9 @@ impl Emitter {
                 // an int held as a growing one, or a growing one handed where
                 // 64 bits are taken (refused past them, as the interpreter
                 // refuses it): item by item in a list or a map
-                Convert::ToBig => {
-                    let inner = self.owned_expr(expr);
-                    let held = self.tt(expr);
-                    let grow = |v: &str| match Self::inner(&held) {
-                        Ty::List(_) => format!("({}).into_iter().map(crow_runtime::int::Int::from).collect::<Vec<crow_runtime::int::Int>>()", v),
-                        Ty::Map(..) => format!("({}).into_iter().map(|(k, v)| (k, crow_runtime::int::Int::from(v))).collect::<std::collections::BTreeMap<_, crow_runtime::int::Int>>()", v),
-                        _ => format!("crow_runtime::int::Int::from({})", v),
-                    };
-                    // (a value that can fail grows as its payload, its failure kept)
-                    if matches!(held, Ty::Result(_)) {
-                        return format!("{{ let _r = &({}); CrowResult {{ ok: _r.ok, value: {}, reason: _r.reason.clone(), kind: _r.kind.clone(), trace: _r.trace.clone(), captured: _r.captured }} }}", inner, grow("_r.value.clone()"));
-                    }
-                    grow(&inner)
-                }
+                // (a value that can fail grows as its payload, its failure
+                // kept — the value itself, a list's or a map's items)
+                Convert::ToBig => grown(&self.tt(expr), &self.owned_expr(expr)),
                 // an int, or a float literal, as the decimal it is; an int or a
                 // decimal as the fraction it is (a value that can fail
                 // converts as its payload)
@@ -118,22 +107,27 @@ impl Emitter {
                         one(&inner)
                     }
                 }
+                // arithmetic of ints proven within 64 bits: the plain operator
+                // (no overflow branch, so a loop's arithmetic vectorizes)
+                Convert::Proven => match Emitter::raw(expr) {
+                    Expr::Binary { op, l, r, .. } if matches!(op.as_str(), "add" | "sub" | "mul") => {
+                        let (a, b) = (self.operand(l), self.operand(r));
+                        let sym = match op.as_str() {
+                            "add" => "+",
+                            "sub" => "-",
+                            _ => "*",
+                        };
+                        format!("({} {} {})", a, sym, b)
+                    }
+                    Expr::Unary { op, expr: x, .. } if op == "neg" => format!("(-{})", self.operand(x)),
+                    other => self.expr(other),
+                },
+                // (a value that can fail keeps its failure, a list's or a
+                // map's items each; a failed one's placeholder holds no
+                // number past 64 bits)
                 Convert::ToSmall(who) => {
                     let inner = self.expr(expr);
-                    let line = self.line_now();
-                    let what = who.text();
-                    let held = self.tt(expr);
-                    let small = |v: &str| match Self::inner(&held) {
-                        Ty::List(_) => format!("({}).iter().map(|i| i.small_for({:?})).collect::<Result<Vec<i64>, String>>().unwrap_or_else(|e| crow_stop({}, e))", v, what, line),
-                        Ty::Map(..) => format!("({}).iter().map(|(k, v)| v.small_for({:?}).map(|v| (k.clone(), v))).collect::<Result<std::collections::BTreeMap<_, i64>, String>>().unwrap_or_else(|e| crow_stop({}, e))", v, what, line),
-                        _ => format!("({}).small_for({:?}).unwrap_or_else(|e| crow_stop({}, e))", v, what, line),
-                    };
-                    // (a value that can fail keeps its failure; a failed one's
-                    // placeholder holds no number past 64 bits)
-                    if matches!(held, Ty::Result(_)) {
-                        return format!("{{ let _r = &({}); CrowResult {{ ok: _r.ok, value: {}, reason: _r.reason.clone(), kind: _r.kind.clone(), trace: _r.trace.clone(), captured: _r.captured }} }}", inner, small("_r.value"));
-                    }
-                    small(&inner)
+                    shrunk(&self.tt(expr), &inner, &who.text(), &self.line_now())
                 }
                 Convert::IntToFloat => {
                     let inner = self.expr(expr);
@@ -532,6 +526,12 @@ impl Emitter {
             // a slice of text compared, where it lies (texts.rs)
             if let Some(s) = self.slice_compared(left, right).or_else(|| self.slice_compared(right, left)) {
                 return if op == "ne" { format!("!{}", s) } else { s };
+            }
+            // a character of text compared, where it lies (the other side
+            // first only where reading it does nothing: a name, a literal)
+            let plain = |e: &Expr| matches!(e, Expr::Const(..) | Expr::Local(..));
+            if let Some(s) = self.char_compared(left, right).or_else(|| if plain(left) { self.char_compared(right, left) } else { None }) {
+                return if op == "ne" { format!("(!{})", s) } else { s };
             }
         }
         let l = self.operand(left);
@@ -1051,13 +1051,13 @@ impl Emitter {
                 let cast = if matches!(el.as_ref(), Ty::Int) { " as i64" } else { "" };
                 // a plain vector's number, read where it lies (vectors.rs)
                 if let Some(v) = self.plain_vector(base) {
-                    return format!("{{ let _i = {}; {}[crow_runtime::stops::item(_i, {}.len()).unwrap_or_else(|e| crow_stop({}, e))]{} }}", idx, v, v, line, cast);
+                    return format!("{{ let _i = {}; {}[{}]{} }}", idx, v, self.index_at("_i", &format!("{}.len()", v)), cast);
                 }
                 format!("{{ let _i = {}; crow_runtime::core::number_at(&{}, _i).unwrap_or_else(|e| crow_stop({}, e)){} }}", idx, b, line, cast)
             }
             Ty::List(el) => {
                 let suffix = if Self::is_copy_type(el) { "" } else { ".clone()" };
-                format!("{{ let _i = {}; let _v = &{}; _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop({}, e))]{} }}", idx, b, self.line_now(), suffix)
+                format!("{{ let _i = {}; let _v = &{}; _v[{}]{} }}", idx, b, self.index_at("_i", "_v.len()"), suffix)
             }
             // a character, read with what is known of the text's start (a
             // text read by position keeps it; every character had been
@@ -1074,14 +1074,13 @@ impl Emitter {
                 let getter = Self::cell_getter(&Self::inner(&self.tt(whole)));
                 // a column that can have missing cells: the cell is a result,
                 // a missing one an error
-                let line = self.line_now();
                 if matches!(self.tt(whole), Ty::Result(_)) {
                     return format!(
-                        "{{ let _i = {}; let _c = &{}; let _idx = crow_runtime::stops::item(_i, _c.len()).unwrap_or_else(|e| crow_stop({}, e)); let _ok = _c.valid[_idx]; let _why = if _ok {{ String::new() }} else {{ \"missing\".to_string() }}; CrowResult {{ ok: _ok, value: _c.{}(_idx), reason: _why.clone(), kind: _why, trace: vec![], captured: 0.0 }} }}",
-                        idx, b, line, getter
+                        "{{ let _i = {}; let _c = &{}; let _idx = {}; let _ok = _c.valid[_idx]; let _why = if _ok {{ String::new() }} else {{ \"missing\".to_string() }}; CrowResult {{ ok: _ok, value: _c.{}(_idx), reason: _why.clone(), kind: _why, trace: vec![], captured: 0.0 }} }}",
+                        idx, b, self.index_at("_i", "_c.len()"), getter
                     );
                 }
-                format!("{{ let _i = {}; let _c = &{}; _c.{}(crow_runtime::stops::item(_i, _c.len()).unwrap_or_else(|e| crow_stop({}, e))) }}", idx, b, getter, line)
+                format!("{{ let _i = {}; let _c = &{}; _c.{}({}) }}", idx, b, getter, self.index_at("_i", "_c.len()"))
             }
             Ty::Map(..) => {
                 self.needs_crow_runtime = true;
@@ -2415,6 +2414,13 @@ impl Emitter {
                 let s = strs[i].clone();
                 strs[i] = match k {
                     k if k.owned() => self.moved_or_cloned(a, &s),
+                    // a list whose items can fail, joined: its items, a failed
+                    // one stopping the program with its reason, as the
+                    // interpreter reads its words (table::read_words)
+                    Kind::Words if matches!(Self::inner(&self.tt(a)), Ty::List(it) if it.is_result()) => {
+                        let line = self.line_now();
+                        format!("{{ let _xs = &({}); let mut _w = Vec::with_capacity(_xs.len()); for (_i, _x) in _xs.iter().enumerate() {{ if !_x.ok {{ crow_stop({}, if _x.kind == \"missing\" {{ crow_runtime::stops::missing_cell(_i) }} else {{ format!(\"item {{}} of the list failed: {{}}\", _i, _x.reason) }}) }} _w.push(_x.value.clone()); }} _w }}", s, line)
+                    }
                     Kind::Item | Kind::ItemRef => {
                         let at = self.tt(a);
                         // (a local read for the last time moves into the collection)
@@ -2443,12 +2449,23 @@ impl Emitter {
             let raw = Emitter::raw(first);
             let taken = matches!(raw, Expr::Local(n, _) | Expr::Move(n, _) if self.move_target.as_deref() == Some(n.as_str()))
                 || self.moved_local(first)
-                || matches!(raw, Expr::Call { propagates: false, .. } | Expr::Interp(_));
-            if taken && matches!(self.tt(first), Ty::Str) && row.params.len() == strs.len() {
+                || matches!(raw, Expr::Call { propagates: false, .. } | Expr::Call { target: Target::Row(_) | Target::User(_), .. } | Expr::Interp(_));
+            let held = match self.tt(first) {
+                Ty::Str => true,
+                // (a list's items are moved with it: `lines` drops its empty
+                // last piece without copying the rest)
+                Ty::List(_) => row.id == "core.slice",
+                _ => false,
+            };
+            if taken && held && row.params.len() == strs.len() {
                 let line = self.line_now();
                 let mut printed = vec![strs[0].clone()];
                 printed.extend(row.params.iter().zip(&strs).skip(1).map(|(k, s)| k.print(s, &line)));
-                return format!("{}({})", path, printed.join(", "));
+                let call = format!("{}({})", path, printed.join(", "));
+                return match row.fails {
+                    crate::table::Fails::Stops => format!("{}.unwrap_or_else(|e| crow_stop({}, e))", call, line),
+                    _ => call,
+                };
             }
         }
         let trace = self.trace_format_expr();
@@ -2461,6 +2478,19 @@ impl Emitter {
     /// The line a stop names: the statement's, or, inside a standard
     /// module's function written in Crow, the line of the call that
     /// reached it (crow_runtime::stops::call_line, noted by `at_call_line`).
+    /// The position `i` names in a sequence of `len` (each printed Rust),
+    /// or the program stops on this statement's line — inside a standard
+    /// module's function written in Crow, on the call's, read only when it
+    /// stops (crow_runtime::stops::at: no call the optimizer cannot see
+    /// through, so a loop's reads of a list it does not write are hoisted).
+    pub(crate) fn index_at(&self, i: &str, len: &str) -> String {
+        if self.in_crow_fn {
+            format!("crow_runtime::stops::at_call({}, {})", i, len)
+        } else {
+            format!("crow_runtime::stops::at({}, {}, {})", i, len, self.current_line)
+        }
+    }
+
     pub(crate) fn line_now(&self) -> String {
         if self.in_crow_fn {
             "crow_runtime::stops::call_line()".to_string()
@@ -2578,4 +2608,30 @@ fn yielding(body: &[Stmt], acc: &str, list: &Ty) -> Block {
             other => other.clone(),
         })
         .collect()
+}
+
+/// A value of type `t` (ints in 64 bits) as the same value growing: each
+/// int an `Int`, through lists, maps and values that can fail (a failed
+/// one's failure kept).
+fn grown(t: &Ty, v: &str) -> String {
+    match t {
+        Ty::Int | Ty::Unknown => format!("crow_runtime::int::Int::from({})", v),
+        Ty::Result(i) => format!("{{ let _r = {}; CrowResult {{ ok: _r.ok, value: {}, reason: _r.reason, kind: _r.kind, trace: _r.trace, captured: _r.captured }} }}", v, grown(i, "_r.value")),
+        Ty::List(i) => format!("({}).into_iter().map(|_x| {}).collect::<Vec<_>>()", v, grown(i, "_x")),
+        Ty::Map(_, i) => format!("({}).into_iter().map(|(_k, _x)| (_k, {})).collect::<std::collections::BTreeMap<_, _>>()", v, grown(i, "_x")),
+        _ => v.to_string(),
+    }
+}
+
+/// A value of type `t` (ints that grow) as the same value in 64 bits, read
+/// where it lies: an int past them stops the program on `line`, naming
+/// `what` took it (`Who::text`).
+fn shrunk(t: &Ty, v: &str, what: &str, line: &str) -> String {
+    match t {
+        Ty::Big | Ty::Unknown => format!("({}).small_for({:?}).unwrap_or_else(|e| crow_stop({}, e))", v, what, line),
+        Ty::Result(i) => format!("{{ let _r = &({}); CrowResult {{ ok: _r.ok, value: {}, reason: _r.reason.clone(), kind: _r.kind.clone(), trace: _r.trace.clone(), captured: _r.captured }} }}", v, shrunk(i, "_r.value", what, line)),
+        Ty::List(i) => format!("({}).iter().map(|_x| {}).collect::<Vec<_>>()", v, shrunk(i, "(*_x)", what, line)),
+        Ty::Map(_, i) => format!("({}).iter().map(|(_k, _x)| (_k.clone(), {})).collect::<std::collections::BTreeMap<_, _>>()", v, shrunk(i, "(*_x)", what, line)),
+        _ => format!("({}).clone()", v),
+    }
 }

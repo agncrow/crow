@@ -260,6 +260,7 @@ fn settle(program: &Program) -> (Widths, Walk) {
         rels: Vec::new(),
         thresholds: thresholds_of(program),
         frozen: false,
+        soft: Default::default(),
     };
     // writes only widen a range, and a range that keeps growing is taken as
     // unbounded: the rounds end
@@ -413,6 +414,11 @@ struct Walk {
     thresholds: Vec<i128>,
     /// Settled: the rewrite asks ranges, and nothing it asks widens one.
     frozen: bool,
+    /// The places (roots) whose range rests on ROUNDS — a sum bounded by no
+    /// count the program states, a recursion's answer — or reads one: their
+    /// bound holds only as long as no part of the program runs 2^48 times,
+    /// so arithmetic on them keeps its check (Convert::Proven).
+    soft: std::collections::HashSet<Place>,
 }
 
 impl Walk {
@@ -490,6 +496,9 @@ impl Walk {
         let ib = self.range.remove(&rb).unwrap_or(Iv::EMPTY);
         let ba = self.base.get(&ra).copied().unwrap_or(Iv::EMPTY);
         let bb = self.base.remove(&rb).unwrap_or(Iv::EMPTY);
+        if self.soft.remove(&rb) {
+            self.soft.insert(ra.clone());
+        }
         self.parent.insert(rb, ra.clone());
         self.range.insert(ra.clone(), ia.join(ib));
         self.base.insert(ra, ba.join(bb));
@@ -531,6 +540,35 @@ impl Walk {
         self.made_items(&from, e);
     }
 
+    /// A list handed to a parameter: the parameter's items hold what the
+    /// argument's hold, at every depth. Nothing flows back — the callee
+    /// has its own copy (a write there never reaches the caller's) — so
+    /// the lists two calls hand one function stay apart: `report[ones]`
+    /// and `report[twos]`, twos made from ones' items, had joined into one
+    /// range that grew round each pass.
+    fn flow_into(&mut self, to: &Place, e: &Expr) {
+        if !holds_ints(e.ty_ref()) {
+            return;
+        }
+        let Some(from) = self.place_of(e) else { return };
+        self.made_items(&from, e);
+        self.flow_items_into(to, &from, e.ty_ref().map(|t| t.payload().clone()).unwrap_or(Ty::Unknown));
+    }
+
+    fn flow_items_into(&mut self, to: &Place, from: &Place, ty: Ty) {
+        if let Ty::List(inner) | Ty::Map(_, inner) = ty {
+            let (a, b) = (Place::Items(Box::new(to.clone())), Place::Items(Box::new(from.clone())));
+            if self.root(&a) != self.root(&b) {
+                let r = self.get(&b);
+                self.widen_base(&a, r);
+                if self.soft.contains(&self.root(&b)) {
+                    self.mark_soft(&a);
+                }
+            }
+            self.flow_items_into(&a, &b, *inner);
+        }
+    }
+
     /// The items of two places of a type holding ints, joined at every
     /// depth (a list of lists of ints: its lists' items too).
     fn flow_items(&mut self, to: &Place, from: &Place, ty: Ty) {
@@ -541,15 +579,31 @@ impl Walk {
         }
     }
 
-    /// The range of a range builtin's items, of its bounds' ranges.
-    fn range_items(&mut self, id: &str, args: &[Expr]) -> Iv {
+    /// The range of a range builtin's items, of its bounds' ranges: within
+    /// 64 bits (a bound past them is refused where it is handed), and
+    /// fewer than COUNT from its start — no part of a program runs 2^48
+    /// times, nor holds a list that long. A range bounded by that alone (a
+    /// bound parsed from text, which grows) rests on ROUNDS: `soft` is
+    /// marked on the place its items go to.
+    fn range_items(&mut self, id: &str, args: &[Expr], to: &Place) -> Iv {
         let ivs: Vec<Iv> = args.iter().map(|a| self.iv_of(a)).collect();
-        match (id, ivs.as_slice()) {
-            ("core.range_to", [n]) => Iv::new(0, (n.hi - 1).max(0)),
-            ("core.range_from", [a, b]) => Iv::new(a.lo, (b.hi - 1).max(a.lo)),
-            ("core.range", [a, b, _]) => a.join(*b),
-            _ => Iv::I64,
+        let (r, counted) = match (id, ivs.as_slice()) {
+            ("core.range_to", [n]) => (Iv::new(0, (n.hi - 1).max(0)), Iv::new(0, COUNT - 1)),
+            ("core.range_from", [a, b]) => {
+                let r = Iv::new(a.lo, (b.hi - 1).max(a.lo));
+                (r, Iv::new(a.lo.max(b.lo.saturating_sub(COUNT)), (b.hi - 1).min(a.hi.saturating_add(COUNT)).max(a.lo)))
+            }
+            ("core.range", [a, b, _]) => (a.join(*b), Iv::I64),
+            _ => (Iv::I64, Iv::I64),
+        };
+        if r.is_empty() {
+            return r;
         }
+        let bounded = Iv::new(r.lo.max(counted.lo).max(i64::MIN as i128), r.hi.min(counted.hi).min(i64::MAX as i128));
+        if bounded != r {
+            self.mark_soft(to);
+        }
+        bounded
     }
 
     /// What a made list holds, written into its items' place.
@@ -584,7 +638,7 @@ impl Walk {
             Expr::Call { target: Target::Row(row), args, .. } => match row.id {
                 // the items of a range lie between its bounds
                 "core.range_to" | "core.range_from" | "core.range" => {
-                    let r = self.range_items(row.id, args);
+                    let r = self.range_items(row.id, args, &items);
                     self.widen_base(&items, r);
                 }
                 // a list the row makes of the lists it is given (push, concat,
@@ -915,7 +969,7 @@ impl Walk {
                 let place = self.local(var);
                 let (r, rounds) = match iter {
                     Expr::Call { target: Target::Row(row), args, .. } if matches!(row.id, "core.range_to" | "core.range_from" | "core.range") => {
-                        let r = self.range_items(row.id, args);
+                        let r = self.range_items(row.id, args, &place);
                         (r, r.sub(r).count_bits() + 1)
                     }
                     _ => {
@@ -975,6 +1029,9 @@ impl Walk {
     /// function walked (a local the walk knows — written before in the
     /// line, or bounded by its loop's condition — is its value's range).
     fn write_as(&mut self, dest: &Place, e: &Expr, straight: bool) -> Iv {
+        if self.reads_soft(e) {
+            self.mark_soft(dest);
+        }
         let known = straight && matches!(dest, Place::Local(f, v) if *f == self.fun && self.cur.contains_key(v));
         if !known && let Some(r) = self.summed(dest, e) {
             self.widen(dest, r);
@@ -1030,6 +1087,33 @@ impl Walk {
         ctx.rounds.unwrap_or(ROUNDS)
     }
 
+    /// A place's range rests on ROUNDS from here on.
+    fn mark_soft(&mut self, p: &Place) {
+        if self.frozen {
+            return;
+        }
+        let r = self.root(p);
+        if self.soft.insert(r) {
+            self.changed = true;
+        }
+    }
+
+    /// Whether an expression reads a place whose range rests on ROUNDS.
+    pub(crate) fn reads_soft(&self, e: &Expr) -> bool {
+        let mut any = false;
+        crate::ir::visit_expr(e, &mut |y| {
+            let p = match y {
+                Expr::Call { target: Target::User(g), .. } => Some(Place::Ret(g.clone())),
+                Expr::Derived(d, _) => Some(Place::Ret(derive_fn(d))),
+                other => self.read_place(other),
+            };
+            if let Some(p) = p {
+                any |= self.soft.contains(&self.root(&p));
+            }
+        });
+        any
+    }
+
     /// A sum into `dest`: a write that adds to what `dest` holds — `t = t +
     /// e`, `xs[i] = xs[j] - e`, `set[m, k, m[k] + 1]` (through the temporary
     /// the lowering made), a fact a handler adds to, `make[depth - 1]` of a
@@ -1038,6 +1122,11 @@ impl Walk {
     /// that are no sum start it, moved by every sum's drift this round.
     /// None for a write of any other shape.
     fn summed(&mut self, dest: &Place, e: &Expr) -> Option<Iv> {
+        // (the value of a sum that can fail, unwrapped where it is held:
+        // `others = unwrap _t2`)
+        if let Expr::Convert { how: crate::ir::Convert::Unwrap | crate::ir::Convert::Known, expr, .. } = e {
+            return self.summed(dest, expr);
+        }
         // a temporary the lowering made for the value is the value
         if let Expr::Local(v, _) | Expr::Move(v, _) = e
             && let Some(def) = self.temps.get(&(self.fun.clone(), v.clone())).cloned()
@@ -1086,6 +1175,9 @@ impl Walk {
             }
             // after N rounds: c^N times what it started at and N steps
             let bits = self.sum_rounds(dest);
+            if bits == ROUNDS {
+                self.mark_soft(dest);
+            }
             let n: i128 = if bits >= 100 { INF } else { 1i128 << bits };
             let mut m: i128 = 1;
             let mut k = 0i128;
@@ -1117,6 +1209,9 @@ impl Walk {
             step = if *neg { step.sub(r) } else { step.add(r) };
         }
         let bits = self.sum_rounds(dest);
+        if bits == ROUNDS && self.loops.last().is_none_or(|c| c.rounds != Some(ROUNDS)) {
+            self.mark_soft(dest);
+        }
         let moved = step.drift(bits);
         let total = self.drifts.get(&d).copied().unwrap_or(Iv::point(0)).add(moved);
         self.drifts.insert(d.clone(), total);
@@ -1162,6 +1257,7 @@ impl Walk {
             let r = self.iv_of(x);
             each = each.join(r.neg()).join(r);
         }
+        self.mark_soft(&Place::Ret(me));
         Some(each.join(Iv::point(0)).drift(ROUNDS))
     }
 
@@ -1218,14 +1314,14 @@ impl Walk {
                     // (a parameter is the callee's: never this line's write)
                     self.write(&place, a);
                 }
-                self.flow(&place, a);
+                self.flow_into(&place, a);
             }
         }
         // (a collecting loop's body: its assignments and calls)
         if let Expr::ForExpr { var, iter, body, .. } = e {
             let place = self.local(var);
             let r = match iter.as_ref() {
-                Expr::Call { target: Target::Row(row), args, .. } if matches!(row.id, "core.range_to" | "core.range_from" | "core.range") => Some(self.range_items(row.id, args)),
+                Expr::Call { target: Target::Row(row), args, .. } if matches!(row.id, "core.range_to" | "core.range_from" | "core.range") => Some(self.range_items(row.id, args, &place)),
                 _ => self.place_of(iter).map(|p| {
                     self.made_items(&p, iter);
                     self.get(&Place::Items(Box::new(p)))
@@ -1498,9 +1594,7 @@ fn row_iv(id: &str, ivs: &[Iv]) -> Iv {
 /// (`Convert::ToSmall`, refused past 64 bits, in both modes).
 pub fn widen(program: &mut Program) {
     let (w, mut walk) = settle(program);
-    if w.wide.is_empty() && !grows_anywhere(program, &mut walk) {
-        return;
-    }
+    let _ = grows_anywhere;
     // the declared types first: what each read and each call will meet
     let mut rets: HashMap<String, Ty> = HashMap::new();
     let mut params: HashMap<String, Vec<Ty>> = HashMap::new();
@@ -1820,8 +1914,36 @@ impl<'a> Retype<'a> {
         }
     }
 
-    /// An expression's parts retyped, then its own type from them.
+    /// An expression's parts retyped, then its own type from them; and
+    /// arithmetic of 64-bit ints whose range the walk proves within 64 bits,
+    /// on no bound that rests on ROUNDS, computed without its check
+    /// (Convert::Proven: the overflow branch kept LLVM from vectorizing a
+    /// loop's arithmetic).
     fn expr(&mut self, e: &mut Expr) {
+        self.expr_inner(e);
+        if self.proven(e) {
+            let inner = take(e);
+            *e = Expr::Convert { how: crate::ir::Convert::Proven, expr: Box::new(inner), ty: Ty::Int };
+        }
+    }
+
+    /// Whether `+`, `-`, `*` or a negation of 64-bit ints cannot pass them.
+    fn proven(&mut self, e: &Expr) -> bool {
+        let plain_int = |x: &Expr| matches!(x.ty(), Ty::Int);
+        let ok = match e {
+            Expr::Binary { op, l, r, ty } => matches!(op.as_str(), "add" | "sub" | "mul") && matches!(ty, Ty::Int) && plain_int(l) && plain_int(r),
+            Expr::Unary { op, expr, ty } => op == "neg" && matches!(ty, Ty::Int) && plain_int(expr),
+            _ => false,
+        };
+        if !ok {
+            return false;
+        }
+        let r = self.walk.iv_of(e);
+        // (strictly inside: the extremes are where a check would matter)
+        !r.is_empty() && r.lo > i64::MIN as i128 && r.hi < i64::MAX as i128 && !self.walk.reads_soft(e)
+    }
+
+    fn expr_inner(&mut self, e: &mut Expr) {
         // arithmetic of 64-bit ints whose answer may not fit them grows (asked
         // of the expression as the walk saw it, before its parts are retyped)
         let wide = wide_arith(self.walk, e);
@@ -1913,13 +2035,15 @@ impl<'a> Retype<'a> {
                         }
                     }
                     Target::Row(row) => {
-                        // `int[n]` of a big int is itself, `float[n]` its nearest float
+                        // `int[n]` of a big int is itself (`float[n]`, its nearest
+                        // float, is a row's: the call keeps a failure riding on n)
                         if row.id == "core.int" && args.len() == 1 && matches!(args[0].ty().payload(), Ty::Big) {
-                            *e = take(&mut args[0]);
-                            return;
-                        }
-                        if row.id == "core.float_of_int" && args.len() == 1 && matches!(args[0].ty().payload(), Ty::Big) {
-                            *e = Expr::Convert { how: crate::ir::Convert::IntToFloat, expr: Box::new(take(&mut args[0])), ty: Ty::Float };
+                            // (n that can fail, as the call answered it)
+                            let fails = ty.is_result();
+                            *e = match take(&mut args[0]) {
+                                Expr::Convert { how: crate::ir::Convert::Unwrap, expr, .. } if fails && expr.ty().is_result() => *expr,
+                                other => other,
+                            };
                             return;
                         }
                         // the row that keeps every digit: where its answer may

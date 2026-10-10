@@ -33,6 +33,7 @@ pub fn call_line() -> usize {
 
 /// Where index `i` reads in a sequence of `len`: a negative index counts
 /// from the end, `-1` the last.
+#[inline]
 fn resolve(i: i64, len: usize) -> Option<usize> {
     let n = i64::try_from(len).ok()?;
     // n ≥ 0 and i < 0: the sum cannot overflow
@@ -62,6 +63,43 @@ pub fn item(i: i64, len: usize) -> Result<usize, String> {
 #[inline(never)]
 fn item_slow(i: i64, len: usize) -> Result<usize, String> {
     resolve(i, len).ok_or_else(|| format!("index {} is out of range for an array of {}", i, count(len, "item", "items")))
+}
+
+/// `xs[i]`'s position in a list of `len` items, or the program stops on
+/// `line` (an index past the end, or before the start counted from it):
+/// pure arithmetic on every path that answers, the stop never returning,
+/// so an optimizer hoists a loop's reads of a list it does not write. A
+/// check whose slow path built its message as a value (`item`) is a call
+/// that may write anything, and every read after it was made again: the
+/// many-body n-body had run at half Rust's speed.
+#[inline(always)]
+pub fn at(i: i64, len: usize, line: usize) -> usize {
+    if (i as u64) < (len as u64) {
+        return i as usize;
+    }
+    match resolve(i, len) {
+        Some(k) => k,
+        None => out_of_range(i, len, line),
+    }
+}
+
+/// `at` inside a standard module's function written in Crow: the stop
+/// names the line of the call that reached it, read only when it stops.
+#[inline(always)]
+pub fn at_call(i: i64, len: usize) -> usize {
+    if (i as u64) < (len as u64) {
+        return i as usize;
+    }
+    match resolve(i, len) {
+        Some(k) => k,
+        None => out_of_range(i, len, call_line()),
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn out_of_range(i: i64, len: usize, line: usize) -> ! {
+    halt(line, &format!("index {} is out of range for an array of {}", i, count(len, "item", "items")))
 }
 
 /// `s[i]` of a string, counted in characters.
@@ -396,6 +434,23 @@ mod tests {
         assert_eq!(item(-4, 3), Err("index -4 is out of range for an array of 3 items".to_string()));
         assert_eq!(item(0, 0), Err("index 0 is out of range for an array of 0 items".to_string()));
         assert_eq!(char_at(5, 1), Err("index 5 is out of range for a string of 1 character".to_string()));
+    }
+
+    /// The compiled program's index answers what `item` answers, and stops
+    /// with its words on the line it is given (off the main thread a stop
+    /// travels as a panic, which the test catches)
+    #[test]
+    fn a_compiled_index_is_items_answer() {
+        assert_eq!(at(0, 3, 7), 0);
+        assert_eq!(at(-1, 3, 7), 2);
+        assert_eq!(at(-3, 3, 7), 0);
+        let stopped = |f: fn() -> usize| match std::panic::catch_unwind(f) {
+            Err(p) => p.downcast_ref::<Stop>().map(|s| s.0.clone()),
+            Ok(_) => None,
+        };
+        assert_eq!(stopped(|| at(3, 3, 7)).as_deref(), Some("line 7: index 3 is out of range for an array of 3 items"));
+        assert_eq!(stopped(|| at(-4, 3, 7)).as_deref(), Some("line 7: index -4 is out of range for an array of 3 items"));
+        assert_eq!(stopped(|| at_call(0, 0)).as_deref(), Some("index 0 is out of range for an array of 0 items"));
         assert_eq!(row(i64::MIN, 2), Err(format!("index {} is out of range for a tensor of 2 rows", i64::MIN)));
     }
 

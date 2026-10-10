@@ -1517,6 +1517,11 @@ pub static ROWS: &[Row] = &[
     // kind no row takes is refused before the program runs
     row!("text.split", "", "split", crow_runtime::text::split, (Str, Str) -> Strs, never),
     row!("text.trim", "", "trim", crow_runtime::text::trim, (Str) -> Str, never),
+    // how many times a part occurs (not overlapping: Python's str.count),
+    // and each character of one set mapped to the one at its place in
+    // another, in one pass (DNA's complement: tr, Python's translate)
+    row!("text.occurs", "", "occurs", crow_runtime::text::count, (Str, Str) -> Int, stops),
+    Row { take: texts::translate_taken, ..row!("text.translate", "", "translate", crow_runtime::text::translate, (Str, Str, Str) -> Str, stops) },
     Row { take: texts::replace_taken, ..row!("text.replace", "", "replace", crow_runtime::text::replace, (Str, Str, Str) -> Str, never) },
     Row { take: texts::upper_taken, ..row!("text.upper", "", "upper", crow_runtime::text::upper, (Str) -> Str, never) },
     Row { take: texts::lower_taken, ..row!("text.lower", "", "lower", crow_runtime::text::lower, (Str) -> Str, never) },
@@ -1551,7 +1556,7 @@ pub static ROWS: &[Row] = &[
     row!("core.__pick_rows", "", "__pick_rows", crow_runtime::math::pick_rows, (Tensor, Bools) -> Tensor, stops),
     // `map[keys, values]`: the literal's other form, reached by the lowering
     maprow!("core.__map_of", "__map_of", crow_runtime::core::map_of, (Keys, Seq) -> MapOf, stops, maps::map_of, maps::map_of_taken),
-    row!("core.slice", "", "slice", crow_runtime::core::slice, (Seq, Int, Int) -> List, never),
+    Row { take: lists::slice_taken, ..row!("core.slice", "", "slice", crow_runtime::core::slice, (Seq, Int, Int) -> List, never) },
     row!("core.slice_str", "", "slice", crow_runtime::core::slice_str, (Str, Int, Int) -> Str, never),
     row!("core.slice_tensor", "", "slice", crow_runtime::core::slice_tensor, (Tensor, Int, Int) -> Tensor, never),
     row!("core.push", "", "push", crow_runtime::core::push, (List, Item) -> List, never),
@@ -1710,6 +1715,7 @@ pub static ROWS: &[Row] = &[
     row!("core.__min_big", "", "__min_big", crow_runtime::int::min, (Big, Big) -> Big, never),
     row!("core.__max_big", "", "__max_big", crow_runtime::int::max, (Big, Big) -> Big, never),
     row!("core.__sort_big", "", "__sort_big", crow_runtime::int::sort, (Bigs) -> Bigs, never),
+    row!("core.__float_of_big", "", "__float_of_big", crow_runtime::int::float_of, (Big) -> Float, never),
     // exact numbers (spec, Numbers That Keep Every Digit): a decimal of text,
     // an int, a float (the text it shows) or itself; with digits, every
     // answer it takes part in rounds to them; a fraction of two ints in
@@ -2528,7 +2534,9 @@ impl Kind {
                 Kind::Frame => a == Arg::Frame,
                 Kind::Cell => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Json | Arg::Moment),
                 Kind::Cells => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Column | Arg::Moment | Arg::Moments),
-                Kind::Words => matches!(a, Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Column | Arg::Moments),
+                // (a list whose items can fail: its items, a failed one
+                // stopping the program, as a sum's numbers do)
+                Kind::Words => matches!(a, Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Column | Arg::Moments | Arg::Fallible | Arg::FallibleNumbers),
                 Kind::List | Kind::Seq => matches!(a, Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Tensors | Arg::Records | Arg::Maps | Arg::Items | Arg::Chunks | Arg::Fallible | Arg::FallibleNumbers | Arg::Moments),
                 Kind::Item | Kind::ItemRef => true,
                 Kind::MapOf | Kind::MapRef | Kind::TextMap => a == Arg::Map,
@@ -2850,21 +2858,21 @@ mod tests {
         assert_eq!(literal_text("\"\\t\".to_string()"), Some("\"\\t\"".to_string()));
         assert_eq!(literal_text("\"a\".to_string() + \"b\".to_string()"), None);
         assert_eq!(literal_text("name.to_string()"), None);
-        let indexed = "{ let _i = 2_i64; let _v = &rows; _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop(5, e))].clone() }";
-        let borrowed = "{ let _i = 2_i64; let _v = &rows; &_v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop(5, e))] }";
+        let indexed = "{ let _i = 2_i64; let _v = &rows; _v[crow_runtime::stops::at(_i, _v.len(), 5)].clone() }";
+        let borrowed = "{ let _i = 2_i64; let _v = &rows; &_v[crow_runtime::stops::at(_i, _v.len(), 5)] }";
         assert_eq!(borrowed_index(indexed).as_deref(), Some(borrowed));
         // an item that is Copy is not cloned, and is not a borrow either
-        assert_eq!(borrowed_index("{ let _i = 0_i64; let _v = &xs; _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop(5, e))] }"), None);
+        assert_eq!(borrowed_index("{ let _i = 0_i64; let _v = &xs; _v[crow_runtime::stops::at(_i, _v.len(), 5)] }"), None);
         // a list an expression makes dies with the block: the item is cloned
-        assert_eq!(borrowed_index("{ let _i = 0_i64; let _v = &crow_runtime::text::split(&*(s), \" \"); _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop(5, e))].clone() }"), None);
-        assert_eq!(borrowed_index("{ let _i = 0_i64; let _v = &(_t4).value.names; _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop(5, e))].clone() }"), None);
-        assert!(borrowed_index("{ let _i = 0_i64; let _v = &r.names; _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop(5, e))].clone() }").is_some());
+        assert_eq!(borrowed_index("{ let _i = 0_i64; let _v = &crow_runtime::text::split(&*(s), \" \"); _v[crow_runtime::stops::at(_i, _v.len(), 5)].clone() }"), None);
+        assert_eq!(borrowed_index("{ let _i = 0_i64; let _v = &(_t4).value.names; _v[crow_runtime::stops::at(_i, _v.len(), 5)].clone() }"), None);
+        assert!(borrowed_index("{ let _i = 0_i64; let _v = &r.names; _v[crow_runtime::stops::at(_i, _v.len(), 5)].clone() }").is_some());
         // a parameter the caller lends and the payload of a held value that can
         // fail are places a name holds; a call's answer is not
-        assert!(borrowed_index("{ let _i = i; let _v = &(*rows); _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop(6, e))].clone() }").is_some());
-        assert!(borrowed_index("{ let _i = i; let _v = &(rows).value; _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop(6, e))].clone() }").is_some());
-        assert_eq!(borrowed_index("{ let _i = i; let _v = &(rows.clone()); _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop(6, e))].clone() }"), None);
-        assert_eq!(borrowed_index("{ let _i = i; let _v = &f(x); _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop(6, e))].clone() }"), None);
+        assert!(borrowed_index("{ let _i = i; let _v = &(*rows); _v[crow_runtime::stops::at(_i, _v.len(), 6)].clone() }").is_some());
+        assert!(borrowed_index("{ let _i = i; let _v = &(rows).value; _v[crow_runtime::stops::at(_i, _v.len(), 6)].clone() }").is_some());
+        assert_eq!(borrowed_index("{ let _i = i; let _v = &(rows.clone()); _v[crow_runtime::stops::at(_i, _v.len(), 6)].clone() }"), None);
+        assert_eq!(borrowed_index("{ let _i = i; let _v = &f(x); _v[crow_runtime::stops::at(_i, _v.len(), 6)].clone() }"), None);
         assert_eq!(Kind::Str.print("\"\\t\".to_string()", "3"), "\"\\t\"");
         assert_eq!(Kind::Str.print(indexed, "3"), format!("&*({})", borrowed));
         assert_eq!(Kind::Str.print("name", "3"), "&*(name)");
@@ -2993,14 +3001,12 @@ pub fn taken_path(id: &str) -> Option<&'static str> {
         "text.upper" => Some("crow_runtime::text::upper_taken"),
         "text.lower" => Some("crow_runtime::text::lower_taken"),
         "core.reverse_text" => Some("crow_runtime::core::reverse_text_taken"),
+        "text.translate" => Some("crow_runtime::text::translate_taken"),
+        "core.slice" => Some("crow_runtime::core::slice_taken"),
         _ => None,
     }
 }
 
-/// Whether a row's take path makes its answer of the value handed at
-/// position `i` of `argc` (a list it pushes onto, a map it sets, a text it
-/// changes where it lies): a value read for the last time there is moved
-/// into the call; anywhere else the row only reads it, and it is lent.
 /// The row that keeps every digit in place of one that answers 64 bits
 /// (int_width): `int` of text or a float, `floor`, `ceil` and `round` answer
 /// a whole number of any size; `abs`, `min` and `max` keep one handed to
@@ -3016,11 +3022,16 @@ pub fn big_form(id: &str) -> Option<&'static Row> {
         "core.min_ints" => "core.__min_big",
         "core.max_ints" => "core.__max_big",
         "core.sort_ints" => "core.__sort_big",
+        "core.float_of_int" => "core.__float_of_big",
         _ => return None,
     };
     ROWS.iter().find(|r| r.id == big)
 }
 
+/// Whether a row's take path makes its answer of the value handed at
+/// position `i` of `argc` (a list it pushes onto, a map it sets, a text it
+/// changes where it lies): a value read for the last time there is moved
+/// into the call; anywhere else the row only reads it, and it is lent.
 pub fn keeps_storage(row: &Row, i: usize, argc: usize) -> bool {
     if i == 0 && (taken_path(row.id).is_some() || row.id == "core.push_number") {
         return true;
@@ -3061,6 +3072,16 @@ pub mod texts {
             }
         }
         by_row("text.replace", &args, trace)
+    }
+
+    /// `translate[s, from, to]` given the text: mapped where it lies.
+    pub fn translate_taken(mut args: Vec<CrowValue>, trace: &str) -> Result<CrowValue, String> {
+        if args.len() == 3 {
+            if let Some((s, rest)) = texts_taken(&mut args) {
+                return crow_runtime::text::translate_taken(s, rest[0], rest[1]).map(write_str);
+            }
+        }
+        by_row("text.translate", &args, trace)
     }
 
     /// `upper[s]` given the text: ASCII raised where it lies.
@@ -3112,6 +3133,27 @@ pub mod tensors {
         match ROWS.iter().find(|r| r.id == "core.push_number") {
             Some(row) => (row.call)(&args, trace),
             None => Err("a bug in Crow: the row core.push_number is gone".to_string()),
+        }
+    }
+}
+
+pub mod lists {
+    use super::*;
+
+    /// `slice[xs, a, b]` given the list: cut where it lies when nothing
+    /// else holds its items (a shared list is the row's own call, a copy).
+    pub fn slice_taken(mut args: Vec<CrowValue>, trace: &str) -> Result<CrowValue, String> {
+        if let [xs, a, b] = args.as_mut_slice()
+            && xs.is_ok()
+            && let (Value::Array(items), Some(a), Some(b)) = (&mut xs.value, a.plain_int(), b.plain_int())
+            && let Some(v) = std::sync::Arc::get_mut(items)
+        {
+            let v = crow_runtime::core::slice_taken(std::mem::take(v), a, b);
+            return Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(v))));
+        }
+        match ROWS.iter().find(|r| r.id == "core.slice") {
+            Some(row) => (row.call)(&args, trace),
+            None => Err("a bug in Crow: the row core.slice is gone".to_string()),
         }
     }
 }

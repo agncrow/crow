@@ -78,34 +78,44 @@ impl Int {
         }
     }
 
+    // (the operations read a big operand where it lies: a copy of a number
+    // of thousands of digits had cost as much as adding it)
+
     #[inline]
     pub fn add(&self, o: &Int) -> Int {
-        if let (Int::Small(a), Int::Small(b)) = (self, o)
-            && let Some(c) = a.checked_add(*b)
-        {
-            return Int::Small(c);
+        match (self, o) {
+            (Int::Small(a), Int::Small(b)) => match a.checked_add(*b) {
+                Some(c) => Int::Small(c),
+                None => Int::of_big(IBig::from(*a) + IBig::from(*b)),
+            },
+            (Int::Big(a), Int::Big(b)) => Int::of_big(&**a + &**b),
+            (Int::Big(a), Int::Small(b)) | (Int::Small(b), Int::Big(a)) => Int::of_big(&**a + IBig::from(*b)),
         }
-        Int::of_big(self.big() + o.big())
     }
 
     #[inline]
     pub fn sub(&self, o: &Int) -> Int {
-        if let (Int::Small(a), Int::Small(b)) = (self, o)
-            && let Some(c) = a.checked_sub(*b)
-        {
-            return Int::Small(c);
+        match (self, o) {
+            (Int::Small(a), Int::Small(b)) => match a.checked_sub(*b) {
+                Some(c) => Int::Small(c),
+                None => Int::of_big(IBig::from(*a) - IBig::from(*b)),
+            },
+            (Int::Big(a), Int::Big(b)) => Int::of_big(&**a - &**b),
+            (Int::Big(a), Int::Small(b)) => Int::of_big(&**a - IBig::from(*b)),
+            (Int::Small(a), Int::Big(b)) => Int::of_big(IBig::from(*a) - &**b),
         }
-        Int::of_big(self.big() - o.big())
     }
 
     #[inline]
     pub fn mul(&self, o: &Int) -> Int {
-        if let (Int::Small(a), Int::Small(b)) = (self, o)
-            && let Some(c) = a.checked_mul(*b)
-        {
-            return Int::Small(c);
+        match (self, o) {
+            (Int::Small(a), Int::Small(b)) => match a.checked_mul(*b) {
+                Some(c) => Int::Small(c),
+                None => Int::of_big(IBig::from(*a) * IBig::from(*b)),
+            },
+            (Int::Big(a), Int::Big(b)) => Int::of_big(&**a * &**b),
+            (Int::Big(a), Int::Small(b)) | (Int::Small(b), Int::Big(a)) => Int::of_big(&**a * IBig::from(*b)),
         }
-        Int::of_big(self.big() * o.big())
     }
 
     /// `a / b`: the quotient, rounded toward zero (spec, Arithmetic).
@@ -113,12 +123,15 @@ impl Int {
         if o.is_zero() {
             return Err("division by zero".to_string());
         }
-        if let (Int::Small(a), Int::Small(b)) = (self, o)
-            && let Some(c) = a.checked_div(*b)
-        {
-            return Ok(Int::Small(c));
-        }
-        Ok(Int::of_big(self.big() / o.big()))
+        Ok(match (self, o) {
+            (Int::Small(a), Int::Small(b)) => match a.checked_div(*b) {
+                Some(c) => Int::Small(c),
+                None => Int::of_big(IBig::from(*a) / IBig::from(*b)),
+            },
+            (Int::Big(a), Int::Big(b)) => Int::of_big(&**a / &**b),
+            (Int::Big(a), Int::Small(b)) => Int::of_big(&**a / IBig::from(*b)),
+            (Int::Small(a), Int::Big(b)) => Int::of_big(IBig::from(*a) / &**b),
+        })
     }
 
     /// `a % b`: the remainder, with the sign of `a`.
@@ -126,22 +139,26 @@ impl Int {
         if o.is_zero() {
             return Err("modulo by zero".to_string());
         }
-        if let (Int::Small(a), Int::Small(b)) = (self, o)
-            && let Some(c) = a.checked_rem(*b)
-        {
-            return Ok(Int::Small(c));
-        }
-        Ok(Int::of_big(self.big() % o.big()))
+        Ok(match (self, o) {
+            (Int::Small(a), Int::Small(b)) => match a.checked_rem(*b) {
+                Some(c) => Int::Small(c),
+                None => Int::of_big(IBig::from(*a) % IBig::from(*b)),
+            },
+            (Int::Big(a), Int::Big(b)) => Int::of_big(&**a % &**b),
+            (Int::Big(a), Int::Small(b)) => Int::of_big(&**a % IBig::from(*b)),
+            (Int::Small(a), Int::Big(b)) => Int::of_big(IBig::from(*a) % &**b),
+        })
     }
 
     #[inline]
     pub fn neg(&self) -> Int {
-        if let Int::Small(a) = self
-            && let Some(c) = a.checked_neg()
-        {
-            return Int::Small(c);
+        match self {
+            Int::Small(a) => match a.checked_neg() {
+                Some(c) => Int::Small(c),
+                None => Int::of_big(-IBig::from(*a)),
+            },
+            Int::Big(b) => Int::of_big(-&**b),
         }
-        Int::of_big(-self.big())
     }
 
     #[inline]
@@ -307,6 +324,11 @@ pub fn abs(n: &Int) -> Int {
     n.abs()
 }
 
+/// `float[n]` of an int that grows: its nearest float.
+pub fn float_of(n: &Int) -> f64 {
+    n.to_f64()
+}
+
 pub fn min(a: &Int, b: &Int) -> Int {
     if b < a { b.clone() } else { a.clone() }
 }
@@ -372,9 +394,12 @@ impl PartialOrd for Int {
 
 impl Ord for Int {
     fn cmp(&self, o: &Int) -> Ordering {
+        // (a big one is past 64 bits: beyond any small one, by its sign)
         match (self, o) {
             (Int::Small(a), Int::Small(b)) => a.cmp(b),
-            _ => self.big().cmp(&o.big()),
+            (Int::Big(a), Int::Big(b)) => (**a).cmp(&**b),
+            (Int::Big(a), Int::Small(_)) => if a.signum() < IBig::ZERO { Ordering::Less } else { Ordering::Greater },
+            (Int::Small(_), Int::Big(b)) => if b.signum() < IBig::ZERO { Ordering::Greater } else { Ordering::Less },
         }
     }
 }

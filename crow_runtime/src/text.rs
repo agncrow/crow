@@ -104,6 +104,94 @@ pub fn slice_is(s: &str, known: &Known, start: i64, end: i64, other: &str) -> bo
     slice_known(s, known, start, end) == other
 }
 
+/// `text[i] eq other`: the character at a position compared where it lies
+/// (no text made of it), or why there is none — what `char_at_known`
+/// answers, compared.
+#[inline]
+pub fn char_is(s: &str, known: &Known, i: i64, other: &str) -> Result<bool, String> {
+    if i >= 0 {
+        let k = i as usize;
+        if k < known.ascii(s, k.saturating_add(1)) {
+            let b = other.as_bytes();
+            return Ok(b.len() == 1 && s.as_bytes()[k] == b[0]);
+        }
+    }
+    char_at_known(s, known, i).map(|c| c == other)
+}
+
+/// `occurs[text, part]`: how many times the part occurs in the text, not
+/// overlapping (`occurs['aaaa', 'aa']` is 2), as Python's `str.count` and
+/// Go's `strings.Count` count, at about the cost of reading the text: one
+/// byte, or two different bytes (which cannot overlap themselves, so every
+/// place counts), by a compare the compiler runs on many bytes at once; a
+/// longer part by memchr's search. An empty part counts nothing a program
+/// means: refused.
+pub fn count(s: &str, part: &str) -> Result<i64, String> {
+    let h = s.as_bytes();
+    Ok(match part.as_bytes() {
+        [] => return Err("occurs[] counts a part of at least one character".to_string()),
+        [c] => counted(h, h, |x, _| x == *c),
+        [a, b] if a != b => {
+            if h.len() < 2 {
+                return Ok(0);
+            }
+            counted(&h[..h.len() - 1], &h[1..], |x, y| (x == *a) & (y == *b))
+        }
+        p => memchr::memmem::find_iter(h, p).count(),
+    } as i64)
+}
+
+/// How many places `hit` holds at, of two byte slices read side by side:
+/// each chunk's count kept in a byte (a chunk is shorter than 256, so it
+/// cannot wrap — added unchecked, as a program's build checks every add
+/// otherwise), so the compare runs a vector's width of bytes at a time.
+fn counted(xs: &[u8], ys: &[u8], hit: impl Fn(u8, u8) -> bool) -> usize {
+    let mut total = 0usize;
+    for (cx, cy) in xs.chunks(240).zip(ys.chunks(240)) {
+        let mut n = 0u8;
+        for (&x, &y) in cx.iter().zip(cy) {
+            n = n.wrapping_add(hit(x, y) as u8);
+        }
+        total += n as usize;
+    }
+    total
+}
+
+/// `translate[text, from, to]`: each character of `from` in the text
+/// replaced by the character at its place in `to`, in one pass — the
+/// complement of DNA is `translate[s, 'ACGT', 'TGCA']`. A text of ASCII
+/// maps its bytes through a table; any other, its characters. The two
+/// must have as many characters.
+pub fn translate(s: &str, from: &str, to: &str) -> Result<String, String> {
+    translate_taken(s.to_string(), from, to)
+}
+
+/// `translate`, of a text nothing else holds: its bytes changed where they
+/// lie when the text and both maps are ASCII.
+pub fn translate_taken(s: String, from: &str, to: &str) -> Result<String, String> {
+    let (nf, nt) = (from.chars().count(), to.chars().count());
+    if nf != nt {
+        return Err(format!("translate[] maps each character of from to the one at its place in to: '{}' has {}, '{}' has {}", from, nf, to, nt));
+    }
+    if s.is_ascii() && from.is_ascii() && to.is_ascii() {
+        let mut table: [u8; 256] = [0; 256];
+        for (i, b) in table.iter_mut().enumerate() {
+            *b = i as u8;
+        }
+        for (f, t) in from.bytes().zip(to.bytes()) {
+            table[f as usize] = t;
+        }
+        let mut bytes = s.into_bytes();
+        for b in bytes.iter_mut() {
+            *b = table[*b as usize];
+        }
+        // (ASCII mapped through ASCII stays UTF-8)
+        return String::from_utf8(bytes).map_err(|e| format!("translate[]: {}", e));
+    }
+    let map: std::collections::HashMap<char, char> = from.chars().zip(to.chars()).collect();
+    Ok(s.chars().map(|c| *map.get(&c).unwrap_or(&c)).collect())
+}
+
 /// `len[text]`: its characters, counted with what is known of its start.
 pub fn len_known(s: &str, known: &Known) -> i64 {
     let p = known.ascii(s, s.len());
@@ -407,6 +495,35 @@ pub fn decode_as(text: &str, scheme: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    /// `occurs` counts as Python's `str.count` does, by every path: one
+    /// byte, two different bytes (across the chunks the compare is run in),
+    /// a part that overlaps itself, a longer part, a character of two bytes
+    #[test]
+    fn occurs_counts_what_a_search_finds() {
+        let plain = |s: &str, p: &str| -> i64 {
+            let (mut n, mut i) = (0, 0);
+            while let Some(at) = s[i..].find(p) {
+                n += 1;
+                i += at + p.len();
+            }
+            n
+        };
+        let mut text = String::new();
+        let mut x: u64 = 7;
+        for _ in 0..5000 {
+            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            text.push(['A', 'C', 'G', 'T', '\n'][(x >> 33) as usize % 5]);
+        }
+        for p in ["A", "\n", "AC", "GT", "TA", "AA", "AAA", "GGT", "GGTATT", "ACGTACGT"] {
+            assert_eq!(super::count(&text, p).unwrap(), plain(&text, p), "{}", p);
+        }
+        assert_eq!(super::count("aaaa", "aa").unwrap(), 2);
+        assert_eq!(super::count("a", "ab").unwrap(), 0);
+        assert_eq!(super::count("", "a").unwrap(), 0);
+        assert_eq!(super::count("héllo hé", "é").unwrap(), 2);
+        assert!(super::count("abc", "").is_err());
+    }
+
     /// One ASCII character for another, in place or not, is the standard
     /// library's replace; so is every other replacement, and upper, lower
     /// and reverse of a text taken are the copies' (non-ASCII text included)

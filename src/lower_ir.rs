@@ -527,17 +527,56 @@ impl LoopOrder {
                     // a collecting loop over a list that can fail refuses it
                     // where it starts: it can leave the function
                     Expr::ForExpr { iter, .. } => iter.ty().is_result(),
-                    // a value that can fail, unwrapped in the body, leaves
-                    // the function with its failure — which a round run on
-                    // another thread cannot (the compiled program had
-                    // returned the function's result from the loop's
-                    // closure, and did not build: fuzz seed 1791422055)
-                    Expr::Convert { how: Convert::Unwrap, expr, .. } => expr.ty().is_result(),
                     _ => false,
                 }
                 || handed(e).iter().any(|n| self.ordered.contains(n) || !self.known.contains(n));
         });
-        order
+        // a value that can fail, unwrapped where nothing around it holds the
+        // failure, leaves the function with it — which a round run on
+        // another thread cannot (the compiled program had returned the
+        // function's result from the loop's closure, and did not build: fuzz
+        // seed 1791422055, `bucket[unwrap moment[t]] eq …` into a bool)
+        order || unwrap_leaves_block(body)
+    }
+}
+
+/// Whether a statement of the block (nested ones too) unwraps a value that
+/// can fail where no expression around it holds the failure: a call, an
+/// operator or a text typed as a value that can fail answers it as its own
+/// value (`occurs[unwrap seq, b]`, the round's item), and the round goes
+/// on; anything else hands it out of the function.
+fn unwrap_leaves_block(b: &[Stmt]) -> bool {
+    let mut leaves = false;
+    visit_stmts(b, &mut |s| {
+        leaves |= match s {
+            Stmt::Let { expr, .. } | Stmt::Set { expr, .. } | Stmt::Store { expr, .. } | Stmt::Do(expr) | Stmt::Return(Some(expr)) => unwrap_leaves(expr, false),
+            Stmt::SetPath { path, expr, .. } => unwrap_leaves(expr, false) || path.iter().any(|p| matches!(p, PathStep::Index(i) if unwrap_leaves(i, false))),
+            Stmt::If { cond, .. } | Stmt::While { cond, .. } => unwrap_leaves(cond, false),
+            Stmt::For { iter, .. } => unwrap_leaves(iter, false),
+            _ => false,
+        }
+    });
+    leaves
+}
+
+/// `unwrap_leaves_block` of one expression, `held` where an expression
+/// around it holds a failure.
+fn unwrap_leaves(e: &Expr, held: bool) -> bool {
+    let inner = held || e.ty_ref().is_some_and(|t| t.is_result());
+    match e {
+        Expr::Convert { how: Convert::Unwrap, expr, .. } => (expr.ty().is_result() && !held) || unwrap_leaves(expr, held),
+        // (a collecting loop's rounds: statements of their own)
+        Expr::ForExpr { iter, body, .. } => unwrap_leaves(iter, held) || unwrap_leaves_block(body),
+        Expr::Call { args, .. } | Expr::Effect { args, .. } | Expr::Deferred { args, .. } => args.iter().any(|a| unwrap_leaves(a, inner)),
+        Expr::Convert { expr, .. } | Expr::Unary { expr, .. } | Expr::Field { base: expr, .. } | Expr::Meta { base: expr, .. } => unwrap_leaves(expr, inner),
+        Expr::Binary { l, r, .. } => unwrap_leaves(l, inner) || unwrap_leaves(r, inner),
+        Expr::Index { base, indices, .. } => unwrap_leaves(base, inner) || indices.iter().any(|i| unwrap_leaves(i, inner)),
+        Expr::Interp(pieces) => pieces.iter().any(|p| matches!(p, Piece::Expr(x) if unwrap_leaves(x, inner))),
+        Expr::ListLit(items, _) => items.iter().any(|i| unwrap_leaves(i, inner)),
+        Expr::MapLit(pairs, _) => pairs.iter().any(|(_, v)| unwrap_leaves(v, inner)),
+        Expr::RecordLit { fields, .. } => fields.iter().any(|x| unwrap_leaves(x, inner)),
+        Expr::Tree { attrs, children, .. } => attrs.iter().any(|(_, a)| unwrap_leaves(a, inner)) || children.iter().any(|c| unwrap_leaves(c, inner)),
+        _ => false,
     }
 }
 
@@ -4982,6 +5021,12 @@ fn place_moves_in(block: &mut Block, live_after: &HashSet<String>, allowed: Opti
     // its caller says is live after it (a notebook's next cell reads them).
     let mut live: HashSet<String> = if allowed.is_some() { live_after.iter().filter(|n| !defined.contains(*n)).cloned().collect() } else { live_after.clone() };
     for s in block.iter_mut().rev() {
+        // a return leaves the function: nothing after it is read on its path
+        // (`return slice[pieces, 0, n - 1]` in a branch, `return pieces`
+        // after the branch, had copied every line of a file to drop one)
+        if matches!(s, Stmt::Return(_)) {
+            live.clear();
+        }
         let mut reads = HashSet::new();
         stmt_reads(s, &mut reads);
         // nested blocks first, with what is live after them
@@ -5415,7 +5460,7 @@ mod tests {
     #[test]
     fn an_update_from_its_own_entry_takes_the_map_where_it_lies() {
         let ir = ir_of("fn counts_of[t]\n    counts = map[]\n    for i in range[len[t]]\n        w = slice[t, i, i + 1]\n        if w in counts\n            counts = set[counts, w, counts[w] + 1]\n        else\n            counts = set[counts, w, 1]\n    return counts\nlog[counts_of['abca']]\n");
-        assert!(ir.contains(": Int = (counts[w] add 1)"), "the value first, into a temporary: {}", ir);
+        assert!(ir.contains(": Int = proven((counts[w] add 1))"), "the value first, into a temporary (a count of a text's characters, within 64 bits): {}", ir);
         assert!(ir.contains("counts = core.set(move counts, move w, _t"), "the map taken where it lies, the key read for the last time: {}", ir);
         assert!(!ir.contains("core.set(counts,"), "{}", ir);
     }
@@ -5512,7 +5557,7 @@ mod tests {
         // (a numeric literal is a tensor: the IR names the row that grows one)
         assert!(ir.contains("xs = core.push_number(move xs, i)"), "{}", ir);
         assert!(ir.contains("log!held(move xs)"), "{}", ir);
-        assert!(ir.contains("i = (i add 1)"), "{}", ir);
+        assert!(ir.contains("i = proven((i add 1))"), "{}", ir);
     }
 
     #[test]
@@ -5910,7 +5955,7 @@ mod tests {
         assert!(ir.contains("let m: Map(Float) = core.set(floats(core.set(core.map_new(), \"a\", 1)), \"b\", 2.5)"), "{}", ir);
         assert!(ir.contains("let c: List(Float) = core.concat(floats("), "{}", ir);
         assert!(ir.contains("struct P { x: Result(Float), y: Float }"), "{}", ir);
-        assert!(ir.contains("P{float(core.int_of(\"12\")), 3.0}"), "{}", ir);
+        assert!(ir.contains("P{float(core.__int_big(\"12\")), 3.0}"), "an int read from text keeps every digit: {}", ir);
     }
 
     /// A tensor's rank is in its type: every builtin's answer has one, so a
@@ -6085,7 +6130,7 @@ mod tests {
             "core.len_text(move s)",
             "core.len(move xs)",
             "core.len_map(move m)",
-            "core.abs_int((neg 2))",
+            "core.abs_int(proven((neg 2)))",
             // a name the core and math both answer is math's for a tensor
             "math.abs_t(t)",
             "core.max_ints(1, 2)",

@@ -58,13 +58,21 @@ pub fn emit_with(
     schema: Option<crow_db::schema::Mode>,
 ) -> Result<Emitted, String> {
     let part = program.parts.first().cloned().ok_or("an empty program")?;
+    // (in the program's own scope: a bare name reaches its imports' rows,
+    // not those of the standard module whose function the lowering left
+    // the thread in — `find[text, p]` after a `read` had reached sys's
+    // `find` of bytes; each function's own scope is entered where it is
+    // emitted)
+    let outer = registry.enter("");
     let mut e = Emitter::new(part, registry, source_file, shown_names);
     e.test_control = test_control;
     e.schema_mode = schema;
     if let Some(n) = cpu {
         e.cpu_count = Some(n);
     }
-    let source = e.program()?;
+    let source = e.program();
+    e.registry.resume(outer);
+    let source = source?;
     Ok(Emitted {
         source,
         needs_rayon: e.needs_rayon,

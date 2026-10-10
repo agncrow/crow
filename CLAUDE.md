@@ -418,7 +418,12 @@ steps on every push and must be green.
   new write site goes through `write` (else a sum there diverges to Big
   and the hot loop pays the growing form: fannkuch had run 5× slower), and
   a builtin that keeps every digit gets a hidden `__…_big` row in
-  `table::big_form`. `CROW_WIDTH_DEBUG=1` prints the settled ranges.
+  `table::big_form`. `CROW_WIDTH_DEBUG=1` prints the settled ranges. A
+  list handed to a function flows ONE way into its parameter
+  (`flow_into`): joined, `report[ones]` and `report[twos]` (twos made of
+  ones' items) shared one range that grew round every pass, and every
+  count of k-nucleotide became a big int. `int[text]` always answers the
+  growing form; `range[n]` clamps its items below 2^48 (soft).
 - A row can grow what it is given (`Row { take: …, ..row!(…) }`: the
   tensor `push`'s bridge pushes in place when nothing else holds the
   storage). The interpreter hands a row its arguments by value only on
@@ -459,4 +464,24 @@ steps on every push and must be green.
   row's call lends its large arguments unless the row makes its answer of a
   moved one (`table::keeps_storage`): a moved list had made every other
   large argument a copy.
-
+- A compiled index is `crow_runtime::stops::at` (emitter: `index_at`):
+  pure arithmetic, its stop never returning. A check whose slow path
+  builds its message as a value (`stops::item(…).unwrap_or_else(…)`, the
+  interpreter's form) is a call the optimizer cannot see through, so a
+  loop's reads of a list it never writes were made again every round:
+  the many-body n-body ran at half Rust's speed.
+- A generated program's release and dev builds check overflow in the
+  program and in Crow's own crates only (`generated_cargo_toml`); the
+  crates beneath them build unchecked, as their authors release them. A
+  runtime loop meant to run a vector's width at a time adds with
+  `wrapping_add` where it cannot overflow (`text::counted`), or the
+  build's checks keep it to one item at a time (`occurs` ran 25× slower).
+- The emitter emits in the program's scope (`emit_with` enters it, each
+  function its own): the registry's scope is a thread-local, and lowering
+  a standard module's function leaves the thread in that module's —
+  `find[text, p]` after a `read` had reached sys's `find` of bytes, and
+  the program did not build.
+- A `return` clears what is live where moves are placed: nothing after it
+  runs on its path (`return slice[pieces, 0, n - 1]` in a branch had
+  copied every line of a file, because `return pieces` after the branch
+  read them).

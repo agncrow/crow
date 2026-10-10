@@ -1,0 +1,33 @@
+--- Text counted and mapped in one pass, in both modes: `occurs` counts a
+--- part not overlapping (one byte, two different bytes, a part that
+--- overlaps itself, a longer part, a character of two bytes), `translate`
+--- maps each character to the one at its place (ASCII and not, a text
+--- taken where it lies), a character is compared where it lies, a
+--- backslash before an ordinary character stays (a regular expression's
+--- `\|`), and `join` of a list whose items can fail joins them — a failed
+--- one stops the program with its reason.
+dna = 'GATTACAGATTACA'
+log[occurs[dna, 'A']]
+log[occurs[dna, 'TA']]
+log[occurs[dna, 'GATTACA']]
+log[occurs['aaaa', 'aa']]
+log[occurs['héllo hé', 'é']]
+log[translate[dna, 'ACGT', 'TGCA']]
+log[translate['naïve', 'ïa', 'iA']]
+comp = translate[upper['gattaca'], 'ACGT', 'TGCA']
+log[comp]
+hits = 0
+i = 0
+while i lt len[dna]
+    if dna[i] eq 'A'
+        hits = hits + 1
+    i = i + 1
+log[hits]
+log[sub['a|bc|d|ef|g', '\|[^|][^|]*\|', '-']]
+log[len['\d']]
+good = for w in ['1', '2']
+    str[int[w]]
+log[join[good, '+']]
+bad = for w in ['3', 'x']
+    str[int[w]]
+log[join[bad, '+']]

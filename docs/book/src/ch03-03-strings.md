@@ -29,7 +29,9 @@ hello, crow
 ```
 
 Outside backticks, strings are completely inert — braces, JSON, and regex
-punctuation need no escaping. For a literal backtick, write ``\` ``.
+punctuation need no escaping. For a literal backtick, write ``\` ``. A
+backslash before any other character stays as it is, so a regular
+expression is written as it is: `'\d+'`, `'\|'`.
 
 ## Length and slicing count characters
 
@@ -49,6 +51,26 @@ log[s[2]]
 —
 é
 ï
+```
+
+## Counting and mapping characters
+
+`occurs` counts how many times a part occurs, not overlapping (as Python's
+`str.count` counts), and `translate` maps each character of one text to
+the character at its place in another, all in one pass — the complement
+of a strand of DNA:
+
+```crow
+dna = 'GATTACA'
+log[occurs[dna, 'A']]
+log[occurs['aaaa', 'aa']]
+log[translate[dna, 'ACGT', 'TGCA']]
+```
+
+```text
+3
+2
+CTAATGT
 ```
 
 ## No `+` on strings

@@ -828,8 +828,8 @@ impl Emitter {
             // the value first, then the index, as the interpreter reads them
             let val = self.expr(expr);
             let idx = self.expr(i);
-            let line = self.line_now();
-            self.line(&format!("{{ let _v = ({}) as f64; let _i = {}; let _k = crow_runtime::stops::item(_i, {}.len()).unwrap_or_else(|e| crow_stop({}, e)); {}[_k] = _v; }}", val, idx, var, line, var));
+            let at = self.index_at("_i", &format!("{}.len()", var));
+            self.line(&format!("{{ let _v = ({}) as f64; let _i = {}; let _k = {}; {}[_k] = _v; }}", val, idx, at, var));
             return;
         }
         // a part of a fact of the session (`items[0] = x`, `p.qty = 3`),
@@ -950,7 +950,7 @@ impl Emitter {
                         format!("(*{{ let _k = {i}; {o}.get_mut(&_k).unwrap_or_else(|| crow_stop({l}, crow_runtime::stops::no_key(&_k))) }})", i = idx, o = obj, l = self.line_now())
                     } else {
                         let k = found.len();
-                        found.push(format!("let _at{k} = crow_runtime::stops::item({i}, {o}.len()).unwrap_or_else(|e| crow_stop({l}, e));", k = k, i = idx, o = obj, l = self.line_now()));
+                        found.push(format!("let _at{k} = {at};", k = k, at = self.index_at(&idx, &format!("{}.len()", obj))));
                         format!("{}[_at{}]", obj, k)
                     };
                     ty = next;
@@ -984,7 +984,7 @@ impl Emitter {
                             val, idx, obj, self.line_now()
                         ));
                     }
-                    _ => self.line_after(&found, &format!("{{ let _v = {}; let _i = {}; let _idx = crow_runtime::stops::item(_i, {}.len()).unwrap_or_else(|e| crow_stop({}, e)); {}[_idx] = _v; }}", val, idx, obj, self.line_now(), obj)),
+                    _ => self.line_after(&found, &format!("{{ let _v = {}; let _i = {}; let _idx = {}; {}[_idx] = _v; }}", val, idx, self.index_at("_i", &format!("{}.len()", obj)), obj)),
                 }
             }
             None => self.line_after(&found, &format!("{} = {};", obj, val)),

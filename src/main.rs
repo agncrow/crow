@@ -3375,12 +3375,23 @@ fn package_name(entry: &str) -> String {
 /// 3 s at 0, 14 s at 1), while a program whose own loops are the work runs
 /// many times faster at 1 (fannkuch: 12×) — and the runtime crates at 1 at
 /// least, following `opt` above it, so a higher level reaches the kernels
-/// too. The release build (`crow build`) is level 3 with LTO.
+/// too. The release build (`crow build`) is level 3 with LTO. The program
+/// and Crow's own crates check every add for overflow in both; the crates
+/// beneath them are built as their authors release them, unchecked (with
+/// checks, a vectorizable loop of theirs runs one item at a time).
 fn generated_cargo_toml(project_name: &str, deps: &str, opt: u8) -> String {
     let crates = opt.max(1);
+    let mut checked = String::new();
+    for krate in ["crow_runtime", "crow_web", "crow_db"] {
+        if deps.contains(&format!("{} = ", krate)) {
+            for profile in ["dev", "release"] {
+                checked.push_str(&format!("\n[profile.{}.package.{}]\noverflow-checks = true\n", profile, krate));
+            }
+        }
+    }
     format!(
-        "[workspace]\n\n[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n{}\n[profile.dev]\ndebug = 0\nopt-level = {}\n\n[profile.dev.package.\"*\"]\nopt-level = {}\n\n[profile.debuginfo]\ninherits = \"dev\"\ndebug = true\n\n[profile.debuginfo.package.\"*\"]\nopt-level = 1\n\n[profile.release]\nopt-level = 3\nlto = true\noverflow-checks = true\n",
-        project_name, deps, opt, crates
+        "[workspace]\n\n[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n{}\n[profile.dev]\ndebug = 0\nopt-level = {}\n\n[profile.dev.package.\"*\"]\nopt-level = {}\noverflow-checks = false\n\n[profile.debuginfo]\ninherits = \"dev\"\ndebug = true\n\n[profile.debuginfo.package.\"*\"]\nopt-level = 1\n\n[profile.release]\nopt-level = 3\nlto = true\noverflow-checks = true\n\n[profile.release.package.\"*\"]\noverflow-checks = false\n{}",
+        project_name, deps, opt, crates, checked
     )
 }
 
@@ -5973,6 +5984,11 @@ mod build_crate_tests {
         assert!(generated_cargo_toml("main", "", 3).contains("[profile.dev]\ndebug = 0\nopt-level = 3\n\n[profile.dev.package.\"*\"]\nopt-level = 3\n"));
         assert!(toml.contains("[profile.debuginfo]\ninherits = \"dev\"\ndebug = true\n\n[profile.debuginfo.package.\"*\"]\nopt-level = 1\n"), "CROW_DEBUGINFO=1 builds dev with debug info: {}", toml);
         assert!(toml.contains("[profile.release]\nopt-level = 3\nlto = true\noverflow-checks = true"), "{}", toml);
+        // the crates beneath Crow's are built unchecked, Crow's own checked
+        assert!(toml.contains("[profile.release.package.\"*\"]\noverflow-checks = false"), "{}", toml);
+        assert!(!toml.contains("crow_runtime]"), "no runtime among the dependencies, none named: {}", toml);
+        let with_runtime = generated_cargo_toml("main", "[dependencies]\ncrow_runtime = { path = \"/x\" }\n", 0);
+        assert!(with_runtime.contains("[profile.release.package.crow_runtime]\noverflow-checks = true") && with_runtime.contains("[profile.dev.package.crow_runtime]\noverflow-checks = true"), "{}", with_runtime);
         assert!(toml.starts_with("[workspace]\n\n[package]\nname = \"main\""), "{}", toml);
     }
 

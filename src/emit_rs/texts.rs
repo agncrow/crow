@@ -108,6 +108,28 @@ impl Emitter {
         Some(format!("crow_runtime::text::slice_is(&{base}, {known}, ({a}) as i64, ({b}) as i64, &{o})"))
     }
 
+    /// A character of a text compared (`s[i] eq 'A'`), where it lies: no
+    /// text is made of it, nor of a literal it meets (two had been made for
+    /// every character a loop compared). None for another comparison.
+    pub(super) fn char_compared(&mut self, index: &Expr, other: &Expr) -> Option<String> {
+        let Expr::Index { base, indices, ty } = index else { return None };
+        if indices.len() != 1 || !matches!(ty, Ty::Str) || !matches!(base.ty(), Ty::Str) || !matches!(other.ty(), Ty::Str) {
+            return None;
+        }
+        self.needs_crow_runtime = true;
+        let line = self.line_now();
+        let (b, known) = match self.indexed_text(base) {
+            Some(x) => (x.to_string(), format!("&{x}__known")),
+            None => (format!("({})", self.expr(base)), "&crow_runtime::text::Known::new()".to_string()),
+        };
+        let i = self.expr(&indices[0]);
+        let o = match other {
+            Expr::Const(crate::ir::Const::Str(s), _) => format!("{:?}", s),
+            _ => format!("&*({})", self.expr(other)),
+        };
+        Some(format!("crow_runtime::text::char_is(&{b}, {known}, ({i}) as i64, {o}).unwrap_or_else(|e| crow_stop({line}, e))"))
+    }
+
     /// A slice or a length of a text read by position, with what is known
     /// of its start.
     pub(super) fn text_read(&mut self, e: &Expr) -> Option<String> {

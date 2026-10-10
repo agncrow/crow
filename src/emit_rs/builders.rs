@@ -265,8 +265,8 @@ impl Emitter {
             Expr::Index { base, indices, .. } if indices.len() == 1 && matches!(base.ty(), Ty::List(item) if *item == Ty::Str) && matches!(unwrapped(base), Expr::Local(..) | Expr::Move(..)) => {
                 let b = self.expr(base);
                 let i = self.expr(&indices[0]);
-                let line = self.line_now();
-                format!("{{ let _i = {i}; let _v = &{b}; _v[crow_runtime::stops::item(_i, _v.len()).unwrap_or_else(|e| crow_stop({line}, e))].as_str() }}")
+                let at = self.index_at("_i", "_v.len()");
+                format!("{{ let _i = {i}; let _v = &{b}; _v[{at}].as_str() }}")
             }
             Expr::Local(v, _) | Expr::Move(v, _) if matches!(e.ty().payload(), Ty::Str) => format!("{v}.as_str()"),
             Expr::Const(crate::ir::Const::Str(text), _) => format!("{text:?}"),

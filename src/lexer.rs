@@ -443,11 +443,13 @@ impl Lexer {
                         // Escaped backtick: kept as \` in the raw string so
                         // interpolation treats it as a literal character
                         Some('`') => { s.push('\\'); s.push('`'); self.advance(); }
+                        // any other character after a backslash is itself, the
+                        // backslash kept: a regular expression's `\d`, `\.` and
+                        // `\|` are written as they are (strings are inert)
                         Some(ch) => {
-                            return Err(format!(
-                                "unknown escape sequence '\\{}' at line {}, col {}",
-                                ch, self.line, self.col
-                            ));
+                            s.push('\\');
+                            s.push(ch);
+                            self.advance();
                         }
                         None => {
                             return Err(format!(
