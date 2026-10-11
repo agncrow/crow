@@ -1,0 +1,29 @@
+--- A list of text only appended to and joined is written where it lies
+--- (the emitter's text builder): a piece that can fail — a function's
+--- answer read from a parsed value — is appended as its payload once it
+--- is checked. (Compiled, the piece had been read as the result itself,
+--- and the program did not build: `tools_wire` in the llm module.)
+
+--- a tool's name, read from its schema
+fn named[schema]
+    j = json[schema]
+    return str[j.name]
+
+fn listed[schemas]
+    written = []
+    for s in schemas
+        written = push[written, named[s]]
+    return join[written, ', ']
+
+fn labelled[schemas, label]
+    written = []
+    for s in schemas
+        written = push[written, '`label`: `named[s]`']
+    return join[written, '; ']
+
+schemas = ['{"name": "weather"}', '{"name": "search"}']
+log[listed[schemas]]
+log[labelled[schemas, 'tool']]
+broken = listed[['{"name": "ok"}', 'not json']]
+log[broken.ok]
+log[broken.reason]

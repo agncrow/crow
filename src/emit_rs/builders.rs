@@ -268,7 +268,17 @@ impl Emitter {
                 let at = self.index_at("_i", "_v.len()");
                 format!("{{ let _i = {i}; let _v = &{b}; _v[{at}].as_str() }}")
             }
-            Expr::Local(v, _) | Expr::Move(v, _) if matches!(e.ty().payload(), Ty::Str) => format!("{v}.as_str()"),
+            // (a local holding a value that can fail, unwrapped in the IR
+            // once checked, keeps the text in its payload: a tool's schema
+            // written by a function that reads a parsed value had been read
+            // as the result itself, and the program did not build)
+            Expr::Local(v, lt) | Expr::Move(v, lt) if matches!(e.ty().payload(), Ty::Str) => {
+                if lt.is_result() {
+                    format!("{v}.value.as_str()")
+                } else {
+                    format!("{v}.as_str()")
+                }
+            }
             Expr::Const(crate::ir::Const::Str(text), _) => format!("{text:?}"),
             _ => {
                 let owned = self.owned_expr(e);
