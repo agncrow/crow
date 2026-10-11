@@ -8,8 +8,10 @@ regex = "1.12.3"
 serde_json = "1"
 # only what writes an IPC stream: arrow's csv and json readers are not used
 arrow = { version = "58.0.0", default-features = false, features = ["ipc"], optional = true }
-bytemuck = { version = "1.25.0", features = ["derive"] }
-chrono = "0.4.45"
+bytemuck = { version = "1.25.0", features = ["derive"], optional = true }
+# time zones by the database chrono-tz carries: never the system's local
+# zone, whose lookup (iana-time-zone) links CoreFoundation into every program
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 chrono-tz = "0.10.4"
 faer = "0.24.0"
 # whole numbers of any size, decimals to any digits, fractions (spec,
@@ -21,7 +23,7 @@ dashu-ratio = "0.6"
 # is written over erf in Crow)
 libm = "0.2"
 itoa = "1.0.17"
-pollster = "0.4.0"
+pollster = { version = "0.4.0", optional = true }
 pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
 rand = "0.10.0"
 rand_distr = "0.6.0"
@@ -37,7 +39,8 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 webpki-roots = "1.0"
 ryu = "1.0.23"
 sprs = "0.11.4"
-wgpu = "28.0.0"
+# the GPU, linked only by a program that asks for one (feature `gpu`)
+wgpu = { version = "28.0.0", optional = true }
 # hash[]: the digests and the password hash, for both modes
 sha2 = "0.10"
 sha1 = "0.10"
@@ -56,6 +59,10 @@ hmac = "0.12"
 
 [features]
 arrow = ["dep:arrow"]
+# `gpu[…]`: tensors on the GPU through wgpu — and the system frameworks it
+# links (Metal, QuartzCore, Foundation), which a program that uses no GPU
+# does without (crow's emitter asks for it only where `gpu` is written)
+gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
 # the feature a compiled program asks for by what its paths may name
 # (crate::sources); the interpreter has it. A remote source is read by the
 # protocol written in Crow (src/modules/sys.co): nothing to build in

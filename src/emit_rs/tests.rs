@@ -2389,3 +2389,74 @@ fn a_route_without_derivations_lets_its_writes_go() {
     assert!(rust.contains("impl Drop for __CrowWrites {\n    fn drop(&mut self) { let _ = crow_db::take_write_keys(); }"), "{}", rust);
     assert!(!rust.contains("crow_web::live::"), "no live runtime for a program without derivations:\n{}", rust);
 }
+
+/// A local read for the last time where no read moves it — an indexed
+/// base, a list a loop walks — is dropped after the statement that reads it
+/// (the move pass's `move x` alone): revcomp's input slice and its reversed
+/// lines had lived to the end of each round beside the lines made from them.
+#[test]
+fn a_local_is_dropped_after_its_last_read() {
+    let src = "fn f[rows]\n    body = slice[rows, 1, 3]\n    first = body[0]\n    loud = upper[first]\n    return loud\nlog[f[['a', 'b', 'c', 'd']]]\n";
+    let rust = transpile(src);
+    let start = rust.find("fn f(").expect("f");
+    let body = &rust[start..start + rust[start..].find("\n}\n").unwrap()];
+    let read = body.find("let first").expect("first read");
+    let dropped = body.find("drop(body);").expect("body dropped after its last read");
+    assert!(read < dropped, "{}", body);
+    assert!(!body.contains("drop(rows)"), "a parameter is never dropped: it may be lent\n{}", body);
+}
+
+/// A collecting loop over a list it reads for the last time walks it by
+/// value: each item moved into the body, none copied (k-nucleotide's two
+/// million lines had each been copied to be uppercased).
+#[test]
+fn a_loop_takes_the_list_it_reads_last() {
+    let src = "fn f[text]\n    lines = split[text, '\\n']\n    loud = for l in lines\n        upper[l]\n    return loud\nlog[f['a\\nb']]\n";
+    let rust = transpile(src);
+    let start = rust.find("fn f(").expect("f");
+    let body = &rust[start..start + rust[start..].find("\n}\n").unwrap()];
+    assert!(body.contains("into_par_iter()") || body.contains("into_iter()"), "{}", body);
+    assert!(!body.contains("__item_l.clone()"), "no item copied\n{}", body);
+}
+
+/// A list that can fail, read for the last time, is cut where it lies
+/// (`slice_taken`): the payload the propagation bound goes on as it is,
+/// where it had been copied, half a 4-million-line file beside the file.
+#[test]
+fn a_last_read_list_that_can_fail_is_cut_where_it_lies() {
+    let src = "t = read['x.txt']\nparts = split[t, ',']\nmid = slice[parts, 1, 2]\nlog[mid]\n";
+    let rust = transpile(src);
+    assert!(rust.contains("slice_taken({_prop_0.value}") || rust.contains("slice_taken(_prop_0.value"), "{}", rust);
+}
+
+/// A program links the GPU only where it asks for it (`gpu[…]`): the
+/// runtime's `gpu` feature, and the frameworks it brings, had been linked
+/// by every program — four of a small program's seven megabytes.
+#[test]
+fn only_a_program_that_asks_for_the_gpu_links_it() {
+    let features = |source: &str| {
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().expect("lexer failed");
+        let stmts = Parser::new(tokens).parse().expect("parser failed");
+        let stmts = crate::lower::lower_program(&stmts).expect("lowering failed");
+        let mut ctx = TypeContext::new();
+        ctx.infer_program(&stmts);
+        let program = crate::lower_ir::lower(&stmts, &mut ctx, "t").expect("lowering to the IR failed");
+        crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), None, false, None).expect("emitting failed").runtime_features
+    };
+    assert!(features("use math\ngpu[1]\nt = tensor[[[1.0, 2.0]]]\nlog[sum[t]]\n").contains("gpu"));
+    assert!(!features("use math\nt = tensor[[[1.0, 2.0]]]\nlog[sum[t]]\n").contains("gpu"));
+}
+
+/// A record read through its fields is not dropped after the read: the
+/// compiled program may have handed the fields on (moved), and dropping
+/// what was left of it did not build (packages/models' cross-validation
+/// handing a fold's columns to a scorer).
+#[test]
+fn a_record_read_by_its_fields_is_not_dropped() {
+    let src = "struct Held [x, y]\nfn total[a, b]\n    return len[a] + len[b]\nfn run[f, xs]\n    h = Held[xs, xs]\n    t = f[h.x, h.y]\n    u = t + 1\n    return u\nlog[run[total, ['a', 'b']]]\n";
+    let rust = transpile(src);
+    let start = rust.find("fn run(").expect("run");
+    let body = &rust[start..start + rust[start..].find("\n}\n").unwrap()];
+    assert!(!body.contains("drop(h)"), "{}", body);
+}

@@ -14,6 +14,12 @@ pub mod frames;
 pub mod fused;
 pub mod hash;
 pub mod indicators;
+// the GPU where a program asks for one (`gpu[…]`), and its surface with
+// no context anywhere else: a program links no GPU framework it never uses
+#[cfg(feature = "gpu")]
+pub mod gpu;
+#[cfg(not(feature = "gpu"))]
+#[path = "gpu_off.rs"]
 pub mod gpu;
 pub mod io;
 pub mod json;

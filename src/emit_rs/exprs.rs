@@ -460,6 +460,16 @@ impl Emitter {
     /// instead of being copied (`return out` had copied the list it
     /// returned). A parameter lent by the caller, a handle, a plain vector
     /// and a text builder are printed as something else, and copy.
+    /// Whether a collecting loop may take what it walks: a local's last
+    /// read the function owns, a list bound by value where a failed one was
+    /// refused, or a list made where the loop starts (a call's answer, a
+    /// literal).
+    fn consumable(&self, e: &Expr) -> bool {
+        self.moved_local(e)
+            || matches!(Emitter::raw(e), Expr::Local(n, _) if self.owned_lists.contains(n))
+            || matches!(Emitter::raw(e), Expr::Call { .. } | Expr::ListLit(..))
+    }
+
     pub(crate) fn moved_local(&self, e: &Expr) -> bool {
         match Emitter::raw(e) {
             Expr::Move(n, _) => {
@@ -1559,9 +1569,15 @@ impl Emitter {
             let lty = self.tt(iter);
             let on_error = self.refuse_at(&list, &Decision::Loop);
             self.declare(&list, lty);
+            // (the list's last read is bound by value, and walked by value)
+            let owned = self.consumable(iter);
+            if owned {
+                self.owned_lists.insert(list.clone());
+            }
             let value = Expr::Convert { how: Convert::Unwrap, expr: Box::new(Expr::Local(list.clone(), iter.ty())), ty: iter.ty().payload().clone() };
             let walked = self.for_expr(var, &value, body, parallel, whole);
-            return format!("{{ let {l} = &({p}); if !{l}.ok {{ {e} }} {w} }}", l = list, p = printed, e = on_error, w = walked);
+            let bound = if owned { format!("({})", printed) } else { format!("&({})", printed) };
+            return format!("{{ let {l} = {b}; if !{l}.ok {{ {e} }} {w} }}", l = list, b = bound, e = on_error, w = walked);
         }
         // in parallel as the lowering decided, on the cores `cpu[…]` allows
         // where the loop starts (crow_runtime::cores)
@@ -1580,14 +1596,26 @@ impl Emitter {
         if use_par {
             self.needs_rayon = true;
         }
-        let method = if use_par { "par_iter" } else { "iter" };
         let it = self.tt(iter);
         let (iter_str, elem) = self.loop_items(iter_str, &it, iter);
         let is_copy = Self::is_copy_type(&elem);
+        // a list the loop reads for the last time is walked by value: each
+        // item is moved into the body, no copy made, and the list goes as
+        // the loop does (k-nucleotide's 2 million lines had each been copied
+        // to be uppercased, and the list had lived to the program's end)
+        let consumes = !is_copy && matches!(it, Ty::List(_)) && self.consumable(iter);
+        let method = match (use_par, consumes) {
+            (true, true) => "into_par_iter",
+            (true, false) => "par_iter",
+            (false, true) => "into_iter",
+            (false, false) => "iter",
+        };
         // an item that is not Copy is borrowed from what the loop walks; the
         // body reads it as its own value, as the interpreter's does
         let (param, rebind) = if is_copy {
             (format!("|&{}|", var), String::new())
+        } else if consumes {
+            (format!("|__item_{}|", var), format!("let {v} = __item_{v}; ", v = var))
         } else {
             (format!("|__item_{}|", var), format!("let {v} = __item_{v}.clone(); ", v = var))
         };
@@ -2044,6 +2072,12 @@ impl Emitter {
                     } else if ref_flags.get(i).copied().unwrap_or(false) {
                         // a struct the callee borrows is lent, not copied
                         format!("&_prop_{}.value", i)
+                    } else if self.moved_local(&raw_args[i]) {
+                        // a local read for the last time was bound by value:
+                        // its payload goes on as it is (a list then cut where
+                        // it lies, `rows` sliced to one section had been
+                        // copied, half of a 4-million-line file beside it)
+                        format!("_prop_{}.value", i)
                     } else {
                         format!("_prop_{}.value.clone()", i)
                     };
@@ -2469,7 +2503,7 @@ impl Emitter {
             let taken = matches!(raw, Expr::Local(n, _) | Expr::Move(n, _) if self.move_target.as_deref() == Some(n.as_str()))
                 || self.moved_local(first)
                 || matches!(raw, Expr::Call { propagates: false, .. } | Expr::Call { target: Target::Row(_) | Target::User(_), .. } | Expr::Interp(_));
-            let held = match self.tt(first) {
+            let held = match Self::inner(&self.tt(first)) {
                 Ty::Str => true,
                 // (a list's items are moved with it: `lines` drops its empty
                 // last piece without copying the rest)

@@ -350,6 +350,31 @@ pub fn sub(s: &str, pattern: &str, replacement: &str) -> Result<String, String> 
     Ok(compile(pattern)?.replace_all(s, replacement).to_string())
 }
 
+/// `len[sub[s, pattern, replacement]]` without the text `sub` would make:
+/// the characters of `s`, less each match's, plus each replacement's as
+/// `sub` writes it (`$1` its group). regex-redux counted nine patterns of a
+/// 50 MB sequence by the length each `sub` left, each a 50 MB copy, nine at
+/// once on the cores.
+pub fn sub_len(s: &str, pattern: &str, replacement: &str) -> Result<i64, String> {
+    let re = compile(pattern)?;
+    let mut n = len_known(s, &Known::new());
+    if !replacement.contains('$') {
+        let r = replacement.chars().count() as i64;
+        for m in re.find_iter(s) {
+            n += r - m.as_str().chars().count() as i64;
+        }
+    } else {
+        let mut written = String::new();
+        for caps in re.captures_iter(s) {
+            let whole = caps.get(0).map_or(0, |m| m.as_str().chars().count()) as i64;
+            written.clear();
+            caps.expand(replacement, &mut written);
+            n += written.chars().count() as i64 - whole;
+        }
+    }
+    Ok(n)
+}
+
 // ── encodings: text written so that a header or a URL can carry it ──
 // `encode[text, scheme]` and `decode[text, scheme]` (spec, Encodings): one
 // pair of functions both modes call, written here rather than taken from a
@@ -490,6 +515,25 @@ pub fn decode_as(text: &str, scheme: &str) -> Result<String, String> {
         "base64" => String::from_utf8(base64_decode(text)?).map_err(|_| format!("'{}' decodes to bytes that are not text (UTF-8)", shortened(text))),
         "url" => url_decode(text),
         other => Err(unknown_scheme("decode", other)),
+    }
+}
+
+#[cfg(test)]
+mod sub_len_tests {
+    use super::*;
+
+    /// The length a substitution makes, counted without the text, is the
+    /// length of the text it makes: literal and group replacements, empty
+    /// matches, characters beyond ASCII, and the same reason for a pattern
+    /// that is none
+    #[test]
+    fn the_length_of_a_substitution_is_its_texts() {
+        let s = "The quick brown fox — jumps über the lazy dög";
+        for (p, r) in [("o", ""), ("(qu)ick", "$1$1"), ("[aeiouö]", "XY"), ("zzz", ""), ("", "-"), ("ü|ö", "ue"), ("(\\w)(\\w)", "$2$1"), ("$", "!")] {
+            let made = sub(s, p, r).expect("a substitution");
+            assert_eq!(sub_len(s, p, r), Ok(made.chars().count() as i64), "{} → {}", p, r);
+        }
+        assert_eq!(sub_len(s, "(", ""), Err(sub(s, "(", "").unwrap_err()));
     }
 }
 

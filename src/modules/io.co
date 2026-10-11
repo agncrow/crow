@@ -27,12 +27,18 @@ fn lines_split[pieces]
         pieces[n - 1] = slice[last, 0, len[last] - 1]
     return pieces
 
---- `lines[path]`: a text's lines
+--- `lines[path]`: a text's lines — a file's read a block at a time, so the
+--- whole text is not held beside them (sys.file_lines)
 fn lines[path]
-    t = read[path]
-    if not t.ok
-        return error[t.reason, 'io']
-    return lines_of[t]
+    if remote[path]
+        t = read[path]
+        if not t.ok
+            return error[t.reason, 'io']
+        return lines_of[t]
+    got = file_lines[path]
+    if not got.ok
+        return error[got.reason, 'io']
+    return got
 
 --- `lines[url, headers = map[…], query = map[…], timeout = s]`
 fn lines_asked[path, headers, query, timeout]
@@ -73,3 +79,13 @@ test the_lines_of_a_text[]
     rows = csv['io-note.csv']
     assert[len[rows] eq 2 and rows[1]['b'] eq '4']
     assert[not lines['no-such-file'].ok and lines['no-such-file'].kind eq 'io']
+
+--- a file read a block at a time has the lines its text has
+test a_files_lines_are_its_texts[]
+    texts = ['a\nb\n', 'a\r\nb', '', 'one', '\n\n', 'a\r', '\n\r', 'x\r\r\ny', 'a\rb\n', 'über\ndög\r\n']
+    for t in texts
+        kept = write['io-lines.txt', t]
+        assert[kept.ok]
+        assert[lines['io-lines.txt'] eq lines_of[t]]
+    gone = rm['io-lines.txt']
+    assert[gone.ok]

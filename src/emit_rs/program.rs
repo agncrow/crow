@@ -1477,6 +1477,7 @@ impl Emitter {
             self.line(&format!("crow_runtime::cores::set_default({});", n));
         }
         if self.part.gpu.is_some() {
+            self.runtime_features.insert("gpu".to_string());
             self.needs_crow_runtime = true;
             self.line("crow_runtime::gpu::set_gpu_enabled(true);");
         }

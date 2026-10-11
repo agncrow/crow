@@ -1,0 +1,57 @@
+--- A local is let go after its last read: one read last as an indexed base
+--- or by a loop, which no read moves, is freed after the statement that
+--- reads it (revcomp's input slice and its reversed lines had lived to the
+--- end of each round); a collecting loop walks a list it reads for the last
+--- time by value, each item moved into its body (k-nucleotide's lines had
+--- each been copied to be uppercased); and a list that can fail, read for
+--- the last time, is cut where it lies. What the program prints is the same
+--- in both modes, and what it reads after a branch or a shadowing binding
+--- is still there.
+fn pick[flag]
+    xs = ['a', 'b', 'c']
+    ys = ['d']
+    if flag
+        ys = push[ys, xs[0]]
+    else
+        log[len[xs]]
+    total = len[ys]
+    words = for w in xs
+        upper[w]
+    log[words]
+    big = join[xs, '-']
+    n = len[big]
+    keep = big
+    log[n]
+    return keep
+
+fn sections[rows]
+    body = slice[rows, 1, 4]
+    first = body[0]
+    m = len[body]
+    back = reverse[body]
+    tails = for k in range[m]
+        slice[back[k], 0, 1]
+    log[first]
+    log[tails]
+    return m
+
+fn shouted[text]
+    lines = split[text, '\n']
+    loud = for l in lines
+        upper[l]
+    return loud
+
+log[pick[true]]
+log[pick[false]]
+log[sections[['h', 'one', 'two', 'three', 'tail']]]
+log[shouted['a\nb\nc']]
+made = write['/tmp/crow_parity_236.txt', 'one\ntwo\nthree\n']
+t = read['/tmp/crow_parity_236.txt']
+pieces = split[t, '\n']
+mid = slice[pieces, 0, 2]
+log[len[mid]]
+x = [1, 2, 3]
+y = len[x]
+x = push[x, 4]
+log[x]
+log[y]

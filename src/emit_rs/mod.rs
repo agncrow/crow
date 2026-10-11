@@ -227,6 +227,9 @@ pub(crate) struct Emitter {
     /// was called from (`line_now`), noted before the call.
     pub(crate) in_crow_fn: bool,
     pub(crate) binop_counter: usize,
+    /// The lists a collecting loop bound by value where it refused a failed
+    /// one (`_list_N`): walked by value, their items moved into the body.
+    pub(crate) owned_lists: HashSet<String>,
     pub(crate) move_target: Option<String>,
     pub(crate) pinned_module: Option<String>,
     /// The first thing the program asks that Rust cannot say: the build
@@ -315,6 +318,7 @@ impl Emitter {
             current_line: 0,
             in_crow_fn: false,
             binop_counter: 0,
+            owned_lists: HashSet::new(),
             move_target: None,
             pinned_module: None,
             error: None,

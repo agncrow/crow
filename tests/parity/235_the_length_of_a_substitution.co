@@ -1,0 +1,20 @@
+--- The length of a substitution of text, `len[sub[s, pattern, r]]`, is
+--- counted without the text the substitution would make: the characters of
+--- `s`, less each match's, plus each replacement's as `sub` writes it (`$1`
+--- its group) — the same count as the text made, in both modes, and an
+--- invalid pattern the same failure. regex-redux counted nine patterns of a
+--- 50 MB sequence so, each count a 50 MB copy, nine at once on the cores.
+s = 'The quick brown fox — jumps über the lazy dög'
+pats = ['o', '(qu)ick', '[aeiouö]', 'zzz', '', 'ü|ö', '(\w)(\w)']
+reps = ['', '$1$1', 'XY', '', '-', 'ue', '$2$1']
+i = 0
+while i lt len[pats]
+    made = sub[s, pats[i], reps[i]]
+    log['`len[sub[s, pats[i], reps[i]]]` `len[made]`']
+    i = i + 1
+bad = len[sub[s, '(', '']]
+log[bad.ok]
+log[bad.reason]
+counts = for p in ['a', 'e', 'o']
+    len[s] - len[sub[s, p, '']]
+log[counts]

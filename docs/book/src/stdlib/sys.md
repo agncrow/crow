@@ -19,6 +19,7 @@ Import with `use sys` — **only in a module of the standard library.** `sys` is
 | `close[stream]` | The connection let go; every call after is refused | [Web: responses and submodules](../by-example/web-more.md) |
 | `concat[chunks]` | A list of bytes joined in order, as one (what a connection read, piece by piece), as `concat[[a, b, c]]` joins pieces written down | [Arrays](../by-example/arrays.md) · [Math: tensors](../by-example/math.md) · [The standard library's layer: `use sys`](../by-example/sys.md) · [Arrays and Tensors](../ch05-01-arrays-and-tensors.md) |
 | `file[path]` | A file's bytes, as they are; an error value of kind `'sys'` where it cannot be read | [The standard library's layer: `use sys`](../by-example/sys.md) |
+| `file_lines[path]` | A file's lines, read a block at a time — split at each line break, a `\r` before one dropped, a last line's trailing `\r` too, no empty line after the last break — without the whole text held beside them; an error value of kind `'sys'` where it cannot be read or a line is not UTF-8 | [The standard library's layer: `use sys`](../by-example/sys.md) |
 | `store[path, bytes]` | The bytes written to a file, as they are; an error value of kind `'sys'` where it cannot be written | [The standard library's layer: `use sys`](../by-example/sys.md) |
 | `random[n]` | `n` bytes from the operating system's randomness | [The standard library's layer: `use sys`](../by-example/sys.md) |
 | `hex[bytes]` | The bytes as lowercase hex, two digits each | [The standard library's layer: `use sys`](../by-example/sys.md) |

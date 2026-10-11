@@ -941,6 +941,13 @@ impl Comp {
                     }
                 }
             }
+            // a local freed after its last read (the move pass's `move x`
+            // alone): its register let go, as its block's end lets it go
+            Stmt::Do(Expr::Move(v, _)) if self.resolve(v).is_some() => {
+                if let Some(d) = self.resolve(v) {
+                    self.emit(Ins::Clear { d });
+                }
+            }
             Stmt::Do(e) => {
                 let p = self.expr(e);
                 let s = self.reg(p);

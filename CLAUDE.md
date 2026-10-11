@@ -523,6 +523,29 @@ steps on every push and must be green.
   its top-level names are facts. Who holds a derivation is
   `derive::read_sets` alone — a fact of a page's address and a data source
   are the session's (`session_written`; both had been shared).
+- A local is let go after its last read (`place_moves_in`'s frees): where
+  no read moves it — an indexed base, a loop's list, `len[x]` — the move
+  pass puts `move x` alone (`Stmt::Do(Expr::Move)`) after the statement;
+  the emitter prints `drop(x)` (`emit_do`), the prepared interpreter
+  `Ins::Clear`, the walker takes the slot. Never after a block's last
+  statement (a collecting loop's item, a function's implicit return), never
+  a parameter (it may be lent) and never a binding the block did not make
+  before the read (a later `let` of the name shadows an outer one). A
+  collecting loop over a list it reads for the last time walks it by value
+  (`consumable`: a moved local, a `_list_N` bound by value, a call's
+  answer), and a fallible argument that is a moved local hands its payload
+  on (`_prop_N.value`, not `.clone()`), the taken path judging the
+  payload's type: revcomp 1249 → 924 MB, k-nucleotide 645 → 356 MB.
+- What a compiled program links is what every one of them pays at start:
+  wgpu brought Metal, QuartzCore and Foundation, chrono's default `clock`
+  CoreFoundation (iana-time-zone) — 4 of a one-line program's 6.4 MB. The
+  GPU is crow_runtime's `gpu` feature, asked for by the emitter only where
+  `gpu[…]` is written (`runtime_features`); the crow binary enables it.
+  `otool -L` on a generated binary shows what a new dependency brings.
+  Measuring memory: vmmap labels mimalloc's pages "IOAccelerator" (VM tag
+  100 is mimalloc's default `os_tag`), and a 24-byte allocation takes a
+  32-byte slot in both mimalloc and macOS malloc (16-byte alignment): a
+  three-field record costs twice a two-field one.
 - The interpreter's walker (the top level, a collecting loop's rounds,
   what a prepared body hands it) keeps a `Known` per local text only while
   it runs a loop (`walker_loop`, `loop_text`, keyed by frame and name):

@@ -103,6 +103,37 @@ pub fn file(path: &str) -> Result<Bytes, String> {
     std::fs::read(path).map(Bytes).map_err(|e| format!("cannot read '{}': {}", path, e))
 }
 
+/// A file's lines, read a block at a time: the lines `io.lines_of` makes of
+/// the file's text — split at each `\n`, one `\r` before it dropped, a
+/// last line's trailing `\r` too, no empty line after the last break — and
+/// the reason a line is not UTF-8 where it is not (a `\n` lies inside no
+/// character, so line by line is the whole text's answer). The whole text
+/// had been held beside its lines: a 254 MB file's 4 million lines peaked
+/// at 624 MB.
+pub fn file_lines(path: &str) -> Result<Vec<String>, String> {
+    use std::io::BufRead;
+    let cannot = |e: std::io::Error| format!("cannot read '{}': {}", path, e);
+    let mut reader = std::io::BufReader::with_capacity(1 << 20, std::fs::File::open(path).map_err(cannot)?);
+    let mut out = Vec::new();
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        if reader.read_until(b'\n', &mut line).map_err(cannot)? == 0 {
+            return Ok(out);
+        }
+        if line.last() == Some(&b'\n') {
+            line.pop();
+        }
+        if line.last() == Some(&b'\r') {
+            line.pop();
+        }
+        match std::str::from_utf8(&line) {
+            Ok(text) => out.push(text.to_string()),
+            Err(_) => return Err(format!("cannot read '{}': it is not text (UTF-8)", path)),
+        }
+    }
+}
+
 /// A connection's answer, as the HTTP client written in Crow reads one
 /// (`sys.exchange`, `sys.fetch`): the status and its phrase, the headers
 /// (names in lower case, repeated ones joined) and the body's bytes. The
@@ -801,6 +832,38 @@ pub fn rowbinary_of_frame(frame: &crate::frame::CrowFrame, types: Vec<String>) -
 pub fn close(s: &CrowStream) {
     if let Ok(mut guard) = s.0.conn.lock() {
         *guard = None;
+    }
+}
+
+#[cfg(test)]
+mod file_lines_tests {
+    use super::*;
+
+    /// A file's lines read a block at a time are the lines of its text, as
+    /// `io.lines_of` makes them, and the reasons are the reader's
+    #[test]
+    fn a_files_lines_are_its_texts() {
+        let path = std::env::temp_dir().join(format!("crow_file_lines_{}", std::process::id()));
+        let p = path.to_string_lossy().to_string();
+        let cases: [(&str, &[&str]); 9] = [
+            ("a\nb\n", &["a", "b"]),
+            ("a\r\nb", &["a", "b"]),
+            ("", &[]),
+            ("one", &["one"]),
+            ("\n\n", &["", ""]),
+            ("a\r", &["a"]),
+            ("x\r\r\ny", &["x\r", "y"]),
+            ("a\rb\n", &["a\rb"]),
+            ("über\ndög\r\n", &["über", "dög"]),
+        ];
+        for (text, lines) in cases {
+            std::fs::write(&path, text).unwrap();
+            assert_eq!(file_lines(&p).unwrap(), lines.iter().map(|l| l.to_string()).collect::<Vec<_>>(), "{:?}", text);
+        }
+        std::fs::write(&path, [b'a', b'\n', 0xff, b'\n']).unwrap();
+        assert_eq!(file_lines(&p), Err(format!("cannot read '{}': it is not text (UTF-8)", p)));
+        let _ = std::fs::remove_file(&path);
+        assert!(file_lines(&p).unwrap_err().starts_with(&format!("cannot read '{}': ", p)));
     }
 }
 

@@ -1343,7 +1343,7 @@ A builtin handed a number of arguments, or a kind of argument, it does not take 
 
 | Function | Description |
 |----------|-------------|
-| `log[value]` | Print a value to stdout, as it shows: text bare, a number as it displays (a whole float as an int), a list as `[1, 'a']` with its text quoted, a map as `[key = value]`, a record as `Point[x = 1, y = 2]` (its fields in name order; a module's record by the name it was declared by, as `type` names it), a value that failed as `error: reason` — the same in both modes, through one display (`crow_runtime::display`). To a terminal, each line as it is logged; a script whose output goes to a file or a pipe writes it in blocks — before the program sleeps, at least every tenth of a second whatever else it is doing (so a reader watching it sees each line within that), at the end, before a stop is reported, at `exit` and before `input` reads (a line at a time had been a write to the system per line). A program that serves pages writes each line as it is logged |
+| `log[value]` | Print a value to stdout, as it shows: text bare, a number as it displays (a whole float as an int), a list as `[1, 'a']` with its text quoted, a map as `[key = value]`, a record as `Point[x = 1, y = 2]` (its fields in name order; a module's record by the name it was declared by, as `type` names it), a value that failed as `error: reason` — the same in both modes, through one display (`crow_runtime::display`). To a terminal, each line as it is logged; a script whose output goes to a file or a pipe writes it in blocks — before the program sleeps, at least every tenth of a second whatever else it is doing (so a reader watching it sees each line within that), at the end, before a stop is reported, at `exit` and before `input` reads (a line at a time had been a write to the system per line); a text of 64 KB or more goes out where it lies, after what is held, never copied into the block (fasta's 125 MB section had been held twice). A program that serves pages writes each line as it is logged |
 | `range[stop]` | Array of ints from 0 to stop (exclusive); every argument of `range` is an int (`range[2.5]` is refused) |
 | `range[start, stop]` | Array of ints from start to stop (exclusive) |
 | `range[start, stop, step]` | Array of ints with custom step; a negative step counts down (`range[5, 0, -2]` is `[5, 3, 1]`); a zero step is an error |
@@ -1489,6 +1489,8 @@ type[error['x']]  --- 'error'
 A collection builtin takes the kinds its forms above say — a list, a map, text, a tensor — and any other is refused before the program runs, in both modes, naming the forms it takes: `1 in [1, 2]` is `has[] takes a map and text, got numbers and an int`, and `len[5]`, `keys[[1, 2]]` and `'a' in m` of a map are refused alike. A JSON value's kind shows only as the program runs, so `len` of one that is a number or a bool stops the program with the same words. (Compiled, those calls did not build, where the interpreter stopped as it ran; and `len` of a JSON number was 0.)
 
 **All builtins are immutable.** No builtin modifies its arguments. To update a variable, reassign: `nums = push[nums, 4]`. Both modes turn `x = push[x, v]` (and `pop`, `sort`, `reverse`, `concat`, `set`, `del` in the same shape) into an in-place update: the collection is moved into the operation, not copied, when the right-hand side reads `x` exactly once.
+
+**A value goes after its last read.** A variable's last read moves its value where the read can take it — into a call, out of a function — and a variable last read where nothing takes it (indexed, `body[0]`; walked by a loop; measured, `len[body]`) is let go after the statement that reads it, in both modes, rather than at the end of its block. A collecting loop over a list it reads for the last time takes the list's items into its body, none copied, and a list cut by `slice` there is cut where it lies, the list it came from let go with what it leaves. So a program that turns a big input into a series of lists holds the lists it still reads: revcomp's 254 MB input had been held beside five of its intermediate lists, each one's last read long past (1.25 GB at the peak, 0.92 GB after), and k-nucleotide's slice of the lines beside every line (645 MB, 356 MB after). Nothing a program prints changes: a value let go is one nothing reads again.
 
 ### I/O
 
@@ -1659,7 +1661,7 @@ A scheme neither knows is refused before the program runs when the call writes i
 |----------|-------------|
 | `matches[s, pattern]` | Check if string matches regex pattern (returns bool); an invalid pattern is an error value of kind `'regex'` |
 | `find[s, pattern]` | The first match, as a record whose `groups` holds the whole match followed by each capture group. No match is an error value (`.ok` false, reason `no match`), as `find[arr, pred]` answers; an invalid pattern is one with kind `'regex'` |
-| `sub[s, pattern, replacement]` | Replace all regex matches with replacement string; an invalid pattern is an error value of kind `'regex'` |
+| `sub[s, pattern, replacement]` | Replace all regex matches with replacement string; an invalid pattern is an error value of kind `'regex'`. `len[sub[s, pattern, replacement]]` of text is counted without the text it would make — the characters of `s`, less each match's, plus each replacement's — in both modes (regex-redux counted nine patterns of a 50 MB sequence so, each count a 50 MB copy) |
 
 ```
 matches['hello', '[a-z]+']       --- true
@@ -1928,7 +1930,7 @@ The modules that ship with Crow. Their exports are bare names in files that impo
 **Design Note: what stays native, and why.** Considered: the standard library wholly in Crow, Rust kept for the compiler alone. Decided (design rule 20; Vijay, 2026-10-04): native code stays where one of four reasons holds, and every crate the manifests name (`Cargo.toml`, `crow_runtime/`, `crow_web/`, `crow_db/`) is accounted for here — a crate added gets its line, with its reason.
 
 - *A mechanism of the runtime, which no formula can be:* the server and its pages (axum, tokio, tower, tokio-stream, futures-util) and what runs inside its request handling — multipart uploads (multer), CORS and static files (tower-http), the signed sign-in cookie and session ids (hmac, sha2, base64, uuid), a live page's `fetch[]` sources polled by the server (reqwest); the database handles — their pools, a handler's transaction, the race of a query against a stop (`crow_db::driven`); the drivers themselves are written in Crow (docs/db-in-crow-design.md); the seeded process-global random source (rand); the autograd tape; parallel loops (rayon).
-- *A validated kernel:* TLS (rustls, webpki-roots); the digests, the keyed digests and the password hash (sha2, sha1, md-5, hmac, argon2), randomness from the operating system (getrandom); regular expressions (regex); the byte search the CSV reader splits lines and fields with, vectorised (memchr); the formats a table travels in (arrow, parquet, serde_json, bytes); linear algebra, the FFT, sparse matrices and the GPU (faer, rustfft, sprs, wgpu, pollster, bytemuck); time zones (chrono, chrono-tz); markdown (pulldown-cmark); a number written and read exactly (itoa, ryu), `erf` to the last bit (libm); whole numbers of any size, decimals to any digits with their roots, powers, logarithms and trigonometry correctly rounded, and fractions (dashu-int, dashu-float, dashu-ratio); the distributions drawn by rejection or a ziggurat — Poisson, Bernoulli, gamma, beta and exponential (rand_distr).
+- *A validated kernel:* TLS (rustls, webpki-roots); the digests, the keyed digests and the password hash (sha2, sha1, md-5, hmac, argon2), randomness from the operating system (getrandom); regular expressions (regex); the byte search the CSV reader splits lines and fields with, vectorised (memchr); the formats a table travels in (arrow, parquet, serde_json, bytes); linear algebra, the FFT, sparse matrices and the GPU (faer, rustfft, sprs, wgpu, pollster, bytemuck — the GPU's linked only by a program that writes `gpu[…]`); time zones (chrono, chrono-tz — by the database chrono-tz carries, never the system's local zone, whose lookup links CoreFoundation); markdown (pulldown-cmark); a number written and read exactly (itoa, ryu), `erf` to the last bit (libm); whole numbers of any size, decimals to any digits with their roots, powers, logarithms and trigonometry correctly rounded, and fractions (dashu-int, dashu-float, dashu-ratio); the distributions drawn by rejection or a ziggurat — Poisson, Bernoulli, gamma, beta and exponential (rand_distr).
 - *A C library:* SQLite (rusqlite); the memory allocator of the interpreter and of every compiled program (mimalloc): the system allocator on macOS reads the clock in its `free` and frees a value another thread made slowly, and a program allocates for nearly every text and list it makes — revcomp and k-nucleotide run on every core spent half their time there, interpreted, and compiled binarytrees nine times its CPU.
 - *The compiler's own tooling:* the Jupyter kernel (zeromq, libc), the REPL (rustyline), the language server (lsp-server, lsp-types), `crow check`'s SQL facts (sqlparser), snapshots of a program (bincode, serde), the served harness's client (tungstenite, in the compiler alone).
 
@@ -2342,7 +2344,7 @@ Import with `use io`. Provides structured file parsing beyond the built-in `read
 | Function | Description |
 |----------|-------------|
 | `csv[path]` | Parse CSV — a file, a URL or an S3 object — into array of maps (error-value on failure) |
-| `lines[path]` | Read a file, a URL or an S3 object as array of lines (error-value on failure) |
+| `lines[path]` | Read a file, a URL or an S3 object as array of lines (error-value on failure); a file is read a block at a time (`sys.file_lines`), so its whole text is not held beside its lines |
 
 **Note:** Basic file I/O (`read[path]`, `write[path, content]`) are builtins available without any import. The io module adds structured parsing only.
 
@@ -2459,6 +2461,7 @@ Import with `use sys` — **only in a module of the standard library.** `sys` is
 | `close[stream]` | The connection let go; every call after is refused |
 | `concat[chunks]` | A list of bytes joined in order, as one (what a connection read, piece by piece), as `concat[[a, b, c]]` joins pieces written down |
 | `file[path]` | A file's bytes, as they are; an error value of kind `'sys'` where it cannot be read |
+| `file_lines[path]` | A file's lines, read a block at a time — split at each line break, a `\r` before one dropped, a last line's trailing `\r` too, no empty line after the last break — without the whole text held beside them; an error value of kind `'sys'` where it cannot be read or a line is not UTF-8 |
 | `store[path, bytes]` | The bytes written to a file, as they are; an error value of kind `'sys'` where it cannot be written |
 | `random[n]` | `n` bytes from the operating system's randomness |
 | `hex[bytes]` | The bytes as lowercase hex, two digits each |
@@ -3383,7 +3386,7 @@ fn task_b[]
 
 ### GPU Support
 
-`gpu[n]` specifies intent — "use n GPUs." `gpu[]` uses all available GPUs. The language does not expose any GPU vendor API. The compiler decides what is GPU-eligible (numeric operations on arrays) and what falls back to CPU (string ops, I/O, map lookups).
+`gpu[n]` specifies intent — "use n GPUs." `gpu[]` uses all available GPUs. The language does not expose any GPU vendor API. The compiler decides what is GPU-eligible (numeric operations on arrays) and what falls back to CPU (string ops, I/O, map lookups). A compiled program links the GPU only where it writes `gpu[…]`: the runtime's GPU support (wgpu) and the system frameworks it brings — Metal, QuartzCore, Foundation — had been linked by every program, and their loading had been four of a small program's seven megabytes; without it every tensor operation runs on the CPU, as it does where no GPU answers.
 
 #### Implementation
 

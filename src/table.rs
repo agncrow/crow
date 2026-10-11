@@ -1770,6 +1770,8 @@ pub static ROWS: &[Row] = &[
     // (the interpreter answered one while the compiled program stopped)
     row!("text.matches", "", "matches", crow_runtime::text::matches, (Str, Str) -> Bool, value "regex"),
     row!("text.sub", "", "sub", crow_runtime::text::sub, (Str, Str, Str) -> Str, value "regex"),
+    // `len[sub[…]]` of text, counted without the text (lower_ir: sub_len_of)
+    row!("text.__sub_len", "", "__sub_len", crow_runtime::text::sub_len, (Str, Str, Str) -> Int, value "regex"),
     // math: the constructors and the distributions (a size, a parameter, a
     // rank the interpreter refused and the compiled program cast or
     // panicked on is one check)
@@ -1985,6 +1987,7 @@ pub static ROWS: &[Row] = &[
     row!("sys.byte", "sys", "byte", crow_runtime::sys::byte, (Bytes, Int) -> Int, stops),
     row!("sys.concat_all", "sys", "concat", crow_runtime::sys::gather, (Chunks) -> Bytes, never),
     row!("sys.file", "sys", "file", crow_runtime::sys::file, (Str) -> Bytes, value "sys"),
+    row!("sys.file_lines", "sys", "file_lines", crow_runtime::sys::file_lines, (Str) -> Strs, value "sys"),
     row!("sys.store", "sys", "store", crow_runtime::sys::store, (Str, Bytes) -> Unit, value "sys"),
     row!("sys.random", "sys", "random", crow_runtime::sys::random, (Int) -> Bytes, stops),
     row!("sys.hex", "sys", "hex", crow_runtime::sys::hex, (Bytes) -> Str, never),
@@ -2701,6 +2704,7 @@ pub fn form(name: &str) -> String {
         "contains" => "`x in xs`".to_string(),
         "__map_of" => "map[keys, values]".to_string(),
         "__pick_items" | "__pick_rows" => "`xs[mask]`".to_string(),
+        "__sub_len" => "len[sub[…]]".to_string(),
         _ => format!("{}[]", shown(name)),
     }
 }

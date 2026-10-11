@@ -593,6 +593,16 @@ impl Emitter {
     }
 
     fn emit_do(&mut self, e: &Expr) {
+        // a local freed after its last read (the move pass's `move x`
+        // alone): dropped where it is, when the function owns it — a
+        // parameter lent, a borrowed loop item and a static handle are not
+        // its to drop
+        if let Expr::Move(v, _) = e {
+            if self.declared(v) && !self.borrowed(v) && !self.lent_here.contains(v) && !self.ref_params.contains(v) && !self.static_handle_vars.contains(v) {
+                self.line(&format!("drop({});", v));
+            }
+            return;
+        }
         // cpu[n] bounds the loops that start after it, where it runs
         // (crow_runtime::cores); gpu[] and nodes[n] are the program's
         // resources
@@ -606,6 +616,7 @@ impl Emitter {
             return;
         }
         if call_name(e).as_deref() == Some("gpu") && super::program::call_args(e).len() <= 1 && matches!(e, Expr::Call { target: Target::Runtime(_), .. }) {
+            self.runtime_features.insert("gpu".to_string());
             self.needs_crow_runtime = true;
             self.line("crow_runtime::gpu::set_gpu_enabled(true);");
             return;

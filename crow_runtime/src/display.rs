@@ -28,6 +28,11 @@ pub trait CrowDisplay {
     fn crow_write(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(self.crow_fmt().as_bytes());
     }
+    /// The value itself when it is text, which `log` hands to the output
+    /// where it lies when it is long, rather than copying it first.
+    fn as_text(&self) -> Option<&str> {
+        None
+    }
 }
 
 impl CrowDisplay for i64 {
@@ -64,6 +69,9 @@ impl CrowDisplay for String {
     fn crow_write(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(self.as_bytes());
     }
+    fn as_text(&self) -> Option<&str> {
+        Some(self)
+    }
 }
 
 impl CrowDisplay for str {
@@ -72,6 +80,12 @@ impl CrowDisplay for str {
     }
     fn crow_fmt(&self) -> String {
         self.to_string()
+    }
+    fn crow_write(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.as_bytes());
+    }
+    fn as_text(&self) -> Option<&str> {
+        Some(self)
     }
 }
 
@@ -84,6 +98,12 @@ impl<T: CrowDisplay + ?Sized> CrowDisplay for &T {
     }
     fn crow_fmt(&self) -> String {
         (**self).crow_fmt()
+    }
+    fn crow_write(&self, out: &mut Vec<u8>) {
+        (**self).crow_write(out)
+    }
+    fn as_text(&self) -> Option<&str> {
+        (**self).as_text()
     }
 }
 
@@ -128,7 +148,19 @@ pub fn log(items: &[&dyn CrowDisplay]) {
         if i > 0 {
             held.push(b' ');
         }
-        x.crow_write(&mut held);
+        match x.as_text() {
+            // a long text goes out where it lies, after what is held: copied
+            // into the buffer first, fasta's 125 MB section had been held
+            // twice, and the buffer kept that size to the end of the run
+            Some(t) if t.len() >= BLOCK => {
+                let mut out = std::io::stdout().lock();
+                let _ = out.write_all(&held);
+                held.clear();
+                let _ = out.write_all(t.as_bytes());
+                let _ = out.flush();
+            }
+            _ => x.crow_write(&mut held),
+        }
     }
     held.push(b'\n');
     // a line at a time, unless a script's output goes to a file or a pipe
@@ -138,6 +170,10 @@ pub fn log(items: &[&dyn CrowDisplay]) {
         let _ = out.write_all(&held);
         let _ = out.flush();
         held.clear();
+        // (a buffer one long value grew is let go: it is a block's room)
+        if held.capacity() > 4 * BLOCK {
+            held.shrink_to(BLOCK);
+        }
     }
 }
 

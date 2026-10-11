@@ -54,13 +54,14 @@ sys
 false
 ```
 
-The rest of the layer, for the modules written on it — a file's bytes, chunks gathered, digests, and a request's answer made from its parts:
+The rest of the layer, for the modules written on it — a file's bytes and its lines read a block at a time, chunks gathered, digests, and a request's answer made from its parts:
 
 ```crow
 use sys
 
 store['sys-note.txt', bytes['one\ntwo']]
 log[len[file['sys-note.txt']]]
+log[file_lines['sys-note.txt']]
 log[text[concat[[bytes['ab'], bytes['cd']]], '?']]
 log[hex[bytes['hi']]]
 log[hash[bytes['hello'], 'sha256']]
@@ -74,6 +75,7 @@ log[len[file['no-such-file'].reason] gt 0]
 
 ```text
 7
+['one', 'two']
 abcd
 6869
 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824

@@ -3707,6 +3707,14 @@ impl<'a> Lowerer<'a> {
             }
             lowered = read_args;
         }
+        // `len[sub[s, pattern, r]]` of text: the length the substitution
+        // makes, counted without making the text (regex-redux counted nine
+        // patterns of a 50 MB sequence so, each a copy, nine at once)
+        if name == "len" && module.is_none() && lowered.len() == 1
+            && let Some(fused) = Self::sub_len_of(&lowered[0])
+        {
+            return Ok(fused);
+        }
         // `map[keys, values]` of a tensor of values: its numbers as a list,
         // for a map of floats (the row takes a list of values of one kind)
         if name == "__map_of" && lowered.len() == 2 {
@@ -4455,7 +4463,24 @@ impl<'a> Lowerer<'a> {
         (args, ty)
     }
 
-        /// The kind of a collection's items, as a value handed to it is read: a
+        /// `len` of a `sub` of text, as the call that counts the length the
+    /// substitution makes without making it (`text.__sub_len`): the same
+    /// arguments, and a failure where `sub`'s would be.
+    fn sub_len_of(arg: &Expr) -> Option<Expr> {
+        let inner = match arg {
+            Expr::Convert { how: Convert::Unwrap, expr, .. } => expr.as_ref(),
+            other => other,
+        };
+        let Expr::Call { target: Target::Row(row), args, propagates, ty } = inner else { return None };
+        if row.id != "text.sub" || args.len() != 3 {
+            return None;
+        }
+        let fused = crate::table::ROWS.iter().find(|r| r.id == "text.__sub_len")?;
+        let ty = if ty.is_result() { Ty::Result(Box::new(Ty::Int)) } else { Ty::Int };
+        Some(Expr::Call { target: Target::Row(fused), args: args.clone(), ty, propagates: *propagates })
+    }
+
+    /// The kind of a collection's items, as a value handed to it is read: a
     /// list's or a tensor's items, a map's values — or its keys, for `k in
     /// m` — when they are numbers, text or bools.
     fn items_kind(t: &Ty, keys: bool) -> Option<Ty> {
@@ -5101,7 +5126,16 @@ fn place_moves_in(block: &mut Block, live_after: &HashSet<String>, allowed: Opti
     // copied `piece` in both modes). The outermost block's names are what
     // its caller says is live after it (a notebook's next cell reads them).
     let mut live: HashSet<String> = if allowed.is_some() { live_after.iter().filter(|n| !defined.contains(*n)).cloned().collect() } else { live_after.clone() };
-    for s in block.iter_mut().rev() {
+    // the block's own locals a statement reads for the last time and does
+    // not move, freed after it (`move x` alone, which both backends drop
+    // there): a value read last as an indexed base, or by a loop, had lived
+    // to the block's end — revcomp's input slice and its reversed lines, a
+    // section of 185 MB each, beside the lines made from them. Never after
+    // the block's last statement (its value, or the end that frees them),
+    // nor after one that leaves.
+    let last = block.iter().rposition(|s| !matches!(s, Stmt::Line(_)));
+    let mut frees: Vec<(usize, String)> = Vec::new();
+    for (at, s) in block.iter_mut().enumerate().rev() {
         // a return leaves the function: nothing after it is read on its path
         // (`return slice[pieces, 0, n - 1]` in a branch, `return pieces`
         // after the branch, had copied every line of a file to drop one)
@@ -5209,6 +5243,23 @@ fn place_moves_in(block: &mut Block, live_after: &HashSet<String>, allowed: Opti
         for e in stmt_exprs_mut(s).into_iter().rev() {
             move_last_reads(e, &live_here, &allowed_here, &mut seen);
         }
+        if Some(at) != last && !matches!(s, Stmt::Return(_) | Stmt::Break | Stmt::Continue) {
+            let mut moved = HashSet::new();
+            stmt_moves(s, &mut moved);
+            // (a record read by its fields may have handed them on: the
+            // compiled program moves a field read for the last time, and
+            // what is left of the record goes with its block)
+            stmt_field_bases(s, &mut moved);
+            let target = match s {
+                Stmt::Let { var, .. } | Stmt::Set { var, .. } => Some(var.as_str()),
+                _ => None,
+            };
+            for v in &reads {
+                if defined.contains(v) && !live.contains(v) && !moved.contains(v) && target != Some(v.as_str()) {
+                    frees.push((at, v.clone()));
+                }
+            }
+        }
         match s {
             Stmt::Let { var, .. } | Stmt::Set { var, .. } => {
                 live.remove(var);
@@ -5217,6 +5268,46 @@ fn place_moves_in(block: &mut Block, live_after: &HashSet<String>, allowed: Opti
         }
         live.extend(reads);
     }
+    // each after its statement, of the binding it reads there: one this
+    // block made before it (a name read before the block binds it anew is
+    // an outer binding, which is not this block's to free)
+    frees.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    for (at, v) in frees {
+        let ty = block[..=at].iter().rev().find_map(|s| match s {
+            Stmt::Let { var, ty, .. } if *var == v => Some(ty.clone()),
+            _ => None,
+        });
+        if let Some(ty) = ty.filter(movable) {
+            block.insert(at + 1, Stmt::Do(Expr::Move(v, ty)));
+        }
+    }
+}
+
+/// The names a statement reads a field of, anywhere in it.
+fn stmt_field_bases(s: &Stmt, out: &mut HashSet<String>) {
+    crate::ir::visit_block(std::slice::from_ref(s), &mut |e| {
+        if let Expr::Field { base, .. } = e
+            && let Some(v) = named(base)
+        {
+            out.insert(v.clone());
+        }
+    });
+    fn named(e: &Expr) -> Option<&String> {
+        match e {
+            Expr::Local(v, _) | Expr::Move(v, _) => Some(v),
+            Expr::Convert { expr, .. } => named(expr),
+            _ => None,
+        }
+    }
+}
+
+/// The names a statement moves, anywhere in it.
+fn stmt_moves(s: &Stmt, out: &mut HashSet<String>) {
+    crate::ir::visit_block(std::slice::from_ref(s), &mut |e| {
+        if let Expr::Move(v, _) = e {
+            out.insert(v.clone());
+        }
+    });
 }
 
 fn defined_in(block: &Block) -> HashSet<String> {

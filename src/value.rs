@@ -583,6 +583,18 @@ impl crow_runtime::display::CrowDisplay for CrowValue {
     fn crow_fmt(&self) -> String {
         self.to_string()
     }
+    fn crow_write(&self, out: &mut Vec<u8>) {
+        match &self.value {
+            Value::Str(s) if self.is_ok() => out.extend_from_slice(s.as_bytes()),
+            _ => out.extend_from_slice(self.to_string().as_bytes()),
+        }
+    }
+    fn as_text(&self) -> Option<&str> {
+        match &self.value {
+            Value::Str(s) if self.is_ok() => Some(s),
+            _ => None,
+        }
+    }
 }
 
 /// A value's JSON (`encode`), by the rule the compiled program's values

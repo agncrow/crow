@@ -237,7 +237,7 @@ Pages are composed from layout primitives, never styled with CSS. Five container
 | `size`, `weight`, `font` | the type scale `xs s m l xl xxl` = 12 14 16 20 24 32 px; `regular medium bold`; `font = 'mono'` sets the monospace face with tabular digits — a figure in a stat tile, a code-like value |  |
 | `surface = 'card'`, `radius`, `border = true`, `shadow` | surfaces: radius `none s m l round`, shadow `s m l` |  |
 | `color`, `background` | a colour token: `text muted accent up down surface bg` — never a literal colour |  |
-| `lines = 2` | clamp a wrapping paragraph | [Structured files: `use io`](../by-example/io.md) |
+| `lines = 2` | clamp a wrapping paragraph | [Structured files: `use io`](../by-example/io.md) · [The standard library's layer: `use sys`](../by-example/sys.md) |
 | `below = 'phone' \| 'tablet'`, `becomes = 'stack'`, `columns_then = 1`, `hidden_below` | responsive rules at named widths (phone < 600, tablet < 1024) — no media queries |  |
 | `open = true`, `side = 'left' \| 'right'` | a disclosure's or layer's state (any bool expression) and a drawer's or dropdown's side | [The standard library's layer: `use sys`](../by-example/sys.md) |
 | `tip = 'text'`, `fit = 'cover' \| 'contain'`, `active = '/path'` | a tooltip on anything; how an `img` fills its `aspect` box; the current page of a `nav` |  |
@@ -283,7 +283,7 @@ view render[]
 |---|---|---|---|
 | `x` | `'ts'` | Column of moments for the x axis | [Frames: `use frame`](../by-example/frames.md) · [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) · [Neural-network building blocks: `use math.nn`](../by-example/nn.md) · [Numbers and conversion](../by-example/numbers.md) · [The standard library's layer: `use sys`](../by-example/sys.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [Testing](../ch09-00-testing.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
 | `candles` | `[]` | Four column names — open, high, low, close — drawn as candlesticks |  |
-| `lines` | `[]` | Column names drawn as line series | [Structured files: `use io`](../by-example/io.md) |
+| `lines` | `[]` | Column names drawn as line series | [Structured files: `use io`](../by-example/io.md) · [The standard library's layer: `use sys`](../by-example/sys.md) |
 | `bars_y` | `''` | Column drawn as a volume pane under the chart |  |
 | `marker` | `0` | A moment marked with a vertical play-head |  |
 | `tz` | `'UTC'` | Timezone for the axis ticks |  |
