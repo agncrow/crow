@@ -238,7 +238,7 @@ fn a_vector_read_and_set_by_index_is_a_plain_vector() {
     let rust = transpile("fn step[xs, n]\n    vs = [0.5, 0.5]\n    for i in range[n]\n        vs[i] = vs[i] + xs[i] * 0.5\n        xs[i] = xs[i] + vs[len[vs] - 1]\n    return xs\nlog[step[[1.0, 2.0], 2]]\n");
     let body = &rust[rust.find("fn step(").expect("step is emitted")..];
     let body = &body[..body.find("\n}").unwrap_or(body.len())];
-    assert!(body.contains("let mut xs: Vec<f64> = xs.to_vec();"), "{}", body);
+    assert!(body.contains("let mut xs: Vec<f64> = (xs).to_vec();"), "{}", body);
     assert!(body.contains("let mut vs: Vec<f64> = ("), "{}", body);
     assert!(!body.contains("set_flat_at") && !body.contains("number_at"), "the loop writes and reads the vectors where they lie: {}", body);
     assert!(body.contains("CrowTensor::from_vec(xs.clone(), vec![xs.len()])"), "answered as a tensor: {}", body);
@@ -2459,4 +2459,55 @@ fn a_record_read_by_its_fields_is_not_dropped() {
     let start = rust.find("fn run(").expect("run");
     let body = &rust[start..start + rust[start..].find("\n}\n").unwrap()];
     assert!(!body.contains("drop(h)"), "{}", body);
+}
+
+/// A tensor pushed onto at the top level grows where it lies, as one in a
+/// function does: `xs = push[xs, v]` had copied the tensor at every push
+/// (400,000 pushes took 18 s).
+#[test]
+fn a_tensor_pushed_onto_at_the_top_level_grows_where_it_lies() {
+    let src = "xs = slice[[0], 0, 0]\ni = 0\nwhile i lt 10\n    xs = push[xs, i]\n    i = i + 1\nlog[len[xs]]\n";
+    let rust = transpile(src);
+    assert!(rust.contains("push_number_taken("), "{}", rust);
+    assert!(!rust.contains("push_number(&"), "{}", rust);
+}
+
+/// A record's link to a record of its kind is a shared link, never a box
+/// copied whole: reading `t.left` is a count (a treap's split had copied
+/// every subtree it passed).
+#[test]
+fn a_records_link_is_shared() {
+    let src = "struct Node [key, left]\nfn depth[t]\n    if type[t] eq 'int'\n        return 0\n    return 1 + depth[t.left]\nt = Node[1, Node[2, 0]]\nlog[depth[t]]\nlog[type[t.left]]\n";
+    let rust = transpile(src);
+    assert!(rust.contains("Option<crow_runtime::link::Link<Node>>"), "{}", rust);
+    assert!(!rust.contains("Box<Node>"), "{}", rust);
+    let start = rust.find("fn depth(").expect("depth");
+    let body = &rust[start..start + rust[start..].find("\n}\n").unwrap()];
+    assert!(!body.contains(".unwrap()"), "a link that holds none stops, it never panics\n{}", body);
+}
+
+/// A vector of whole numbers the body only reads and sets by index is held
+/// as `Vec<i64>`: held as floats, a brainfuck interpreter's tape had turned
+/// each cell into a float and back at every step.
+#[test]
+fn a_vector_of_whole_numbers_is_held_as_ints() {
+    let src = "fn run[n]\n    tape = slice[[0], 0, 0]\n    i = 0\n    while i lt n\n        tape = push[tape, 0]\n        i = i + 1\n    tape[2] = (tape[2] + 1) % 256\n    return tape[2]\nlog[run[5]]\n";
+    let rust = transpile(src);
+    let start = rust.find("fn run(").expect("run");
+    let body = &rust[start..start + rust[start..].find("\n}\n").unwrap()];
+    assert!(body.contains("let mut tape: Vec<i64>"), "{}", body);
+    assert!(body.contains("held_int("), "a number written as a tensor holds it\n{}", body);
+}
+
+/// A vector parameter the body only reads by index is read through a view
+/// of its numbers made as the body starts, not through the tensor at every
+/// number (a binary search, a jump table).
+#[test]
+fn a_vector_parameter_only_read_is_read_through_a_view() {
+    let src = "fn below[a, x]\n    lo = 0\n    hi = len[a]\n    while lo lt hi\n        mid = (lo + hi) / 2\n        if a[mid] lt x\n            lo = mid + 1\n        else\n            hi = mid\n    return lo\nxs = slice[[0], 0, 0]\nxs = push[xs, 3]\nxs = push[xs, 9]\nlog[below[xs, 5]]\n";
+    let rust = transpile(src);
+    let start = rust.find("fn below(").expect("below");
+    let body = &rust[start..start + rust[start..].find("\n}\n").unwrap()];
+    assert!(body.contains("let a__v = a.numbers();"), "{}", body);
+    assert!(body.contains("a__v[") && !body.contains("number_at(&a"), "{}", body);
 }

@@ -152,7 +152,7 @@ pub fn outside(name: &str, vals: &[crate::value::CrowValue]) -> Option<crate::va
             m.insert("status".to_string(), CrowValue::ok(Value::Int(0)));
             m.insert("stdout".to_string(), CrowValue::ok(Value::Str(String::new())));
             m.insert("stderr".to_string(), CrowValue::ok(Value::Str(String::new())));
-            CrowValue::ok(Value::Map(m))
+            CrowValue::ok(Value::map(m))
         }
         // a file operation answers empty text, as a real one does
         _ => CrowValue::ok(Value::Str(String::new())),
@@ -403,7 +403,7 @@ mod tests {
     fn a_rehearsed_request_is_recorded_with_its_options_by_name() {
         use crate::value::{CrowValue, Value};
         let text = |s: &str| CrowValue::ok(Value::Str(s.to_string()));
-        let map = |pairs: &[(&str, &str)]| CrowValue::ok(Value::Map(pairs.iter().map(|(k, v)| (k.to_string(), text(v))).collect()));
+        let map = |pairs: &[(&str, &str)]| CrowValue::ok(Value::map(pairs.iter().map(|(k, v)| (k.to_string(), text(v))).collect()));
         let r = begin(Path::new("/no/such/project"));
         let vals = vec![
             text("https://example.com/upload"),

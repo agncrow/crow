@@ -324,7 +324,7 @@ impl Emitter {
 
     fn local(&self, v: &str) -> String {
         if self.plain_vecs.contains(v) {
-            return Self::vector_as_tensor(v);
+            return self.vector_as_tensor(v);
         }
         // a list, a map or a text the function reads where its caller
         // holds it: the caller's place
@@ -1059,9 +1059,15 @@ impl Emitter {
                     return format!("{{ let _i = {}; crow_runtime::core::row_at(&{}, _i).unwrap_or_else(|e| crow_stop({}, e)) }}", idx, b, line);
                 }
                 let cast = if matches!(el.as_ref(), Ty::Int) { " as i64" } else { "" };
-                // a plain vector's number, read where it lies (vectors.rs)
+                // a plain vector's number, read where it lies (vectors.rs):
+                // a vector of whole numbers holds them as they are read
                 if let Some(v) = self.plain_vector(base) {
+                    let cast = if self.int_vecs.contains(v) { "" } else { cast };
                     return format!("{{ let _i = {}; {}[{}]{} }}", idx, v, self.index_at("_i", &format!("{}.len()", v)), cast);
+                }
+                // a parameter's number, read through the view of its numbers
+                if let Some(view) = self.read_view(base) {
+                    return format!("{{ let _i = {}; {}[{}]{} }}", idx, view, self.index_at("_i", &format!("{}.len()", view)), cast);
                 }
                 format!("{{ let _i = {}; crow_runtime::core::number_at(&{}, _i).unwrap_or_else(|e| crow_stop({}, e)){} }}", idx, b, line, cast)
             }
@@ -1179,7 +1185,9 @@ impl Emitter {
     }
 
     fn field(&mut self, base: &Expr, field: &str) -> String {
-        let obj = self.expr(base);
+        // (a record or a link read through on the way is read where it
+        // lies: `t.left.right` had counted `t.left` up and down)
+        let obj = self.link_place(base).unwrap_or_else(|| self.expr(base));
         let oty = self.tt(base);
         // a value that failed has no fields: where the lowering could not
         // refuse it first (a fact's declared value), the read refuses it,
@@ -1525,7 +1533,7 @@ impl Emitter {
                     // (a record or none already: a child handed on)
                     inits.push(format!("{}: {}", Self::rust_field(fname), owned));
                 } else {
-                    inits.push(format!("{}: Some(Box::new({}))", Self::rust_field(fname), owned));
+                    inits.push(format!("{}: Some(crow_runtime::link::new({}))", Self::rust_field(fname), owned));
                 }
             } else {
                 // a field that can hold a failed value takes a plain one as
@@ -1839,6 +1847,13 @@ impl Emitter {
         {
             return format!("({}.len() as i64)", v);
         }
+        if let Expr::Call { target: Target::Row(row), args, .. } = e
+            && row.id == "core.len_tensor"
+            && args.len() == 1
+            && let Some(view) = self.read_view(&args[0])
+        {
+            return format!("({}.len() as i64)", view);
+        }
         let (mut target, args, propagates) = match e {
             Expr::Call { target, args, propagates, .. } => (target.clone(), args.clone(), *propagates),
             Expr::Effect { name, row, args, propagates, .. } => {
@@ -1930,28 +1945,44 @@ impl Emitter {
             let stop = format!("crow_stop({}, \"a record is needed here, and this value is 0 (none)\".to_string())", self.line_now());
             match (takes, &given) {
                 (Some(Ty::Record(_)), Ty::OptRecord(_)) => {
-                    let s = self.expr(a);
-                    arg_strs.push(if by_ref { format!("({}).as_deref().unwrap_or_else(|| {})", s, stop) } else { format!("(*({}).clone().unwrap_or_else(|| {}))", s, stop) });
+                    let s = self.link_place(a).unwrap_or_else(|| self.expr(a));
+                    arg_strs.push(if by_ref { format!("({}).as_deref().unwrap_or_else(|| {})", s, stop) } else { format!("({}).as_deref().unwrap_or_else(|| {}).clone()", s, stop) });
                     continue;
                 }
                 (Some(Ty::OptRecord(_)), Ty::Record(_)) => {
                     let s = self.owned_expr(a);
-                    arg_strs.push(if by_ref { format!("&Some(Box::new({}))", s) } else { format!("Some(Box::new({}))", s) });
+                    arg_strs.push(if by_ref { format!("&Some(crow_runtime::link::new({}))", s) } else { format!("Some(crow_runtime::link::new({}))", s) });
                     continue;
                 }
                 (Some(Ty::OptRecord(_)), _) if none_literal => {
                     arg_strs.push(if by_ref { "&None".to_string() } else { "None".to_string() });
                     continue;
                 }
+                // (a link handed on: lent where it lies, or one count up —
+                // a local read for the last time moved)
                 (Some(Ty::OptRecord(_)), Ty::OptRecord(_)) => {
-                    let s = if by_ref { format!("&{}", self.expr(a)) } else { format!("{}.clone()", self.expr(a)) };
+                    let s = match Emitter::raw(a) {
+                        Expr::Local(v, _) | Expr::Move(v, _) if self.ref_params.contains(v) => {
+                            if by_ref { v.clone() } else { format!("(*{}).clone()", v) }
+                        }
+                        Expr::Local(v, _) | Expr::Move(v, _) if !by_ref && self.moved_local(a) => v.clone(),
+                        _ => match self.link_place(a) {
+                            Some(place) if by_ref => format!("&{}", place),
+                            Some(place) => format!("{}.clone()", place),
+                            None if by_ref => format!("&{}", self.expr(a)),
+                            // (a call's answer, or a field read already its own count)
+                            None => self.expr(a),
+                        },
+                    };
                     arg_strs.push(s);
                     continue;
                 }
                 _ => {}
             }
+            // (a builtin takes a record or none as it is: `type[t.left]`,
+            // `str[t.left]` of none had unwrapped it, a panic)
             if by_ref {
-                if let Some(s) = self.optbox_ref(a) {
+                if user && let Some(s) = self.optbox_ref(a) {
                     arg_strs.push(s);
                 } else if let Expr::Local(v, _) | Expr::Move(v, _) = a {
                     if self.ref_params.contains(v) {
@@ -1966,7 +1997,7 @@ impl Emitter {
                     let s = self.expr(a);
                     arg_strs.push(format!("&{}", s));
                 }
-            } else if let Some(s) = self.optbox_value(a) {
+            } else if user && let Some(s) = self.optbox_value(a) {
                 arg_strs.push(s);
             } else {
                 let local_read = match a {
@@ -2180,30 +2211,72 @@ impl Emitter {
         result
     }
 
-    /// A struct field that is a recursive link, handed by reference.
+    /// A struct field that is a recursive link, handed by reference to a
+    /// function that takes the record: the record it holds, or the program
+    /// stops where it holds none (it had unwrapped, a panic).
     fn optbox_ref(&mut self, e: &Expr) -> Option<String> {
         if let Expr::Field { base, name, .. } = e {
             if let Ty::Record(s) = self.tt(base) {
                 if self.structs.get(&s).map_or(false, |d| d.fields.iter().any(|(f, t)| f == name && matches!(t, Ty::OptRecord(_)))) {
                     let obj = self.expr(base);
-                    return Some(format!("{}.{}.as_ref().unwrap()", obj, Self::rust_field(name)));
+                    return Some(format!("{}.{}.as_deref().unwrap_or_else(|| {})", obj, Self::rust_field(name), self.none_stop()));
                 }
             }
         }
         None
     }
 
-    /// A struct field that is a recursive link, handed by value.
+    /// A struct field that is a recursive link, handed by value to a
+    /// function that takes the record: a copy of the record it holds (its
+    /// own links shared), or the program stops where it holds none.
     fn optbox_value(&mut self, e: &Expr) -> Option<String> {
         if let Expr::Field { base, name, .. } = e {
             if let Ty::Record(s) = self.tt(base) {
                 if self.structs.get(&s).map_or(false, |d| d.fields.iter().any(|(f, t)| f == name && matches!(t, Ty::OptRecord(_)))) {
                     let obj = self.expr(base);
-                    return Some(format!("*{}.{}.as_ref().unwrap().clone()", obj, Self::rust_field(name)));
+                    return Some(format!("{}.{}.as_deref().unwrap_or_else(|| {}).clone()", obj, Self::rust_field(name), self.none_stop()));
                 }
             }
         }
         None
+    }
+
+    /// A record's field or a link read where it lies — a place, for the
+    /// caller to borrow or copy: a local, a field of a record, a field
+    /// read through a link (none stopping as a field read of 0 does), at
+    /// any depth below a local. None for anything else.
+    fn link_place(&mut self, e: &Expr) -> Option<String> {
+        match e {
+            Expr::Local(v, _) | Expr::Move(v, _) => {
+                if self.ref_params.contains(v) {
+                    return Some(format!("(*{})", v));
+                }
+                let plain = self.declared(v) && !self.plain_vecs.contains(v) && !self.lent_here.contains(v) && !self.static_handle_vars.contains(v);
+                plain.then(|| v.clone())
+            }
+            Expr::Field { base, name, .. } => {
+                let bt = self.tt(base);
+                let known = |s: &String| self.structs.get(s).is_some_and(|d| d.fields.iter().any(|(f, _)| f == name));
+                match &bt {
+                    Ty::Record(s) if known(s) => {
+                        let b = self.link_place(base)?;
+                        Some(format!("{}.{}", b, Self::rust_field(name)))
+                    }
+                    Ty::OptRecord(s) if known(s) => {
+                        let b = self.link_place(base)?;
+                        Some(format!("{}.as_ref().unwrap_or_else(|| crow_stop({}, \"cannot access field '{}' on this value\".to_string())).{}", b, self.line_now(), name, Self::rust_field(name)))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// The stop where a record is needed and a link holds none, as the
+    /// interpreter stops reading a field of 0.
+    fn none_stop(&self) -> String {
+        format!("crow_stop({}, \"a record is needed here, and this value is 0 (none)\".to_string())", self.line_now())
     }
 
     /// A core builtin's row for a call the IR leaves by name: the one its
@@ -2508,6 +2581,10 @@ impl Emitter {
                 // (a list's items are moved with it: `lines` drops its empty
                 // last piece without copying the rest)
                 Ty::List(_) => row.id == "core.slice",
+                // (a tensor's numbers are appended where they lie: `xs =
+                // push[xs, v]` at the top level had copied the tensor at
+                // every push, 400,000 pushes in 18 s)
+                Ty::Tensor(..) => row.id == "core.push_number",
                 _ => false,
             };
             if taken && held && row.params.len() == strs.len() {

@@ -32,6 +32,10 @@ rayon = "1.11.0"
 memchr = "2.8.0"
 serde = { version = "1", features = ["derive", "rc"] }
 rustfft = "6.4.1"
+# a record's link to a record of its kind, shared: one count and no weak
+# one, so a node of two links and a flag keeps the slot a box of it took
+# (crow_runtime::link)
+triomphe = { version = "0.1", features = ["serde"] }
 # `sys`: the standard library's own layer — a TCP connection, plain or
 # behind TLS, for the modules written in Crow (spec, The standard library's
 # layer)

@@ -1,0 +1,27 @@
+--- An int handed where a record or none is held — a field only ever given
+--- 0, handed to a function that also takes a record or none — is none
+--- when it is 0, and stops otherwise, in both modes. (The lowered program
+--- had handed the int, and disagreed with itself: an internal error in
+--- both modes.)
+struct Node [key, left, right]
+
+fn is_none[t]
+    return type[t] eq 'int'
+
+fn walk[t]
+    cur = t
+    n = 0
+    while not is_none[cur]
+        n = n + 1
+        cur = cur.left
+    return n
+
+t = Node[5, Node[3, 0, 0], 0]
+log['`type[t]` | `type[t.right]` | `is_none[t.right]` | `is_none[t]`']
+log['`walk[t]`']
+
+struct Chain [key, next, other]
+b = Chain[1, Chain[2, 0, 0], 7]
+log[is_none[b.next]]
+log[is_none[b.next.next]]
+log[is_none[b.other]]

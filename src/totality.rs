@@ -70,11 +70,11 @@ fn every_value() -> Vec<Value> {
         Value::Int(1), Value::Big(std::sync::Arc::new(crow_runtime::int::IBig::from(u64::MAX))), Value::Decimal(std::sync::Arc::new(crow_runtime::decimal::Dec::default())), Value::Fraction(std::sync::Arc::new(crow_runtime::fraction::Frac::default())), Value::Float(1.5), Value::Str("a".into()), Value::Bool(true),
         Value::Moment(crow_runtime::moments::Moment::of_seconds(1.5)),
         Value::Array(std::sync::Arc::new(vec![CrowValue::ok(Value::Int(1))])), Value::NumArray(Box::new(tensor.clone())),
-        Value::Map(std::collections::BTreeMap::from([("k".to_string(), CrowValue::ok(Value::Int(1)))])),
+        Value::map(std::collections::BTreeMap::from([("k".to_string(), CrowValue::ok(Value::Int(1)))])),
         Value::StructInstance(std::sync::Arc::new(crate::value::StructInstance::new("P".into(), "P".into(), std::collections::BTreeMap::from([("x".to_string(), CrowValue::ok(Value::Int(1)))])))),
         Value::Frame(Box::new(crow_runtime::frames::new())),
         Value::Bytes(crow_runtime::sys::Bytes(vec![1u8, 2])),
-        Value::Json(Box::new(serde_json::json!({"a": 1}))),
+        Value::Json(std::sync::Arc::new(serde_json::json!({"a": 1}))),
         Value::Dual(1.5, 0.5),
         Value::Done,
     ]

@@ -1923,6 +1923,7 @@ impl<'a> Lowerer<'a> {
                     self.settled_entry(object, &expr);
                 }
                 let idx = self.lower_expr(index)?;
+                let idx = self.decided_index(idx);
                 let (var, mut path, held) = self.muted_target(object)?;
                 // an int assigned to an item of a list of floats is a float,
                 // where it is written — as one handed to a float parameter
@@ -2289,6 +2290,19 @@ impl<'a> Lowerer<'a> {
     /// What a decision reads: a value that can fail is refused first when it
     /// failed (a function hands it back, a handler stops, the top level
     /// halts), and the decision reads its payload.
+    /// A position or a key that can fail, refused first when it failed —
+    /// a function hands the error back, a handler stops, the top level
+    /// halts — as an item of a value that can fail is: one rule for
+    /// reading into a value (Vijay, 2026-10-01). `xs[int[ch]]` had typed
+    /// the item as able to fail where both backends stopped, and the
+    /// compiled program did not build.
+    fn decided_index(&mut self, i: Expr) -> Expr {
+        if self.in_fact_default || !i.ty().is_result() || matches!(i.ty().payload(), Ty::Fn(..) | Ty::Unknown) {
+            return i;
+        }
+        self.decided(i, Decision::Index)
+    }
+
     fn decided(&mut self, e: Expr, at: Decision) -> Expr {
         if e.ty().is_result() {
             let ty = e.ty();
@@ -2800,6 +2814,18 @@ impl<'a> Lowerer<'a> {
         out
     }
 
+    /// An int handed where a record or none is held — a field only ever
+    /// given 0 (`t.right` of `Node[5, leaf, 0]`) handed to a function whose
+    /// parameter holds a record or none: checked first, 0 being none and
+    /// another int stopping, then handed as the 0 that writes none, in both
+    /// modes (the lowered program had handed the int, and disagreed with
+    /// itself).
+    fn none_of(&mut self, x: Expr, slot: &Ty) -> Expr {
+        let Some(row) = crate::table::ROWS.iter().find(|r| r.id == "core.__none") else { return x };
+        self.pre.push(Stmt::Do(Expr::Call { target: Target::Row(row), args: vec![x], ty: Ty::Int, propagates: false }));
+        Expr::Const(Const::Int(0), slot.clone())
+    }
+
     fn fresh(&mut self) -> String {
         self.temp += 1;
         // (named as no function of the program's is: a program with a
@@ -2845,6 +2871,7 @@ impl<'a> Lowerer<'a> {
                 let mut checks = Vec::with_capacity(args.len());
                 for a in args {
                     let i = self.lower_expr(a)?;
+                    let i = self.decided_index(i);
                     arg_types.push(read(&i));
                     types.push(full(&i));
                     checks.push(self.checked(&i));
@@ -3390,7 +3417,8 @@ impl<'a> Lowerer<'a> {
             }
             let mut idx = Vec::new();
             for a in args {
-                idx.push(self.lower_expr(a)?);
+                let i = self.lower_expr(a)?;
+                idx.push(self.decided_index(i));
             }
             // a position or a key the program does not know the type of — a
             // parsed value — is read as what the place takes: a position an
@@ -3848,18 +3876,22 @@ impl<'a> Lowerer<'a> {
             // list did not build)
             if let Some(sig) = self.ctx.functions.get(&resolved) {
                 let params: Vec<Ty> = sig.params.iter().map(|(_, t)| t.clone()).collect();
-                lowered = lowered
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, x)| match (params.get(i), x.ty()) {
+                let mut handed = Vec::with_capacity(lowered.len());
+                for (i, x) in lowered.into_iter().enumerate() {
+                    handed.push(match (params.get(i), x.ty()) {
                         (Some(Ty::Float), Ty::Int) => Expr::Convert { how: Convert::IntToFloat, expr: Box::new(x), ty: Ty::Float },
                         (Some(p @ Ty::List(_)), Ty::Tensor(..)) => Expr::Convert { how: Convert::ToList, expr: Box::new(x), ty: (p).clone() },
                         // (an empty literal, whose items are not known, is
                         // any list the backends need: parity 71)
                         (Some(p @ Ty::Tensor(..)), Ty::List(e)) if *e != Ty::Unknown => Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty: (p).clone() },
+                        // (0 handed where a record or none is held is none,
+                        // typed as the parameter holds it)
+                        (Some(p @ Ty::OptRecord(_)), Ty::Int) if matches!(x, Expr::Const(Const::Int(0), _)) => Expr::Const(Const::Int(0), p.clone()),
+                        (Some(p @ Ty::OptRecord(_)), Ty::Int) => self.none_of(x, p),
                         _ => x,
-                    })
-                    .collect();
+                    });
+                }
+                lowered = handed;
             }
             if self.pass == Pass::Final {
                 self.calls.entry(current).or_default().insert(resolved.clone());
@@ -5731,6 +5763,27 @@ mod tests {
         assert!(!ir.contains("move tag"), "tag is read again next round: {}", ir);
         assert!(ir.contains("    for x in xs\n"), "xs is walked again by the second loop: {}", ir);
         assert!(ir.contains("for x in move xs yield"), "the second loop's walk is its last read: {}", ir);
+    }
+
+    /// A counter stepped both ways in a loop, its step down under the
+    /// condition that it is not 0, is held in 64 bits: the narrowed write
+    /// had been taken as no sum, its range joined the other step's drift
+    /// into where the sums start each round, and n-queens' `k` became a
+    /// growing int (4.4× slower than Rust's).
+    #[test]
+    fn a_counter_stepped_both_ways_under_a_condition_stays_in_64_bits() {
+        let ir = ir_of("fn f[n]\n    a = slice[[0], 0, 0]\n    i = 0\n    while i lt n + 1\n        a = push[a, -1]\n        i = i + 1\n    k = 0\n    count = 0\n    done = false\n    while not done\n        c = a[k] + 1\n        if c lt n\n            a[k] = c\n            if k eq n - 1\n                count = count + 1\n            else\n                k = k + 1\n                a[k] = -1\n        else\n            a[k] = -1\n            if k eq 0\n                done = true\n            else\n                k = k - 1\n    return count\nlog[f[5]]\n");
+        assert!(ir.contains("let k: Int = 0"), "{}", ir);
+        assert!(!ir.contains(": Big"), "{}", ir);
+    }
+
+    /// A counter a condition bounds on the side it steps toward stays
+    /// within the bound, also where a branch gives it a value of its own
+    /// (a brainfuck interpreter's `pc`, jumping): its step is proven.
+    #[test]
+    fn a_counter_under_its_bound_steps_without_a_check() {
+        let ir = ir_of("fn run[ops, jump, most]\n    n = len[ops]\n    pc = 0\n    steps = 0\n    while pc lt n and steps lt most\n        op = ops[pc]\n        if op eq 5\n            pc = jump[pc]\n        pc = pc + 1\n        steps = steps + 1\n    return pc\nlog[run[[5, 1, 2], [2, 0, 1], 10]]\n");
+        assert!(ir.contains("pc = proven((pc add 1))"), "{}", ir);
     }
 
     #[test]

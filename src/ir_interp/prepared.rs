@@ -2174,6 +2174,21 @@ mod tests {
         assert!(!shown.contains("LSet"), "{}", shown);
     }
 
+    /// A list a function is handed stays as it came — read where it lies
+    /// (`IIndex`), never made bare at the call (`LIndex`): a binary search
+    /// called 80,000 times had read the whole list at every call.
+    #[test]
+    fn a_list_handed_to_a_function_is_read_where_it_lies() {
+        let f = lowered_fn(
+            "fn below[a, x]\n    lo = 0\n    hi = len[a]\n    while lo lt hi\n        mid = (lo + hi) / 2\n        if a[mid] lt x\n            lo = mid + 1\n        else\n            hi = mid\n    return lo\nxs = for i in range[10]\n    i * 3\nlog[below[xs, 7]]\n",
+            "below",
+        );
+        let p = prepare(&f);
+        let shown = format!("{:?}", p.typed.as_ref().map(|tc| &tc.code));
+        assert!(shown.contains("IIndex"), "{}", shown);
+        assert!(!shown.contains("LIndex") && !shown.contains("LLen"), "{}", shown);
+    }
+
     /// A text the body reads by position keeps what is known of its start
     /// where it does not change while the call runs — a parameter, a local
     /// bound once outside every loop — and a text given new values in a
@@ -2753,6 +2768,14 @@ fn typed(p: &Body) -> Option<Typed> {
     // a fallback names or the body answers is boxed: converting it there
     // would cost a pass over it each time)
     let mut kinds = p.kinds.clone();
+    // (a parameter's list arrives boxed, and is read where it lies: made
+    // bare, it was converted at every call — a binary search's seventeen
+    // reads of a list of 80,000 had read all 80,000 first, every call)
+    for r in p.params.iter() {
+        if kinds[*r as usize] == RKind::IntList {
+            kinds[*r as usize] = RKind::Boxed;
+        }
+    }
     loop {
         let mut demoted = false;
         for r in 0..kinds.len() as R {

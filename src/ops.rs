@@ -733,7 +733,7 @@ pub fn index(callee: &CrowValue, arg_vals: Vec<CrowValue>) -> Result<CrowValue, 
             other => return Err(format!("a JSON value is indexed by a position or a key, got {}", other.type_name())),
         };
         Ok(match found {
-            Some(x) if !x.is_null() => CrowValue::ok(Value::Json(Box::new(x.clone()))),
+            Some(x) if !x.is_null() => CrowValue::ok(Value::Json(std::sync::Arc::new(x.clone()))),
             _ => CrowValue::error_with_kind("null", "parse", ""),
         })
     }
@@ -882,7 +882,7 @@ pub fn field(obj: CrowValue, field: &str) -> Result<CrowValue, String> {
             "reason" => CrowValue::ok(Value::Str(if null { "null" } else { "" }.to_string())),
             "kind" => CrowValue::ok(Value::Str(if null { "parse" } else { "" }.to_string())),
             "trace" => CrowValue::ok(Value::Array(std::sync::Arc::new(Vec::new()))),
-            name => CrowValue::ok(Value::Json(Box::new(j.get(name).cloned().unwrap_or(serde_json::Value::Null)))),
+            name => CrowValue::ok(Value::Json(std::sync::Arc::new(j.get(name).cloned().unwrap_or(serde_json::Value::Null)))),
         });
     }
 
@@ -1077,7 +1077,7 @@ pub fn iter_items(iter_val: &CrowValue) -> Result<Vec<CrowValue>, String> {
     match &iter_val.value {
         Value::Array(items) => Ok(items.as_ref().clone()),
         // a parsed list's items, each JSON, as the compiled program walks it
-        Value::Json(j) => Ok(crow_runtime::json::items(j)?.into_iter().map(|x| CrowValue::ok(Value::Json(Box::new(x)))).collect()),
+        Value::Json(j) => Ok(crow_runtime::json::items(j)?.into_iter().map(|x| CrowValue::ok(Value::Json(std::sync::Arc::new(x)))).collect()),
         Value::NumArray(tensor) => {
             if tensor.ndim() >= 2 {
                 Ok(tensor.rows().into_iter().map(|t| CrowValue::ok(Value::NumArray(Box::new(t)))).collect())
@@ -1109,7 +1109,7 @@ fn render_widget(vals: &[CrowValue]) -> String {
     for v in vals {
         match &v.value {
             Value::Map(m) => {
-                for (k, val) in m {
+                for (k, val) in m.iter() {
                     match (k.as_str(), &val.value) {
                         // props that failed: the widget shows the reason in
                         // its place, as a control shows a failed argument
@@ -1118,7 +1118,7 @@ fn render_widget(vals: &[CrowValue]) -> String {
                         }
                         ("props", _) => props = crate::builtins::crow_to_json("", val).unwrap_or(serde_json::Value::Null),
                         ("on", Value::Map(evs)) => {
-                            for (event, h) in evs {
+                            for (event, h) in evs.iter() {
                                 if let Value::Fn(f) = &h.value {
                                     on.push((event.clone(), f.name.clone()));
                                 }

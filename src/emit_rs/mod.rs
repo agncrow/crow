@@ -190,6 +190,11 @@ pub(crate) struct Emitter {
     pub(crate) static_handle_vars: BTreeSet<String>,
     /// The current function's locals kept as plain `Vec<f64>` (vectors.rs).
     pub(crate) plain_vecs: BTreeSet<String>,
+    /// The plain vectors of whole numbers among them, kept as `Vec<i64>`.
+    pub(crate) int_vecs: BTreeSet<String>,
+    /// The vector parameters read through a view of their numbers
+    /// (`{p}__v`, vectors.rs `read_views`).
+    pub(crate) read_vecs: BTreeSet<String>,
     /// The current body's texts read by position, each with a `Known`
     /// beside it (texts.rs).
     pub(crate) indexed_texts: BTreeSet<String>,
@@ -298,6 +303,8 @@ impl Emitter {
             fact_inits: BTreeMap::new(),
             static_handle_vars: BTreeSet::new(),
             plain_vecs: BTreeSet::new(),
+            int_vecs: BTreeSet::new(),
+            read_vecs: BTreeSet::new(),
             indexed_texts: BTreeSet::new(),
             text_builders: BTreeMap::new(),
             data_source_vars: BTreeSet::new(),

@@ -258,6 +258,7 @@ fn settle(program: &Program) -> (Widths, Walk) {
         cur: HashMap::new(),
         written: Default::default(),
         rels: Vec::new(),
+        bounds: HashMap::new(),
         thresholds: thresholds_of(program),
         frozen: false,
         soft: Default::default(),
@@ -300,6 +301,7 @@ fn settle(program: &Program) -> (Widths, Walk) {
     w.frozen = true;
     w.cur.clear();
     w.rels.clear();
+    w.bounds.clear();
     w.written.clear();
     let mut wide = BTreeSet::new();
     let places: Vec<Place> = w.range.keys().chain(w.parent.keys()).cloned().collect();
@@ -409,6 +411,11 @@ struct Walk {
     /// `(a, b, strict)` is a below b (or at most b) — so `b - a` is at
     /// least one (or none) — until either is written.
     rels: Vec<(String, String, bool)>,
+    /// The sides of a local's range the conditions the walk stands under
+    /// bound with a value of their own — `(below, above)`: `i lt n` bounds
+    /// `i` above, `i gte 0` below, `i eq n` both — as against `k ne 0`,
+    /// which only moves an end of `k`'s own range by one.
+    bounds: HashMap<String, (bool, bool)>,
     /// The bounds a range that keeps growing moves to: the ladder and the
     /// program's own constants, each and its neighbours.
     thresholds: Vec<i128>,
@@ -755,6 +762,7 @@ impl Walk {
         self.cur.clear();
         self.written.clear();
         self.rels.clear();
+        self.bounds.clear();
         self.block(b);
     }
 
@@ -789,19 +797,22 @@ impl Walk {
                     if o.is_empty() || have.is_empty() {
                         continue;
                     }
-                    let held = match op.as_str() {
-                        "lt" => Iv { lo: -INF, hi: o.hi - 1 },
-                        "lte" => Iv { lo: -INF, hi: o.hi },
-                        "gt" => Iv { lo: o.lo + 1, hi: INF },
-                        "gte" => Iv { lo: o.lo, hi: INF },
-                        "eq" => o,
+                    // (and the sides it bounds with a value of its own)
+                    let (held, below, above) = match op.as_str() {
+                        "lt" => (Iv { lo: -INF, hi: o.hi - 1 }, false, true),
+                        "lte" => (Iv { lo: -INF, hi: o.hi }, false, true),
+                        "gt" => (Iv { lo: o.lo + 1, hi: INF }, true, false),
+                        "gte" => (Iv { lo: o.lo, hi: INF }, true, false),
+                        "eq" => (o, true, true),
                         // (not one value: an end of the range that is it is not)
-                        "ne" if o.lo == o.hi && have.hi == o.lo && have.lo < have.hi => Iv { lo: -INF, hi: o.lo - 1 },
-                        "ne" if o.lo == o.hi && have.lo == o.lo && have.lo < have.hi => Iv { lo: o.lo + 1, hi: INF },
+                        "ne" if o.lo == o.hi && have.hi == o.lo && have.lo < have.hi => (Iv { lo: -INF, hi: o.lo - 1 }, false, true),
+                        "ne" if o.lo == o.hi && have.lo == o.lo && have.lo < have.hi => (Iv { lo: o.lo + 1, hi: INF }, true, false),
                         _ => continue,
                     };
                     let narrowed = Iv { lo: have.lo.max(held.lo), hi: have.hi.min(held.hi) };
                     self.cur.insert(v.clone(), narrowed);
+                    let e = self.bounds.entry(v.clone()).or_insert((false, false));
+                    *e = (e.0 || below, e.1 || above);
                 }
             }
             _ => {}
@@ -833,6 +844,13 @@ impl Walk {
                 self.flow(&place, expr);
                 self.written.insert(var.clone());
                 self.rels.retain(|(a, b, _)| a != var && b != var);
+                // (a value whose range is not the local's own bounds it on
+                // both sides: `pc = jump[pc]`)
+                if is_int(expr.ty_ref()) && !ranges_from(expr, var) {
+                    self.bounds.insert(var.clone(), (true, true));
+                } else {
+                    self.bounds.remove(var);
+                }
             }
             Stmt::Set { var, expr } => {
                 self.calls_in(expr);
@@ -844,6 +862,13 @@ impl Walk {
                 self.flow(&place, expr);
                 self.written.insert(var.clone());
                 self.rels.retain(|(a, b, _)| a != var && b != var);
+                // (a value whose range is not the local's own bounds it on
+                // both sides: `pc = jump[pc]`)
+                if is_int(expr.ty_ref()) && !ranges_from(expr, var) {
+                    self.bounds.insert(var.clone(), (true, true));
+                } else {
+                    self.bounds.remove(var);
+                }
             }
             Stmt::SetPath { var, path, expr } => {
                 self.calls_in(expr);
@@ -886,11 +911,13 @@ impl Walk {
                 let before = self.cur.clone();
                 let written_before = self.written.clone();
                 let rels_before = self.rels.clone();
+                let bounds_before = self.bounds.clone();
                 self.refine(cond, true);
                 self.block(then);
                 let then_cur = std::mem::replace(&mut self.cur, before.clone());
                 let then_written = std::mem::replace(&mut self.written, written_before);
                 let then_rels = std::mem::replace(&mut self.rels, rels_before.clone());
+                let then_bounds = std::mem::replace(&mut self.bounds, bounds_before.clone());
                 self.refine(cond, false);
                 if let Some(e) = els {
                     self.block(e);
@@ -905,10 +932,24 @@ impl Walk {
                     self.cur = then_cur;
                     self.written = then_written;
                     self.rels = then_rels;
+                    self.bounds = then_bounds;
                     return;
                 }
                 let assigned_branches: std::collections::HashSet<String> = assigned_in(then).into_iter().chain(els.as_ref().map(assigned_in).unwrap_or_default()).collect();
                 self.rels = rels_before.into_iter().filter(|(a, b, _)| !assigned_branches.contains(a) && !assigned_branches.contains(b)).collect();
+                // (a side either way bounds stays bounded: a branch's own
+                // value, or what the conditions bound where it wrote none)
+                let else_bounds = std::mem::take(&mut self.bounds);
+                let mut bounds: HashMap<String, (bool, bool)> = bounds_before.into_iter().filter(|(v, _)| !assigned_branches.contains(v)).collect();
+                for v in &assigned_branches {
+                    let t = then_bounds.get(v).copied().unwrap_or((false, false));
+                    let e = else_bounds.get(v).copied().unwrap_or((false, false));
+                    let both = (t.0 && e.0, t.1 && e.1);
+                    if both.0 || both.1 {
+                        bounds.insert(v.clone(), both);
+                    }
+                }
+                self.bounds = bounds;
                 let else_cur = std::mem::take(&mut self.cur);
                 // after the branches: what either left, a local one did not
                 // write holding what it held before
@@ -952,7 +993,9 @@ impl Walk {
                     self.written.remove(v);
                 }
                 self.rels.retain(|(a, b, _)| !assigned.contains(a) && !assigned.contains(b));
+                self.bounds.retain(|v, _| !assigned.contains(v));
                 let (outside, written_outside, rels_outside) = (self.cur.clone(), self.written.clone(), self.rels.clone());
+                let bounds_outside = self.bounds.clone();
                 self.loops.push(LoopCtx { rounds: None, entry, fresh });
                 self.refine(cond, true);
                 self.block(body);
@@ -960,6 +1003,7 @@ impl Walk {
                 self.cur = outside;
                 self.written = written_outside;
                 self.rels = rels_outside;
+                self.bounds = bounds_outside;
             }
             Stmt::For { var, iter, body, .. } => {
                 self.calls_in(iter);
@@ -1002,7 +1046,9 @@ impl Walk {
                     self.written.remove(v);
                 }
                 self.rels.retain(|(a, b, _)| !assigned.contains(a) && !assigned.contains(b));
+                self.bounds.retain(|v, _| !assigned.contains(v));
                 let (outside, written_outside, rels_outside) = (self.cur.clone(), self.written.clone(), self.rels.clone());
+                let bounds_outside = self.bounds.clone();
                 if matches!(iter.ty_ref().map(|t| t.payload()), Some(Ty::List(t)) if matches!(t.as_ref(), Ty::Int | Ty::Big)) || matches!(iter, Expr::Call { target: Target::Row(_), .. }) {
                     self.cur.insert(var.clone(), r);
                 }
@@ -1012,6 +1058,7 @@ impl Walk {
                 self.cur = outside;
                 self.written = written_outside;
                 self.rels = rels_outside;
+                self.bounds = bounds_outside;
             }
             Stmt::Propagate { .. } | Stmt::Return(None) | Stmt::Break | Stmt::Continue | Stmt::Line(_) => {}
         }
@@ -1032,14 +1079,52 @@ impl Walk {
         if self.reads_soft(e) {
             self.mark_soft(dest);
         }
-        let known = straight && matches!(dest, Place::Local(f, v) if *f == self.fun && self.cur.contains_key(v));
+        // (a local this round's straight line has written: its write is no
+        // sum coming round the loop. Nor is one a condition bounds on the
+        // side the write moves it toward — `i = i + 1` under `i lt n`. One
+        // a condition only narrowed otherwise is: its narrowed range holds
+        // the loop's own drift, and taking the write as straight had joined
+        // that drift into where the sums start each round, until the range
+        // was taken as unbounded — n-queens' `k`, `if k eq 0 … else k = k -
+        // 1`, held as a growing int)
+        let local = match dest {
+            Place::Local(f, v) if *f == self.fun && self.cur.contains_key(v) => Some(v.clone()),
+            _ => None,
+        };
+        let written = local.as_ref().is_some_and(|v| self.written.contains(v));
+        let narrowed = !written && local.as_ref().is_some_and(|v| self.bound_toward(v, e));
+        let known = straight && (written || narrowed);
         if !known && let Some(r) = self.summed(dest, e) {
             self.widen(dest, r);
             return r;
         }
         let r = self.iv_of(e);
+        // (a write a condition bounds moves away from its other side: that
+        // side of its value is the local's own range, which holds the
+        // loop's drift — where the sums start takes only the bounded sides,
+        // or each round had started them from the last one's end)
+        if straight && narrowed && let Some(v) = &local {
+            let (below, above) = self.bounds.get(v).copied().unwrap_or((false, false));
+            let b = self.base_of(dest);
+            let start = if b.is_empty() { r } else { Iv { lo: if below { r.lo } else { r.lo.max(b.lo) }, hi: if above { r.hi } else { r.hi.min(b.hi) } } };
+            if !start.is_empty() {
+                self.widen_base(dest, start);
+            }
+            self.widen(dest, r);
+            return r;
+        }
         self.widen_base(dest, r);
         r
+    }
+
+    /// Whether a write of `e` to the local `v` moves it only toward the
+    /// sides of its range the conditions it stands under bound with a
+    /// value of their own (`bounds`).
+    fn bound_toward(&mut self, v: &str, e: &Expr) -> bool {
+        let Some(c) = self.cur.get(v).copied() else { return false };
+        let (below, above) = self.bounds.get(v).copied().unwrap_or((false, false));
+        let r = self.iv_of(e);
+        (r.hi <= c.hi || above) && (r.lo >= c.lo || below)
     }
 
     /// The place an expression reads its int from, where it reads one a
@@ -1339,7 +1424,9 @@ impl Walk {
                 self.written.remove(v);
             }
             self.rels.retain(|(a, b, _)| !assigned.contains(a) && !assigned.contains(b));
+            self.bounds.retain(|v, _| !assigned.contains(v));
             let (outside, written_outside, rels_outside) = (self.cur.clone(), self.written.clone(), self.rels.clone());
+            let bounds_outside = self.bounds.clone();
             if let Some(r) = r {
                 self.cur.insert(var.clone(), r);
             }
@@ -1349,6 +1436,7 @@ impl Walk {
             self.cur = outside;
             self.written = written_outside;
             self.rels = rels_outside;
+            self.bounds = bounds_outside;
         }
     }
 }
@@ -1483,6 +1571,24 @@ fn assigned_in(b: &Block) -> std::collections::HashSet<String> {
         _ => {}
     });
     out
+}
+
+/// Whether an expression's range is read from the local `v`'s own: an
+/// item read at `v` is not (its range is the items'), a sum of `v` is.
+fn ranges_from(e: &Expr, v: &str) -> bool {
+    match e {
+        Expr::Local(n, _) | Expr::Move(n, _) => n == v,
+        Expr::Const(..) => false,
+        Expr::Index { base, .. } => ranges_from(base, v),
+        Expr::Field { base, .. } => ranges_from(base, v),
+        Expr::Binary { l, r, .. } => ranges_from(l, v) || ranges_from(r, v),
+        Expr::Unary { expr, .. } | Expr::Convert { expr, .. } => ranges_from(expr, v),
+        other => {
+            let mut any = false;
+            crate::ir::visit_expr(other, &mut |x| any |= matches!(x, Expr::Local(n, _) | Expr::Move(n, _) if n == v));
+            any
+        }
+    }
 }
 
 /// A comparison's operator where it fails.

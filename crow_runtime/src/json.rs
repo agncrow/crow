@@ -197,7 +197,7 @@ impl<T: ToJson> ToJson for Vec<T> {
     fn to_json(&self) -> serde_json::Value { serde_json::Value::Array(self.iter().map(|v| v.to_json()).collect()) }
 }
 /// A recursive link: the record it holds, or the empty sentinel `0`.
-impl<T: ToJson> ToJson for Option<Box<T>> {
+impl<T: ToJson> ToJson for Option<crate::link::Link<T>> {
     fn to_json(&self) -> serde_json::Value {
         match self {
             Some(r) => r.to_json(),

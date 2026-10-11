@@ -538,6 +538,10 @@ impl Emitter {
                         // the runtime's records are the interpreter's maps
                         Ty::Record(nm) if matches!(nm.as_str(), "CrowShell" | "CrowFindResult" | "CrowReply" | "CrowAnswer") => "\"map\"".to_string(),
                         Ty::Record(nm) => format!("\"{}\"", shown.get(nm).unwrap_or(nm)),
+                        // a record or none: none is the 0 it is written as
+                        // (compiled, `type[t.left]` had said "unknown", and
+                        // of none had stopped)
+                        Ty::OptRecord(nm) => format!("(if ({}).is_some() {{ \"{}\" }} else {{ \"int\" }})", v, shown.get(nm).unwrap_or(nm)),
                         Ty::Json => format!("crow_runtime::json::type_word(&({}))", v),
                         Ty::Result(inner) => format!("{{ let _v = &({}); if _v.ok {{ {} }} else {{ \"error\" }} }}", v, word(inner, "_v.value", shown)),
                         _ => "\"unknown\"".to_string(),

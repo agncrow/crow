@@ -272,7 +272,7 @@ pub fn json_to_crow(trace: &str, jval: &serde_json::Value) -> CrowValue {
             for (k, v) in obj {
                 map.insert(k.clone(), json_to_crow("", v));
             }
-            CrowValue::ok(Value::Map(map))
+            CrowValue::ok(Value::map(map))
         }
     }
 }
@@ -323,7 +323,7 @@ pub fn crow_to_json(trace: &str, val: &CrowValue) -> Result<serde_json::Value, S
         Value::NumArray(t) => Ok(crow_runtime::json::tensor_to_json(t)),
         Value::Map(map) => {
             let mut obj = serde_json::Map::new();
-            for (k, v) in map {
+            for (k, v) in map.iter() {
                 obj.insert(k.clone(), crow_to_json(trace, v)?);
             }
             Ok(serde_json::Value::Object(obj))

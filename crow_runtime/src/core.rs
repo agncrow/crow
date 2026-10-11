@@ -166,6 +166,13 @@ pub fn map_del<K: Ord, T>(mut m: BTreeMap<K, T>, key: &K) -> BTreeMap<K, T> {
 
 /// `set[map, key, value]`.
 pub fn set<K: Ord + Clone, T>(mut m: BTreeMap<K, T>, key: &K, value: T) -> BTreeMap<K, T> {
+    set_in(&mut m, key, value);
+    m
+}
+
+/// `set[m, k, v]` where the map lies (the interpreter's map, written in
+/// place when nothing else holds it).
+pub fn set_in<K: Ord + Clone, T>(m: &mut BTreeMap<K, T>, key: &K, value: T) {
     // (an entry the map holds takes the value where it lies: the key had
     // been copied for every update, a string made per count)
     match m.get_mut(key) {
@@ -174,7 +181,6 @@ pub fn set<K: Ord + Clone, T>(mut m: BTreeMap<K, T>, key: &K, value: T) -> BTree
             m.insert(key.clone(), value);
         }
     }
-    m
 }
 
 /// `len[list]`.
@@ -385,6 +391,31 @@ pub fn pop_tensor(t: &crate::tensor::CrowTensor) -> crate::tensor::CrowTensor {
     crate::tensor::CrowTensor::from_vec(v, vec![n])
 }
 
+/// A vector of whole numbers as a compiled function keeps it (`Vec<i64>`,
+/// emit_rs/vectors.rs): each number as a tensor holds it.
+pub fn ints_of(t: &crate::tensor::CrowTensor) -> Vec<i64> {
+    t.numbers().iter().map(|x| *x as i64).collect()
+}
+
+/// A vector of whole numbers made back into the tensor it stands for.
+pub fn tensor_of_ints(v: &[i64]) -> crate::tensor::CrowTensor {
+    crate::tensor::CrowTensor::from_vec(v.iter().map(|n| *n as f64).collect(), vec![v.len()])
+}
+
+/// A whole number as a tensor holds it: itself up to 2^53, past that the
+/// float nearest it, so a vector of ints kept as ints holds what the
+/// tensor would, in both modes. (Through the float every time, the round
+/// trip had cost a brainfuck interpreter a third of its time.)
+#[inline(always)]
+pub fn held_int(n: i64) -> i64 {
+    if n.unsigned_abs() <= 1 << 53 { n } else { held_far(n) }
+}
+
+#[cold]
+fn held_far(n: i64) -> i64 {
+    n as f64 as i64
+}
+
 /// `push[tensor, x]`: a number onto a vector.
 pub fn push_number(t: &crate::tensor::CrowTensor, x: f64) -> Result<crate::tensor::CrowTensor, String> {
     t.push_scalar(x)
@@ -395,6 +426,18 @@ pub fn push_number(t: &crate::tensor::CrowTensor, x: f64) -> Result<crate::tenso
 pub fn push_number_taken(mut t: crate::tensor::CrowTensor, x: f64) -> Result<crate::tensor::CrowTensor, String> {
     t.push_scalar_in_place(x)?;
     Ok(t)
+}
+
+/// An int where a record or none is held — a field only ever given 0,
+/// handed to a function that takes a record or none: 0 is none, and
+/// another int is no record (the compiled program holds none there, never
+/// an int).
+pub fn none_of(n: i64) -> Result<i64, String> {
+    if n == 0 {
+        Ok(0)
+    } else {
+        Err(format!("a record or 0 (none) is needed here, and this value is {}", n))
+    }
 }
 
 /// `push[matrix, row]`: a row onto a matrix.

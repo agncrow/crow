@@ -1,0 +1,28 @@
+--- A position or a key that can fail is refused first when it failed, as
+--- an item of a value that can fail is: a function hands the error back,
+--- the top level halts. Where it did not fail, it reads the item, in both
+--- modes. (Compiled, `xs[int[ch]]` had not built.)
+xs = ['a', 'b', 'c', 'd']
+out = []
+for ch in split['0213', '']
+    if ch ne ''
+        out = push[out, xs[int[ch]]]
+log[out]
+
+fn pick[t, ys]
+    return ys[int[t]]
+
+fn put[t, ys]
+    zs = ys
+    zs[int[t]] = 'z'
+    return zs
+
+log[pick['2', xs]]
+r = pick['x', xs]
+log[r.ok]
+log[r.reason]
+log[put['1', xs]]
+w = put['y', xs]
+log[w.ok]
+log[xs[int['q']]]
+log['not reached']

@@ -974,7 +974,7 @@ pub fn read_list(v: &CrowValue) -> Result<Vec<CrowValue>, String> {
 /// A map's entries, the interpreter's values.
 pub fn read_map_ref(v: &CrowValue) -> Result<&BTreeMap<String, CrowValue>, String> {
     match &v.value {
-        Value::Map(m) => Ok(m),
+        Value::Map(m) => Ok(m.as_ref()),
         _ => Err(format!("expected a map, got {}", named(v))),
     }
 }
@@ -1096,7 +1096,7 @@ pub fn write_list(items: Vec<CrowValue>) -> CrowValue {
 }
 
 pub fn write_map_of(m: BTreeMap<String, CrowValue>) -> CrowValue {
-    CrowValue::ok(Value::Map(m))
+    CrowValue::ok(Value::map(m))
 }
 
 /// A list of whole numbers of any size.
@@ -1123,8 +1123,8 @@ pub fn write_reply(r: crow_runtime::sources::Reply) -> CrowValue {
     m.insert("status".to_string(), write_int(r.status));
     m.insert("body".to_string(), write_str(r.body));
     let headers: BTreeMap<String, CrowValue> = r.headers.into_iter().map(|(k, v)| (k, write_str(v))).collect();
-    m.insert("headers".to_string(), CrowValue::ok(Value::Map(headers)));
-    CrowValue::ok(Value::Map(m))
+    m.insert("headers".to_string(), CrowValue::ok(Value::map(headers)));
+    CrowValue::ok(Value::map(m))
 }
 
 /// A connection's answer as the interpreter's record: `status`, `phrase`,
@@ -1134,9 +1134,9 @@ pub fn write_answer(a: crow_runtime::sys::Answer) -> CrowValue {
     m.insert("status".to_string(), write_int(a.status));
     m.insert("phrase".to_string(), write_str(a.phrase));
     let headers: BTreeMap<String, CrowValue> = a.headers.into_iter().map(|(k, v)| (k, write_str(v))).collect();
-    m.insert("headers".to_string(), CrowValue::ok(Value::Map(headers)));
+    m.insert("headers".to_string(), CrowValue::ok(Value::map(headers)));
     m.insert("body".to_string(), write_bytes(a.body));
-    CrowValue::ok(Value::Map(m))
+    CrowValue::ok(Value::map(m))
 }
 
 /// A command's answer as the interpreter's record: `status`, `stdout`,
@@ -1150,14 +1150,14 @@ pub fn write_shell(sh: crow_runtime::core::Shell) -> CrowValue {
     m.insert("status".to_string(), write_int(sh.status));
     m.insert("stdout".to_string(), write_str(sh.stdout));
     m.insert("stderr".to_string(), write_str(sh.stderr));
-    CrowValue::ok(Value::Map(m))
+    CrowValue::ok(Value::map(m))
 }
 
 /// A parsed JSON value as the interpreter holds it: arrays, maps and
 /// scalars, a `null` inside an error value of reason `null`.
 /// A JSON answer, kept as the compiled program keeps it.
 pub fn write_json(v: serde_json::Value) -> CrowValue {
-    CrowValue::ok(Value::Json(Box::new(v)))
+    CrowValue::ok(Value::Json(std::sync::Arc::new(v)))
 }
 
 pub fn write_json_list(vs: Vec<serde_json::Value>) -> CrowValue {
@@ -1169,7 +1169,7 @@ pub fn write_markup(s: String) -> CrowValue {
 }
 
 pub fn write_text_rows(rows: Vec<BTreeMap<String, String>>) -> CrowValue {
-    CrowValue::ok(Value::Array(std::sync::Arc::new(rows.into_iter().map(|r| CrowValue::ok(Value::Map(r.into_iter().map(|(k, v)| (k, write_str(v))).collect()))).collect())))
+    CrowValue::ok(Value::Array(std::sync::Arc::new(rows.into_iter().map(|r| CrowValue::ok(Value::map(r.into_iter().map(|(k, v)| (k, write_str(v))).collect()))).collect())))
 }
 
 /// One argument of a group, the group of a single parameter.
@@ -1193,7 +1193,8 @@ pub fn take_list(v: CrowValue) -> Result<Vec<CrowValue>, String> {
 /// A map the function makes its answer of, moved.
 pub fn take_map(v: CrowValue) -> Result<BTreeMap<String, CrowValue>, String> {
     match v.value {
-        Value::Map(m) => Ok(m),
+        // (the entries moved out where nothing else holds them)
+        Value::Map(m) => Ok(std::sync::Arc::unwrap_or_clone(m)),
         other => Err(format!("expected a map, got {}", other.type_name())),
     }
 }
@@ -1408,7 +1409,7 @@ pub fn value_as(kind: Kind, v: &CrowValue) -> Result<CrowValue, String> {
         Kind::Bool => CrowValue::ok(Value::Bool(read_bool(v)?)),
         Kind::Bytes => CrowValue::ok(Value::Bytes(read_bytes(v)?)),
         Kind::Chunks => CrowValue::ok(Value::Array(std::sync::Arc::new(read_chunks(v)?.into_iter().map(write_bytes).collect()))),
-        Kind::TextMap => CrowValue::ok(Value::Map(read_text_map(v)?.into_iter().map(|(k, t)| (k, CrowValue::ok(Value::Str(t)))).collect())),
+        Kind::TextMap => CrowValue::ok(Value::map(read_text_map(v)?.into_iter().map(|(k, t)| (k, CrowValue::ok(Value::Str(t)))).collect())),
         Kind::Frame => CrowValue::ok(Value::Frame(Box::new(read_frame(v)?.clone()))),
         Kind::Strs => CrowValue::ok(Value::Array(std::sync::Arc::new(read_strs(v)?.into_iter().map(|t| CrowValue::ok(Value::Str(t))).collect()))),
         // a value JSON can hold reaches the function as its JSON text
@@ -1707,6 +1708,9 @@ pub static ROWS: &[Row] = &[
     // grow past 64 bits or a whole number past them is handed (int_width,
     // `big_form`); no program names them
     row!("core.__int_big", "", "__int_big", crow_runtime::int::int_of, (Cell) -> Big, value "parse"),
+    // an int where a record or none is held: 0 is none, another int stops
+    // (the lowering's `none_of`, in both modes)
+    row!("core.__none", "", "__none", crow_runtime::core::none_of, (Int) -> Int, stops),
     row!("core.__int_of_float_big", "", "__int_of_float_big", crow_runtime::int::int_of_float, (Float) -> Big, stops),
     row!("core.__floor_big", "", "__floor_big", crow_runtime::int::floor, (Float) -> Big, stops),
     row!("core.__ceil_big", "", "__ceil_big", crow_runtime::int::ceil, (Float) -> Big, stops),
@@ -2705,6 +2709,7 @@ pub fn form(name: &str) -> String {
         "__map_of" => "map[keys, values]".to_string(),
         "__pick_items" | "__pick_rows" => "`xs[mask]`".to_string(),
         "__sub_len" => "len[sub[…]]".to_string(),
+        "__none" => "a record or 0 (none)".to_string(),
         _ => format!("{}[]", shown(name)),
     }
 }
@@ -3024,7 +3029,8 @@ mod tests {
 /// The runtime function a row's call is printed as when its first argument
 /// is a text nothing else holds (`s = replace[s, …]`, or another call's
 /// answer): the text is changed where it lies, as the interpreter's `take`
-/// bridges change it (`texts`). None for a row without one.
+/// bridges change it (`texts`) — and a list cut, a tensor pushed onto, the
+/// same way. None for a row without one.
 pub fn taken_path(id: &str) -> Option<&'static str> {
     match id {
         "text.replace" => Some("crow_runtime::text::replace_taken"),
@@ -3033,6 +3039,7 @@ pub fn taken_path(id: &str) -> Option<&'static str> {
         "core.reverse_text" => Some("crow_runtime::core::reverse_text_taken"),
         "text.translate" => Some("crow_runtime::text::translate_taken"),
         "core.slice" => Some("crow_runtime::core::slice_taken"),
+        "core.push_number" => Some("crow_runtime::core::push_number_taken"),
         _ => None,
     }
 }
@@ -3063,7 +3070,7 @@ pub fn big_form(id: &str) -> Option<&'static Row> {
 /// changes where it lies): a value read for the last time there is moved
 /// into the call; anywhere else the row only reads it, and it is lent.
 pub fn keeps_storage(row: &Row, i: usize, argc: usize) -> bool {
-    if i == 0 && (taken_path(row.id).is_some() || row.id == "core.push_number") {
+    if i == 0 && taken_path(row.id).is_some() {
         return true;
     }
     kinds_of(row.params, argc).and_then(|k| k.get(i).copied()).is_some_and(|k| k.owned())
@@ -3196,9 +3203,11 @@ pub mod maps {
         Text(&'a BTreeMap<String, CrowValue>),
         Int(&'a BTreeMap<i64, CrowValue>),
     }
+    // (a map a row takes is written where it lies when nothing else
+    // holds its entries: `Arc::make_mut`)
     enum Owned {
-        Text(BTreeMap<String, CrowValue>),
-        Int(BTreeMap<i64, CrowValue>),
+        Text(std::sync::Arc<BTreeMap<String, CrowValue>>),
+        Int(std::sync::Arc<BTreeMap<i64, CrowValue>>),
     }
     enum K {
         Text(String),
@@ -3234,9 +3243,15 @@ pub mod maps {
         }
     }
     fn text(m: BTreeMap<String, CrowValue>) -> CrowValue {
-        CrowValue::ok(Value::Map(m))
+        CrowValue::ok(Value::map(m))
     }
     fn ints(m: BTreeMap<i64, CrowValue>) -> CrowValue {
+        CrowValue::ok(Value::int_map(m))
+    }
+    fn text_kept(m: std::sync::Arc<BTreeMap<String, CrowValue>>) -> CrowValue {
+        CrowValue::ok(Value::Map(m))
+    }
+    fn ints_kept(m: std::sync::Arc<BTreeMap<i64, CrowValue>>) -> CrowValue {
         CrowValue::ok(Value::IntMap(m))
     }
     fn arg<'a>(args: &'a [CrowValue], i: usize, name: &str) -> Result<&'a CrowValue, String> {
@@ -3265,8 +3280,14 @@ pub mod maps {
         let mut it = args.into_iter();
         let (m, k, v) = (it.next().ok_or("set[] is missing its map")?, it.next().ok_or("set[] is missing its key")?, it.next().ok_or("set[] is missing its value")?);
         match (map_taken(m)?, key_of(&k)?) {
-            (Owned::Text(m), K::Text(k)) => Ok(text(crow_runtime::core::set(m, &k, v))),
-            (Owned::Int(m), K::Int(k)) => Ok(ints(crow_runtime::core::set(m, &k, v))),
+            (Owned::Text(mut m), K::Text(k)) => {
+                crow_runtime::core::set_in(std::sync::Arc::make_mut(&mut m), &k, v);
+                Ok(text_kept(m))
+            }
+            (Owned::Int(mut m), K::Int(k)) => {
+                crow_runtime::core::set_in(std::sync::Arc::make_mut(&mut m), &k, v);
+                Ok(ints_kept(m))
+            }
             (Owned::Text(m), K::Int(k)) if m.is_empty() => Ok(ints(crow_runtime::core::set(BTreeMap::new(), &k, v))),
             (Owned::Int(_), key) => Err(wrong(&key, true)),
             (Owned::Text(_), key) => Err(wrong(&key, false)),
@@ -3286,8 +3307,14 @@ pub mod maps {
         let mut it = args.into_iter();
         let (m, k) = (it.next().ok_or("del[] is missing its map")?, it.next().ok_or("del[] is missing its key")?);
         match (map_taken(m)?, key_of(&k)?) {
-            (Owned::Text(m), K::Text(k)) => Ok(text(crow_runtime::core::map_del(m, &k))),
-            (Owned::Int(m), K::Int(k)) => Ok(ints(crow_runtime::core::map_del(m, &k))),
+            (Owned::Text(mut m), K::Text(k)) => {
+                std::sync::Arc::make_mut(&mut m).remove(&k);
+                Ok(text_kept(m))
+            }
+            (Owned::Int(mut m), K::Int(k)) => {
+                std::sync::Arc::make_mut(&mut m).remove(&k);
+                Ok(ints_kept(m))
+            }
             (Owned::Int(_), key) => Err(wrong(&key, true)),
             (Owned::Text(_), key) => Err(wrong(&key, false)),
         }

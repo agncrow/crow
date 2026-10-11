@@ -119,7 +119,8 @@ impl Ty {
             Ty::List(inner) => format!("Vec<{}>", inner.to_rust_type()),
             Ty::Map(key, inner) => format!("std::collections::BTreeMap<{}, {}>", key.rust(), inner.to_rust_type()),
             Ty::Record(name) => name.clone(),
-            Ty::OptRecord(name) => format!("Option<Box<{}>>", name),
+            // a link shared, not copied (crow_runtime::link)
+            Ty::OptRecord(name) => format!("Option<crow_runtime::link::Link<{}>>", name),
             Ty::Fn(params, ret) => {
                 let param_types: Vec<String> = params.iter().map(|p| p.to_rust_type()).collect();
                 format!("fn({}) -> {}", param_types.join(", "), ret.to_rust_type())
@@ -300,7 +301,9 @@ impl Ty {
             (Ty::Frame(_), Ty::Frame(_)) => true,
             (Ty::Int, Ty::Record(_)) | (Ty::Record(_), Ty::Int) => true, // OptBoxStruct
             (Ty::OptRecord(_), Ty::Int) | (Ty::Int, Ty::OptRecord(_)) => true,
-            (Ty::OptRecord(_), Ty::Record(_)) | (Ty::Record(_), Ty::OptRecord(_)) => true,
+            // (a record or none of the record's own kind: a function handed
+            // a `Node` and a `Chain` had one version for both)
+            (Ty::OptRecord(a), Ty::Record(b)) | (Ty::Record(b), Ty::OptRecord(a)) => a == b,
             _ => false,
         }
     }
@@ -748,10 +751,7 @@ impl TypeContext {
             if self.functions.contains_key(f) {
                 let sig: Vec<Ty> = types.iter().map(reaching).collect();
                 if sig.iter().all(Self::type_is_concrete) {
-                    let entry = self.call_signatures.entry(f.clone()).or_default();
-                    if !entry.iter().any(|existing| Self::same_signature(existing, &sig)) {
-                        entry.push(sig);
-                    }
+                    self.note_signature(f, sig);
                 }
             }
             for (i, t) in types.iter().enumerate() {
@@ -887,6 +887,27 @@ impl TypeContext {
     /// whether a call signature is usable for monomorphization).
     pub(crate) fn type_is_concrete(t: &Ty) -> bool {
         t.is_concrete()
+    }
+
+    /// A call's signature noted for the monomorphization pass (F2): a new
+    /// one, or one an earlier call already reaches, joined with it where a
+    /// record, a record or none and the int that writes none meet (a record
+    /// and 0 are a record or none). An int had made every record kind reach
+    /// one version: a `Node` and a `Chain` handed to one helper after a 0
+    /// had been one function, which the lowering refused.
+    pub(crate) fn note_signature(&mut self, name: &str, sig: Vec<Ty>) {
+        let entry = self.call_signatures.entry(name.to_string()).or_default();
+        match entry.iter().position(|existing| Self::same_signature(existing, &sig)) {
+            Some(i) => {
+                let linked = |t: &Ty| matches!(t, Ty::Int | Ty::Record(_) | Ty::OptRecord(_));
+                for (held, given) in entry[i].iter_mut().zip(&sig) {
+                    if linked(held) && linked(given) && !(*held == Ty::Int && *given == Ty::Int) {
+                        *held = held.unify(given);
+                    }
+                }
+            }
+            None => entry.push(sig),
+        }
     }
 
     /// One round of the F2 monomorphization pass: each function called with

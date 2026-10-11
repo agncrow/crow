@@ -293,9 +293,13 @@ pub enum Value {
     // the large ones are held apart, so a value is as big as the small
     // ones (typed-values-design.md §5, B)
     NumArray(Box<CrowTensor>),
-    Map(BTreeMap<String, CrowValue>),
+    /// A map, its entries behind an `Arc` as a list's items are: a copy is
+    /// a count, and a write copies the entries only where another value
+    /// shares them (`Arc::make_mut`). A top-level loop asking `key in
+    /// counts` had copied the whole map at every round.
+    Map(std::sync::Arc<BTreeMap<String, CrowValue>>),
     /// A map keyed by ints: `map[[1, 2], …]`, `set[m, 2, v]` (spec, Maps).
-    IntMap(BTreeMap<i64, CrowValue>),
+    IntMap(std::sync::Arc<BTreeMap<i64, CrowValue>>),
     Fn(FnValue),
     StructInstance(std::sync::Arc<StructInstance>),
     Sparse(Box<CrowSparse>), // sparse matrix (CSR format)
@@ -318,7 +322,9 @@ pub enum Value {
     /// that take JSON read it as it is, and a field or an item read from it
     /// is JSON too (typed-values-design.md, `Json`). It had been converted
     /// to lists, maps and tensors, which JSON's own rows then converted back.
-    Json(Box<serde_json::Value>),
+    /// Behind an `Arc`, as a list's items are: a read of a parsed document
+    /// is a count (`p = c[i]` had copied the whole document at every item).
+    Json(std::sync::Arc<serde_json::Value>),
     Dual(f64, f64), // dual number for autograd: (real, derivative)
     /// A tensor a function `grad` differentiates computes with: its value
     /// and, where it depends on a parameter, its node on the tape
@@ -446,6 +452,16 @@ impl StructInstance {
 }
 
 impl Value {
+    /// A map keyed by text, made here.
+    pub fn map(m: BTreeMap<String, CrowValue>) -> Value {
+        Value::Map(std::sync::Arc::new(m))
+    }
+
+    /// A map keyed by ints, made here.
+    pub fn int_map(m: BTreeMap<i64, CrowValue>) -> Value {
+        Value::IntMap(std::sync::Arc::new(m))
+    }
+
     /// An int as the runtime's whole number (in 64 bits or past them).
     pub fn int_of(v: &Value) -> Option<crow_runtime::int::Int> {
         match v {

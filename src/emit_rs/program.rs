@@ -449,7 +449,9 @@ impl Emitter {
                 || self.dual_helpers.contains(&n)
                 || f.kind == FnKind::Handler);
             for (i, (p, t)) in f.params.iter().enumerate() {
-                if let Ty::Record(s) = t {
+                // (a record or none is lent as a record is: handed by value,
+                // each call had counted the link up and down)
+                if let Ty::Record(s) | Ty::OptRecord(s) = t {
                     if !self.struct_is_copy(s) && !changed.contains(p) {
                         refs.insert(p.clone());
                     }

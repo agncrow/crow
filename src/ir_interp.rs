@@ -1184,7 +1184,7 @@ impl IrInterp {
                         map.insert("__sort_desc".to_string(), CrowValue::ok(Value::Bool(*desc)));
                     }
                 }
-                let mut vals = vec![CrowValue::ok(Value::Map(map))];
+                let mut vals = vec![CrowValue::ok(Value::map(map))];
                 for c in children {
                     vals.push(self.eval(c)?);
                 }
@@ -1340,7 +1340,7 @@ impl IrInterp {
                                 _ => i.clone(),
                             }).collect::<Vec<_>>().into(),
                         )),
-                        Value::Map(m) if v.is_ok() => CrowValue::ok(Value::Map(
+                        Value::Map(m) if v.is_ok() => CrowValue::ok(Value::map(
                             m.iter().map(|(k, i)| (k.clone(), match &i.value {
                                 Value::Int(n) if i.is_ok() => CrowValue::ok(Value::Float(*n as f64)),
                                 Value::Big(n) if i.is_ok() => CrowValue::ok(Value::Float(n.to_f64().value())),
@@ -1644,13 +1644,13 @@ impl IrInterp {
                     for (k, v) in pairs {
                         map.insert(k.parse::<i64>().unwrap_or(0), self.eval(v)?);
                     }
-                    return Ok(CrowValue::ok(Value::IntMap(map)));
+                    return Ok(CrowValue::ok(Value::int_map(map)));
                 }
                 let mut map = std::collections::BTreeMap::new();
                 for (k, v) in pairs {
                     map.insert(k.clone(), self.eval(v)?);
                 }
-                CrowValue::ok(Value::Map(map))
+                CrowValue::ok(Value::map(map))
             }
             Expr::RecordLit { name, fields } => {
                 let def = self.structs.get(name).cloned().ok_or_else(|| format!("unknown struct '{}'", name))?;
@@ -2346,7 +2346,7 @@ impl IrInterp {
                         Ok(Some(groups)) => {
                             let mut map = std::collections::BTreeMap::new();
                             map.insert("groups".to_string(), CrowValue::ok(Value::Array(std::sync::Arc::new(groups.into_iter().map(|m| CrowValue::ok(Value::Str(m))).collect()))));
-                            CrowValue::ok(Value::Map(map))
+                            CrowValue::ok(Value::map(map))
                         }
                         Ok(None) => CrowValue::error("no match", &self.trace_entry()),
                         Err(e) => CrowValue::error_with_kind(&e, "regex", &self.trace_entry()),
@@ -2406,17 +2406,17 @@ impl IrInterp {
             // the page's signed-in reader: the session's, a map of strings
             "__reader" => {
                 let id = self.active_session.unwrap_or(0);
-                Ok(CrowValue::ok(Value::Map(self.session_reader.get(&id).cloned().unwrap_or_default())))
+                Ok(CrowValue::ok(Value::map(self.session_reader.get(&id).cloned().unwrap_or_default())))
             }
             // sign_in[record] / sign_out[]: held to the handler's commit
             "sign_in" | "sign_out" => {
                 let record = if name == "sign_in" {
                     let m = match vals.first().map(|v| &v.value) {
-                        Some(Value::Map(m)) => m.clone(),
+                        Some(Value::Map(m)) => m.as_ref().clone(),
                         _ => return Err("sign_in[] takes the reader as a map of strings: sign_in[map[id = '42', name = 'Ada']]".into()),
                     };
                     let mut strings = std::collections::BTreeMap::new();
-                    for (k, v) in &m {
+                    for (k, v) in m.iter() {
                         match &v.value {
                             Value::Str(s) => {
                                 strings.insert(k.clone(), s.clone());
@@ -3472,7 +3472,7 @@ impl IrInterp {
                         let mut m = std::collections::BTreeMap::new();
                         m.insert("name".to_string(), CrowValue::ok(Value::Str(name)));
                         m.insert("text".to_string(), CrowValue::ok(Value::Str(String::from_utf8_lossy(&bytes).to_string())));
-                        CrowValue::ok(Value::Map(m))
+                        CrowValue::ok(Value::map(m))
                     })
                     .collect::<Vec<CrowValue>>();
                 CrowValue::ok(Value::Array(std::sync::Arc::new(items)))
@@ -3491,7 +3491,7 @@ impl IrInterp {
                         map.insert("to".to_string(), CrowValue::ok(Value::Str(m.to)));
                         map.insert("subject".to_string(), CrowValue::ok(Value::Str(m.subject)));
                         map.insert("body".to_string(), CrowValue::ok(Value::Str(m.body)));
-                        CrowValue::ok(Value::Map(map))
+                        CrowValue::ok(Value::map(map))
                     })
                     .collect::<Vec<CrowValue>>();
                 CrowValue::ok(Value::Array(std::sync::Arc::new(items)))
@@ -3533,7 +3533,7 @@ impl IrInterp {
                 // a reader who signed in, as a handler's sign_in would say
                 if var == "reader" {
                     let m = match &value.value {
-                        Value::Map(m) if m.values().all(|v| matches!(v.value, Value::Str(_))) => m.clone(),
+                        Value::Map(m) if m.values().all(|v| matches!(v.value, Value::Str(_))) => m.as_ref().clone(),
                         other => return Err(format!("change[a, 'reader', record] takes the reader as a map of strings, not {}", other.type_name())),
                     };
                     if let Some(rid) = self.remote_sessions.get(&id).copied() {
@@ -3734,7 +3734,7 @@ fn style_tokens(m: &std::collections::BTreeMap<String, CrowValue>) -> CrowValue 
     r.insert("color".to_string(), CrowValue::ok(Value::Str(color)));
     r.insert("size".to_string(), CrowValue::ok(Value::Str(size)));
     r.insert("weight".to_string(), CrowValue::ok(Value::Str(weight)));
-    CrowValue::ok(Value::Map(r))
+    CrowValue::ok(Value::map(r))
 }
 
 fn binop_of(op: &str) -> Result<BinOp, String> {
@@ -3790,9 +3790,10 @@ fn set_path(root: &mut Value, path: &[PathStep], idx: &[CrowValue], new: CrowVal
                     let shown = si.shown().to_string();
                     si.get_mut(f).ok_or_else(|| format!("struct '{}' has no field '{}'", shown, f))
                 }
+                // (a map another value shares is copied first, as a record is)
                 Value::Map(m) => {
                     crow_runtime::stops::key(m, &f.to_string())?;
-                    m.get_mut(f).ok_or_else(|| format!("map has no key '{}'", f))
+                    std::sync::Arc::make_mut(m).get_mut(f).ok_or_else(|| format!("map has no key '{}'", f))
                 }
                 other => Err(format!("cannot assign field '{}' on {}", f, other.type_name())),
             },
@@ -3809,7 +3810,7 @@ fn set_path(root: &mut Value, path: &[PathStep], idx: &[CrowValue], new: CrowVal
                     Value::Map(m) => match &i.value {
                         Value::Str(k) => {
                             crow_runtime::stops::key(m, k)?;
-                            m.get_mut(k).ok_or_else(|| format!("map has no key '{}'", k))
+                            std::sync::Arc::make_mut(m).get_mut(k).ok_or_else(|| format!("map has no key '{}'", k))
                         }
                         Value::Int(n) => Err(format!("the map's keys are text, not ints: {}", n)),
                         _ => Err("a map's key is text or an int".to_string()),
@@ -3817,7 +3818,7 @@ fn set_path(root: &mut Value, path: &[PathStep], idx: &[CrowValue], new: CrowVal
                     Value::IntMap(m) => match &i.value {
                         Value::Int(n) => {
                             crow_runtime::stops::key(m, n)?;
-                            m.get_mut(n).ok_or_else(|| format!("map has no key '{}'", n))
+                            std::sync::Arc::make_mut(m).get_mut(n).ok_or_else(|| format!("map has no key '{}'", n))
                         }
                         Value::Str(k) => Err(format!("the map's keys are ints, not text: '{}'", k)),
                         _ => Err("a map's key is text or an int".to_string()),
@@ -3848,7 +3849,7 @@ fn set_path(root: &mut Value, path: &[PathStep], idx: &[CrowValue], new: CrowVal
             }
             Value::Map(m) => {
                 crate::builtins::check_map_homogeneous(m, &new)?;
-                m.insert(f.clone(), new);
+                std::sync::Arc::make_mut(m).insert(f.clone(), new);
                 Ok(())
             }
             other => Err(format!("cannot assign field '{}' on {}", f, other.type_name())),
@@ -3874,7 +3875,7 @@ fn set_path(root: &mut Value, path: &[PathStep], idx: &[CrowValue], new: CrowVal
                 Value::Map(m) => match &i.value {
                     Value::Str(k) => {
                         crate::builtins::check_map_homogeneous(m, &new)?;
-                        m.insert(k.clone(), new);
+                        std::sync::Arc::make_mut(m).insert(k.clone(), new);
                         Ok(())
                     }
                     Value::Int(n) => Err(format!("the map's keys are text, not ints: {}", n)),
@@ -3882,7 +3883,7 @@ fn set_path(root: &mut Value, path: &[PathStep], idx: &[CrowValue], new: CrowVal
                 },
                 Value::IntMap(m) => match &i.value {
                     Value::Int(n) => {
-                        m.insert(*n, new);
+                        std::sync::Arc::make_mut(m).insert(*n, new);
                         Ok(())
                     }
                     Value::Str(k) => Err(format!("the map's keys are ints, not text: '{}'", k)),

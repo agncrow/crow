@@ -212,12 +212,15 @@ impl TypeContext {
                 let mut normalized_sig: Vec<Ty> = Vec::with_capacity(arg_types.len());
                 for (i, at) in arg_types.iter().enumerate() {
                     // Normalize types for function params:
-                    // - OptBoxStruct -> Struct (the Rust backend unwraps before passing)
                     // - Result<T> -> T (auto-propagation unwraps at call site)
                     // - an error with no value (error[…]) says nothing of the
                     //   parameter: that call never reaches the body
+                    // (a record or none stays one: the parameter holds none
+                    // as the interpreter's does, and a field of none stops
+                    // where it is read — unwrapped at the call, the
+                    // compiled program had stopped before the body's own
+                    // `type[t] eq 'int'` could tell none)
                     let normalized = match at {
-                        Ty::OptRecord(n) => Ty::Record(n.clone()),
                         Ty::Result(inner) if matches!(inner.as_ref(), Ty::Unit) => Ty::Unknown,
                         Ty::Result(inner) => *inner.clone(),
                         other => other.clone(),
@@ -230,11 +233,7 @@ impl TypeContext {
                 // F2: record this call's concrete signature for the
                 // monomorphization pass (skip if anything is unknown)
                 if normalized_sig.len() == sig.params.len() && normalized_sig.iter().all(Self::type_is_concrete) {
-                    let entry = self.call_signatures.entry(name.clone()).or_default();
-                    let dup = entry.iter().any(|existing| Self::same_signature(existing, &normalized_sig));
-                    if !dup {
-                        entry.push(normalized_sig);
-                    }
+                    self.note_signature(name, normalized_sig);
                 }
                 self.functions.get_mut(name).unwrap().params = new_params;
                 self.hand_functions(name, args);
@@ -297,11 +296,7 @@ impl TypeContext {
                     let mut new_params = sig.params.clone();
                     for (i, at) in text.iter().enumerate() {
                         if i < new_params.len() {
-                            let normalized = match at {
-                                Ty::OptRecord(n) => Ty::Record(n.clone()),
-                                other => other.clone(),
-                            };
-                            new_params[i].1 = new_params[i].1.unify(&normalized);
+                            new_params[i].1 = new_params[i].1.unify(at);
                         }
                     }
                     self.functions.get_mut(&prefixed).unwrap().params = new_params;

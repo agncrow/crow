@@ -418,6 +418,9 @@ pub enum Decision {
     /// An item read from it: a list's, a text's, a map's by its key, a
     /// column's cell, a parsed value's — none of which a failed value has.
     Item,
+    /// An item read or written at it: a failed value is no position and no
+    /// key (`xs[int[ch]]`).
+    Index,
 }
 
 impl Decision {
@@ -429,6 +432,7 @@ impl Decision {
             Decision::Assign(var) => format!("cannot assign an error value to '{}'", var),
             Decision::Read(field) => format!("cannot read '{}' of an error value", field),
             Decision::Item => "cannot read an item of an error value".to_string(),
+            Decision::Index => "cannot index by an error value".to_string(),
         }
     }
 }
@@ -1511,6 +1515,7 @@ fn block(out: &mut String, b: &Block, depth: usize) {
                     Decision::Assign(var) => format!(" (into {})", var),
                     Decision::Read(field) => format!(" (reading {})", field),
                     Decision::Item => " (reading an item)".to_string(),
+                    Decision::Index => " (as a position or a key)".to_string(),
                 };
                 let _ = writeln!(out, "{}propagate {}{}", pad, values.join(", "), at);
             }

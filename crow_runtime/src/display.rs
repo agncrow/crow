@@ -248,7 +248,7 @@ impl<T: CrowDisplay> CrowDisplay for Vec<T> {
 }
 
 /// A recursive link: the record it holds, or the empty sentinel `0`.
-impl<T: CrowDisplay> CrowDisplay for Option<Box<T>> {
+impl<T: CrowDisplay> CrowDisplay for Option<crate::link::Link<T>> {
     fn crow_repr(&self) -> String {
         match self {
             Some(r) => r.crow_repr(),

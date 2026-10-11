@@ -351,6 +351,19 @@ impl CrowTensor {
         Self::from_vec(data, self.shape.clone())
     }
 
+    /// The numbers in row-major order, read where they lie when the tensor
+    /// is one contiguous run on the CPU (a compiled function's view of a
+    /// vector it only reads by index), else copied out.
+    pub fn numbers(&self) -> std::borrow::Cow<'_, [f64]> {
+        if let TensorStorage::Cpu(d) = self.data.as_ref()
+            && self.is_contiguous()
+            && let Some(run) = d.get(self.offset..self.offset + self.len())
+        {
+            return std::borrow::Cow::Borrowed(run);
+        }
+        std::borrow::Cow::Owned(self.to_vec())
+    }
+
     /// Collect all elements into a Vec<f64> in row-major order.
     /// If tensor is on GPU, downloads to CPU first.
     pub fn to_vec(&self) -> Vec<f64> {

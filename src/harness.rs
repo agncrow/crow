@@ -169,7 +169,7 @@ pub(crate) fn harness_select(n: &HNode, steps: &[(String, String)], depth: usize
                 m.insert("tag".to_string(), CrowValue::ok(Value::Str(child.tag.clone())));
                 m.insert("text".to_string(), CrowValue::ok(Value::Str(text)));
                 m.insert("class".to_string(), CrowValue::ok(Value::Str(cls)));
-                out.push(CrowValue::ok(Value::Map(m)));
+                out.push(CrowValue::ok(Value::map(m)));
             } else {
                 harness_select(child, steps, depth + 1, out);
             }
@@ -246,7 +246,7 @@ pub(crate) fn harness_to_lnode(n: &HNode) -> CrowValue {
     fields.insert("tag".to_string(), CrowValue::ok(Value::Str(n.tag.clone())));
     fields.insert("class".to_string(), CrowValue::ok(Value::Str(class)));
     fields.insert("text".to_string(), CrowValue::ok(Value::Str(text)));
-    fields.insert("attrs".to_string(), CrowValue::ok(Value::Map(attrs)));
+    fields.insert("attrs".to_string(), CrowValue::ok(Value::map(attrs)));
     fields.insert("kids".to_string(), CrowValue::ok(Value::Array(std::sync::Arc::new(kids))));
     CrowValue::ok(Value::StructInstance(std::sync::Arc::new(StructInstance::new("LNode".to_string(), "LNode".to_string(), fields))))
 }

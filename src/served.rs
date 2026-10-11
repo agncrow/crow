@@ -53,7 +53,7 @@ pub(crate) fn json_to_fact(j: &serde_json::Value, declared: &CrowValue) -> CrowV
             Err(_) => crate::builtins::json_to_crow("", j),
         },
         // a parsed value comes back JSON, as it was held
-        Value::Json(_) => CrowValue::ok(Value::Json(Box::new(j.clone()))),
+        Value::Json(_) => CrowValue::ok(Value::Json(std::sync::Arc::new(j.clone()))),
         _ => crate::builtins::json_to_crow("", j),
     }
 }
@@ -115,9 +115,9 @@ pub(crate) fn json_to_typed(j: &serde_json::Value, ty: &crate::ir::Ty, template:
                     map.insert(n, json_to_typed(v, item, template, declared));
                 }
             }
-            CrowValue::ok(Value::IntMap(map))
+            CrowValue::ok(Value::int_map(map))
         }
-        (Ty::Json, _) => CrowValue::ok(Value::Json(Box::new(j.clone()))),
+        (Ty::Json, _) => CrowValue::ok(Value::Json(std::sync::Arc::new(j.clone()))),
         _ => json_to_fact(j, declared),
     }
 }
@@ -212,7 +212,7 @@ thread_local! {
 fn route_answer(template: &IrInterp, handler: &str, req: crow_web::core::CrowRequest) -> crow_web::core::CrowResponse {
     use crow_web::core::CrowResponse;
     let pairs = |m: &std::collections::BTreeMap<String, String>| -> CrowValue {
-        CrowValue::ok(Value::Map(m.iter().map(|(k, v)| (k.clone(), CrowValue::ok(Value::Str(v.clone())))).collect()))
+        CrowValue::ok(Value::map(m.iter().map(|(k, v)| (k.clone(), CrowValue::ok(Value::Str(v.clone())))).collect()))
     };
     let text = |s: &str| CrowValue::ok(Value::Str(s.to_string()));
     let request: std::collections::BTreeMap<String, CrowValue> = [
@@ -235,7 +235,7 @@ fn route_answer(template: &IrInterp, handler: &str, req: crow_web::core::CrowReq
             _ => &mut slot.insert((made_from, template.clone())).1,
         };
         it.begin_route();
-        let answered = it.guard(|it| it.call(handler, vec![CrowValue::ok(Value::Map(request))]));
+        let answered = it.guard(|it| it.call(handler, vec![CrowValue::ok(Value::map(request))]));
         it.end_route();
         if answered.is_err() {
             *slot = None;

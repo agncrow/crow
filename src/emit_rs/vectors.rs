@@ -23,6 +23,91 @@ pub(super) fn is_vector(t: &Ty) -> bool {
     matches!(as_inferred(t), Ty::Tensor(el, Some(dims)) if dims.len() == 1 && matches!(*el, Ty::Float | Ty::Int))
 }
 
+/// A vector of whole numbers.
+fn of_ints(t: &Ty) -> bool {
+    matches!(as_inferred(t), Ty::Tensor(el, Some(dims)) if dims.len() == 1 && *el == Ty::Int)
+}
+
+/// The plain vectors of whole numbers among them, kept as `Vec<i64>`: each
+/// binding a vector of ints and every number written to it an int (a
+/// float pushed onto one keeps it a vector of floats). Held as floats, a
+/// brainfuck interpreter's tape had turned each cell into a float and back
+/// at every step, and run at a third of Rust's speed.
+pub(super) fn int_vectors(f: &Fn, plain: &BTreeSet<String>) -> BTreeSet<String> {
+    let mut ints: HashMap<String, bool> = HashMap::new();
+    for (p, t) in &f.params {
+        if plain.contains(p) {
+            ints.insert(p.clone(), of_ints(t));
+        }
+    }
+    fn walk(b: &[Stmt], plain: &BTreeSet<String>, ints: &mut HashMap<String, bool>) {
+        for s in b {
+            match s {
+                Stmt::Let { var, ty, .. } if plain.contains(var) => {
+                    let e = ints.entry(var.clone()).or_insert(true);
+                    *e &= of_ints(ty);
+                }
+                Stmt::Set { var, expr } if plain.contains(var) => {
+                    let whole = match pushed(var, expr) {
+                        Some(n) => *n.ty().payload() == Ty::Int,
+                        None => of_ints(&expr.ty()),
+                    };
+                    let e = ints.entry(var.clone()).or_insert(true);
+                    *e &= whole;
+                }
+                Stmt::SetPath { var, expr, .. } if plain.contains(var) => {
+                    let e = ints.entry(var.clone()).or_insert(true);
+                    *e &= *expr.ty().payload() == Ty::Int;
+                }
+                Stmt::If { then, els, .. } => {
+                    walk(then, plain, ints);
+                    if let Some(e) = els {
+                        walk(e, plain, ints);
+                    }
+                }
+                Stmt::While { body, .. } | Stmt::For { body, .. } => walk(body, plain, ints),
+                _ => {}
+            }
+        }
+    }
+    walk(&f.body, plain, &mut ints);
+    ints.into_iter().filter(|(_, whole)| *whole).map(|(n, _)| n).collect()
+}
+
+/// The vector parameters the body only reads — each use a number read by
+/// index or its length, the parameter never bound anew — read through a
+/// view of its numbers made as the body starts (borrowed where the tensor
+/// is one contiguous run): a read through the tensor checks its shape,
+/// strides and storage at every number (a brainfuck interpreter's program
+/// and jump table, a binary search's sorted list).
+pub(super) fn read_views(f: &Fn, plain: &BTreeSet<String>) -> BTreeSet<String> {
+    let mut ok: HashMap<String, bool> = HashMap::new();
+    for (p, t) in &f.params {
+        if is_vector(t) && !plain.contains(p) {
+            ok.insert(p.clone(), true);
+        }
+    }
+    if ok.is_empty() {
+        return BTreeSet::new();
+    }
+    let mut w = Walk { ok, written: BTreeSet::new() };
+    // (as deep as a loop's body: a use as a value anywhere disqualifies)
+    w.block(&f.body, 1);
+    let mut rebound = BTreeSet::new();
+    crate::ir::visit_stmts(&f.body, &mut |s| match s {
+        Stmt::Let { var, .. } | Stmt::Set { var, .. } | Stmt::SetPath { var, .. } | Stmt::For { var, .. } => {
+            rebound.insert(var.clone());
+        }
+        _ => {}
+    });
+    crate::ir::visit_block(&f.body, &mut |e| {
+        if let Expr::ForExpr { var, .. } = e {
+            rebound.insert(var.clone());
+        }
+    });
+    w.ok.into_iter().filter(|(n, keep)| *keep && !w.written.contains(n) && !rebound.contains(n)).map(|(n, _)| n).collect()
+}
+
 /// The locals of a function kept as plain vectors: parameters and bindings
 /// of a vector type the body writes — a number set by index, a number
 /// pushed (`x = push[x, n]`) — whose every use is a read or a write of one
@@ -233,8 +318,39 @@ impl Emitter {
         }
     }
 
+    /// The view of a parameter's numbers an expression reads through, if
+    /// it names a parameter read so (`read_views`).
+    pub(super) fn read_view(&self, e: &Expr) -> Option<String> {
+        match unwrapped(e) {
+            Expr::Local(v, _) | Expr::Move(v, _) if self.read_vecs.contains(v.as_str()) => Some(format!("{}__v", v)),
+            _ => None,
+        }
+    }
+
     /// A plain vector used as a value: the tensor made from it.
-    pub(super) fn vector_as_tensor(v: &str) -> String {
+    pub(super) fn vector_as_tensor(&self, v: &str) -> String {
+        if self.int_vecs.contains(v) {
+            return format!("crow_runtime::core::tensor_of_ints(&{v})");
+        }
         format!("crow_runtime::tensor::CrowTensor::from_vec({v}.clone(), vec![{v}.len()])")
+    }
+
+    /// A plain vector's Rust type, and a tensor's numbers as it holds them.
+    pub(super) fn vector_of(&self, v: &str, tensor: &str) -> (&'static str, String) {
+        if self.int_vecs.contains(v) {
+            ("Vec<i64>", format!("crow_runtime::core::ints_of(&({}))", tensor))
+        } else {
+            ("Vec<f64>", format!("({}).to_vec()", tensor))
+        }
+    }
+
+    /// A number as a plain vector holds it: a float, or a whole number as a
+    /// tensor holds it (through its float).
+    pub(super) fn vector_number(&self, v: &str, number: &str) -> String {
+        if self.int_vecs.contains(v) {
+            format!("crow_runtime::core::held_int({})", number)
+        } else {
+            format!("({}) as f64", number)
+        }
     }
 }

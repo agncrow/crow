@@ -25,6 +25,7 @@ pub mod io;
 pub mod json;
 pub mod later;
 pub mod layout;
+pub mod link;
 pub mod cancel;
 pub mod autograd;
 pub mod sys;

@@ -1,0 +1,59 @@
+--- A record's link to a record of its kind is shared, not copied: a
+--- persistent tree keeps every version it was, a write through a link
+--- changes only the value written to (another value holding the same
+--- record keeps what it held), and `type[]` tells a link that holds none
+--- from one that holds a record. Compiled, a link had been a box, so
+--- reading `t.left` copied the subtree below it (a treap ran a thousand
+--- times slower than Rust's), and `type[t.left]` of none had panicked.
+struct Node [key, left, right]
+
+fn insert[t, k]
+    if type[t] eq 'int'
+        return Node[k, 0, 0]
+    if k lt t.key
+        return Node[t.key, insert[t.left, k], t.right]
+    return Node[t.key, t.left, insert[t.right, k]]
+
+fn size[t]
+    if type[t] eq 'int'
+        return 0
+    return 1 + size[t.left] + size[t.right]
+
+fn total[t]
+    if type[t] eq 'int'
+        return 0
+    return t.key + total[t.left] + total[t.right]
+
+fn depth_of[t, k]
+    cur = t
+    d = 0
+    while type[cur] ne 'int'
+        if k eq cur.key
+            return d
+        if k lt cur.key
+            cur = cur.left
+        else
+            cur = cur.right
+        d = d + 1
+    return -1
+
+t1 = 0
+for k in [5, 3, 8, 1, 4]
+    t1 = insert[t1, k]
+t2 = insert[t1, 7]
+log['`size[t1]` `size[t2]` `total[t1]` `total[t2]`']
+log['`depth_of[t2, 7]` `depth_of[t1, 7]` `depth_of[t2, 4]`']
+
+--- a write through a link copies what another value still holds
+t3 = t2
+t3.left.key = 30
+t3.left.left.key = 10
+log['`t2.left.key` `t3.left.key` `t2.left.left.key` `t3.left.left.key`']
+log['`total[t2]` `total[t3]`']
+
+--- none, and a record, as type[] and the display show them
+log['`type[t1.left.left.left]` `type[t1.left]`']
+log[t1.left.left]
+leaf = Node[9, 0, 0]
+none_left = type[leaf.left] eq 'int'
+log['`type[leaf.left]` `none_left` `str[leaf.right]`']

@@ -130,6 +130,8 @@ impl Emitter {
         // the vectors the body only reads and writes by index, kept plain
         // (vectors.rs); a parameter's is made as the body starts
         let saved_vecs = std::mem::take(&mut self.plain_vecs);
+        let saved_ints = std::mem::take(&mut self.int_vecs);
+        let saved_views = std::mem::take(&mut self.read_vecs);
         let saved_builders = std::mem::take(&mut self.text_builders);
         let saved_texts = std::mem::take(&mut self.indexed_texts);
         if !(is_reactive_render || is_reactive_handler || is_live_render || is_live_handle || is_component_view || self.emitting_dual || self.emitting_traced) {
@@ -146,10 +148,16 @@ impl Emitter {
                 }
             }
             self.plain_vecs = vectors::plain_vectors(f);
+            self.int_vecs = vectors::int_vectors(f, &self.plain_vecs);
+            self.read_vecs = vectors::read_views(f, &self.plain_vecs);
             for (p, _) in &f.params {
                 if self.plain_vecs.contains(p) {
                     self.needs_crow_runtime = true;
-                    self.line(&format!("let mut {p}: Vec<f64> = {p}.to_vec();"));
+                    let (ty, made) = self.vector_of(p, p);
+                    self.line(&format!("let mut {p}: {ty} = {made};"));
+                }
+                if self.read_vecs.contains(p) {
+                    self.line(&format!("let {p}__v = {p}.numbers();"));
                 }
             }
         }
@@ -238,6 +246,8 @@ impl Emitter {
         self.cur_fn = cur;
         self.view_mark = mark;
         self.plain_vecs = saved_vecs;
+        self.int_vecs = saved_ints;
+        self.read_vecs = saved_views;
         self.text_builders = saved_builders;
         self.lent_here = saved_lent;
         self.indexed_texts = saved_texts;
@@ -664,7 +674,8 @@ impl Emitter {
         }
         if self.plain_vecs.contains(var) {
             let text = self.owned_expr(expr);
-            self.line(&format!("let mut {}: Vec<f64> = ({}).to_vec();", var, text));
+            let (vty, made) = self.vector_of(var, &text);
+            self.line(&format!("let mut {}: {} = {};", var, vty, made));
             self.declare(var, as_inferred(ty));
             return;
         }
@@ -700,7 +711,7 @@ impl Emitter {
                 text = "None".to_string();
             } else if matches!(t, Ty::Record(_)) {
                 t = as_inferred(ty);
-                text = format!("Some(Box::new({}))", text);
+                text = format!("Some(crow_runtime::link::new({}))", text);
             }
         }
         let kw = if self.mutated.contains(var) { "let mut" } else { "let" };
@@ -733,11 +744,12 @@ impl Emitter {
             // a number pushed: onto the vector (vectors.rs)
             if let Some(n) = vectors::pushed(var, expr) {
                 let val = self.expr(n);
-                self.line(&format!("{{ let _v = ({}) as f64; {}.push(_v); }}", val, var));
+                self.line(&format!("{{ let _v = {}; {}.push(_v); }}", self.vector_number(var, &val), var));
                 return;
             }
             let text = self.owned_expr(expr);
-            self.line(&format!("{} = ({}).to_vec();", var, text));
+            let (_, made) = self.vector_of(var, &text);
+            self.line(&format!("{} = {};", var, made));
             return;
         }
         // `x = push[x, v]` and its kin move `x` into the runtime call so the
@@ -777,7 +789,7 @@ impl Emitter {
                     return;
                 }
                 if matches!(new_ty, Ty::Record(_)) {
-                    self.line(&format!("{} = Some(Box::new({}));", var, text));
+                    self.line(&format!("{} = Some(crow_runtime::link::new({}));", var, text));
                     return;
                 }
             }
@@ -839,7 +851,7 @@ impl Emitter {
             let val = self.expr(expr);
             let idx = self.expr(i);
             let at = self.index_at("_i", &format!("{}.len()", var));
-            self.line(&format!("{{ let _v = ({}) as f64; let _i = {}; let _k = {}; {}[_k] = _v; }}", val, idx, at, var));
+            self.line(&format!("{{ let _v = {}; let _i = {}; let _k = {}; {}[_k] = _v; }}", self.vector_number(var, &val), idx, at, var));
             return;
         }
         // a part of a fact of the session (`items[0] = x`, `p.qty = 3`),
@@ -854,7 +866,7 @@ impl Emitter {
             self.line(&format!("let _fv = {};", val));
             val = "_fv".to_string();
         }
-        self.emit_set_path_with(var, path, &val, in_facts);
+        self.emit_set_path_with(var, path, &val, expr, in_facts);
         if in_facts {
             self.line(&format!("state.touch(\"{}\");", var));
             self.indent -= 1;
@@ -904,7 +916,7 @@ impl Emitter {
         }
     }
 
-    fn emit_set_path_with(&mut self, var: &str, path: &[PathStep], val: &str, in_facts: bool) {
+    fn emit_set_path_with(&mut self, var: &str, path: &[PathStep], val: &str, given: &Expr, in_facts: bool) {
         let val = val.to_string();
         // the object the last step writes into, and its type; each list
         // index is found before the write (`out[m].status = …` read
@@ -935,9 +947,23 @@ impl Emitter {
             }
         }
         let mut found: Vec<String> = Vec::new();
+        // a link written through is the record it holds, copied first where
+        // another value holds it too (crow_runtime::link::make_mut): values
+        // stay values; none stops, as the interpreter stops assigning a
+        // field of 0
+        let through = |me: &Self, obj: String, ty: &Ty, f: &str| -> (String, Ty) {
+            match ty {
+                Ty::OptRecord(s) => (
+                    format!("(*crow_runtime::link::make_mut({}.as_mut().unwrap_or_else(|| crow_stop({}, \"cannot assign field '{}' on int\".to_string()))))", obj, me.line_now(), f),
+                    Ty::Record(s.clone()),
+                ),
+                _ => (obj, ty.clone()),
+            }
+        };
         for step in &path[..path.len().saturating_sub(1)] {
             match step {
                 PathStep::Field(f) => {
+                    (obj, ty) = through(self, obj, &ty, f);
                     let next = match &ty {
                         Ty::Record(s) => self.structs.get(s).and_then(|d| d.fields.iter().find(|(n, _)| n == f).map(|(_, t)| as_inferred(t))).unwrap_or(Ty::Unknown),
                         Ty::Map(_, inner) => inner.as_ref().clone(),
@@ -969,9 +995,21 @@ impl Emitter {
         }
         match path.last() {
             Some(PathStep::Field(f)) => {
+                (obj, ty) = through(self, obj, &ty, f);
                 if matches!(ty, Ty::Map(..)) {
                     self.line_after(&found, &format!("{}.insert(\"{}\".to_string(), {});", obj, f, val));
                 } else {
+                    // a link given a record holds it, given 0 none, as a
+                    // constructor's field does
+                    let held = match &ty {
+                        Ty::Record(s) => self.structs.get(s).and_then(|d| d.fields.iter().find(|(n, _)| n == f).map(|(_, t)| as_inferred(t))),
+                        _ => None,
+                    };
+                    let val = match held {
+                        Some(Ty::OptRecord(_)) if matches!(Emitter::raw(given), Expr::Const(Const::Int(0), _)) => "None".to_string(),
+                        Some(Ty::OptRecord(_)) if matches!(Self::inner(&self.tt(given)), Ty::Record(_)) => format!("Some(crow_runtime::link::new({}))", val),
+                        _ => val,
+                    };
                     self.line_after(&found, &format!("{}.{} = {};", obj, Self::rust_field(f), val));
                 }
             }
@@ -1022,7 +1060,7 @@ impl Emitter {
                     return "None".to_string();
                 }
                 if matches!(ety, Ty::Record(_)) {
-                    return format!("Some(Box::new({}))", text);
+                    return format!("Some(crow_runtime::link::new({}))", text);
                 }
             }
             text

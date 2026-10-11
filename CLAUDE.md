@@ -228,7 +228,9 @@ steps on every push and must be green.
   an `IntList` register only where every instruction that meets it is a list
   instruction or makes it (`list_use_ok`, `reads_writes`): an instruction
   that READS one otherwise would convert the whole list each time it runs,
-  so a new `Ins` that reads registers must say so in `reads_writes`. The
+  so a new `Ins` that reads registers must say so in `reads_writes`. A
+  PARAMETER is never one: its list arrives boxed, and making it bare at
+  every call read the whole list (a binary search called 80,000 times). The
   slots follow the
   walker's scoping (`declare` reuses a name bound in the current block,
   `fresh` is a loop variable's): a nested `for i` restores the outer `i`.
@@ -378,11 +380,18 @@ steps on every push and must be green.
   handles (`handle`); one reference count every thread wrote on every
   call had made 16 threads run no faster than one (spectral norm).
 - The emitter keeps a function's one-axis float tensor that the body only
-  reads and sets by index as a plain `Vec<f64>` (`emit_rs/vectors.rs`), and
-  a list of text it only empties, appends to and joins as a `String` and a
+  reads and sets by index as a plain `Vec<f64>` (`emit_rs/vectors.rs`) —
+  `Vec<i64>` when every binding and every number written is an int
+  (`int_vectors`; a write goes through `core::held_int`, the float's nearest
+  past 2^53, so it holds what the tensor would) — a vector PARAMETER it only
+  reads by index and measures through a view made as the body starts
+  (`read_views`, `{p}__v = p.numbers()`, borrowed where contiguous), and a
+  list of text it only empties, appends to and joins as a `String` and a
   count (`emit_rs/builders.rs`). A new emitter path that prints a local
-  goes through `local()`, `plain_vector` or the builders' intercepts, or it
-  prints a vector or a text where a tensor or a list is expected.
+  goes through `local()`, `plain_vector`, `read_view` or the builders'
+  intercepts, or it prints a vector or a text where a tensor or a list is
+  expected. (A brainfuck interpreter's tape held as floats turned each cell
+  into a float and back every step: 5.1 s against Rust's 0.98, 2.0 now.)
 - `cpu[n]` is a count both backends read where a parallel loop starts
   (`crow_runtime::cores`: per thread, the crowfile's the default, a
   function's put back by `Restore`). A new parallel form — a builtin that
@@ -422,7 +431,14 @@ steps on every push and must be green.
   — and as `Ty::Big` (`crow_runtime::int::Int`) elsewhere. The pass runs on
   the lowered IR, so both backends see its conversions (`ToBig`,
   `ToSmall(Who)` — refused past 64 bits in one wording; the interpreter's
-  rows refuse by `table::no_big_taken`). A new expression shape that makes
+  rows refuse by `table::no_big_taken`). A write to a local a condition
+  only NARROWED (not written yet this round) is a sum unless the condition
+  bounds the side the write moves toward (`bounds`, `bound_toward`: `lt`
+  above, `gt` below, `eq` both, `ne` the end it cuts), and then only its
+  bounded sides go into where the sums start (`write_as`): the narrowed
+  range holds the loop's own drift, and joining it there each round had
+  grown the range to unbounded — n-queens' `k` (`if k eq 0 … else k = k -
+  1`) was a growing int, 4.4× slower than Rust's. A new expression shape that makes
   an int needs its range in `iv_of` (else it reads as any 64-bit int), a
   new write site goes through `write` (else a sum there diverges to Big
   and the hot loop pays the growing form: fannkuch had run 5× slower), and
@@ -454,11 +470,15 @@ steps on every push and must be green.
   argument is a moved local, the statement's target or a call's answer) and a
   `texts` take bridge (the interpreter's moved argument): both, or the modes
   copy differently.
-- The interpreter's lists and records are copy-on-write: `Value::Array(Arc<Vec
-  <CrowValue>>)` (write through `Arc::make_mut`, take the items with
-  `Arc::unwrap_or_clone`) and `Value::StructInstance(Arc<StructInstance>)`
+- The interpreter's lists, maps, parsed values and records are
+  copy-on-write: `Value::Array(Arc<Vec<CrowValue>>)`, `Value::Map`/`IntMap`
+  (`Arc<BTreeMap>`, made with `Value::map`/`Value::int_map`), `Value::Json(
+  Arc<serde_json::Value>)` (write through `Arc::make_mut`, take the items
+  with `Arc::unwrap_or_clone`) and `Value::StructInstance(Arc<StructInstance>)`
   over an interned `&'static Layout` (`Layout::intern`, the interpreter's
-  `Shape`s). A read of either is a count: the walker's reads had copied a
+  `Shape`s). A map had been copied whole at every top-level `key in m`
+  (primes: 6.5 s at 100k), a parsed document at every `c[i]` (JSON: 109 s
+  for 20,000 objects). A read of either is a count: the walker's reads had copied a
   400,000-line list for each chunk of a parallel loop, and a record copied
   every node below it at each field read (binarytrees: 4.6 GB). A count
   every thread writes is the spectral-norm trap again: the record's layout
@@ -563,3 +583,14 @@ steps on every push and must be green.
   walker hands back). A new walker path that reads a text by position
   takes it from `loop_text`, or a long text is walked from its start at
   every read (revcomp's pieces had taken 106 s interpreted).
+- A record's link to a record of its kind (`Ty::OptRecord`) is
+  `Option<crow_runtime::link::Link<T>>` compiled — triomphe's `Arc`, one
+  count and no weak one (the 32-byte slot a box took) — never a `Box`: a
+  box copied the subtree at every `t.left` (a treap ran 1000× slower than
+  Rust's). A write through a link goes through `link::make_mut`
+  (`emit_set_path_with`'s `through`); a builtin takes the link as it is
+  (`type[t.left]`, `str[t.left]` of none had unwrapped it, a panic); a
+  user function taking the record gets `as_deref().unwrap_or_else(stop)`.
+  An int handed where a record or none is held (a field only ever given
+  0) goes through the hidden row `core.__none` (`none_of` in lower_ir.rs),
+  then as the literal 0 both backends read as none.
