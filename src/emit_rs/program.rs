@@ -450,9 +450,12 @@ impl Emitter {
                 || f.kind == FnKind::Handler);
             for (i, (p, t)) in f.params.iter().enumerate() {
                 // (a record or none is lent as a record is: handed by value,
-                // each call had counted the link up and down)
+                // each call had counted the link up and down — but never to
+                // a function called through a value, whose signature is the
+                // function type that holds it: one taking a record of a list
+                // had not built)
                 if let Ty::Record(s) | Ty::OptRecord(s) = t {
-                    if !self.struct_is_copy(s) && !changed.contains(p) {
+                    if plain && !self.struct_is_copy(s) && !changed.contains(p) {
                         refs.insert(p.clone());
                     }
                 } else if plain && matches!(as_inferred(t), Ty::List(_) | Ty::Map(..) | Ty::Str) && lendable.get(&n).and_then(|v| v.get(i)).copied().unwrap_or(false) {

@@ -1,0 +1,32 @@
+--- A function handed as a value takes a record whole, and a record the
+--- caller was lent is handed to it as its own (compiled, a function taking
+--- a record of a list had been lent its record, which a function value's
+--- type does not take, and the program did not build). A call through a
+--- value hands on an argument that can fail as any call does: the call is
+--- that error.
+struct P [name, xs]
+
+fn total[p]
+    return len[p.xs] + len[p.name]
+
+fn apply[f, q]
+    return f[q]
+
+log[apply[total, P['ab', [1, 2, 3]]]]
+
+fn fit[s]
+    if s eq 'x'
+        return error['nothing to fit', 'fit']
+    return P[s, [1, 2]]
+
+fn score[m, k]
+    return len[m.xs] + k
+
+fn run[fitter, scorer, s]
+    m = fitter[s]
+    return scorer[m, 1]
+
+log[run[fit, score, 'ok']]
+r = run[fit, score, 'x']
+log[r.ok]
+log[r.reason]

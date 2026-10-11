@@ -1130,10 +1130,13 @@ impl Emitter {
         let mut failing: Vec<usize> = Vec::new();
         let mut vals: Vec<String> = Vec::new();
         for (k, a) in args.iter().enumerate() {
-            let s = self.expr(a);
             let param = ps.get(k).cloned().unwrap_or(Ty::Unknown);
             let takes_failure = matches!(param, Ty::Result(_));
             let as_float = |v: String, t: &Ty| if matches!(param, Ty::Float) && matches!(t, Ty::Int) { format!("{} as f64", v) } else { v };
+            // (a value the function takes is its own: a local read again
+            // later, or one this function was lent, is copied in — a
+            // parameter lent its record had been handed as a reference)
+            let s = if matches!(self.tt(a), Ty::Result(_)) { self.expr(a) } else { self.owned_expr(a) };
             vals.push(match self.tt(a) {
                 Ty::Result(t) if answers_failure => {
                     binds.push_str(&format!("let _fa{} = {}; ", k, s));
@@ -1146,7 +1149,6 @@ impl Emitter {
                 Ty::Result(t) => as_float(format!("{{ let _ix = &({}); if !_ix.ok {{ crow_stop({}, _ix.reason.clone()); }} _ix.value.clone() }}", s, self.line_now()), &t),
                 // (a tensor a gradient is handed is read: the local, or the
                 // record it is a field of, lives on)
-                Ty::Tensor(..) if (matches!(Emitter::raw(a), Expr::Local(..) | Expr::Field { .. }) || matches!(Emitter::raw(a), Expr::Move(..)) && !self.moved_local(a)) => format!("{}.clone()", s),
                 t => as_float(s, &t),
             });
         }

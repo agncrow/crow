@@ -3415,10 +3415,13 @@ impl<'a> Lowerer<'a> {
                     }
                 }
             }
+            // (a function value applied is a call: its arguments propagate
+            // as any call's do, and are no positions)
+            let applied = matches!(base.ty().payload(), Ty::Fn(..) | Ty::Unknown);
             let mut idx = Vec::new();
             for a in args {
                 let i = self.lower_expr(a)?;
-                idx.push(self.decided_index(i));
+                idx.push(if applied { i } else { self.decided_index(i) });
             }
             // a position or a key the program does not know the type of — a
             // parsed value — is read as what the place takes: a position an

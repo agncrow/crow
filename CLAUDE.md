@@ -414,7 +414,12 @@ steps on every push and must be green.
   (`ir::reading_lent`). A new way to call a user function from generated
   code must pass `by_ref_params` by reference, or exclude the function
   (a Crow-written row's function is excluded: its row calls it with
-  values). A register named twice in one call is lent once, never twice.
+  values; so is one handed as a value — its signature is the function type
+  that holds it, records included — and `apply_fn_value` hands its
+  arguments as owned values). A register named twice in one call is lent
+  once, never twice. A call through a function value is lowered on the
+  INDEX path (`f[x]` of a local): a rule for positions (`decided_index`)
+  must skip it, or it unwraps the call's arguments and retypes the value.
 - `log` writes a script's output in blocks when stdout is not a terminal
   (`display::buffer_output`; a thread writes what is held every 100 ms, so
   a reader watching the pipe or the log sees each line soon — the lost-
