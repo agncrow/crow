@@ -817,14 +817,13 @@ fn test_comparison_operators_transpile() {
 
 #[test]
 fn test_logical_operators_transpile() {
-    // both sides are evaluated, the left first (spec, Logical): Rust's
-    // `&` and `|` on booleans, never the short-circuiting `&&` and `||`
+    // the left decides first (spec, Operators): Rust's short-circuiting
+    // `&&` and `||` on truths; a mask's `&` and `|`, item by item
     let rust = transpile("x = true and false\ny = x or true\n");
-    assert!(rust.contains("true & false"), "and evaluates both sides\n{}", rust);
-    assert!(rust.contains("x | true"), "or evaluates both sides\n{}", rust);
-    for l in rust.lines().filter(|l| l.contains("let x") || l.contains("let y")) {
-        assert!(!l.contains("&&") && !l.contains("||"), "{}", l);
-    }
+    assert!(rust.contains("(true) && (false)"), "and decides from the left\n{}", rust);
+    assert!(rust.contains("(x) || (true)"), "or decides from the left\n{}", rust);
+    let masks = transpile("m = [true, false]\nk = [true, true]\nlog[m and k]\n");
+    assert!(masks.contains("*_a & *_b"), "a mask joins item by item\n{}", masks);
 }
 
 #[test]
@@ -1057,22 +1056,13 @@ fn test_is_gpu_call() {
     assert!(!transpile("cpu[4]\nlog[1]\n").contains("set_gpu_enabled"));
 }
 
-// ===== nodes (distributed) tests =====
+// ===== nodes: a name, no longer a builtin =====
 
+/// `nodes` is the program's to name (the process count is `crow launch`'s)
 #[test]
-fn test_nodes_call_transpile() {
-    let rust = transpile("nodes[4]\n");
-    assert!(rust.contains("distributed::init(4)"), "nodes[] should emit distributed::init\n{}", rust);
-    assert!(rust.contains("distributed::finalize()"), "nodes[] should emit distributed::finalize\n{}", rust);
-}
-
-/// nodes[n] joins a cluster of n before anything runs and leaves it at the end
-#[test]
-fn test_extract_nodes_call() {
-    let rust = transpile("nodes[8]\nlog[1]\n");
-    assert!(rust.contains("crow_runtime::distributed::init(8)"), "{}", rust);
-    assert!(rust.contains("crow_runtime::distributed::finalize()"), "{}", rust);
-    assert!(!transpile("gpu[]\nlog[1]\n").contains("distributed::init"));
+fn nodes_is_the_programs_name() {
+    let rust = transpile("nodes = [1, 2]\nlog[len[nodes]]\n");
+    assert!(!rust.contains("distributed::init"), "{}", rust);
 }
 
 // ===== grad tests =====
@@ -2459,6 +2449,20 @@ fn a_record_read_by_its_fields_is_not_dropped() {
     let start = rust.find("fn run(").expect("run");
     let body = &rust[start..start + rust[start..].find("\n}\n").unwrap()];
     assert!(!body.contains("drop(h)"), "{}", body);
+}
+
+/// `and`/`or` of truths decide from the left: `&&`, `||` (spec, Operators)
+#[test]
+fn and_and_or_decide_from_the_left() {
+    let rust = transpile("fn first_free[col, n]\n    c = 0\n    while c lt n and col[c] ne 0\n        c = c + 1\n    return c\nlog[first_free[[1, 0], 2]]\n");
+    assert!(rust.contains(") && ("), "{}", rust);
+}
+
+/// A record or none compared with 0 is the none test, asked where the link lies
+#[test]
+fn a_link_compared_with_0_asks_whether_it_holds_none() {
+    let rust = transpile("struct T [left]\nfn depth[t]\n    d = 0\n    cur = t\n    while cur ne 0\n        d = d + 1\n        cur = cur.left\n    return d\nlog[depth[T[T[0]]]]\n");
+    assert!(rust.contains(".is_some()"), "{}", rust);
 }
 
 /// A tensor pushed onto at the top level grows where it lies, as one in a

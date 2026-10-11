@@ -328,6 +328,8 @@ fn test_fn(i: usize) -> String {
 fn wide_arith(walk: &mut Walk, e: &Expr) -> bool {
     match e {
         Expr::Binary { op, ty, .. } if matches!(op.as_str(), "add" | "sub" | "mul" | "pow") && matches!(ty.payload(), Ty::Int) => !walk.iv_of(e).fits(),
+        // (a shift whose answer may pass 64 bits: its form that grows)
+        Expr::Call { target: Target::Row(row), .. } if row.id == "bits.shift" => !walk.iv_of(e).fits(),
         _ => false,
     }
 }
@@ -1660,6 +1662,24 @@ fn item_of(t: Option<&Ty>) -> bool {
     matches!(t.map(|t| t.payload()), Some(Ty::List(i)) | Some(Ty::Map(_, i)) if is_int(Some(i)))
 }
 
+/// The least power of two above `m` (`m` ≥ 0): what an `or` of numbers up
+/// to `m` stays below.
+fn pow2_above(m: i128) -> i128 {
+    let mut p: i128 = 1;
+    while p <= m && p < INF {
+        p = p.saturating_mul(2);
+    }
+    p
+}
+
+/// The span of an and/or/xor where a side may be negative: within the
+/// powers of two above both sides' sizes, either sign (64 bits where both
+/// fit them).
+fn bits_span(a: Iv, b: Iv) -> Iv {
+    let p = pow2_above(a.mag().max(b.mag()));
+    Iv::new(-p, p - 1)
+}
+
 /// The range of an int a builtin answers: a count or a position from -1 to
 /// 2^48, a whole number of any size where it reads one from text or a
 /// float, the arguments' where the row keeps them, any other a 64-bit int.
@@ -1681,6 +1701,39 @@ fn row_iv(id: &str, ivs: &[Iv]) -> Iv {
             _ => Iv::I64,
         },
         "core.int" | "core.floor_int" | "core.ceil_int" | "core.round_int" => first,
+        // an int's bits: and/or/xor of 64-bit ints are 64-bit, and tighter
+        // where a side is not negative; a shift moves a range by its count
+        "bits.bitand" | "core.__bitand_big" => match ivs {
+            [a, b] if a.lo >= 0 && b.lo >= 0 => Iv::new(0, a.hi.min(b.hi)),
+            [a, _] if a.lo >= 0 => Iv::new(0, a.hi),
+            [_, b] if b.lo >= 0 => Iv::new(0, b.hi),
+            [a, b] => bits_span(*a, *b),
+            _ => Iv::I64,
+        },
+        "bits.bitor" | "bits.bitxor" | "core.__bitor_big" | "core.__bitxor_big" => match ivs {
+            [a, b] if a.lo >= 0 && b.lo >= 0 => Iv::new(0, pow2_above(a.hi.max(b.hi)) - 1),
+            [a, b] => bits_span(*a, *b),
+            _ => Iv::I64,
+        },
+        "bits.bitcount" | "core.__bitcount_big" => Iv::new(0, COUNT),
+        "bits.code" => Iv::new(0, 0x10FFFF),
+        "bits.shift" | "core.__shift_big" => match ivs {
+            [a, n] if n.hi < 100 => {
+                // a left shift multiplies by 2^n for n between its ends; a
+                // right one moves toward 0 (or -1), rounding down
+                let mut r = Iv::EMPTY;
+                if n.hi > 0 {
+                    let (k0, k1) = (1i128 << n.lo.max(0), 1i128 << n.hi);
+                    let ends = [a.lo.saturating_mul(k0), a.lo.saturating_mul(k1), a.hi.saturating_mul(k0), a.hi.saturating_mul(k1)];
+                    r = r.join(Iv::new(ends.iter().copied().min().unwrap_or(0), ends.iter().copied().max().unwrap_or(0)));
+                }
+                if n.lo <= 0 {
+                    r = r.join(Iv::new(a.lo.min(if a.lo < 0 { -1 } else { 0 }), a.hi.max(0)));
+                }
+                r
+            }
+            _ => Iv::TOP,
+        },
         "core.int_of_bool" => Iv::BOOL,
         // text read as an int, a float cut to one, an exact number rounded:
         // any size
@@ -2155,7 +2208,7 @@ impl<'a> Retype<'a> {
                         // the row that keeps every digit: where its answer may
                         // grow (`int[text]`, `floor[x]`), or a big int is
                         // handed to one that keeps it (`abs`, `min`, `max`)
-                        let grows = matches!(row.id, "core.int_of" | "core.int_of_float" | "core.floor" | "core.ceil" | "core.round");
+                        let grows = matches!(row.id, "core.int_of" | "core.int_of_float" | "core.floor" | "core.ceil" | "core.round") || (row.id == "bits.shift" && wide);
                         if let Some(big) = crate::table::big_form(row.id)
                             && (grows || args.iter().any(|a| has_big(&a.ty())))
                         {

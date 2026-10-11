@@ -114,7 +114,6 @@ pub(crate) struct Emitter {
     /// them as JSON, so they derive serde's traits.
     pub(crate) serde_records: BTreeSet<String>,
     pub(crate) needs_crow_runtime: bool,
-    pub(crate) needs_distributed: bool,
     pub(crate) needs_later: bool,
     pub(crate) needs_regex: bool,
     pub(crate) needs_find_struct: bool,
@@ -259,7 +258,6 @@ impl Emitter {
             needs_serde_json: false,
             serde_records: BTreeSet::new(),
             needs_crow_runtime: false,
-            needs_distributed: false,
             needs_later: false,
             needs_regex: false,
             needs_find_struct: false,

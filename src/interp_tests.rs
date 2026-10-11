@@ -1833,22 +1833,17 @@ mod tests {
         crow_runtime::gpu::set_gpu_enabled(false);
     }
 
-    // ===== §nodes: Distributed computing =====
+    // ===== §nodes: retired — the process count is the launch's =====
 
+    /// `nodes` is a name the program may use (graph code reaches for it);
+    /// `nodes[n]` is refused with where the process count went.
     #[test]
-    fn test_nodes_call() {
-        // nodes[2] should initialize distributed mode (single-process simulation)
-        run_program("nodes[2]\n");
-        // In interpreter mode, rank is always 0 and world_size is set
-        assert!(crow_runtime::distributed::is_distributed());
-        // Reset
-        // Note: can't fully reset OnceLock, but the flag is set
-    }
-
-    #[test]
-    fn test_nodes_resource_stmt() {
-        run("nodes[4]\n").unwrap();
-        assert!(crow_runtime::distributed::is_distributed());
+    fn nodes_is_a_name_and_nodes_call_is_refused() {
+        assert!(run("nodes = [1, 2, 3]\nlog[len[nodes]]\n").is_ok());
+        match run("nodes[4]\n") {
+            Err(err) => assert!(err.contains("nodes[] is gone"), "{}", err),
+            Ok(_) => panic!("nodes[4] was accepted"),
+        }
     }
 
     // ===== §grad: Automatic differentiation =====

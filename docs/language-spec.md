@@ -417,23 +417,24 @@ if x eq 1 or x eq 2
     log['one or two']
 ```
 
-`and` and `or` evaluate both sides, the left first: there is no short-circuit. A call on the right runs even when the left side already decides, and an error on either side is the value, because an error has no truth value (Errors in Conditions). A guard that must not touch a failed value is its own `if`:
+`and` and `or` decide from the left: the right side is evaluated only where the left does not decide the answer — `false and …` is false and `true or …` is true without it. An error on the left is the value, since an error has no truth value (Errors in Conditions); where the right side is evaluated, its error is the value. So a guard reads as it does in nearly every language:
 
 ```
-if not r.ok
-    return 'unreadable'
-if len[r] eq 0              --- r is known good here
-    return 'empty'
+if i lt len[xs] and xs[i] gt 0      --- xs[i] is read only when i is in range
+    log['positive']
+
+if r.ok and r.price gt 0            --- r's price is read only when r did not fail
+    log['priced']
 ```
 
-`if not r.ok or len[r] eq 0` is not that guard: when `r` failed, `len[r]` is the error, so the condition is the error and the decision is refused.
+A call on the right runs only where the left does not decide. `and` and `or` of two lists of truths (masks) join them item by item, and both sides are evaluated.
 
 
-### Design Note: `and` and `or` Evaluate Both Sides
+### Design Note: `and` and `or` Decide From the Left
 
-**Considered:** short-circuiting, as most languages do: `or` skipping its right side when the left is true, `and` when the left is false, so `not r.ok or len[r] eq 0` would work as a guard.
+**Considered:** evaluating both sides, the left first, as every other operator does — the rule from 2026-09-23 to 2026-10-11: an error on either side was the value, and nothing was evaluated conditionally except by `if` and `while`.
 
-**Decision (Vijay, 2026-09-23):** both sides are evaluated. Every operator treats an error the same way, and `and` and `or` are operators like the rest: an error on either side is the value, and nothing is evaluated conditionally except by `if` and `while`. The guard that must not touch a failed value is written as the `if` it is, and reads the same in both modes. The compiled program had short-circuited plain booleans, so `false and check[x]` ran `check` in the interpreter only; now both modes run it.
+**Decision (Vijay, 2026-10-11):** the right side is evaluated only where the left does not decide. Evaluating both turned the commonest guard into a stop: `i lt len[xs] and xs[i] gt 0` with `i` past the end stopped the program, because an index outside its list stops rather than failing as a value; inside a `while` condition the nested `if` the rule prescribed meant rewriting the loop around a `break`, and benchmark authors padded their arrays instead (sudoku, n-queens). Measured, the cost of evaluating both was small (n-queens' gap was elsewhere; a brainfuck interpreter about 9%): the reason is the guard, not speed. Both modes decide from the same lowered program — the right side's own refusals wait under the left's decision there — so they cannot part as they did when the compiled program short-circuited on its own.
 
 
 ### Membership
@@ -1020,9 +1021,20 @@ parameter handed either, and a function's value answering either
 (`fn child[n, side]` answering `n.a` or `n.b`). It passes through all of
 them as it is, in both modes. Reading a field of none, or handing none to
 a function that takes a record and reads it, stops the program:
-`cannot access field 'op' on this value`. A program tells a leaf from a
-branch by a field of its own (`op eq 'leaf'`, a `leaf` flag), not by
-comparing the record with `0`: two values of two kinds are not compared.
+`cannot access field 'op' on this value`. Whether a link holds none is
+asked by comparing it with the `0` that writes none — `t.left eq 0`,
+`cur ne 0` — in both modes; a record always holds one, so `leaf eq 0` is
+false. That is the one comparison of a record with a number: any other
+is refused, two values of two kinds not compared (Vijay, 2026-10-11: a
+leaf flag, or `type[t] eq 'int'`, had been the only ways to tell a leaf).
+
+```
+fn size[t]
+    if t eq 0
+        return 0
+    return 1 + size[t.a] + size[t.b]
+```
+
 `type[]` of none is `int`, as of the `0` it is written as, and of a record
 its name, in both modes (compiled, `type[t.left]` had said `unknown`, and
 of none had panicked). An int handed where a record or none is held — a
@@ -1371,7 +1383,6 @@ A builtin handed a number of arguments, or a kind of argument, it does not take 
 | `error[reason, kind]` | Create an error-value with reason and category |
 | `cpu[n]` | Set thread count for parallel loops |
 | `gpu[n]` | Set GPU count (`gpu[]` for all GPUs) |
-| `nodes[n]` | Set machine count for distributed compute |
 
 ### Math
 
@@ -2417,6 +2428,40 @@ for i in range[len[toc]]
 ```
 
 
+### bits
+
+Import with `use bits`. An int's bits and a character's code, for the algorithms that work on them — a set of small numbers held as one int's bits, a hash, a parser that reads character codes. An int is a whole number of any size, read as two's complement with as many bits as it needs (as Python reads one): `bitand[n, -1]` is `n`, a negative number's high bits are ones, and a shift right rounds down. Every function works identically in both modes (`crow_runtime::bits`). An int stays in 64 bits where the width rules show it fits (Numbers That Keep Every Digit); a shift left by a count nothing bounds grows, so a mask meant to stay a width is cut to it with `bitand` after the shift.
+
+| Function | Description |
+|----------|-------------|
+| `bitand[a, b]` | The bits both have |
+| `bitor[a, b]` | The bits either has |
+| `bitxor[a, b]` | The bits one has and the other has not; `bitxor[a, -1]` flips every bit (`-a - 1`) |
+| `bitcount[a]` | How many ones the bits of `abs[a]` hold |
+| `shift[a, n]` | `a` times 2^n; for a negative `n`, `a` divided by 2^-n and rounded down (`shift[-7, -1]` is -4). A number past 2^32 bits stops |
+| `code[ch]` | The code of a one-character text, its Unicode scalar value (`code['A']` is 65); any other length stops: `code takes one character, got "ab" (2 characters)` |
+| `char[n]` | The character whose code is `n` (`char[233]` is `'é'`); a number that is no character's code stops |
+
+```
+use bits
+
+fn queens[n, mask, row, cols, d1, d2]
+    if row eq n
+        return 1
+    count = 0
+    free = bitand[bitxor[bitor[bitor[cols, d1], d2], -1], mask]
+    while free ne 0
+        bit = bitand[free, -free]                --- the lowest free column
+        free = bitxor[free, bit]
+        count = count + queens[n, mask, row + 1, bitor[cols, bit], bitand[shift[bitor[d1, bit], 1], mask], shift[bitor[d2, bit], -1]]
+    return count
+
+log[queens[8, shift[1, 8] - 1, 0, 0, 0, 0]]     --- 92
+```
+
+**Design Note: bits by name, in a module.** Considered: the operators most languages write — `&`, `|`, `^`, `<<`, `>>` — or the functions in the core. Decided (Vijay, 2026-10-11): named functions in a module a program imports. `^` is already the power, and symbols are shift-key syntax whose cost needs a reason a few algorithms do not give; the core is frozen by the budget rule, and `code` is a variable's name in many programs, so the names are taken only where a program asks for them. Before the module, a program had no way to read a character's code at all (`sys` has one, and a program may not import `sys`).
+
+
 ### chart
 
 Import with `use chart`. Technical indicators for the chart element, computed by the runtime (`crow_runtime::indicators`, over the kernels in `crow_runtime::ta`) so the interpreter and compiled programs draw the same numbers. Every function takes series — frame columns or arrays of numbers — and returns a series of the same length, `NaN` where the value is not yet defined (a 14-period RSI has no value on row 3), so a chart draws a gap instead of a guess. Put a result back into the frame with `with[frame, name, series]` and name the column in `lines = [...]` or `panes = [...]`.
@@ -3349,14 +3394,12 @@ while x gt 0
 
 ### Resource Control
 
-By default, Crow uses all available CPU cores. Use `cpu`, `gpu`, or `nodes` to control resources.
+By default, Crow uses all available CPU cores. Use `cpu` or `gpu` to control resources; running the program as several processes is `crow launch`'s (Distributed Support).
 
 ```
 cpu[4]                   --- 4 CPU cores
 gpu[]                    --- all GPUs on this machine
 gpu[2]                   --- 2 GPUs on this machine
-nodes[4]                 --- 4 machines
-nodes[4, gpu = 2]        --- 4 machines, 2 GPUs each
 ```
 
 `cpu[n]` bounds every parallel loop that starts after it runs — in the code after it and in every function that code calls, whichever was written first — until another `cpu[…]` changes it; written in a function, it holds until the function returns, and the caller's count is back. A loop nested in a bounded loop runs on the same cores. A count below 1 stops the program (`cpu[] requires a positive integer`). Both modes read the count where a loop starts, so the same loops are bounded in both. (The compiled program had applied `cpu[1]` while it wrote the program, so a loop in a function written above the call ran on every core, and `cpu[4]` bounded nothing; the interpreter had sized one pool for the whole process at the first `cpu[…]`, and ignored every later one.)
@@ -3467,34 +3510,19 @@ What is refused before the program runs, in both modes: an operation on a traced
 
 ### Distributed Support
 
-`nodes[n]` specifies distributed computing across multiple processes. The compiler handles process coordination, and the `crow launch` CLI command spawns and manages all processes.
-
-```
-nodes[4]                 --- 4 processes
-```
-
-#### Implementation
-
-When `nodes[n]` is called, the runtime initializes distributed mode using TCP-based networking:
-
-1. **Process discovery**: Each process reads `CROW_RANK`, `CROW_WORLD_SIZE`, `CROW_MASTER_ADDR`, and `CROW_MASTER_PORT` from environment variables.
-2. **Ring topology**: Processes form a ring — each connects to the next rank via TCP.
-3. **Available operations**: `allreduce_mean` (ring allreduce), `broadcast`, `barrier`, `shard` (split data by rank).
-4. **Finalize**: The compiled program calls `finalize()` at the end of main to clean up connections.
-
-In interpreter mode, `nodes[n]` always simulates single-process (rank 0) — no TCP connections are made.
-
-#### CLI: crow launch
+Running a program as several processes is the launch's, not the program's:
 
 ```
 crow launch <n> <file.co>
 ```
 
-Builds the binary via `crow build`, then spawns `n` processes with the correct environment variables. All processes run on `127.0.0.1` with base port `29500`. Output from all ranks is interleaved to stdout/stderr.
+builds the binary with `crow build`, then runs `n` processes of it, each with `CROW_RANK` (0 to n − 1), `CROW_WORLD_SIZE`, `CROW_MASTER_ADDR` and `CROW_MASTER_PORT` in its environment, all on `127.0.0.1` from base port `29500`, their output interleaved. A process reads its rank as it reads any variable of its environment — `rank = int[env['CROW_RANK', '0']]` — and takes its share of the work by it.
 
 ```
 crow launch 4 train.co     --- build + run on 4 processes
 ```
+
+**Design Note: the process count is the launch's.** Considered: `nodes[n]` in the program, as `cpu[n]` and `gpu[]` are. Decided (Vijay, 2026-10-11): the count is given once, where the processes are started — the program had said it beside the launch's own count, and the core name took `nodes` from every program (graph code reached for it and wrote `all_nodes` instead). `nodes[n]` is refused with where the count went. The runtime's ring operations (`crow_runtime::distributed`: a mean across the ranks, a broadcast, a barrier) are not written as builtins yet.
 
 #### Backend Detection
 

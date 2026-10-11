@@ -60,7 +60,7 @@ for x in xs                loop — a parallel expression when its body is pure
 ys = for x in xs           collect: the body's last expression is the element
     x * x
 while c                    loop
-cpu[4]  gpu[]  nodes[4]    resources: where the program runs
+cpu[4]  gpu[]              resources: where the program runs
 f[a, b]  f[a, k = v]       call, positional then named; m.f[...] for a module
 xs[0]  xs[-1]  s[i]        index (strings by character); slice[xs, a, b]
 [1, 2, 3]  map[k = v]      array; map (keys are names or 'strings')

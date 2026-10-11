@@ -88,6 +88,7 @@ impl Emitter {
             "math.nn" => std::sync::Arc::new(crate::modules::nn::NnModule),
             "frame" => std::sync::Arc::new(crate::modules::frame::FrameModule),
             "doc" => std::sync::Arc::new(crate::modules::doc::DocModule),
+            "bits" => std::sync::Arc::new(crate::modules::bits::BitsModule),
             "chart" => std::sync::Arc::new(crate::modules::chart::ChartModule),
             "io" => std::sync::Arc::new(crate::modules::io::IoModule),
             "web" => std::sync::Arc::new(crate::modules::web::WebModule),
@@ -128,7 +129,7 @@ impl Emitter {
                     self.needs_crow_runtime = true;
                     self.load_module("io");
                 }
-                "frame" | "doc" | "chart" => {
+                "frame" | "doc" | "chart" | "bits" => {
                     self.needs_crow_runtime = true;
                     self.load_module(&path);
                 }
@@ -1486,11 +1487,6 @@ impl Emitter {
             self.needs_crow_runtime = true;
             self.line("crow_runtime::gpu::set_gpu_enabled(true);");
         }
-        if let Some(n) = self.part.nodes {
-            self.needs_crow_runtime = true;
-            self.needs_distributed = true;
-            self.line(&format!("crow_runtime::distributed::init({});", n));
-        }
         if self.has_noapp_web && !self.has_page_routes {
             self.line("let mut __crow_app = CrowApp::new();");
         }
@@ -1610,9 +1606,6 @@ impl Emitter {
             }
             let main: Vec<Stmt> = main.into_iter().filter(|s| !matches!(s, Stmt::Let { var, .. } if self.module_consts.contains(var))).collect();
             self.emit_block(&main);
-        }
-        if self.needs_distributed {
-            self.line("crow_runtime::distributed::finalize();");
         }
         if self.needs_later {
             self.line("crow_runtime::later::wait_all();");

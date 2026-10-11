@@ -1717,6 +1717,11 @@ pub static ROWS: &[Row] = &[
     row!("core.__round_big", "", "__round_big", crow_runtime::int::round, (Float) -> Big, stops),
     row!("core.__abs_big", "", "__abs_big", crow_runtime::int::abs, (Big) -> Big, never),
     row!("core.__min_big", "", "__min_big", crow_runtime::int::min, (Big, Big) -> Big, never),
+    row!("core.__bitand_big", "", "__bitand_big", crow_runtime::bits::and_big, (Big, Big) -> Big, never),
+    row!("core.__bitor_big", "", "__bitor_big", crow_runtime::bits::or_big, (Big, Big) -> Big, never),
+    row!("core.__bitxor_big", "", "__bitxor_big", crow_runtime::bits::xor_big, (Big, Big) -> Big, never),
+    row!("core.__bitcount_big", "", "__bitcount_big", crow_runtime::bits::count_big, (Big) -> Int, never),
+    row!("core.__shift_big", "", "__shift_big", crow_runtime::bits::shift_big, (Big, Whole) -> Big, stops),
     row!("core.__max_big", "", "__max_big", crow_runtime::int::max, (Big, Big) -> Big, never),
     row!("core.__sort_big", "", "__sort_big", crow_runtime::int::sort, (Bigs) -> Bigs, never),
     row!("core.__float_of_big", "", "__float_of_big", crow_runtime::int::float_of, (Big) -> Float, never),
@@ -2167,6 +2172,16 @@ pub static ROWS: &[Row] = &[
     row!("doc.pager", "doc", "pager", crow_runtime::markdown::pager_from_frame, (Frame, Str) -> Markup, never),
     row!("doc.plain", "doc", "plain", crow_runtime::markdown::plain_text, (Str) -> Str, never),
     row!("doc.document", "doc", "document", crow_runtime::markdown::document, (Str, Str) -> Str, never),
+    // `use bits`: an int's bits as two's complement of any width, and a
+    // character's code (crow_runtime::bits); the width pass hands a number
+    // past 64 bits, or a shift that may pass them, to the `__…_big` forms
+    row!("bits.bitand", "bits", "bitand", crow_runtime::bits::and, (Whole, Whole) -> Int, never),
+    row!("bits.bitor", "bits", "bitor", crow_runtime::bits::or, (Whole, Whole) -> Int, never),
+    row!("bits.bitxor", "bits", "bitxor", crow_runtime::bits::xor, (Whole, Whole) -> Int, never),
+    row!("bits.bitcount", "bits", "bitcount", crow_runtime::bits::count, (Whole) -> Int, never),
+    row!("bits.shift", "bits", "shift", crow_runtime::bits::shift, (Whole, Whole) -> Int, stops),
+    row!("bits.code", "bits", "code", crow_runtime::bits::code, (Str) -> Int, stops),
+    row!("bits.char", "bits", "char", crow_runtime::bits::char, (Whole) -> Str, stops),
 ];
 
 /// The row of an id (the tests name rows so).
@@ -2734,7 +2749,7 @@ fn miscount(name: &str, counts: &str, argc: usize) -> String {
 /// block; a chart's tree.
 #[cfg_attr(not(test), allow(dead_code))] // read by the drift test
 pub const OWN_FORM: &[&str] = &[
-    "type", "error", "assert", "captured", "later", "running", "notice", "any", "all", "find", "grad", "cpu", "gpu", "nodes", "test", "chart",
+    "type", "error", "assert", "captured", "later", "running", "notice", "any", "all", "find", "grad", "cpu", "gpu", "test", "chart",
 ];
 
 /// The scalar names the core and math both answer — a number's row the
@@ -2845,8 +2860,8 @@ mod tests {
     /// move, and exactly one of these.
     #[test]
     fn every_module_function_is_a_row_or_says_why_not() {
-        use crate::modules::{chart, db, doc, frame, io, math, nn, stats};
-        let modules: [(&str, &[&str]); 8] = [
+        use crate::modules::{bits, chart, db, doc, frame, io, math, nn, stats};
+        let modules: [(&str, &[&str]); 9] = [
             ("math", &math::MATH_FUNCTIONS[..]),
             ("math.stats", &stats::STATS_FUNCTIONS[..]),
             ("math.nn", &nn::NN_FUNCTIONS[..]),
@@ -2855,6 +2870,7 @@ mod tests {
             ("io", &io::IO_FUNCTIONS[..]),
             ("doc", &doc::DOC_FUNCTIONS[..]),
             ("chart", &chart::CHART_FUNCTIONS[..]),
+            ("bits", &bits::BITS_FUNCTIONS[..]),
         ];
         for (m, names) in modules {
             for name in names {
@@ -3060,6 +3076,11 @@ pub fn big_form(id: &str) -> Option<&'static Row> {
         "core.max_ints" => "core.__max_big",
         "core.sort_ints" => "core.__sort_big",
         "core.float_of_int" => "core.__float_of_big",
+        "bits.bitand" => "core.__bitand_big",
+        "bits.bitor" => "core.__bitor_big",
+        "bits.bitxor" => "core.__bitxor_big",
+        "bits.bitcount" => "core.__bitcount_big",
+        "bits.shift" => "core.__shift_big",
         _ => return None,
     };
     ROWS.iter().find(|r| r.id == big)

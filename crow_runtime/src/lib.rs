@@ -8,6 +8,7 @@ pub mod display;
 pub mod distributed;
 pub mod frame;
 pub mod int;
+pub mod bits;
 pub mod decimal;
 pub mod fraction;
 pub mod frames;

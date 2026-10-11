@@ -568,11 +568,32 @@ impl Emitter {
             "lt" => "<",
             "gte" => ">=",
             "lte" => "<=",
-            // both sides are evaluated, the left first: no short-circuit
+            // (a mask's items, joined item by item)
             "and" => "&",
             "or" => "|",
             other => other,
         };
+        // `and`/`or` of truths: the right side only where the left does not
+        // decide (spec, Operators), an error on the left the value
+        if matches!(op, "and" | "or") && crate::ir::short_circuits(left, right) && lti == Ty::Bool && rti == Ty::Bool {
+            let and = op == "and";
+            if !l_res && !r_res {
+                return format!("(({}) {} ({}))", l, if and { "&&" } else { "||" }, r);
+            }
+            let ok = |v: &str| format!("CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", v);
+            let c = self.binop_counter;
+            self.binop_counter += 1;
+            let (bind, lv) = if l_res { (format!("let _scl_{c} = &({});", l), format!("_scl_{c}.value")) } else { (format!("let _scl_{c}: bool = {};", l), format!("_scl_{c}")) };
+            let decided = ok(if and { "false" } else { "true" });
+            let rest = if r_res { format!("({}).clone()", r) } else { ok(&r) };
+            let fail = if l_res {
+                format!("if !_scl_{c}.ok {{ CrowResult {{ ok: false, value: false, reason: _scl_{c}.reason.clone(), kind: _scl_{c}.kind.clone(), trace: _scl_{c}.trace.clone(), captured: 0.0 }} }} else ")
+            } else {
+                String::new()
+            };
+            let test = if and { format!("!{}", lv) } else { lv };
+            return format!("{{ {} {}if {} {{ {} }} else {{ {} }} }}", bind, fail, test, decided, rest);
+        }
         if l_res || r_res {
             // an operator's value is its failed operand, unchanged; both
             // operands are evaluated, the left first, and the left's error
@@ -957,30 +978,32 @@ impl Emitter {
         }
     }
 
-    /// `tree.left eq 0` on a recursive link: is the link empty?
+    /// `t.left eq 0`, the none test (spec, A Record or None): whether a
+    /// link holds none — read where it lies — and of a record, which always
+    /// holds one, never.
     fn optbox_comparison(&mut self, left: &Expr, op: &str, right: &Expr) -> Option<String> {
-        let (field_side, zero_side) = if matches!(right, Expr::Const(Const::Int(0), _)) {
-            (left, right)
+        if !matches!(op, "eq" | "ne") {
+            return None;
+        }
+        let side = if matches!(right, Expr::Const(Const::Int(0), _)) {
+            left
         } else if matches!(left, Expr::Const(Const::Int(0), _)) {
-            (right, left)
+            right
         } else {
             return None;
         };
-        let _ = zero_side;
-        if let Expr::Field { base, name, .. } = field_side {
-            if let Ty::Record(sname) = self.tt(base) {
-                let is_opt = self.structs.get(&sname).map_or(false, |d| d.fields.iter().any(|(f, t)| f == name && matches!(t, Ty::OptRecord(_))));
-                if is_opt {
-                    let obj = self.expr(base);
-                    return match op {
-                        "eq" => Some(format!("{}.{}.is_none()", obj, Self::rust_field(name))),
-                        "ne" => Some(format!("{}.{}.is_some()", obj, Self::rust_field(name))),
-                        _ => None,
-                    };
-                }
+        let none = op == "eq";
+        match self.tt(side) {
+            Ty::OptRecord(_) => {
+                let link = self.link_place(side).unwrap_or_else(|| self.expr(side));
+                Some(format!("({}).{}()", link, if none { "is_none" } else { "is_some" }))
             }
+            Ty::Record(_) => {
+                let record = self.expr(side);
+                Some(format!("{{ let _ = &({}); {} }}", record, !none))
+            }
+            _ => None,
         }
-        None
     }
 
     // ── indexing, fields, meta ──────────────────────────────────────
@@ -1885,7 +1908,7 @@ impl Emitter {
         // a qualified call to a registry module is its bare call, pinned
         let mut pinned: Option<String> = None;
         if let Target::Module(m, f) = &target {
-            if matches!(m.as_str(), "math" | "io" | "frame" | "doc" | "chart" | "math.stats" | "math.nn") && self.registry.has_function(f) {
+            if matches!(m.as_str(), "math" | "io" | "frame" | "doc" | "chart" | "math.stats" | "math.nn" | "bits") && self.registry.has_function(f) {
                 pinned = Some(m.clone());
                 target = Target::Runtime(f.clone());
             }
@@ -2047,7 +2070,7 @@ impl Emitter {
         // (a function of the program's named like an element is a call,
         // not the element: it hands a failed argument on)
         let skip = (!propagates && matches!(target, Target::Runtime(_) | Target::Row(_)))
-            || matches!(name.as_str(), "log" | "assert" | "cpu" | "gpu" | "nodes" | "type" | "error" | "captured" | "running")
+            || matches!(name.as_str(), "log" | "assert" | "cpu" | "gpu" | "type" | "error" | "captured" | "running")
             || (self.needs_ui && !from_module && !matches!(target, Target::User(_)) && (name == "chart" || name == "table" || crate::lower::UI_ELEMENTS.contains(&name.as_str())));
         if !skip {
             // an argument that converts a failed value's payload — `list(unwrap

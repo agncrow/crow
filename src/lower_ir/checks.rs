@@ -80,7 +80,7 @@ pub(crate) static BUILTINS: std::sync::LazyLock<Vec<&'static str>> = std::sync::
 });
 
 /// The modules whose functions and constants a bare `use` makes names.
-const REGISTRY_MODULES: &[&str] = &["math", "math.stats", "math.nn", "io", "frame", "doc", "chart", "sys"];
+const REGISTRY_MODULES: &[&str] = &["math", "math.stats", "math.nn", "io", "frame", "doc", "chart", "sys", "bits"];
 
 /// Whether a `use` names a standard module: one the registry loads, one
 /// written in Crow (src/modules/*.co), or db, ui and web.ui, which the
@@ -1487,6 +1487,11 @@ impl<'a> Lowerer<'a> {
                     }
                     candidates.extend(registry.functions_of(module).into_iter().map(|f| (f.to_string(), Some(module.to_string()))));
                 }
+                // (`nodes[n]` retired: the process count is the launch's)
+                if name == "nodes" {
+                    self.refuse("nodes[] is gone: `crow launch <n> file.co` runs n processes, and each reads its rank with env['CROW_RANK', '0']".to_string());
+                    return;
+                }
                 let near = self.near(name, candidates);
                 self.refuse(format!("undefined function '{}'{}", name, near));
             }
@@ -1621,7 +1626,6 @@ fn builtin_arity_ok(name: &str, argc: usize) -> bool {
         "error" => (1..=2).contains(&argc),
         "cpu" => argc == 1,
         "gpu" => argc <= 1,
-        "nodes" => argc == 1,
         "grad" => argc == 1,
         // Shell / Hash / Regex / Date
         "shell" => argc == 1,

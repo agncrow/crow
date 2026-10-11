@@ -1188,7 +1188,6 @@ impl<'a> Lowerer<'a> {
             uses: vec![],
             cpu: None,
             gpu: None,
-            nodes: None,
             structs: vec![],
             facts: vec![],
             derives: vec![],
@@ -1219,7 +1218,6 @@ impl<'a> Lowerer<'a> {
                     let n = if let A::Int(n) = count { *n } else { 0 };
                     match kind.as_str() {
                         "gpu" => part.gpu = Some(n),
-                        "nodes" => part.nodes = Some(n),
                         _ => part.cpu = Some(n),
                     }
                 }
@@ -2290,6 +2288,43 @@ impl<'a> Lowerer<'a> {
     /// What a decision reads: a value that can fail is refused first when it
     /// failed (a function hands it back, a handler stops, the top level
     /// halts), and the decision reads its payload.
+    /// `l and r` (or `or`) whose right side needs statements first: the
+    /// left into a temporary, then — only where it does not decide — the
+    /// right side's statements and the right side into it (spec, Operators:
+    /// the right side runs only where the left does not decide). A mask's
+    /// `and`, which joins item by item, keeps them in front.
+    fn right_side_waits(&mut self, joined: Expr, right_pre: Vec<Stmt>) -> Expr {
+        let Expr::Binary { op, l, r, ty } = joined else { return joined };
+        if !crate::ir::short_circuits(&l, &r) {
+            self.pre.extend(right_pre);
+            return Expr::Binary { op, l, r, ty };
+        }
+        let t = self.fresh();
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(t.clone());
+        }
+        let left_ty = l.ty();
+        self.pre.push(Stmt::Let { var: t.clone(), ty: ty.clone(), expr: *l });
+        let held = Expr::Local(t.clone(), ty.clone());
+        // (the left holds a truth, or an error: the right runs where it is
+        // a truth that does not decide)
+        let truth = if left_ty.is_result() || ty.is_result() {
+            Expr::Convert { how: Convert::Known, expr: Box::new(held.clone()), ty: Ty::Bool }
+        } else {
+            held.clone()
+        };
+        let goes_on = if op == "and" { truth } else { Expr::Unary { op: "not".to_string(), expr: Box::new(truth), ty: Ty::Bool } };
+        let cond = if left_ty.is_result() || ty.is_result() {
+            Expr::Binary { op: "and".to_string(), l: Box::new(Expr::Meta { base: Box::new(held.clone()), which: Meta::Ok }), r: Box::new(goes_on), ty: Ty::Bool }
+        } else {
+            goes_on
+        };
+        let mut then = right_pre;
+        then.push(Stmt::Set { var: t.clone(), expr: *r });
+        self.pre.push(Stmt::If { cond, then, els: None });
+        held
+    }
+
     /// A position or a key that can fail, refused first when it failed —
     /// a function hands the error back, a handler stops, the top level
     /// halts — as an item of a value that can fail is: one rule for
@@ -2933,7 +2968,13 @@ impl<'a> Lowerer<'a> {
             }
             A::BinOp { left, op, right } => {
                 let mut l = self.lower_expr(left)?;
+                // (what the right side of `and`/`or` needs done first — a
+                // failed value's refusal — waits for the left's decision:
+                // `r.ok and r.x gt 0` must not refuse `r` when it failed)
+                let joins = matches!(op, BinOp::And | BinOp::Or);
+                let outer = if joins { std::mem::take(&mut self.pre) } else { Vec::new() };
                 let mut r = self.lower_expr(right)?;
+                let right_pre = if joins { std::mem::replace(&mut self.pre, outer) } else { Vec::new() };
                 // a parsed value met in an operator is read as the kind the
                 // other side says — a number as a float, `%` an int — and as
                 // a bool by and/or; two parsed values compare as the program
@@ -2976,7 +3017,26 @@ impl<'a> Lowerer<'a> {
                     r = self.read_json(r, &kind, &how);
                 }
                 self.check_binop(op, self.checked(&l), self.checked(&r));
-                self.check_order(op, &l.ty(), &r.ty());
+                // a record or none compared with the 0 that writes none is
+                // the none test (spec, A Record or None): the 0 is typed as
+                // the link it is compared with; any other record beside a
+                // number is refused
+                let none_test = matches!(op, BinOp::Eq | BinOp::Ne)
+                    && ((matches!(l.ty(), Ty::Record(_) | Ty::OptRecord(_)) && matches!(r, Expr::Const(Const::Int(0), _)))
+                        || (matches!(r.ty(), Ty::Record(_) | Ty::OptRecord(_)) && matches!(l, Expr::Const(Const::Int(0), _))));
+                if none_test {
+                    let link = |t: Ty| match t {
+                        Ty::Record(n) | Ty::OptRecord(n) => Ty::OptRecord(n),
+                        other => other,
+                    };
+                    if let Expr::Const(Const::Int(0), _) = &r {
+                        r = Expr::Const(Const::Int(0), link(l.ty()));
+                    } else {
+                        l = Expr::Const(Const::Int(0), link(r.ty()));
+                    }
+                } else {
+                    self.check_order(op, &l.ty(), &r.ty());
+                }
                 // a frame's column in arithmetic is its numbers, as it is
                 // handed to a function that takes them: converted the same
                 // way in both modes, a missing cell the reason it has none
@@ -3032,7 +3092,12 @@ impl<'a> Lowerer<'a> {
                         _ => {}
                     }
                 }
-                Expr::Binary { op: format!("{:?}", op).to_lowercase(), l: Box::new(l), r: Box::new(r), ty }
+                let joined = Expr::Binary { op: format!("{:?}", op).to_lowercase(), l: Box::new(l), r: Box::new(r), ty };
+                if right_pre.is_empty() {
+                    joined
+                } else {
+                    self.right_side_waits(joined, right_pre)
+                }
             }
             A::UnaryOp { op, expr } => {
                 let x = self.lower_expr(expr)?;
@@ -5787,6 +5852,18 @@ mod tests {
     fn a_counter_under_its_bound_steps_without_a_check() {
         let ir = ir_of("fn run[ops, jump, most]\n    n = len[ops]\n    pc = 0\n    steps = 0\n    while pc lt n and steps lt most\n        op = ops[pc]\n        if op eq 5\n            pc = jump[pc]\n        pc = pc + 1\n        steps = steps + 1\n    return pc\nlog[run[[5, 1, 2], [2, 0, 1], 10]]\n");
         assert!(ir.contains("pc = proven((pc add 1))"), "{}", ir);
+    }
+
+    /// The right side of `and` runs only where the left does not decide:
+    /// what it needs done first — the refusal of a failed record whose
+    /// field it reads — waits under the left's decision.
+    #[test]
+    fn a_right_side_waits_for_the_left() {
+        let ir = ir_of("struct P [x]\nfn maybe[s]\n    if s eq 'bad'\n        return error['no', 'p']\n    return P[1]\nfn guard[s]\n    r = maybe[s]\n    if r.ok and r.x gt 0\n        return 'yes'\n    return 'no'\nlog[guard['bad']]\n");
+        let left = ir.find("= r.ok").unwrap_or_else(|| panic!("the left first: {}", ir));
+        let refusal = ir.find("propagate r (reading x)").unwrap_or_else(|| panic!("the refusal: {}", ir));
+        let decision = ir[left..refusal].find("if ");
+        assert!(decision.is_some(), "the refusal waits under the left's decision: {}", ir);
     }
 
     #[test]

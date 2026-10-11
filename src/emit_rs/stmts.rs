@@ -614,8 +614,7 @@ impl Emitter {
             return;
         }
         // cpu[n] bounds the loops that start after it, where it runs
-        // (crow_runtime::cores); gpu[] and nodes[n] are the program's
-        // resources
+        // (crow_runtime::cores); gpu[] is the program's resource
         if call_name(e).as_deref() == Some("cpu")
             && let [n] = super::program::call_args(e)
         {
@@ -630,14 +629,6 @@ impl Emitter {
             self.needs_crow_runtime = true;
             self.line("crow_runtime::gpu::set_gpu_enabled(true);");
             return;
-        }
-        if call_name(e).as_deref() == Some("nodes") && matches!(e, Expr::Call { target: Target::Runtime(_), .. }) {
-            if let Some(Expr::Const(Const::Int(n), _)) = super::program::call_args(e).first().map(Emitter::raw) {
-                self.needs_crow_runtime = true;
-                self.needs_distributed = true;
-                self.line(&format!("crow_runtime::distributed::init({});", n));
-                return;
-            }
         }
         let text = self.expr(e);
         self.line(&format!("{};", text));

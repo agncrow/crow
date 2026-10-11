@@ -1,0 +1,49 @@
+--- use bits: an int's bits as two's complement of any width, a shift both
+--- ways (rounding down), a number past 64 bits kept whole, a bitmask search,
+--- a hash over character codes and back — in both modes; a text of two
+--- characters handed to code stops, with the same words in both.
+use bits
+
+log['`bitand[12, 10]` `bitor[12, 10]` `bitxor[12, 10]` `bitcount[255]`']
+log['`bitand[-1, 255]` `bitand[-8, 7]` `bitxor[5, -1]` `bitcount[-255]`']
+log['`shift[1, 10]` `shift[1024, -3]` `shift[-7, -1]` `shift[5, -100]`']
+a = code['A']
+e = code['é']
+log['`a` `e` `char[65]` `char[128512]`']
+
+--- past 64 bits: every digit
+big = shift[1, 100]
+log[big]
+log[shift[big, -98]]
+log[bitand[big, -1] eq big]
+log[bitcount[big]]
+
+--- a word's hash, FNV-1a in 32 bits
+fn fnv[s]
+    h = 2166136261
+    for c in split[s, '']
+        if c ne ''
+            h = bitxor[h, code[c]]
+            h = h * 16777619 % 4294967296
+    return h
+log[fnv['crow']]
+
+--- n-queens by bitmasks
+fn solve[n, row, cols, d1, d2]
+    if row eq n
+        return 1
+    count = 0
+    free = bitand[bitxor[bitor[bitor[cols, d1], d2], -1], shift[1, n] - 1]
+    while free ne 0
+        bit = bitand[free, -free]
+        free = bitxor[free, bit]
+        count = count + solve[n, row + 1, bitor[cols, bit], shift[bitor[d1, bit], 1], shift[bitor[d2, bit], -1]]
+    return count
+log[solve[8, 0, 0, 0, 0]]
+
+word = ''
+for n in [99, 114, 111, 119]
+    word = '`word``char[n]`'
+log[word]
+log[code['ab']]
+log['not reached']

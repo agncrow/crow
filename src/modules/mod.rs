@@ -1,3 +1,4 @@
+pub mod bits;
 pub mod chart;
 pub mod db;
 pub mod doc;
@@ -92,6 +93,7 @@ pub fn module_by_path(path: &str) -> Option<Arc<dyn CrowModule>> {
         "sys" => Arc::new(sys::SysModule),
         "frame" => Arc::new(frame::FrameModule),
         "doc" => Arc::new(doc::DocModule),
+        "bits" => Arc::new(bits::BitsModule),
         "chart" => Arc::new(chart::ChartModule),
         "db" => Arc::new(db::DbModule),
         "db.clickhouse" => Arc::new(db::ClickhouseDriver),
@@ -741,6 +743,7 @@ impl ModuleRegistry {
         r.load(Arc::new(crate::modules::db::DbModule));
         r.load(Arc::new(crate::modules::doc::DocModule));
         r.load(Arc::new(crate::modules::chart::ChartModule));
+        r.load(Arc::new(crate::modules::bits::BitsModule));
         r
     }
 

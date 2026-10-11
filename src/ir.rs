@@ -240,7 +240,6 @@ pub struct Part {
     pub uses: Vec<String>,
     pub cpu: Option<i64>,
     pub gpu: Option<i64>,
-    pub nodes: Option<i64>,
     pub structs: Vec<StructDef>,
     pub facts: Vec<Fact>,
     pub derives: Vec<Derive>,
@@ -1086,6 +1085,16 @@ pub fn call_args(e: &Expr) -> &[Expr] {
 /// lies, a loop's list, or a call's argument the callee may be lent in turn
 /// (decided together, to a fixed point). A lent parameter's move compiles
 /// as a read.
+/// Whether `l and r` (or `or`) decides on two truths, the right side
+/// computed only when the left does not decide (spec, Operators): false for
+/// `and`, true for `or`, an error on the left the value. A list of truths
+/// on either side is a mask joined item by item, both sides computed. The
+/// one rule every backend reads.
+pub fn short_circuits(l: &Expr, r: &Expr) -> bool {
+    let truth = |e: &Expr| !matches!(e.ty().payload(), Ty::List(_) | Ty::Tensor(..) | Ty::Column(_) | Ty::Frame(_));
+    truth(l) && truth(r)
+}
+
 pub fn lendable_params<'a>(fns: &[&'a Fn]) -> HashMap<String, Vec<bool>> {
     let mut lend: HashMap<String, Vec<bool>> = fns.iter().map(|f| (f.name.clone(), f.params.iter().map(|(p, _)| never_rebound(&f.body, p)).collect())).collect();
     loop {
@@ -1394,9 +1403,6 @@ pub fn print(program: &Program) -> String {
         }
         if let Some(n) = part.gpu {
             let _ = writeln!(out, "  gpu {}", n);
-        }
-        if let Some(n) = part.nodes {
-            let _ = writeln!(out, "  nodes {}", n);
         }
         for s in &part.structs {
             let fields: Vec<String> = s.fields.iter().map(|(n, t)| format!("{}: {}", n, t)).collect();

@@ -555,15 +555,9 @@ impl IrInterp {
     pub fn run_main(&mut self, program: &Program) -> Result<(), String> {
         for part in &program.parts {
             // the part's resources: gpu[n] turns the kernels' device on,
-            // nodes[n] runs as the one rank of a cluster, cpu[n] bounds the
-            // parallel loops
+            // cpu[n] bounds the parallel loops
             if part.gpu.is_some() {
                 crow_runtime::gpu::set_gpu_enabled(true);
-            }
-            if let Some(n) = part.nodes {
-                if n >= 1 {
-                    crow_runtime::distributed::init(1);
-                }
             }
             if let Some(n) = part.cpu {
                 if n >= 1 {
@@ -1400,6 +1394,17 @@ impl IrInterp {
                     // the caller's to propagate
                     Convert::Unwrap | Convert::Known => v,
                 }
+            }
+            // `and`/`or` of truths: the right side only where the left does
+            // not decide (spec, Operators) — the left's error is the value
+            Expr::Binary { op, l, r, .. } if (op == "and" || op == "or") && crate::ir::short_circuits(l, r) => {
+                let lv = self.eval(l)?;
+                let and = op == "and";
+                if lv.is_error() || lv.plain_bool() == Some(!and) {
+                    return Ok(lv);
+                }
+                let rv = self.eval(r)?;
+                crate::ops::binop(&lv, &binop_of(op)?, &rv)?
             }
             Expr::Binary { op, l, r, .. } => {
                 let lv = self.eval(l)?;
@@ -2486,8 +2491,8 @@ impl IrInterp {
                 Ok(if name == "__notice_text" { CrowValue::ok(Value::Str(text)) } else { CrowValue::ok(Value::Float(at)) })
             }
             "running" => Ok(CrowValue::ok(Value::Bool(false))),
-            // the resources as calls: gpu[n] turns the device on, nodes[n]
-            // runs as the one rank of a cluster, cpu[n] bounds the loops
+            // the resources as calls: gpu[n] turns the device on, cpu[n]
+            // bounds the loops
             "gpu" => {
                 if vals.len() > 1 {
                     return Err("gpu[] takes 0 or 1 arguments".to_string());
@@ -2502,7 +2507,7 @@ impl IrInterp {
                 crow_runtime::gpu::set_gpu_enabled(true);
                 Ok(CrowValue::done())
             }
-            "nodes" | "cpu" => {
+            "cpu" => {
                 if vals.len() != 1 {
                     return Err(format!("{}[] takes exactly 1 argument", name));
                 }
@@ -2511,14 +2516,9 @@ impl IrInterp {
                     Value::Int(_) => return Err(format!("{}[] requires a positive integer", name)),
                     _ => return Err(format!("{}[] requires an integer argument", name)),
                 };
-                if name == "nodes" {
-                    // one process, rank 0: no connections in the interpreter
-                    crow_runtime::distributed::init(1);
-                } else {
-                    // the loops that start after it, where it runs
-                    // (crow_runtime::cores, as the compiled program's)
-                    crow_runtime::cores::set(n as i64)?;
-                }
+                // the loops that start after it, where it runs
+                // (crow_runtime::cores, as the compiled program's)
+                crow_runtime::cores::set(n as i64)?;
                 Ok(CrowValue::done())
             }
             // progress[value, max] (lowered)

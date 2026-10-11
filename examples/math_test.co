@@ -161,6 +161,3 @@ log['cov:', cov[data, data2]]
 result = ttest[data, data2]
 log['ttest:', result]
 
---- distributed computing
-nodes[1]
-log['distributed initialized']

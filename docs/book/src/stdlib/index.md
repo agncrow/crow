@@ -4,7 +4,7 @@ Every module ships with the compiler: `use` it and its names are there in both e
 
 | Module | Import | Names | Page |
 |---|---|---|---|
-| Core builtins | `(none)` | 82 | [Core builtins](core.md) |
+| Core builtins | `(none)` | 81 | [Core builtins](core.md) |
 | math | `use math` | 104 | [math](math.md) |
 | math.stats | `use math.stats` | 13 | [math.stats](math-stats.md) |
 | math.nn | `use math.nn` | 8 | [math.nn](math-nn.md) |
@@ -12,6 +12,7 @@ Every module ships with the compiler: `use` it and its names are there in both e
 | db | `use db` | 7 | [db](db.md) |
 | io | `use io` | 2 | [io](io.md) |
 | doc | `use doc` | 6 | [doc](doc.md) |
+| bits | `use bits` | 7 | [bits](bits.md) |
 | chart | `use chart` | 7 | [chart](chart.md) |
 | sys | `use sys` | 69 | [sys](sys.md) |
 | ui | `use ui` | 10 | [ui](ui.md) |

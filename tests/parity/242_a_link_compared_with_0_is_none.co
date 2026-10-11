@@ -1,0 +1,31 @@
+--- A record or none compared with the 0 that writes none is the none test:
+--- `t.left eq 0`, `cur ne 0` in a loop, and a record, which always holds
+--- one, never none — in both modes (it had been refused; a leaf flag or
+--- type[t] eq 'int' had been the only ways to tell a leaf).
+struct Tree [left, right]
+
+fn make[depth]
+    if depth eq 0
+        return Tree[0, 0]
+    return Tree[make[depth - 1], make[depth - 1]]
+
+fn check[t]
+    if t.left eq 0
+        return 1
+    return 1 + check[t.left] + check[t.right]
+
+fn depth_left[t]
+    d = 0
+    cur = t
+    while cur ne 0
+        d = d + 1
+        cur = cur.left
+    return d
+
+t = make[4]
+log[check[t]]
+log[depth_left[t]]
+log[t eq 0]
+log[t ne 0]
+log[t.left.left.left.left eq 0]
+log[0 eq t.left]

@@ -599,3 +599,37 @@ steps on every push and must be green.
   An int handed where a record or none is held (a field only ever given
   0) goes through the hidden row `core.__none` (`none_of` in lower_ir.rs),
   then as the literal 0 both backends read as none.
+- `and`/`or` decide from the left (2026-10-11): the right side runs only
+  where the left does not decide — `ir::short_circuits` (neither side a
+  list, a tensor, a column or a frame: a mask joins item by item, both
+  sides computed) is the one rule all three backends read: the emitter's
+  `&&`/`||` (a lazy right side where either can fail), the walker's early
+  return, the prepared form's `Ins::JumpDecided` (the left in its own
+  register, copied into the destination when it decides). Statements the
+  RIGHT side's lowering pushes (`self.pre`: a failed value's refusal, a
+  position's check) wait under the left's decision (`right_side_waits`:
+  the left into `_tN`, then `if <left goes on>` around them and `_tN =
+  right`), or `r.ok and r.x gt 0` refused `r` before asking `r.ok`.
+- A record or none compared with the literal 0 is the none test (`t.left
+  eq 0`): the lowering lets exactly that comparison past `check_order` and
+  types the 0 as the link (`Ty::OptRecord`); the emitter's
+  `optbox_comparison` asks `is_none()`/`is_some()` where the link lies (a
+  record: always one); the interpreter's `values_equal` already answers.
+- `use bits` (bitand, bitor, bitxor, bitcount, shift, code, char) is a
+  module like `doc`: rows in table.rs, `crow_runtime::bits`, the module
+  registered at the dozen places `doc` is (modules/mod.rs `module_by_path`
+  and `with_stdlib`, emit_rs/program.rs `load_module` and the `use` arm,
+  type_infer/classify.rs, checks.rs `REGISTRY_MODULES`, emit_rs/exprs.rs's
+  pinned list, main.rs's docs tables and stdlib pages). Its growing forms
+  are hidden CORE rows (`core.__bitand_big`, …: a module's `__` rows would
+  be listed as its functions), reached through `table::big_form`; a shift
+  whose range may pass 64 bits is `wide` (`wide_arith`) and takes
+  `__shift_big`. `row_iv` gives and/or/xor/shift their ranges: a mask cut
+  with `bitand` after a shift stays 64-bit (`shift[1, 13]` is exactly
+  8192 — an end from 0 had made every mask look negative).
+- `nodes[n]` is retired (2026-10-11): the process count is `crow launch
+  <n>`'s, a process reads its rank with `env['CROW_RANK', '0']`, and
+  `nodes[…]` is refused naming that (checks.rs, before "undefined
+  function"). The runtime's ring (`crow_runtime::distributed`) has no
+  builtin yet.
+

@@ -265,6 +265,9 @@ enum Ins {
     Loop { to: u32 },
     /// A decision: a failed value refused, a false one jumps.
     JumpUnless { c: R, to: u32 },
+    /// `and`/`or`'s left side decided — an error, false for `and`, true for
+    /// `or`: it is the value, into `d`, and the right side is jumped over.
+    JumpDecided { c: R, d: R, and: bool, to: u32 },
     /// A decision on two ints compared, fused: jumps when it is false.
     JumpUnlessInt { op: IntOp, a: Opnd, b: Opnd, to: u32 },
     /// A `for` loop begins: the bounds or the items into its hidden
@@ -590,7 +593,7 @@ impl Comp {
 
     fn patch(&mut self, at: usize, to: u32) {
         match &mut self.code[at] {
-            Ins::Jump { to: t } | Ins::Loop { to: t } | Ins::JumpUnless { to: t, .. } | Ins::JumpUnlessInt { to: t, .. } => *t = to,
+            Ins::Jump { to: t } | Ins::Loop { to: t } | Ins::JumpUnless { to: t, .. } | Ins::JumpUnlessInt { to: t, .. } | Ins::JumpDecided { to: t, .. } => *t = to,
             Ins::ForStart { end, .. } => *end = to,
             _ => {}
         }
@@ -1176,6 +1179,24 @@ impl Comp {
                 } else if lt == Ty::Float && rt == Ty::Float && let Some(op) = FloatOp::of(&bop) {
                     let (a, b) = self.two_regs(l, r);
                     self.emit(Ins::Float { op, d, a, b });
+                } else if matches!(bop, BinOp::And | BinOp::Or) && crate::ir::short_circuits(l, r) {
+                    // the left first; where it decides it is the value, and
+                    // the right side's instructions are jumped over (spec,
+                    // Operators)
+                    let and = matches!(bop, BinOp::And);
+                    let pa = self.expr(l);
+                    let pa = self.kept_place(pa, std::slice::from_ref(r));
+                    let a = self.reg(pa);
+                    let at = self.emit(Ins::JumpDecided { c: a, d, and, to: u32::MAX });
+                    let pb = self.expr(r);
+                    let b = self.reg(pb);
+                    if lt == Ty::Bool && rt == Ty::Bool {
+                        self.emit(Ins::Logic { and, d, a, b });
+                    } else {
+                        self.emit(Ins::Bin { op: bop, d, a, b });
+                    }
+                    let end = self.here();
+                    self.patch(at, end);
                 } else if lt == Ty::Bool && rt == Ty::Bool && matches!(bop, BinOp::And | BinOp::Or) {
                     let (a, b) = self.two_regs(l, r);
                     self.emit(Ins::Logic { and: matches!(bop, BinOp::And), d, a, b });
@@ -1746,6 +1767,14 @@ impl IrInterp {
                     regs[*d as usize].assign(v);
                 }
                 Ins::Jump { to } => return *to as usize,
+                Ins::JumpDecided { c, d, and, to } => {
+                    let v = &regs[*c as usize];
+                    if v.is_error() || v.plain_bool() == Some(!*and) {
+                        let v = copied(v);
+                        regs[*d as usize].assign(v);
+                        return *to as usize;
+                    }
+                }
                 Ins::Cancel => t!(self.check_cancel()),
                 Ins::Loop { to } => {
                     t!(self.check_cancel());
@@ -2545,6 +2574,7 @@ fn reads_writes(ins: &Ins) -> (Vec<R>, Vec<R>) {
         Ins::Float { d, a, b, .. } | Ins::Logic { d, a, b, .. } | Ins::Bin { d, a, b, .. } => (vec![*a, *b], vec![*d]),
         Ins::Jump { .. } | Ins::Loop { .. } | Ins::Cancel => (vec![], vec![]),
         Ins::JumpUnless { c, .. } => (vec![*c], vec![]),
+        Ins::JumpDecided { c, d, .. } => (vec![*c], vec![*d]),
         Ins::JumpUnlessInt { a, b, .. } => (rs(&[*a, *b]), vec![]),
         Ins::ForStart { var, ctr, hi, items, src, .. } => {
             let reads = match &**src {
@@ -2898,6 +2928,7 @@ fn typed(p: &Body) -> Option<Typed> {
             Ins::Loop { to } => TIns::Loop { to: *to },
             Ins::Cancel => TIns::Cancel,
             Ins::JumpUnless { c, .. } => wrap(&[*c], &[]),
+            Ins::JumpDecided { c, d, .. } => wrap(&[*c], &[*d]),
             Ins::JumpUnlessInt { op, a, b, to } => match (top(*a), top(*b)) {
                 (Some(TOp::R(x)), Some(TOp::R(y))) => TIns::IJumpR { op: *op, a: x, b: y, to: *to },
                 (Some(TOp::R(x)), Some(TOp::K(k))) => TIns::IJumpK { op: *op, a: x, k, to: *to },

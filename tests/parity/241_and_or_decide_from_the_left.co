@@ -1,0 +1,47 @@
+--- and/or decide from the left: the right side runs only where the left
+--- does not decide — a guard reads as written (an index past the end is not
+--- read, a failed record's field is not refused), a call on the right runs
+--- only when it is needed, an error on the left or (when reached) on the
+--- right is the value, and masks still join item by item, in both modes.
+struct P [x]
+fn noisy[v]
+    log['evaluated `v`']
+    return v
+fn maybe[s]
+    if s eq 'bad'
+        return error['no P', 'p']
+    return P[int[s]]
+fn guard[s]
+    r = maybe[s]
+    if r.ok and r.x gt 0
+        return 'positive'
+    return 'not'
+xs = [1, 2]
+i = 5
+if i lt len[xs] and xs[i] gt 0
+    log['in']
+log['guarded']
+log[false and noisy[true]]
+log[true or noisy[false]]
+log[true and noisy[false]]
+log[false or noisy[true]]
+log[guard['bad']]
+log[guard['3']]
+log[guard['0']]
+fn fallible[a, s]
+    return a and int[s] gt 0
+log[fallible[false, 'x']]
+e = fallible[true, 'x']
+log[e.ok]
+log[fallible[true, '4']]
+fn first_free[col, n]
+    c = 0
+    while c lt n and col[c] ne 0
+        c = c + 1
+    return c
+log[first_free[[1, 1, 0], 3]]
+log[first_free[[1, 1, 1], 3]]
+m = [true, false, true]
+k = [true, true, false]
+log[m and k]
+log[m or k]

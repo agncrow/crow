@@ -150,6 +150,11 @@ impl TypeContext {
                             self.registry.load(std::sync::Arc::new(crate::modules::doc::DocModule));
                         }
                     }
+                    if path == "bits" {
+                        if !self.registry.is_loaded("bits") {
+                            self.registry.load(std::sync::Arc::new(crate::modules::bits::BitsModule));
+                        }
+                    }
                     if path == "chart" {
                         if !self.registry.is_loaded("chart") {
                             self.registry.load(std::sync::Arc::new(crate::modules::chart::ChartModule));

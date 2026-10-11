@@ -32,9 +32,7 @@ if not fail.ok
 will retry
 ```
 
-The guard is its own `if`. `and` and `or` evaluate both sides, so a
-condition that touches a failed value on either side is itself the
-error:
+A guard can be its own `if`, telling each case apart:
 
 ```crow
 text = read['no_such_file.txt']
@@ -50,9 +48,21 @@ else
 unreadable
 ```
 
-Written as `if not text.ok or len[text] eq 0`, the same check is refused
-when the read fails: `len[text]` is then the error, and so is the whole
-condition.
+Or one condition, where the cases are handled alike: `and` and `or`
+decide from the left, so the right side runs only where the left has not
+already decided — `len[text]` is never asked of a read that failed:
+
+```crow
+text = read['no_such_file.txt']
+if not text.ok or len[text] eq 0
+    log['nothing to read']
+else
+    log['`len[text]` characters']
+```
+
+```text
+nothing to read
+```
 
 Inside a function, a guard whose branch leaves also *narrows*: after
 `if not text.ok` ending in `return`, `text` is known good for the rest of
