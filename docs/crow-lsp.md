@@ -89,6 +89,16 @@ generic LSP configuration for the language `crow` on files ending in `.co`.
 
 - **One binary.** The server is a subcommand of `crow` itself — no separate
   install, no version skew between the compiler and the editor.
+- **A server outlives no install.** The server watches the binary it runs
+  from: when `install.sh` or `cargo install` replaces `crow`, it stops at
+  its next message, or within two seconds when idle, and the editor starts
+  it again on the new binary — VS Code writes "Connection to server got
+  closed. Server will restart." to the server's output pane, where the
+  server also names its binary, and when it was written, at start; its
+  `serverInfo` carries the same. (A server that had outlived its install kept
+  refusing, for two days, programs the installed crow accepted — a query's
+  cell pushed onto a list — until the window was reloaded.) A reload is
+  still needed after the extension itself is reinstalled.
 - **Whole-file re-analysis per change, parts kept.** Each change re-runs
   the pipeline on the file, and a change that another change to the same
   file has overtaken is not analysed at all. The parts it imports are

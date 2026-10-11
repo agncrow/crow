@@ -31,6 +31,13 @@ pub fn run_server() -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
     // keystroke: a part validated alone had asked one
     // (Rust 2024: the environment is process-global; no thread runs yet)
     unsafe { std::env::set_var("CROW_NO_DESCRIBE", "1") };
+    let binary = std::env::current_exe().ok().map(Binary::of);
+    let version = match &binary {
+        Some(b) => format!("{} {}", env!("CARGO_PKG_VERSION"), b.describe()),
+        None => env!("CARGO_PKG_VERSION").to_string(),
+    };
+    // (the editor's output pane for the server says which crow answers)
+    eprintln!("crow lsp: crow {}", version);
     let (connection, io_threads) = Connection::stdio();
     let capabilities = ServerCapabilities {
         text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
@@ -48,8 +55,18 @@ pub fn run_server() -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
         rename_provider: Some(OneOf::Right(lsp_types::RenameOptions { prepare_provider: Some(true), work_done_progress_options: Default::default() })),
         ..Default::default()
     };
-    let init_params = connection.initialize(serde_json::to_value(capabilities)?)?;
-    main_loop(&connection, init_params)?;
+    let (id, init_params) = connection.initialize_start()?;
+    let result = lsp_types::InitializeResult {
+        capabilities,
+        server_info: Some(lsp_types::ServerInfo { name: "crow".into(), version: Some(version) }),
+    };
+    connection.initialize_finish(id, serde_json::to_value(result)?)?;
+    if main_loop(&connection, init_params, binary.as_ref())? == Left::BinaryChanged {
+        // the editor starts the server again, on the binary installed now
+        // (the reader thread waits on a stdin the client keeps open: no join)
+        eprintln!("crow lsp: the crow binary changed since this server started — stopping, so the editor starts the new one");
+        std::process::exit(0);
+    }
     // The writer thread ends when the last sender is dropped — drop the
     // connection before joining or the join deadlocks.
     drop(connection);
@@ -63,10 +80,71 @@ pub(crate) struct State {
     db_url: Option<String>,
 }
 
+/// Why the loop ended: the client ended the session (a shutdown, or its
+/// connection closed), or the server's binary changed under it.
+#[derive(Debug, PartialEq)]
+enum Left {
+    ByClient,
+    BinaryChanged,
+}
+
+/// The binary this server runs: its path, and the file's modified time and
+/// length as the server started. An install replaces the file while an
+/// editor's server keeps running the old one — it had served a two-day-old
+/// compiler, refusing what the installed crow accepted — so the loop
+/// watches the file and leaves when it is no longer the one it started
+/// from; the editor starts the server again, on the new binary.
+pub(crate) struct Binary {
+    path: PathBuf,
+    stamp: (Option<std::time::SystemTime>, u64),
+}
+
+impl Binary {
+    pub(crate) fn of(path: PathBuf) -> Binary {
+        let stamp = stamp(&path);
+        Binary { path, stamp }
+    }
+
+    /// Whether the file is no longer the one the server started from:
+    /// rewritten, replaced or gone. A rewrite still in progress is waited
+    /// out, so the editor does not start a half-copied binary.
+    pub(crate) fn changed(&self) -> bool {
+        let mut now = stamp(&self.path);
+        if now == self.stamp {
+            return false;
+        }
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            let next = stamp(&self.path);
+            if next == now {
+                break;
+            }
+            now = next;
+        }
+        true
+    }
+
+    /// "at /usr/local/bin/crow, written Oct 10 16:32" (the file's modified
+    /// time: the install, for an installed crow).
+    fn describe(&self) -> String {
+        let built = match self.stamp.0 {
+            Some(t) => chrono::DateTime::<chrono::Local>::from(t).format("written %b %d %H:%M").to_string(),
+            None => "written at an unknown time".to_string(),
+        };
+        format!("at {}, {}", self.path.display(), built)
+    }
+}
+
+/// A file's modified time and length; none and zero when it cannot be read.
+fn stamp(path: &std::path::Path) -> (Option<std::time::SystemTime>, u64) {
+    std::fs::metadata(path).map(|m| (m.modified().ok(), m.len())).unwrap_or((None, 0))
+}
+
 fn main_loop(
     connection: &Connection,
     init_params: serde_json::Value,
-) -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
+    binary: Option<&Binary>,
+) -> Result<Left, Box<dyn std::error::Error + Sync + Send>> {
     let init: InitializeParams = serde_json::from_value(init_params).unwrap_or_default();
     let root = init
         .workspace_folders
@@ -92,11 +170,23 @@ fn main_loop(
     loop {
         let msg = match waiting.pop_front() {
             Some(m) => m,
-            None => match connection.receiver.recv() {
+            None => match connection.receiver.recv_timeout(std::time::Duration::from_secs(2)) {
                 Ok(m) => m,
+                // (idle: the binary is looked at every two seconds)
+                Err(e) if e.is_timeout() => {
+                    if binary.is_some_and(Binary::changed) {
+                        return Ok(Left::BinaryChanged);
+                    }
+                    continue;
+                }
                 Err(_) => break,
             },
         };
+        // a message arriving after the binary changed is the new server's
+        // to answer: the client opens its documents again when it starts
+        if binary.is_some_and(Binary::changed) {
+            return Ok(Left::BinaryChanged);
+        }
         // a change another change to the same document has overtaken is not
         // analysed: typing into a file that takes seconds to analyse had
         // queued an analysis per keystroke
@@ -107,7 +197,7 @@ fn main_loop(
         match msg {
             Message::Request(req) => {
                 if connection.handle_shutdown(&req)? {
-                    return Ok(());
+                    return Ok(Left::ByClient);
                 }
                 let resp = handle_request(&state, req);
                 connection.sender.send(Message::Response(resp))?;
@@ -129,7 +219,7 @@ fn main_loop(
             Message::Response(_) => {}
         }
     }
-    Ok(())
+    Ok(Left::ByClient)
 }
 
 /// A document's open or change, or the latest change to it already waiting
@@ -359,7 +449,7 @@ mod tests {
             let init = server_conn
                 .initialize(serde_json::to_value(caps).unwrap())
                 .unwrap();
-            main_loop(&server_conn, init).unwrap();
+            main_loop(&server_conn, init, None).unwrap();
         });
 
         // -- handshake
@@ -439,5 +529,78 @@ mod tests {
             .send(Message::Notification(N::new("exit".into(), serde_json::Value::Null)))
             .unwrap();
         server.join().unwrap();
+    }
+
+    /// The server leaves when its binary is replaced, as an install
+    /// replaces it, so the editor starts the new one; a message arriving
+    /// after the change is not answered by the old server (it had kept
+    /// answering, two days after the install).
+    #[test]
+    fn the_server_leaves_when_its_binary_changes() {
+        let dir = std::env::temp_dir().join(format!("crow_lsp_binary_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("crow");
+        std::fs::write(&exe, b"the binary as installed").unwrap();
+        let binary = Binary::of(exe.clone());
+        assert!(!binary.changed(), "untouched, it is the binary the server started from");
+
+        let (server_conn, client_conn) = Connection::memory();
+        let server = std::thread::spawn(move || {
+            let init = server_conn.initialize(serde_json::json!({})).unwrap();
+            main_loop(&server_conn, init, Some(&binary)).unwrap()
+        });
+        client_conn.sender.send(Message::Request(R::new(RequestId::from(1), "initialize".into(), serde_json::json!({"capabilities": {}})))).unwrap();
+        let _ = client_conn.receiver.recv().unwrap();
+        client_conn.sender.send(Message::Notification(N::new("initialized".into(), serde_json::json!({})))).unwrap();
+        client_conn
+            .sender
+            .send(Message::Notification(N::new(
+                DidOpenTextDocument::METHOD.into(),
+                serde_json::json!({"textDocument": {"uri": "file:///demo.co", "languageId": "crow", "version": 1, "text": "x = 1\n"}}),
+            )))
+            .unwrap();
+        let Message::Notification(n) = client_conn.receiver.recv().unwrap() else { panic!("expected publishDiagnostics") };
+        assert_eq!(n.method, PublishDiagnostics::METHOD);
+
+        // the install: a rebuilt binary in the file's place
+        std::fs::write(&exe, b"the binary as installed, then rebuilt").unwrap();
+        client_conn
+            .sender
+            .send(Message::Request(R::new(
+                RequestId::from(2),
+                HoverRequest::METHOD.into(),
+                serde_json::json!({"textDocument": {"uri": "file:///demo.co"}, "position": {"line": 0, "character": 0}}),
+            )))
+            .unwrap();
+        assert_eq!(server.join().unwrap(), Left::BinaryChanged);
+        // (the old server answered nothing: its connection closed instead)
+        assert!(client_conn.receiver.recv().is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A binary rewritten to the same length is noticed by its modified
+    /// time, a binary gone is changed, and one stamped anew is current
+    #[test]
+    fn a_binary_is_known_by_its_modified_time_and_length() {
+        let dir = std::env::temp_dir().join(format!("crow_lsp_stamp_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("crow");
+        std::fs::write(&exe, b"a binary").unwrap();
+        let binary = Binary::of(exe.clone());
+        assert!(!binary.changed());
+        assert!(binary.describe().starts_with(&format!("at {}, written ", exe.display())), "{}", binary.describe());
+        // (the same bytes, written later: a filesystem counting whole
+        // seconds would not tell them apart, so the time is set outright)
+        std::fs::write(&exe, b"a binary").unwrap();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+        std::fs::File::options().write(true).open(&exe).unwrap().set_modified(later).unwrap();
+        assert!(binary.changed(), "rewritten to the same length, it is a different binary");
+        let binary = Binary::of(exe.clone());
+        assert!(!binary.changed(), "stamped anew, it is current");
+        std::fs::remove_file(&exe).unwrap();
+        assert!(binary.changed(), "gone, it is not the binary the server started from");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

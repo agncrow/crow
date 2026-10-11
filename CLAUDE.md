@@ -67,6 +67,15 @@ steps on every push and must be green.
   to `~/.crow/src` for that reason.
 - After verifying a served app (finch on 3100), run `crow stop` so the
   port is free for the user.
+- The editor's language server is a process: VS Code's `crow lsp` kept
+  the binary it started from for two days after `install.sh` replaced it,
+  and refused a query's cell pushed onto a list long after the installed
+  crow accepted it (parity 233). The server now leaves when its binary
+  changes and the editor starts it again (`lsp::Binary`); its output pane
+  names the binary it runs and when it was written. The extension's installed copy
+  is a second process to keep current: any change under `editors/vscode`
+  is repackaged and reinstalled (docs/crow-lsp.md), then the window
+  reloaded.
 - Every build checks the IR of every program it lowers (`CROW_IR_VERIFY`:
   strict unless set to `off` or `report`; a release binary had skipped
   the check until 2026-10-08, so a lowering slip reached the backends
