@@ -10,6 +10,7 @@ Every module ships with the compiler: `use` it and its names are there in both e
 | math.nn | `use math.nn` | 8 | [math.nn](math-nn.md) |
 | frame | `use frame` | 23 | [frame](frame.md) |
 | db | `use db` | 7 | [db](db.md) |
+| llm | `use llm` | 9 | [llm](llm.md) |
 | io | `use io` | 2 | [io](io.md) |
 | doc | `use doc` | 6 | [doc](doc.md) |
 | bits | `use bits` | 7 | [bits](bits.md) |

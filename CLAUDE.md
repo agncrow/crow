@@ -42,6 +42,7 @@ cargo clippy --workspace --all-features
 ./target/release/crow test src/modules/web.co
 ./target/release/crow test src/modules/ws.co
 ./target/release/crow test src/modules/mail.co
+./target/release/crow test src/modules/llm.co
 ./target/release/crow test src/modules/stats.co
 ./target/release/crow test src/modules/clickhouse.co
 ./target/release/crow test src/modules/postgres.co
@@ -348,6 +349,25 @@ steps on every push and must be green.
   of a million rows was 20–45× slower than `frame_of_csv`. The rows a
   database answers are decoded by a kernel (`frame_of_rowbinary`,
   `frame_of_postgres`); the protocol around them is Crow's.
+- A Crow-written row's parameter that is a parsed value, a map or a
+  record is `Encoded` in the table: the lowering writes the argument as its
+  JSON text (`crow_call_args`) and the Crow body reads it back with
+  `json[…]` at its door (`llm.co`'s `talk_of`, `model_of`). A `Json` kind
+  on a `crow!` row is "a bug in Crow" as the program runs. Such a row is
+  NOT listed in `ir::EFFECTS`: the effect path re-encodes the argument
+  through the by-name bridge, and the text arrived quoted (`"{\"base\"…`);
+  a Crow row's effects are its body's (`request`, `send`, `recv`), which
+  the call graph carries. Inside a module, `split[text, '']` keeps an empty
+  end on each side (`['', '1', 'a', '']`), an interpolation holds no quote
+  and no backslash (`` `join[xs, ', ']` `` and `` `join[xs, '\n']` `` are
+  hoisted into a variable first), a variable set in a branch is not in
+  scope after it, `text`, `input`, `args` and (with `use math`) `max` are
+  builtins and so no parameter's name, and `a.ok and a.field` reads the
+  field of a failed value — nest the `if`s. A list of float lists is not a
+  matrix for `tensor` or `stack`: a list of row tensors is (`stack[rows]`
+  with `rows = push[rows, tensor[numbers]]`); a list of lists of values
+  that can fail handed to `stack` passes the lowering and fails only in the
+  verifier (open).
 - A standard module written in Crow (`src/modules/*.co`) is read in its own
   scope: inside its inlined functions the program's names are invisible
   (`calls_fn` in lower_ir.rs, lower.rs, checks.rs and type_infer/calls.rs).

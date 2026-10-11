@@ -80,7 +80,7 @@ pub(crate) static BUILTINS: std::sync::LazyLock<Vec<&'static str>> = std::sync::
 });
 
 /// The modules whose functions and constants a bare `use` makes names.
-const REGISTRY_MODULES: &[&str] = &["math", "math.stats", "math.nn", "io", "frame", "doc", "chart", "sys", "bits"];
+const REGISTRY_MODULES: &[&str] = &["math", "math.stats", "math.nn", "io", "frame", "doc", "chart", "sys", "bits", "llm"];
 
 /// Whether a `use` names a standard module: one the registry loads, one
 /// written in Crow (src/modules/*.co), or db, ui and web.ui, which the

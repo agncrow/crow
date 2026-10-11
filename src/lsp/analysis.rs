@@ -33,6 +33,7 @@ pub fn analyze(
 ) -> Analysis {
     let mut diagnostics = Vec::new();
 
+    crate::note_fn_docs("", text);
     // Tokenize. A lexer error poisons the whole file — report it and stop.
     let tokens = match Lexer::new(text).tokenize() {
         Ok(t) => t,

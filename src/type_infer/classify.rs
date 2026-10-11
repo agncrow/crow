@@ -185,6 +185,9 @@ impl TypeContext {
                     if path == "web.mail" && !self.registry.is_loaded("web.mail") {
                         self.registry.load(std::sync::Arc::new(crate::modules::web::MailModule));
                     }
+                    if path == "llm" && !self.registry.is_loaded("llm") {
+                        self.registry.load(std::sync::Arc::new(crate::modules::llm::LlmModule));
+                    }
                 }
                 Stmt::Resource { kind, count } => {
                     if kind == "cpu" {

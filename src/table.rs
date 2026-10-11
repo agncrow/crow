@@ -2099,6 +2099,24 @@ pub static ROWS: &[Row] = &[
     crow!("web.ws.close_socket", "web.ws", "close", (Socket) -> Str, never),
     // mail written in Crow (src/modules/mail.co): SMTP over the sys layer
     crow!("web.mail.mail", "web.mail", "mail", (Mailer, Str, Str, Str) -> Bool, value "mail"),
+    // a language model as a connection, written in Crow (src/modules/llm.co):
+    // the model's description, a conversation and a reply are parsed values
+    // in one shape; `chat`'s and `follow`'s options (system, tools, max,
+    // temperature) are filled in by name (crate::lower::llm_options), and a
+    // `tools` list of functions becomes their schemas (crate::lower_ir)
+    crow!("llm.reach", "llm", "reach", (Str) -> Json, value "llm"),
+    crow!("llm.ask", "llm", "ask", (Str) -> Json, value "llm"),
+    // (a model's description, a conversation, a reply and a call reach the
+    // Crow body as their JSON text — `Encoded`, as sign's claims do — and
+    // are read back with json[…] at the row's door)
+    crow!("llm.ask_more", "llm", "ask", (Encoded, Str) -> Json, value "llm"),
+    crow!("llm.said", "llm", "said", (Encoded, Encoded) -> Json, value "llm"),
+    crow!("llm.told", "llm", "told", (Encoded, Encoded, Str) -> Json, value "llm"),
+    crow!("llm.chat", "llm", "chat", (Encoded, Encoded, Str, Strs, Int, Float) -> Json, value "llm"),
+    crow!("llm.follow", "llm", "follow", (Encoded, Encoded, Str, Strs, Int, Float) -> Socket, value "llm"),
+    crow!("llm.next_piece", "llm", "next", (Socket) -> Str, value "llm"),
+    crow!("llm.whole", "llm", "reply", (Socket) -> Json, value "llm"),
+    crow!("llm.embed", "llm", "embed", (Encoded, Strs) -> Tensor, value "llm"),
     // frame (a column the frame lacks, an aggregation or a join it does not
     // know, a mask or a count that does not fit: the reason the program
     // stops with, as df.col of a missing column is — the interpreter had

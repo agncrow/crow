@@ -161,6 +161,12 @@ fn request_options() -> Vec<(&'static str, Expr)> {
     ]
 }
 
+/// What a model is asked with beyond the connection and the conversation
+/// (`chat`, `follow`), and the default of each (spec, section 13: llm).
+pub(crate) fn llm_options() -> Vec<(&'static str, Expr)> {
+    vec![("system", Expr::Str(String::new())), ("tools", Expr::Array(vec![])), ("max", Expr::Int(1024)), ("temperature", Expr::Float(1.0))]
+}
+
 #[derive(Clone)]
 struct FnSig {
     params: Vec<String>,
@@ -840,6 +846,11 @@ impl Lowerer {
         self.imports.get(name).is_some_and(|p| p == module) && self.module_imported(name)
     }
 
+    /// Whether the file whose code this is imports a module, under any name.
+    fn imports_path(&self, module: &str) -> bool {
+        self.imports.iter().any(|(alias, path)| path == module && self.module_imported(alias))
+    }
+
     /// Whether a name the program calls through is an import of the file
     /// whose code this is: in the entry's code a module only a part imports
     /// is not imported; inside a part's function the part's own serves, and
@@ -1260,6 +1271,30 @@ impl Lowerer {
                         }
                         if positional.len() < 3 {
                             positional.push(Expr::Str(String::new()));
+                        }
+                        positional.extend(options);
+                        Expr::Call { callee: Box::new(callee), args: positional }
+                    }
+                    // chat[m, talk] and follow[m, talk], each with system, tools,
+                    // max and temperature by name, the ones left out filled in:
+                    // one row says every ask of a model (spec, section 13: llm)
+                    Some(name @ ("chat" | "follow")) if !self.fns.contains_key(name) && self.imports_path("llm") => {
+                        let (mut positional, options) = self.options(name, args, &llm_options())?;
+                        if positional.len() != 2 {
+                            return Err(self.err(format!("{0}[] takes a model and a conversation, then system, tools, max and temperature by name: {0}[m, talk, system = 'Answer briefly']", name)));
+                        }
+                        positional.extend(options);
+                        Expr::Call { callee: Box::new(callee), args: positional }
+                    }
+                    // llm.chat[…], llm.follow[…]: the same, qualified
+                    None if matches!(&callee, Expr::FieldAccess { object, field } if matches!(object.as_ref(), Expr::Ident(m) if self.imports.get(m).is_some_and(|p| p == "llm")) && matches!(field.as_str(), "chat" | "follow")) => {
+                        let name = match &callee {
+                            Expr::FieldAccess { field, .. } => field.clone(),
+                            _ => "chat".to_string(),
+                        };
+                        let (mut positional, options) = self.options(&name, args, &llm_options())?;
+                        if positional.len() != 2 {
+                            return Err(self.err(format!("{0}[] takes a model and a conversation, then system, tools, max and temperature by name: {0}[m, talk, system = 'Answer briefly']", name)));
                         }
                         positional.extend(options);
                         Expr::Call { callee: Box::new(callee), args: positional }

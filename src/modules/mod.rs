@@ -4,6 +4,7 @@ pub mod db;
 pub mod doc;
 pub mod frame;
 pub mod io;
+pub mod llm;
 pub mod math;
 pub mod nn;
 pub mod stats;
@@ -33,6 +34,7 @@ pub fn crow_source(path: &str) -> Option<&'static str> {
         "web" => Some(WEB_SOURCE),
         "db.clickhouse" => Some(CLICKHOUSE_SOURCE),
         "db.postgres" => Some(POSTGRES_SOURCE),
+        "llm" => Some(LLM_SOURCE),
         _ => None,
     }
 }
@@ -62,6 +64,8 @@ pub(crate) const POSTGRES_SOURCE: &str = include_str!("postgres.co");
 /// over the sys primitives: `sys.exchange`, `sys.fetch`, `sys.put`, the
 /// formats; a module that imports `sys` inlines it.
 pub(crate) const SYS_SOURCE: &str = include_str!("sys.co");
+/// `use llm`: a language model as a connection, written in Crow.
+pub(crate) const LLM_SOURCE: &str = include_str!("llm.co");
 /// `io.lines`, `io.csv`: readers written in Crow.
 pub(crate) const IO_SOURCE: &str = include_str!("io.co");
 /// `frame.load`, `frame.save`: written in Crow.
@@ -75,7 +79,7 @@ pub(crate) const CORE_SOURCE: &str = include_str!("core.co");
 
 /// The modules written in Crow, with the prefix their functions carry (the
 /// core's, imported by no `use`, carries `_core`).
-const CROW_MODULES: &[(&str, &str)] = &[("math.nn", "_math_nn"), ("", "_core"), ("sys", "_sys"), ("io", "_io"), ("frame", "_frame"), ("math", "_math"), ("web.auth", "_web_auth"), ("web.ws", "_web_ws"), ("web.mail", "_web_mail"), ("web", "_web"), ("math.stats", "_math_stats"), ("db.clickhouse", "_db_clickhouse"), ("db.postgres", "_db_postgres")];
+const CROW_MODULES: &[(&str, &str)] = &[("math.nn", "_math_nn"), ("", "_core"), ("sys", "_sys"), ("io", "_io"), ("frame", "_frame"), ("math", "_math"), ("web.auth", "_web_auth"), ("web.ws", "_web_ws"), ("web.mail", "_web_mail"), ("web", "_web"), ("math.stats", "_math_stats"), ("db.clickhouse", "_db_clickhouse"), ("db.postgres", "_db_postgres"), ("llm", "_llm")];
 
 thread_local! {
     /// What each inlined module imports (its own `use` lines), by its
@@ -102,6 +106,7 @@ pub fn module_by_path(path: &str) -> Option<Arc<dyn CrowModule>> {
         "web.auth" => Arc::new(web::AuthModule),
         "web.ws" => Arc::new(web::WsModule),
         "web.mail" => Arc::new(web::MailModule),
+        "llm" => Arc::new(llm::LlmModule),
         _ => return None,
     })
 }

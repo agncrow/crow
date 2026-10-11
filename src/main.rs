@@ -782,9 +782,10 @@ fn reference_tables(h2: &str, h3: &str, h4: &str) -> Option<Vec<&'static str>> {
         "sys" => vec!["sys"],
         "frame" => vec!["frame"],
         "db" => vec!["db"],
+        "llm" => vec!["llm"],
         h if h == "web" || h.starts_with("Layout") => vec!["web", "ui", "element", "control", "chart"],
         // the section's opening, before any module's heading
-        _ => vec!["core", "web", "ui", "element", "control", "math", "math.stats", "math.nn", "frame", "db", "io", "doc", "bits", "chart", "sys"],
+        _ => vec!["core", "web", "ui", "element", "control", "math", "math.stats", "math.nn", "frame", "db", "io", "doc", "bits", "chart", "sys", "llm"],
     })
 }
 
@@ -820,6 +821,7 @@ fn cmd_test_docs() {
         ("bits", modules::bits::BITS_FUNCTIONS.to_vec()),
         ("chart", modules::chart::CHART_FUNCTIONS.to_vec()),
         ("sys", modules::sys::SYS_FUNCTIONS.to_vec()),
+        ("llm", modules::llm::LLM_FUNCTIONS.to_vec()),
     ];
     for (_, names) in tables.iter_mut() { names.sort(); names.dedup(); }
     let known: BTreeSet<&str> = tables.iter().flat_map(|(_, ns)| ns.iter().copied()).collect();
@@ -872,7 +874,7 @@ fn cmd_test_docs() {
             page_blocks.push((p.strip_prefix(book_dir).unwrap_or(p).to_string_lossy().to_string(), title, mine));
         }
     }
-    for m in ["math", "math.stats", "math.nn", "frame", "io", "db", "doc", "bits", "chart", "sys", "web", "ui"] {
+    for m in ["math", "math.stats", "math.nn", "frame", "io", "db", "doc", "bits", "chart", "sys", "web", "ui", "llm"] {
         let used = blocks.lines().any(|l| l.starts_with("use ") && l[4..].split(',').any(|part| {
             let part = part.trim();
             let base = part.split(" as ").next().unwrap_or(part).trim();
@@ -1003,6 +1005,7 @@ fn cmd_test_docs() {
     if nn.is_some() { add("math-nn", "math.nn", "use math.nn", "math.nn", "Activation functions, losses, and a linear layer for small networks with autograd.", one(nn), vec![]); }
     if let Some(f) = section("### frame") { add("frame", "frame", "use frame", "frame", "Column-oriented data frames: load, select, filter, sort, group, join, and time handling.", one(Some(f)), vec![]); }
     if let Some(d) = section("### db") { add("db", "db", "use db", "db", "Databases as connections: query, exec, bulk insert, transactions, migrations, and pooling.", one(Some(d)), vec![]); }
+    if let Some(l) = section("### llm") { add("llm", "llm", "use llm", "llm", "A language model as a connection: conversations, replies, tools as the functions themselves, a reply followed piece by piece, and embeddings, over Anthropic's and the OpenAI-compatible wire formats.", one(Some(l)), vec![]); }
     if let Some(i) = section("### io") { add("io", "io", "use io", "io", "Structured file parsing beyond the built-in read and write.", one(Some(i)), vec![]); }
     if let Some(d) = section("### doc") { add("doc", "doc", "use doc", "doc", "Documentation from Markdown, rendered by the kernel so both execution modes write the same pages.", one(Some(d)), vec![]); }
     if let Some(b) = section("### bits") { add("bits", "bits", "use bits", "bits", "An int's bits — read as two's complement of any width — and a character's code.", one(Some(b)), vec![]); }
@@ -4411,7 +4414,47 @@ fn read_file(filename: &str) -> String {
     }
 }
 
+thread_local! {
+    /// The comment written above each function, by the function's name as
+    /// the lowering knows it (a part's under its prefix): what a tool's
+    /// schema says the function does (spec, llm: Tools are the functions).
+    static FN_DOCS: std::cell::RefCell<std::collections::BTreeMap<String, String>> = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+}
+
+/// The comment lines directly above each `fn` of a source, noted under
+/// the function's name with the prefix its file's functions carry: the
+/// sentence the code already carries, which a tool's schema quotes.
+pub(crate) fn note_fn_docs(prefix: &str, source: &str) {
+    let lines: Vec<&str> = source.lines().collect();
+    FN_DOCS.with(|d| {
+        let mut docs = d.borrow_mut();
+        for (i, line) in lines.iter().enumerate() {
+            let Some(rest) = line.strip_prefix("fn ") else { continue };
+            let name: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+            if name.is_empty() {
+                continue;
+            }
+            let mut above: Vec<String> = Vec::new();
+            let mut k = i;
+            while k > 0 {
+                k -= 1;
+                let Some(text) = lines[k].strip_prefix("---") else { break };
+                above.push(text.trim().to_string());
+            }
+            above.reverse();
+            let doc = above.join(" ").trim().to_string();
+            docs.insert(format!("{}{}", prefix, name), doc);
+        }
+    });
+}
+
+/// The comment above a function, by its name; none where there is none.
+pub(crate) fn fn_doc(name: &str) -> Option<String> {
+    FN_DOCS.with(|d| d.borrow().get(name).filter(|s| !s.is_empty()).cloned())
+}
+
 pub(crate) fn build(source: &str) -> Result<Vec<ast::Stmt>, String> {
+    note_fn_docs("", source);
     let mut lexer = Lexer::new(source);
     let tokens = lexer.tokenize()?;
     let mut parser = Parser::new(tokens);
@@ -5486,6 +5529,7 @@ fn expand_into(
             Some(pk) => format!("{}_{}", pk, file_rel.replace('/', "_")),
             None => file_rel.replace('/', "_"),
         };
+        note_fn_docs(&format!("{}_", prefix), &source);
         // the baseline attributes each declaration to its part's file
         EXPANSION_PARTS.with(|p| {
             let root = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());

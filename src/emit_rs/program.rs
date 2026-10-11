@@ -97,6 +97,7 @@ impl Emitter {
             "web.mail" => std::sync::Arc::new(crate::modules::web::MailModule),
             "db.clickhouse" => std::sync::Arc::new(crate::modules::db::ClickhouseDriver),
             "db.postgres" => std::sync::Arc::new(crate::modules::db::PostgresDriver),
+            "llm" => std::sync::Arc::new(crate::modules::llm::LlmModule),
             _ => return,
         };
         self.registry.load(m);
@@ -129,7 +130,7 @@ impl Emitter {
                     self.needs_crow_runtime = true;
                     self.load_module("io");
                 }
-                "frame" | "doc" | "chart" | "bits" => {
+                "frame" | "doc" | "chart" | "bits" | "llm" => {
                     self.needs_crow_runtime = true;
                     self.load_module(&path);
                 }

@@ -798,6 +798,11 @@ struct Lowerer<'a> {
     /// The parameter list of the query or exec being lowered, as written
     /// (`{:?}` of its items): the one list of several kinds.
     params_items: Option<String>,
+    /// The kind each function's body reads a parsed value handed to a
+    /// parameter as — `upper[city]` text, `city + 0` a number, `str[city]`
+    /// text — by function and parameter: what a tool's schema says the
+    /// parameter is, where inference says only "a parsed value".
+    param_reads: BTreeMap<String, BTreeMap<String, Ty>>,
     temp: usize,
     at: Where,
     in_ui: bool,
@@ -880,6 +885,14 @@ fn mask_pick(base: &Ty, index: &Ty) -> Option<(&'static crate::table::Row, Ty)> 
     crate::table::core_row(row_name, &kinds).map(|row| (row, ty))
 }
 
+/// A tool's parameter as a model can hand it: its JSON schema, or why it
+/// cannot be told one.
+enum Handed {
+    Schema(String),
+    Untyped,
+    Unhandable(&'static str),
+}
+
 impl<'a> Lowerer<'a> {
     fn new(ctx: &'a mut TypeContext, in_ui: bool) -> Self {
         let web = ctx.bare_modules.iter().chain(ctx.module_aliases.values()).any(|m| m == "web" || m.starts_with("web."));
@@ -899,6 +912,7 @@ impl<'a> Lowerer<'a> {
             route_derived: None,
             in_fact_default: false,
             params_items: None,
+            param_reads: BTreeMap::new(),
             calls: BTreeMap::new(),
             direct_effects: BTreeMap::new(),
             current_fn: String::new(),
@@ -2371,10 +2385,27 @@ impl<'a> Lowerer<'a> {
     /// is itself. (Each such use had been refused until read by hand, and
     /// a parsed value decided on, negated or joined with and had run
     /// interpreted and not built compiled.)
+    /// A parsed value handed to a parameter, read in the body as a kind:
+    /// noted for the function's tool schema (`tool_schema`).
+    fn note_param_read(&mut self, expr: &Expr, kind: &Ty) {
+        let local = match expr {
+            Expr::Convert { expr: inner, .. } => inner.as_ref(),
+            other => other,
+        };
+        if let Expr::Local(p, lt) = local {
+            let is_param = matches!(lt.payload(), Ty::Json) && self.ctx.functions.get(&self.current_fn).is_some_and(|sig| sig.params.iter().any(|(n, _)| n == p));
+            if is_param && !matches!(kind, Ty::Unknown) {
+                let read = if matches!(kind, Ty::Markup) { Ty::Str } else { kind.clone() };
+                self.param_reads.entry(self.current_fn.clone()).or_default().insert(p.clone(), read);
+            }
+        }
+    }
+
     fn read_json(&mut self, expr: Expr, kind: &Ty, what: &str) -> Expr {
         if !matches!(expr.ty().payload(), Ty::Json) {
             return expr;
         }
+        self.note_param_read(&expr, kind);
         let row_name = match kind {
             Ty::Int => "__read_int",
             Ty::Float => "__read_float",
@@ -3403,6 +3434,16 @@ impl<'a> Lowerer<'a> {
     /// of what each `?` takes, sent one by one), exempt from the rule
     /// that a list holds one kind, whichever path lowers the call
     fn call(&mut self, callee: &A, args: &[A]) -> Result<Expr, String> {
+        // `tools = [weather, search]` handed to a model: the functions
+        // themselves, written as their schemas before the call is lowered
+        let tooled;
+        let args: &[A] = match self.llm_tools(callee, args) {
+            Some(rewritten) => {
+                tooled = rewritten;
+                &tooled
+            }
+            None => args,
+        };
         let saved = self.params_items.take();
         if let (A::Ident(name), Some(A::Array(items))) = (callee, args.get(2)) {
             if matches!(name.as_str(), "query" | "exec") {
@@ -3412,6 +3453,149 @@ impl<'a> Lowerer<'a> {
         let out = self.call_inner(callee, args);
         self.params_items = saved;
         out
+    }
+
+    /// A call of llm's `chat` or `follow` whose `tools` (the fourth
+    /// argument, filled in by crate::lower::llm_options) is a list written
+    /// in the call: the arguments with each function replaced by its
+    /// schema as text — its name, its parameters by name with the kinds
+    /// inference found, and the comment above it as its description (spec,
+    /// section 13: Tools are the functions). A list that is not the
+    /// functions written, and a parameter typed by nothing, are refused.
+    fn llm_tools(&mut self, callee: &A, args: &[A]) -> Option<Vec<A>> {
+        let llm_fn = |l: &Self, n: &str| matches!(n, "chat" | "follow") && !l.calls_fn(n);
+        let asked = match callee {
+            A::Ident(n) => llm_fn(self, n) && self.ctx.bare_modules.contains("llm"),
+            A::FieldAccess { object, field } => {
+                llm_fn(self, field) && matches!(object.as_ref(), A::Ident(m) if m == "llm" || self.ctx.module_aliases.get(m).is_some_and(|p| p == "llm"))
+            }
+            _ => false,
+        };
+        if !asked || args.len() != 6 {
+            return None;
+        }
+        let A::Array(items) = &args[3] else {
+            if self.pass == Pass::Final {
+                self.refuse("tools = […] takes the functions written: tools = [weather, search]".to_string());
+            }
+            return None;
+        };
+        if items.is_empty() {
+            return None;
+        }
+        let mut schemas: Vec<A> = Vec::new();
+        for item in items {
+            match item {
+                A::Ident(f) if self.ctx.functions.contains_key(f) && !self.declared(f) => schemas.push(A::Str(self.tool_schema(f))),
+                _ => {
+                    if self.pass == Pass::Final {
+                        let shown = match item {
+                            A::Ident(f) => format!("'{}' is no function of the program", crate::lower::shown(f)),
+                            A::Str(t) => format!("'{}' is text, not the function", t),
+                            _ => "a value is no function".to_string(),
+                        };
+                        self.refuse(format!("tools = […] takes the functions written: tools = [weather, search] ({})", shown));
+                    }
+                    return None;
+                }
+            }
+        }
+        let mut rewritten = args.to_vec();
+        rewritten[3] = A::Array(schemas);
+        Some(rewritten)
+    }
+
+    /// A function's schema as a model is told it: name, description and
+    /// its parameters as a JSON schema object, every parameter required.
+    fn tool_schema(&mut self, name: &str) -> String {
+        let quoted = |s: &str| serde_json::to_string(s).unwrap_or_default();
+        let params: Vec<(String, Ty)> = self.ctx.functions.get(name).map(|sig| sig.params.clone()).unwrap_or_default();
+        let mut properties: Vec<String> = Vec::new();
+        let mut required: Vec<String> = Vec::new();
+        for (p, ty) in &params {
+            // a parameter handed a parsed value is the kind the body reads it as
+            let handed = matches!(ty.payload(), Ty::Json);
+            let ty = if handed { self.param_reads.get(name).and_then(|m| m.get(p)).cloned().unwrap_or(Ty::Unknown) } else { ty.clone() };
+            let schema = match self.handed_schema(&ty) {
+                Handed::Schema(s) => s,
+                Handed::Untyped => {
+                    if self.pass == Pass::Final {
+                        if handed {
+                            self.refuse(format!("{0}'s parameter '{1}' is handed a parsed value and read as nothing — read it in the body as what it is (upper[{1}] reads text, {1} + 0 a number, str[{1}] text), or call {0}[…] once with a value of its kind", crate::lower::shown(name), p));
+                        } else {
+                            self.refuse(format!("{0}'s parameter '{1}' is typed by nothing — read it in the body, or call {0}[…] once with a value of its kind", crate::lower::shown(name), p));
+                        }
+                    }
+                    "{\"type\": \"string\"}".to_string()
+                }
+                Handed::Unhandable(what) => {
+                    if self.pass == Pass::Final {
+                        self.refuse(format!("{0}'s parameter '{1}' takes {2}, which a model cannot hand it: a tool takes numbers, text, bools, lists, records and parsed values", crate::lower::shown(name), p, what));
+                    }
+                    "{\"type\": \"string\"}".to_string()
+                }
+            };
+            properties.push(format!("{}: {}", quoted(p), schema));
+            required.push(quoted(p));
+        }
+        let doc = crate::fn_doc(name).unwrap_or_default();
+        format!(
+            "{{\"name\": {}, \"description\": {}, \"parameters\": {{\"type\": \"object\", \"properties\": {{{}}}, \"required\": [{}]}}}}",
+            quoted(&crate::lower::shown(name)),
+            quoted(&doc),
+            properties.join(", "),
+            required.join(", ")
+        )
+    }
+
+    /// The JSON schema of a kind a model can hand a tool, naming every
+    /// variant of the type (design rule 21): a whole number an `integer`,
+    /// a number a `number`, text a `string`, a bool a `boolean`, a list an
+    /// `array` of its items, a tensor an array of numbers, a map an object
+    /// of its values, a record an object of its fields, a parsed value an
+    /// object; a kind typed by nothing, and one a model cannot hand (a
+    /// frame, a handle, a function), are said so.
+    fn handed_schema(&self, ty: &Ty) -> Handed {
+        match ty {
+            Ty::Int | Ty::Big => Handed::Schema("{\"type\": \"integer\"}".to_string()),
+            Ty::Float | Ty::Decimal | Ty::Fraction => Handed::Schema("{\"type\": \"number\"}".to_string()),
+            Ty::Str | Ty::Moment | Ty::Markup | Ty::Bytes => Handed::Schema("{\"type\": \"string\"}".to_string()),
+            Ty::Bool => Handed::Schema("{\"type\": \"boolean\"}".to_string()),
+            Ty::Unit => Handed::Schema("{\"type\": \"null\"}".to_string()),
+            Ty::Json => Handed::Schema("{\"type\": \"object\"}".to_string()),
+            Ty::Tensor(..) | Ty::Column(_) => Handed::Schema("{\"type\": \"array\", \"items\": {\"type\": \"number\"}}".to_string()),
+            Ty::List(item) => match self.handed_schema(item) {
+                Handed::Schema(s) => Handed::Schema(format!("{{\"type\": \"array\", \"items\": {}}}", s)),
+                other => other,
+            },
+            Ty::Map(_, value) => match self.handed_schema(value) {
+                Handed::Schema(s) => Handed::Schema(format!("{{\"type\": \"object\", \"additionalProperties\": {}}}", s)),
+                other => other,
+            },
+            Ty::Result(inner) => self.handed_schema(inner),
+            Ty::Record(name) | Ty::OptRecord(name) => {
+                let fields: Vec<(String, Ty)> = self.ctx.structs.get(name).map(|s| s.fields.clone()).unwrap_or_default();
+                let mut properties: Vec<String> = Vec::new();
+                let mut required: Vec<String> = Vec::new();
+                for (f, fty) in &fields {
+                    match self.handed_schema(fty) {
+                        Handed::Schema(s) => {
+                            properties.push(format!("{}: {}", serde_json::to_string(f).unwrap_or_default(), s));
+                            required.push(serde_json::to_string(f).unwrap_or_default());
+                        }
+                        other => return other,
+                    }
+                }
+                Handed::Schema(format!("{{\"type\": \"object\", \"properties\": {{{}}}, \"required\": [{}]}}", properties.join(", "), required.join(", ")))
+            }
+            Ty::Unknown => Handed::Untyped,
+            Ty::Frame(_) => Handed::Unhandable("a frame"),
+            Ty::Fn(..) => Handed::Unhandable("a function"),
+            Ty::Db | Ty::Tx => Handed::Unhandable("a database connection"),
+            Ty::Sparse => Handed::Unhandable("a sparse matrix"),
+            Ty::WebApp | Ty::WebRequest | Ty::WebResponse | Ty::App | Ty::Node => Handed::Unhandable("the server's own value"),
+            Ty::Mailer | Ty::Socket | Ty::Stream => Handed::Unhandable("a connection"),
+        }
     }
 
     fn call_inner(&mut self, callee: &A, args: &[A]) -> Result<Expr, String> {
@@ -3965,6 +4149,16 @@ impl<'a> Lowerer<'a> {
                 self.calls.entry(current).or_default().insert(resolved.clone());
             }
             return Ok(Expr::Call { target: Target::User(resolved), args: lowered, ty, propagates });
+        }
+        // str[city], int[n], float[x] of a parsed value a parameter holds:
+        // the kind the body reads it as, for the function's tool schema
+        if module.is_none() && lowered.len() == 1 && matches!(name.as_str(), "str" | "int" | "float") {
+            let kind = match name.as_str() {
+                "str" => Ty::Str,
+                "int" => Ty::Int,
+                _ => Ty::Float,
+            };
+            self.note_param_read(&lowered[0], &kind);
         }
         if is_effect(&name) {
             if self.pass == Pass::Final {
@@ -5722,6 +5916,54 @@ fn expr_reads(e: &Expr, out: &mut HashSet<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `tools = [f, g]` handed to a model are the functions' schemas, as
+    /// text: the name, the comment above the function as its description,
+    /// and the parameters by the kinds inference found — an int an integer,
+    /// a float a number, text a string, a bool a boolean, a list an array
+    /// of its items, a record an object of its fields; a parameter handed a
+    /// parsed value is the kind the body reads it as
+    #[test]
+    fn a_tools_list_of_functions_becomes_their_schemas() {
+        let src = "use llm
+
+--- the price of n units at a rate
+fn price[n, rate]
+    return n * rate
+
+--- whether a name is on the list
+fn listed[name, names, strict]
+    if strict
+        return name in names
+    return lower[name] in names
+
+struct Point [x, y]
+
+--- how far a point is from home
+fn far[p]
+    return p.x + p.y
+
+--- the weather in a city
+fn weather[city]
+    return 'sunny in `upper[city]`'
+
+m = reach['openai://127.0.0.1:1/x']
+r = chat[m, ask['hi'], tools = [price, listed, far, weather]]
+log[price[2, 1.5]]
+log[listed['a', ['a'], true]]
+log[far[Point[1.0, 2.0]]]
+log[r.ok]
+if r.ok
+    log[weather[r.calls[0].args.city]]
+";
+        crate::note_fn_docs("", src);
+        let ir = ir_of(src);
+        assert!(ir.contains(r#"{\"name\": \"price\", \"description\": \"the price of n units at a rate\", \"parameters\": {\"type\": \"object\", \"properties\": {\"n\": {\"type\": \"integer\"}, \"rate\": {\"type\": \"number\"}}, \"required\": [\"n\", \"rate\"]}}"#), "{}", ir);
+        assert!(ir.contains(r#"{\"name\": \"listed\", \"description\": \"whether a name is on the list\", \"parameters\": {\"type\": \"object\", \"properties\": {\"name\": {\"type\": \"string\"}, \"names\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"strict\": {\"type\": \"boolean\"}}, \"required\": [\"name\", \"names\", \"strict\"]}}"#), "{}", ir);
+        assert!(ir.contains(r#"{\"name\": \"far\", \"description\": \"how far a point is from home\", \"parameters\": {\"type\": \"object\", \"properties\": {\"p\": {\"type\": \"object\", \"properties\": {\"x\": {\"type\": \"number\"}, \"y\": {\"type\": \"number\"}}, \"required\": [\"x\", \"y\"]}}, \"required\": [\"p\"]}}"#), "{}", ir);
+        // (handed a parsed value, read as text by upper[])
+        assert!(ir.contains(r#"{\"name\": \"weather\", \"description\": \"the weather in a city\", \"parameters\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"]}}"#), "{}", ir);
+    }
 
     fn ir_of(src: &str) -> String {
         let mut lexer = crate::lexer::Lexer::new(src);

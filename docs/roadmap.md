@@ -302,6 +302,18 @@ Top-level `db` module (`use db`) with separate `crow_db` crate. All three backen
 - [x] **Notebook integration** (Sept 30 2026, Vijay: a Jupyter kernel): `crow kernel install`; a notebook is one interpreter session, a cell's logs stream, its value is its result (a frame as a table), an interrupt stops a running cell (spec, Notebooks).
 - [x] **Editor support**: `crow lsp` + VS Code extension (Neovim/Helix/Zed via native LSP clients) — see `crow-lsp.md`.
 
+### P8 — The LLM domain (in progress)
+
+Vijay (2026-10-11): what Crow can build where vLLM, LangGraph and the SDKs live — the clients first, the model itself next, the serving software later. Each piece ported from a reference and held to it, as the packages are.
+
+- [ ] **`use llm`** — a model as a connection (`reach`), conversations and replies as parsed values in one shape over Anthropic's and the OpenAI-compatible wire formats, `chat`, a reply followed piece by piece (`follow`, `next`, `reply`), tools as the functions themselves with the compiler writing their schemas, `embed` (docs/llm-design.md; spec section 13, `### llm`).
+- [ ] **A model's answer as a fixture** — `crow check --record-fixtures` keeps what a model answered, so an agent's test replays without the model (on `request`'s rehearsal).
+- [ ] **A GPT in Crow** (`packages/gpt`) — a character tokenizer, a transformer written over `grad`'s list and trained on tiny Shakespeare, held to nanoGPT in float64 (docs/gpt-design.md); then byte-level BPE held to tiktoken and GPT-2's weights read for inference.
+- [ ] **Retrieval and a RAG app** — a vector index held to faiss's recall, hybrid retrieval over `packages/retrieval`, a chat page with sessions.
+- [ ] **An agent runtime shaped like LangGraph** — state as facts, nodes as derivations, checkpoints as snapshots, tools gated by what the checker knows of their effects; a design note before code.
+- [ ] **Evals and traces** — runs and costs as frames in ClickHouse with a dashboard page; LLM-as-judge in `test` blocks over fixtures.
+- [ ] **Serving** — an OpenAI-compatible endpoint over the Crow model with continuous batching and a paged cache; after the rest.
+
 ## Overall Rating (current)
 
 ### As a data science language

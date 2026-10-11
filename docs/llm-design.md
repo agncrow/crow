@@ -1,0 +1,243 @@
+# `use llm` — a model as a connection
+
+The client for language-model APIs, the first piece of Crow's LLM work
+(Vijay, 2026-10-11: "start with what you recommended"): the clients and
+SDKs first, the model itself next (docs/gpt-design.md), the serving
+software later. This note is the design; the spec's section 13 (`### llm`)
+is the contract, and `src/modules/llm.co` the body.
+
+## What it is
+
+A standard module written in Crow on the `sys` layer (design rule 20), as
+`request`, the readers, `web.ws` and `web.mail` are: a program sees one
+way to ask a model, the same in `crow run -i` and `crow run`, and every
+line of the protocol is Crow the fuzzer and both backends run. It speaks
+two wire formats — Anthropic's Messages API and the OpenAI-compatible
+chat completions that Ollama, vLLM, OpenRouter and LiteLLM also serve —
+behind one surface, so a program written against a local model runs
+unchanged against a hosted one.
+
+```
+use llm
+
+m = connect['anthropic://claude-sonnet-5']
+chat = user['What is the capital of Mongolia?']
+r = chat[m, chat, system = 'Answer in one word.']
+log[r.text]                                  --- Ulaanbaatar
+log[r.usage.input]                           --- 21
+```
+
+## The surface
+
+| Function | What it does |
+|---|---|
+| `connect[url]` | A model as a connection: `anthropic://<model>` or `openai://<host>[:port]/<model>`. The key comes from the environment — `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, or the variable `?key=NAME` names — and a local host (`localhost`, `127.0.0.1`) needs none and is reached over `http`; any other host over `https`. Answers the model's description, a parsed value: `m.provider`, `m.model`, `m.base`, `m.key` (the variable's *name*; the key itself is read when a call is made and is in no value). An error value of kind `'llm'`: a URL of neither scheme, no model named, a key's variable unset for a remote host |
+| `user[text]`, `user[chat, text]` | A conversation of one user turn; a conversation with another user turn added |
+| `said[chat, reply]` | The conversation with the model's reply added, its text and its tool calls, as the next request needs it |
+| `result[chat, call, text]` | The conversation with a tool's result added: what the program computed for the call the model made |
+| `chat[m, chat]` | The model's reply to the conversation: a parsed value with `text`, `calls` (each `id`, `name`, `args` — the arguments as the model wrote them, a parsed value read as the program's use implies), `usage` (`input`, `output` tokens) and `stop` (`end`, `tool`, `length` or `other`). Options by name: `system = text`, `tools = [f, g]`, `max = tokens` (1024), `temperature = t` (1.0). An error value of kind `'llm'` when no answer came, when the server's status is no success (its message quoted: `the model's server answered 401: invalid x-api-key`), or when its answer is no JSON |
+| `stream[m, chat]` | The same request, its reply streamed: a socket the pieces are read from, the same options. An error value of kind `'llm'` as `chat`'s |
+| `next[s]` | The next piece of the reply's text as the model writes it; empty text once the stream has ended. A tool call's arguments are gathered, not shown: they are in `reply`. An error value of kind `'llm'` when the connection breaks |
+| `reply[s]` | The whole reply the stream carried so far — `chat`'s shape — complete once `next` has answered empty text |
+| `embed[m, texts]` | The texts' embeddings, a matrix with a row per text, from an OpenAI-compatible embeddings endpoint (`openai://host/<embedding model>`); an Anthropic connection is refused, since it serves none |
+
+Every function works identically in both modes, and `chat`, `stream`,
+`next` and `embed` are effects (`ir::EFFECTS`): a route's handler calling
+one runs off the server's threads, and `crow check` sees the call.
+
+### Tools are the functions
+
+```
+--- the current weather in a city, in °C
+fn weather[city]
+    r = request['https://wttr.in/`city`?format=j1']
+    return str[json[r.body].current_condition[0].temp_C]
+
+chat = user['How warm is it in Lisbon right now?']
+r = chat[m, chat, tools = [weather]]
+while r.stop eq 'tool'
+    chat = said[chat, r]
+    for call in r.calls
+        if call.name eq 'weather'
+            chat = result[chat, call, weather[call.args.city]]
+    r = chat[m, chat, tools = [weather]]
+log[r.text]
+```
+
+`tools = [weather, search]` hands the functions themselves. The compiler
+writes each one's schema from what it already knows: the function's name,
+its parameters by name with the kinds inference found for them — an int is
+an `integer`, a float a `number`, text a `string`, a bool a `boolean`, a
+list an `array` of its items' kind, a record an `object` of its fields, a
+parsed value an `object` — and, as the description, the comment written
+above the function (`--- the current weather in a city, in °C`), the
+sentence the code already carries. A function whose parameter nothing
+types is refused before the program runs, with the fix: `weather's
+parameter 'city' is typed by nothing — read it in the body, or call
+weather[…] once with a value of its kind`.
+
+The program makes the call: the model's `calls` name a tool and its
+arguments, the program dispatches on the name, reads the arguments as its
+use implies (`call.args.city` is text where `weather` takes text) and
+hands the result back with `result`. The module never calls a function of
+the program: a call the program did not write would be one `crow check`
+could not see, and the program's own `if` is where it decides what a model
+may make it do.
+
+### Streaming is a loop the program writes
+
+```
+s = stream[m, user['Tell me a story in three sentences.']]
+piece = next[s]
+while piece.ok and len[piece] gt 0
+    log[piece]
+    piece = next[s]
+r = reply[s]
+```
+
+A route forwards the pieces as it reads them, with the response `stream`
+the server already has (`fn feed[put, s]` putting each piece); a page
+keeps them in a fact a view shows. The pieces are text; a tool call the
+model streams is gathered into `reply`, so a program that reads text sees
+only text.
+
+### Conversations are parsed values
+
+A conversation is a parsed value — a list of turns, each `role` (`user`,
+`assistant`, `tool`) with its `text`, a model's turn with its `calls`, a
+tool's with the `id` of the call it answers — because a map holds one kind
+and a turn holds several; JSON is the language's shape for that, and a
+turn read by a program reads as its use implies. The builders (`user`,
+`said`, `result`) keep every turn in the one shape both wire formats are
+written from, so a conversation started against one provider continues
+against the other.
+
+## The wire
+
+**Anthropic** (`POST {base}/v1/messages`, `x-api-key`, `anthropic-version:
+2023-06-01`): `system` top-level, each turn's `content` a list of blocks
+— `text`, `tool_use` (the model's calls, `id`, `name`, `input`) and
+`tool_result` (`tool_use_id`, `content`); tools as `name`, `description`,
+`input_schema`; the reply's `content` blocks read back into `text` and
+`calls`, `stop_reason` `end_turn`/`tool_use`/`max_tokens` into `end`/
+`tool`/`length`; streaming as SSE events `message_start`,
+`content_block_start`, `content_block_delta` (`text_delta` and
+`input_json_delta`), `message_delta` (the stop reason and output usage),
+`message_stop`.
+
+**OpenAI-compatible** (`POST {base}/v1/chat/completions`, `authorization:
+Bearer`): `messages` with the system turn first, the model's turns'
+`tool_calls` (`id`, `function.name`, `function.arguments` as JSON text) and
+`tool` turns (`tool_call_id`); tools as `{"type": "function", "function":
+{name, description, parameters}}`; `choices[0].message` read back,
+`finish_reason` `stop`/`tool_calls`/`length`; streaming as SSE `data:`
+lines of `choices[0].delta` (`content`, `tool_calls` with argument
+fragments) ending with `data: [DONE]`. Embeddings: `POST
+{base}/v1/embeddings`, `data[i].embedding`.
+
+`chat` and `embed` send through `request` (one client, one timeout policy,
+a rehearsal's recording); `stream` sends through the protocol layer
+`request` stands on — `open`, `send`, `read_head` — and reads the body in
+pieces, dechunking as it goes, keeping what a read took past an event on
+the socket (`unread`) and the reply gathered so far in the connection's
+notes (`note`/`noted`), as the WebSocket client and the database drivers
+keep theirs.
+
+## Design notes
+
+**A model as a connection.** Considered: the model named on every call
+(`chat['anthropic://claude-sonnet-5', chat]`), as many SDKs take a model
+string. Decided: `connect`, as `db`'s `connect[url]` and `web.mail`'s
+`smtp` make a handle once; the URL is parsed and the key's presence
+checked where the program says it, and a program's calls read as calls on
+one model.
+
+**The connection is a parsed value, not a handle kind.** Considered: a
+kind of its own (`Ty::Llm`, as `Mailer` is), threaded through the table,
+the backends and the runtime. Decided: the connection holds no secret —
+the key is read from the environment as each call is made, and is in no
+value a program can print — so what it holds is description, and a parsed
+value is readable where a handle is opaque (`m.model` in a log line), with
+nothing new to thread (design rule 21 holds the thread to every variant).
+
+**Tools are the functions, the schema the compiler's.** Considered: a
+tool written by hand — a name, a description and a schema beside the
+function (rejected: the signature said twice, and the two drift); the
+module calling the tool for the program and sending the result back by
+itself, as "agent" SDKs do (rejected: a call the program never wrote, an
+effect `crow check` could not see, and a model deciding what runs with no
+`if` of the program's between). Decided: `tools = [f, g]`, the compiler
+writes the schema from the signature it inferred and the comment above
+the function, and the program dispatches, which is one `if` per tool and
+the place a program decides what a model may make it do.
+
+**Streaming is a socket read piece by piece.** Considered: a feed function
+handed to `stream` and called for each piece, as a response `stream[feed]`
+hands its feed a `put` (rejected: a builtin's row takes no function value
+today — a function handed to a row is typed by nothing — and a loop the
+program writes can stop, show, keep or forward a piece where a callback
+only receives it). Decided: `stream` answers a socket, `next` the pieces,
+`reply` the whole; the loop is the program's.
+
+**The description is the comment above the function.** Considered: a
+description handed beside the tool, `tools = [weather], describe =
+map[weather = '…']` (rejected: one thing in two places). Decided: the
+comment the code already carries, kept by the parser for every function
+(`fn_docs`), is the description; a function with none has none, which
+both APIs allow.
+
+**One reply shape.** The two formats' replies are read into one parsed
+value — `text`, `calls`, `usage`, `stop` — so a program's reads do not
+name a provider; what one provider answers and the other does not (a
+cache token count, a log probability) is not there until both mean it.
+
+**Not in this round**, each a later note: images and documents in a turn;
+a conversation kept by the server (Anthropic's prompt caching, OpenAI's
+responses); batches; a model's answer recorded as a fixture so an agent's
+test replays without the model — the next piece, on `request`'s rehearsal
+(`crow check --record-fixtures`); the `models` to list; an `embed` for
+Anthropic-side providers (Voyage) once one speaks a second format.
+
+## What holds it
+
+- The module's own tests (`crow test src/modules/llm.co`): a URL read
+  apart, the key's variable named, a conversation written into each wire
+  format and read back, an SSE stream of each provider's events parsed
+  from bytes, a tool call gathered from its fragments, each reply shape
+  read from each provider's JSON, a schema written from a signature.
+- `tests/llm_server.rs`: a server speaking both wire formats — a reply, a
+  tool call, a streamed reply, a streamed tool call, a 401, a body that is
+  no JSON, a connection that closes mid-stream — and a program driven
+  against it in both modes, its lines compared.
+- The compiler: unit tests for the `tools` rewrite (the schema of each
+  kind, the refusal of an untyped parameter, a list that is no literal),
+  and the errors corpus for the messages.
+- The book: `docs/book/src/by-example/llm.md`, every function shown and
+  run (a server nobody answers shows the error path, as `web.ws`'s page
+  does), and the generated `stdlib/llm.md` from the spec.
+
+## The pieces
+
+- `src/modules/llm.co` — the module; `src/modules/llm.rs` — `LlmModule`
+  and `LLM_FUNCTIONS`; `src/modules/mod.rs` — `CROW_MODULES` (`("llm",
+  "_llm")`), `module_by_path`, the source; `src/emit_rs/program.rs` and
+  `src/type_infer/classify.rs` — registration, as `web.mail`'s.
+- `src/table.rs` — the `crow!` rows: `llm.connect (Str) -> Json`,
+  `llm.user (Str) -> Json`, `llm.user_more (Json, Str) -> Json`, `llm.said
+  (Json, Json) -> Json`, `llm.result (Json, Json, Str) -> Json`, `llm.chat
+  (Json, Json, Str, Strs, Int, Float) -> Json`, `llm.stream (Json, Json,
+  Str, Strs, Int, Float) -> Socket`, `llm.next (Socket) -> Str`, `llm.reply
+  (Socket) -> Json`, `llm.embed (Json, Strs) -> Tensor`; each `value
+  "llm"`.
+- `src/lower.rs` — `llm_options()`: `system`, `tools`, `max`,
+  `temperature` by name, filled in as `request`'s are.
+- `src/lower_ir.rs` — the `tools` argument: a literal list of functions
+  becomes a list of their schemas (`tool_schemas`), each from the
+  function's signature in `ctx.functions` and its doc comment; the
+  refusals in `lower_ir/checks.rs`.
+- `src/main.rs` — `fn_docs`: the comment lines above each `fn`, kept by
+  file as the program and its parts are read (a part's under its prefix),
+  a thread-local the lowering reads.
+- `src/ir.rs` — `EFFECTS` gains `chat`, `stream`, `next`, `embed`.
+- The spec (`### llm` in section 13, this note's tables and design
+  notes), `docs/roadmap.md`, the book page, CLAUDE.md's notes.
