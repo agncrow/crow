@@ -62,6 +62,16 @@ same budget (2026-10-06, one machine):
 | Nguyen-5, `sin(x²) cos(x) − 1` | loss 1e-5 to 5e-5, ~20 s | exact in 3 of 4, 0.3 s |
 | Nguyen-7, `ln(x+1) + ln(x²+1)` | loss 2e-5 to 7e-4, ~23 s | loss 1e-5 to 2e-5, 0.3 s |
 
+Re-measured 2026-10-11, Crow's side only, after `and` and `or` began
+deciding from the left — the tournament's `place lt n - 1 and rand[] gt p`
+no longer draws once the left decides, so a seed is a different stream —
+on data drawn anew (sixty samples each, Nguyen's ranges; the files of
+2026-10-06 are gone) with eight seeds: `2.5 x0² − sin(x1)` exact in 5 of
+8, Nguyen-1 in 7 of 8, Nguyen-5 median loss 2e-4, Nguyen-7 median 6e-4,
+2–3 s a run compiled. The build before the change, on the same data: 6 of
+8, 7 of 8, 6e-5 and 5e-4, the same worst runs — the same search within the
+noise of eight seeds.
+
 PySR's Julia runs its evolution some seventy times faster per step, so
 its default budget (380 cycles) costs it under a second where Crow's
 compiled search takes a minute and a half; the interpreter is ten times

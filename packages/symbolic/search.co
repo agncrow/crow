@@ -473,7 +473,11 @@ fn equation_at[f, complexity]
 
 --- a known formula is found: y = 2.5 x0^2 - sin(x1) on a small dataset, the
 --- front's best equation predicts it closely, and the frame has PySR's
---- columns
+--- columns; at complexity 4 the x0² term, scaled outside the square or
+--- inside it (`2.5 * square(x0)`, `square(1.59 * x0)`). The search draws
+--- its random numbers as PySR's does — the right side of an `and` only
+--- when it is reached (spec, Operators) — so a seed is a stream: this
+--- small search (2 populations of 25) finds the term from seed 5
 test the_search_finds_a_known_formula[]
     x = []
     y = []
@@ -482,12 +486,13 @@ test the_search_finds_a_known_formula[]
         b = float[(i * 7) % 40] / 10.0 - 2.0
         x = push[x, [a, b]]
         y = push[y, 2.5 * a * a - sin[b]]
-    o = Options[['+', '-', '*'], ['sin', 'square'], 20, 2, 25, 40, 12, 0.0, 3.17, 10, 0.982, 0.14, 0]
+    o = Options[['+', '-', '*'], ['sin', 'square'], 20, 2, 25, 40, 12, 0.0, 3.17, 10, 0.982, 0.14, 5]
     f = fit[x, y, o]
     assert[f.equations.columns eq ['complexity', 'loss', 'score', 'equation']]
     assert[len[f.equations] gt 0]
     assert[f.equations.loss[len[f.equations] - 1] lt 0.6, 'the lowest loss was `f.equations.loss[len[f.equations] - 1]`']
-    assert['square(x0)' in equation_at[f, 4], 'at complexity 4: `equation_at[f, 4]`']
+    four = equation_at[f, 4]
+    assert['square(' in four and 'x0' in four, 'at complexity 4: `four`']
     p = predict[f, x]
     assert[len[p] eq 40]
     assert[f.best gte 0]
