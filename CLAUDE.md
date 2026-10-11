@@ -368,6 +368,19 @@ steps on every push and must be green.
   with `rows = push[rows, tensor[numbers]]`); a list of lists of values
   that can fail handed to `stack` passes the lowering and fails only in the
   verifier (open).
+- Writing a package over `grad` (packages/gpt): a function sees no
+  top-level variable (inputs are the loss's parameters, gradients zeros);
+  `reshape[t, rows, 1]` takes its sizes as arguments and makes the column
+  a reduction broadcasts with; a literal list of tensors is a matrix, so
+  tensors of three shapes are a list grown by `push`; a list of ints
+  handed to `crossentropy` reaches a row `grad` cannot take (hand a
+  tensor); `halt` in a guard does not narrow (`return` does); `fit`'s
+  answer of two kinds is a record, since a list holds one kind and the
+  lowering does not yet refuse the mix; and a function no test block
+  calls can leave a list reaching `grad` as `List(Unknown)` (roadmap P8,
+  open) — keep a file's test blocks reaching every function, as
+  packages/gpt/train.co does. A helper's assigned parameter in a traced
+  copy is `mut` now (parity 245).
 - A standard module written in Crow (`src/modules/*.co`) is read in its own
   scope: inside its inlined functions the program's names are invisible
   (`calls_fn` in lower_ir.rs, lower.rs, checks.rs and type_infer/calls.rs).

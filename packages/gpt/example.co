@@ -1,0 +1,17 @@
+--- A GPT trained on a slice of tiny Shakespeare from a draw of its own,
+--- two thousand steps of descent (a few seconds interpreted), then a
+--- hundred characters continued greedily from the text's first line
+--- (docs/gpt-design.md).
+use math, math.nn
+use chars, model, train
+
+text = read['packages/gpt/reference/data/shakespeare_50k.txt']
+v = chars.vocab[text]
+ids = chars.tokens[text, v]
+log['`len[ids]` tokens, `len[v]` characters']
+fitted = train.fit[ids, len[v], model.init[len[v], 42], 2000, 0.5]
+losses = fitted.losses
+log['loss at step 1: `fmt[losses[0], decimals = 4]`, at step 2000: `fmt[losses[1999], decimals = 4]`']
+prompt = chars.tokens['First Citizen:\n', v]
+continued = model.greedy[prompt, 100, len[v], fitted.weights]
+log[chars.text_of[continued, v]]

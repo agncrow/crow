@@ -1,0 +1,144 @@
+--- nanoGPT's model written over `grad`'s operations (docs/gpt-design.md):
+--- token and position embeddings, two blocks of a layer norm, causal
+--- self-attention over two heads, a layer norm and a GELU MLP, each added
+--- to the stream, a final norm and the logits through the tied embedding.
+--- No biases, no dropout; 32 wide, heads of 16, a block of 16 tokens.
+---
+--- The weights are the loss's parameters, in this order (`fit` and `held`
+--- keep them as a list in it):
+---   0 wte (vocab × 32)   1 wpe (16 × 32)
+---   per layer l (2 + 12 l …): g1 (1 × 32), q0 k0 v0 (32 × 16), o0 (16 × 32),
+---     q1 k1 v1 (32 × 16), o1 (16 × 32), g2 (1 × 32), w1 (32 × 128), w2 (128 × 32)
+---   26 gf (1 × 32)
+--- The inputs come first: X (tokens × vocab, one-hot), P (tokens × 16, the
+--- positions one-hot), the causal mask (tokens × tokens, 0 or -1e9) and
+--- the targets (tokens, ints); their gradients are zeros.
+use math, math.nn
+
+--- the layer norm of each row (eps 1e-5), scaled by g, a row
+fn normed[x, g]
+    rows = len[x]
+    mu = reshape[mean[x, 1], rows, 1]
+    centred = x - mu
+    var = reshape[mean[centred .* centred, 1], rows, 1]
+    return centred ./ sqrt[var + 0.00001] .* g
+
+--- one head of causal attention over the normed stream: scores scaled by
+--- 1/√16, the mask added, a softmax over each row, the values gathered
+fn head[h, wq, wk, wv, mask]
+    rows = len[h]
+    q = h * wq
+    k = h * wk
+    v = h * wv
+    s = q * transpose[k] / 4.0 + mask
+    e = exp[s - reshape[max[s, 1], rows, 1]]
+    p = e ./ reshape[sum[e, 1], rows, 1]
+    return p * v
+
+--- a block: the two heads' outputs through their slices of the output
+--- projection, summed (concat[heads] · Wo, the same numbers), then the MLP
+fn block[x, mask, g1, q0, k0, v0, o0, q1, k1, v1, o1, g2, w1, w2]
+    h = normed[x, g1]
+    x = x + head[h, q0, k0, v0, mask] * o0 + head[h, q1, k1, v1, mask] * o1
+    h = normed[x, g2]
+    return x + gelu[h * w1] * w2
+
+--- the logits of each position over the vocabulary
+fn logits[X, P, mask, wte, wpe, a_g1, a_q0, a_k0, a_v0, a_o0, a_q1, a_k1, a_v1, a_o1, a_g2, a_w1, a_w2, b_g1, b_q0, b_k0, b_v0, b_o0, b_q1, b_k1, b_v1, b_o1, b_g2, b_w1, b_w2, gf]
+    x = X * wte + P * wpe
+    x = block[x, mask, a_g1, a_q0, a_k0, a_v0, a_o0, a_q1, a_k1, a_v1, a_o1, a_g2, a_w1, a_w2]
+    x = block[x, mask, b_g1, b_q0, b_k0, b_v0, b_o0, b_q1, b_k1, b_v1, b_o1, b_g2, b_w1, b_w2]
+    return normed[x, gf] * transpose[wte]
+
+--- the loss: the mean cross-entropy of each position's logits against the
+--- next token
+fn loss[X, P, mask, targets, wte, wpe, a_g1, a_q0, a_k0, a_v0, a_o0, a_q1, a_k1, a_v1, a_o1, a_g2, a_w1, a_w2, b_g1, b_q0, b_k0, b_v0, b_o0, b_q1, b_k1, b_v1, b_o1, b_g2, b_w1, b_w2, gf]
+    return crossentropy[logits[X, P, mask, wte, wpe, a_g1, a_q0, a_k0, a_v0, a_o0, a_q1, a_k1, a_v1, a_o1, a_g2, a_w1, a_w2, b_g1, b_q0, b_k0, b_v0, b_o0, b_q1, b_k1, b_v1, b_o1, b_g2, b_w1, b_w2, gf], targets]
+
+--- the inputs of a sequence of ids: the one-hot tokens, the one-hot
+--- positions (the block's first rows) and the causal mask
+fn inputs[ids, vocabulary_size]
+    n = len[ids]
+    X = onehot[ids, vocabulary_size]
+    P = onehot[range[n], 16]
+    mask = (1.0 - tril[ones[n, n]]) * -1000000000.0
+    --- (a list of three tensors of three shapes: grown, since a literal
+    --- list of tensors is a matrix)
+    made = []
+    made = push[made, X]
+    made = push[made, P]
+    made = push[made, mask]
+    return made
+
+--- the logits of a sequence of ids under the weights `ws` (the order
+--- above): a matrix, a row per position
+fn logits_of[ids, vocabulary_size, ws]
+    made = inputs[ids, vocabulary_size]
+    return logits[made[0], made[1], made[2], ws[0], ws[1], ws[2], ws[3], ws[4], ws[5], ws[6], ws[7], ws[8], ws[9], ws[10], ws[11], ws[12], ws[13], ws[14], ws[15], ws[16], ws[17], ws[18], ws[19], ws[20], ws[21], ws[22], ws[23], ws[24], ws[25], ws[26]]
+
+--- the loss of a block of ids against the ids after each (the targets as
+--- a tensor: a list of ints reaches another crossentropy than the one
+--- grad takes)
+fn loss_of[ids, targets, vocabulary_size, ws]
+    made = inputs[ids, vocabulary_size]
+    return loss[made[0], made[1], made[2], tensor[targets], ws[0], ws[1], ws[2], ws[3], ws[4], ws[5], ws[6], ws[7], ws[8], ws[9], ws[10], ws[11], ws[12], ws[13], ws[14], ws[15], ws[16], ws[17], ws[18], ws[19], ws[20], ws[21], ws[22], ws[23], ws[24], ws[25], ws[26]]
+
+--- the gradient of the loss for each weight, in the weights' order
+fn gradients[ids, targets, vocabulary_size, ws]
+    made = inputs[ids, vocabulary_size]
+    g = grad[loss]
+    every = g[made[0], made[1], made[2], tensor[targets], ws[0], ws[1], ws[2], ws[3], ws[4], ws[5], ws[6], ws[7], ws[8], ws[9], ws[10], ws[11], ws[12], ws[13], ws[14], ws[15], ws[16], ws[17], ws[18], ws[19], ws[20], ws[21], ws[22], ws[23], ws[24], ws[25], ws[26]]
+    return slice[every, 4, len[every]]
+
+--- the weights drawn as nanoGPT draws them: normal with deviation 0.02,
+--- an output projection's 0.02/√(2 · layers), a norm's scale ones
+fn init[vocabulary_size, seed_value]
+    seed[seed_value]
+    small = 0.02
+    projected = 0.02 / sqrt[4.0]
+    ws = []
+    ws = push[ws, randn[vocabulary_size, 32] * small]
+    ws = push[ws, randn[16, 32] * small]
+    for layer in range[2]
+        ws = push[ws, ones[1, 32]]
+        for h in range[2]
+            ws = push[ws, randn[32, 16] * small]
+            ws = push[ws, randn[32, 16] * small]
+            ws = push[ws, randn[32, 16] * small]
+            ws = push[ws, randn[16, 32] * projected]
+        ws = push[ws, ones[1, 32]]
+        ws = push[ws, randn[32, 128] * small]
+        ws = push[ws, randn[128, 32] * projected]
+    ws = push[ws, ones[1, 32]]
+    return ws
+
+--- the continuation of ids by the largest logit, `n` tokens, each step
+--- reading the last sixteen
+fn greedy[ids, n, vocabulary_size, ws]
+    out = ids
+    i = 0
+    while i lt n
+        start = len[out] - 16
+        if start lt 0
+            start = 0
+        window = slice[out, start, len[out]]
+        rows = logits_of[window, vocabulary_size, ws]
+        last = reshape[rows, len[window], vocabulary_size][len[window] - 1]
+        out = push[out, argmax[last]]
+        i = i + 1
+    return slice[out, len[ids], len[out]]
+
+--- the shapes of the weights, and the loss at a draw's weights is the
+--- loss of an uninformed guess, about ln(vocab)
+test the_weights_have_their_shapes[]
+    ws = init[59, 1]
+    len[ws] eq 27
+    ws[0].shape eq [59, 32]
+    ws[1].shape eq [16, 32]
+    ws[3].shape eq [32, 16]
+    ws[6].shape eq [16, 32]
+    ws[12].shape eq [32, 128]
+    ws[26].shape eq [1, 32]
+    l = loss_of[[1, 2, 3, 4], [2, 3, 4, 5], 59, ws]
+    abs[l - ln[59.0]] lt 0.2
+    len[gradients[[1, 2, 3, 4], [2, 3, 4, 5], 59, ws]] eq 27

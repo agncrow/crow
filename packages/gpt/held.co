@@ -1,0 +1,76 @@
+--- The package held to nanoGPT in float64 (reference/reference.py): the
+--- reference's own initial weights loaded, the same tokens, the logits of
+--- the first block and the loss at those weights, the loss before each of
+--- twenty steps of descent at lr 0.1, and the greedy continuation of the
+--- first block at the final weights. Numbers agree to 1e-9 relative (a
+--- matrix product's accumulation order is the BLAS's own); tokens and
+--- characters exactly.
+use math, math.nn
+use chars, model, train
+
+fn weights[]
+    names = ['w00_wte', 'w01_wpe', 'w02_g1_0', 'w03_q0_0', 'w04_k0_0', 'w05_v0_0', 'w06_o0_0', 'w07_q1_0', 'w08_k1_0', 'w09_v1_0', 'w10_o1_0', 'w11_g2_0', 'w12_w1_0', 'w13_w2_0', 'w14_g1_1', 'w15_q0_1', 'w16_k0_1', 'w17_v0_1', 'w18_o0_1', 'w19_q1_1', 'w20_k1_1', 'w21_v1_1', 'w22_o1_1', 'w23_g2_1', 'w24_w1_1', 'w25_w2_1', 'w26_gf']
+    loaded = for name in names
+        weight_of[name]
+    return loaded
+
+--- one weight loaded: a table that cannot be read is a wrong answer of
+--- the right kind, which the first comparison then says (a guard that
+--- returns narrows the value to the tensor it holds)
+fn weight_of[name]
+    t = load['packages/gpt/reference/data/`name`.csv']
+    if not t.ok
+        return zeros[1, 1]
+    return t
+
+fn corpus[]
+    return read['packages/gpt/reference/data/shakespeare_50k.txt']
+
+--- a row of a loaded table as a list of ints
+fn ints_of[table]
+    ints = for x in flatten[table]
+        int[x]
+    return ints
+
+--- the largest relative difference between two tensors of one shape
+fn apart[a, b]
+    return max[abs[a - b]] / max[abs[b]]
+
+--- the vocabulary is the reference's, and the first block's tokens are
+test the_tokens_are_the_references[]
+    v = chars.vocab[corpus[]]
+    len[v] eq 59
+    v eq chars.characters[read['packages/gpt/reference/expected/vocab.txt']]
+    ids = chars.tokens[corpus[], v]
+    expected = ints_of[load['packages/gpt/reference/expected/tokens.csv']]
+    slice[ids, 0, 17] eq expected
+
+--- the logits and the loss at the reference's weights
+test the_logits_at_init_are_the_references[]
+    v = chars.vocab[corpus[]]
+    ids = chars.tokens[corpus[], v]
+    ws = weights[]
+    block = slice[ids, 0, 16]
+    after = slice[ids, 1, 17]
+    got = model.logits_of[block, 59, ws]
+    want = load['packages/gpt/reference/expected/logits0.csv']
+    got.shape eq [16, 59]
+    apart[got, want] lt 0.000000001
+    l = model.loss_of[block, after, 59, ws]
+    want_loss = load['packages/gpt/reference/expected/loss0.csv'][0][0]
+    abs[l - want_loss] lt 0.000000001
+
+--- twenty steps of descent follow the reference's losses, and the
+--- continuation at the final weights is the reference's
+test twenty_steps_follow_the_reference[]
+    v = chars.vocab[corpus[]]
+    ids = chars.tokens[corpus[], v]
+    fitted = train.fit[ids, 59, weights[], 20, 0.1]
+    losses = fitted.losses
+    want = flatten[load['packages/gpt/reference/expected/losses.csv']]
+    len[losses] eq 20
+    apart[tensor[losses], want] lt 0.000000001
+    after = model.loss_of[slice[ids, 0, 16], slice[ids, 1, 17], 59, fitted.weights]
+    abs[after - load['packages/gpt/reference/expected/loss_after.csv'][0][0]] lt 0.000000001
+    continued = model.greedy[slice[ids, 0, 16], 50, 59, fitted.weights]
+    continued eq ints_of[load['packages/gpt/reference/expected/greedy.csv']]

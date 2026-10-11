@@ -1,0 +1,40 @@
+--- A character tokenizer, as nanoGPT's `shakespeare_char` prepares its
+--- data: the vocabulary is the text's distinct characters in sorted order,
+--- a text encodes to the index of each character, and ids decode back.
+
+--- the text's characters (a text split into its characters has an empty
+--- end on each side)
+fn characters[text]
+    split_up = split[text, '']
+    return slice[split_up, 1, len[split_up] - 1]
+
+--- the vocabulary: the distinct characters, sorted
+fn vocab[text]
+    seen = map[]
+    for ch in characters[text]
+        seen = set[seen, ch, 1]
+    return sort[keys[seen]]
+
+--- the text as ids: each character's index in the vocabulary; a character
+--- the vocabulary lacks stops the program
+fn tokens[text, vocabulary]
+    at = map[]
+    for i in range[len[vocabulary]]
+        at = set[at, vocabulary[i], i]
+    ids = for ch in characters[text]
+        at[ch]
+    return ids
+
+--- ids as text: each id's character
+fn text_of[ids, vocabulary]
+    chars = for i in ids
+        vocabulary[i]
+    return join[chars, '']
+
+test a_text_encodes_and_decodes[]
+    v = vocab['hello world']
+    v eq [' ', 'd', 'e', 'h', 'l', 'o', 'r', 'w']
+    tokens['hello', v] eq [3, 2, 4, 4, 5]
+    text_of[[3, 2, 4, 4, 5], v] eq 'hello'
+    text_of[tokens['world hello', v], v] eq 'world hello'
+    len[vocab['']] eq 0
