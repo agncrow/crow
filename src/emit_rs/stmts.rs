@@ -346,10 +346,18 @@ impl Emitter {
     /// number and tensor traced, every operation the kernel's.
     pub(crate) fn emit_traced_function(&mut self, f: &Fn) {
         let traced = |t: &Ty| matches!(as_inferred(t), Ty::Float | Ty::Tensor(..));
+        // (a parameter the body assigns — the stream of a transformer
+        // block, `x = x + …` — is the copy's own, as the plain copy's is;
+        // the traced copy had taken it immutable, and the program did not
+        // build: parity 242)
+        let changed = Self::mutated_in(&f.body);
         let params: Vec<String> = f
             .params
             .iter()
-            .map(|(p, t)| if traced(t) { format!("{}: crow_runtime::autograd::Traced", p) } else { format!("{}: {}", p, as_inferred(t).to_rust_type()) })
+            .map(|(p, t)| {
+                let own = if changed.contains(p) { "mut " } else { "" };
+                if traced(t) { format!("{}{}: crow_runtime::autograd::Traced", own, p) } else { format!("{}{}: {}", own, p, as_inferred(t).to_rust_type()) }
+            })
             .collect();
         let ret = if traced(&f.ret) { "crow_runtime::autograd::Traced".to_string() } else { as_inferred(&f.ret).to_rust_type() };
         self.needs_crow_runtime = true;

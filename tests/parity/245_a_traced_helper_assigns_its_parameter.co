@@ -1,0 +1,23 @@
+--- A helper a differentiated function calls may assign its own parameter
+--- (`x = x + …`, the stream of a transformer block): its traced copy
+--- takes the parameter as its own, as the plain copy does. (Compiled, the
+--- traced copy had taken it immutable, and the program did not build:
+--- `cannot assign to immutable argument` — the gpt package's `block`.)
+use math
+
+fn grown[x, w]
+    x = x + x * w
+    x = x .* x
+    return x
+
+fn loss[x, w]
+    return sum[grown[x, w]]
+
+x = [[1.0, 2.0], [3.0, 4.0]]
+w = [[0.5, 0.0], [0.0, 0.5]]
+log[loss[x, w]]
+g = grad[loss]
+grads = g[x, w]
+log[len[grads]]
+log[grads[0]]
+log[grads[1]]
