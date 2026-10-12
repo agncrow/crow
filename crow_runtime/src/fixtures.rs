@@ -57,9 +57,31 @@ pub fn recording() -> Option<PathBuf> {
     RECORDING.lock().ok().and_then(|r| r.clone())
 }
 
+/// Where a rehearsal (`crow check`, no recording) reads the fixtures a
+/// recording kept: a request one holds is answered from it, any other
+/// is answered `200` with nothing to say, by `request`'s own body.
+static REHEARSING: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+/// Start (`Some(.crow)`) or end (`None`) a rehearsal.
+pub fn rehearse_in(crow_dir: Option<PathBuf>) {
+    if let Ok(mut r) = REHEARSING.lock() {
+        *r = crow_dir;
+    }
+}
+
+/// The `.crow` directory a rehearsal reads fixtures from, if one runs.
+pub fn rehearsing() -> Option<PathBuf> {
+    REHEARSING.lock().ok().and_then(|r| r.clone())
+}
+
 /// `sys.replaying[]`: whether a replay answers the requests.
 pub fn replaying_now() -> bool {
     replaying().is_some()
+}
+
+/// `sys.rehearsing[]`: whether a rehearsal stands in for the requests.
+pub fn rehearsing_now() -> bool {
+    rehearsing().is_some()
 }
 
 /// `sys.recording[]`: whether a recording keeps what the requests answer.
@@ -158,13 +180,14 @@ pub fn answer_from(crow_dir: &Path, in_replay: bool, method: &str, url: &str, bo
 }
 
 /// `sys.replayed[method, url, body]`: the request's answer from its fixture
-/// — the replay's project's, else the recording's — or the miss, an error
-/// value of kind `'http'` as a request that got no answer is.
+/// — the replay's project's, else the recording's, else the rehearsal's —
+/// or the miss, an error value of kind `'http'` as a request that got no
+/// answer is.
 pub fn replayed(method: &str, url: &str, body: &str) -> Result<Reply, String> {
-    match (replaying(), recording()) {
+    match (replaying(), recording().or_else(rehearsing)) {
         (Some(dir), _) => answer_from(&dir, true, method, url, body),
         (None, Some(dir)) => answer_from(&dir, false, method, url, body),
-        (None, None) => Err(format!("no fixture holds `{} {}`: neither a replay nor a recording runs", method, url)),
+        (None, None) => Err(format!("no fixture holds `{} {}`: no replay, recording or rehearsal runs", method, url)),
     }
 }
 

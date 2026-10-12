@@ -3835,8 +3835,10 @@ impl<'a> Lowerer<'a> {
             }
             return Ok(Expr::RecordLit { name, fields });
         }
-        // a ui element with its attributes first (lower.rs put them there)
-        if module.is_none() && self.in_ui && crate::lower::UI_ELEMENTS.contains(&name.as_str()) {
+        // a ui element with its attributes first (lower.rs put them there);
+        // a standard module's inlined function keeps its names (llm's
+        // `embed` stacks tensor rows: math's `stack`, not the element)
+        if module.is_none() && self.in_ui && crate::lower::UI_ELEMENTS.contains(&name.as_str()) && !crate::modules::is_crow_fn(&self.current_fn) {
             let mut attrs = Vec::new();
             let mut children = Vec::new();
             // what the call scan reads of the arguments: the attributes as

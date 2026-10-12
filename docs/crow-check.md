@@ -113,16 +113,20 @@ same fixtures run the tests where the servers are not: `crow test
 modes (spec, `crow test --fixtures`). A write
 is recorded as in any rehearsal, so a recording never changes a database. A write — `exec`, `insert`, a
 migration, a statement through `query` that changes rows — is recorded
-with its payload and the program sees success; a shell command, an HTTP
-`request` (answered `200` with nothing to say) and a file written, moved
-or removed are recorded instead of run; mail is recorded
-as the harness records it, and `fetch` answers nothing, as in any test.
-In a recording a request is sent, and what it answered is kept as its
-fixture — named by its method, its URL with the query and what it sends,
-its headers no part of it — so `crow test --fixtures` answers it with no
-server and no model, in both modes (spec, Requests); a recording runs the
-tests that open no app too, for their fixtures alone, since the replay
-runs every test. The clock stands at 2026-01-01 00:00 UTC until the
+with its payload and the program sees success; a shell command and a file
+written, moved or removed are recorded instead of run; an HTTP `request`
+is answered from its fixture where a recording kept one, else as a
+request that landed — `200` with nothing to say — and recorded; mail is
+recorded as the harness records it, and `fetch` answers nothing, as in
+any test. A dependency's functions (`crow_modules/`, a package's) are not probed
+with edge cases: a package is held by its own tests, and the app's check
+reports the app's. In a recording a request is sent, and what it answered is kept
+as its fixture — named by its method, its URL with the query and what it
+sends, its headers no part of it — so `crow test --fixtures` answers it
+with no server and no model, in both modes (spec, Requests), and the
+rehearsals after answer it the same, so a scenario that asks a model
+comes out as the recording did; a recording runs the tests that open no
+app too, for their fixtures alone, since the replay runs every test. The clock stands at 2026-01-01 00:00 UTC until the
 test moves it, and random draws are seeded, so a scenario comes out the
 same on every run. An assertion that does not hold is reported, not
 failed — the data was the rehearsal's. The scenario's file says how it

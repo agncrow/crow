@@ -111,6 +111,15 @@ pub fn module_by_path(path: &str) -> Option<Arc<dyn CrowModule>> {
     })
 }
 
+/// Every function of every module a program can import, by name: what the
+/// checker's undefined-variable rule counts as defined (`with_stdlib` loads
+/// the core set; the modules a program imports by path — llm, web.ws, … —
+/// are read here, or a part's `reach` and `chat` were "undefined").
+pub fn every_module_function() -> Vec<String> {
+    const PATHS: &[&str] = &["math", "math.stats", "math.nn", "io", "frame", "doc", "bits", "chart", "db", "db.clickhouse", "db.postgres", "web", "web.auth", "web.ws", "web.mail", "llm"];
+    PATHS.iter().filter_map(|p| module_by_path(p)).flat_map(|m| m.functions().iter().map(|f| f.to_string()).collect::<Vec<_>>()).collect()
+}
+
 /// The standard modules written in Crow that a program carries, by the
 /// functions inlined behind their prefixes, each with its own imports
 /// (its source's `use` lines) — read from the program itself, since a

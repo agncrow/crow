@@ -50,10 +50,12 @@ its fields and its files' field and path (`sent_as`). A recording runs
 the tests that open no app too, for their fixtures alone, since the
 replay runs every test. The hash is the one the statements'
 fixtures use: `fnv` moves to `crow_runtime`, and `crow_db` reads it from
-there (one hash, not two). The rehearsal's own intercept
-(`rehearsal::outside`, the interpreter's) still answers a stand-in — `200`
-with nothing to say — in a rehearsal, and in a recording lets `request`
-run, so the fixture is kept; crow-check.md's paragraph says so.
+there (one hash, not two). A rehearsal (`crow check`
+without a recording) goes through the same body: a request a recording
+kept is answered from its fixture, any other as `200` with nothing to
+say (`sys.rehearsing[]`), so a scenario that asks a model comes out as
+its recording did and the baseline stands; crow-check.md's paragraph
+says so.
 
 **Not kept:** a reply followed piece by piece (`follow`, a socket of its
 own); a test that must replay uses `chat`. Recording a followed reply's
@@ -118,6 +120,55 @@ HNSW as a package held to recall when a corpus asks for it.
 scores (rejected: the scales are not alike, and the weight is a knob with
 no reference). Decided: RRF with k = 60 as the paper states it, over the
 two rankings; the retrieval package's BM25 is the lexical side.
+
+## What the build found
+
+- **A standard module's `stack` read as the ui element** (fixed, with a
+  unit test): llm's `embed` stacks its rows with math's `stack`; in a `use
+  ui` program the element check, and the element lowering after it, read
+  the inlined module's call as the element outside a view ("ui element
+  'stack' can only be used inside a view block"). Both now skip a standard
+  module's own function (`modules::is_crow_fn`), as the fact and the
+  function rules already did.
+- **A derivation of records unreadable by the compiled harness** (fixed,
+  with an emitter test): a test's `a.chunks[0].file` answered interpreted
+  and not compiled ("the compiled program has no fact or readable
+  derivation named 'chunks'") — the harness reader had an arm for a
+  record and none for a list of them.
+- **The checker's defined names lacked the modules imported by path**
+  (fixed): `crow check` reported `reach`, `chat`, `ask` and `embed` as
+  undefined variables in the parts; the undefined-variable rule read the
+  core registry only, and now every module a program can import.
+- **A module's local named like a program's fact took the fact's type**
+  (fixed, with a unit test): a `use ui` program with a fact named `rows`
+  and a call to `embed` was refused (`push[] takes a list and a value …
+  got an int`), since `embed`'s own `rows = []` was typed as a write of
+  the fact; inference's first-assignment rule (`fresh_binding`) now keeps
+  a standard module's binding its own, as the lowering's `is_fact` did.
+- **A package linked into `crow_modules` was named by the machine's
+  absolute path** (fixed, with an end-to-end test): the baseline's reach
+  keys for the vectors and retrieval files held `/private/tmp/…`, and a
+  linked package's own imports lost the package's prefix (`words.co` for
+  `crow_modules/retrieval/words.co`), because the path was resolved
+  through the link before it was named. A part is named by the path the
+  program reaches it through, and the package is read off that path.
+- **The checker probed a dependency's functions** (fixed, with the same
+  test): six edge cases of the vectors package's `cosine` of two lengths
+  were the example's findings; a package is held by its own tests, and
+  the app's check reports the app's (`from_dependency`).
+- **A plain rehearsal moved the baseline of a scenario that asks a
+  model** (fixed): the recording ran the request and the rehearsal
+  answered it `200` with nothing to say, so the scenario stopped in one
+  and ran to its end in the other. A rehearsal now answers a request from
+  the fixture a recording kept, and stands in only for what none holds —
+  through the same body, `sys.rehearsing[]`.
+- Crow-writing lessons: a part holding derivations must read them (a
+  view or a handler in the same program), so the derivations live beside
+  the page; a derivation's matrix of one row is read with `flatten`, not
+  `[0]` (the rank is not known there); a collecting loop in a view makes
+  its elements through a view, not inline; a literal `[3, 1, 2]` is a
+  tensor, so positions are built with `push`; `crow test main.co` runs
+  the entry's own blocks, so a part's tests run from the part.
 
 ## What holds it
 

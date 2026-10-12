@@ -50,6 +50,8 @@ jobs:
         run: ./target/release/crow test --served && df -h / | tail -1
       - name: The packages the repository ships (tests, and each example in both modes)
         run: ./target/release/crow test --packages && df -h / | tail -1
+      - name: The RAG example's tests from its recorded fixtures, with no model, in both modes
+        run: cd examples/rag && ../../target/release/crow test chat/corpus.co && ../../target/release/crow test chat/retrieve.co && ../../target/release/crow test --fixtures chat/page.co && ../../target/release/crow test --fixtures --compiled chat/page.co
       - name: Generated programs agree across both modes (a new seed each run; the report names it)
         run: ./target/release/crow test --fuzz 20 && df -h / | tail -1
       - name: Mistakes planted in generated programs are refused as the rules say (a new seed each run)

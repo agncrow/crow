@@ -83,9 +83,12 @@ fn begin_as(root: &Path, recording: bool) -> Arc<Rehearsal> {
         recorded: Mutex::new(std::collections::BTreeMap::new()),
     });
     ACTIVE.with(|a| *a.borrow_mut() = Some(r.clone()));
-    // a recording keeps what the requests answer too, through `request`'s
-    // own body (crow_runtime::fixtures)
-    crow_runtime::fixtures::record_to(if recording { Some(root.join(".crow")) } else { None });
+    // the requests go through `request`'s own body (crow_runtime::fixtures):
+    // a recording keeps what they answer, a rehearsal answers from what one
+    // kept and stands in for the rest
+    let crow_dir = root.join(".crow");
+    crow_runtime::fixtures::record_to(if recording { Some(crow_dir.clone()) } else { None });
+    crow_runtime::fixtures::rehearse_in(if recording { None } else { Some(crow_dir) });
     r
 }
 
@@ -93,6 +96,7 @@ fn begin_as(root: &Path, recording: bool) -> Arc<Rehearsal> {
 pub fn end() {
     ACTIVE.with(|a| *a.borrow_mut() = None);
     crow_runtime::fixtures::record_to(None);
+    crow_runtime::fixtures::rehearse_in(None);
 }
 
 /// An assertion that did not hold: in a rehearsal it is kept to report
@@ -114,8 +118,9 @@ pub fn unheld(what: String) -> bool {
 /// written, moved or removed — recorded instead of run, with what it
 /// answers the program: a shell that ran and said nothing, a write that
 /// landed. `None` outside a rehearsal, or for a builtin that stays real —
-/// a request in a recording, which is sent and its answer kept as its
-/// fixture (`crow_runtime::fixtures`, through `request`'s own body).
+/// a request, which its own body answers: from the fixture a recording
+/// kept, as `200` with nothing to say in a rehearsal that holds none, and
+/// sent in a recording, its answer kept (`crow_runtime::fixtures`).
 pub fn outside(name: &str, vals: &[crate::value::CrowValue]) -> Option<crate::value::CrowValue> {
     use crate::value::{CrowValue, Value};
     if !matches!(name, "shell" | "request" | "write" | "mkdir" | "rm" | "mv" | "cp") {
@@ -150,12 +155,10 @@ pub fn outside(name: &str, vals: &[crate::value::CrowValue]) -> Option<crate::va
     if let Ok(mut e) = r.effects.lock() {
         e.push(format!("{}[{}]", name, args.join(", ")));
     }
-    if name == "request" && r.recording {
+    if name == "request" {
         return None;
     }
     Some(match name {
-        // a request recorded, answered as one that landed with nothing to say
-        "request" => crate::table::write_reply(crow_runtime::sources::Reply { status: 200, ..Default::default() }),
         "shell" => {
             let mut m = std::collections::BTreeMap::new();
             m.insert("status".to_string(), CrowValue::ok(Value::Int(0)));
@@ -425,15 +428,16 @@ mod tests {
             text("kept.bin"),
             CrowValue::ok(Value::Float(5.0)),
         ];
-        let answer = outside("request", &vals).expect("a rehearsal answers a request");
+        // (the request's own body answers it: from a fixture a recording
+        // kept, else as a request that landed with nothing to say)
+        let answer = outside("request", &vals);
         end();
         let recorded = r.effects.lock().unwrap().clone();
         assert_eq!(
             recorded,
             vec![r#"request["https://example.com/upload", "POST", "", headers = [authorization = 'Bearer k'], form = [title = 'July'], files = [report = 'july.csv'], save = "kept.bin", timeout = 5]"#.to_string()]
         );
-        let Value::Map(m) = &answer.value else { panic!("a request answers a record: {:?}", answer) };
-        assert!(matches!(m["status"].value, Value::Int(200)));
+        assert!(answer.is_none(), "a request is answered by its own body: {:?}", answer);
         assert!(!Path::new("kept.bin").exists());
     }
 

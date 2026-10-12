@@ -1844,6 +1844,17 @@ fn cmd_install() {
     }
 }
 
+/// Whether a function came from a dependency (`crow_modules/…`): its
+/// prefix's part is a package's file. A package is held by its own tests;
+/// the app's check probes the app's functions, not a dependency's (an
+/// example's `crow check` had reported the vectors package's `cosine` of
+/// two lengths six times).
+pub(crate) fn from_dependency(fn_name: &str) -> bool {
+    // (a package linked into crow_modules is recorded by its path as the
+    // program names it, absolute where the link leaves the project)
+    EXPANSION_PARTS.with(|p| p.borrow().iter().any(|(prefix, rel)| fn_name.starts_with(prefix.as_str()) && rel.split('/').any(|c| c == "crow_modules")))
+}
+
 /// Transpile a .co file to Rust, compile it, and return the path to the binary.
 /// If `quiet` is true, suppress cargo build output (used for `crow run`).
 /// If `release` is true, compile with --release (optimized). Otherwise, use debug mode (fast compile).
@@ -5487,10 +5498,12 @@ fn expand_into(
         };
         // Parse the module: one that does not is the program's refusal,
         // named by the part's file
+        // (a package linked into crow_modules lies elsewhere: it is named
+        // by the path the program reaches it through)
         let shown_part = std::fs::canonicalize(&file_path)
             .ok()
             .zip(std::fs::canonicalize(&root).ok())
-            .and_then(|(c, r)| c.strip_prefix(&r).ok().map(|p| p.display().to_string()))
+            .and_then(|(c, r)| file_path.strip_prefix(&r).or_else(|_| c.strip_prefix(&r)).ok().map(|p| p.display().to_string()))
             .unwrap_or_else(|| file_path.display().to_string());
         let mut lexer = Lexer::new(&source);
         let tokens = match lexer.tokenize() {
@@ -5537,7 +5550,9 @@ fn expand_into(
         // every importer. A package's own import is spelled inside the
         // package, so its path there carries the package's name: `use b` in
         // package `pk` is `pk.b` to the program, never the program's `b`
-        let package = package_dir(&root).and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()));
+        // (read from the path as spelled, before a link is followed: a
+        // package linked into crow_modules is a package all the same)
+        let package = package_dir(source_dir).or_else(|| package_dir(&root)).and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()));
         let prefix = match &package {
             Some(pk) => format!("{}_{}", pk, file_rel.replace('/', "_")),
             None => file_rel.replace('/', "_"),
@@ -5546,7 +5561,14 @@ fn expand_into(
         // the baseline attributes each declaration to its part's file
         EXPANSION_PARTS.with(|p| {
             let root = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
-            let rel = canon.strip_prefix(&root).map(|p| p.display().to_string()).unwrap_or_else(|_| file_path.display().to_string());
+            // (a linked package's file lies outside the root: the path the
+            // program reaches it through, crow_modules/…, names it — the
+            // baseline's keys had held the machine's absolute path)
+            let rel = file_path
+                .strip_prefix(&root)
+                .or_else(|_| canon.strip_prefix(&root))
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| file_path.display().to_string());
             let rel = match &package {
                 Some(pk) => format!("crow_modules/{}/{}", pk, rel),
                 None => rel,
@@ -6226,6 +6248,33 @@ mod module_parts_tests {
         let checked = infer_and_validate(&lowered, false);
         assert!(checked.is_ok(), "{:?}", checked.err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A standard module's function, inlined into a `use ui` program, keeps
+    /// its own names: llm's `embed` stacks its rows with math's `stack`,
+    /// which the element check had read as the ui element outside a view
+    /// ("ui element 'stack' can only be used inside a view block" — the
+    /// rag example's handler)
+    #[test]
+    fn a_modules_stack_in_a_ui_program_is_maths() {
+        let src = "use web, ui, llm\n\nquestion = ''\ncount = 0\n\nfn asked[]\n    e = embed[reach['openai://127.0.0.1:1/x'], [question]]\n    if e.ok\n        count = len[e]\n\nview home[]\n    return stack[field['Question', question], button['Ask', click = asked]]\n\npage['/', home]\nserve[3000]\n";
+        let stmts = build(src).unwrap();
+        let lowered = lower::lower_program(&stmts).unwrap();
+        let checked = infer_and_validate(&lowered, false);
+        assert!(checked.is_ok(), "{:?}", checked.err());
+    }
+
+    /// A standard module's local named like a fact of the program is the
+    /// module's own: llm's `embed` grows `rows = []`, and a `use ui`
+    /// program with a fact `rows = 0` had typed the module's list as that
+    /// int ("push[] takes a list and a value … got an int and numbers")
+    #[test]
+    fn a_modules_local_named_like_a_fact_is_its_own() {
+        let src = "use web, ui, llm\n\nquestion = ''\nrows = 0\n\nfn asked[]\n    e = embed[reach['openai://127.0.0.1:1/x'], [question]]\n    if e.ok\n        rows = len[e]\n\nview home[]\n    return stack[field['Question', question], button['Ask', click = asked]]\n\npage['/', home]\nserve[3000]\n";
+        let stmts = build(src).unwrap();
+        let lowered = lower::lower_program(&stmts).unwrap();
+        let checked = infer_and_validate(&lowered, false);
+        assert!(checked.is_ok(), "{:?}", checked.err());
     }
 
     /// A part that does not parse is the program's refusal, named by the

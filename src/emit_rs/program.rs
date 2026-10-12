@@ -1276,6 +1276,10 @@ impl Emitter {
                     Some(format!("serde_json::to_value(&{}).unwrap_or(serde_json::Value::Null)", v))
                 }
                 Ty::Record(n) if records.contains(n) => Some(format!("crow_runtime::json::ToJson::to_json(&{})", v)),
+                // a list of records reads as the array of their maps (the
+                // rag example's chunks: a test reads `a.chunks[0].file`
+                // compiled as it does interpreted)
+                Ty::List(i) if matches!(i.as_ref(), Ty::Record(n) if records.contains(n)) => Some(format!("crow_runtime::json::ToJson::to_json(&{})", v)),
                 _ => None,
             }
         };
@@ -1294,7 +1298,7 @@ impl Emitter {
                 }
                 other => {
                     if let Some(value) = as_json(other, &read) {
-                        if matches!(other, Ty::Tensor(..)) {
+                        if value.contains("crow_runtime::") {
                             self.needs_crow_runtime = true;
                         }
                         self.line(&format!("\"{}\" => Some(serde_json::json!({{ \"ok\": true, \"value\": {} }})),", d, value));

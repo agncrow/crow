@@ -114,15 +114,19 @@ fn request[url, method, body, headers, queried, fields, files, save, timeout]
                         lines = push[lines, 'content-type: text/plain; charset=utf-8']
                 body_bytes = bytes[body]
     full = with_query[url, queried]
-    --- a fixture answers the request where a replay or a recording holds
-    --- one — the request as made: its method, its URL with the query, and
-    --- what it sends (the spec, Requests); a replay sends nothing
-    if replaying[] or recording[]
+    --- a fixture answers the request where a replay, a recording or a
+    --- rehearsal holds one — the request as made: its method, its URL with
+    --- the query, and what it sends (the spec, Requests); a replay sends
+    --- nothing, and a rehearsal answers what it does not hold as a request
+    --- that landed with nothing to say (crow-check.md)
+    if replaying[] or recording[] or rehearsing[]
         held = replayed[method, full, written]
         if held.ok
             return held
         if replaying[]
             return held
+        if rehearsing[]
+            return reply[200, '', map[]]
     asked = full
     asked_as = method
     got = exchange[full, method, lines, body_bytes, timeout]

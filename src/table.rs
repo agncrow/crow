@@ -2008,6 +2008,7 @@ pub static ROWS: &[Row] = &[
     // (crow_runtime::fixtures; `request`'s body asks before it sends)
     row!("sys.replaying", "sys", "replaying", crow_runtime::fixtures::replaying_now, () -> Bool, never),
     row!("sys.recording", "sys", "recording", crow_runtime::fixtures::recording_now, () -> Bool, never),
+    row!("sys.rehearsing", "sys", "rehearsing", crow_runtime::fixtures::rehearsing_now, () -> Bool, never),
     row!("sys.replayed", "sys", "replayed", crow_runtime::fixtures::replayed, (Str, Str, Str) -> Reply, value "http"),
     row!("sys.recorded", "sys", "recorded", crow_runtime::fixtures::recorded, (Str, Str, Str, Int, Str, TextMap) -> Unit, value "sys"),
     // bytes as text and back, a signature compared, a number's bytes, and a

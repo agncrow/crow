@@ -1117,12 +1117,16 @@ impl TypeContext {
     /// Inside a function, the first assignment of a name that is neither a
     /// parameter nor a fact is a new binding: its type is its own, not the
     /// module variable's of the same name. Reactive state keeps its type
-    /// through a handler's assignment; every other module name is shadowed.
+    /// through a handler's assignment; every other module name is shadowed
+    /// — and a standard module's function, inlined, has locals of its own:
+    /// one named like a fact of the program is still its local (llm's
+    /// `rows = []` in `embed` had taken a fact `rows = 0`'s int).
     pub(crate) fn fresh_binding(&mut self, name: &str) -> bool {
         let is_ui = self.is_ui;
+        let own = self.current_fn_name.as_deref().is_some_and(crate::modules::is_crow_fn);
         let facts = &self.facts;
         match &mut self.body_assigned {
-            Some(assigned) => assigned.insert(name.to_string()) && !(is_ui && facts.contains(name)),
+            Some(assigned) => assigned.insert(name.to_string()) && !(is_ui && facts.contains(name) && !own),
             None => false,
         }
     }

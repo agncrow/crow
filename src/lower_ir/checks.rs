@@ -1280,8 +1280,10 @@ impl<'a> Lowerer<'a> {
             return;
         }
 
-        // ui elements exist only inside view blocks
-        if crate::lower::UI_ELEMENTS.contains(&name) && self.v.ui_mode && !self.in_view() {
+        // ui elements exist only inside view blocks — and a standard module's
+        // own function, inlined, keeps its names: llm's `embed` stacks
+        // tensor rows in a `use ui` program too (its `stack` is math's)
+        if crate::lower::UI_ELEMENTS.contains(&name) && self.v.ui_mode && !self.in_view() && !crate::modules::is_crow_fn(&self.current_fn) {
             self.refuse(format!(
                 "ui element '{}' can only be used inside a view block — declare the builder with 'view name[params]' instead of 'fn'",
                 name

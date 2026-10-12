@@ -1536,11 +1536,9 @@ pub(crate) fn declarations(stmts: &[Stmt]) -> Vec<Stmt> {
 fn stdlib_names() -> &'static BTreeSet<String> {
     static NAMES: std::sync::OnceLock<BTreeSet<String>> = std::sync::OnceLock::new();
     NAMES.get_or_init(|| {
-        crate::modules::ModuleRegistry::with_stdlib()
-            .all_function_names()
-            .into_iter()
-            .map(|s| s.to_string())
-            .collect()
+        let mut names: BTreeSet<String> = crate::modules::ModuleRegistry::with_stdlib().all_function_names().into_iter().map(|s| s.to_string()).collect();
+        names.extend(crate::modules::every_module_function());
+        names
     })
 }
 
@@ -2243,9 +2241,10 @@ pub fn run_check(
     // exercised by rendering, not by synthetic inputs.
     let recursive_fns = find_recursive_functions(ctx);
     let reactive = reactive_readers(ctx);
+    // (a dependency's functions are its package's to probe)
     let edge_candidates: BTreeSet<String> = pure_fns
         .iter()
-        .filter(|f| !reactive.contains(*f))
+        .filter(|f| !reactive.contains(*f) && !crate::from_dependency(f))
         .cloned()
         .collect();
     let (edge_issues, new_snapshots) = run_edge_cases(ctx, stmts, &edge_candidates, &recursive_fns);

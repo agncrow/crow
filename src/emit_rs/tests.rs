@@ -1934,6 +1934,22 @@ fn test_web_stream_response() {
 
 // --- UI / LiveView tests ---
 
+/// A derivation that is a list of records answers the harness as the
+/// array of their maps, as the interpreter does (a test of the rag example
+/// reads `a.chunks[0].file` of the app compiled; the arm had been missing,
+/// and the compiled program said it had no readable derivation of the name)
+#[test]
+fn a_derivation_of_records_answers_the_harness() {
+    let src = "use web, ui\nstruct Chunk [file, n]\nderive chunks\n    found = []\n    found = push[found, Chunk['a.md', 1]]\n    return found\nview v[]\n    return stack[p['`len[chunks]`']]\n";
+    let stmts = crate::lower::lower_program(&crate::build(src).unwrap()).unwrap();
+    let mut ctx = crate::type_infer::TypeContext::new();
+    ctx.infer_program(&stmts);
+    let program = crate::lower_ir::lower(&stmts, &mut ctx, "t").unwrap();
+    let rust = crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), None, true, None).expect("emitting failed").source;
+    assert!(rust.contains("\"chunks\" => Some(serde_json::json!({ \"ok\": true, \"value\": crow_runtime::json::ToJson::to_json(&__derive_chunks(state)) })),"), "{}", rust);
+    assert!(rust.contains("impl crow_runtime::json::ToJson for Chunk"), "{}", rust);
+}
+
 /// `crow test --compiled`: a part with no page is built as a page program
 /// that answers the harness — its views and derivations by name, the routes
 /// merged, serving on the port the test gives; a plain build has none of it

@@ -132,7 +132,7 @@ https://x.example.com/c
 hi
 ```
 
-Bytes as text and back, a signature compared, a number's bytes, and a response of bytes — what a token, a frame's header and a packed value are written over — and the request fixtures `request` asks for before it sends (`replaying`, `recording`, `replayed`, `recorded`: no replay and no recording run here, so nothing is held and nothing kept):
+Bytes as text and back, a signature compared, a number's bytes, and a response of bytes — what a token, a frame's header and a packed value are written over — and the request fixtures `request` asks for before it sends (`replaying`, `recording`, `rehearsing`, `replayed`, `recorded`: no replay, recording or rehearsal runs here, so nothing is held and nothing kept):
 
 ```crow
 use sys, web.mail, math
@@ -166,6 +166,7 @@ log[hex[xor[bytes['ab'], bytes['  ']]]]
 log[len[copy_of_frame[frame_of_csv['n,s\n1,a\n2,b\n']]]]
 log[replaying[]]
 log[recording[]]
+log[rehearsing[]]
 miss = replayed['GET', 'http://x.test/a', '']
 log[miss.kind]
 kept = recorded['GET', 'http://x.test/a', '', 200, 'hello', map[]]
@@ -210,6 +211,7 @@ true
 20
 4142
 8
+false
 false
 false
 http

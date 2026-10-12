@@ -46,6 +46,7 @@ cargo clippy --workspace --all-features
 ./target/release/crow test src/modules/stats.co
 ./target/release/crow test src/modules/clickhouse.co
 ./target/release/crow test src/modules/postgres.co
+(cd examples/rag && ../../target/release/crow test chat/corpus.co && ../../target/release/crow test chat/retrieve.co && ../../target/release/crow test --fixtures chat/page.co && ../../target/release/crow test --fixtures --compiled chat/page.co)
 scripts/coverage.sh
 ```
 
@@ -374,16 +375,40 @@ steps on every push and must be green.
   rows over `crow_runtime::fixtures`), so both modes agree by construction;
   the replay's switch is `CROW_REPLAY`, the recording's a runtime global the
   rehearsal sets (`record_to`, since a recording runs interpreted in the
-  process that began it); `rehearsal::outside` answers `request` a stand-in
-  in a rehearsal and lets it run in a recording; a recording runs the tests
-  that open no app too, for their fixtures alone (the replay runs every
-  test). `fnv`, `note_miss` and `take_misses` are the runtime's — crow_db
+  process that began it), a rehearsal's a third (`rehearse_in`: a request
+  a recording kept is answered from its fixture, any other `200` with
+  nothing to say — in the body, so a scenario that asks a model comes out
+  as its recording did and the baseline stands; `rehearsal::outside` no
+  longer answers `request` itself); a recording runs the tests that open
+  no app too, for their fixtures alone (the replay runs every test). `fnv`, `note_miss` and `take_misses` are the runtime's — crow_db
   reads them from there; a second copy is the bug class. The key is the
   method, the URL with its query and what is sent: a multipart boundary is
   random, so files are keyed by field and path (`sent_as`). The miss is
   noted as the whole sentence the run prints. A `crow!` row's body may
   `return held` of a fallible local, and a local may not be named like a
   sys row (`answer`).
+- A standard module's function inlined into a `use ui` program is read in
+  the module's scope at EVERY site that reads a bare name: the ui-element
+  check (checks.rs) and the element lowering (lower_ir.rs `module.is_none()
+  && in_ui`) had read llm's `stack[rows]` (math's) as the element outside a
+  view; both skip `modules::is_crow_fn(current_fn)` now, as `calls_fn` and
+  `is_fact` do, and so does inference's first-assignment rule
+  (`fresh_binding`: the module local's type had come from a program fact
+  of the same name — `rows = 0` beside `embed`'s `rows = []`: "push[]
+  takes a list … got an int"). A part is named by the path the program
+  reaches it through (`crow_modules/vectors/flat.co`), never the path a
+  link resolves to: the baseline's reach keys had held the machine's
+  absolute path, and a linked package's own imports had lost its prefix. The compiled harness answers a test's read
+  of a derivation by `__crow_derived`'s arms (emit_rs/program.rs `as_json`):
+  a kind without an arm is "no fact or readable derivation named" compiled
+  and fine interpreted — a list of records has one now. The checker's
+  defined names are every module's (`modules::every_module_function`), not
+  `with_stdlib`'s core set alone; a dependency's functions
+  (`main::from_dependency`, by `EXPANSION_PARTS`'s `crow_modules/` path)
+  are not probed with edge cases. An example app's `crow_modules/` holds
+  RELATIVE symlinks to packages/ (committed; `crow install` would write
+  absolute ones). `crow test main.co` runs the entry's own blocks: a part's
+  tests run from the part, and a part holding derivations must read them.
 - Writing a package over `grad` (packages/gpt): a function sees no
   top-level variable (inputs are the loss's parameters, gradients zeros);
   `reshape[t, rows, 1]` takes its sizes as arguments and makes the column
