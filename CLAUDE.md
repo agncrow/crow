@@ -375,12 +375,15 @@ steps on every push and must be green.
   tensors of three shapes are a list grown by `push`; a list of ints
   handed to `crossentropy` reaches a row `grad` cannot take (hand a
   tensor); `halt` in a guard does not narrow (`return` does); `fit`'s
-  answer of two kinds is a record, since a list holds one kind and the
-  lowering does not yet refuse the mix; and a function no test block
-  calls can leave a list reaching `grad` as `List(Unknown)` (roadmap P8,
-  open) — keep a file's test blocks reaching every function, as
-  packages/gpt/train.co does. A helper's assigned parameter in a traced
-  copy is `mut` now (parity 245).
+  answer of two kinds is a record (a list holds one kind: `push` refuses
+  another kind against the kind the items were first known to be, noted
+  in the scan on `ctx.first_items` — a map on the Lowerer does not survive
+  to the final pass, which runs on a Lowerer of its own; `ctx.param_reads`
+  moved there for the same reason). A test's call refines a parameter the
+  program's calls typed with an unknown inside (`type_by_tests`): an
+  uncalled `fit` had handed `step` a `List(Unknown)` that a test's list of
+  tensors could not replace, and `grad` refused the weights. A helper's
+  assigned parameter in a traced copy is `mut` now (parity 245).
 - A standard module written in Crow (`src/modules/*.co`) is read in its own
   scope: inside its inlined functions the program's names are invisible
   (`calls_fn` in lower_ir.rs, lower.rs, checks.rs and type_infer/calls.rs).

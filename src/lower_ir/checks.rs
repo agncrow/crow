@@ -858,7 +858,29 @@ impl<'a> Lowerer<'a> {
             Ty::List(i) | Ty::Map(_, i) => (**i).clone(),
             _ => return,
         };
-        if let (Some((many, _)), Some((others, one))) = (item_kind(&inner), item_kind(&item.ty()))
+        // a list variable's items are the kind they were first known to be:
+        // the scan meets the pushes in order and notes it, and the final
+        // pass holds each push to it (the variable's settled type is the last
+        // binding's, so a push of another kind had been blamed on the first)
+        let key = match holder {
+            Expr::Local(name, _) | Expr::Move(name, _) if row.id == "core.push" => Some((self.current_fn.clone(), name.clone())),
+            _ => None,
+        };
+        if self.pass != super::Pass::Final {
+            if let Some(key) = key {
+                if let Some((many, _)) = item_kind(&inner).or_else(|| item_kind(&item.ty())) {
+                    self.ctx.first_items.entry(key).or_insert(many);
+                }
+            }
+            return;
+        }
+        let first = key.and_then(|k| self.ctx.first_items.get(&k).cloned());
+        let many = match (first, item_kind(&inner)) {
+            (Some(first), _) => first,
+            (None, Some((many, _))) => many,
+            (None, None) => return,
+        };
+        if let Some((others, one)) = item_kind(&item.ty())
             && many != others
         {
             self.refuse(format!("{} takes {}: its {} are {}, not {}", crate::table::form(row.name), takes, what, many, one));
@@ -2310,7 +2332,16 @@ pub(crate) fn item_kind(t: &Ty) -> Option<(String, String)> {
         Ty::Str | Ty::Markup => ("text".to_string(), "text".to_string()),
         Ty::Bool => ("bools".to_string(), "a bool".to_string()),
         Ty::Record(n) | Ty::OptRecord(n) => (format!("{} records", crate::lower::shown(n)), format!("a {} record", crate::lower::shown(n))),
-        Ty::List(_) | Ty::Tensor(..) => ("lists".to_string(), "a list".to_string()),
+        // (a list's items say its kind, as `compatible` reads it: a tensor
+        // and a list of numbers are one kind; a list of unknown items is
+        // none, and a push onto it is not checked — a list of floats beside
+        // a list of tensors had passed as "lists", and the verifier caught
+        // the clone it mistyped: the gpt package's fit)
+        Ty::Tensor(..) => ("lists of numbers".to_string(), "a list of numbers".to_string()),
+        Ty::List(inner) => {
+            let (many, _) = item_kind(inner)?;
+            (format!("lists of {}", many), format!("a list of {}", many))
+        }
         Ty::Map(..) => ("maps".to_string(), "a map".to_string()),
         Ty::Frame(_) => ("frames".to_string(), "a frame".to_string()),
         _ => return None,

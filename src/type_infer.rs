@@ -453,6 +453,17 @@ pub struct TypeContext {
     /// guessed floats: a call of the gradient that hands tensors retypes
     /// them (the lowering's Index path), and takes the name out
     pub grad_forced: std::collections::BTreeSet<String>,
+    /// The kind each function's body reads a parsed value handed to a
+    /// parameter as (`upper[city]` text, `city + 0` a number, `str[city]`
+    /// text), by function and parameter: what a tool's schema says the
+    /// parameter is where inference says only "a parsed value" (noted by
+    /// the lowering's passes, read where the schema is written).
+    pub param_reads: BTreeMap<String, BTreeMap<String, Ty>>,
+    /// The kind a list variable's items were first known to be, by function
+    /// and variable, as the scan met its pushes in order: what a later push
+    /// of another kind is refused against (a variable's settled type is its
+    /// last binding's, which had blamed the first push for the second's).
+    pub first_items: BTreeMap<(String, String), String>,
     /// While a function body is inferred: the names it has assigned so far
     /// (its parameters to begin with). The first assignment of another
     /// name binds a new local (spec §7), whatever the module calls it.
@@ -594,6 +605,8 @@ impl TypeContext {
             call_signatures: BTreeMap::new(),
             views: std::collections::BTreeSet::new(),
             grad_forced: std::collections::BTreeSet::new(),
+            param_reads: BTreeMap::new(),
+            first_items: BTreeMap::new(),
             body_assigned: None,
             in_view: false,
             is_ui: false,
@@ -696,6 +709,19 @@ impl TypeContext {
         };
         let Some(p) = slot else { return false };
         let ours = matches!(p.1, Ty::Unknown) || before.as_ref() == Some(&p.1);
+        // a type the program's calls gave with an unknown inside — a list
+        // of unknown items, handed by a function nothing calls — takes what
+        // the test's call knows of it, and stays the program's (the gpt
+        // package's weights: `List(Unknown)` from an uncalled `fit`, a list
+        // of tensors from the test; left unknown, grad had refused them)
+        if !ours && p.1.has_unknown() && p.1.compatible(t) {
+            let joined = p.1.unify(t);
+            if joined != p.1 {
+                p.1 = joined;
+                return true;
+            }
+            return false;
+        }
         // a tensor parameter the program's calls typed takes the shapes a
         // test's calls hand it too: what the sizes disagree on is unknown
         // (one call in the program had fixed a function's sizes, and a

@@ -798,11 +798,6 @@ struct Lowerer<'a> {
     /// The parameter list of the query or exec being lowered, as written
     /// (`{:?}` of its items): the one list of several kinds.
     params_items: Option<String>,
-    /// The kind each function's body reads a parsed value handed to a
-    /// parameter as — `upper[city]` text, `city + 0` a number, `str[city]`
-    /// text — by function and parameter: what a tool's schema says the
-    /// parameter is, where inference says only "a parsed value".
-    param_reads: BTreeMap<String, BTreeMap<String, Ty>>,
     temp: usize,
     at: Where,
     in_ui: bool,
@@ -912,7 +907,6 @@ impl<'a> Lowerer<'a> {
             route_derived: None,
             in_fact_default: false,
             params_items: None,
-            param_reads: BTreeMap::new(),
             calls: BTreeMap::new(),
             direct_effects: BTreeMap::new(),
             current_fn: String::new(),
@@ -2396,7 +2390,7 @@ impl<'a> Lowerer<'a> {
             let is_param = matches!(lt.payload(), Ty::Json) && self.ctx.functions.get(&self.current_fn).is_some_and(|sig| sig.params.iter().any(|(n, _)| n == p));
             if is_param && !matches!(kind, Ty::Unknown) {
                 let read = if matches!(kind, Ty::Markup) { Ty::Str } else { kind.clone() };
-                self.param_reads.entry(self.current_fn.clone()).or_default().insert(p.clone(), read);
+                self.ctx.param_reads.entry(self.current_fn.clone()).or_default().insert(p.clone(), read);
             }
         }
     }
@@ -3515,7 +3509,7 @@ impl<'a> Lowerer<'a> {
         for (p, ty) in &params {
             // a parameter handed a parsed value is the kind the body reads it as
             let handed = matches!(ty.payload(), Ty::Json);
-            let ty = if handed { self.param_reads.get(name).and_then(|m| m.get(p)).cloned().unwrap_or(Ty::Unknown) } else { ty.clone() };
+            let ty = if handed { self.ctx.param_reads.get(name).and_then(|m| m.get(p)).cloned().unwrap_or(Ty::Unknown) } else { ty.clone() };
             let schema = match self.handed_schema(&ty) {
                 Handed::Schema(s) => s,
                 Handed::Untyped => {

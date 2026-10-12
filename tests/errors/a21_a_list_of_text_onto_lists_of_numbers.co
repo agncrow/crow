@@ -1,0 +1,6 @@
+--- a list holds one kind: a list of text pushed onto a list of tensors
+--- is refused (it had run interpreted as a mixed list)
+rows = []
+rows = push[rows, [1.0, 2.0]]
+rows = push[rows, ['x', 'y']]
+log[rows]

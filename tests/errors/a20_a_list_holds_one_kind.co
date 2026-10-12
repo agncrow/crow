@@ -1,0 +1,15 @@
+--- a list holds one kind: a list of tensors pushed onto a list holding a
+--- list of numbers is refused where it is written, not caught later as a
+--- clone the lowering mistyped
+use math
+
+fn fitted[]
+    losses = [1.5, 2.5]
+    weights = []
+    weights = push[weights, [[1.0, 0.0], [0.0, 1.0]]]
+    answer = []
+    answer = push[answer, losses]
+    answer = push[answer, weights]
+    return answer
+
+log[len[fitted[]]]

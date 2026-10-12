@@ -31,9 +31,7 @@ fn fit[ids, vocabulary_size, ws, steps, lr]
     return Fitted[losses, weights]
 
 --- a step lowers the loss on its own block, and two steps over a short
---- text answer a loss a step and the weights handed on (one block for
---- both: a function no test block calls keeps its parameters untyped, and
---- the loss would be asked to differentiate a weight of no kind)
+--- text answer a loss a step and the weights handed on
 test a_step_lowers_the_loss_and_fit_hands_the_weights_on[]
     ws = model.init[59, 2]
     ids = [5, 9, 2, 7, 1, 8, 3, 4, 6, 10, 11, 2, 5, 9, 2, 7]

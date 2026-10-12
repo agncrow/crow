@@ -97,18 +97,18 @@ on the random stream, which the reference and Crow do not share;
   helper a differentiated function calls may assign its parameter (`x = x
   + …`, the stream of a block); the traced copy the emitter writes had
   not marked it `mut`, and the compiled program did not build.
-- **A function no test block calls poisons `grad`'s typing** (open):
+- **A function no test block calls poisoned `grad`'s typing** (fixed):
   with `fit` uncalled in a file whose test block calls `step`, the list
-  of weights reaching `gradients` stays `List(Unknown)` and `grad` refuses
-  the loss's weights as "a value of a kind grad does not differentiate";
-  calling `fit` from the test, or removing it, cures it. The small
-  reproduction is in the roadmap (P8). The package keeps `train.co`'s
-  tests in one block meanwhile.
-- **A list holding two kinds is not refused** (open): `[losses, weights]`
-  grown by `push` — a list of floats beside a list of tensors — passed the
-  lowering and the verifier caught the mistyped clone; the spec's rule
-  (a list holds one kind) wants the refusal in words. `fit` answers a
-  record.
+  of weights reaching `gradients` stayed `List(Unknown)` — a test's call
+  types a parameter only where nothing typed it, and `fit`'s untyped call
+  had — and `grad` refused the loss's weights. A test's call now refines a
+  type that holds an unknown (`type_by_tests`), with a unit test.
+- **A list holding two kinds was not refused** (fixed): `[losses,
+  weights]` grown by `push` — a list of floats beside a list of tensors —
+  had passed as "lists" and the verifier caught the mistyped clone. A
+  list's items say its kind now, and a push of another kind is refused
+  against the kind the items were first known to be, at the push that
+  differs (corpus a20, a21). `fit` answers a record.
 - **A literal list of tensors is a matrix**, so three tensors of three
   shapes stop at `[X, P, mask]` ("all inner arrays must be the same
   length"); a list of them is grown with `push`. A list of ints handed

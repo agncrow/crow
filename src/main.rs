@@ -6188,6 +6188,33 @@ mod module_parts_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A test's call refines a parameter the program's calls typed with
+    /// an unknown inside: `fit`, which nothing calls, hands `step` a list
+    /// of unknown items; the test hands it a list of tensors, which the
+    /// gradient inside `gradients` then needs (it had been left
+    /// `List(Unknown)`, and grad refused the loss's weights as "a value of
+    /// a kind grad does not differentiate" — the gpt package)
+    #[test]
+    fn a_tests_call_refines_what_an_uncalled_function_left_unknown() {
+        let dir = std::env::temp_dir().join(format!("crow_tests_refine_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'refine'\n").unwrap();
+        std::fs::write(
+            dir.join("lib/gm.co"),
+            "use math\n\nfn loss[x, w0, w1]\n    return sum[(x * w0 * w1) .* (x * w0 * w1)]\n\nfn gradients[x, ws]\n    g = grad[loss]\n    every = g[x, ws[0], ws[1]]\n    return slice[every, 1, 3]\n\nfn init[]\n    ws = []\n    ws = push[ws, [[0.5, 0.0], [0.0, 0.5]]]\n    ws = push[ws, [[1.0, 0.0], [0.0, 1.0]]]\n    return ws\n",
+        )
+        .unwrap();
+        let src = "use math\nuse lib/gm\n\nfn step[x, ws, lr]\n    grads = gm.gradients[x, ws]\n    moved = for i in range[len[ws]]\n        ws[i] - grads[i] * lr\n    return moved\n\nfn fit[x, ws, steps, lr]\n    weights = ws\n    i = 0\n    while i lt steps\n        weights = step[x, weights, lr]\n        i = i + 1\n    return weights\n\ntest a_step_lowers[]\n    x = [[1.0, 2.0], [3.0, 4.0]]\n    moved = step[x, gm.init[], 0.01]\n    len[moved] eq 2\n";
+        let stmts = build(src).unwrap();
+        let mut visited = std::collections::HashSet::new();
+        let stmts = expand_module_imports_checked(&stmts, &dir, &mut visited).unwrap();
+        let lowered = lower::lower_program(&stmts).unwrap();
+        let checked = infer_and_validate(&lowered, false);
+        assert!(checked.is_ok(), "{:?}", checked.err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A part that does not parse is the program's refusal, named by the
     /// part's file and line (it had been dropped silently, and the entry
     /// told its name was undefined)
