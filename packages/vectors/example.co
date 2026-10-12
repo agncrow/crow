@@ -1,0 +1,31 @@
+--- Five notes as bag-of-words vectors over a small vocabulary, indexed,
+--- and the two nearest a question: the index is exact, so the answer is
+--- the cosine's — with a model's embeddings in place of the counts (`use
+--- llm`, `embed`), the same two calls make a retrieval step.
+use math
+use flat
+
+--- how often each word of the vocabulary occurs in a text
+fn counts_of[text, vocabulary]
+    words = split[text, ' ']
+    row = for w in vocabulary
+        n = 0
+        for word in words
+            if word eq w
+                n = n + 1
+        float[n]
+    return tensor[row]
+
+notes = ['the cat sat on the mat', 'a dog chased the cat', 'rain fell on the roof', 'the roof leaked in the rain', 'the dog slept']
+vocabulary = ['the', 'cat', 'sat', 'on', 'mat', 'a', 'dog', 'chased', 'rain', 'fell', 'roof', 'leaked', 'in', 'slept']
+rows = []
+for note in notes
+    rows = push[rows, counts_of[note, vocabulary]]
+ix = flat.index[stack[rows]]
+question = 'did the rain reach the roof'
+hits = flat.nearest[ix, counts_of[question, vocabulary], 2]
+for i in range[2]
+    p = hits.positions[i]
+    note = notes[p]
+    score = fmt[hits.scores[i], decimals = 3]
+    log['`note` (`score`)']

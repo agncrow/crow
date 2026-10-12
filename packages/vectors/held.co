@@ -1,0 +1,41 @@
+--- The package held to faiss (reference/reference.py): three hundred random
+--- vectors of 24 dimensions indexed, sixteen queries, the ten nearest of
+--- each — the positions exactly as faiss's IndexFlatIP answers them (the
+--- reference checks faiss's ranking against numpy's in float64 and that
+--- no tie lies near the tenth), the scores to 1e-12 relative against the
+--- float64 inner product at those positions (faiss computes in float32,
+--- so its own digits are not the ones held).
+use math
+use flat
+
+--- a table of the reference's, as a matrix: one that cannot be read is a
+--- wrong answer of the right kind, which the first comparison then says
+fn table_of[name]
+    t = load['packages/vectors/reference/`name`.csv']
+    if not t.ok
+        return zeros[1, 1]
+    return t
+
+--- a row of a loaded table as a list of ints
+fn ints_of[row]
+    ints = for x in row
+        int[x]
+    return ints
+
+--- the largest relative difference between two tensors of one shape
+fn apart[a, b]
+    return max[abs[a - b]] / max[abs[b]]
+
+--- every query's ten nearest are faiss's, and their scores the float64
+--- inner products
+test the_nearest_are_faiss_s[]
+    ix = flat.index[table_of['data/vectors']]
+    queries = table_of['data/queries']
+    positions = table_of['expected/positions']
+    scores = table_of['expected/scores']
+    len[ix] eq 300
+    len[queries] eq 16
+    for i in range[16]
+        hits = flat.nearest[ix, queries[i], 10]
+        hits.positions eq ints_of[positions[i]]
+        apart[hits.scores, scores[i]] lt 0.000000000001

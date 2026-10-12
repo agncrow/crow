@@ -52,6 +52,8 @@ _tmp_test_error_line
 !packages/gpt/reference/data/*.txt
 !packages/gpt/reference/expected/*.csv
 !packages/gpt/reference/expected/*.txt
+!packages/vectors/reference/data/*.csv
+!packages/vectors/reference/expected/*.csv
 !examples/taskboard/fixtures/*.csv
 docs/book/crow-site/
 editors/vscode/node_modules/

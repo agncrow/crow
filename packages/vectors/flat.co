@@ -1,0 +1,59 @@
+--- A flat index over embeddings, exact: the rows held as unit vectors, a
+--- query's nearest k by the inner product — the cosine, on unit rows — the
+--- same numbers in both modes. Held to faiss's IndexFlatIP (held.co):
+--- the positions exactly, the scores to 1e-12 against the float64 inner
+--- product. An approximate index (HNSW) is a part of its own, when a
+--- corpus asks for one (docs/rag-design.md).
+use math
+
+--- what a search answers: the rows' positions, best first, and their scores
+struct Hits [positions, scores]
+
+--- a vector as a unit vector; a vector of nothing stays as it is
+fn unit[v]
+    n = norm[v]
+    if n eq 0.0
+        return v
+    return v / n
+
+--- the index of a matrix of embeddings, a row each: every row a unit
+--- vector (a row of zeros stays)
+fn index[rows]
+    norms = sqrt[sum[rows .* rows, 1]]
+    safe = where[norms eq 0.0, norms + 1.0, norms]
+    return rows ./ reshape[safe, len[rows], 1]
+
+--- the k rows nearest the query: their positions, best first — an earlier
+--- row first between equals — and the inner product of each with the
+--- query's unit vector
+fn nearest[ix, q, k]
+    scores = flatten[ix * reshape[unit[q], len[q], 1]]
+    order = argsort[0.0 - scores]
+    positions = slice[order, 0, min[k, len[scores]]]
+    found = for i in positions
+        scores[i]
+    return Hits[positions, tensor[found]]
+
+--- the cosine of two vectors: the inner product of their unit vectors
+fn cosine[a, b]
+    return dot[unit[a], unit[b]]
+
+--- a unit vector has norm one, a vector of nothing stays, and the cosine
+--- is one along a vector, zero across it
+test a_unit_vector_and_the_cosine[]
+    u = unit[[3.0, 4.0]]
+    max[abs[u - [0.6, 0.8]]] lt 0.000000000000001
+    unit[[0.0, 0.0]] eq [0.0, 0.0]
+    cosine[[1.0, 0.0], [2.0, 0.0]] eq 1.0
+    cosine[[1.0, 0.0], [0.0, 3.0]] eq 0.0
+    abs[cosine[[1.0, 0.0], [1.0, 1.0]] - 0.7071067811865475] lt 0.000000000000001
+
+--- the nearest rows come best first, an earlier row first between equals,
+--- and at most as many as there are
+test the_nearest_come_best_first[]
+    ix = index[[[1.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]]]
+    hits = nearest[ix, [1.0, 0.0], 3]
+    hits.positions eq [0, 3, 2]
+    abs[hits.scores[0] - 1.0] lt 0.000000000000001
+    abs[hits.scores[2] - 0.7071067811865475] lt 0.000000000000001
+    len[nearest[ix, [1.0, 0.0], 10].positions] eq 4
