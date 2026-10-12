@@ -41,9 +41,14 @@ test --fixtures` lists the misses at the end, as it does for statements).
 **Where it lives.** In the Crow body of `request` (src/modules/core.co),
 which both modes run: before the request is sent, `sys.replayed[method,
 url, body]` answers the fixture where `CROW_REPLAY` names a project (the
-switch `crow test --fixtures` already sets), and after an answer comes in
-a recording, `sys.kept[method, url, body, reply]` writes it — two rows of
-the `sys` layer over `crow_runtime`. The hash is the one the statements'
+switch `crow test --fixtures` already sets) or a recording runs
+(`sys.replaying[]`, `sys.recording[]`), and after an answer comes in a
+recording, `sys.recorded[method, url, body, status, text, headers]` writes
+it — four rows of the `sys` layer over `crow_runtime::fixtures`. A
+multipart body's boundary is random, so a request with files is keyed by
+its fields and its files' field and path (`sent_as`). A recording runs
+the tests that open no app too, for their fixtures alone, since the
+replay runs every test. The hash is the one the statements'
 fixtures use: `fnv` moves to `crow_runtime`, and `crow_db` reads it from
 there (one hash, not two). The rehearsal's own intercept
 (`rehearsal::outside`, the interpreter's) still answers a stand-in — `200`
@@ -52,7 +57,8 @@ run, so the fixture is kept; crow-check.md's paragraph says so.
 
 **Not kept:** a reply followed piece by piece (`follow`, a socket of its
 own); a test that must replay uses `chat`. Recording a followed reply's
-bytes is a later note.
+bytes is a later note. (Built 2026-10-11: `tests/fixture_replay.rs`
+records against a server of its own and replays in both modes.)
 
 ## The vectors package: `packages/vectors`
 

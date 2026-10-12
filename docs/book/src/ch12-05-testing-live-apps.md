@@ -313,6 +313,15 @@ $ crow test --compiled sim/clock.co
   ✓ 2 blocks pass, the apps they opened compiled (1 run) — 0 truths, 1 law, 51 inputs run
 ```
 
+A test that reaches a database server or a model needs it running —
+unless it was recorded. `crow check --record-fixtures` runs the tests
+against the real servers and keeps what each statement and each request
+answered under `.crow/fixtures`; `crow test --fixtures` runs them from
+what was kept, in both modes, and names a statement or a request nothing
+recorded. A request's fixture is named by its method, its URL and what it
+sends, so a changed prompt to a model is a changed request; its headers,
+and the key in them, are no part of it.
+
 `crow test` runs these blocks; `crow check` runs them plus the live-loop
 hazards; `crow run` and `crow build` ignore them. Next: the two things
 every dashboard needs that you haven't written yet — a chart, and a page

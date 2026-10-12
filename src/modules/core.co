@@ -28,6 +28,27 @@ fn media_of[path]
 fn quoted[s]
     return replace[replace[replace[s, '"', '%22'], '\r', '%0D'], '\n', '%0A']
 
+--- what a request sends, as its fixture names it (the spec, Requests): the
+--- body as written, a form as its encoded pairs, files by field and path
+fn sent_as[body, fields, files]
+    if len[files] gt 0
+        named = []
+        for name in keys[fields]
+            value = fields[name]
+            named = push[named, '`name`=`value`']
+        for name in keys[files]
+            path = files[name]
+            named = push[named, '`name`@`path`']
+        return join[named, '&']
+    if len[fields] gt 0
+        pairs = []
+        for k in keys[fields]
+            ek = encode[k, 'url']
+            ev = encode[fields[k], 'url']
+            pairs = push[pairs, '`ek`=`ev`']
+        return join[pairs, '&']
+    return body
+
 --- `request[url, method, body]` with every option (the spec, Requests)
 fn request[url, method, body, headers, queried, fields, files, save, timeout]
     if not (starts[url, 'http://'] or starts[url, 'https://'])
@@ -54,6 +75,7 @@ fn request[url, method, body, headers, queried, fields, files, save, timeout]
         if lower[k] eq 'content-type'
             typed = true
     body_bytes = bytes['']
+    written = sent_as[body, fields, files]
     if len[files] gt 0
         boundary = 'crow-`hex[random[6]]`'
         pieces = []
@@ -81,12 +103,7 @@ fn request[url, method, body, headers, queried, fields, files, save, timeout]
         if len[fields] gt 0
             if not typed
                 lines = push[lines, 'content-type: application/x-www-form-urlencoded']
-            pairs = []
-            for k in keys[fields]
-                ek = encode[k, 'url']
-                ev = encode[fields[k], 'url']
-                pairs = push[pairs, '`ek`=`ev`']
-            body_bytes = bytes[join[pairs, '&']]
+            body_bytes = bytes[written]
         else
             if len[body] gt 0
                 if not typed
@@ -97,6 +114,17 @@ fn request[url, method, body, headers, queried, fields, files, save, timeout]
                         lines = push[lines, 'content-type: text/plain; charset=utf-8']
                 body_bytes = bytes[body]
     full = with_query[url, queried]
+    --- a fixture answers the request where a replay or a recording holds
+    --- one — the request as made: its method, its URL with the query, and
+    --- what it sends (the spec, Requests); a replay sends nothing
+    if replaying[] or recording[]
+        held = replayed[method, full, written]
+        if held.ok
+            return held
+        if replaying[]
+            return held
+    asked = full
+    asked_as = method
     got = exchange[full, method, lines, body_bytes, timeout]
     --- a redirect followed, as a browser follows one: up to ten, a 303
     --- (and a 301 or 302 of a POST) as a GET without the body
@@ -123,7 +151,13 @@ fn request[url, method, body, headers, queried, fields, files, save, timeout]
             return error['cannot request \'`full`\': `kept.reason`', 'http']
     else
         text_body = text[got.body, '�']
-    return reply[got.status, text_body, got.headers]
+    replied = reply[got.status, text_body, got.headers]
+    --- in a recording the answer is kept as the request's fixture
+    if recording[]
+        noted_down = recorded[asked_as, asked, written, got.status, text_body, got.headers]
+        if not noted_down.ok
+            return error['cannot request \'`asked`\': `noted_down.reason`', 'http']
+    return replied
 
 --- bytes read as text, or the reason they are none
 fn as_text[path, data]

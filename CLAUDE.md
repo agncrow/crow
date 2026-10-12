@@ -368,6 +368,22 @@ steps on every push and must be green.
   with `rows = push[rows, tensor[numbers]]`); a list of lists of values
   that can fail handed to `stack` passes the lowering and fails only in the
   verifier (open).
+- A request's fixture (`crow check --record-fixtures` keeps it, `crow test
+  --fixtures` answers from it) is asked for and kept by `request`'s OWN Crow
+  body (core.co: `replaying[]`, `recording[]`, `replayed`, `recorded` — sys
+  rows over `crow_runtime::fixtures`), so both modes agree by construction;
+  the replay's switch is `CROW_REPLAY`, the recording's a runtime global the
+  rehearsal sets (`record_to`, since a recording runs interpreted in the
+  process that began it); `rehearsal::outside` answers `request` a stand-in
+  in a rehearsal and lets it run in a recording; a recording runs the tests
+  that open no app too, for their fixtures alone (the replay runs every
+  test). `fnv`, `note_miss` and `take_misses` are the runtime's — crow_db
+  reads them from there; a second copy is the bug class. The key is the
+  method, the URL with its query and what is sent: a multipart boundary is
+  random, so files are keyed by field and path (`sent_as`). The miss is
+  noted as the whole sentence the run prints. A `crow!` row's body may
+  `return held` of a fallible local, and a local may not be named like a
+  sys row (`answer`).
 - Writing a package over `grad` (packages/gpt): a function sees no
   top-level variable (inputs are the loss's parameters, gradients zeros);
   `reshape[t, rows, 1]` takes its sizes as arguments and makes the column

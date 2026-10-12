@@ -2004,6 +2004,12 @@ pub static ROWS: &[Row] = &[
     row!("sys.hash", "sys", "hash", crow_runtime::sys::hash, (Bytes, Str) -> Str, stops),
     row!("sys.hmac", "sys", "hmac", crow_runtime::sys::hmac, (Bytes, Bytes, Str) -> Bytes, stops),
     row!("sys.reply", "sys", "reply", crow_runtime::sources::reply, (Int, Str, TextMap) -> Reply, never),
+    // a request's fixture: what a recording kept, what a replay answers
+    // (crow_runtime::fixtures; `request`'s body asks before it sends)
+    row!("sys.replaying", "sys", "replaying", crow_runtime::fixtures::replaying_now, () -> Bool, never),
+    row!("sys.recording", "sys", "recording", crow_runtime::fixtures::recording_now, () -> Bool, never),
+    row!("sys.replayed", "sys", "replayed", crow_runtime::fixtures::replayed, (Str, Str, Str) -> Reply, value "http"),
+    row!("sys.recorded", "sys", "recorded", crow_runtime::fixtures::recorded, (Str, Str, Str, Int, Str, TextMap) -> Unit, value "sys"),
     // bytes as text and back, a signature compared, a number's bytes, and a
     // response of bytes: what a token, a frame's header and a packed value
     // are written over

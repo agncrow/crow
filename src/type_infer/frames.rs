@@ -363,7 +363,7 @@ pub(crate) mod schema_record {
     /// The FNV-1a hash of the parts, a stable file name (crow_db's, which a
     /// replay names its files by too)
     pub(crate) fn fnv(parts: &[&str]) -> String {
-        crow_db::fixtures::fnv(parts)
+        crow_runtime::fixtures::fnv(parts)
     }
 
     fn file_for(var: &str, sql: &str) -> Option<std::path::PathBuf> {

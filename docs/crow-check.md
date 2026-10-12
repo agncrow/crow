@@ -116,7 +116,13 @@ migration, a statement through `query` that changes rows — is recorded
 with its payload and the program sees success; a shell command, an HTTP
 `request` (answered `200` with nothing to say) and a file written, moved
 or removed are recorded instead of run; mail is recorded
-as the harness records it, and `fetch` answers nothing, as in any test. The clock stands at 2026-01-01 00:00 UTC until the
+as the harness records it, and `fetch` answers nothing, as in any test.
+In a recording a request is sent, and what it answered is kept as its
+fixture — named by its method, its URL with the query and what it sends,
+its headers no part of it — so `crow test --fixtures` answers it with no
+server and no model, in both modes (spec, Requests); a recording runs the
+tests that open no app too, for their fixtures alone, since the replay
+runs every test. The clock stands at 2026-01-01 00:00 UTC until the
 test moves it, and random draws are seeded, so a scenario comes out the
 same on every run. An assertion that does not hold is reported, not
 failed — the data was the rehearsal's. The scenario's file says how it

@@ -421,10 +421,10 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
             counts.inputs_run += 1;
             // a replay runs each test as the recording ran it: its draws
             // seeded afresh, as a rehearsal's are
-            let replaying = crow_db::fixtures::replaying().is_some();
+            let replaying = crow_runtime::fixtures::replaying().is_some();
             if replaying {
                 crow_runtime::rng::set_seed(0);
-                let _ = crow_db::fixtures::take_misses();
+                let _ = crow_runtime::fixtures::take_misses();
             }
             // the declarations run first; one that fails (a database that is
             // down, a top-level query that errors) is the finding, named as
@@ -452,9 +452,9 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
                 };
                 // what the replay could not answer, which is likely why
                 let missed: String = if replaying {
-                    crow_db::fixtures::take_misses()
+                    crow_runtime::fixtures::take_misses()
                         .iter()
-                        .map(|m| format!("\n     no fixture held `{}` — `crow check --record-fixtures` records it where the database is", m))
+                        .map(|m| format!("\n     {}", m))
                         .collect()
                 } else {
                     String::new()

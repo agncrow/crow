@@ -3032,7 +3032,7 @@ fn cmd_test_blocks(filename: &str) {
             (true, 0) => ", none opening an app to compile".to_string(),
             (true, n) => format!(", the apps they opened compiled ({} run{})", n, if n == 1 { "" } else { "s" }),
         };
-        let against = if crow_db::fixtures::replaying().is_some() { format!("{}, the databases answered from .crow/fixtures", against) } else { against };
+        let against = if crow_runtime::fixtures::replaying().is_some() { format!("{}, the databases and the requests answered from .crow/fixtures", against) } else { against };
         println!("\n  \x1b[32m✓ {} block{} pass\x1b[0m{} — {} truth{}, {} law{}, {} input{} run",
             counts.blocks, if counts.blocks == 1 { "" } else { "s" }, against,
             counts.truths, if counts.truths == 1 { "" } else { "s" },
@@ -3094,10 +3094,17 @@ fn scenario_artifacts(entry: &str, parts: &std::collections::BTreeMap<String, St
         }
         for st in &stmts {
             let ast::Stmt::TestBlock { name: Some(name), params, body } = st else { continue };
-            if !params.is_empty() || !opens_app(body) {
+            if !params.is_empty() {
                 continue;
             }
             let recording = RECORD_FIXTURES.load(std::sync::atomic::Ordering::SeqCst);
+            // a test that opens no app leaves no state and is no scenario; a
+            // recording runs it all the same, for what its requests and
+            // statements answer — `crow test --fixtures` replays every test
+            let scenario = opens_app(body);
+            if !scenario && !recording {
+                continue;
+            }
             let r = if recording { rehearsal::begin_recording(&root) } else { rehearsal::begin(&root) };
             crow_runtime::rng::set_seed(0);
             let (result, changed_facts, mailed) = ir_interp::run_scenario(&decls, &format!("test {}", name), body);
@@ -3117,6 +3124,12 @@ fn scenario_artifacts(entry: &str, parts: &std::collections::BTreeMap<String, St
                     }
                     Err(e) => eprintln!("  the fixtures of {} were not kept: {}", name, e),
                 }
+                for line in crow_runtime::fixtures::take_kept() {
+                    println!("  recorded {}", line);
+                }
+            }
+            if !scenario {
+                continue;
             }
             let short = |l: &str| -> String { if l.chars().count() > 200 { format!("{}…", l.chars().take(200).collect::<String>()) } else { l.to_string() } };
             // the store reads a key back from the first line, up to ` (`
@@ -6461,7 +6474,7 @@ mod module_parts_tests {
         let db = dir.join("never.db");
         let sql = "SELECT sym, px FROM bars WHERE d = ?";
         std::fs::write(
-            dir.join(".crow/schema").join(format!("{}.json", crow_db::fixtures::fnv(&["ch", sql]))),
+            dir.join(".crow/schema").join(format!("{}.json", crow_runtime::fixtures::fnv(&["ch", sql]))),
             serde_json::json!({ "via": "ch", "sql": sql, "columns": [["sym", "str"], ["px", "float"]] }).to_string(),
         )
         .unwrap();

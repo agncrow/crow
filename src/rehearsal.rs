@@ -83,12 +83,16 @@ fn begin_as(root: &Path, recording: bool) -> Arc<Rehearsal> {
         recorded: Mutex::new(std::collections::BTreeMap::new()),
     });
     ACTIVE.with(|a| *a.borrow_mut() = Some(r.clone()));
+    // a recording keeps what the requests answer too, through `request`'s
+    // own body (crow_runtime::fixtures)
+    crow_runtime::fixtures::record_to(if recording { Some(root.join(".crow")) } else { None });
     r
 }
 
 /// End the rehearsal on this thread.
 pub fn end() {
     ACTIVE.with(|a| *a.borrow_mut() = None);
+    crow_runtime::fixtures::record_to(None);
 }
 
 /// An assertion that did not hold: in a rehearsal it is kept to report
@@ -109,7 +113,9 @@ pub fn unheld(what: String) -> bool {
 /// A builtin that reaches past the program — a shell command, a file
 /// written, moved or removed — recorded instead of run, with what it
 /// answers the program: a shell that ran and said nothing, a write that
-/// landed. `None` outside a rehearsal, or for a builtin that stays real.
+/// landed. `None` outside a rehearsal, or for a builtin that stays real —
+/// a request in a recording, which is sent and its answer kept as its
+/// fixture (`crow_runtime::fixtures`, through `request`'s own body).
 pub fn outside(name: &str, vals: &[crate::value::CrowValue]) -> Option<crate::value::CrowValue> {
     use crate::value::{CrowValue, Value};
     if !matches!(name, "shell" | "request" | "write" | "mkdir" | "rm" | "mv" | "cp") {
@@ -144,6 +150,9 @@ pub fn outside(name: &str, vals: &[crate::value::CrowValue]) -> Option<crate::va
     if let Ok(mut e) = r.effects.lock() {
         e.push(format!("{}[{}]", name, args.join(", ")));
     }
+    if name == "request" && r.recording {
+        return None;
+    }
     Some(match name {
         // a request recorded, answered as one that landed with nothing to say
         "request" => crate::table::write_reply(crow_runtime::sources::Reply { status: 200, ..Default::default() }),
@@ -172,7 +181,7 @@ impl Rehearsal {
 
     /// A fixture recorded for the statement: `{"sql", "columns", "rows"}`.
     fn fixture(&self, sql: &str) -> Option<CrowFrame> {
-        let path = self.fixtures.join(format!("{}.json", crow_db::fixtures::fnv(&[&one_placeholder_per_list(sql)])));
+        let path = self.fixtures.join(format!("{}.json", crow_runtime::fixtures::fnv(&[&one_placeholder_per_list(sql)])));
         crow_db::fixtures::fixture_frame(&std::fs::read_to_string(path).ok()?)
     }
 
@@ -292,7 +301,7 @@ pub fn keep_fixtures(r: &Rehearsal) -> Result<Vec<(String, usize, usize)>, Strin
             })
             .collect();
         let doc = serde_json::json!({ "sql": key, "columns": columns, "rows": rows, "answered": answered });
-        let path = r.fixtures.join(format!("{}.json", crow_db::fixtures::fnv(&[key])));
+        let path = r.fixtures.join(format!("{}.json", crow_runtime::fixtures::fnv(&[key])));
         std::fs::write(&path, serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())? + "\n").map_err(|e| e.to_string())?;
         out.push((key.clone(), frame.nrows(), *answered));
     }

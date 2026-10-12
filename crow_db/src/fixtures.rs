@@ -4,26 +4,14 @@
 //! one it was written as, where its fixture and its columns' record live,
 //! the rows a write answers — and the replay's database, which `connect`
 //! hands back when `CROW_REPLAY` names a project's `.crow` directory, in
-//! either mode (spec, crow test --fixtures; crow-check.md, rehearsals).
+//! either mode (spec, crow test --fixtures; crow-check.md, rehearsals). The
+//! hash that names a fixture, the replay's switch and the misses it notes
+//! are the runtime's (`crow_runtime::fixtures`), shared with a request's
+//! fixture.
 
+use crow_runtime::fixtures::{fnv, note_miss, replaying};
 use crow_runtime::frame::{Column, CrowFrame};
 use std::path::{Path, PathBuf};
-
-/// The FNV-1a hash of the parts: a stable file name.
-pub fn fnv(parts: &[&str]) -> String {
-    let mut h: u64 = 0xcbf29ce484222325;
-    for (i, p) in parts.iter().enumerate() {
-        if i > 0 {
-            h ^= b'\n' as u64;
-            h = h.wrapping_mul(0x100000001b3);
-        }
-        for b in p.bytes() {
-            h ^= b as u64;
-            h = h.wrapping_mul(0x100000001b3);
-        }
-    }
-    format!("{:016x}", h)
-}
 
 /// Whether a statement can only read: it starts as a query does and names
 /// no write anywhere (a `WITH … INSERT` writes). Only such a statement goes
@@ -243,13 +231,6 @@ pub fn generated_rows(cols: &[(String, String)], n: usize) -> CrowFrame {
     CrowFrame::new(cols.iter().map(|(n, _)| n.clone()).collect(), data, validity)
 }
 
-/// The project whose recordings answer a replay: `CROW_REPLAY` names its
-/// `.crow` directory (`crow test --fixtures` sets it, for itself and for the
-/// compiled apps its tests open).
-pub fn replaying() -> Option<PathBuf> {
-    std::env::var_os("CROW_REPLAY").map(PathBuf::from).filter(|p| !p.as_os_str().is_empty())
-}
-
 /// The recordings that answer a connection to `url` in a replay: a database
 /// server's (Postgres, ClickHouse), which a machine without it cannot reach.
 /// A sqlite file is the program's own and opens as always, so a test that
@@ -257,32 +238,6 @@ pub fn replaying() -> Option<PathBuf> {
 pub fn replaying_for(url: &str) -> Option<PathBuf> {
     let server = ["postgres://", "postgresql://", "clickhouse://"].iter().any(|s| url.starts_with(s));
     if server { replaying() } else { None }
-}
-
-/// A statement a replay had no fixture for, kept where the test run reads
-/// it (`CROW_REPLAY_MISSES`, a file every process of the run appends to — a
-/// compiled app's misses are its own process's), so a test that fails says
-/// what was not recorded.
-fn note_miss(statement: &str) {
-    let Some(path) = std::env::var_os("CROW_REPLAY_MISSES") else { return };
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-        let _ = std::io::Write::write_all(&mut f, format!("{}\n", statement).as_bytes());
-    }
-}
-
-/// The statements the replay had no fixture for since this was last asked,
-/// each once, in the order they were met.
-pub fn take_misses() -> Vec<String> {
-    let Some(path) = std::env::var_os("CROW_REPLAY_MISSES") else { return Vec::new() };
-    let text = std::fs::read_to_string(&path).unwrap_or_default();
-    let _ = std::fs::write(&path, "");
-    let mut out: Vec<String> = Vec::new();
-    for line in text.lines().filter(|l| !l.is_empty()) {
-        if !out.iter().any(|o| o == line) {
-            out.push(line.to_string());
-        }
-    }
-    out
 }
 
 /// A database answered from what recordings kept: a statement that reads
@@ -307,7 +262,7 @@ impl Replay {
         let text = std::fs::read_to_string(fixture_path(&self.crow_dir, sql)).ok();
         text.as_deref().and_then(fixture_frame).ok_or_else(|| {
             let head: String = sql.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(80).collect();
-            note_miss(&head);
+            note_miss(&format!("no fixture held `{}` — `crow check --record-fixtures` records it where the database is", head));
             format!("no fixture holds `{}` — `crow check --record-fixtures` records it where the database is", head)
         })
     }
@@ -387,13 +342,5 @@ mod tests {
         assert_eq!((back.nrows(), back.columns.clone()), (1, vec!["id".to_string()]));
         assert_eq!(db.backend_name(), "postgres");
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// The hash names the same file the build's records and the
-    /// rehearsal's fixtures have always used
-    #[test]
-    fn the_hash_is_the_files_name() {
-        assert_eq!(fnv(&["a"]), "af63dc4c8601ec8c");
-        assert_eq!(fnv(&["a", "b"]).len(), 16);
     }
 }
