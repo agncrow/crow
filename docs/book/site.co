@@ -82,7 +82,7 @@ test runner[]
 --- a page with the favicon in its head: the mark, reached from where the
 --- page sits (`up` takes links back to the site root)
 fn with_icon[written, up]
-    tag = replace['<head><link rel="icon" type="image/svg+xml" href="UPcrow.svg">', 'UP', up]
+    tag = replace['<head><link rel="icon" type="image/svg+xml" href="UPcrow.svg"><link rel="icon" href="UPfavicon.ico" sizes="32x32"><link rel="apple-touch-icon" href="UPapple-touch-icon.png">', 'UP', up]
     return replace[written, '<head>', tag]
 
 toc = doc.chapters[read['`src`SUMMARY.md']]

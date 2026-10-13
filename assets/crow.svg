@@ -1,17 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
-  <defs>
-    <clipPath id="badge"><rect x="0" y="0" width="256" height="256" rx="56"/></clipPath>
-  </defs>
-  <rect x="0" y="0" width="256" height="256" rx="56" fill="#F2A900"/>
-  <g clip-path="url(#badge)" fill="#141414">
-    <!-- neck and shoulder, running off the badge -->
-    <path d="M76 160 C 80 194, 54 226, 42 256 L 186 256 C 180 214, 166 190, 150 172 Z"/>
-    <!-- head -->
-    <circle cx="118" cy="124" r="56"/>
-    <!-- beak: a convex upper mandible, a lower one that curves up to the tip -->
-    <path d="M156 98 C 190 98, 222 110, 248 126 C 220 140, 192 148, 160 152 C 154 134, 154 116, 156 98 Z"/>
-  </g>
-  <!-- the eye: (o.o) -->
-  <circle cx="135" cy="112" r="13" fill="#F2A900"/>
-  <circle cx="138" cy="112" r="6" fill="#141414"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256"><rect width="256" height="256" rx="56" fill="#f6f7f9"/><g fill="#0f1317"><g transform="translate(17.24 151.07) scale(0.03593 -0.03593)"><path transform="translate(0 0)" d="M924 1554Q792 1315 728.0 1091.0Q664 867 664 643Q664 421 728.0 195.5Q792 -30 924 -270H696Q537 -39 460.0 185.5Q383 410 383 643Q383 875 460.5 1100.5Q538 1326 696 1554Z"/><path transform="translate(1233 0)" d="M616 909Q511 909 451.0 816.5Q391 724 391 559Q391 394 451.0 301.5Q511 209 616 209Q722 209 782.0 301.5Q842 394 842 559Q842 724 782.0 816.5Q722 909 616 909ZM98 559Q98 830 238.5 988.5Q379 1147 616 1147Q854 1147 994.5 988.5Q1135 830 1135 559Q1135 288 994.5 129.5Q854 -29 616 -29Q379 -29 238.5 129.5Q98 288 98 559Z"/><path transform="translate(2466 0)" d="M449 367H782V0H449Z"/><path transform="translate(3699 0)" d="M616 909Q511 909 451.0 816.5Q391 724 391 559Q391 394 451.0 301.5Q511 209 616 209Q722 209 782.0 301.5Q842 394 842 559Q842 724 782.0 816.5Q722 909 616 909ZM98 559Q98 830 238.5 988.5Q379 1147 616 1147Q854 1147 994.5 988.5Q1135 830 1135 559Q1135 288 994.5 129.5Q854 -29 616 -29Q379 -29 238.5 129.5Q98 288 98 559Z"/><path transform="translate(4932 0)" d="M309 1554H537Q695 1326 772.5 1100.5Q850 875 850 643Q850 410 773.0 185.5Q696 -39 537 -270H309Q441 -30 505.0 195.5Q569 421 569 643Q569 867 505.0 1091.0Q441 1315 309 1554Z"/></g></g></svg>

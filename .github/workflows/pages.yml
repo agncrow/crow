@@ -5,7 +5,7 @@ name: Pages
 on:
   push:
     branches: [main]
-    paths: ['docs/**', 'src/**', '.github/workflows/pages.yml']
+    paths: ['docs/**', 'src/**', 'assets/**', '.github/workflows/pages.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -26,6 +26,7 @@ jobs:
       - name: Render the book
         run: |
           ./target/release/crow run -i docs/book/site.co
+          cp assets/favicon.ico assets/apple-touch-icon.png docs/book/crow-site/
           test -f docs/book/crow-site/index.html && test -f docs/book/crow-site/ch01-01-toolchain.html
           n=$(find docs/book/crow-site -name '*.html' | wc -l); echo "$n pages"; test "$n" -ge 90
       - uses: actions/upload-pages-artifact@v3
