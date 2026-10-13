@@ -17,7 +17,7 @@ view chapter[title, body, nav, pages, up]
     return stack[
         row[
             button['☰', class = 'nav-toggle', title = 'menu'],
-            img[src = '`up`crow.svg', alt = '', width = 28, height = 28],
+            img[src = '`up`crow.svg?v=`mark_version`', alt = '', width = 28, height = 28],
             a['The Crow Programming Language', href = '`up`index.html', class = 'title'],
             row[
                 input[class = 'doc-search', type = 'search', placeholder = 'Search  /', hidden_below = 'phone'],
@@ -80,11 +80,15 @@ test runner[]
     assert[fits[phone, 390]]
 
 --- a page with the favicon in its head: the mark, reached from where the
---- page sits (`up` takes links back to the site root)
-fn with_icon[written, up]
-    tag = replace['<head><link rel="icon" type="image/svg+xml" href="UPcrow.svg"><link rel="icon" href="UPfavicon.ico" sizes="32x32"><link rel="apple-touch-icon" href="UPapple-touch-icon.png">', 'UP', up]
+--- page sits (`up` takes links back to the site root), its address carrying
+--- a version from the mark's own bytes, so a browser that cached the old
+--- icon fetches a changed one (browsers hold favicons for months)
+fn with_icon[written, up, version]
+    tag = replace[replace['<head><link rel="icon" type="image/svg+xml" href="UPcrow.svg?v=V"><link rel="icon" href="UPfavicon.ico?v=V" sizes="32x32"><link rel="apple-touch-icon" href="UPapple-touch-icon.png?v=V">', 'UP', up], 'V', version]
     return replace[written, '<head>', tag]
 
+mark = read['assets/crow.svg']
+mark_version = slice[hash[mark, 'sha256'], 0, 8]
 toc = doc.chapters[read['`src`SUMMARY.md']]
 --- (the site directory first: on a fresh checkout nothing has made it, and
 --- a page written into a directory that is not there is a failed write)
@@ -98,14 +102,14 @@ for i in range[len[toc]]
         parts = split[path, '/']
         folder = parts[0]
         mkdir['`out``folder`']
-    doc_page = with_icon[doc.document[title, chapter[title, doc.markdown[read['`src``path`']], doc.menu[toc, path], doc.pager[toc, path], up]], up]
+    doc_page = with_icon[doc.document[title, chapter[title, doc.markdown[read['`src``path`']], doc.menu[toc, path], doc.pager[toc, path], up]], up, mark_version]
     html_path = replace[path, '.md', '.html']
     write['`out``html_path`', doc_page]
 --- the front door is the first chapter
 first = toc.path[0]
-write['`out`index.html', with_icon[doc.document[toc.title[0], chapter[toc.title[0], doc.markdown[read['`src``first`']], doc.menu[toc, first], doc.pager[toc, first], '']], '']]
+write['`out`index.html', with_icon[doc.document[toc.title[0], chapter[toc.title[0], doc.markdown[read['`src``first`']], doc.menu[toc, first], doc.pager[toc, first], '']], '', mark_version]]
 --- the mark, beside the pages, for the favicon and the top bar
-write['`out`crow.svg', read['assets/crow.svg']]
+write['`out`crow.svg', mark]
 
 --- the search index: every chapter's title, page, and words
 entries = for i in range[len[toc]]

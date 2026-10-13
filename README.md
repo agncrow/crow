@@ -1,4 +1,4 @@
-<p align="center"><img src="assets/crow.svg" width="128" alt="Crow"></p>
+<p align="center"><img src="assets/crow.svg?v=2" width="128" alt="Crow"></p>
 
 # Crow
 
