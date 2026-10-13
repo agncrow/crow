@@ -24,7 +24,10 @@ jobs:
       - name: Build crow
         run: cargo build --release --locked
       - name: Render the book
-        run: ./target/release/crow run -i docs/book/site.co && test -f docs/book/crow-site/index.html
+        run: |
+          ./target/release/crow run -i docs/book/site.co
+          test -f docs/book/crow-site/index.html && test -f docs/book/crow-site/ch01-01-toolchain.html
+          n=$(find docs/book/crow-site -name '*.html' | wc -l); echo "$n pages"; test "$n" -ge 90
       - uses: actions/upload-pages-artifact@v3
         with:
           path: docs/book/crow-site

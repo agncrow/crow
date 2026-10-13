@@ -79,6 +79,9 @@ test runner[]
     assert[fits[phone, 390]]
 
 toc = doc.chapters[read['`src`SUMMARY.md']]
+--- (the site directory first: on a fresh checkout nothing has made it, and
+--- a page written into a directory that is not there is a failed write)
+mkdir[out]
 for i in range[len[toc]]
     path = toc.path[i]
     title = toc.title[i]
