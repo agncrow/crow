@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/crow.svg" width="128" alt="Crow"></p>
+
 # Crow
 
 A programming language for data work and web applications. Looks like

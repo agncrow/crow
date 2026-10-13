@@ -4,16 +4,25 @@
   "description": "Crow language support: diagnostics, completions, hover, navigation — powered by `crow lsp`",
   "version": "0.1.0",
   "publisher": "crow-lang",
-  "engines": { "vscode": "^1.85.0" },
-  "categories": ["Programming Languages"],
+  "icon": "icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
   "main": "./extension.js",
   "activationEvents": [],
   "contributes": {
     "languages": [
       {
         "id": "crow",
-        "aliases": ["Crow"],
-        "extensions": [".co"],
+        "aliases": [
+          "Crow"
+        ],
+        "extensions": [
+          ".co"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],

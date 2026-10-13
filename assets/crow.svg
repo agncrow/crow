@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <clipPath id="badge"><rect x="0" y="0" width="256" height="256" rx="56"/></clipPath>
+  </defs>
+  <rect x="0" y="0" width="256" height="256" rx="56" fill="#F2A900"/>
+  <g clip-path="url(#badge)" fill="#141414">
+    <!-- neck and shoulder, running off the badge -->
+    <path d="M76 160 C 80 194, 54 226, 42 256 L 186 256 C 180 214, 166 190, 150 172 Z"/>
+    <!-- head -->
+    <circle cx="118" cy="124" r="56"/>
+    <!-- beak: a convex upper mandible, a lower one that curves up to the tip -->
+    <path d="M156 98 C 190 98, 222 110, 248 126 C 220 140, 192 148, 160 152 C 154 134, 154 116, 156 98 Z"/>
+  </g>
+  <!-- the eye: (o.o) -->
+  <circle cx="135" cy="112" r="13" fill="#F2A900"/>
+  <circle cx="138" cy="112" r="6" fill="#141414"/>
+</svg>
