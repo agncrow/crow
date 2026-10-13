@@ -14,9 +14,14 @@ they find. It looks like Python, compiles to Rust, and makes three promises:
    error tells you what to write instead.
 
 The language ships as a single binary containing an interpreter (for
-immediate feedback), a compiler to Rust (for production speed), tensors,
+immediate feedback), a compiler to Rust (for production speed; the Rust
+toolchain it needs is fetched once, on the first native build), tensors,
 data frames, a database layer, and a reactive web framework. The final
 chapter of this book builds a live dashboard using all of them.
+
+Crow is in alpha: the language still changes between releases, the
+changelog in the repository says what moved, and this book is rebuilt
+for every change, so what you read matches the release you install.
 
 ## Who This Book Is For
 
