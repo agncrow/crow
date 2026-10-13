@@ -28,31 +28,36 @@ log['average: `fmt[avg, decimals = 2]`']
 
 ## Quick start
 
-You need a Mac or a Linux machine (on Windows, use WSL), `git`, and about
-ten minutes, most of it compiling. The installer brings everything else — a
-C compiler and the Rust toolchain — and skips whatever you already have:
+One line on a Mac or a Linux machine (on Windows, use WSL):
 
 ```bash
-git clone https://github.com/agncrow/crow.git
-cd crow
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/agncrow/crow/main/install.sh | bash
 ```
 
-It ends by compiling and running a hello program, so when it says done, it
-works. If it installed Rust for you, open a new terminal first. Then:
+It puts one prebuilt binary in `~/.crow/bin`, checks it against its
+published hash, runs a hello program, and prints the PATH line. Nothing
+else is installed: the interpreter, the tests, `crow check`, the language
+server and served apps work at once.
 
 ```bash
 crow new hello && cd hello && crow run
 ```
 
-`crow help` lists every command. To upgrade, `git pull` and run
-`./install.sh` again. `./install.sh --uninstall` removes Crow and leaves
-Rust alone. Working on Crow itself? `./install.sh --dev` builds your
-checkout in place.
+Compiling to a native binary needs a Rust toolchain. The first `crow
+build` fetches a pinned one into `~/.crow`, with the runtime, once (about
+215 MB); `crow setup` does it up front, and `crow setup --check` says
+what is present. Until then `crow run` says so and interprets, which
+answers the same, only slower.
+
+`crow help` lists every command. To upgrade, run the line again;
+`install.sh --uninstall` removes `~/.crow`. Working on Crow itself?
+`git clone https://github.com/agncrow/crow && cd crow && ./install.sh --dev`
+builds your checkout in place; `--source` builds from it and snapshots the
+source for compiled programs.
 
 ## Learn
 
-- **[The Crow Book](docs/book/src/SUMMARY.md)** — step-by-step, from install to a live dashboard. Every code block is executed in both execution modes by CI (`crow test --book`).
+- **[The Crow Book](https://agncrow.github.io/crow/)** ([source](docs/book/src/SUMMARY.md)) — step-by-step, from install to a live dashboard. Every code block is executed in both execution modes by CI (`crow test --book`).
 - **[Toolchain guide](docs/usage.md)** — every `crow` command, project layout, the crowfile.
 - **Run the book's examples in place** — `crow book` serves the book with ▶ Run / ⚙ Compile / ✓ Test / ■ Stop on every code block.
 - **Learning with an AI assistant?** Paste [`docs/crow-for-llms.md`](docs/crow-for-llms.md) into it and ask it to teach you interactively — the file is written to make any LLM an accurate Crow tutor.

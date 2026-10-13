@@ -7,18 +7,29 @@ language — that is [The Crow Book](book/src/SUMMARY.md); the reference is
 
 ## Installation
 
-Crow builds from source with the Rust toolchain. `cargo` stays a real
-dependency after installation: `crow run` compiles your program to Rust.
+One line fetches the prebuilt binary for your machine from the latest
+release into `~/.crow/bin`, held to its published hash:
 
 ```bash
-git clone <the crow repository>
-cd crow
-cargo install --path .        # installs ~/.cargo/bin/crow
+curl -fsSL https://raw.githubusercontent.com/agncrow/crow/main/install.sh | bash
 ```
 
-Make sure `~/.cargo/bin` is on your `PATH`, then run `crow` with no
-arguments — you should see the usage help. (`cargo build --release` instead
-leaves the binary at `target/release/crow` without installing it.)
+Nothing else is installed: the interpreter, the tests, `crow check`, the
+language server and served apps work at once. Compiling to a native
+binary needs a Rust toolchain: the first `crow build` fetches a pinned one
+from Rust's own servers into `~/.crow/toolchain`, with the release's
+runtime bundle into `~/.crow/runtime`, once, each file verified; `crow
+setup` does it up front, `crow setup --check` says what is present, and
+the one thing asked of the machine is a linker (the Xcode command line
+tools, or `build-essential`). Until the compiler is there, `crow run`
+says so and interprets, which answers the same, only slower. `CROW_HOME`
+moves the directory.
+
+From a checkout, `./install.sh --source` builds Crow with your own Rust
+and snapshots the source to `~/.crow/src` for compiled programs to link,
+and `./install.sh --dev` builds the checkout in place for working on Crow
+itself (`cargo build --release` leaves the binary at `target/release/crow`
+without installing it; it links the checkout it was built from).
 
 Editor support is a subcommand of the same binary: `crow lsp`. See
 [crow-lsp.md](crow-lsp.md) for VS Code, Neovim, Helix, and Zed.
@@ -111,6 +122,7 @@ variables win).
 | `crow new myapp --ml` | Adds `jobs/train.co`, `lib/model.co`. |
 | `crow new myapp --db` | Adds `db/schema.co`, `jobs/migrate.co`. Flags combine. |
 | `crow install` | Install the crowfile's `deps` into `crow_modules/`, each pinned by `crow.lock`; `--update [name]` moves them to what their versions name now. |
+| `crow setup` | Fetch the pinned Rust toolchain and this release's runtime into `~/.crow` for compiled builds, each file verified; `--check` says what is present and whether compiled builds are ready. |
 
 Every scaffolded file is working code — `crow run` succeeds right after
 `crow new`.

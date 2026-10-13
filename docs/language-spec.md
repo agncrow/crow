@@ -4230,11 +4230,12 @@ crow new myapp --ml         --- create ML project (+ jobs/train.co, lib/model.co
 crow new myapp --db         --- create DB project (+ db/schema.co, jobs/migrate.co)
 crow new myapp --web --ml --db  --- all capabilities
 crow install                --- install deps into crow_modules/, pinned by crow.lock (--update [name] moves them)
+crow setup                  --- fetch the pinned Rust toolchain and this release's runtime into ~/.crow for compiled builds, each file verified (--check: what is present)
 crow build                  --- transpile to Rust and compile to native binary
 crow build file.co        --- transpile a specific file
 crow build --ir file.co   --- print the program's one typed form, the IR (docs/ir-design.md); nothing is compiled
 crow build --rs file.co   --- print the Rust the program compiles to, printed from the IR; nothing is compiled
-crow run                    --- transpile + compile + run main.co
+crow run                    --- transpile + compile + run main.co; with no compiler on the machine yet, interpreted and told so (crow setup fetches one)
 crow run file.co          --- transpile + compile + run a specific file (a dev build: the runtime crates at optimization level 1, the program at 0, no LTO)
 crow run --opt 1 file.co  --- the same, the program at level 1 (0 to 3, 0 unless said; the runtime crates follow above 1; crow build is 3 with LTO)
 crow run train              --- run a named job from the crowfile jobs map

@@ -387,6 +387,21 @@ steps on every push and must be green.
   noted as the whole sentence the run prints. A `crow!` row's body may
   `return held` of a fallible local, and a local may not be named like a
   sys row (`answer`).
+- Where the runtime crates come from is `home::runtime()` (src/home.rs),
+  in order: a checkout named by `~/.crow/dev` (`install.sh --dev`), the
+  checkout the binary was built from where it still exists (the gate's
+  `target/release/crow`; `CROW_IGNORE_CHECKOUT=1` skips it, for a
+  release-shaped run), the release's bundle `~/.crow/runtime/<version>`
+  (`crow setup`: toolchain from static.rust-lang.org by the channel
+  manifest's hashes into `~/.crow/toolchain/<rust version>`, the bundle
+  from the GitHub Release; curl and tar do the fetching), then an
+  install's snapshot `~/.crow/src`. A bundle build is offline: the
+  generated project gets `.cargo/config.toml` (vendored sources) and the
+  bundle's lockfile. cargo is `home::cargo()` (Crow's own when fetched).
+  `crow run` with no compiler interprets and says so; `crow build` fetches
+  first. A version bump renames the bundle: `scripts/bundle_runtime.sh`
+  and the release workflow read Cargo.toml's; `RUST_VERSION` in home.rs
+  is pinned by hand and must match the release workflow's.
 - A standard module's function inlined into a `use ui` program is read in
   the module's scope at EVERY site that reads a bare name: the ui-element
   check (checks.rs) and the element lowering (lower_ir.rs `module.is_none()

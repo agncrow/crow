@@ -36,6 +36,7 @@ mod parallel;
 mod packages;
 mod parser;
 mod rehearsal;
+mod home;
 mod rust_names;
 mod served;
 mod compiled_harness;
@@ -149,6 +150,15 @@ fn crow_main() {
         "help" | "--help" | "-h" => print_usage(),
         "new" => cmd_new(),
         "install" => cmd_install(),
+        // `crow setup`: the Rust toolchain and the runtime fetched for
+        // compiled builds; `--check` says what is present (home.rs)
+        "setup" => {
+            let check = args.iter().any(|a| a == "--check");
+            if let Err(e) = home::setup(check) {
+                eprintln!("(x.x) {}", e);
+                process::exit(1);
+            }
+        }
         "fmt" => cmd_fmt(),
         "build" => cmd_build(),
         "launch" => cmd_launch(),
@@ -380,7 +390,14 @@ fn crow_main() {
                 eprintln!("{}", e);
                 process::exit(1);
             });
-            if interp {
+            let no_compiler = !interp && rest.first().is_none_or(|t| is_source(t)) && !home::can_compile();
+            if no_compiler {
+                // both modes answer the same by design; the difference is
+                // speed, so a machine with no compiler yet runs the program
+                // interpreted and is told how to get one
+                eprintln!("(o.o) no compiler here yet: running interpreted — `crow setup` fetches the Rust toolchain and the runtime (about 215 MB, once), and `crow run` compiles from then on");
+            }
+            if interp || no_compiler {
                 if let Some(file) = rest.first() {
                     cmd_run_file_interpreted(file);
                 } else {
@@ -402,7 +419,10 @@ fn crow_main() {
         }
         other => {
             // check if it's a .co or .coc file (shortcut)
-            if is_source(other) || is_bytecode(other) {
+            if is_source(other) && !home::can_compile() {
+                eprintln!("(o.o) no compiler here yet: running interpreted — `crow setup` fetches the Rust toolchain and the runtime (about 215 MB, once), and `crow run` compiles from then on");
+                cmd_run_file_interpreted(other);
+            } else if is_source(other) || is_bytecode(other) {
                 let extra_args = args[2..].to_vec();
                 cmd_run_file(other, &extra_args, 0);
             } else {
@@ -422,6 +442,7 @@ fn print_usage() {
     eprintln!("  crow new myapp --ml    create ML project (jobs, lib)");
     eprintln!("  crow new myapp --db    create DB project (schema, migrate)");
     eprintln!("  crow install           install deps from crowfile into crow_modules/");
+    eprintln!("  crow setup             fetch the Rust toolchain and the runtime for compiled builds (--check: what is present)");
     eprintln!("  crow build             transpile to rust and compile to native binary");
     eprintln!("  crow build file.co   transpile a specific file");
     eprintln!("  crow run               transpile + compile + run main.co");
@@ -1935,6 +1956,17 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     // every program allocates with mimalloc, as the interpreter does (spec
     // §13, what stays native): the system allocator had cost compiled
     // binarytrees nine times the CPU
+    // the runtime crates the program links, wherever this install keeps
+    // them (home.rs): what is missing is fetched first, once, saying so
+    home::ensure_for_build().unwrap_or_else(|e| {
+        eprintln!("error: {}", e);
+        process::exit(1);
+    });
+    let rt = home::runtime().unwrap_or_else(|| {
+        eprintln!("error: a compiled build needs the runtime, which is not on this machine: `crow setup` fetches it");
+        process::exit(1);
+    });
+    let rt_dir = rt.dir().display().to_string();
     let mut dep_list: Vec<String> = vec!["mimalloc = { version = \"0.1\", default-features = false }".to_string()];
     if emitted.needs_rayon {
         dep_list.push("rayon = \"1.11\"".to_string());
@@ -1946,7 +1978,7 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
         dep_list.push("serde = { version = \"1\", features = [\"derive\"] }".to_string());
     }
     if emitted.needs_crow_runtime {
-        let runtime_path = concat!(env!("CARGO_MANIFEST_DIR"), "/crow_runtime");
+        let runtime_path = format!("{}/crow_runtime", rt_dir);
         // what the program's paths may name (sources), and Arrow for a
         // response in it
         let mut features: Vec<String> = emitted.runtime_features.iter().cloned().collect();
@@ -1966,7 +1998,7 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
         dep_list.push("chrono = \"0.4\"".to_string());
     }
     if emitted.needs_crow_web {
-        let web_path = concat!(env!("CARGO_MANIFEST_DIR"), "/crow_web");
+        let web_path = format!("{}/crow_web", rt_dir);
         let features: Vec<&str> = emitted.web_features.iter().map(|s| s.as_str()).collect();
         // (a program that only makes a response from bytes needs none)
         if features.is_empty() {
@@ -1978,7 +2010,7 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
         dep_list.push("tokio = { version = \"1\", features = [\"full\"] }".to_string());
     }
     if emitted.needs_crow_db {
-        let db_path = concat!(env!("CARGO_MANIFEST_DIR"), "/crow_db");
+        let db_path = format!("{}/crow_db", rt_dir);
         let features: Vec<&str> = emitted.db_features.iter().map(|s| s.as_str()).collect();
         let features_str = features.join("\", \"");
         dep_list.push(format!(
@@ -2000,6 +2032,20 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
         eprintln!("error writing Cargo.toml: {}", e);
         process::exit(1);
     });
+    if rt.vendored() {
+        let cargo_dir = build_dir.join(".cargo");
+        let _ = std::fs::create_dir_all(&cargo_dir);
+        std::fs::write(cargo_dir.join("config.toml"), home::vendored_config(&rt.dir().join("vendor"))).unwrap_or_else(|e| {
+            eprintln!("error writing .cargo/config.toml: {}", e);
+            process::exit(1);
+        });
+        let lock = build_dir.join("Cargo.lock");
+        if !lock.exists() {
+            if let Ok(text) = std::fs::read_to_string(rt.dir().join("Cargo.lock")) {
+                let _ = std::fs::write(&lock, text);
+            }
+        }
+    }
 
     // Check if source has changed — skip compilation if binary is up-to-date
     let main_rs_path = src_dir.join("main.rs");
@@ -2017,7 +2063,7 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     }
 
     // Compile with cargo (suppress output for quiet mode, but capture errors)
-    let mut cmd = std::process::Command::new("cargo");
+    let mut cmd = home::cargo();
     if release {
         cmd.args(["build", "--release"]).current_dir(&build_dir);
     } else if debuginfo {
@@ -4734,9 +4780,9 @@ fn sys_allowed(dir: &std::path::Path) -> bool {
     if std::env::var_os("CROW_SYS").is_some() {
         return true;
     }
-    let standard = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src/modules"));
     let canon = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-    canon(dir).starts_with(canon(standard))
+    let here = canon(dir);
+    home::module_source_dirs().iter().any(|standard| here.starts_with(canon(standard)))
 }
 
 fn sys_refusal(line: usize) -> String {

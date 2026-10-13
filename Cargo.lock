@@ -722,7 +722,7 @@ checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
 
 [[package]]
 name = "crow"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "bincode",
  "bytes",
@@ -792,6 +792,7 @@ dependencies = [
  "sha1",
  "sha2",
  "sprs",
+ "triomphe",
  "webpki-roots",
  "wgpu",
 ]
@@ -4182,6 +4183,16 @@ checksum = "1ad61aed86bc3faea4300c7aee358b4c6d0c8d6ccc36524c96e4c92ccf26e77e"
 dependencies = [
  "num-integer",
  "strength_reduce",
+]
+
+[[package]]
+name = "triomphe"
+version = "0.1.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d15f4f5898bcfc5d8a8e45ed30b2f108d710c1a2e5489dbf80e078f707181bc"
+dependencies = [
+ "serde",
+ "stable_deref_trait",
 ]
 
 [[package]]

@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Pull requests
+    url: https://github.com/agncrow/crow/blob/main/CONTRIBUTING.md
+    about: Crow takes no pull requests during the alpha; CONTRIBUTING.md says what is welcome instead.

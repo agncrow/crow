@@ -1,0 +1,126 @@
+# A release (docs/distribution-design.md): on a tag v<version>, the crow
+# binary for each platform, the runtime bundle and the editor extension are
+# built, a fresh machine installs from them and compiles a program with
+# nothing but the binary and a linker, and then the files are attached to
+# the GitHub Release the install line reads. The version is Cargo.toml's,
+# which the binary names when it fetches its runtime.
+name: Release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: write
+env:
+  RUST_VERSION: "1.93.1"
+jobs:
+  binaries:
+    strategy:
+      matrix:
+        include:
+          - os: macos-14
+            triple: aarch64-apple-darwin
+          - os: ubuntu-22.04
+            triple: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Build
+        run: cargo build --release --locked
+      - name: Package
+        run: |
+          VERSION="$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)"
+          strip target/release/crow || true
+          mkdir -p dist
+          tar -czf "dist/crow-$VERSION-${{ matrix.triple }}.tar.gz" -C target/release crow
+          cd dist && { sha256sum "crow-$VERSION-${{ matrix.triple }}.tar.gz" 2>/dev/null || shasum -a 256 "crow-$VERSION-${{ matrix.triple }}.tar.gz"; } > "crow-$VERSION-${{ matrix.triple }}.tar.gz.sha256"
+          ls -la
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crow-${{ matrix.triple }}
+          path: dist/*
+  runtime:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: The runtime bundle
+        run: scripts/bundle_runtime.sh "$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)" dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crow-runtime
+          path: dist/*
+  extension:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Package the VS Code extension
+        run: |
+          VERSION="$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)"
+          mkdir -p dist
+          cd editors/vscode && npm install --silent && npx --yes @vscode/vsce package --allow-missing-repository --skip-license -o "../../dist/crow-lang-$VERSION.vsix"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crow-extension
+          path: dist/*
+  fresh-machine:
+    needs: [binaries, runtime]
+    strategy:
+      matrix:
+        include:
+          - os: macos-14
+            triple: aarch64-apple-darwin
+          - os: ubuntu-22.04
+            triple: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: crow-*
+          path: dist
+          merge-multiple: true
+      - name: Install from the binary alone, run interpreted, then fetch the compiler and build
+        run: |
+          VERSION="$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)"
+          export CROW_HOME="$RUNNER_TEMP/crow-home"
+          export CROW_DIST_URL="file://$PWD/dist"
+          # the install line, from the files this run built
+          bash install.sh --version "$VERSION"
+          export PATH="$CROW_HOME/bin:$PATH"
+          crow -v
+          cd "$RUNNER_TEMP" && crow new hello && cd hello
+          crow run -i | grep -q 'hello, hello'
+          crow test || true
+          # no compiler yet: `crow run` says so and interprets
+          crow run 2>err.txt | grep -q 'hello, hello' && grep -q 'no compiler here yet' err.txt
+          # the compiler and the runtime, fetched and verified, then a native build
+          crow setup
+          crow build main.co
+          ./main | grep -q 'hello, hello'
+          crow setup --check
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [binaries, runtime, extension, fresh-machine]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: crow-*
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la dist
+          gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes

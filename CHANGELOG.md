@@ -5,7 +5,10 @@ migrates what it can, and a breaking change bumps the minor version.
 Each release lists what breaks first. This file summarises; the commit
 history says the rest.
 
-## Unreleased (since v0.5.0, 2026-09-06)
+## v0.6.0 — 2026-10-13
+
+The first release of the alpha: the one-line install, and everything
+since v0.5.0 (2026-09-06).
 
 ### Breaking
 
@@ -21,6 +24,11 @@ history says the rest.
 
 ### Added
 
+- One line installs Crow: a prebuilt binary for macOS arm64 and Linux
+  x86_64 from the release, verified; the interpreter, the tests and the
+  servers need nothing else. `crow setup` (or the first `crow build`)
+  fetches the pinned Rust toolchain and the runtime into `~/.crow`; with
+  no compiler present, `crow run` says so and interprets.
 - `use llm`: a language model as a connection (`reach`, `ask`, `chat`,
   `follow`, `embed`), tools as functions, over Anthropic's and the
   OpenAI-compatible wire formats.
