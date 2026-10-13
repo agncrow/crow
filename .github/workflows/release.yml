@@ -82,7 +82,12 @@ jobs:
             triple: x86_64-unknown-linux-gnu
     runs-on: ${{ matrix.os }}
     steps:
+      # (into a subdirectory: the binary was built at the runner's default
+      # checkout path, and a checkout there would be "the checkout this
+      # binary was built from" — a user's machine has none)
       - uses: actions/checkout@v4
+        with:
+          path: checkout
       - uses: actions/download-artifact@v4
         with:
           pattern: crow-*
@@ -90,11 +95,11 @@ jobs:
           merge-multiple: true
       - name: Install from the binary alone, run interpreted, then fetch the compiler and build
         run: |
-          VERSION="$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)"
+          VERSION="$(grep '^version' checkout/Cargo.toml | head -1 | cut -d'"' -f2)"
           export CROW_HOME="$RUNNER_TEMP/crow-home"
           export CROW_DIST_URL="file://$PWD/dist"
           # the install line, from the files this run built
-          bash install.sh --version "$VERSION"
+          bash checkout/install.sh --version "$VERSION"
           export PATH="$CROW_HOME/bin:$PATH"
           crow -v
           cd "$RUNNER_TEMP" && crow new hello && cd hello
