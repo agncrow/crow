@@ -154,7 +154,7 @@ else
         # the lockfile is not tracked, but a checkout's resolution is a tested one
         [ -f "$REPO/Cargo.lock" ] && cp "$REPO/Cargo.lock" "$SRC/Cargo.lock"
     else
-        for p in Cargo.toml Cargo.lock LICENSE README.md src crow_runtime crow_web crow_db docs tests; do
+        for p in Cargo.toml Cargo.lock LICENSE-MIT LICENSE-APACHE README.md src crow_runtime crow_web crow_db docs tests; do
             [ -e "$REPO/$p" ] && cp -R "$REPO/$p" "$SRC/"
         done
         rm -rf "$SRC/target" "$SRC/.crow_build" "$SRC/docs/book/crow-site"

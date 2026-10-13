@@ -7,7 +7,7 @@ resolver = "3"
 name = "crow"
 version = "0.5.0"
 edition = "2024"
-license-file = "LICENSE"
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 mimalloc = { version = "0.1", default-features = false }

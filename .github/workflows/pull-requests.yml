@@ -1,0 +1,18 @@
+# Crow takes no pull requests during the alpha (CONTRIBUTING.md): each one
+# is closed at once with the note, so nobody waits on it. Nothing of the
+# pull request is checked out or run.
+name: Pull requests
+on:
+  pull_request_target:
+    types: [opened]
+permissions:
+  pull-requests: write
+jobs:
+  close:
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh pr close "$PR" --repo "$REPO" --comment "Thank you for the pull request. Crow takes no pull requests during the alpha: the language still changes between releases, and every line is kept under one hand so that the licence can still change (CONTRIBUTING.md). A bug report with the program that shows it, or a question, is welcome in Issues."
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
