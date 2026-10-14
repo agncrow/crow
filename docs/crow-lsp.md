@@ -43,10 +43,14 @@ with the compiler.
 
 ## Editor setup
 
-**VS Code** — the extension is published as "Crow" by `crow-lang` on the
-Visual Studio Marketplace and on Open VSX once the release workflow has
-the publisher's tokens (`VSCE_PAT`, `OVSX_PAT` in the repository's
-secrets); until then each release carries the `.vsix`, installed with
+**VS Code** — the extension is published as "Crow" by `crow-lang`: to the
+Visual Studio Marketplace by trusted publishing (the release workflow's
+own OIDC token, exchanged under the publisher's policy naming this
+repository and workflow file; the repository variable
+`MARKETPLACE_TRUSTED` turns the step on once the policy exists — the
+Marketplace's side was still being tested in October 2026), and to Open
+VSX with the token in the secret `OVSX_PAT`. Until then each release
+carries the `.vsix`, installed with
 `code --install-extension crow-lang-<version>.vsix`. From a checkout, the
 extension lives in `editors/vscode`:
 ```
