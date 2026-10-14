@@ -5,13 +5,17 @@ migrates what it can, and a breaking change bumps the minor version.
 Each release lists what breaks first. This file summarises; the commit
 history says the rest.
 
-## Unreleased
+## v0.6.1 — 2026-10-14
 
 ### Added
 
 - The mark: the `(o.o)` every command prints, as `assets/crow.svg`, on
   the README, the book's pages (favicon, touch icon and top bar, their
   addresses versioned by the mark's own bytes) and the editor extension.
+- The editor extension is published with each release: to Open VSX
+  (Cursor, VSCodium, Gitpod) now, and to the Visual Studio Marketplace by
+  trusted publishing once the Marketplace accepts it; the release page
+  keeps the `.vsix` for VS Code meanwhile. Its version is Crow's.
 
 ### Fixed
 

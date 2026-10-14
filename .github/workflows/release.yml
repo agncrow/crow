@@ -97,6 +97,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v') && env.OVSX_PAT != ''
         run: |
           VERSION="$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)"
+          PUBLISHER="$(node -p "require('./editors/vscode/package.json').publisher")"
+          # the namespace is the manifest's publisher, made the first time
+          npx --yes ovsx verify-pat "$PUBLISHER" -p "$OVSX_PAT" >/dev/null 2>&1 || npx --yes ovsx create-namespace "$PUBLISHER" -p "$OVSX_PAT"
           npx --yes ovsx publish "dist/crow-lang-$VERSION.vsix" -p "$OVSX_PAT"
   fresh-machine:
     needs: [binaries, runtime]
