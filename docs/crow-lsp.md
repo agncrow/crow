@@ -43,7 +43,12 @@ with the compiler.
 
 ## Editor setup
 
-**VS Code** — the extension lives in `editors/vscode`:
+**VS Code** — the extension is published as "Crow" by `crow-lang` on the
+Visual Studio Marketplace and on Open VSX once the release workflow has
+the publisher's tokens (`VSCE_PAT`, `OVSX_PAT` in the repository's
+secrets); until then each release carries the `.vsix`, installed with
+`code --install-extension crow-lang-<version>.vsix`. From a checkout, the
+extension lives in `editors/vscode`:
 ```
 cd editors/vscode && npm install
 npx --yes @vscode/vsce package --allow-missing-repository --skip-license

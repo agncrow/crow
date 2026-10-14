@@ -62,15 +62,32 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Package the VS Code extension
+      - name: Package the VS Code extension, at Crow's version
         run: |
           VERSION="$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)"
           mkdir -p dist
-          cd editors/vscode && npm install --silent && npx --yes @vscode/vsce package --allow-missing-repository --skip-license -o "../../dist/crow-lang-$VERSION.vsix"
+          cd editors/vscode && npm version "$VERSION" --no-git-tag-version --allow-same-version >/dev/null && npm install --silent && npx --yes @vscode/vsce package -o "../../dist/crow-lang-$VERSION.vsix"
       - uses: actions/upload-artifact@v4
         with:
           name: crow-extension
           path: dist/*
+      # published on a tag, where the publisher's tokens are set as the
+      # repository's secrets: VSCE_PAT for the Visual Studio Marketplace,
+      # OVSX_PAT for Open VSX (Cursor, VSCodium, Gitpod read from there)
+      - name: Publish to the Visual Studio Marketplace
+        if: startsWith(github.ref, 'refs/tags/v') && env.VSCE_PAT != ''
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          VERSION="$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)"
+          npx --yes @vscode/vsce publish --packagePath "dist/crow-lang-$VERSION.vsix" -p "$VSCE_PAT"
+      - name: Publish to Open VSX
+        if: startsWith(github.ref, 'refs/tags/v') && env.OVSX_PAT != ''
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          VERSION="$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)"
+          npx --yes ovsx publish "dist/crow-lang-$VERSION.vsix" -p "$OVSX_PAT"
   fresh-machine:
     needs: [binaries, runtime]
     strategy:

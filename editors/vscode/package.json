@@ -5,12 +5,32 @@
   "version": "0.1.0",
   "publisher": "crow-lang",
   "icon": "icon.png",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agncrow/crow"
+  },
+  "homepage": "https://agncrow.github.io/crow/",
+  "bugs": {
+    "url": "https://github.com/agncrow/crow/issues"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
     "Programming Languages"
   ],
+  "keywords": [
+    "crow",
+    "language",
+    "data",
+    "web",
+    "rust"
+  ],
+  "galleryBanner": {
+    "color": "#0f1317",
+    "theme": "dark"
+  },
   "main": "./extension.js",
   "activationEvents": [],
   "contributes": {
