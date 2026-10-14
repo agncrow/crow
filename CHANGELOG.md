@@ -5,6 +5,20 @@ migrates what it can, and a breaking change bumps the minor version.
 Each release lists what breaks first. This file summarises; the commit
 history says the rest.
 
+## Unreleased
+
+### Added
+
+- The mark: the `(o.o)` every command prints, as `assets/crow.svg`, on
+  the README, the book's pages (favicon, touch icon and top bar, their
+  addresses versioned by the mark's own bytes) and the editor extension.
+
+### Fixed
+
+- The book site made its directory before writing a page, so a fresh
+  checkout published every chapter; the Pages site had answered 404 for
+  all but the front page and the specification.
+
 ## v0.6.0 — 2026-10-13
 
 The first release of the alpha: the one-line install, and everything
