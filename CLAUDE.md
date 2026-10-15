@@ -724,7 +724,13 @@ steps on every push and must be green.
   went public failed there while every suite before it passed. A script is
   bash as macOS ships it (3.2: no associative arrays; `mktemp` given its
   whole template, which GNU's needs); coverage is a CI job of its own,
-  since it runs every suite again instrumented.
+  since it runs every suite again instrumented. The Postgres tests start a
+  scratch cluster with `initdb` from the PATH and skip without it: the
+  runner ships PostgreSQL with its server tools in
+  `/usr/lib/postgresql/<n>/bin`, put on the PATH by both CI jobs — until
+  then the Postgres driver had never been tested on CI. The GPU tests skip
+  where no adapter answers, as on the runner: the GPU code is counted on a
+  Mac only.
 - `nodes[n]` is retired (2026-10-11): the process count is `crow launch
   <n>`'s, a process reads its rank with `env['CROW_RANK', '0']`, and
   `nodes[…]` is refused naming that (checks.rs, before "undefined
