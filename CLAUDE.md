@@ -729,8 +729,10 @@ steps on every push and must be green.
   runner ships PostgreSQL with its server tools in
   `/usr/lib/postgresql/<n>/bin`, put on the PATH by both CI jobs — until
   then the Postgres driver had never been tested on CI. The GPU tests skip
-  where no adapter answers, as on the runner: the GPU code is counted on a
-  Mac only.
+  where no adapter answers: both CI jobs install Mesa's lavapipe (a Vulkan
+  device on the CPU) so they run there, since gpu.rs alone was the 3.7
+  points crow_runtime's coverage stood lower on Linux (85.28% against its
+  floor of 87).
 - `nodes[n]` is retired (2026-10-11): the process count is `crow launch
   <n>`'s, a process reads its rank with `env['CROW_RANK', '0']`, and
   `nodes[…]` is refused naming that (checks.rs, before "undefined

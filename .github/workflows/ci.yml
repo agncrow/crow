@@ -28,6 +28,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Postgres's own tools on the PATH (the driver's tests start a scratch cluster of their own; the image ships PostgreSQL with initdb and pg_ctl off the PATH)
         run: ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1 | tee -a "$GITHUB_PATH"
+      - name: A GPU on the CPU (Mesa's lavapipe, a Vulkan device), so the GPU tests run on a runner that has no GPU
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq mesa-vulkan-drivers libvulkan1 > /dev/null
+          ls /usr/share/vulkan/icd.d/
       - name: Unit tests (a debug build checks the IR of every program it lowers)
         run: cargo test --workspace
       - name: The runtime never panics (clippy refuses an unaudited unwrap, expect or panic in crow_runtime, crow_db and crow_web)
@@ -154,6 +158,10 @@ jobs:
         run: cargo install cargo-llvm-cov --locked
       - name: Postgres's own tools on the PATH (the driver's tests start a scratch cluster of their own; the image ships PostgreSQL with initdb and pg_ctl off the PATH)
         run: ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1 | tee -a "$GITHUB_PATH"
+      - name: A GPU on the CPU (Mesa's lavapipe, a Vulkan device), so the GPU tests run on a runner that has no GPU
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq mesa-vulkan-drivers libvulkan1 > /dev/null
+          ls /usr/share/vulkan/icd.d/
       - name: Coverage of the compiler under the gate's tests, above its floor
         run: scripts/coverage.sh
       - name: Disk used by the run
