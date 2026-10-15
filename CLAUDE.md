@@ -719,6 +719,12 @@ steps on every push and must be green.
   `__shift_big`. `row_iv` gives and/or/xor/shift their ranges: a mask cut
   with `bitand` after a shift stays 64-bit (`shift[1, 13]` is exactly
   8192 — an end from 0 had made every mask look negative).
+- `scripts/coverage.sh` had been a zsh script, and GitHub's Linux runner
+  has no zsh: coverage never ran on CI, and every run after the repository
+  went public failed there while every suite before it passed. A script is
+  bash as macOS ships it (3.2: no associative arrays; `mktemp` given its
+  whole template, which GNU's needs); coverage is a CI job of its own,
+  since it runs every suite again instrumented.
 - `nodes[n]` is retired (2026-10-11): the process count is `crow launch
   <n>`'s, a process reads its rank with `env['CROW_RANK', '0']`, and
   `nodes[…]` is refused naming that (checks.rs, before "undefined

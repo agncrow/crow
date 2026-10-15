@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 # Line coverage of the compiler and its crates under every suite the gate
 # runs — the unit tests, the docs check, the parity corpus, the packages,
 # the served pages, the book, twenty generated programs, the layout and
@@ -15,6 +15,8 @@
 #   crow 83.35%, crow_runtime 88.93%, crow_web 76.56%, crow_db 84.16% —
 #   rounded down by one; they only rise. A change that lowers one names the uncovered lines
 #   in its commit message, with why they cannot be reached.
+# Written for the bash every Mac ships (3.2) and the CI runner's: no
+# associative arrays, a temporary file named the way both mktemps take.
 set -e
 cd "$(dirname "$0")/.."
 command -v cargo-llvm-cov > /dev/null || { echo "cargo-llvm-cov is not installed: cargo install cargo-llvm-cov --locked (and rustup component add llvm-tools-preview)"; exit 2; }
@@ -26,11 +28,14 @@ for a in "$@"; do
     *) echo "usage: scripts/coverage.sh [--quick] [--arms]"; exit 2 ;;
   esac
 done
-typeset -A FLOOR
-FLOOR[crow]=82
-FLOOR[crow_runtime]=87
-FLOOR[crow_web]=75
-FLOOR[crow_db]=83
+floor_of() {
+  case $1 in
+    crow) echo 82 ;;
+    crow_runtime) echo 87 ;;
+    crow_web) echo 75 ;;
+    crow_db) echo 83 ;;
+  esac
+}
 export CROW_IR_VERIFY=strict
 cargo llvm-cov clean --workspace > /dev/null 2>&1
 cargo llvm-cov --workspace --release --no-report 2>&1 | grep -E '^test result|^error' || true
@@ -48,11 +53,11 @@ if [ $quick = 0 ]; then
   # profile written where the report reads
   crow=$PWD/target/llvm-cov-target/release/crow
   export LLVM_PROFILE_FILE=$PWD/target/llvm-cov-target/crow-extra-%p-%16m.profraw
-  (cd tests/parts && $crow test views/sim.co && $crow test sim/clock.co) 2>&1 | tail -1
-  (cd examples/taskboard && $crow test board/door.co && $crow test board/cards.co && $crow test board/page.co) 2>&1 | tail -1
+  (cd tests/parts && "$crow" test views/sim.co && "$crow" test sim/clock.co) 2>&1 | tail -1
+  (cd examples/taskboard && "$crow" test board/door.co && "$crow" test board/cards.co && "$crow" test board/page.co) 2>&1 | tail -1
   unset LLVM_PROFILE_FILE
 fi
-report=$(mktemp -t crow_coverage)
+report=$(mktemp "${TMPDIR:-/tmp}/crow_coverage.XXXXXX")
 cargo llvm-cov report --release --workspace > "$report"
 tail -1 "$report" | awk '{ printf "workspace: %s lines, %s covered\n", $8, $10 }'
 fail=0
@@ -62,7 +67,7 @@ for crate in crow crow_runtime crow_web crow_db; do
     { which = ($1 ~ /^crow_runtime\//) ? "crow_runtime" : ($1 ~ /^crow_web\//) ? "crow_web" : ($1 ~ /^crow_db\//) ? "crow_db" : "crow";
       if (which == c) { lines += $8; missed += $9 } }
     END { if (lines) printf "%.2f", 100 * (lines - missed) / lines; else print "0" }' "$report")
-  floor=${FLOOR[$crate]}
+  floor=$(floor_of "$crate")
   if [ $quick = 1 ]; then
     printf '  %-13s %6s%% (the unit tests alone; no floor)\n' "$crate" "$pct"
     continue
