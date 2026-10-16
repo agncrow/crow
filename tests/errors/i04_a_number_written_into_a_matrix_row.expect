@@ -1,0 +1,3 @@
+i04_a_number_written_into_a_matrix_row.co:4:1: `m[…] = …` writes one number, and m is a matrix, whose `m[i]` is its row i: write a number with m[i][j] = …, or a row of its own length with m[i] = […]
+  4 │ m[0] = 5.0
+    │ ^^^^^^^^^^

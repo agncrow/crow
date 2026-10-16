@@ -1,0 +1,5 @@
+--- one position of a matrix is its row, which a number is not: a number is
+--- written at its row and its column
+m = [[1.0, 2.0], [3.0, 4.0]]
+m[0] = 5.0
+log[m]

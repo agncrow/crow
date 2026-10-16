@@ -1,0 +1,14 @@
+--- A row written into a matrix holds the matrix's own length: where the
+--- lengths are known before the program runs, a row of another length is
+--- refused (tests/errors i06); where one is known only as the program
+--- runs — a list grown by push, handed to a function — the write stops
+--- there, in the same words in both modes.
+use math
+fn put[t, row]
+    t[0] = row
+    return t
+ok = push[push[[], 1.0], 2.0]
+log[put[zeros[2, 2], ok]]
+long = push[ok, 3.0]
+log[put[zeros[2, 2], long]]
+log['not reached']

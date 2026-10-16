@@ -25,9 +25,17 @@ history says the rest.
   where the column was meant.
 - `describe[conn, sql]` answers a frame of `name` and `type`; its `kind`
   column had been unreachable as `d.kind`.
+- `m[i] = x` on a matrix is refused (one position of a matrix is its row):
+  it had written the flat number `i` while `m[i]` read the row. A number
+  of a matrix is written `m[i][j] = x`, a row `m[i] = row`.
 
 ### Added
 
+- A matrix's row is written in place, `m[i] = [7.0, 8.0]`, as a list of
+  numbers or a tensor of the row's own length; a part of a tensor of more
+  axes the same way (`c[i] = matrix`). A value of another shape is refused
+  before the program runs, or stops where its shape shows only as it runs.
+  It had been refused, the matrix built anew.
 - A frame's column of bools is the mask it makes where a mask is taken:
   `filter[f, f.active]`, `where[f.active, a, b]`, `names[f.active]`.
 - A list of lists of numbers is a matrix where a tensor is taken:
@@ -67,6 +75,14 @@ history says the rest.
 - `max`, `min` or `sum` of a tensor that can fail is a number that can
   fail; it had been typed as nothing known, and the compiled program did
   not build (found by the fuzzer).
+- `m[i][j] = x` writes a matrix's number where it lies, in both modes; the
+  interpreter had stopped on the chained index and the compiled program
+  had not built. A matrix held in a record's field, a list's item or a
+  map's value is written the same way (`g.cells[i][j] = x`), where both
+  modes had failed too.
+- `df.name[mask]` is refused, naming `filter[df, mask].name`; the
+  interpreter had stopped as it ran and the compiled program had not
+  built.
 - `crow stop` stops a program the interpreter serves (`crow run -i`) and
   `crow dev` with what it serves; it had said nothing was running. A
   process a stale pidfile names is signalled only when it runs in the

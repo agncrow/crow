@@ -1,0 +1,48 @@
+--- A matrix is written where it lies, in both modes: a number at one
+--- position per axis — `m[i][j] = x` — and a part at fewer — `m[i] = row`,
+--- a row of the matrix's own length (the interpreter had stopped on the
+--- chained index, the compiled program had not built, and a row had been
+--- refused outright). A vector's number is still `v[i] = x`; a position
+--- past the end stops in the words a list's index uses.
+use math
+m = [[1.0, 2.0], [3.0, 4.0]]
+m[0][1] = 9.0
+m[1][0] = m[1][0] + 10.0
+log[m]
+m[-1][-1] = 0.5
+log[m[1]]
+v = [1.0, 2.0, 3.0]
+v[1] = 7.0
+log[v]
+z = zeros[2, 3]
+i = 0
+while i lt 2
+    j = 0
+    while j lt 3
+        z[i][j] = float[i * 3 + j]
+        j = j + 1
+    i = i + 1
+log[z]
+--- a row: a literal, a list grown by push, another row of the matrix
+m[0] = [7.0, 8.0]
+r = push[push[[], 5.0], 6.0]
+m[1] = r
+log[m]
+m[-1] = m[0]
+log[m]
+--- a row made of the row above it, and a number of the one above it
+d = zeros[3, 2]
+d[0] = [1.0, 2.0]
+k = 1
+while k lt 3
+    d[k] = d[k - 1] + 1.0
+    d[k][1] = d[k - 1][1] * 10.0
+    k = k + 1
+log[d]
+--- a part of a cube: a matrix at one position, a row at two
+c = zeros[2, 2, 2]
+c[1] = [[1.0, 2.0], [3.0, 4.0]]
+c[0][1] = [5.0, 6.0]
+log[c]
+m[2][0] = 1.0
+log['not reached']

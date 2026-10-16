@@ -264,12 +264,115 @@ pub fn number_at(t: &crate::tensor::CrowTensor, i: i64) -> Result<f64, String> {
 /// set one number and built it again, at every write.
 #[inline]
 pub fn set_flat_at(t: &mut crate::tensor::CrowTensor, i: i64, x: f64) -> Result<(), String> {
+    // (one position of a matrix is its row, which a number is not: the
+    // write had landed on the flat number `i` while `m[i]` read the row)
+    if t.ndim() >= 2 {
+        return Err(at_positions(t.ndim(), 1));
+    }
     if t.set_fast(i, x) {
         return Ok(());
     }
     let k = crate::stops::item(i, t.len())?;
     t.set_flat(k, x);
     Ok(())
+}
+
+/// The words a write at the wrong count of positions stops with: a number of
+/// a tensor is written at one position per axis.
+pub fn at_positions(axes: usize, given: usize) -> String {
+    format!(
+        "a tensor of {} {} takes a number at {} {}, one per axis, and was given {} — `m[i][j] = x` writes a matrix's number, and `m[i] = row` a row of its own length",
+        axes,
+        if axes == 1 { "axis" } else { "axes" },
+        axes,
+        if axes == 1 { "position" } else { "positions" },
+        given
+    )
+}
+
+/// `m[i][j] = x`: the number at one position per axis (each counted from
+/// the end when negative, refused past it in the words a list's index
+/// uses) written where the tensor lies. Both modes had failed on a chained
+/// index — the interpreter as it ran, the compiled program not built.
+pub fn set_at_in_place(t: &mut crate::tensor::CrowTensor, at: &[i64], x: f64) -> Result<(), String> {
+    let shape: Vec<usize> = t.shape().to_vec();
+    if at.len() != shape.len() {
+        return Err(at_positions(shape.len(), at.len()));
+    }
+    let mut flat = 0usize;
+    for (&i, &n) in at.iter().zip(&shape) {
+        flat = flat * n + crate::stops::item(i, n)?;
+    }
+    t.set_flat(flat, x);
+    Ok(())
+}
+
+/// What a part of a tensor holds, in words: a number, `n numbers`, a shape.
+fn held(shape: &[usize]) -> String {
+    match shape {
+        [] => "a number".to_string(),
+        [n] => format!("{} {}", n, if *n == 1 { "number" } else { "numbers" }),
+        _ => format!("shape {:?}", shape),
+    }
+}
+
+/// The words a part written of another shape stops with.
+pub fn part_disagrees(rest: &[usize], given: &[usize]) -> String {
+    let what = if rest.len() == 1 { "a row" } else if rest.is_empty() { "a number's place" } else { "a part" };
+    format!("{} here holds {}, and the value written holds {} — a part is written as one of its own shape", what, held(rest), held(given))
+}
+
+/// `m[i] = row` (fewer positions than the tensor has axes): the part there —
+/// a matrix's row — replaced, where the tensor lies, by a tensor of exactly
+/// its shape; each position counted from the end when negative, refused
+/// past it in the words a list's index uses. (A row had been refused:
+/// "build the matrix anew".)
+pub fn set_part_in_place(t: &mut crate::tensor::CrowTensor, at: &[i64], part: &crate::tensor::CrowTensor) -> Result<(), String> {
+    let shape: Vec<usize> = t.shape().to_vec();
+    if at.is_empty() || at.len() > shape.len() {
+        return Err(at_positions(shape.len(), at.len()));
+    }
+    let rest = &shape[at.len()..];
+    if part.shape() != rest {
+        return Err(part_disagrees(rest, part.shape()));
+    }
+    let mut start = 0usize;
+    for (&i, &n) in at.iter().zip(&shape) {
+        start = start * n + crate::stops::item(i, n)?;
+    }
+    let size: usize = rest.iter().product();
+    for (k, v) in part.to_vec().into_iter().enumerate() {
+        t.set_flat(start * size + k, v);
+    }
+    Ok(())
+}
+
+/// `m[i] = row`'s row: the tensor with that part written.
+pub fn set_part(t: &crate::tensor::CrowTensor, at: Vec<i64>, part: &crate::tensor::CrowTensor) -> Result<crate::tensor::CrowTensor, String> {
+    let mut t = t.clone();
+    set_part_in_place(&mut t, &at, part)?;
+    Ok(t)
+}
+
+/// `set_part` given the tensor (`m = __set_part[m, [i], row]`): written
+/// where it lies when nothing else holds it.
+pub fn set_part_taken(mut t: crate::tensor::CrowTensor, at: Vec<i64>, part: &crate::tensor::CrowTensor) -> Result<crate::tensor::CrowTensor, String> {
+    set_part_in_place(&mut t, &at, part)?;
+    Ok(t)
+}
+
+/// `m[i][j] = x`'s row: the tensor with that number written.
+pub fn set_at(t: &crate::tensor::CrowTensor, at: Vec<i64>, x: f64) -> Result<crate::tensor::CrowTensor, String> {
+    let mut t = t.clone();
+    set_at_in_place(&mut t, &at, x)?;
+    Ok(t)
+}
+
+/// `set_at` given the tensor (`m = __set_at[m, …]`, as the lowering writes
+/// `m[i][j] = x`): written where it lies when nothing else holds it.
+pub fn set_at_taken(mut t: crate::tensor::CrowTensor, at: Vec<i64>, x: f64) -> Result<crate::tensor::CrowTensor, String> {
+    set_at_in_place(&mut t, &at, x)?;
+    Ok(t)
 }
 
 fn rank_disagrees(read: &str, typed: &str, t: &crate::tensor::CrowTensor) -> String {
@@ -730,6 +833,36 @@ pub fn read_line(prompt: Option<&str>) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    /// A number of a tensor is written at one position per axis, each
+    /// counted from the end when negative; one position of a matrix is its
+    /// row, which a number is not.
+    #[test]
+    fn a_number_is_written_at_one_position_per_axis() {
+        let mut m = crate::tensor::CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        set_at_in_place(&mut m, &[0, 1], 9.0).unwrap();
+        set_at_in_place(&mut m, &[-1, -1], 0.5).unwrap();
+        assert_eq!(m.to_vec(), vec![1.0, 9.0, 3.0, 0.5]);
+        assert!(set_at_in_place(&mut m, &[2, 0], 1.0).unwrap_err().contains("out of range"));
+        assert!(set_at_in_place(&mut m, &[0], 1.0).unwrap_err().contains("takes a number at 2 positions"));
+        assert!(set_flat_at(&mut m, 0, 1.0).unwrap_err().contains("takes a number at 2 positions"));
+        let mut v = crate::tensor::CrowTensor::from_vec(vec![1.0, 2.0], vec![2]);
+        set_flat_at(&mut v, 1, 7.0).unwrap();
+        assert_eq!(v.to_vec(), vec![1.0, 7.0]);
+        // a row of a matrix is written as one of its own length
+        let row = crate::tensor::CrowTensor::from_vec(vec![7.0, 8.0], vec![2]);
+        set_part_in_place(&mut m, &[-1], &row).unwrap();
+        assert_eq!(m.to_vec(), vec![1.0, 9.0, 7.0, 8.0]);
+        let long = crate::tensor::CrowTensor::from_vec(vec![1.0, 2.0, 3.0], vec![3]);
+        assert_eq!(set_part_in_place(&mut m, &[0], &long).unwrap_err(), "a row here holds 2 numbers, and the value written holds 3 numbers — a part is written as one of its own shape");
+        assert!(set_part_in_place(&mut v, &[0], &row).unwrap_err().contains("a number's place here holds a number"));
+        // a part of a tensor of three axes: a matrix at one position
+        let mut cube = crate::tensor::CrowTensor::from_vec(vec![0.0; 8], vec![2, 2, 2]);
+        let plane = crate::tensor::CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        set_part_in_place(&mut cube, &[1], &plane).unwrap();
+        set_part_in_place(&mut cube, &[0, 1], &row).unwrap();
+        assert_eq!(cube.to_vec(), vec![0.0, 0.0, 7.0, 8.0, 1.0, 2.0, 3.0, 4.0]);
+    }
+
     /// A slice's positions count from the end when negative, then clamp —
     /// lists, tensors and text alike (a negative end had been 0).
     #[test]

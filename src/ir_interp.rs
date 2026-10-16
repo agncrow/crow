@@ -1728,6 +1728,14 @@ impl IrInterp {
         if named.is_none() && self.registry.has_function(name) && name != "sort" {
             return Ok(false);
         }
+        // (a named row decides before any argument is evaluated: one whose
+        // collection is no list or map goes the ordinary way, where a
+        // moved argument is its take path — evaluating the arguments here
+        // first had read a moved one twice: `m[1] = r` at r's last read,
+        // "expected numbers, got done")
+        if named.is_some_and(|row| !row.params.first().is_some_and(|k| k.owned())) {
+            return Ok(false);
+        }
         let rest = self.eval_args(&args[1..])?;
         if rest.iter().any(|r| r.is_error()) {
             return Ok(false);

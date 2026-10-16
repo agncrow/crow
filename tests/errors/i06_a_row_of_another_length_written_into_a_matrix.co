@@ -1,0 +1,5 @@
+--- a row of a matrix is written as one of the matrix's own length: a
+--- longer one has nowhere to go
+m = [[1.0, 2.0], [3.0, 4.0]]
+m[0] = [1.0, 2.0, 3.0]
+log[m]

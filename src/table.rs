@@ -1564,6 +1564,12 @@ pub static ROWS: &[Row] = &[
     row!("core.push_row", "", "push", crow_runtime::core::push_row, (Tensor, Tensor) -> Tensor, stops),
     // (given the tensor — `x = push[move x, n]` — it grows where it lies)
     Row { take: tensors::push_number_taken, ..row!("core.push_number", "", "push", crow_runtime::core::push_number, (Tensor, Float) -> Tensor, stops) },
+    // `m[i][j] = x`, as the lowering writes it (`m = __set_at[m, [i, j], x]`):
+    // a number of a tensor at one position per axis, written in place
+    Row { take: tensors::set_at_taken, ..row!("core.__set_at", "", "__set_at", crow_runtime::core::set_at, (Tensor, Ints, Float) -> Tensor, stops) },
+    // `m[i] = row` (`m = __set_part[m, [i], row]`): a part of a tensor — a
+    // matrix's row — replaced by one of its own shape, in place
+    Row { take: tensors::set_part_taken, ..row!("core.__set_part", "", "__set_part", crow_runtime::core::set_part, (Tensor, Ints, Tensor) -> Tensor, stops) },
     row!("core.pop", "", "pop", crow_runtime::core::pop, (List) -> List, never),
     row!("core.pop_tensor", "", "pop", crow_runtime::core::pop_tensor, (Tensor) -> Tensor, never),
     // numbers ascending with NaN last, text by its characters; a list of
@@ -2763,6 +2769,8 @@ pub fn form(name: &str) -> String {
         "contains" => "`x in xs`".to_string(),
         "__map_of" => "map[keys, values]".to_string(),
         "__pick_items" | "__pick_rows" => "`xs[mask]`".to_string(),
+        "__set_at" => "`m[i][j] = x`".to_string(),
+        "__set_part" => "`m[i] = row`".to_string(),
         "__sub_len" => "len[sub[…]]".to_string(),
         "__none" => "a record or 0 (none)".to_string(),
         _ => format!("{}[]", shown(name)),
@@ -3103,6 +3111,8 @@ pub fn taken_path(id: &str) -> Option<&'static str> {
         "text.translate" => Some("crow_runtime::text::translate_taken"),
         "core.slice" => Some("crow_runtime::core::slice_taken"),
         "core.push_number" => Some("crow_runtime::core::push_number_taken"),
+        "core.__set_at" => Some("crow_runtime::core::set_at_taken"),
+        "core.__set_part" => Some("crow_runtime::core::set_part_taken"),
         _ => None,
     }
 }
@@ -3238,6 +3248,46 @@ pub mod tensors {
         match ROWS.iter().find(|r| r.id == "core.push_number") {
             Some(row) => (row.call)(&args, trace),
             None => Err("a bug in Crow: the row core.push_number is gone".to_string()),
+        }
+    }
+
+    /// `m[i][j] = x`'s row given the tensor: the number written where the
+    /// tensor lies when nothing else holds it
+    /// (crow_runtime::core::set_at_in_place); anything else, the row's own
+    /// call, with its conversions and refusals.
+    pub fn set_at_taken(mut args: Vec<CrowValue>, trace: &str) -> Result<CrowValue, String> {
+        if let [t, at, x] = args.as_mut_slice()
+            && t.is_ok()
+            && at.is_ok()
+            && x.is_ok()
+            && let (Value::NumArray(tensor), Ok(positions), Some(n)) = (&mut t.value, super::read_ints(at), x.plain_float().or_else(|| x.plain_int().map(|i| i as f64)))
+        {
+            crow_runtime::core::set_at_in_place(tensor, &positions, n)?;
+            return Ok(std::mem::replace(t, CrowValue::done()));
+        }
+        match ROWS.iter().find(|r| r.id == "core.__set_at") {
+            Some(row) => (row.call)(&args, trace),
+            None => Err("a bug in Crow: the row core.__set_at is gone".to_string()),
+        }
+    }
+
+    /// `m[i] = row`'s row given the tensor: the part written where the
+    /// tensor lies when nothing else holds it
+    /// (crow_runtime::core::set_part_in_place); anything else, the row's
+    /// own call.
+    pub fn set_part_taken(mut args: Vec<CrowValue>, trace: &str) -> Result<CrowValue, String> {
+        if let [t, at, part] = args.as_mut_slice()
+            && t.is_ok()
+            && at.is_ok()
+            && part.is_ok()
+            && let (Value::NumArray(tensor), Ok(positions), Value::NumArray(p)) = (&mut t.value, super::read_ints(at), &part.value)
+        {
+            crow_runtime::core::set_part_in_place(tensor, &positions, p)?;
+            return Ok(std::mem::replace(t, CrowValue::done()));
+        }
+        match ROWS.iter().find(|r| r.id == "core.__set_part") {
+            Some(row) => (row.call)(&args, trace),
+            None => Err("a bug in Crow: the row core.__set_part is gone".to_string()),
         }
     }
 }

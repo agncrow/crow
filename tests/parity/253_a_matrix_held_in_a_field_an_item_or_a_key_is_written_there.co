@@ -1,0 +1,33 @@
+--- A matrix held in a record's field, a list's item or a map's value is
+--- written where it is held, as one in a variable is: `g.cells[i][j] = x`,
+--- `ms[k][i] = row`, `mats['a'][i] = row` (both modes had failed there,
+--- differently: the interpreter stopped and the compiled program did not
+--- build). A position computed along the way is computed once, a copy of
+--- the record keeps its own matrix, and a key the map lacks stops.
+use math
+struct Grid [cells, n]
+g = Grid[cells = [[1.0, 2.0], [3.0, 4.0]], n = 0]
+g.cells[0][1] = 9.0
+g.cells[1] = [5.0, 6.0]
+g.cells[-1][0] = g.cells[0][0] + 100.0
+log[g.cells]
+ms = push[push[[], zeros[2, 2]], ones[2, 2]]
+ms[1][0] = [7.0, 8.0]
+ms[0][1][1] = 3.0
+log[ms]
+fn pick[k]
+    log['picked `k`']
+    return k
+ms[pick[1]][1] = [4.0, 4.0]
+log[ms[1]]
+gs = push[[], g]
+gs[0].cells[0] = [0.5, 0.5]
+log[gs[0].cells]
+log[g.cells]
+mats = map[a = eye[2], b = ones[2, 2]]
+mats['a'][0] = [5.0, 5.0]
+k = 'b'
+mats[k][1][0] = 7.0
+log[mats]
+mats['c'][0] = [1.0, 1.0]
+log['not reached']

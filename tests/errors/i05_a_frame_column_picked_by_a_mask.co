@@ -1,0 +1,5 @@
+--- a frame's column is not picked by a mask: the frame is, with filter, and
+--- the column read after
+use frame
+f = frame.new[name = ['a', 'b', 'c'], n = [1, 2, 3]]
+log[f.name[f.n gt 1]]

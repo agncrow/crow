@@ -13,6 +13,10 @@ log[9 in xs]
 log[range[3]]
 log[range[2, 5]]
 log[range[0, 10, 3]]
+m = [[1.0, 2.0], [3.0, 4.0]]
+m[0][1] = 9.0
+m[1] = [5.0, 6.0]
+log[m]
 ```
 
 ```text
@@ -27,6 +31,7 @@ true
 [0, 1, 2]
 [2, 3, 4]
 [0, 3, 6, 9]
+[[1, 9], [5, 6]]
 ```
 
 Reference: spec section 8 (Collections) and section 11 (Collections).

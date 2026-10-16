@@ -146,7 +146,7 @@ test a_gradient_through_the_formulas_is_the_slope[]
         for j in range[3]
             up = tensor[w]
             down = tensor[w]
-            up[i * 3 + j] = w[i][j] + 0.00001
-            down[i * 3 + j] = w[i][j] - 0.00001
+            up[i][j] = w[i][j] + 0.00001
+            down[i][j] = w[i][j] - 0.00001
             slope = (through_all[up, x, y, c] - through_all[down, x, y, c]) / 0.00002
             assert[abs[g[i][j] - slope] lt 0.00001]

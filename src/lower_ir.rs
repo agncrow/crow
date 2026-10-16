@@ -1962,6 +1962,129 @@ impl<'a> Lowerer<'a> {
                     (Ty::List(item), Ty::Int) if **item == Ty::Float => Expr::Convert { how: Convert::IntToFloat, expr: Box::new(expr), ty: Ty::Float },
                     _ => expr,
                 };
+                // a tensor written at positions (spec, Arrays): a number at one
+                // position per axis — `m[i][j] = x` — and a part at fewer — a
+                // matrix's row, `m[i] = row` — of exactly the shape the
+                // positions leave, each written where the tensor lies by one
+                // row in both modes (the chained index had failed in both,
+                // differently, and a row had been refused outright). A number
+                // at fewer positions than axes is no part: the write had landed
+                // on the flat number `i` while `m[i]` read the row. A vector's
+                // `v[i] = x` is the item write below. The tensor is the
+                // variable (`m[i] = row`) or the first field or item along the
+                // target that holds one (`g.cells[i] = row`, `ms[k][i] = row`:
+                // both modes had failed there, differently).
+                let var_ty = self.ctx.vars.get(&var).cloned().unwrap_or(Ty::Unknown);
+                let lead = match &var_ty {
+                    Ty::Tensor(..) => Some((0, Vec::new())),
+                    _ if path.is_empty() => None,
+                    _ => self.tensor_lead(object, &var_ty),
+                };
+                if let Some((lead, step_types)) = lead
+                    && let tensor_ty = step_types.last().cloned().unwrap_or_else(|| var_ty.clone())
+                    && let Ty::Tensor(_, dims) = &tensor_ty
+                {
+                    let positions = path[lead..].iter().all(|p| matches!(p, PathStep::Index(_)));
+                    let given = path.len() - lead + 1;
+                    let rank = dims.as_ref().map(|d| d.len());
+                    let number = matches!(expr.ty().payload(), Ty::Int | Ty::Float);
+                    let part = matches!(expr.ty().payload(), Ty::Tensor(..))
+                        || matches!(expr.ty().payload(), Ty::List(item) if matches!(item.payload(), Ty::Int | Ty::Float | Ty::List(_) | Ty::Tensor(..)));
+                    let v = format!(
+                        "{}{}",
+                        crate::lower::shown(&var),
+                        path[..lead].iter().map(|p| match p {
+                            PathStep::Field(f) => format!(".{f}"),
+                            PathStep::Index(_) => "[…]".to_string(),
+                        }).collect::<String>()
+                    );
+                    if positions && number && given == 1 && rank.is_some_and(|r| r >= 2) {
+                        self.refuse(format!(
+                            "`{0}[…] = …` writes one number, and {0} is a matrix, whose `{0}[i]` is its row i: write a number with {0}[i][j] = …, or a row of its own length with {0}[i] = […]",
+                            v
+                        ));
+                    }
+                    if positions && part {
+                        // (both shapes known: one that disagrees is refused
+                        // before the program runs, in the words it stops with)
+                        let value_dims: Option<Vec<Option<usize>>> = match expr.ty().payload() {
+                            Ty::Tensor(_, d) => d.clone(),
+                            _ => shapes::stacked_dims(&expr.ty()),
+                        };
+                        if let (Some(d), Some(vd)) = (dims.as_ref(), value_dims.as_ref()) {
+                            let rest: Vec<Option<usize>> = d.iter().skip(given).cloned().collect();
+                            let known = |xs: &[Option<usize>]| xs.iter().map(|x| *x).collect::<Option<Vec<usize>>>();
+                            if let (Some(r), Some(g)) = (known(&rest), known(vd)) {
+                                if given > d.len() || r != g {
+                                    self.refuse(format!("`{}[…] = …`: {}", v, crow_runtime::core::part_disagrees(&r, &g)));
+                                }
+                            }
+                        }
+                    }
+                    let write = if number && given >= 2 { Some("core.__set_at") } else if part { Some("core.__set_part") } else { None };
+                    if let (true, Some(id), Some(row)) = (positions, write, write.and_then(|id| crate::table::ROWS.iter().find(|r| r.id == id))) {
+                        let mut at: Vec<Expr> = path.split_off(lead).into_iter().filter_map(|p| match p {
+                            PathStep::Index(i) => Some(i),
+                            _ => None,
+                        }).collect();
+                        at.push(idx);
+                        // (a value that can fail is decided where it is
+                        // written, as one assigned to a variable is)
+                        let value = if expr.ty().is_result() { self.decided(expr, Decision::Assign(var.clone())) } else { expr };
+                        let value = if id == "core.__set_at" {
+                            match value.ty().payload() {
+                                Ty::Float => value,
+                                _ => Expr::Convert { how: Convert::IntToFloat, expr: Box::new(value), ty: Ty::Float },
+                            }
+                        } else if matches!(value.ty().payload(), Ty::List(_)) {
+                            let ty = Ty::Tensor(Box::new(Ty::Float), shapes::stacked_dims(&value.ty()));
+                            Expr::Convert { how: Convert::ToTensor, expr: Box::new(value), ty }
+                        } else {
+                            value
+                        };
+                        let at = Expr::ListLit(at, Ty::List(Box::new(Ty::Int)));
+                        if lead == 0 {
+                            let call = Expr::Call {
+                                target: Target::Row(row),
+                                args: vec![Expr::Local(var.clone(), var_ty.clone()), at, value],
+                                ty: var_ty.clone(),
+                                propagates: false,
+                            };
+                            let stmt = self.assign(&var, call);
+                            self.forget_shape(&var);
+                            if self.pass == Pass::Final {
+                                return Ok(self.taken_in_place(stmt));
+                            }
+                            return Ok(vec![stmt]);
+                        }
+                        // through fields and items: the tensor read where it
+                        // lies and written back whole, a position computed
+                        // along the way computed once
+                        let mut out = Vec::new();
+                        let mut read = Expr::Local(var.clone(), var_ty.clone());
+                        for (step, ty) in path.iter_mut().zip(step_types) {
+                            read = match step {
+                                PathStep::Field(name) => Expr::Field { base: Box::new(read), name: name.clone(), ty },
+                                PathStep::Index(e) => {
+                                    if !matches!(e, Expr::Const(..) | Expr::Local(..)) {
+                                        let t = self.fresh();
+                                        let et = e.ty();
+                                        out.push(Stmt::Let { var: t.clone(), ty: et.clone(), expr: e.clone() });
+                                        if let Some(scope) = self.scopes.last_mut() {
+                                            scope.insert(t.clone());
+                                        }
+                                        *e = Expr::Local(t, et);
+                                    }
+                                    Expr::Index { base: Box::new(read), indices: vec![e.clone()], ty }
+                                }
+                            };
+                        }
+                        let call = Expr::Call { target: Target::Row(row), args: vec![read, at, value], ty: tensor_ty.clone(), propagates: false };
+                        self.forget_shape(&var);
+                        out.push(Stmt::SetPath { var, path, expr: call });
+                        return Ok(out);
+                    }
+                }
                 // an item assigned a value of a known kind types the list's
                 // items where they were not known (a list of empty lists,
                 // one of them given a list of records — a graph's arcs —
@@ -1982,15 +2105,6 @@ impl<'a> Lowerer<'a> {
                         self.ctx.note_scanned_assign(&var, refined.clone());
                         self.rebind(&var, &refined);
                     }
-                }
-                // a tensor's item assigned is a number: a row cannot be (the
-                // interpreter had stopped there, and the compiled program
-                // had not built)
-                if path.is_empty() && matches!(self.ctx.vars.get(&var), Some(Ty::Tensor(..))) && matches!(expr.ty().payload(), Ty::Tensor(..) | Ty::List(_)) {
-                    self.refuse(format!(
-                        "`{}[…]` takes a number: a tensor's rows cannot be assigned one at a time — build the matrix anew (concat[…], stack[…], reshape[…])",
-                        crate::lower::shown(&var)
-                    ));
                 }
                 path.push(PathStep::Index(idx));
                 self.forget_shape(&var);
@@ -2917,7 +3031,9 @@ impl<'a> Lowerer<'a> {
             found
         };
         let takes_var = matches!(args.first(), Some(Expr::Local(n, _) | Expr::Move(n, _)) if n == var);
-        if !(row.module.is_empty() && crate::ast::IN_PLACE_BUILTINS.contains(&row.name) && row.params.first().is_some_and(|k| k.owned()) && takes_var && args[1..].iter().any(reads_var)) {
+        // (a tensor too: `d[i][j] = d[i - 1][j] + 1.0` reads `d` in the
+        // value, which had made every write a copy of the whole matrix)
+        if !(row.module.is_empty() && crate::ast::IN_PLACE_BUILTINS.contains(&row.name) && row.params.first().is_some_and(|k| k.owned() || *k == crate::table::Kind::Tensor) && takes_var && args[1..].iter().any(reads_var)) {
             return vec![stmt];
         }
         let mut out = Vec::with_capacity(args.len() + 1);
@@ -2970,6 +3086,48 @@ impl<'a> Lowerer<'a> {
             A::Ident(_) | A::FieldAccess { .. } => self.muted(|l| l.path_of(object)),
             _ => self.path_of(object),
         }
+    }
+
+    /// Where along an assignment's target a tensor starts, past a variable
+    /// that is none: the first field of a record, item of a list or value of
+    /// a map that holds one (`g.cells` of `g.cells[i] = row`, `ms[k]` of
+    /// `ms[k][i] = row`, `mats['a']` of `mats['a'][i] = row`), as the type
+    /// each step up to it reads — the last the tensor's. A target through
+    /// anything else (a parsed value, an index of several positions) has
+    /// none.
+    fn tensor_lead(&mut self, object: &A, root: &Ty) -> Option<(usize, Vec<Ty>)> {
+        fn chain<'b>(o: &'b A, out: &mut Vec<&'b A>) -> bool {
+            let ok = match o {
+                A::Ident(_) => true,
+                A::FieldAccess { object, .. } => chain(object, out),
+                A::Call { callee, args } if args.len() == 1 => chain(callee, out),
+                _ => false,
+            };
+            out.push(o);
+            ok
+        }
+        let mut nodes = Vec::new();
+        if !chain(object, &mut nodes) {
+            return None;
+        }
+        let mut types = Vec::new();
+        let mut before = root.clone();
+        for node in nodes.into_iter().skip(1) {
+            let through = match node {
+                A::FieldAccess { .. } => matches!(before, Ty::Record(_)),
+                _ => matches!(before, Ty::List(_) | Ty::Map(..)),
+            };
+            if !through {
+                return None;
+            }
+            let ty = self.target_type(node);
+            types.push(ty.clone());
+            if matches!(ty, Ty::Tensor(..)) {
+                return Some((types.len(), types));
+            }
+            before = ty;
+        }
+        None
     }
 
     /// An assignment target's variable, its path, and the type of what the
@@ -3763,6 +3921,27 @@ impl<'a> Lowerer<'a> {
                     read_idx.push(self.read_json(x, &kind, &how));
                 }
                 idx = read_idx;
+            }
+            // a frame's column is not picked by a mask: its frame is, and
+            // the column read after (spec, Arrays: frames keep filter) — the
+            // interpreter had stopped as it ran ("array index must be an
+            // integer") and the compiled program had not built
+            if self.pass == Pass::Final
+                && let [index] = idx.as_slice()
+                && matches!(base.ty().payload(), Ty::Column(_))
+                && matches!(index.ty().payload(), Ty::List(item) if **item == Ty::Bool)
+            {
+                let (frame, column) = match callee {
+                    A::FieldAccess { object, field } => (
+                        match object.as_ref() {
+                            A::Ident(f) => crate::lower::shown(f).to_string(),
+                            _ => "f".to_string(),
+                        },
+                        field.clone(),
+                    ),
+                    _ => ("f".to_string(), "column".to_string()),
+                };
+                self.refuse(format!("a frame's column is not picked by a mask: filter the frame, then read the column — filter[{0}, mask].{1}", frame, column));
             }
             // a mask picks: `t[labels eq j]` is the rows (or the numbers)
             // where it is true, `xs[mask]` the items (spec, Arrays) — the
@@ -6671,8 +6850,12 @@ if r.ok
         let refused = refusal_of("use math\nm = [[2.0, 0.0], [0.0, 3.0]]\nparts = svd[m]\ni = 0\nu = parts[i]\nfor r in u\n    log[r]\nlog[parts[i][0]]\n");
         assert!(refused.contains("line 6: a loop over `u` walks rows or numbers by its rank, and the rank of `u` is not known here — state it: reshape[t, rows, columns] for a matrix, flatten[t] for a vector"), "{}", refused);
         assert!(refused.contains("line 8: an index into the tensor reads a row or a number by its rank"), "{}", refused);
-        let refused = refusal_of("use math\nm = eye[2]\nm[1] = [7.0, 8.0]\n");
-        assert!(refused.contains("`m[…]` takes a number: a tensor's rows cannot be assigned one at a time"), "{}", refused);
+        // a row of a matrix is written as one of its own length, in place;
+        // one of another length is refused before the program runs
+        let ir = ir_of("use math\nm = eye[2]\nm[1] = [7.0, 8.0]\nlog[m]\n");
+        assert!(ir.contains("core.__set_part("), "{}", ir);
+        let refused = refusal_of("use math\nm = eye[2]\nm[1] = [7.0, 8.0, 9.0]\nlog[m]\n");
+        assert!(refused.contains("`m[…] = …`: a row here holds 2 numbers, and the value written holds 3 numbers"), "{}", refused);
         // a function handed as a value: typed however far it is handed on,
         // and refused where nothing types it
         let ir = ir_of("fn double[x]\n    return x * 2\nfn apply[f, x]\n    return f[x]\nfn relay[f, x]\n    return apply[f, x]\nlog[relay[double, 21]]\n");

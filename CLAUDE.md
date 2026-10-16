@@ -762,6 +762,22 @@ steps on every push and must be green.
   inference's "is it numbers" test, the call was typed as nothing known,
   and the compiled program did not build (fuzz seed 1792144449, parity
   250). The outer step wraps the answer as one that can fail.
+- A tensor is written at the positions that read it: `m[i][j] = x` lowers
+  (S::IndexAssign) to `m = core.__set_at[m, [i, j], x]` and `m[i] = row` to
+  `core.__set_part` (a part of exactly the shape the positions leave:
+  `part_disagrees` refuses statically where both shapes are known, the
+  runtime stops in the same words), hidden rows in `IN_PLACE_BUILTINS` with
+  take bridges and `taken_path`s, so both modes write where the matrix lies;
+  `taken_in_place` splits a tensor's self-reading write too (`d[k] = d[k -
+  1] + 1.0`). Through a record's field, a list's item or a map's value
+  (`tensor_lead`) it is `g.cells = __set_at[g.cells, …]` as a `SetPath`, a
+  computed position hoisted once — a copy of that tensor per write.
+  `crow_runtime::core::set_flat_at` (`v[i] = x`, both backends) refuses a
+  tensor of two axes or more. The interpreter's `assign_in_place` declines
+  a row whose collection is no list or map BEFORE evaluating its arguments:
+  evaluating first had read a moved row twice ("expected numbers, got
+  done"). A frame's column picked by a mask is refused
+  (`filter[df, mask].col`).
 - A list of lists of numbers is `Arg::Rows`, not `Arg::Tensors`: no list
   of tensors' parameter takes it (`Kind::Tensors`), a tensor's does as a
   matrix (`stack[rows]` is `math.stack_rows` of it). Both backends make the
