@@ -28,6 +28,10 @@ history says the rest.
 - `m[i] = x` on a matrix is refused (one position of a matrix is its row):
   it had written the flat number `i` while `m[i]` read the row. A number
   of a matrix is written `m[i][j] = x`, a row `m[i] = row`.
+- `filter` is removed: a mask picks a frame's rows as it picks a list's
+  items, `f[f.age gt 30]` (`filter[a, b]` is `a[b]`). A mask that compares
+  the frame's own columns is still computed in one pass. A frame's index
+  takes a mask alone: `f[0]` and `f['name']` stay refused.
 
 ### Added
 
@@ -37,7 +41,11 @@ history says the rest.
   before the program runs, or stops where its shape shows only as it runs.
   It had been refused, the matrix built anew.
 - A frame's column of bools is the mask it makes where a mask is taken:
-  `filter[f, f.active]`, `where[f.active, a, b]`, `names[f.active]`.
+  `f[f.active]`, `where[f.active, a, b]`, `names[f.active]`, and negated
+  or joined, `not f.active`, `f.active and f.age gt 30` (negated it had
+  been one bool, and joined it had not built compiled).
+- A frame's column is picked by a mask, `f.name[f.age gt 30]`: a column of
+  the same kind with its missing cells kept, as `f[mask].name` reads it.
 - A list of lists of numbers is a matrix where a tensor is taken:
   `tensor[rows]` and `stack[rows]` (both had stopped interpreted and not
   built compiled).
@@ -80,9 +88,8 @@ history says the rest.
   had not built. A matrix held in a record's field, a list's item or a
   map's value is written the same way (`g.cells[i][j] = x`), where both
   modes had failed too.
-- `df.name[mask]` is refused, naming `filter[df, mask].name`; the
-  interpreter had stopped as it ran and the compiled program had not
-  built.
+- `xs[mask]` of a list read from a value that can fail (a file's text
+  split into lines) builds compiled; it had run interpreted only.
 - `crow stop` stops a program the interpreter serves (`crow run -i`) and
   `crow dev` with what it serves; it had said nothing was running. A
   process a stale pidfile names is signalled only when it runs in the

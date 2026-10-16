@@ -2,7 +2,7 @@
 //! buffer with an offset per cell, so a column is two allocations however
 //! many rows it has — or, for a column of few distinct values (a symbol,
 //! a side), a code per cell into a dictionary of the values, four bytes a
-//! cell, which a group, a join, a sort or a filter can work on without
+//! cell, which a group, a join, a sort or a mask can work on without
 //! reading the text. A cell is read by index as `&str`. (A `String` per
 //! cell had cost 24 bytes and an allocation each: 160 of a benchmark row's
 //! 220 bytes, and 40 million allocations to sort ten million rows.)

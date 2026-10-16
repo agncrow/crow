@@ -70,13 +70,16 @@ struct Uses<'c> {
 /// each cell as it was: a read of the answer's column is a read of that
 /// frame's. (`with`, `rename`, `join`, `group`, `pivot`, `unpivot` and
 /// `window` change the columns, and say nothing of the frame they take.)
-const KEEPS_COLUMNS: &[&str] = &["filter", "sort", "head", "tail", "sample", "unique", "fill", "complete", "select"];
+/// A frame's rows picked by a mask (`f[mask]`) keep them too.
+const KEEPS_COLUMNS: &[&str] = &["sort", "head", "tail", "sample", "unique", "fill", "complete", "select"];
 
 /// The frame a value is, when it is one the body holds: the name itself,
 /// or a verb's answer over it.
 fn frame_of(e: &A, env: &Env) -> Option<FrameKey> {
     match e {
         A::Ident(f) => env.frames.get(f).cloned(),
+        // (a frame indexed: its rows a mask picks, every column kept)
+        A::Call { callee, args } if args.len() == 1 && frame_of(callee, env).is_some() => frame_of(callee, env),
         A::Call { callee, args } => {
             let verb = match callee.as_ref() {
                 A::Ident(n) => n.as_str(),
@@ -755,7 +758,7 @@ mod tests {
     /// literal says what its cells are.
     #[test]
     fn a_frame_handed_on_or_derived_is_read_as_itself() {
-        let s = shapes("use frame\nfn total[rows]\n    t = 0\n    for q in rows.qty\n        t = t + q\n    return t\nfn names[rows]\n    kept = filter[rows, rows.sym eq 'AAPL']\n    labels = for t in kept.sym\n        upper[t]\n    return labels\ndf = frame.load[args[][0]]\nsame = df\nlog[total[df]]\nlog[names[same]]\nfor f in df.flag\n    if f\n        log[f]\n");
+        let s = shapes("use frame\nfn total[rows]\n    t = 0\n    for q in rows.qty\n        t = t + q\n    return t\nfn names[rows]\n    kept = rows[rows.sym eq 'AAPL']\n    labels = for t in kept.sym\n        upper[t]\n    return labels\ndf = frame.load[args[][0]]\nsame = df\nlog[total[df]]\nlog[names[same]]\nfor f in df.flag\n    if f\n        log[f]\n");
         let key = (TOP.to_string(), "df".to_string());
         let df = s.frames.get(&key).expect("df");
         assert_eq!(df.get("qty"), Some(&Ty::Float), "{:?}", df);
@@ -769,12 +772,12 @@ mod tests {
 
     /// A column met only whole as numbers — a mask, an aggregate — holds
     /// ints or floats as they are, and nothing of it is held (the book's
-    /// `filter[trades, trades.qty gte 40]` had widened `qty` to floats,
+    /// a mask of `trades.qty gte 40` had widened `qty` to floats,
     /// and the printed frame said so); a cell read as a number holds it to
     /// numbers; a column met whole as text is text.
     #[test]
     fn a_column_met_only_whole_as_numbers_is_left_as_it_comes() {
-        let s = shapes("use frame\ndf = frame.load[args[][0]]\nbig = filter[df, df.qty gte 40]\nlog[len[big]]\nkept = filter[df, df.sym eq 'AAPL']\nlog[len[kept]]\nfor p in df.px\n    log[p * 2.0]\nhigh = filter[df, df.px gt 100]\nlog[len[high]]\n");
+        let s = shapes("use frame\ndf = frame.load[args[][0]]\nbig = df[df.qty gte 40]\nlog[len[big]]\nkept = df[df.sym eq 'AAPL']\nlog[len[kept]]\nfor p in df.px\n    log[p * 2.0]\nhigh = df[df.px gt 100]\nlog[len[high]]\n");
         let df = s.frames.get(&(TOP.to_string(), "df".to_string())).expect("df");
         assert_eq!(df.get("qty"), None, "{:?}", df);
         assert_eq!(df.get("sym"), Some(&Ty::Str), "{:?}", df);

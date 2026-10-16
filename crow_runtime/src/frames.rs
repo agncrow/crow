@@ -151,9 +151,23 @@ pub fn select(f: &CrowFrame, names: &[String]) -> Result<CrowFrame, String> {
     f.select(&names)
 }
 
-/// `filter[frame, mask]`: the rows the mask keeps, a mask per row.
-pub fn filter(f: &CrowFrame, mask: &[bool]) -> Result<CrowFrame, String> {
-    f.filter(mask)
+/// `f[mask]`: the rows the mask keeps, a mask per row (the lowering's
+/// fused form, `mask::pick_where`, where the mask compares the frame's
+/// own columns).
+pub fn pick_rows(f: &CrowFrame, mask: &[bool]) -> Result<CrowFrame, String> {
+    f.pick_rows(mask)
+}
+
+/// `f.name[mask]`: the cells the mask keeps, a column of the same kind with
+/// its missing cells kept — what `f[mask].name` reads, one column picked
+/// rather than every one. A mask of another length stops in the words a
+/// list's mask does.
+pub fn pick_cells(c: &CrowColumn, mask: &[bool]) -> Result<CrowColumn, String> {
+    if mask.len() != c.len() {
+        return Err(format!("a mask of {} picks from a column of {}: they must be as long as each other", mask.len(), c.len()));
+    }
+    let (data, valid) = crate::frame::pick_column(&c.data, &c.valid, mask);
+    Ok(CrowColumn { data: std::sync::Arc::new(data), valid: std::sync::Arc::new(valid) })
 }
 
 /// `sort[frame, name]`, ascending.
@@ -401,6 +415,24 @@ mod tests {
     }
 
 
+    /// A mask picks a frame's rows and a column's cells alike: the column
+    /// keeps its kind and its missing cells, and a mask of another length
+    /// stops in the words a list's mask does.
+    #[test]
+    fn a_mask_picks_rows_and_cells() {
+        let f = people();
+        let kept = pick_rows(&f, &[true, false, true]).expect("a mask per row");
+        assert_eq!(kept.nrows(), 2);
+        assert_eq!(column(&kept, "age").0, Column::Int(vec![30, 50]));
+        assert_eq!(pick_rows(&f, &[true]).map(|_| ()), Err("a mask of 1 picks from a frame of 3 rows: they must be as long as each other".to_string()));
+        let gappy = CrowFrame::new(vec!["n".to_string()], vec![Column::Int(vec![1, 0, 3])], vec![vec![true, false, true]]);
+        let n = gappy.col_native("n").expect("the column");
+        let picked = pick_cells(&n, &[false, true, true]).expect("a mask per cell");
+        assert_eq!((*picked.data).clone(), Column::Int(vec![0, 3]));
+        assert_eq!(picked.valid.to_vec(), vec![false, true]);
+        assert_eq!(pick_cells(&n, &[true, true]).map(|_| ()), Err("a mask of 2 picks from a column of 3: they must be as long as each other".to_string()));
+    }
+
     /// Trades over two days and symbols: the frame the groups, pivots and
     /// windows below are read from.
     fn trades() -> CrowFrame {
@@ -464,13 +496,13 @@ mod tests {
     #[test]
     fn a_pivot_makes_the_long_frame_wide() {
         let f = trades();
-        let one_per_pair = filter(&f, &[true, true, false, true, true]).expect("four rows");
+        let one_per_pair = pick_rows(&f, &[true, true, false, true, true]).expect("four rows");
         let p = pivot(&one_per_pair, "sym", "day", "qty").expect("a pivot");
         assert_eq!(p.columns, vec!["sym", "1", "2"]);
         assert_eq!(column(&p, "sym").0, Column::strs(vec!["a".into(), "b".into()]));
         assert_eq!(column(&p, "1"), (Column::Int(vec![1, 30]), vec![true, true]));
         assert_eq!(column(&p, "2"), (Column::Int(vec![2, 10]), vec![true, true]));
-        let sparse = filter(&f, &[true, true, false, false, true]).expect("three rows");
+        let sparse = pick_rows(&f, &[true, true, false, false, true]).expect("three rows");
         let p = pivot(&sparse, "day", "sym", "px").expect("a pivot");
         assert_eq!(p.columns, vec!["day", "a", "b"]);
         assert_eq!(column(&p, "day").0, Column::Int(vec![1, 2]));

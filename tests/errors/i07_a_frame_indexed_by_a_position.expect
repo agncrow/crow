@@ -1,0 +1,3 @@
+i07_a_frame_indexed_by_a_position.co:5:1: a frame is indexed by a mask, which picks its rows (f[f.age gt 30]): read a column as `f.name`, its cell as `f.name[i]`, and columns with select[f, ['name']]
+  5 │ log[f[0]]
+    │ ^^^^^^^^^

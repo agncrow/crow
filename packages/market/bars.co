@@ -108,7 +108,7 @@ fn during[bars, part]
             keep = push[keep, p eq part]
         else
             keep = push[keep, false]
-    return filter[bars, keep]
+    return bars[keep]
 
 --- five trades over two minutes make two minute bars; resampled to two
 --- minutes they are one bar again

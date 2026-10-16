@@ -372,7 +372,7 @@ impl Draw {
 
 /// The builtins a slip is planted in: names of five letters or more, so a
 /// swapped pair is one slip from them and from no other name.
-const SLIPPABLE: &[&str] = &["upper", "lower", "split", "strip", "round", "floor", "contains", "reverse", "filter", "concat", "values", "replace"];
+const SLIPPABLE: &[&str] = &["upper", "lower", "split", "strip", "round", "floor", "contains", "reverse", "concat", "values", "replace"];
 
 /// The mistakes a program's lines allow, each with the line changed: the
 /// program as it runs, one mistake in it.

@@ -776,8 +776,20 @@ steps on every push and must be green.
   tensor of two axes or more. The interpreter's `assign_in_place` declines
   a row whose collection is no list or map BEFORE evaluating its arguments:
   evaluating first had read a moved row twice ("expected numbers, got
-  done"). A frame's column picked by a mask is refused
-  (`filter[df, mask].col`).
+  done").
+- A mask picks a frame's rows: `f[mask]` (`filter` removed from the
+  language 2026-10-16, an unknown name like any other) is lowered at the
+  index site (call_inner) to the hidden row `core.__pick_frame`
+  (`frames::pick_rows`), which `fuse.rs` turns into `core.__pick_where`
+  (`mask::pick_where`) where the mask compares the frame's own columns;
+  any other index of a frame is refused.
+  A column picked by a mask is `__pick_cells` (mask_pick), a column of its
+  kind. A pick's call goes through `picked`: it propagates (and is typed as
+  one that can fail) where an argument is an unwrap mark, because the
+  emitter reads such a mark only in a propagating call (`raw`) — `xs[mask]`
+  of a list read from a file had not built. A column of bools under `not`,
+  `and` or `or` is lowered as `c eq true`. `uses::frame_of` follows a
+  frame through its index.
 - A list of lists of numbers is `Arg::Rows`, not `Arg::Tensors`: no list
   of tensors' parameter takes it (`Kind::Tensors`), a tensor's does as a
   matrix (`stack[rows]` is `math.stack_rows` of it). Both backends make the

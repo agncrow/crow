@@ -43,7 +43,7 @@ Three things to notice:
   `%` wildcards need no escaping — and it's `>=` in there, not `gte`;
   the database speaks its own language.
 
-`query` returns a frame — everything from chapter 10 (filter, sort,
+`query` returns a frame — everything from chapter 10 (masks, sort,
 columns, `sum`) applies to results directly. `exec` returns the affected
 row count:
 

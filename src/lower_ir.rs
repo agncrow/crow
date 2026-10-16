@@ -116,7 +116,7 @@ fn lower_checked_as(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: 
     if !refusals.is_empty() {
         return Err(Refusal::Invalid(refusals.into_iter().map(|(f, m)| (m, Some(f))).collect()));
     }
-    // chains computed in one pass: element-wise tensors, a filter's predicate
+    // chains computed in one pass: element-wise tensors, a frame's mask
     fuse::chains(&mut program);
     // each connection opens with the tables the program declares on it
     schema::attach(&mut program);
@@ -875,11 +875,34 @@ fn as_mask(a: &A) -> A {
     A::BinOp { left: Box::new(a.clone()), op: BinOp::Eq, right: Box::new(A::Bool(true)) }
 }
 
+/// A pick's call (a mask's rows, items or cells): one that propagates
+/// where an argument is read from a value that can fail — the backends read
+/// such an argument through the lowering's mark only in a call that
+/// propagates (the emitter's `raw`) — and is then typed as one that can
+/// fail, as a builtin's call is (`xs[mask]` of a list read from a file had
+/// not built compiled).
+fn picked(row: &'static crate::table::Row, base: Expr, mask: Expr, ty: Ty) -> Expr {
+    let fallible = |e: &Expr| matches!(e, Expr::Convert { how: Convert::Unwrap, .. }) || e.ty().is_result();
+    let carried = fallible(&base) || fallible(&mask);
+    let ty = if carried && !ty.is_result() { Ty::Result(Box::new(ty)) } else { ty };
+    Expr::Call { target: Target::Row(row), args: vec![base, mask], ty, propagates: carried }
+}
+
+/// Whether an expression reads a frame's column anywhere in it: a
+/// comparison over one is a mask, one bool per row, even where the
+/// column's cells are not typed yet.
+fn reads_a_column(e: &Expr) -> bool {
+    let mut found = false;
+    crate::ir::visit_expr(e, &mut |x| found |= matches!(x.ty().payload(), Ty::Column(_)));
+    found
+}
+
 /// A mask picks: the index's own row and the result's type, by the base —
 /// `__pick_rows` of a tensor (its first dimension unknown after),
-/// `__pick_items` of a list — or none where the index is not a mask, or
-/// either can fail. (A helper, not inline: the lowering's recursive frame is
-/// measured against a 43-entry map literal in the debug build, parity 48.)
+/// `__pick_items` of a list, `__pick_cells` of a frame's column — or none
+/// where the index is not a mask, or either can fail. (A helper, not
+/// inline: the lowering's recursive frame is measured against a 43-entry
+/// map literal in the debug build, parity 48.)
 #[inline(never)]
 fn mask_pick(base: &Ty, index: &Ty) -> Option<(&'static crate::table::Row, Ty)> {
     if !matches!(index.payload(), Ty::List(item) if **item == Ty::Bool) || index.is_result() || base.is_result() {
@@ -892,6 +915,9 @@ fn mask_pick(base: &Ty, index: &Ty) -> Option<(&'static crate::table::Row, Ty)> 
             Ty::Tensor(item.clone(), dims.as_ref().map(|d| { let mut d = d.clone(); if let Some(first) = d.first_mut() { *first = None; } d })),
         ),
         Ty::List(_) => ("__pick_items", base_ty.clone()),
+        // (a frame's column: its cells where the mask is true, a column of
+        // the same kind with its missing cells kept — `f.name[mask]`)
+        Ty::Column(_) => ("__pick_cells", base_ty.clone()),
         _ => return None,
     };
     let kinds = [crate::table::Arg::of_type(&base_ty), crate::table::Arg::Truths];
@@ -3217,13 +3243,23 @@ impl<'a> Lowerer<'a> {
                 self.ident(name, ty)
             }
             A::BinOp { left, op, right } => {
+                let joins = matches!(op, BinOp::And | BinOp::Or);
                 let mut l = self.lower_expr(left)?;
+                // (a frame's column of bools joined by and/or is the mask it
+                // makes, `c eq true`, as wherever a mask is taken: `f.on and
+                // f.n gt 1` had joined a column with a mask, which ran
+                // interpreted and did not build compiled)
+                if joins && is_bool_column(&l, false) {
+                    l = self.lower_expr(&as_mask(left))?;
+                }
                 // (what the right side of `and`/`or` needs done first — a
                 // failed value's refusal — waits for the left's decision:
                 // `r.ok and r.x gt 0` must not refuse `r` when it failed)
-                let joins = matches!(op, BinOp::And | BinOp::Or);
                 let outer = if joins { std::mem::take(&mut self.pre) } else { Vec::new() };
                 let mut r = self.lower_expr(right)?;
+                if joins && is_bool_column(&r, false) {
+                    r = self.lower_expr(&as_mask(right))?;
+                }
                 let right_pre = if joins { std::mem::replace(&mut self.pre, outer) } else { Vec::new() };
                 // a parsed value met in an operator is read as the kind the
                 // other side says — a number as a float, `%` an int — and as
@@ -3350,7 +3386,15 @@ impl<'a> Lowerer<'a> {
                 }
             }
             A::UnaryOp { op, expr } => {
-                let x = self.lower_expr(expr)?;
+                let mut x = self.lower_expr(expr)?;
+                // a frame's column of bools negated is the mask it makes,
+                // negated: `not f.on` is `not (f.on eq true)`, one bool per
+                // row (it had been typed one bool — refused where a mask is
+                // taken, and `xs[not f.on]` had stopped the interpreter and
+                // not built compiled)
+                if matches!(op, crate::ast::UnaryOp::Not) && is_bool_column(&x, false) {
+                    x = self.lower_expr(&as_mask(expr))?;
+                }
                 // a parsed value negated is read as a bool, one made negative
                 // as a number
                 let x = match op {
@@ -3867,14 +3911,6 @@ impl<'a> Lowerer<'a> {
             // the facts are set, takes the error the read carries.
             let refused = !self.in_fact_default && base.ty().is_result() && !matches!(base.ty().payload(), Ty::Fn(..) | Ty::Unknown);
             let base = if refused { self.decided(base, Decision::Item) } else { base };
-            // a frame has no items to index: a column is read by its name,
-            // a cell by the column's index (`f['a']` had stopped the
-            // interpreter as it ran — `not indexable` — and the compiled
-            // program had not built)
-            if self.pass == Pass::Final && matches!(base.ty().payload(), Ty::Frame(_)) {
-                let name = local_named(&base).unwrap_or_else(|| "frame".to_string());
-                self.refuse(format!("a frame is not indexed: read a column as `{0}.name`, its cell as `{0}.name[i]`, and columns with select[{0}, ['name']]", name));
-            }
             // a number or a bool has no items (`x[0]` of an int had stopped
             // the interpreter as it ran — `not indexable` — and the compiled
             // program had not built); a builtin's name read as a method,
@@ -3922,26 +3958,49 @@ impl<'a> Lowerer<'a> {
                 }
                 idx = read_idx;
             }
-            // a frame's column is not picked by a mask: its frame is, and
-            // the column read after (spec, Arrays: frames keep filter) — the
-            // interpreter had stopped as it ran ("array index must be an
-            // integer") and the compiled program had not built
-            if self.pass == Pass::Final
-                && let [index] = idx.as_slice()
-                && matches!(base.ty().payload(), Ty::Column(_))
-                && matches!(index.ty().payload(), Ty::List(item) if **item == Ty::Bool)
-            {
-                let (frame, column) = match callee {
-                    A::FieldAccess { object, field } => (
-                        match object.as_ref() {
-                            A::Ident(f) => crate::lower::shown(f).to_string(),
-                            _ => "f".to_string(),
-                        },
-                        field.clone(),
-                    ),
-                    _ => ("f".to_string(), "column".to_string()),
+            // a mask picks a frame's rows (spec, Frames; Vijay, 2026-10-16:
+            // the index picks a frame's rows as it picks a list's items and a
+            // tensor's rows): `f[f.n gt 1]` is the frame of the rows where it
+            // is true, every column as it was, fused where the mask compares
+            // the frame's own columns into one pass over them (fuse.rs). Any other index of a frame is refused: a column is
+            // read by its name, a cell by the column's index (`f['a']` had
+            // stopped the interpreter as it ran and not built compiled).
+            if matches!(base.ty().payload(), Ty::Frame(_)) {
+                let masked = match idx.as_slice() {
+                    [index] => match index.ty().payload() {
+                        Ty::List(item) => matches!(item.payload(), Ty::Bool),
+                        // (a comparison over columns not typed yet is typed
+                        // a truth until they are, and a mask still: it reads a
+                        // column)
+                        Ty::Bool | Ty::Unknown => self.pass != Pass::Final || reads_a_column(index),
+                        _ => false,
+                    },
+                    _ => false,
                 };
-                self.refuse(format!("a frame's column is not picked by a mask: filter the frame, then read the column — filter[{0}, mask].{1}", frame, column));
+                let name = local_named(&base).unwrap_or_else(|| "f".to_string());
+                if masked && let Some(row) = crate::table::row("core.__pick_frame") {
+                    // a mask decides each row, and an error decides nothing: a
+                    // list of values that can fail (a cell of a column that can
+                    // be missing) is not a mask, in either mode
+                    if let (Some(Ty::List(item)), Some(a)) = (idx.first().map(|m| m.ty().payload().clone()), args.first())
+                        && item.is_result()
+                    {
+                        let what = match a {
+                            A::Ident(v) => format!("'{}'", crate::lower::shown(v)),
+                            _ => "the mask".to_string(),
+                        };
+                        self.refuse(format!("{} holds values that can fail, and a mask decides every row: guard each value with .ok (cells of a column that can be missing: fill the column first, fill[frame, 'column', value])", what));
+                    }
+                    let frame = base.ty().payload().clone();
+                    let mask = idx.pop().unwrap_or(Expr::Const(Const::Bool(false), Ty::Bool));
+                    return Ok(picked(row, base, mask, frame));
+                }
+                if self.pass == Pass::Final {
+                    self.refuse(format!(
+                        "a frame is indexed by a mask, which picks its rows ({0}[{0}.age gt 30]): read a column as `{0}.name`, its cell as `{0}.name[i]`, and columns with select[{0}, ['name']]",
+                        name
+                    ));
+                }
             }
             // a mask picks: `t[labels eq j]` is the rows (or the numbers)
             // where it is true, `xs[mask]` the items (spec, Arrays) — the
@@ -3950,7 +4009,7 @@ impl<'a> Lowerer<'a> {
                 && let Some((row, ty)) = mask_pick(&base.ty(), &index.ty())
             {
                 let index = idx.pop().unwrap_or(Expr::Const(Const::Bool(false), Ty::Bool));
-                return Ok(Expr::Call { target: Target::Row(row), args: vec![base, index], ty, propagates: false });
+                return Ok(picked(row, base, index, ty));
             }
             // a map's keys are one kind: an index of the other kind is
             // refused before the program runs, in both modes
@@ -4184,8 +4243,8 @@ impl<'a> Lowerer<'a> {
                 }
             }
             // a frame's column of bools where the call takes a mask is the
-            // mask it makes — `filter[f, f.on]` is `filter[f, f.on eq
-            // true]`, a missing cell false as the comparison answers it
+            // mask it makes — `where[f.on, a, b]` is `where[f.on eq true,
+            // a, b]`, a missing cell false as the comparison answers it
             // (spec, Frames): lowered as that comparison, in both modes
             let mut x = self.lower_expr(a)?;
             if !self.ctx.functions.contains_key(&name) && is_bool_column(&x, true) && crate::table::takes_mask_at(&name, i, args.len()) {
@@ -4298,21 +4357,6 @@ impl<'a> Lowerer<'a> {
                     if is_list && before.get(i).is_some_and(|w| !w.eq_ignore_ascii_case("IN")) {
                         self.refuse(format!("{}: parameter {} is a list, which is sent as (?, ?, …) — only `IN ?` reads one: write `x IN ?`", name, i + 1));
                     }
-                }
-            }
-        }
-        // a mask decides each row, and an error decides nothing: a list of
-        // values that can fail (a cell of a column that can be missing) is
-        // not a mask, in either mode (compiled, it did not build; the
-        // interpreter stopped only when a cell was missing)
-        if name == "filter" && matches!(module.as_deref(), None | Some("frame")) {
-            if let Some(Ty::List(item)) = lowered.get(1).map(|m| m.ty()) {
-                if item.is_result() {
-                    let what = match args.get(1) {
-                        Some(A::Ident(v)) => format!("'{}'", crate::lower::shown(v)),
-                        _ => "the mask".to_string(),
-                    };
-                    self.refuse(format!("filter: {} holds values that can fail, and a mask decides every row: guard each value with .ok (cells of a column that can be missing: fill the column first, fill[frame, 'column', value])", what));
                 }
             }
         }
@@ -6380,13 +6424,13 @@ if r.ok
     }
 
     /// A frame's column of bools where a mask is taken is the mask `c eq
-    /// true` makes: filter's, where's, an index's.
+    /// true` makes: a frame's index, where's, a list's index.
     #[test]
     fn a_column_of_bools_where_a_mask_is_taken_is_its_mask() {
-        let ir = ir_of("use frame\nf = frame.new[n = [1, 2], on = [true, false]]\nlog[filter[f, f.on]]\nlog[where[f.on, f.n, 0]]\n");
-        // (filter's mask is fused into the frame's own kernel, as `filter[f,
-        // f.on eq true]`'s is)
-        assert!(ir.contains("frame.filter_where(unwrap f, \"c0 v0 eq\", [\"on\"], true)"), "{}", ir);
+        let ir = ir_of("use frame\nf = frame.new[n = [1, 2], on = [true, false]]\nlog[f[f.on]]\nlog[where[f.on, f.n, 0]]\n");
+        // (a frame's mask is fused into the frame's own kernel, as `f[f.on
+        // eq true]`'s is)
+        assert!(ir.contains("core.__pick_where(unwrap f, \"c0 v0 eq\", [\"on\"], true)"), "{}", ir);
         assert!(ir.contains("frame.where((unwrap f.on eq true)"), "{}", ir);
     }
 
@@ -6467,24 +6511,24 @@ if r.ok
         assert!(inner.contains("tensor.fused(\"#0 #1 elemmul #2 sub\""), "a chain inside a product: {}", inner);
     }
 
-    /// A filter whose predicate compares the filtered frame's own columns
-    /// with values that only read, asks a column's `.ok`, and combines them
-    /// with `and`, `or` and `not` is one call of the fused kernel
-    /// (crow_runtime::mask::filter_where): a column read twice is one, a
+    /// A frame's mask that compares the frame's own columns with values
+    /// that only read, asks a column's `.ok`, and combines them with `and`,
+    /// `or` and `not` is one call of the fused kernel
+    /// (crow_runtime::mask::pick_where): a column read twice is one, a
     /// value written first turns the operator round. A value that calls
     /// something, another frame's column, and a mask held in a variable
     /// are the operators'
     #[test]
-    fn a_filters_predicate_is_one_call() {
+    fn a_frames_mask_is_one_call() {
         let df = "use frame\ndf = with[with[frame.new[], 'name', ['ada', 'bob']], 'age', [30, 50]]\n";
-        let ir = ir_of(&format!("{}k = 40\nx = filter[df, df.age gt 40 and df.name ne 'bob' or not (k lt df.age) and df.age.ok]\nlog[len[x]]\n", df));
-        assert!(ir.contains("frame.filter_where(unwrap df, \"c0 v0 gt c1 v1 ne and c0 v2 gt not c0 ok and or\", [\"age\", \"name\"], 40, \"bob\", k)"), "{}", ir);
-        let call = ir_of(&format!("{}fn limit[]\n    40\nx = filter[df, df.age gt limit[]]\nlog[len[x]]\n", df));
-        assert!(!call.contains("filter_where"), "a value that calls: {}", call);
-        let other = ir_of(&format!("{}other = df\nx = filter[df, other.age gt 40]\nlog[len[x]]\n", df));
-        assert!(!other.contains("filter_where"), "another frame's column: {}", other);
-        let held = ir_of(&format!("{}m = df.age gt 40\nx = filter[df, m]\nlog[len[x]]\n", df));
-        assert!(!held.contains("filter_where"), "a mask in a variable: {}", held);
+        let ir = ir_of(&format!("{}k = 40\nx = df[df.age gt 40 and df.name ne 'bob' or not (k lt df.age) and df.age.ok]\nlog[len[x]]\n", df));
+        assert!(ir.contains("core.__pick_where(unwrap df, \"c0 v0 gt c1 v1 ne and c0 v2 gt not c0 ok and or\", [\"age\", \"name\"], 40, \"bob\", k)"), "{}", ir);
+        let call = ir_of(&format!("{}fn limit[]\n    40\nx = df[df.age gt limit[]]\nlog[len[x]]\n", df));
+        assert!(!call.contains("__pick_where"), "a value that calls: {}", call);
+        let other = ir_of(&format!("{}other = df\nx = df[other.age gt 40]\nlog[len[x]]\n", df));
+        assert!(!other.contains("__pick_where"), "another frame's column: {}", other);
+        let held = ir_of(&format!("{}m = df.age gt 40\nx = df[m]\nlog[len[x]]\n", df));
+        assert!(!held.contains("__pick_where"), "a mask in a variable: {}", held);
     }
 
     /// Values of two kinds are not compared, and an order is asked only of

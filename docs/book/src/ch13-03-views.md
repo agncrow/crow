@@ -30,7 +30,7 @@ view render[]
 
     shown = trades
     if min_qty gt 0
-        shown = filter[trades, trades.qty gte min_qty]
+        shown = trades[trades.qty gte min_qty]
     shown = sort[shown, 'pnl', desc = true]
 
     by_symbol = group[trades, 'symbol', ['pnl', 'sum'], ['pnl', 'count']]
@@ -69,8 +69,8 @@ Walk it top to bottom and count the chapters:
   (string and int values). Chapter 4's monomorphization quietly makes
   both work.
 - **`render`** — queries at render time, so every re-render shows the
-  database as it is *now*. Frames flow from `query` through `filter`/
-  `sort`/`group` into `table[...]` untouched.
+  database as it is *now*. Frames flow from `query` through masks,
+  `sort` and `group` into `table[...]` untouched.
 - **A failed query renders its reason** — a view renders what it's
   given, and what it's given is chapter 7's error value. Stop the
   database and the page tells you why, instead of crashing.

@@ -180,7 +180,7 @@ pub enum Kind {
     /// Each of `Operands`.
     Operand,
     /// `&[crow_runtime::mask::Cell]` taken: the rest of the arguments, each
-    /// a number, text or a bool — the values a fused filter's predicate
+    /// a number, text or a bool — the values a fused mask
     /// compares its columns with.
     Scalars,
     /// Each of `Scalars`.
@@ -1218,7 +1218,7 @@ pub fn read_operands(group: &[CrowValue]) -> Result<Vec<crow_runtime::fused::Ope
         .collect()
 }
 
-/// A fused filter's values: each a number, text or a bool.
+/// A fused mask's values: each a number, text or a bool.
 pub fn read_scalars(group: &[CrowValue]) -> Result<Vec<crow_runtime::mask::Cell<'_>>, String> {
     use crow_runtime::mask::Cell;
     group
@@ -1555,6 +1555,7 @@ pub static ROWS: &[Row] = &[
     // index's own rows, reached by the lowering, never by name
     row!("core.__pick_items", "", "__pick_items", crow_runtime::core::pick_items, (Seq, Bools) -> List, stops),
     row!("core.__pick_rows", "", "__pick_rows", crow_runtime::math::pick_rows, (Tensor, Bools) -> Tensor, stops),
+    row!("core.__pick_cells", "", "__pick_cells", crow_runtime::frames::pick_cells, (Column, Bools) -> Column, stops),
     // `map[keys, values]`: the literal's other form, reached by the lowering
     maprow!("core.__map_of", "__map_of", crow_runtime::core::map_of, (Keys, Seq) -> MapOf, stops, maps::map_of, maps::map_of_taken),
     Row { take: lists::slice_taken, ..row!("core.slice", "", "slice", crow_runtime::core::slice, (Seq, Int, Int) -> List, never) },
@@ -2139,8 +2140,11 @@ pub static ROWS: &[Row] = &[
     row!("frame.new", "frame", "new", crow_runtime::frames::new, () -> Frame, never),
     row!("frame.with", "frame", "with", crow_runtime::frames::with, (Frame, Str, Cells) -> Frame, value "frame"),
     row!("frame.select", "frame", "select", crow_runtime::frames::select, (Frame, Strs) -> Frame, stops),
-    row!("frame.filter", "frame", "filter", crow_runtime::frames::filter, (Frame, Bools) -> Frame, stops),
-    row!("frame.filter_where", "", "__filter_where", crow_runtime::mask::filter_where, (Frame, Str, Strs, Scalars) -> Frame, stops),
+    // `f[mask]`, a frame's rows picked by a mask (the lowering's, at a
+    // frame's index), and its fused form where the mask compares the
+    // frame's own columns, computed in one pass (lower_ir/fuse.rs)
+    row!("core.__pick_frame", "", "__pick_frame", crow_runtime::frames::pick_rows, (Frame, Bools) -> Frame, stops),
+    row!("core.__pick_where", "", "__pick_where", crow_runtime::mask::pick_where, (Frame, Str, Strs, Scalars) -> Frame, stops),
     row!("frame.sort", "frame", "sort", crow_runtime::frames::sort, (Frame, Str) -> Frame, stops),
     row!("frame.sort_by", "frame", "sort", crow_runtime::frames::sort_by, (Frame, Str, Bool) -> Frame, stops),
     row!("frame.sort_keys", "frame", "sort", crow_runtime::frames::sort_keys, (Frame, Strs) -> Frame, stops),
@@ -2250,12 +2254,13 @@ pub fn module_names(module: &str) -> Vec<&'static str> {
 }
 
 /// Whether a module (`""` the core) answers the name with rows.
-/// Where a call takes a mask — a list of bools, one per row: `filter`'s
-/// second argument and `where`'s first (spec, Frames). A frame's column of
-/// bools there is read as the mask it makes (`c eq true`). (Not every
-/// `Bools` parameter is a mask: `sort`'s are a key's descending flags.)
+/// Where a call takes a mask — a list of bools, one per row: `where`'s
+/// first argument (spec, Frames; an index takes one as well, `f[mask]`,
+/// read where the index is lowered). A frame's column of bools there is
+/// read as the mask it makes (`c eq true`). (Not every `Bools` parameter
+/// is a mask: `sort`'s are a key's descending flags.)
 pub fn takes_mask_at(name: &str, i: usize, argc: usize) -> bool {
-    matches!((name, i, argc), ("filter", 1, 2) | ("where", 0, 3))
+    matches!((name, i, argc), ("where", 0, 3))
 }
 
 pub fn has_rows(module: &str, name: &str) -> bool {
@@ -2768,7 +2773,8 @@ pub fn form(name: &str) -> String {
     match name {
         "contains" => "`x in xs`".to_string(),
         "__map_of" => "map[keys, values]".to_string(),
-        "__pick_items" | "__pick_rows" => "`xs[mask]`".to_string(),
+        "__pick_items" | "__pick_rows" | "__pick_cells" => "`xs[mask]`".to_string(),
+        "__pick_frame" | "__pick_where" => "`f[mask]`".to_string(),
         "__set_at" => "`m[i][j] = x`".to_string(),
         "__set_part" => "`m[i] = row`".to_string(),
         "__sub_len" => "len[sub[…]]".to_string(),
@@ -3046,7 +3052,7 @@ mod tests {
         assert_eq!(rows, Arg::Rows);
         assert_eq!(Arg::of_type(&Ty::List(Box::new(Ty::tensor(Ty::Float)))), Arg::Tensors);
         assert!(!Kind::Tensors.takes(Arg::Rows) && Kind::Tensor.takes(Arg::Rows) && Kind::List.takes(Arg::Rows));
-        assert!(takes_mask_at("filter", 1, 2) && takes_mask_at("where", 0, 3) && !takes_mask_at("sort", 2, 3));
+        assert!(takes_mask_at("where", 0, 3) && !takes_mask_at("sort", 2, 3));
         assert_eq!(core_row("len", &[Arg::Column]).map(|r| r.id), Some("core.len_column"));
         assert!(core_row("contains", &[Arg::Column, Arg::Int]).is_none());
     }

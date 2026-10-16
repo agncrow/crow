@@ -86,23 +86,23 @@ df.columns  --- ['name', 'age', 'city', 'salary', 'score']
 
 ## Vectorized Column Expressions for Filtering
 
-`filter[df, df.age gt 50]` where `df.age gt 50` returns a boolean array. Vectorized — operates on whole columns at once, no per-row allocation.
+`df[df.age gt 50]` where `df.age gt 50` returns a boolean array. Vectorized — operates on whole columns at once, no per-row allocation.
 
 ```crow
 use frame
 df = load['people.csv']
 
 --- filter rows where age > 50
-old = filter[df, df.age gt 50]
+old = df[df.age gt 50]
 
 --- string equality
-alices = filter[df, df.name eq 'alice']
+alices = df[df.name eq 'alice']
 
 --- compound conditions
-rich_old = filter[df, df.age gt 50 and df.salary gt 100000]
+rich_old = df[df.age gt 50 and df.salary gt 100000]
 
 --- negation
-others = filter[df, not (df.name eq 'alice')]
+others = df[not (df.name eq 'alice')]
 ```
 
 Mask semantics (implemented in both interpreter and transpiler):
@@ -141,14 +141,14 @@ Replaces `math.load` and `io.csv[]` — `load` is the single CSV entry point.
 
 **Column references: strings for names, expressions for computation.**
 Naming a column is a string (`sort[df, 'age']`). Computing on a column is a
-normal Crow expression over `df.col` (`filter[df, df.age gt 50]`). Every line
+normal Crow expression over `df.col` (`df[df.age gt 50]`). Every line
 is plain Crow — no special evaluation rules inside frame calls.
 
 ```crow
 sort[df, 'age']                    --- name a column: string
 sort[df, 'first name']             --- spaces, hyphens — no escape hatch needed
 select[df, ['name', 'age']]        --- list of names: strings
-filter[df, df.age gt 50]           --- compute on a column: expression
+df[df.age gt 50]           --- compute on a column: expression
 
 col = 'age'
 sorted = sort[df, col]             --- dynamic column names just work
@@ -167,7 +167,7 @@ sorted = sort[df, col]             --- dynamic column names just work
 | load | Load CSV → frame | `df = load['data.csv']` |
 | save | Write frame → CSV | `save[df, 'out.csv']` |
 | select | Pick columns | `sub = select[df, ['age', 'salary']]` |
-| filter | Filter rows | `old = filter[df, df.age gt 50]` |
+| a mask | Pick rows | `old = df[df.age gt 50]` |
 | sort | Sort by a column, or by several with a direction each | `s = sort[df, ['symbol', 'qty'], desc = [false, true]]` |
 | group | Group and aggregate, by one key or several | `g = group[df, ['dept', 'city'], ['salary', 'mean'], ['age', 'max']]` |
 | pivot | The long frame made wide: rows, columns, the values between | `wide = pivot[df, 'symbol', 'day', 'close']` |
@@ -249,7 +249,7 @@ moment[d, tz = '+09:00']
 
 ## Resolved Open Questions
 
-- **`head[df, 5]`** returns a frame (composable: `filter[head[df, 5], ...]`)
+- **`head[df, 5]`** returns a frame (composable: `head[df, 5][...]`)
 - **`log[df]`** displays a table summary: column names, dtypes, row count, first few rows
 - **`df.age * 2`** (column arithmetic) included from day one — essential for data science
 - **Missing values** handled via validity bitmap + `.ok`
@@ -290,7 +290,7 @@ clean = fill[df, 'age', 0]
 log[df.salary * 1.1]       --- [55000, 82500, nan, 99000]
 
 --- filter
-rich = filter[df, df.salary gt 60000]
+rich = df[df.salary gt 60000]
 
 --- select
 sub = select[df, ['age', 'salary']]

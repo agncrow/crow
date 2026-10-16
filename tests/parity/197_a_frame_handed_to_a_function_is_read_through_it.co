@@ -15,7 +15,7 @@ fn total[rows]
     return t
 
 fn labels[rows]
-    kept = filter[rows, rows.sym eq 'AAPL']
+    kept = rows[rows.sym eq 'AAPL']
     names = for s in kept.sym
         upper[s]
     return names

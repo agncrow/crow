@@ -140,7 +140,7 @@ impl<'r> Case<'r> {
                 21 => format!("len[{}.k]", self.expr(Kind::Frame, d)),
                 22 => {
                     let df = self.var_frame(d);
-                    format!("len[filter[{}, {}.a gt {}]]", df, df, 1 + self.rng.below(3))
+                    format!("len[{}[{}.a gt {}]]", df, df, 1 + self.rng.below(3))
                 }
                 23 => format!("len[group[{}, 'k', ['a', 'sum']]]", self.expr(Kind::Frame, d)),
                 15 => format!("len[{}.l]", self.expr(Kind::Doc, d)),
@@ -243,7 +243,7 @@ impl<'r> Case<'r> {
                 }
                 12 => {
                     let df = self.var_frame(d);
-                    format!("(len[filter[{}, {}.b gte 1.5]] eq 3)", df, df)
+                    format!("(len[{}[{}.b gte 1.5]] eq 3)", df, df)
                 }
                 6 => format!("starts[{}, 'a']", self.expr(Kind::Text, d)),
                 7 => format!("ends[{}, 'z']", self.expr(Kind::Text, d)),
@@ -261,7 +261,7 @@ impl<'r> Case<'r> {
                 // (what a predicate handed to any[] is then given)
                 5 => {
                     let df = self.var_frame(d);
-                    format!("push[{}, len[filter[{}, {}.a gt {}]]]", self.expr(Kind::Ints, d), df, df, 1 + self.rng.below(3))
+                    format!("push[{}, len[{}[{}.a gt {}]]]", self.expr(Kind::Ints, d), df, df, 1 + self.rng.below(3))
                 }
                 0 => format!("push[{}, {}]", self.expr(Kind::Ints, d), self.expr(Kind::Int, d)),
                 1 => format!("sort[{}]", self.expr(Kind::Ints, d)),
@@ -310,11 +310,11 @@ impl<'r> Case<'r> {
                 7 => format!("kept[{}]", self.expr(Kind::Frame, d)),
                 0 => {
                     let df = self.var_frame(d);
-                    format!("filter[{}, {}.a gt {}]", df, df, self.rng.below(4))
+                    format!("{}[{}.a gt {}]", df, df, self.rng.below(4))
                 }
                 1 => {
                     let df = self.var_frame(d);
-                    format!("filter[{}, {}.k eq 'x']", df, df)
+                    format!("{}[{}.k eq 'x']", df, df)
                 }
                 2 => format!("sort[{}, 'b']", self.expr(Kind::Frame, d)),
                 3 => format!("sort[{}, 'a', desc = true]", self.expr(Kind::Frame, d)),
@@ -344,7 +344,7 @@ impl<'r> Case<'r> {
         }
     }
 
-    /// A frame named twice in one expression (`filter[df, df.a gt 1]`): a
+    /// A frame named twice in one expression (`df[df.a gt 1]`): a
     /// variable of the case's, or a fresh one bound first.
     fn var_frame(&mut self, depth: usize) -> String {
         if let Some(v) = self.var_of(Kind::Frame) {
@@ -528,7 +528,7 @@ impl<'r> Case<'r> {
                 let df = self.var_frame(2);
                 let xs = self.expr(Kind::Ints, 1);
                 let (n, p) = (1 + self.rng.below(3), self.rng.below(2));
-                self.lines.push(format!("{}log[any[push[{}, len[filter[{}, {}.a gt {}]]], p{}]]", pad, xs, df, df, n, p));
+                self.lines.push(format!("{}log[any[push[{}, len[{}[{}.a gt {}]]], p{}]]", pad, xs, df, df, n, p));
                 let ys = self.expr(Kind::Ints, 1);
                 let p = self.rng.below(2);
                 self.lines.push(format!("{}log[all[push[{}, len[{}]], p{}]]", pad, ys, df, p));
@@ -559,7 +559,7 @@ impl<'r> Case<'r> {
                 self.lines.push(format!("{}        {} = {} + q", pad, tot, tot));
                 self.lines.push(format!("{}log[{}]", pad, tot));
                 self.lines.push(format!("{}log[upper[{}.sym[0]]]", pad, ld));
-                self.lines.push(format!("{}log[len[filter[{}, {}.px gt 1.0]]]", pad, ld, ld));
+                self.lines.push(format!("{}log[len[{}[{}.px gt 1.0]]]", pad, ld, ld));
                 let names = format!("nm{}", self.lines.len());
                 self.lines.push(format!("{}{} = for s in {}.sym", pad, names, ld));
                 self.lines.push(format!("{}    upper[s]", pad));
@@ -613,7 +613,7 @@ impl<'r> Case<'r> {
                 let df = self.var_frame(2);
                 match self.rng.below(4) {
                     0 => self.lines.push(format!("{}log[upper[{}.k]]", pad, df)),
-                    1 => self.lines.push(format!("{}log[len[filter[{}, 'p' in {}.g]]]", pad, df, df)),
+                    1 => self.lines.push(format!("{}log[len[{}['p' in {}.g]]]", pad, df, df)),
                     2 => self.lines.push(format!("{}log[where[{}.a gt 2, {}.a, 0]]", pad, df, df)),
                     _ => self.lines.push(format!("{}log[replace[{}.g, 'p', 'P']]", pad, df)),
                 }
@@ -664,7 +664,7 @@ impl<'r> Case<'r> {
                     7 => {
                         let (g, j) = (format!("g{}", self.lines.len()), format!("j{}", self.lines.len()));
                         self.lines.push(format!("{}{} = group[{}, 'k', ['a', 'sum']]", pad, g, df));
-                        self.lines.push(format!("{}{} = join[{}, filter[{}, {}.a_sum gt 3], 'k', 'left']", pad, j, df, g, g));
+                        self.lines.push(format!("{}{} = join[{}, {}[{}.a_sum gt 3], 'k', 'left']", pad, j, df, g, g));
                         self.lines.push(format!("{}log[{}.a_sum]", pad, j));
                     }
                     // distinct rows of two keys, sorted by both
@@ -858,7 +858,7 @@ fn generate(seed: u64, cases: usize, module: Option<String>) -> String {
     out.push_str("fn p0[x]\n    return x gt 1\n\nfn p1[x]\n    return x % 2 eq 0\n\n");
     // a frame handed to a function, read through its body; a function
     // that answers a frame
-    out.push_str("fn rows_of[df]\n    return len[df]\n\nfn kept[df]\n    return filter[df, df.a gt 1]\n\nfn first_k[df]\n    return df.k[0]\n\nfn total_b[df]\n    return sum[df.b]\n\n");
+    out.push_str("fn rows_of[df]\n    return len[df]\n\nfn kept[df]\n    return df[df.a gt 1]\n\nfn first_k[df]\n    return df.k[0]\n\nfn total_b[df]\n    return sum[df.b]\n\n");
     for h in 0..HELPERS {
         let mut case = Case { rng: &mut rng, vars: vec![("a".to_string(), Kind::Int), ("b".to_string(), Kind::Int)], lines: Vec::new(), depth: 0, tag: h, module: module.clone(), made: 0 };
         // a helper calls no helper (no recursion without a base)
@@ -1105,7 +1105,7 @@ mod tests {
         // walked and indexed, frames filtered by their own columns, a
         // function handed as a value
         assert!(all.contains("for r") && all.contains("transpose["), "no matrix walked or multiplied");
-        assert!(all.contains("filter[") && all.contains("frame.new["), "no frame built and filtered");
+        assert!(all.contains(".a gt") && all.contains("frame.new["), "no frame built and picked by a mask");
         assert!(all.contains("relay[h") || all.contains("ap[h"), "no function handed as a value");
         // and the kinds the coverage of 2026-10-07 found no suite reached:
         // moments, values that can fail read where known good, parsed

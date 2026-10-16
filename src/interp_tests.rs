@@ -2671,18 +2671,18 @@ mod tests {
     }
 
     #[test]
-    fn test_frame_filter_eq_mask() {
+    fn test_frame_picked_by_an_eq_mask() {
         let val = get_var(
-            "use frame\ndf = load['examples/test_data.csv']\nr = filter[df, df.name eq 'Alice']\nn = len[r]\n",
+            "use frame\ndf = load['examples/test_data.csv']\nr = df[df.name eq 'Alice']\nn = len[r]\n",
             "n",
         );
         assert!(matches!(val.value, Value::Int(1)));
     }
 
     #[test]
-    fn test_frame_filter_compound_mask() {
+    fn test_frame_picked_by_a_compound_mask() {
         let val = get_var(
-            "use frame\ndf = load['examples/test_data.csv']\nr = filter[df, df.age gt 26 and df.salary gt 60000]\nn = len[r]\n",
+            "use frame\ndf = load['examples/test_data.csv']\nr = df[df.age gt 26 and df.salary gt 60000]\nn = len[r]\n",
             "n",
         );
         assert!(matches!(val.value, Value::Int(1)));

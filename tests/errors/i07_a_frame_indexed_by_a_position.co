@@ -1,0 +1,5 @@
+--- a frame's index is a mask, which picks its rows: a position or a
+--- column's name is no index of a frame
+use frame
+f = frame.new[name = ['a', 'b', 'c'], n = [1, 2, 3]]
+log[f[0]]

@@ -33,7 +33,7 @@ symbol  pnl_sum
 [3 rows x 2 cols]
 ```
 
-Query results are frames, frames feed `sum`/`group`/`sort`/`filter`, and
+Query results are frames, frames feed `sum`/`group`/`sort` and masks, and
 `fmt` dresses the numbers. This is the entire "backend" of the dashboard —
 there is no separate API layer to write, because the views run in the
 same process as the data.

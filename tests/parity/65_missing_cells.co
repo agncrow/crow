@@ -30,5 +30,5 @@ f = fill[j, 'rsi', 0.0]
 hot = for i in range[len[f]]
     f.gate[i] eq 1 or f.rsi[i] gt 70.0
 log[hot]
-log[len[filter[f, hot]]]
-log[len[filter[j, j.rsi gt 70.0]]]
+log[len[f[hot]]]
+log[len[j[j.rsi gt 70.0]]]

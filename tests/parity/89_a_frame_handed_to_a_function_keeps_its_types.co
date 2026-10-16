@@ -17,7 +17,7 @@ fn dearest[f]
 t = frame.new[sym = ['AB', 'CD', 'EF'], px = [1.5, 2.5, 0.5], qty = [2, 4, 8]]
 log[total[t]]
 log[dearest[t]]
-cheap = filter[t, t.px lt 2.0]
+cheap = t[t.px lt 2.0]
 log[total[cheap]]
 
 --- a grouped frame's columns are its key and its aggregates, floats

@@ -1,4 +1,4 @@
 --- df.b where the frame has a
 use frame
 df = frame.new[a = [1.0, 2.0]]
-log[filter[df, df.b gt 1.0]]
+log[df[df.b gt 1.0]]

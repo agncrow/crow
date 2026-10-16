@@ -6,9 +6,8 @@
 //! function decides a cell — `holds` — and every comparison whose kinds
 //! show only as the program runs is decided with it: the interpreter's
 //! over a list's items, the compiled program's over its typed column or
-//! list, a parsed value (`json_holds`, `json_pair`), and a filter whose
-//! predicate is computed in one pass (`filter_where`, second-half-design
-//! §3). So a comparison is the same in both modes, and the same fused or
+//! list, a parsed value (`json_holds`, `json_pair`), and a frame's mask
+//! computed in one pass (`pick_where`, second-half-design §3). So a comparison is the same in both modes, and the same fused or
 //! not.
 
 use std::cmp::Ordering;
@@ -369,7 +368,7 @@ fn check(col: &Column, cmp: Cmp, value: Cell) -> Result<(), String> {
 /// Rows `start..start + out.len()` of a column compared with a value:
 /// a block at a time, one loop per kind and operator (each cell had been
 /// read into a `Cell` and decided on its own, which cost the compiled
-/// filter 3.6 times the interpreter's mask); equality with text over a
+/// mask 3.6 times the interpreter's); equality with text over a
 /// dictionary column compares codes.
 fn leaf(col: &Column, valid: &crate::frame::Validity, cmp: Cmp, value: Cell, start: usize, out: &mut [bool]) {
     let rows = start..start + out.len();
@@ -430,7 +429,7 @@ fn numbers(xs: &[f64], valid: &[bool], cmp: Cmp, y: f64, out: &mut [bool]) {
     }
 }
 
-/// A filter's predicate: comparisons of the frame's columns with values,
+/// A frame's mask: comparisons of the frame's columns with values,
 /// a column's `.ok`, and `and`, `or` and `not` of them.
 enum Node {
     /// The column at a position of the frame, compared with a value.
@@ -453,7 +452,7 @@ enum Item {
 const BLOCK: usize = 4096;
 const PARALLEL_FROM: usize = 1 << 16;
 
-/// `filter[frame, predicate]` with the predicate computed in one pass,
+/// `f[mask]` with the mask computed in one pass,
 /// row block by row block, never a mask per comparison. `program` is the
 /// predicate in postfix: `c<i>` the column `columns[i]`, `v<i>` the value
 /// `values[i]`, a comparison's word compares the column before it with the
@@ -462,9 +461,9 @@ const PARALLEL_FROM: usize = 1 << 16;
 /// comparison's kinds checked, in the order the operators would read and
 /// compare them: the first that fails is the reason, in the operators'
 /// words — a column the frame lacks, an order between kinds with none —
-/// so a fused filter stops where the unfused one would, and otherwise
+/// so a fused mask stops where the unfused one would, and otherwise
 /// keeps the rows its mask would.
-pub fn filter_where(f: &CrowFrame, program: &str, columns: &[String], values: &[Cell]) -> Result<CrowFrame, String> {
+pub fn pick_where(f: &CrowFrame, program: &str, columns: &[String], values: &[Cell]) -> Result<CrowFrame, String> {
     let bug = || format!("a bug in Crow: the predicate '{}' is not one", program);
     let index = |tok: &str, prefix: char, len: usize| tok.strip_prefix(prefix).and_then(|i| i.parse::<usize>().ok()).filter(|&i| i < len);
     let find = |c: usize| f.col_index(&columns[c]).ok_or_else(|| crate::stops::no_column(&columns[c]));
@@ -510,7 +509,7 @@ pub fn filter_where(f: &CrowFrame, program: &str, columns: &[String], values: &[
     } else {
         mask.chunks_mut(BLOCK).enumerate().for_each(fill);
     }
-    f.filter(&mask)
+    f.pick_rows(&mask)
 }
 
 /// A predicate over rows `start..start + out.len()`.
@@ -732,13 +731,13 @@ mod tests {
         }
     }
 
-    /// The fused filter keeps the rows the unfused one keeps, and stops with
+    /// The fused mask keeps the rows the unfused one keeps, and stops with
     /// the reason the unfused one stops with first — on generated frames
     /// (missing cells, NaN, ints, text, bools, moments) and predicates, a
     /// column the frame lacks among them; small frames and ones across the
     /// cores.
     #[test]
-    fn a_fused_filter_is_the_unfused_one() {
+    fn a_fused_mask_is_the_unfused_one() {
         let mut g = Gen(1001);
         let mut kept = 0;
         let mut stopped = 0;
@@ -755,8 +754,8 @@ mod tests {
             let mut program = Vec::new();
             postfix(&t, &mut program);
             let program = program.join(" ");
-            let fused = filter_where(&f, &program, &columns, &values);
-            let by_masks = unfused(&t, &f, &columns, &values).and_then(|m| f.filter(&m));
+            let fused = pick_where(&f, &program, &columns, &values);
+            let by_masks = unfused(&t, &f, &columns, &values).and_then(|m| f.pick_rows(&m));
             match (&fused, &by_masks) {
                 (Ok(a), Ok(b)) => {
                     assert_eq!(format!("{:?}", a), format!("{:?}", b), "{}", program);
@@ -818,7 +817,7 @@ mod tests {
         let f = CrowFrame::new(vec!["a".to_string()], vec![Column::Int(vec![1])], vec![vec![true]]);
         let cols = ["a".to_string()];
         for p in ["c0 v0", "c0 v0 gt and", "c1 v0 gt", "c0 v0 gt c0 v0 lt", "c0 v0 xor"] {
-            assert!(filter_where(&f, p, &cols, &[Cell::Number(1.0)]).unwrap_err().contains("a bug in Crow"), "{}", p);
+            assert!(pick_where(&f, p, &cols, &[Cell::Number(1.0)]).unwrap_err().contains("a bug in Crow"), "{}", p);
         }
     }
 }

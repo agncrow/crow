@@ -1,0 +1,47 @@
+--- A mask picks a frame's rows as it picks a list's items: `f[mask]` is the
+--- frame of the rows where it is true, every column as it was, and
+--- `f.name[mask]` a column's cells, of the column's kind with its missing
+--- cells kept (Vijay, 2026-10-16: the index is the one way). A mask
+--- that compares the frame's own columns is computed in one pass, and one
+--- held in a variable picks the same rows; a column of bools is the mask
+--- it makes, negated or joined too (`not f.on` had been one bool, and
+--- `f.on and …` had not built compiled); a mask of another length stops
+--- in the words a list's mask does.
+use frame
+use math
+f = frame.new[name = ['ann', 'bob', 'cy', 'dee'], n = [1, 2, 3, 0], on = [true, false, true, true]]
+log[f[f.n gt 1]]
+log[f[f.n gt 1 and f.name ne 'bob'].name]
+log[f[f.on].name]
+log[f[not f.on].name]
+log[f[f.on and f.n gt 1].name]
+log[f[f.n gt 2 or not f.on].name]
+m = f.n gt 0
+log[len[f[m]]]
+big = f[f.n gt 1]
+log[big[big.on].name]
+log[f.name[f.n gt 1]]
+log[sum[f.n[f.on]]]
+names = f.name
+log[names[not f.on]]
+xs = push[push[push[push[[], 'w'], 'x'], 'y'], 'z']
+log[xs[f.on and f.n gt 1]]
+--- a mask over another frame of the same length picks by position
+g = frame.new[k = [10, 20, 30, 40]]
+log[f[g.k gt 15].name]
+--- a missing cell compares false, fused or held; a picked column keeps its own
+a = frame.new[name = ['a', 'b', 'c'], k = [1, 2, 3]]
+b = frame.new[k = [1, 3], n = [5, 7]]
+j = join[a, b, 'k', 'left']
+log[j[j.n.ok].name]
+log[j[j.n gt 5].name]
+held = j.n gt 5
+log[j[held].name]
+log[j.n[j.k gt 1]]
+log[j.name[j.n gt 5]]
+--- a frame handed to a function is picked there
+fn kept[df]
+    return df[df.n gt 1]
+log[kept[f].name]
+log[f.name[[true, true]]]
+log['not reached']

@@ -47,7 +47,7 @@ tensor (`*` is matmul, `.*` is element-wise), and a table is a *frame*
 | `# comment` | `--- comment` |
 | global variables in functions | invisible — pass parameters (chapter 4) |
 | threads / asyncio / multiprocessing | delete them — `for` is already parallel; `later[f]` for background work |
-| `pandas.DataFrame` | `use frame`; `df[df.age > 30]` → `filter[df, df.age gt 30]` |
+| `pandas.DataFrame` | `use frame`; `df[df.age > 30]` → `df[df.age gt 30]` |
 | `numpy` arrays | plain numeric arrays; `@` → `*`, `*` → `.*` |
 | `pytest` files | `test` blocks under the function (chapter 9) |
 
@@ -91,7 +91,7 @@ tensor (`*` is matmul, `.*` is element-wise), and a table is a *frame*
 | `function(x) x * 2` | a named `fn`, passed by name |
 | `xs %>% f() %>% g(a)` | `xs then f then g[a]` |
 | `sapply(xs, f)`, `lapply`, `purrr::map` | `for`-as-expression |
-| `df[df$age > 30, ]`, `dplyr::filter` | `filter[df, df.age gt 30]` |
+| `df[df$age > 30, ]`, `dplyr::filter` | `df[df.age gt 30]` |
 | `df$col` | `df.col` |
 | `nrow(df)` | `len[df]` |
 | `group_by %>% summarise` | `group[df, 'dept', ['salary', 'mean']]` |
@@ -99,7 +99,7 @@ tensor (`*` is matmul, `.*` is element-wise), and a table is a *frame*
 | `TRUE/FALSE` | `true/false` |
 | `==  !=  <=` | `eq  ne  lte` |
 | `&&  \|\|  !`, `&  \|` | `and  or  not` (they work element-wise on columns too) |
-| `ifelse(c, a, b)` | `if`/`else` (columns: build a mask, then `filter`) |
+| `ifelse(c, a, b)` | `if`/`else`; over columns, `where[mask, a, b]` |
 | `paste0("a", x)`, `sprintf` | interpolation `` '`x`' ``, `fmt[x, decimals = 2]` |
 | `print(x)`, `cat` | `log[x]` |
 | `library(x)` | `use x` |

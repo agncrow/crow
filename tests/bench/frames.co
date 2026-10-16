@@ -10,7 +10,7 @@ log['bench: csv_load `now[] - t0`']
 log[df.columns]
 
 t0 = now[]
-dear = filter[df, df.price gt 100.0]
+dear = df[df.price gt 100.0]
 log['bench: filter `now[] - t0`']
 log[len[dear] gt 0]
 

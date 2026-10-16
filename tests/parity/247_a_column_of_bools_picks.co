@@ -1,11 +1,11 @@
 --- A frame's column of bools is the mask it makes where a mask is taken —
---- filter's second argument, where's first, an index — as `c eq true` is:
+--- a frame's index, where's first argument, a list's index — as `c eq true` is:
 --- it had been refused alike ("takes a frame and a list of bools, got a
 --- frame and a frame's column"), and `eq true` written every time.
 use frame
 f = frame.new[name = ['a', 'b', 'c'], on = [true, false, true], n = [1, 2, 3]]
-log[filter[f, f.on]]
+log[f[f.on]]
 log[where[f.on, f.n, 0]]
 names = push[push[push[[], 'x'], 'y'], 'z']
 log[names[f.on]]
-log[len[filter[f, f.on]] eq len[filter[f, f.on eq true]]]
+log[len[f[f.on]] eq len[f[f.on eq true]]]

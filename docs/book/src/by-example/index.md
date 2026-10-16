@@ -28,7 +28,7 @@ Part II.
 | [Statistics: `use math.stats`](stats.md) | `median std var percentile corr linreg` |
 | [Neural-network building blocks: `use math.nn`](nn.md) | `relu sigmoid softmax mse` |
 | [Structured files: `use io`](io.md) | `csv lines` |
-| [Frames: `use frame`](frames.md) | `frame.load filter sort select head group`, column reductions |
+| [Frames: `use frame`](frames.md) | `frame.load`, masks (`f[mask]`), `sort select head group`, column reductions |
 | [Databases: `use db`](db.md) | `connect exec query transact` |
 | [Web: a JSON route](web.md) | `route serve`, a JSON response |
 | [Web: responses, auth, sessions, and sockets](web-more.md) | `text html redirect respond msgpack arrow bytes sign verify sessions cache limit templates render uploads send recv close smtp` |

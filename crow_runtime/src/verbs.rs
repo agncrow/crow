@@ -1230,7 +1230,7 @@ impl CrowFrame {
         };
         let n = self.nrows();
         let mask: Vec<bool> = (0..n).map(|row| idx.iter().all(|&i| self.validity[i][row])).collect();
-        self.filter(&mask)
+        self.pick_rows(&mask)
     }
 
     /// `sample[frame, n]`: `n` of the rows drawn without replacement by the

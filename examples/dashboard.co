@@ -24,7 +24,7 @@ view render[]
 
     shown = trades
     if min_qty gt 0
-        shown = filter[trades, trades.qty gte min_qty]
+        shown = trades[trades.qty gte min_qty]
     shown = sort[shown, 'pnl', desc = true]
 
     by_symbol = group[trades, 'symbol', ['pnl', 'sum'], ['pnl', 'count']]

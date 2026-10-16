@@ -91,9 +91,10 @@ save[day, 's3://reports/aapl-2026-07-14.parquet']
 
 ## Filtering and Sorting
 
-Column access (`trades.qty`) plus a comparison gives a *mask*, and
-`filter` applies it. `sort` takes a column name, with `desc` as a named
-argument:
+Column access (`trades.qty`) plus a comparison gives a *mask*, and the
+frame's index applies it: `trades[trades.qty gte 40]` is the rows where
+it is true, as `xs[mask]` is a list's items. `sort` takes a column name,
+with `desc` as a named argument:
 
 ```crow
 use frame
@@ -107,7 +108,7 @@ MSFT,25,411.9'
 write['trades.csv', csv]
 trades = frame.load['trades.csv']
 
-big = filter[trades, trades.qty gte 40]
+big = trades[trades.qty gte 40]
 log[len[big]]
 
 by_price = sort[trades, 'price', desc = true]
@@ -273,7 +274,7 @@ log[sort[ticks, ['symbol', 'qty'], desc = [false, true]].price]
 log[where[ticks.qty.ok, ticks.qty, 0]]
 log[complete[ticks].price]
 log[unpivot[select[ticks, ['symbol', 'qty', 'price']], 'symbol', ['qty', 'price']]]
-log[filter[ticks, 'AA' in ticks.symbol and ticks.at.hour eq 9].price]
+log[ticks['AA' in ticks.symbol and ticks.at.hour eq 9].price]
 log[window[ticks, 'price', 'mean', span = 3600, on = 'at', by = 'symbol']]
 rm['ticks.csv']
 ```

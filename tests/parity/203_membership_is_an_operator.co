@@ -19,7 +19,7 @@ log['name' in j]
 log['x' in j]
 t = frame.new[sym = ['AAPL', 'MSFT', 'AA'], qty = [1, 2, 3]]
 log['AA' in t.sym]
-log[len[filter[t, 'AA' in t.sym]]]
+log[len[t['AA' in t.sym]]]
 if 'x' not in xs and 'a' in xs
     log['both']
 --- it binds like a comparison: tighter than and, looser than arithmetic

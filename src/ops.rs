@@ -812,7 +812,7 @@ pub fn index(callee: &CrowValue, arg_vals: Vec<CrowValue>) -> Result<CrowValue, 
 }
 
 /// `.ok` of a frame column: each row's validity, a missing cell false — the
-/// mask `filter[df, df.col.ok]` keeps the complete rows with. A column that
+/// mask `df[df.col.ok]` keeps the complete rows with. A column that
 /// failed to read is its error, as any field of an error value is.
 pub fn valid(obj: CrowValue) -> Result<CrowValue, String> {
     if obj.is_error() {

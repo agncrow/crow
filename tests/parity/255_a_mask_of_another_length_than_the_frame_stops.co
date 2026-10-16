@@ -1,0 +1,9 @@
+--- A mask of another length than the frame's rows stops, in the words a
+--- list's mask does, in both modes: one made of another frame's column
+--- (a mask that compares the frame's own columns is as long as it is).
+use frame
+f = frame.new[n = [1, 2, 3]]
+g = frame.new[n = [1, 2]]
+log[len[f[f.n gt 1]]]
+log[f[g.n gt 1]]
+log['not reached']

@@ -1142,13 +1142,14 @@ impl CrowFrame {
         Ok(CrowFrame { columns: new_cols, data: new_data, validity: new_valid })
     }
 
-    /// Filter rows by a boolean mask.
-    pub fn filter(&self, mask: &[bool]) -> Result<CrowFrame, String> {
+    /// The rows a mask keeps, one bool per row: `f[mask]`. A mask of
+    /// another length stops in the words a list's mask does.
+    pub fn pick_rows(&self, mask: &[bool]) -> Result<CrowFrame, String> {
         if mask.len() != self.nrows() {
-            return Err(format!("filter: mask length {} != row count {}", mask.len(), self.nrows()));
+            return Err(format!("a mask of {} picks from a frame of {} rows: they must be as long as each other", mask.len(), self.nrows()));
         }
         let cols: Vec<usize> = (0..self.data.len()).collect();
-        let results: Vec<(Column, Validity)> = crate::cores::map_items(&cols, mask.len(), |&i| filter_column(&self.data[i], &self.validity[i], mask));
+        let results: Vec<(Column, Validity)> = crate::cores::map_items(&cols, mask.len(), |&i| pick_column(&self.data[i], &self.validity[i], mask));
         let (new_data, new_valid): (Vec<_>, Vec<_>) = results.into_iter().unzip();
         Ok(CrowFrame::assembled(self.columns.clone(), new_data, new_valid))
     }
@@ -1308,7 +1309,7 @@ impl CrowFrame {
 
 // ===== Helper functions =====
 
-fn filter_column(col: &Column, valid: &Validity, mask: &[bool]) -> (Column, Validity) {
+pub(crate) fn pick_column(col: &Column, valid: &Validity, mask: &[bool]) -> (Column, Validity) {
     let new_valid = valid.filtered(mask);
     let new_col = match col {
         Column::Int(v) => Column::Int(v.iter().zip(mask).filter(|&(_, &m)| m).map(|(&x, _)| x).collect()),

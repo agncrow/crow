@@ -780,7 +780,7 @@ impl<'a> Lowerer<'a> {
     /// build.)
     ///
     /// A list of values that can fail compared with one value is a mask,
-    /// and a mask decides every row: it is refused as a filter refuses it
+    /// and a mask decides every row: it is refused as a frame's mask refuses it
     /// (compiled, it had not built, where the interpreter stopped on a
     /// failed item).
     pub(super) fn check_order(&mut self, op: &BinOp, l: &Ty, r: &Ty) {
@@ -1740,16 +1740,21 @@ mod tests {
         assert!(check_source("use db\nbook = db.connect['sqlite://:memory:']\nexec[book, 'CREATE TABLE t (k TEXT, v REAL)']\nexec[book, 'INSERT INTO t VALUES (?, ?)', ['a', 1.5]]\nlog[query[book, 'SELECT k FROM t WHERE v > ? AND k = ?', [1.0, 'a']]]\n").is_ok());
     }
 
-    /// A frame is not indexed: `f['a']` and `f[0]` are refused before the
-    /// program runs, naming the column read (the interpreter had stopped
-    /// as it ran — `not indexable` — and the compiled program did not build)
+    /// A frame is indexed by a mask alone, which picks its rows: `f['a']`
+    /// and `f[0]` are refused before the program runs, naming the column
+    /// read (the interpreter had stopped as it ran — `not indexable` — and
+    /// the compiled program did not build); `filter` is no name of the
+    /// language
     #[test]
-    fn a_frame_is_not_indexed() {
+    fn a_frame_is_indexed_by_a_mask_alone() {
         let err = check_source("use frame\nf = with[frame.new[], 'a', [1.0, 2.0]]\nx = f['a']\nlog[x]\n").unwrap_err();
-        assert!(err.contains("a frame is not indexed: read a column as `f.name`, its cell as `f.name[i]`"), "{}", err);
+        assert!(err.contains("a frame is indexed by a mask, which picks its rows (f[f.age gt 30]): read a column as `f.name`, its cell as `f.name[i]`"), "{}", err);
         let err = check_source("use frame\nf = with[frame.new[], 'a', [1.0, 2.0]]\nlog[f[0]]\n").unwrap_err();
-        assert!(err.contains("a frame is not indexed"), "{}", err);
+        assert!(err.contains("a frame is indexed by a mask"), "{}", err);
         assert!(check_source("use frame\nf = with[frame.new[], 'a', [1.0, 2.0]]\nlog[f.a[0]]\n").is_ok());
+        assert!(check_source("use frame\nf = with[frame.new[], 'a', [1.0, 2.0]]\nlog[f[f.a gt 1.0]]\nlog[f.a[f.a gt 1.0]]\n").is_ok());
+        let err = check_source("use frame\nf = with[frame.new[], 'a', [1.0, 2.0]]\nlog[filter[f, f.a gt 1.0]]\n").unwrap_err();
+        assert!(err.contains("undefined function 'filter'"), "{}", err);
     }
 
     /// The order of a list of numbers is a list of ints, and its running
@@ -1854,9 +1859,9 @@ mod tests {
     /// missing), and a filled column's cells make one
     #[test]
     fn a_mask_of_values_that_can_fail_is_refused() {
-        let src = "use frame\na = with[with[frame.new[], 'k', [0, 1]], 'p', [1.5, 2.5]]\nb = with[with[frame.new[], 'k', [0]], 'q', [7.5]]\nj = join[a, b, 'k', 'left']\nkeep = for i in range[len[j]]\n    j.q[i] gt 1.0\nlog[len[filter[j, keep]]]\n";
+        let src = "use frame\na = with[with[frame.new[], 'k', [0, 1]], 'p', [1.5, 2.5]]\nb = with[with[frame.new[], 'k', [0]], 'q', [7.5]]\nj = join[a, b, 'k', 'left']\nkeep = for i in range[len[j]]\n    j.q[i] gt 1.0\nlog[len[j[keep]]]\n";
         let err = check_source(src).unwrap_err();
-        assert!(err.contains("filter: 'keep' holds values that can fail, and a mask decides every row: guard each value with .ok (cells of a column that can be missing: fill the column first, fill[frame, 'column', value])"), "{}", err);
+        assert!(err.contains("'keep' holds values that can fail, and a mask decides every row: guard each value with .ok (cells of a column that can be missing: fill the column first, fill[frame, 'column', value])"), "{}", err);
         assert!(check_source(&src.replace("j = join[a, b, 'k', 'left']", "j = fill[join[a, b, 'k', 'left'], 'q', 0.0]")).is_ok());
     }
 

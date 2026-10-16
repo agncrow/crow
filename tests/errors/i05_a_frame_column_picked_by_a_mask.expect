@@ -1,3 +1,0 @@
-i05_a_frame_column_picked_by_a_mask.co:5:1: a frame's column is not picked by a mask: filter the frame, then read the column — filter[f, mask].name
-  5 │ log[f.name[f.n gt 1]]
-    │ ^^^^^^^^^^^^^^^^^^^^^

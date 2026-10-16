@@ -391,7 +391,7 @@ timeout take one; there is no duration kind. A list of moments is a list.
 A moment handed to `with` makes a moment column (`datetime`, as `.dtypes`
 names it), `fill` fills one with a moment, a moment column's cell read one
 at a time is a moment — from a file, a query or `with` alike — and a moment
-column compares with a moment: `filter[df, df.at gt open_bell]`.
+column compares with a moment: `df[df.at gt open_bell]`.
 
 **One moment per event.** In a script `now[]` is the clock at the call. In a live program it is the moment the current event began — a click or a change from the page, a render, a `refresh` tick, a `later` schedule — everywhere inside it: a handler and every helper it calls, a render and every view and derivation in it. Time advances between events, never inside one, so `base, anchor = head, now[]` reads one clock twice and gets one answer, and two rows a handler stamps with `now[]` share a stamp. In the test harness the clock is the test's: it starts at the moment the first `app[…]` opened and moves only when the test moves it with `change[a, 'now', t]`.
 

@@ -542,7 +542,7 @@ impl<'a> Lowerer<'a> {
         };
         Some(match name {
                 "new" => Some(Cols::closed(BTreeMap::new())),
-                "filter" | "sort" | "head" | "tail" | "sample" => base(0),
+                "sort" | "head" | "tail" | "sample" => base(0),
                 // unique[df, ['a', 'b']]: the first row of each combination,
                 // every column as it was
                 "unique" => {

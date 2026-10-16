@@ -8,7 +8,7 @@
 //!   and whose operands only read — a local, a fact, a derivation, a number
 //!   written, a record's field of one. The kernel reads each element once
 //!   and writes one tensor.
-//! - A filter's predicate (crow_runtime::mask::filter_where): `filter[f, p]`
+//! - A frame's mask (crow_runtime::mask::pick_where): `f[p]`
 //!   whose `p` compares `f`'s own columns with values that only read —
 //!   `f.age gt 40`, `f.name ne 'bob'`, `40 lt f.age` — asks a column's
 //!   `.ok`, and combines those with `and`, `or` and `not`. The kernel
@@ -28,7 +28,7 @@ use crate::table::Row;
 #[derive(Clone, Copy)]
 struct Rows {
     tensor: &'static Row,
-    filter: &'static Row,
+    pick: &'static Row,
 }
 
 /// Every chain of the program, fused.
@@ -36,8 +36,8 @@ pub(super) fn chains(program: &mut Program) {
     if std::env::var("CROW_NO_FUSE").is_ok_and(|v| !v.is_empty() && v != "0") {
         return;
     }
-    let (Some(tensor), Some(filter)) = (crate::table::row("tensor.fused"), crate::table::row("frame.filter_where")) else { return };
-    let row = Rows { tensor, filter };
+    let (Some(tensor), Some(pick)) = (crate::table::row("tensor.fused"), crate::table::row("core.__pick_where")) else { return };
+    let row = Rows { tensor, pick };
     for part in &mut program.parts {
         // (a function grad differentiates is left to the operators the tape
         // records: a fused kernel would be opaque to it)
@@ -107,7 +107,7 @@ fn expr(e: &mut Expr, row: Rows) {
         *e = Expr::Call { target: Target::Row(row.tensor), args, ty, propagates: false };
         return;
     }
-    if let Some(fused) = filter(e, row.filter) {
+    if let Some(fused) = picked(e, row.pick) {
         // (its frame and values only read: no chain is inside them)
         *e = fused;
         return;
@@ -226,13 +226,13 @@ fn only_reads(e: &Expr) -> bool {
     }
 }
 
-// ── filters ─────────────────────────────────────────────────────────
+// ── a frame's masks ─────────────────────────────────────────────────
 
-/// The fused filter a call is, when it is one: `filter[f, p]` whose
-/// predicate the kernel computes.
-fn filter(e: &Expr, row: &'static Row) -> Option<Expr> {
+/// The fused pick a call is, when it is one: `f[p]` whose mask the kernel
+/// computes.
+fn picked(e: &Expr, row: &'static Row) -> Option<Expr> {
     let Expr::Call { target: Target::Row(r), args, ty, propagates } = e else { return None };
-    if r.id != "frame.filter" || args.len() != 2 {
+    if r.id != "core.__pick_frame" || args.len() != 2 {
         return None;
     }
     let frame = read_name(&args[0])?;
@@ -258,7 +258,7 @@ fn read_name(e: &Expr) -> Option<&str> {
     }
 }
 
-/// A predicate being written: in postfix, over the filtered frame's
+/// A mask being written: in postfix, over the picked frame's
 /// columns (each once) and the values its comparisons compare them with.
 struct Predicate<'a> {
     frame: &'a str,
@@ -307,7 +307,7 @@ impl Predicate<'_> {
         Some(())
     }
 
-    /// The column of the filtered frame an expression reads.
+    /// The column of the picked frame an expression reads.
     fn column(&self, e: &Expr) -> Option<String> {
         match e {
             Expr::Field { base, name, ty: Ty::Column(_) } if read_name(base) == Some(self.frame) => Some(name.clone()),

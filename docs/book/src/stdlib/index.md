@@ -8,7 +8,7 @@ Every module ships with the compiler: `use` it and its names are there in both e
 | math | `use math` | 104 | [math](math.md) |
 | math.stats | `use math.stats` | 13 | [math.stats](math-stats.md) |
 | math.nn | `use math.nn` | 8 | [math.nn](math-nn.md) |
-| frame | `use frame` | 23 | [frame](frame.md) |
+| frame | `use frame` | 22 | [frame](frame.md) |
 | db | `use db` | 7 | [db](db.md) |
 | llm | `use llm` | 9 | [llm](llm.md) |
 | io | `use io` | 2 | [io](io.md) |
