@@ -242,6 +242,17 @@ impl Emitter {
                             self.needs_crow_runtime = true;
                             format!("crow_runtime::tensor::CrowTensor::from_elements(&({})){}", inner, self.or_stop())
                         }
+                        // a list of lists of numbers is a matrix as a list of
+                        // rows is: each list a row, every row one length, or
+                        // the reason (the interpreter's words)
+                        Ty::List(item) if matches!(item.as_ref(), Ty::List(e) if matches!(e.as_ref(), Ty::Int | Ty::Float | Ty::Big)) => {
+                            self.needs_crow_runtime = true;
+                            let each = if matches!(item.as_ref(), Ty::List(e) if **e == Ty::Big) { "x.to_f64()" } else { "*x as f64" };
+                            format!(
+                                "{{ let _rows: Vec<crow_runtime::tensor::CrowTensor> = ({}).iter().map(|r| {{ let _v: Vec<f64> = r.iter().map(|x| {}).collect(); let _n = _v.len(); crow_runtime::tensor::CrowTensor::from_vec(_v, vec![_n]) }}).collect(); crow_runtime::tensor::CrowTensor::from_elements(&_rows){} }}",
+                                inner, each, self.or_stop()
+                            )
+                        }
                         // a mask where numbers are taken: true 1, false 0
                         Ty::List(item) if *item == Ty::Bool => {
                             self.needs_crow_runtime = true;

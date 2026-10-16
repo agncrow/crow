@@ -1365,6 +1365,27 @@ impl IrInterp {
                             let rows: Vec<crow_runtime::tensor::CrowTensor> = items.iter().filter_map(|i| if let Value::NumArray(t) = &i.value { Some(t.as_ref().clone()) } else { None }).collect();
                             CrowValue::ok(Value::NumArray(Box::new(crow_runtime::tensor::CrowTensor::from_elements(&rows)?)))
                         }
+                        // a list of lists of numbers is a matrix as a list
+                        // of rows is: each list a row, every row one length,
+                        // or the reason (the compiled program's words)
+                        Value::Array(items) if v.is_ok() && !items.is_empty() && items.iter().all(|i| i.is_ok() && matches!(i.value, Value::Array(_))) => {
+                            let mut rows = Vec::with_capacity(items.len());
+                            for row in items.iter() {
+                                let Value::Array(xs) = &row.value else { continue };
+                                let mut data = Vec::with_capacity(xs.len());
+                                for x in xs.iter() {
+                                    match &x.value {
+                                        Value::Int(n) if x.is_ok() => data.push(*n as f64),
+                                        Value::Float(f) if x.is_ok() => data.push(*f),
+                                        Value::Big(b) if x.is_ok() => data.push(crow_runtime::int::Int::Big(b.clone()).to_f64()),
+                                        _ => return Err(format!("a list of {} is not a list of numbers", x.value.type_name())),
+                                    }
+                                }
+                                let n = data.len();
+                                rows.push(crow_runtime::tensor::CrowTensor::from_vec(data, vec![n]));
+                            }
+                            CrowValue::ok(Value::NumArray(Box::new(crow_runtime::tensor::CrowTensor::from_elements(&rows)?)))
+                        }
                         Value::Array(items) if v.is_ok() => {
                             let column = matches!(expr.ty(), Ty::Column(_));
                             let mut data = Vec::with_capacity(items.len());

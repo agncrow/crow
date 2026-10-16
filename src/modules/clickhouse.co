@@ -331,7 +331,7 @@ fn ch_describe[parts, s, sql]
         return error['clickhouse describe: unexpected DESCRIBE output', 'db']
     out = frame.new[]
     out = with[out, 'name', names]
-    out = with[out, 'kind', kinds]
+    out = with[out, 'type', kinds]
     return out
 
 --- `ch_cancel[parts, stream]`: the statement the connection was running
@@ -363,7 +363,9 @@ fn ch_check[parts, s]
         return error['clickhouse ping failed: `said`', 'db']
     host = part[parts, 'host']
     if host eq 'localhost' or host eq '127.0.0.1' or host eq '::1'
-        sweep[parts, s]
+        --- (the sweep tidies what dead runs left: kept, not decided on —
+        --- its failure is no reason to refuse the connection)
+        swept = sweep[parts, s]
     return 0
 
 --- the statements a process of this machine that is gone left running,
@@ -384,7 +386,8 @@ fn sweep[parts, s]
     for owner in stopped
         where = shown[parts]
         log['crow db: stopping queries a finished run (process `owner`) left running on `where`']
-        request_on[parts, s, 'KILL QUERY WHERE query_id LIKE \'crow-`me`-`owner`-%\' ASYNC', 'TabSeparated', fresh_id[]]
+        --- (each kill asked whichever answers: kept, not decided on)
+        killed = request_on[parts, s, 'KILL QUERY WHERE query_id LIKE \'crow-`me`-`owner`-%\' ASYNC', 'TabSeparated', fresh_id[]]
     return 0
 
 test the_statement_takes_its_parameters_as_literals[]

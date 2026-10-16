@@ -1,0 +1,40 @@
+--- A recursive function that adds its own answers into a local and returns
+--- it (`found = found + place[…]`, a backtracking search's count) is a sum
+--- over its calls, bounded as one that returns the sum is: held in 64 bits
+--- compiled (it had been a growing int, every addition paying for it).
+fn count[n]
+    if n eq 0
+        return 1
+    total = 0
+    i = 0
+    while i lt 2
+        total = total + count[n - 1]
+        i = i + 1
+    return total
+
+fn safe[cols, row, col]
+    ok = true
+    r = 0
+    while r lt row
+        c = cols[r]
+        if c eq col or c - col eq row - r or col - c eq row - r
+            ok = false
+        r = r + 1
+    return ok
+
+fn place[n, row, cols]
+    if row eq n
+        return 1
+    found = 0
+    col = 0
+    while col lt n
+        if safe[cols, row, col]
+            next = cols
+            next[row] = col
+            found = found + place[n, row + 1, next]
+        col = col + 1
+    return found
+
+log[count[10]]
+cols = push[push[push[push[push[push[[], 0], 0], 0], 0], 0], 0]
+log[place[6, 0, cols]]

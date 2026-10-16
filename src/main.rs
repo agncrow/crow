@@ -159,6 +159,15 @@ fn crow_main() {
                 process::exit(1);
             }
         }
+        // `crow upgrade`: the binary the install line put in the home
+        // replaced by the latest release, or the one `--version` names, held
+        // to its published hash; `--check` says what is newer (home.rs)
+        "upgrade" => {
+            if let Err(e) = home::upgrade(&args[2..]) {
+                eprintln!("(x.x) {}", e);
+                process::exit(1);
+            }
+        }
         "fmt" => cmd_fmt(),
         "build" => cmd_build(),
         "launch" => cmd_launch(),
@@ -395,7 +404,7 @@ fn crow_main() {
                 // both modes answer the same by design; the difference is
                 // speed, so a machine with no compiler yet runs the program
                 // interpreted and is told how to get one
-                eprintln!("(o.o) no compiler here yet: running interpreted — `crow setup` fetches the Rust toolchain and the runtime (about 215 MB, once), and `crow run` compiles from then on");
+                eprintln!("(o.o) no compiler here yet: running interpreted — `crow setup` fetches the Rust toolchain and the runtime (about 175 MB, once), and `crow run` compiles from then on");
             }
             if interp || no_compiler {
                 if let Some(file) = rest.first() {
@@ -420,7 +429,7 @@ fn crow_main() {
         other => {
             // check if it's a .co or .coc file (shortcut)
             if is_source(other) && !home::can_compile() {
-                eprintln!("(o.o) no compiler here yet: running interpreted — `crow setup` fetches the Rust toolchain and the runtime (about 215 MB, once), and `crow run` compiles from then on");
+                eprintln!("(o.o) no compiler here yet: running interpreted — `crow setup` fetches the Rust toolchain and the runtime (about 175 MB, once), and `crow run` compiles from then on");
                 cmd_run_file_interpreted(other);
             } else if is_source(other) || is_bytecode(other) {
                 let extra_args = args[2..].to_vec();
@@ -443,6 +452,7 @@ fn print_usage() {
     eprintln!("  crow new myapp --db    create DB project (schema, migrate)");
     eprintln!("  crow install           install deps from crowfile into crow_modules/");
     eprintln!("  crow setup             fetch the Rust toolchain and the runtime for compiled builds (--check: what is present)");
+    eprintln!("  crow upgrade           replace this crow with the latest release, verified (--version X: that release; --check: what is newer)");
     eprintln!("  crow build             transpile to rust and compile to native binary");
     eprintln!("  crow build file.co   transpile a specific file");
     eprintln!("  crow run               transpile + compile + run main.co");
@@ -1600,9 +1610,19 @@ fn cmd_repl() {
                     }
                 }
 
-                // Multi-line block handling
+                // a paste arrives as one reading of many lines: a whole cell,
+                // run as it is (it had waited for a blank line behind the
+                // continuation prompt, and looked like nothing happening)
+                if !in_block && trimmed.contains('\n') {
+                    repl_eval(&mut session, trimmed, &mut accumulated_stmts);
+                    continue;
+                }
+
+                // Multi-line block handling: a line indented, or an `else`
+                // under its `if`, goes on with the block
+                let goes_on = trimmed.starts_with(' ') || trimmed.starts_with('\t') || trimmed.starts_with("else") || trimmed.starts_with("elif");
                 if in_block {
-                    if trimmed.is_empty() || (!trimmed.starts_with(' ') && !trimmed.starts_with('\t')) {
+                    if trimmed.is_empty() || !goes_on {
                         in_block = false;
                         let source = std::mem::take(&mut buffer);
                         repl_eval(&mut session, &source, &mut accumulated_stmts);
@@ -1625,8 +1645,9 @@ fn cmd_repl() {
                         .map(|(_, s)| s)
                         .collect::<Vec<_>>()
                         .join(" ");
+                    // (the words the parser opens a block with)
                     stripped.split_whitespace()
-                        .any(|w| matches!(w, "if" | "for" | "while" | "fn" | "match" | "struct"))
+                        .any(|w| matches!(w, "if" | "for" | "while" | "fn" | "view" | "test" | "struct" | "derive"))
                 };
 
                 if needs_block {
@@ -1708,6 +1729,11 @@ fn repl_eval(session: &mut ir_interp::Session, source: &str, accumulated: &mut V
 
     match build(source) {
         Ok(stmts) => {
+            // a program that serves pages is run from its file: the console
+            // runs statements and shows their values, and serves nothing
+            if serve_line(&stmts).is_some() {
+                eprintln!("(o.o) the console serves no pages: save the program as a file, then `crow run -i app.co` serves it, or `crow dev app.co` reloads it as it changes");
+            }
             // Accumulate statements for :check
             accumulated.extend(stmts.clone());
 
@@ -2698,10 +2724,30 @@ fn cmd_stop_book() {
     println!("no book is serving from this project");
 }
 
+/// Whether a process's working directory is `here` (lsof): what `crow
+/// stop` asks before it signals one, so another project's app — or a
+/// process that took a stale pidfile's number since — is never touched.
+fn runs_in(pid: i32, here: &str) -> bool {
+    // (Linux names a process's working directory in /proc; a Mac, lsof)
+    if let Ok(cwd) = std::fs::read_link(format!("/proc/{}/cwd", pid)) {
+        return cwd.to_string_lossy() == here;
+    }
+    std::process::Command::new("lsof")
+        .args(["-a", "-p", &pid.to_string(), "-d", "cwd", "-Fn"])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default()
+        .lines()
+        .any(|l| l.strip_prefix('n') == Some(here))
+}
+
 fn cmd_stop() {
+    let here = std::env::current_dir().unwrap_or_default();
+    let here_s = here.to_string_lossy().to_string();
     if let Ok(pid_s) = std::fs::read_to_string(".crow/app.pid") {
         if let Ok(pid) = pid_s.trim().parse::<i32>() {
-            let alive = unsafe { libc_kill(pid, 0) } == 0;
+            let alive = unsafe { libc_kill(pid, 0) } == 0 && runs_in(pid, &here_s);
             if alive {
                 unsafe { libc_kill(pid, 15) };
                 let _ = std::fs::remove_file(".crow/app.pid");
@@ -2720,13 +2766,16 @@ fn cmd_stop() {
     // Fallback: any process running a .crow_build binary WHOSE WORKING
     // DIRECTORY is this project — matches absolute, ./-relative, and bare
     // relative launches, and never touches another project's app.
-    let here = std::env::current_dir().unwrap_or_default();
-    let here_s = here.to_string_lossy().to_string();
     // Candidates: the cargo-built binary AND the copied ./main that
-    // `crow build` announces. Over-matching is safe — every candidate is
-    // cwd-verified against this project before any signal is sent.
+    // `crow build` announces, and a program the interpreter serves — `crow
+    // run -i`, and `crow dev`'s watcher with it, so the watcher does not
+    // start it again (the interpreter is crow itself: no pidfile and no
+    // build named it, and `crow stop` had said nothing was running).
+    // Over-matching is safe — every candidate is cwd-verified against this
+    // project before any signal is sent.
+    let me = std::process::id() as i32;
     let mut pids = String::new();
-    for pattern in [".crow_build/target", "^\\./main( |$)", "/main$"] {
+    for pattern in [".crow_build/target", "^\\./main( |$)", "/main$", "crow (run -i|dev)( |$)"] {
         if let Ok(o) = std::process::Command::new("pgrep").args(["-f", pattern]).output() {
             pids.push_str(&String::from_utf8_lossy(&o.stdout));
             pids.push('\n');
@@ -2736,16 +2785,10 @@ fn cmd_stop() {
     let mut seen: std::collections::BTreeSet<i32> = std::collections::BTreeSet::new();
     for pid_s in pids.split_whitespace() {
         let Ok(pid) = pid_s.parse::<i32>() else { continue };
-        if !seen.insert(pid) {
+        if pid == me || !seen.insert(pid) {
             continue;
         }
-        let cwd = std::process::Command::new("lsof")
-            .args(["-a", "-p", pid_s, "-d", "cwd", "-Fn"])
-            .output()
-            .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-            .unwrap_or_default();
-        if cwd.lines().any(|l| l.strip_prefix('n') == Some(here_s.as_str())) {
+        if runs_in(pid, &here_s) {
             unsafe { libc_kill(pid, 15) };
             stopped += 1;
         }

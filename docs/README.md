@@ -49,7 +49,7 @@ These explain how Crow got here. They are kept for the reasoning; where a code s
 | [llm-design.md](llm-design.md) | **A language model as a connection, design round.** `use llm`: `reach`, conversations and replies as parsed values, `chat`, a reply followed piece by piece, tools as functions whose schemas the compiler writes, `embed`; both wire formats. |
 | [gpt-design.md](gpt-design.md) | **A GPT in Crow, held to nanoGPT.** The model over `grad`'s operations, the weights as the loss's parameters, held to float64 PyTorch; what the port found. |
 | [rag-design.md](rag-design.md) | **A model's answer as a fixture, and a RAG app.** Request fixtures recorded and replayed in `request`'s own body; the vectors package held to faiss; `examples/rag`; what the build found. |
-| [distribution-design.md](distribution-design.md) | **One binary, the compiler on demand.** The one-line install, the pinned toolchain and the runtime bundle fetched on the first compiled build, the release workflow and the fresh-machine job, the alpha checklist. |
+| [distribution-design.md](distribution-design.md) | **One binary, the compiler on demand.** The one-line install and `crow upgrade`, the pinned toolchain and the runtime bundle fetched on the first compiled build, the release workflow and the fresh-machine job, the alpha checklist. |
 | [chart-module-design.md](chart-module-design.md) | The chart element: geometry kernel, budget, roadmap. |
 | [ui-engine-design.md](ui-engine-design.md) | The layout engine design: a closed layout vocabulary, one engine in Crow, CSS as the wire format, exact UI tests without a browser (decided in principle, not built). |
 | [finch-sim-design.md](finch-sim-design.md) | The second dogfood app — a trading simulator rebuilt in Crow. |

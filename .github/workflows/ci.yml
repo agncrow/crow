@@ -42,6 +42,10 @@ jobs:
         run: rm -rf target/debug && df -h / | tail -1
       - name: Build crow
         run: cargo build --release
+      - name: The binary links only the system's own libraries (no OpenSSL; TLS is rustls)
+        run: |
+          readelf -d target/release/crow | grep NEEDED
+          if readelf -d target/release/crow | grep -E 'NEEDED.*(libssl|libcrypto)'; then echo "the binary needs OpenSSL"; exit 1; fi
       - name: Docs cover the compiler (and nothing more)
         run: ./target/release/crow test --docs
       - name: Wrong programs are refused as reviewed (both modes and the language server)

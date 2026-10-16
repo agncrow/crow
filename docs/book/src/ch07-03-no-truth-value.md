@@ -86,6 +86,53 @@ halts there with `cannot assign an error value to 'acc'`. When you want to
 keep a failure and look at it, give it a name of its own whose first value
 can fail: `r = float[s]`, then `if not r.ok`.
 
+## A failure nothing reads
+
+A line made of one call is usually there for what the call does:
+`write[path, text]`, `exec[conn, sql]`, `rm[path]`. Each answers a value
+that can fail, and on a line of its own nothing reads it. If that failure
+simply went by, a program could lose its work without a word. So Crow
+treats the line as a decision, like a branch: a function hands the failure
+to its caller, and the top level halts.
+
+```crow
+fn save_note[path, note]
+    write[path, note]
+    return 'saved'
+
+r = save_note['/no/such/folder/note.txt', 'hello']
+log[r.ok]
+log[r.reason]
+
+kept = rm['/no/such/folder/old.txt']
+log[kept.ok]
+```
+
+```text
+false
+cannot write '/no/such/folder/note.txt': No such file or directory (os error 2)
+false
+```
+
+`save_note` never reached its `return`: the write failed, and the
+function handed that failure back. The `rm` failed too, but its value was
+given a name, so it is an ordinary value the program may look at or
+ignore; naming it is how you say a failure is fine. At the top level, a
+dropped failure stops the program on its line:
+
+```crow,norun
+write['/no/such/folder/note.txt', 'hello']
+log['not reached']
+```
+
+```text
+runtime error: line 1: cannot drop an error value — cannot write '/no/such/folder/note.txt': No such file or directory (os error 2)
+```
+
+A collecting loop's last line hands its value on, so it is not dropped,
+and neither is a test's truth: `len[xs] eq 3` on a line of a test block is
+asserted.
+
 ## What no value can carry
 
 A few failures have no error value to become. `xs[i]` reads an element and

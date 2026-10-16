@@ -68,12 +68,22 @@ pub fn concat<T: Clone>(mut a: Vec<T>, b: &[T]) -> Vec<T> {
     a
 }
 
+/// Where a slice's two positions lie in a sequence of `n`: each counted
+/// from the end when negative (`-1` before the last, as `xs[-1]` is the
+/// last and a bytes' slice counts), then clamped to `0..=n` — so `slice[xs,
+/// 0, -1]` is all but the last, and `slice[xs, -2, len[xs]]` the last two.
+/// (A negative end had been taken as 0: `slice[xs, 0, -1]` was empty.)
+pub fn slice_bounds(start: i64, end: i64, n: usize) -> (usize, usize) {
+    let n = n as i64;
+    let at = |i: i64| (if i < 0 { i.saturating_add(n) } else { i }).clamp(0, n) as usize;
+    (at(start), at(end))
+}
+
 /// `slice[arr, start, end]`: the elements from `start` to `end`
-/// exclusive, both clamped to the array, empty when `start` is not
-/// before `end`. Never out of range.
+/// exclusive (`slice_bounds`), empty when `start` is not before `end`.
+/// Never out of range.
 pub fn slice<T: Clone>(v: &[T], start: i64, end: i64) -> Vec<T> {
-    let s = start.max(0) as usize;
-    let e = (end.max(0) as usize).min(v.len());
+    let (s, e) = slice_bounds(start, end, v.len());
     if s >= e { Vec::new() } else { v[s..e].to_vec() }
 }
 
@@ -81,8 +91,7 @@ pub fn slice<T: Clone>(v: &[T], start: i64, end: i64) -> Vec<T> {
 /// moved, never copied (`lines[path]` drops the empty piece after the last
 /// break of its millions so).
 pub fn slice_taken<T>(mut v: Vec<T>, start: i64, end: i64) -> Vec<T> {
-    let s = start.max(0) as usize;
-    let e = (end.max(0) as usize).min(v.len());
+    let (s, e) = slice_bounds(start, end, v.len());
     if s >= e {
         return Vec::new();
     }
@@ -91,11 +100,10 @@ pub fn slice_taken<T>(mut v: Vec<T>, start: i64, end: i64) -> Vec<T> {
     v
 }
 
-/// `slice[tensor, start, end]` along the first axis, clamped like the
-/// array form; an empty slice is the empty 1-D tensor.
+/// `slice[tensor, start, end]` along the first axis, its positions as the
+/// array form's (`slice_bounds`); an empty slice is the empty 1-D tensor.
 pub fn slice_tensor(t: &crate::tensor::CrowTensor, start: i64, end: i64) -> crate::tensor::CrowTensor {
-    let s = start.max(0) as usize;
-    let e = (end.max(0) as usize).min(t.len());
+    let (s, e) = slice_bounds(start, end, t.len());
     if s >= e { crate::tensor::CrowTensor::from_vec(vec![], vec![0]) } else { t.slice(0, s, e) }
 }
 
@@ -722,6 +730,26 @@ pub fn read_line(prompt: Option<&str>) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    /// A slice's positions count from the end when negative, then clamp —
+    /// lists, tensors and text alike (a negative end had been 0).
+    #[test]
+    fn a_slice_counts_from_the_end_when_negative() {
+        let xs = vec![1, 2, 3, 4];
+        assert_eq!(slice(&xs, 0, -1), vec![1, 2, 3]);
+        assert_eq!(slice(&xs, -2, 4), vec![3, 4]);
+        assert_eq!(slice(&xs, -10, 2), vec![1, 2]);
+        assert_eq!(slice(&xs, 1, -10), Vec::<i32>::new());
+        assert_eq!(slice(&xs, 1, 10), vec![2, 3, 4]);
+        assert_eq!(slice_taken(xs.clone(), -3, -1), vec![2, 3]);
+        let t = crate::tensor::CrowTensor::from_vec(vec![1.0, 2.0, 3.0], vec![3]);
+        assert_eq!(slice_tensor(&t, 0, -1).len(), 2);
+        assert_eq!(slice_str("abcd", 0, -1), "abc");
+        assert_eq!(slice_str("héllo", -3, 5), "llo");
+        assert_eq!(slice_str("héllo", 0, -4), "h");
+        assert!(crate::text::slice_is("héllo", &crate::text::Known::new(), 1, -2, "él"));
+        assert_eq!(slice_str("", 0, -1), "");
+    }
+
     use super::*;
 
     #[test]
@@ -741,7 +769,10 @@ mod tests {
         let v = vec![10, 20, 30, 40, 50];
         assert_eq!(slice(&v, 1, 3), vec![20, 30]);
         assert_eq!(slice(&v, 3, 99), vec![40, 50]);
-        assert_eq!(slice(&v, -2, 2), vec![10, 20]);
+        // a negative position counts from the end, then clamps
+        assert_eq!(slice(&v, -2, 2), Vec::<i64>::new());
+        assert_eq!(slice(&v, -2, 99), vec![40, 50]);
+        assert_eq!(slice(&v, -99, 2), vec![10, 20]);
         assert_eq!(slice(&v, 4, 1), Vec::<i64>::new());
         assert_eq!(slice_str("héllo wörld", 1, 4), "éll");
         assert_eq!(slice_str("abc", 2, 99), "c");

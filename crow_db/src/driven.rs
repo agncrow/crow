@@ -351,7 +351,9 @@ pub fn ch_kind(t: &str) -> &'static str {
     }
 }
 
-/// A frame of `name` and `kind` columns as the pairs the compiler reads.
+/// A frame of `name` and `type` columns as the pairs the compiler reads (the
+/// column had been `kind`, which `f.kind` cannot reach: every value's
+/// `.kind` is its status).
 pub fn columns_of(frame: &CrowFrame) -> Result<Vec<(String, String)>, String> {
     let text = |name: &str| -> Option<Vec<String>> {
         frame.columns.iter().position(|c| c == name).and_then(|i| match frame.data[i].as_ref() {
@@ -359,18 +361,18 @@ pub fn columns_of(frame: &CrowFrame) -> Result<Vec<(String, String)>, String> {
             _ => None,
         })
     };
-    match (text("name"), text("kind")) {
+    match (text("name"), text("type")) {
         (Some(n), Some(k)) if n.len() == k.len() => Ok(n.into_iter().zip(k).collect()),
-        _ => Err("describe: the driver answered no name and kind columns".to_string()),
+        _ => Err("describe: the driver answered no name and type columns".to_string()),
     }
 }
 
-/// The pairs the compiler reads as a frame of `name` and `kind`, for
+/// The pairs the compiler reads as a frame of `name` and `type`, for
 /// `describe[conn, sql]`.
 pub fn describe_frame(cols: &[(String, String)]) -> CrowFrame {
     let n = cols.len();
     CrowFrame::new(
-        vec!["name".to_string(), "kind".to_string()],
+        vec!["name".to_string(), "type".to_string()],
         vec![Column::Str(cols.iter().map(|(a, _)| a.clone()).collect()), Column::Str(cols.iter().map(|(_, b)| b.clone()).collect())],
         vec![vec![true; n], vec![true; n]],
     )

@@ -29,6 +29,8 @@ log[moment[d, tz = '+09:00']]
 g = frame.new[symbol = ['A', 'B'], px = [1.5, 2.5]]
 log[g.columns]
 log[with[g, 'day', 'today'].day[1]]
+flags = frame.new[name = ['a', 'b', 'c'], on = [true, false, true]]
+log[filter[flags, flags.on].name]
 log[join[['x', 'y'], '+']]
 log[group[t, 'symbol', ['price', 'median'], ['qty', 'p75'], ['symbol', 'distinct']].price_median]
 log[sort[t, ['symbol', 'qty'], desc = [false, true]].qty]
@@ -70,6 +72,7 @@ true
 2026-07-14T22:30:00+09:00
 ['symbol', 'px']
 today
+['a', 'c']
 x+y
 [192.3, 415.2]
 [100, 40, 50]

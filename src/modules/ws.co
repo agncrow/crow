@@ -113,7 +113,8 @@ fn recv_for[s, secs]
             code = bytes['']
             if len[data] gte 2
                 code = slice[data, 0, 2]
-            frame[s, 8, code]
+            --- (the close answered as it is closing: kept, not decided on)
+            answered_close = frame[s, 8, code]
             close[stream_of[s]]
             return error['closed', 'socket']
         if opcode eq 9

@@ -8,7 +8,7 @@ edition = "2024"
 regex = "1.12.3"
 serde_json = "1"
 # only what writes an IPC stream: arrow's csv and json readers are not used
-arrow = { version = "58.0.0", default-features = false, features = ["ipc"], optional = true }
+arrow = { version = "60.0.0", default-features = false, features = ["ipc"], optional = true }
 bytemuck = { version = "1.25.0", features = ["derive"], optional = true }
 # time zones by the database chrono-tz carries: never the system's local
 # zone, whose lookup (iana-time-zone) links CoreFoundation into every program
@@ -55,7 +55,7 @@ argon2 = "0.5"
 getrandom = "0.3"
 # a table in Parquet, read and written by `load` and `save` (the Arrow it
 # rides on is the runtime's own)
-parquet = { version = "58.0.0", default-features = false, features = ["arrow", "snap", "zstd", "flate2", "flate2-rust_backened", "lz4"], optional = true }
+parquet = { version = "60.0.0", default-features = false, features = ["arrow", "snap", "zstd", "flate2", "flate2-rust_backened", "lz4"], optional = true }
 bytes = { version = "1", optional = true }
 # a URL or an S3 object wherever a path is read: a blocking client, no
 # async runtime of its own, and S3's request signing

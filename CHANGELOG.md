@@ -5,6 +5,79 @@ migrates what it can, and a breaking change bumps the minor version.
 Each release lists what breaks first. This file summarises; the commit
 history says the rest.
 
+## Unreleased
+
+### Breaking
+
+- A value that can fail, dropped by its line — `write[path, text]`,
+  `exec[conn, sql]` or `rm[path]` on a line of its own — is decided on as
+  a branch on it is: a function hands the failure to its caller, a
+  handler stops, the top level halts with `cannot drop an error value —
+  <reason>`. Its failure had gone by unseen in both modes. Assign the
+  value to keep a failure on purpose (`kept = rm[tmp]`). To find the lines
+  a program has, `CROW_DROP_AUDIT=1 crow build --ir file.co` lists them.
+- `slice` counts a negative position from the end, as an index does:
+  `slice[xs, 0, -1]` is all but the last (it was empty: a negative end had
+  been taken as 0), `slice[xs, -2, len[xs]]` the last two.
+- `f.kind` (or `.ok`, `.reason`, `.trace`) of a frame that holds a column
+  of that name is refused, naming `rename[f, 'kind', 'another']`: the dot
+  is the frame's status, never the column, and it had read the status
+  where the column was meant.
+- `describe[conn, sql]` answers a frame of `name` and `type`; its `kind`
+  column had been unreachable as `d.kind`.
+
+### Added
+
+- A frame's column of bools is the mask it makes where a mask is taken:
+  `filter[f, f.active]`, `where[f.active, a, b]`, `names[f.active]`.
+- A list of lists of numbers is a matrix where a tensor is taken:
+  `tensor[rows]` and `stack[rows]` (both had stopped interpreted and not
+  built compiled).
+- `crow upgrade` replaces the binary the install line put in
+  `~/.crow/bin` with the latest release, held to its published hash as
+  the install line holds it; `--version X` installs that release (a
+  downgrade too), and `--check` says whether a newer one is out. A crow
+  installed another way — a checkout's build, `install.sh --dev` or
+  `--source` — is left as it is, and the command says how it upgrades.
+
+### Changed
+
+- The runtime bundle carries only what macOS arm64 and Linux x86_64
+  build: every other vendored package (Windows', WebAssembly's and a few
+  more) is a stub of its manifest, which cargo still reads, and the
+  download goes from 84 MB to 43 MB.
+- Arrow and Parquet are at 60, which reads Parquet's metadata without the
+  Thrift crate.
+
+### Fixed
+
+- The Linux binary needed the system's OpenSSL 3 (`libssl.so.3`), which
+  a slim container or an older distribution lacks: the live pages' HTTP
+  client uses rustls now, as the rest of Crow does, and CI and the release
+  check that the binary needs only the system's own libraries.
+- A recursive function that adds its own answers into a local and returns
+  it (a backtracking search's count) is held in 64 bits compiled; it had
+  been a growing int, every addition paying for it.
+- A function called with arguments of different types is checked at each
+  signature it is compiled for: `set[cols, …]` where one call hands a list
+  had run interpreted only to stop and not built compiled; it is refused
+  before either mode runs.
+- `stack` of a list of lists whose numbers can fail is refused in words;
+  it had reached the compiler's own check as an internal error.
+- `max`, `min` or `sum` of a tensor that can fail is a number that can
+  fail; it had been typed as nothing known, and the compiled program did
+  not build (found by the fuzzer).
+- `crow stop` stops a program the interpreter serves (`crow run -i`) and
+  `crow dev` with what it serves; it had said nothing was running. A
+  process a stale pidfile names is signalled only when it runs in the
+  project's directory.
+- The console runs a paste of several lines as one cell (it had waited
+  behind its continuation prompt), reads a `view`, `test` or `derive`
+  block whole and an `else` with its `if`, and tells a program that
+  serves pages to run from its file.
+- Dependencies with security advisories updated: rustls and its
+  certificate checker, rand, and (through Parquet) Thrift; OpenSSL is gone.
+
 ## v0.6.1 — 2026-10-14
 
 ### Added

@@ -25,11 +25,19 @@ tools, or `build-essential`). Until the compiler is there, `crow run`
 says so and interprets, which answers the same, only slower. `CROW_HOME`
 moves the directory.
 
+`crow upgrade` replaces that binary with the latest release, held to its
+published hash as the install line holds it; `crow upgrade --version X`
+installs a given release (a downgrade too), and `crow upgrade --check`
+says whether a newer one is out. The new version fetches its own
+toolchain and runtime the same way, on its first compiled build.
+
 From a checkout, `./install.sh --source` builds Crow with your own Rust
 and snapshots the source to `~/.crow/src` for compiled programs to link,
 and `./install.sh --dev` builds the checkout in place for working on Crow
 itself (`cargo build --release` leaves the binary at `target/release/crow`
-without installing it; it links the checkout it was built from).
+without installing it; it links the checkout it was built from). Either
+upgrades by `git pull` and the same command again: `crow upgrade` replaces
+only the binary the install line put in `~/.crow/bin`, and says so.
 
 Editor support is a subcommand of the same binary: `crow lsp`. See
 [crow-lsp.md](crow-lsp.md) for VS Code, Neovim, Helix, and Zed.
@@ -53,9 +61,9 @@ crow run -i hello.co        # interpret (instant start)
 | `crow run` | Run the project in the current directory: the crowfile's `entry`, `main.co` by default. |
 | `crow run <job>` | Run a named job from the crowfile's `jobs` map, e.g. `crow run train`. Jobs run and exit; `main.co` is the thing that stays running. |
 | `crow build [file.co]` | Compile without running. The binary lands in the current directory, named after the file (`hello`); for a file outside the directory the name is path-mangled (`examples_hello`). |
-| `crow stop` | Stop the running app — by pidfile, then by the project binary's name. `crow run` on a busy port tells you to use it. |
+| `crow stop` | Stop the running app — by pidfile, then by the project binary's name, then a program the interpreter serves (`crow run -i`) and `crow dev`'s watcher with it; only processes running in this project's directory. `crow run` on a busy port tells you to use it. |
 | `crow launch N file.co` | Build, then run on N distributed processes (`nodes[N]` programs). |
-| `crow` | The REPL: variables and functions persist between lines, expression results print automatically. |
+| `crow` | The REPL: variables and functions persist between lines, expression results print automatically. A paste of several lines runs as one cell; a block (`fn`, `view`, `test`, `if` with its `else`) ends at a blank line. The console serves no pages: a program that serves is told to run from its file (`crow run -i app.co`, or `crow dev app.co`). |
 | `crow kernel install` | Make Crow a Jupyter kernel: notebooks, JupyterLab, VS Code's notebooks and `jupyter console` then offer *Crow*. Each notebook is one REPL session; a cell's logs stream under it, its last value is its result (a frame as a table), and interrupting stops a running cell. |
 | `crow book [--port N]` | Render the book with `docs/book/site.co` and serve it with every code block runnable in place: ▶ Run interprets, ⚙ Compile builds the native binary, ✓ Test runs the block's test blocks, every block is editable in place with line numbers (Tab indents, Ctrl/Cmd-Enter runs, ↺ Reset restores the book's text), ■ Stop kills a served app. A run of the unedited example reports whether its output matches the book. Builds the HTML with `mdbook` if needed. Default port 3008. |
 
@@ -123,6 +131,7 @@ variables win).
 | `crow new myapp --db` | Adds `db/schema.co`, `jobs/migrate.co`. Flags combine. |
 | `crow install` | Install the crowfile's `deps` into `crow_modules/`, each pinned by `crow.lock`; `--update [name]` moves them to what their versions name now. |
 | `crow setup` | Fetch the pinned Rust toolchain and this release's runtime into `~/.crow` for compiled builds, each file verified; `--check` says what is present and whether compiled builds are ready. |
+| `crow upgrade` | Replace the binary the install line put in `~/.crow/bin` with the latest release, held to its published hash (a mismatch is named and nothing is kept); `--version X` installs that release instead, a downgrade too; `--check` says whether a newer release is out and changes nothing. The new binary is written beside the old one and renamed over it once it runs. A crow installed any other way — a checkout's build, `--dev`, `--source` — is left as it is, and the command says where it is and how that install upgrades. The new version's toolchain and runtime come with its first compiled build, or `crow setup`. |
 
 Every scaffolded file is working code — `crow run` succeeds right after
 `crow new`.

@@ -60,9 +60,24 @@ fn first_non_ascii(b: &[u8]) -> usize {
     i + b[i..].iter().position(|c| !c.is_ascii()).unwrap_or(b.len() - i)
 }
 
-/// `slice[text, from, to]` by character — both clamped to the text, empty
-/// when `from` is not before `to` — read with what is known of its start.
+/// The positions of a text's slice by character, counted from its end when
+/// negative as a list's are (`core::slice_bounds`): the text's characters
+/// counted only then, its known ASCII start a byte each.
+fn from_end(s: &str, known: &Known, start: i64, end: i64) -> (i64, i64) {
+    if start >= 0 && end >= 0 {
+        return (start, end);
+    }
+    let p = known.ascii(s, s.len());
+    let n = if p == s.len() { p } else { p + s[p..].chars().count() };
+    let (a, b) = crate::core::slice_bounds(start, end, n);
+    (a as i64, b as i64)
+}
+
+/// `slice[text, from, to]` by character — counted from the end when
+/// negative, then clamped to the text, empty when `from` is not before
+/// `to` — read with what is known of its start.
 pub fn slice_known(s: &str, known: &Known, start: i64, end: i64) -> String {
+    let (start, end) = from_end(s, known, start, end);
     let st = start.max(0) as usize;
     let en = end.max(0) as usize;
     if st >= en {
@@ -89,6 +104,7 @@ pub fn slice_known(s: &str, known: &Known, start: i64, end: i64) -> String {
 /// `slice[text, from, to] eq other`, the slice compared where it lies
 /// within what is known of the text's start (and made only past it).
 pub fn slice_is(s: &str, known: &Known, start: i64, end: i64, other: &str) -> bool {
+    let (start, end) = from_end(s, known, start, end);
     let st = start.max(0) as usize;
     let en = end.max(0) as usize;
     if st >= en {
@@ -593,8 +609,12 @@ mod tests {
     /// the other; a read within what is known is a byte offset.
     #[test]
     fn a_text_read_with_what_is_known_answers_what_the_walk_answered() {
+        // (a negative position counts from the end, then clamps: `slice`'s
+        // rule for every sequence, `core::slice_bounds`)
         fn walk(s: &str, a: i64, b: i64) -> String {
-            let (st, en) = (a.max(0) as usize, b.max(0) as usize);
+            let n = s.chars().count() as i64;
+            let at = |i: i64| (if i < 0 { i + n } else { i }).clamp(0, n) as usize;
+            let (st, en) = (at(a), at(b));
             if st >= en { String::new() } else { s.chars().skip(st).take(en - st).collect() }
         }
         for s in ["", "acgt", "héllo wörld", "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJ→é", "→ab", "ab\u{1F600}cd"] {

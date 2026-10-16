@@ -857,6 +857,24 @@ fn as_list(lowered: &mut [Expr], i: usize, item: Ty) {
     lowered[i] = Expr::Convert { how: Convert::ToList, expr: Box::new(taken), ty: Ty::List(Box::new(item)) };
 }
 
+/// Whether a lowered value is a frame's column of bools (one that can fail
+/// too: it is read, as any argument is, before the call) — by its IR type,
+/// which keeps a column's cells (`read` forgets them). `or_unknown` takes a
+/// column whose cells are not known yet as one: a pass before they settle,
+/// a frame loaded with nothing describing it.
+fn is_bool_column(x: &Expr, or_unknown: bool) -> bool {
+    match x.ty().payload() {
+        Ty::Column(cell) => cell.payload() == &Ty::Bool || (or_unknown && cell.payload() == &Ty::Unknown),
+        _ => false,
+    }
+}
+
+/// The mask a column of bools makes, as the program would write it: `c eq
+/// true`.
+fn as_mask(a: &A) -> A {
+    A::BinOp { left: Box::new(a.clone()), op: BinOp::Eq, right: Box::new(A::Bool(true)) }
+}
+
 /// A mask picks: the index's own row and the result's type, by the base —
 /// `__pick_rows` of a tensor (its first dimension unknown after),
 /// `__pick_items` of a list — or none where the index is not a mask, or
@@ -1247,12 +1265,17 @@ impl<'a> Lowerer<'a> {
                     part.fns.push(f);
                     // a function called at several signatures is one function
                     // per signature, each typed by its own (F2): the Rust
-                    // backend compiles each. Its body was checked as the
-                    // function's.
+                    // backend compiles each. Each is checked at its own
+                    // signature: a copy's types can refuse what the function's
+                    // did not (`set[cols, …]` where one call hands a list and
+                    // the recursive call the map set answers — the list's copy
+                    // had resolved to the map's row, unrefused, and run
+                    // interpreted only to stop, compiled not built); a refusal
+                    // both make is printed once
                     let clones: Vec<String> = self.ctx.specializations.get(name).map(|v| v.iter().map(|(_, m)| m.clone()).collect()).unwrap_or_default();
                     for clone in clones {
                         let clone_body = self.ctx.functions.get(&clone).map(|sig| sig.body.clone()).unwrap_or_else(|| body.clone());
-                        let f = self.muted(|l| l.lower_fn(&clone, params, &clone_body, *is_view))?;
+                        let f = self.lower_fn(&clone, params, &clone_body, *is_view)?;
                         part.fns.push(f);
                     }
                 }
@@ -2195,11 +2218,55 @@ impl<'a> Lowerer<'a> {
                         self.refuse(format!("{}[] answers {}, and this line drops it — keep it: {}", row.name, row.ret.words(), keep));
                     }
                 }
-                if let Expr::Effect { answered, .. } = &mut x {
-                    *answered = false;
+                // a value that can fail, dropped by its line, is decided on as
+                // a read of one is: a function hands the failure back, a
+                // handler stops, the top level halts (spec, Errors in
+                // Conditions) — a failed write had gone by unseen in both
+                // modes. What a line hands on (a collecting loop's last, a
+                // console cell's) is no drop, and assigned it is a value; nor
+                // is a truth — a line written as a comparison, or a test's
+                // bool, which the test asserts (`len[v] eq 59` of a value
+                // that can fail)
+                let truth = Self::truth_syntax(e) || (matches!(self.at, Where::Test) && matches!(x.ty().payload(), Ty::Bool));
+                // (a mail nothing reads is held for its handler's commit and
+                // sent then, or dropped by a stop: reading its answer here
+                // would send it at once — its failure is the commit's)
+                let held = matches!(&x, Expr::Effect { name, .. } if name == "mail");
+                // (a handler, or a helper that writes facts, called on its own
+                // line: its stop is the handler's — the session stops and
+                // nothing lands — and it answers nothing a line could drop;
+                // compiled, it answers no value at all)
+                let callee = match &x {
+                    Expr::Convert { how: Convert::Unwrap, expr, .. } => expr.as_ref(),
+                    other => other,
+                };
+                let handler_call = match callee {
+                    Expr::Call { target: Target::User(g), .. } => {
+                        self.ctx.functions.get(g).is_some_and(|sig| matches!(self.kind_of(g, &sig.body, false), FnKind::Handler | FnKind::Helper))
+                    }
+                    _ => false,
+                };
+                let dropped = !truth
+                    && !held
+                    && !handler_call
+                    && !self.yields.contains(&(e as *const A as usize))
+                    && !self.in_fact_default
+                    && x.ty().is_result()
+                    && !matches!(x.ty().payload(), Ty::Fn(..) | Ty::Unknown);
+                if dropped {
+                    if self.pass == Pass::Final && std::env::var_os("CROW_DROP_AUDIT").is_some() {
+                        eprintln!("drop-audit: fn '{}' line {}", self.current_fn, self.v.line);
+                    }
+                    self.refuse_before_helper(&mut x);
+                    let _ = self.decided(x, Decision::Dropped);
+                    vec![]
+                } else {
+                    if let Expr::Effect { answered, .. } = &mut x {
+                        *answered = false;
+                    }
+                    self.refuse_before_helper(&mut x);
+                    vec![Stmt::Do(x)]
                 }
-                self.refuse_before_helper(&mut x);
-                vec![Stmt::Do(x)]
             }
             S::FnDecl { name, .. } => return Err(format!("lowering: a function ('{}') declared inside a body", name)),
             S::StructDecl { name, .. } => return Err(format!("lowering: a struct ('{}') declared inside a body", name)),
@@ -3143,6 +3210,18 @@ impl<'a> Lowerer<'a> {
                 match field.as_str() {
                     "ok" | "reason" | "kind" | "trace" => {
                         let base = if member { self.muted(|l| l.lower_expr(object))? } else { self.lower_expr(object)? };
+                        // a frame that holds a column of the name: the dot is
+                        // the frame's status, never the column — a misread
+                        // refused where it is written (a chart's `kind`, a
+                        // log's `reason`, a file's `ok` are names data has;
+                        // `describe`'s had been `kind`, read as nothing)
+                        if self.pass == Pass::Final && matches!(base.ty().payload(), Ty::Frame(Some(c)) if c.cols.contains_key(field.as_str())) {
+                            let name = local_named(&base).unwrap_or_else(|| "the frame".to_string());
+                            self.refuse(format!(
+                                "{0} holds a column named '{1}', and `{0}.{1}` is the frame's status, not that column (.ok, .reason, .kind and .trace are every value's) — rename the column to read it: rename[{0}, '{1}', 'another']",
+                                name, field
+                            ));
+                        }
                         let which = match field.as_str() {
                             // a frame column's `.ok` is its rows' validity;
                             // any other value's is its own status
@@ -3663,7 +3742,12 @@ impl<'a> Lowerer<'a> {
             let applied = matches!(base.ty().payload(), Ty::Fn(..) | Ty::Unknown);
             let mut idx = Vec::new();
             for a in args {
-                let i = self.lower_expr(a)?;
+                let mut i = self.lower_expr(a)?;
+                // (a frame's column of bools as the index picks as the mask
+                // it makes: `names[f.on]` is `names[f.on eq true]`)
+                if !applied && args.len() == 1 && is_bool_column(&i, false) {
+                    i = self.lower_expr(&as_mask(a))?;
+                }
                 idx.push(if applied { i } else { self.decided_index(i) });
             }
             // a position or a key the program does not know the type of — a
@@ -3920,7 +4004,14 @@ impl<'a> Lowerer<'a> {
                     continue;
                 }
             }
-            let x = self.lower_expr(a)?;
+            // a frame's column of bools where the call takes a mask is the
+            // mask it makes — `filter[f, f.on]` is `filter[f, f.on eq
+            // true]`, a missing cell false as the comparison answers it
+            // (spec, Frames): lowered as that comparison, in both modes
+            let mut x = self.lower_expr(a)?;
+            if !self.ctx.functions.contains_key(&name) && is_bool_column(&x, true) && crate::table::takes_mask_at(&name, i, args.len()) {
+                x = self.lower_expr(&as_mask(a))?;
+            }
             arg_types.push(read(&x));
             full_types.push(full(&x));
             checks.push(self.checked(&x));
@@ -4225,7 +4316,11 @@ impl<'a> Lowerer<'a> {
                 // options, not of a frame — is the control's)
                 let first_is_frame = lowered.first().is_some_and(|x| matches!(x.ty().payload(), Ty::Frame(_)));
                 let control = self.in_ui && crate::lower::is_ui_control(&name, first_is_frame);
-                if !CORE_RESERVED.contains(&name.as_str()) && !crate::lower::UI_ELEMENTS.contains(&name.as_str()) && !control {
+                // (an element's name is an element's in a ui program only:
+                // elsewhere `stack[rows]` is math's, checked as math's —
+                // unchecked, a list no row takes had reached the verifier)
+                let element = self.in_ui && crate::lower::UI_ELEMENTS.contains(&name.as_str());
+                if !CORE_RESERVED.contains(&name.as_str()) && !element && !control {
                     self.refuse_module_call(&m, &name, &lowered);
                 }
                 self.row_arguments(&m, &name, lowered)
@@ -4484,8 +4579,9 @@ impl<'a> Lowerer<'a> {
             .map(|(x, k)| match (k, x.ty()) {
                 (Kind::Tensor, Ty::List(e)) if matches!(e.payload(), Ty::Int | Ty::Float) => Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty: Ty::vector(Ty::Float) },
                 // a list of rows is a matrix where a tensor is taken (spec,
-                // Arrays: a list of rows and a matrix hold numbers alike)
-                (Kind::Tensor, Ty::List(e)) if matches!(e.payload(), Ty::Tensor(..)) => {
+                // Arrays: a list of rows and a matrix hold numbers alike) —
+                // rows that are tensors, or lists of numbers
+                (Kind::Tensor, Ty::List(e)) if matches!(e.payload(), Ty::Tensor(..)) || matches!(e.as_ref(), Ty::List(i) if matches!(i.as_ref(), Ty::Int | Ty::Float | Ty::Big)) => {
                     let ty = Ty::Tensor(Box::new(Ty::Float), shapes::stacked_dims(&x.ty()));
                     Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty }
                 }
@@ -6081,6 +6177,47 @@ if r.ok
         let ir = ir_of("fn f[n]\n    a = slice[[0], 0, 0]\n    i = 0\n    while i lt n + 1\n        a = push[a, -1]\n        i = i + 1\n    k = 0\n    count = 0\n    done = false\n    while not done\n        c = a[k] + 1\n        if c lt n\n            a[k] = c\n            if k eq n - 1\n                count = count + 1\n            else\n                k = k + 1\n                a[k] = -1\n        else\n            a[k] = -1\n            if k eq 0\n                done = true\n            else\n                k = k - 1\n    return count\nlog[f[5]]\n");
         assert!(ir.contains("let k: Int = 0"), "{}", ir);
         assert!(!ir.contains(": Big"), "{}", ir);
+    }
+
+    /// A recursive function that adds its own answers into a local and
+    /// returns it is a sum over its calls, as one that returns the sum is:
+    /// the local and the answer are held in 64 bits (they had grown each
+    /// pass until held as growing ints: n-queens' count).
+    #[test]
+    fn a_recursive_counter_summed_in_a_local_is_a_plain_int() {
+        let ir = ir_of("fn count[n]\n    if n eq 0\n        return 1\n    total = 0\n    i = 0\n    while i lt 2\n        total = total + count[n - 1]\n        i = i + 1\n    return total\nlog[count[10]]\n");
+        assert!(ir.contains("pure count(n: Int) -> Int") && ir.contains("let total: Int = 0"), "{}", ir);
+        assert!(!ir.contains(": Big") && !ir.contains("-> Big"), "{}", ir);
+    }
+
+    /// A value that can fail, dropped by its line, is decided on (a function
+    /// hands the failure back); kept in a variable, or handed on by a
+    /// collecting loop's last line, or a test's truth, it is not.
+    #[test]
+    fn a_failed_value_its_line_drops_is_decided_on() {
+        let ir = ir_of("fn save[path]\n    write[path, 'hi']\n    return 1\nkept = write['/x/a.txt', 'a']\nnums = for s in ['1', 'x']\n    int[s]\nlog[save['/x/b.txt']]\nlog[kept.ok]\nlog[nums]\n");
+        assert!(ir.contains("(dropped by its line)"), "the dropped write is decided on: {}", ir);
+        assert_eq!(ir.matches("(dropped by its line)").count(), 1, "the kept write and the loop's last line are not: {}", ir);
+    }
+
+    /// A frame's column of bools where a mask is taken is the mask `c eq
+    /// true` makes: filter's, where's, an index's.
+    #[test]
+    fn a_column_of_bools_where_a_mask_is_taken_is_its_mask() {
+        let ir = ir_of("use frame\nf = frame.new[n = [1, 2], on = [true, false]]\nlog[filter[f, f.on]]\nlog[where[f.on, f.n, 0]]\n");
+        // (filter's mask is fused into the frame's own kernel, as `filter[f,
+        // f.on eq true]`'s is)
+        assert!(ir.contains("frame.filter_where(unwrap f, \"c0 v0 eq\", [\"on\"], true)"), "{}", ir);
+        assert!(ir.contains("frame.where((unwrap f.on eq true)"), "{}", ir);
+    }
+
+    /// A list of lists of numbers is a matrix where a tensor is taken:
+    /// `stack[rows]` is the matrix's rows restacked, never math.stack of a
+    /// list of tensors handed a list of lists.
+    #[test]
+    fn a_list_of_number_lists_stacks_as_a_matrix() {
+        let ir = ir_of("use math\nxs = push[push[[], 1.5], 2.5]\nrows = push[push[[], xs], xs]\nlog[stack[rows]]\nlog[tensor[rows]]\n");
+        assert!(ir.contains("math.stack_rows(") && !ir.contains("math.stack("), "{}", ir);
     }
 
     /// A counter a condition bounds on the side it steps toward stays

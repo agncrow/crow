@@ -420,6 +420,10 @@ pub enum Decision {
     /// An item read or written at it: a failed value is no position and no
     /// key (`xs[int[ch]]`).
     Index,
+    /// Dropped by its line: a value that can fail, called or computed as a
+    /// statement of its own, which nothing reads (`write[path, text]` alone)
+    /// — its failure had gone by unseen in both modes.
+    Dropped,
 }
 
 impl Decision {
@@ -432,6 +436,7 @@ impl Decision {
             Decision::Read(field) => format!("cannot read '{}' of an error value", field),
             Decision::Item => "cannot read an item of an error value".to_string(),
             Decision::Index => "cannot index by an error value".to_string(),
+            Decision::Dropped => "cannot drop an error value".to_string(),
         }
     }
 }
@@ -1522,6 +1527,7 @@ fn block(out: &mut String, b: &Block, depth: usize) {
                     Decision::Read(field) => format!(" (reading {})", field),
                     Decision::Item => " (reading an item)".to_string(),
                     Decision::Index => " (as a position or a key)".to_string(),
+                    Decision::Dropped => " (dropped by its line)".to_string(),
                 };
                 let _ = writeln!(out, "{}propagate {}{}", pad, values.join(", "), at);
             }

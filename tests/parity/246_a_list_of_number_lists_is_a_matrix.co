@@ -1,0 +1,19 @@
+--- A list of lists of numbers is a matrix where a tensor is taken, as a
+--- list of rows that are tensors is: `tensor[rows]` and `stack[rows]` are
+--- the matrix, `stack[rows, 1]` its columns stacked, ints as floats. Both
+--- modes had stopped — the interpreter on "a list of array is not a list
+--- of numbers", the compiled program not built — and `stack` of one had
+--- reached the verifier as "the lowered program disagrees with itself".
+use math
+xs = push[push[[], 1.5], 2.5]
+ys = push[push[[], 3.5], 4.5]
+rows = push[push[[], xs], ys]
+log[tensor[rows]]
+log[stack[rows]]
+log[stack[rows, 1]]
+log[len[rows]]
+ns = push[push[[], push[push[[], 1], 2]], push[push[[], 3], 4]]
+log[tensor[ns] * 2.0]
+--- rows of two lengths are no matrix: the program stops, saying so
+ragged = push[push[[], push[push[[], 1.0], 2.0]], push[[], 3.0]]
+log[stack[ragged]]

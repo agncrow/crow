@@ -2244,6 +2244,14 @@ pub fn module_names(module: &str) -> Vec<&'static str> {
 }
 
 /// Whether a module (`""` the core) answers the name with rows.
+/// Where a call takes a mask — a list of bools, one per row: `filter`'s
+/// second argument and `where`'s first (spec, Frames). A frame's column of
+/// bools there is read as the mask it makes (`c eq true`). (Not every
+/// `Bools` parameter is a mask: `sort`'s are a key's descending flags.)
+pub fn takes_mask_at(name: &str, i: usize, argc: usize) -> bool {
+    matches!((name, i, argc), ("filter", 1, 2) | ("where", 0, 3))
+}
+
 pub fn has_rows(module: &str, name: &str) -> bool {
     ROWS.iter().any(|r| r.module == module && r.name == name)
 }
@@ -2331,8 +2339,12 @@ pub enum Arg {
     Ints,
     /// A list of floats.
     Floats,
-    /// A list of tensors, or of lists of numbers.
+    /// A list of tensors.
     Tensors,
+    /// A list of lists of numbers: a matrix where a tensor is taken, each
+    /// list a row (no parameter takes it as a list of tensors: `stack` of
+    /// it is the matrix's rows restacked, as `stack` of a matrix is).
+    Rows,
     Text,
     /// A list of text.
     Texts,
@@ -2388,6 +2400,7 @@ impl Arg {
                 | Arg::Items
                 | Arg::Moments
                 | Arg::Tensors
+                | Arg::Rows
                 | Arg::Tensor
                 | Arg::Fallible
                 | Arg::FallibleNumbers
@@ -2409,6 +2422,7 @@ impl Arg {
             Arg::Ints => "a list of ints",
             Arg::Floats => "a list of numbers",
             Arg::Tensors => "a list of tensors",
+            Arg::Rows => "a list of lists of numbers",
             Arg::Text => "text",
             Arg::Texts => "a list of text",
             Arg::Chunks => "a list of bytes",
@@ -2477,7 +2491,8 @@ impl Arg {
             Arg::Int => Arg::Ints,
             Arg::Float => Arg::Floats,
             Arg::Moment => Arg::Moments,
-            Arg::Tensor | Arg::Ints | Arg::Floats => Arg::Tensors,
+            Arg::Tensor => Arg::Tensors,
+            Arg::Ints | Arg::Floats => Arg::Rows,
             Arg::Text => Arg::Texts,
             Arg::Bytes => Arg::Chunks,
             Arg::Truth => Arg::Truths,
@@ -2578,7 +2593,7 @@ impl Kind {
     fn takes(self, a: Arg) -> bool {
         // a list whose items are not known could be any list
         if a == Arg::AnyList {
-            return [Arg::Ints, Arg::Floats, Arg::Texts, Arg::Truths, Arg::Tensors, Arg::Records, Arg::Maps, Arg::Items].iter().any(|l| self.takes(*l));
+            return [Arg::Ints, Arg::Floats, Arg::Texts, Arg::Truths, Arg::Tensors, Arg::Rows, Arg::Records, Arg::Maps, Arg::Items].iter().any(|l| self.takes(*l));
         }
         a == Arg::Unknown
             || match self.each() {
@@ -2590,7 +2605,7 @@ impl Kind {
                 // numbers held as a list or a column are converted where
                 // they meet the parameter (the lowering's row arguments)
                 // (a mask where numbers are asked is numbers: true 1, false 0)
-                Kind::Tensor => matches!(a, Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Column | Arg::FallibleNumbers | Arg::Tensors | Arg::Truths),
+                Kind::Tensor => matches!(a, Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Column | Arg::FallibleNumbers | Arg::Tensors | Arg::Rows | Arg::Truths),
                 Kind::Tensors => a == Arg::Tensors,
                 Kind::Str => a == Arg::Text,
                 Kind::Key => matches!(a, Arg::Text | Arg::Int),
@@ -2610,7 +2625,7 @@ impl Kind {
                 // (a list whose items can fail: its items, a failed one
                 // stopping the program, as a sum's numbers do)
                 Kind::Words => matches!(a, Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Column | Arg::Moments | Arg::Fallible | Arg::FallibleNumbers),
-                Kind::List | Kind::Seq => matches!(a, Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Tensors | Arg::Records | Arg::Maps | Arg::Items | Arg::Chunks | Arg::Fallible | Arg::FallibleNumbers | Arg::Moments),
+                Kind::List | Kind::Seq => matches!(a, Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Tensors | Arg::Rows | Arg::Records | Arg::Maps | Arg::Items | Arg::Chunks | Arg::Fallible | Arg::FallibleNumbers | Arg::Moments),
                 Kind::Item | Kind::ItemRef => true,
                 Kind::MapOf | Kind::MapRef | Kind::TextMap => a == Arg::Map,
                 Kind::Ints | Kind::Bigs => a == Arg::Ints,
@@ -2685,7 +2700,7 @@ pub fn module_of_bare(name: &str, providers: &[&str], kinds: &[Arg]) -> Option<S
     }
     let by_first = match kinds.first() {
         Some(Arg::Frame | Arg::Column) => "frame",
-        Some(Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Tensors | Arg::Texts | Arg::Truths | Arg::Records | Arg::Maps | Arg::Items | Arg::AnyList | Arg::FallibleNumbers | Arg::Fallible) => "math",
+        Some(Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Tensors | Arg::Rows | Arg::Texts | Arg::Truths | Arg::Records | Arg::Maps | Arg::Items | Arg::AnyList | Arg::FallibleNumbers | Arg::Fallible) => "math",
         _ => return None,
     };
     providers.contains(&by_first).then(|| by_first.to_string())
@@ -3017,6 +3032,13 @@ mod tests {
         assert_eq!(format!("{}", grown.value), "[1, 2]");
         assert_eq!(core_row("sort", &[Arg::Floats]).map(|r| r.id), Some("core.sort_floats"));
         assert!(core_row("sort", &[Arg::Records]).is_none());
+        // a list of lists of numbers is rows, which a list of tensors'
+        // parameter does not take and a tensor's does (as a matrix)
+        let rows = Arg::of_type(&Ty::List(Box::new(Ty::List(Box::new(Ty::Float)))));
+        assert_eq!(rows, Arg::Rows);
+        assert_eq!(Arg::of_type(&Ty::List(Box::new(Ty::tensor(Ty::Float)))), Arg::Tensors);
+        assert!(!Kind::Tensors.takes(Arg::Rows) && Kind::Tensor.takes(Arg::Rows) && Kind::List.takes(Arg::Rows));
+        assert!(takes_mask_at("filter", 1, 2) && takes_mask_at("where", 0, 3) && !takes_mask_at("sort", 2, 3));
         assert_eq!(core_row("len", &[Arg::Column]).map(|r| r.id), Some("core.len_column"));
         assert!(core_row("contains", &[Arg::Column, Arg::Int]).is_none());
     }

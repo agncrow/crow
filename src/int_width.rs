@@ -262,6 +262,8 @@ fn settle(program: &Program) -> (Widths, Walk) {
         thresholds: thresholds_of(program),
         frozen: false,
         soft: Default::default(),
+        accs: HashMap::new(),
+        acc_parts: HashMap::new(),
     };
     // writes only widen a range, and a range that keeps growing is taken as
     // unbounded: the rounds end
@@ -428,6 +430,12 @@ struct Walk {
     /// bound holds only as long as no part of the program runs 2^48 times,
     /// so arithmetic on them keeps its check (Convert::Proven).
     soft: std::collections::HashSet<Place>,
+    /// The function walked's locals that add its own answers and are its
+    /// answer (`accumulators`), each with the bits its count of writes adds
+    /// to ROUNDS.
+    accs: HashMap<String, u32>,
+    /// Every part an accumulator's writes have added, in every pass.
+    acc_parts: HashMap<(String, String), Iv>,
 }
 
 impl Walk {
@@ -761,6 +769,7 @@ impl Walk {
     /// walked from no local known.
     fn body(&mut self, name: &str, b: &Block) {
         self.fun = name.to_string();
+        self.accs = accumulators(name, b);
         self.cur.clear();
         self.written.clear();
         self.rels.clear();
@@ -840,7 +849,14 @@ impl Walk {
                 self.calls_in(expr);
                 let place = self.local(var);
                 if is_int(expr.ty_ref()) {
-                    let r = self.write_as(&place, expr, true);
+                    let r = match self.accs.get(var).copied() {
+                        Some(extra) => {
+                            let r = self.accumulated(var, expr, extra);
+                            self.widen(&place, r);
+                            r
+                        }
+                        None => self.write_as(&place, expr, true),
+                    };
                     self.cur.insert(var.clone(), r);
                 }
                 self.flow(&place, expr);
@@ -858,7 +874,14 @@ impl Walk {
                 self.calls_in(expr);
                 let place = self.local(var);
                 if is_int(expr.ty_ref()) {
-                    let r = self.write_as(&place, expr, true);
+                    let r = match self.accs.get(var).copied() {
+                        Some(extra) => {
+                            let r = self.accumulated(var, expr, extra);
+                            self.widen(&place, r);
+                            r
+                        }
+                        None => self.write_as(&place, expr, true),
+                    };
                     self.cur.insert(var.clone(), r);
                 }
                 self.flow(&place, expr);
@@ -897,11 +920,19 @@ impl Walk {
                 self.calls_in(e);
                 let place = Place::Ret(self.fun.clone());
                 if is_int(e.ty_ref()) {
-                    match self.recursive_sum(e) {
-                        Some(r) => self.widen(&place, r),
-                        None => {
-                            let r = self.iv_of(e);
-                            self.widen_base(&place, r);
+                    // (a local the function adds its own answers into is a
+                    // sum over its calls, as below: never a base answer)
+                    if let Some(v) = answered_local(e).filter(|v| self.accs.contains_key(v)) {
+                        let r = self.get(&self.local(&v));
+                        self.widen(&place, r);
+                        self.mark_soft(&place);
+                    } else {
+                        match self.recursive_sum(e) {
+                            Some(r) => self.widen(&place, r),
+                            None => {
+                                let r = self.iv_of(e);
+                                self.widen_base(&place, r);
+                            }
                         }
                     }
                 }
@@ -1348,6 +1379,45 @@ impl Walk {
         Some(each.join(Iv::point(0)).drift(ROUNDS))
     }
 
+    /// The range of a local `accumulators` found: what any call adds to it —
+    /// its starts and its other terms — and the function's other answers,
+    /// each added fewer than 2^ROUNDS times at each place that adds (no
+    /// part of a program runs 2^ROUNDS times), so within those many of the
+    /// largest, as `recursive_sum` bounds an answer that adds the calls
+    /// itself. Its sums never come round as a loop's drift does (a counter
+    /// summed in a loop of a backtracking search had grown each pass until
+    /// it was held as a growing int: n-queens, sudoku). The local and the
+    /// answer rest on ROUNDS.
+    fn accumulated(&mut self, var: &str, e: &Expr, extra: u32) -> Iv {
+        let me = self.fun.clone();
+        let mut terms = Vec::new();
+        signed_terms(e, false, &mut terms);
+        let mut part = Iv::EMPTY;
+        for (x, _) in terms {
+            let own = calls_fun(&me, resolved(x, &self.temps, &me));
+            let itself = matches!(x, Expr::Local(v, _) | Expr::Move(v, _) if v == var);
+            if !own && !itself {
+                let r = self.iv_of(x);
+                part = part.join(r).join(r.neg());
+            }
+        }
+        let key = (me.clone(), var.to_string());
+        if !self.frozen {
+            let had = self.acc_parts.get(&key).copied().unwrap_or(Iv::EMPTY);
+            let next = had.join(part);
+            if next != had {
+                self.acc_parts.insert(key.clone(), next);
+                self.changed = true;
+            }
+        }
+        let parts = self.acc_parts.get(&key).copied().unwrap_or(Iv::EMPTY);
+        let base = self.base_of(&Place::Ret(me.clone()));
+        let place = self.local(var);
+        self.mark_soft(&place);
+        self.mark_soft(&Place::Ret(me));
+        parts.join(base).join(base.neg()).join(Iv::point(0)).drift(ROUNDS + extra)
+    }
+
     /// The place an assignment through a path writes: an item of a list
     /// local, a record's field.
     fn path_place(&mut self, var: &str, path: &[PathStep]) -> Place {
@@ -1522,6 +1592,130 @@ fn steps_only(body: &Block, counter: &str, up: bool) -> bool {
 }
 
 /// The local an expression reads as it is, if it is one.
+/// The terms of a sum, each with whether it is subtracted: `a + b - c`.
+fn signed_terms<'e>(e: &'e Expr, neg: bool, out: &mut Vec<(&'e Expr, bool)>) {
+    match e {
+        Expr::Binary { op, l, r, .. } if op == "add" => {
+            signed_terms(l, neg, out);
+            signed_terms(r, neg, out);
+        }
+        Expr::Binary { op, l, r, .. } if op == "sub" => {
+            signed_terms(l, neg, out);
+            signed_terms(r, !neg, out);
+        }
+        Expr::Convert { how: crate::ir::Convert::Unwrap | crate::ir::Convert::Known, expr, .. } => signed_terms(expr, neg, out),
+        other => out.push((other, neg)),
+    }
+}
+
+/// What a term is, looking through the temporary the lowering put a call
+/// in (`_t3 = count[n - 1]`, then `total + _t3`).
+fn resolved<'e>(x: &'e Expr, temps: &'e HashMap<(String, String), Expr>, fun: &str) -> &'e Expr {
+    match x {
+        Expr::Local(v, _) | Expr::Move(v, _) if v.starts_with("_t") => match temps.get(&(fun.to_string(), v.clone())) {
+            Some(t) => t,
+            None => x,
+        },
+        _ => x,
+    }
+}
+
+/// Whether an expression is a call of the function.
+fn calls_fun(fun: &str, x: &Expr) -> bool {
+    let x = match x {
+        Expr::Convert { how: crate::ir::Convert::Unwrap | crate::ir::Convert::Known, expr, .. } => expr.as_ref(),
+        _ => x,
+    };
+    matches!(x, Expr::Call { target: Target::User(g), .. } if g == fun)
+}
+
+/// The local a `return` answers, through the marks a fallible read takes.
+fn answered_local(e: &Expr) -> Option<String> {
+    match e {
+        Expr::Convert { how: crate::ir::Convert::Unwrap | crate::ir::Convert::Known, expr, .. } => answered_local(expr),
+        _ => local_name(e),
+    }
+}
+
+/// The locals a recursive function adds its own answers into and answers
+/// (`total = total + count[n - 1]` in a loop, then `return total`): every
+/// write starts it — terms none of which reads it — or adds terms to it,
+/// the local read once and not subtracted; one write at least adds the
+/// function's own call; the function returns it; and no other term calls
+/// the function or reads the local inside. Each with the bits its count of
+/// writes adds to ROUNDS (`Walk::accumulated`).
+fn accumulators(fun: &str, b: &Block) -> HashMap<String, u32> {
+    let mut temps: HashMap<(String, String), Expr> = HashMap::new();
+    crate::ir::visit_stmts(b, &mut |s| {
+        if let Stmt::Let { var, expr, .. } = s {
+            if var.starts_with("_t") {
+                temps.insert((fun.to_string(), var.clone()), expr.clone());
+            }
+        }
+    });
+    let calls_inside = |x: &Expr| {
+        let mut any = false;
+        crate::ir::visit_expr(x, &mut |y| any |= calls_fun(fun, y));
+        any
+    };
+    let mut fits: HashMap<String, bool> = HashMap::new();
+    let mut writes: HashMap<String, u32> = HashMap::new();
+    let mut adds_own: std::collections::HashSet<String> = Default::default();
+    let mut answered: std::collections::HashSet<String> = Default::default();
+    crate::ir::visit_stmts(b, &mut |s| match s {
+        Stmt::Let { var, expr, .. } | Stmt::Set { var, expr } => {
+            let is_var = |x: &Expr| matches!(x, Expr::Local(v, _) | Expr::Move(v, _) if v == var);
+            let reads_var = |x: &Expr| {
+                let mut any = false;
+                crate::ir::visit_expr(x, &mut |y| any |= is_var(y));
+                any
+            };
+            let mut terms = Vec::new();
+            signed_terms(expr, false, &mut terms);
+            let selves: Vec<bool> = terms.iter().filter(|(x, _)| is_var(x)).map(|(_, neg)| *neg).collect();
+            let mut own = false;
+            let mut plain = true;
+            for (x, _) in &terms {
+                if is_var(x) {
+                    continue;
+                }
+                let x = resolved(x, &temps, fun);
+                if calls_fun(fun, x) {
+                    own = true;
+                } else if calls_inside(x) || reads_var(x) {
+                    plain = false;
+                }
+            }
+            let ok = is_int(expr.ty_ref()) && plain && match selves.as_slice() {
+                [] => true,
+                [neg] => !neg,
+                _ => false,
+            };
+            *fits.entry(var.clone()).or_insert(true) &= ok;
+            *writes.entry(var.clone()).or_insert(0) += 1;
+            if ok && own && !selves.is_empty() {
+                adds_own.insert(var.clone());
+            }
+        }
+        Stmt::For { var, .. } => {
+            fits.insert(var.clone(), false);
+        }
+        Stmt::Return(Some(e)) => {
+            if let Some(v) = answered_local(e) {
+                answered.insert(v);
+            }
+        }
+        _ => {}
+    });
+    fits.into_iter()
+        .filter(|(v, ok)| *ok && adds_own.contains(v) && answered.contains(v))
+        .map(|(v, _)| {
+            let n = writes.get(&v).copied().unwrap_or(1) + 1;
+            (v, 32 - n.leading_zeros())
+        })
+        .collect()
+}
+
 fn local_name(e: &Expr) -> Option<String> {
     match e {
         Expr::Local(n, _) | Expr::Move(n, _) => Some(n.clone()),

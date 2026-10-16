@@ -1,0 +1,6 @@
+--- a list of lists whose numbers can fail is no matrix: read the numbers first
+use math
+a = for s in ['1', '2']
+    float[s]
+rows = push[push[[], a], a]
+log[stack[rows]]

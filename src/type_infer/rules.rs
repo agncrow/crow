@@ -88,7 +88,12 @@ impl TypeContext {
         // Module function dispatch (overlapping builtins: check arg type)
         let is_overlapping = crate::table::CORE_AND_MATH.contains(&name);
         if is_overlapping && self.registry.has_function(name) {
-            let arg_types: Vec<Ty> = args.iter().map(|a| arg_ty(a)).collect();
+            // (by what each argument holds: one that can fail is handed on
+            // as its error before the call, and the call is wrapped as it
+            // can fail where it is typed — `max[w]` of a tensor that can
+            // fail had been typed as nothing known, and the compiled program
+            // did not build, the fuzzer's seed 1792144449)
+            let arg_types: Vec<Ty> = args.iter().map(|a| arg_ty(a).payload().clone()).collect();
             // (a list of numbers is taken where a tensor is: `max` of a list
             // a function computed is math's, of the whole list — as the
             // lowering picks it)

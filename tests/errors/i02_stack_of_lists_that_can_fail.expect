@@ -1,0 +1,3 @@
+i02_stack_of_lists_that_can_fail.co:6:5: stack[] takes a list of tensors or numbers, got a list
+  6 │ log[stack[rows]]
+    │     ^^^^^

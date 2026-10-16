@@ -1,0 +1,19 @@
+--- A value that can fail, dropped by its line — a call made for what it
+--- does (`write[path, text]` alone) — is decided on as a read of a failed
+--- value is: a function hands the failure back, the top level halts. It had
+--- gone by unseen in both modes. Assigned, the failure is a value kept;
+--- what a line hands on (a collecting loop's last) is no drop.
+kept = write['/nonexistent_dir_for_crow_parity/a.txt', 'hello']
+log[kept.ok]
+nums = for s in ['1', 'x']
+    int[s]
+log[nums]
+fn save[path]
+    write[path, 'hi']
+    return 'saved'
+r = save['/nonexistent_dir_for_crow_parity/b.txt']
+log[r.ok]
+log[starts[r.reason, 'cannot write']]
+log['next, a write whose failure nothing keeps']
+write['/nonexistent_dir_for_crow_parity/c.txt', 'hello']
+log['not reached']

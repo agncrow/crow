@@ -733,6 +733,51 @@ steps on every push and must be green.
   device on the CPU) so they run there, since gpu.rs alone was the 3.7
   points crow_runtime's coverage stood lower on Linux (85.28% against its
   floor of 87).
+- A value that can fail, dropped by its line, is `Decision::Dropped`
+  (lower_ir's `S::ExprStmt` arm, 2026-10-16): a function hands it back,
+  the top level halts `cannot drop an error value`. Exempt: what a line
+  hands on (`self.yields`: a collecting loop's last, a console cell's), a
+  truth (truth syntax, or a bool in a test block — a first version
+  decided `len[v] eq 59` of a value that can fail, and the test lost its
+  truth unseen), a `mail` (its unread answer is what holds it for the
+  commit: reading it sends at once — the mail-waits test caught it), and a
+  call of a handler or a fact-writing helper (`kind_of`: its stop is the
+  handler's, and compiled it answers `()` — served 02 did not build). A standard module's best-effort call keeps its value in a
+  named local (`swept = sweep[…]`), or its failure now fails the caller.
+  `CROW_DROP_AUDIT=1 crow build --ir file.co` lists the lines the rule
+  covers (stderr); the parity corpus compares the modes, not outputs over
+  time, so a semantic change shows only in an old-vs-new run of it.
+- `read(x)` and `full(x)` forget a column's cells (`as_inferred`): ask
+  `x.ty()` to see them — the bool-column mask rewrite (`is_bool_column`)
+  never fired until it did. A rewrite that happens only once types settle
+  still meets the scan pass's refusal: accept a column whose cells are not
+  known yet where the rewrite would apply.
+- A function called at several signatures is lowered once per signature
+  (`specializations`), each checked at its own types — the copies had been
+  `muted`, and a copy whose list met `set` (a map's row) ran interpreted
+  only to stop and did not build. The printer shows a refusal both make
+  once.
+- A name the core and math share (`max`, `min`, `sum`, …) is typed by
+  what its arguments hold (`payload()`): a tensor that can fail had failed
+  inference's "is it numbers" test, the call was typed as nothing known,
+  and the compiled program did not build (fuzz seed 1792144449, parity
+  250). The outer step wraps the answer as one that can fail.
+- A list of lists of numbers is `Arg::Rows`, not `Arg::Tensors`: no list
+  of tensors' parameter takes it (`Kind::Tensors`), a tensor's does as a
+  matrix (`stack[rows]` is `math.stack_rows` of it). Both backends make the
+  matrix through `CrowTensor::from_elements` of the rows.
+- The standard modules (`src/modules/*.co`) are compiled into the crow
+  binary: an edit reaches a program only after a rebuild (`crow test
+  src/modules/x.co` reads the file itself, so the module's own tests pass
+  first).
+- `crow_web`'s reqwest takes rustls (`default-features = false`): its
+  default TLS is OpenSSL on Linux, which the 0.6.1 release binary needed
+  (`libssl.so.3`) while the docs said otherwise. CI and the release check
+  the Linux binary's NEEDED libraries. The runtime bundle keeps what the
+  `TARGETS` line in `scripts/bundle_runtime.sh` builds (by `cargo metadata
+  --filter-platform`, which reads build dependencies for the target, as
+  `cargo tree --target` does not) and stubs the rest: a new platform is a
+  word there.
 - `nodes[n]` is retired (2026-10-11): the process count is `crow launch
   <n>`'s, a process reads its rank with `env['CROW_RANK', '0']`, and
   `nodes[…]` is refused naming that (checks.rs, before "undefined

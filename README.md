@@ -58,12 +58,13 @@ crow new hello && cd hello && crow run
 
 Compiling to a native binary needs a Rust toolchain. The first `crow
 build` fetches a pinned one into `~/.crow`, with the runtime, once (about
-215 MB); `crow setup` does it up front, and `crow setup --check` says
+175 MB); `crow setup` does it up front, and `crow setup --check` says
 what is present. Until then `crow run` says so and interprets, which
 answers the same, only slower.
 
-`crow help` lists every command. To upgrade, run the line again; to
-remove Crow, delete `~/.crow` and the PATH line. Working on Crow itself?
+`crow help` lists every command. To upgrade, `crow upgrade` replaces the
+binary with the latest release, held to its published hash; to remove
+Crow, delete `~/.crow` and the PATH line. Working on Crow itself?
 `git clone https://github.com/agncrow/crow && cd crow && ./install.sh --dev`
 builds your checkout in place; `--source` builds from it and snapshots the
 source for compiled programs.

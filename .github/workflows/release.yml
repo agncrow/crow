@@ -30,6 +30,13 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
       - name: Build
         run: cargo build --release --locked
+      # the binary asks the machine for its C library and nothing more (no
+      # OpenSSL: TLS is rustls) — 0.6.1's Linux binary had needed libssl.so.3
+      - name: The binary links only the system's own libraries
+        if: runner.os == 'Linux'
+        run: |
+          readelf -d target/release/crow | grep NEEDED
+          if readelf -d target/release/crow | grep -E 'NEEDED.*(libssl|libcrypto)'; then echo "the binary needs OpenSSL"; exit 1; fi
       - name: Package
         run: |
           VERSION="$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)"

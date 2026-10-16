@@ -58,8 +58,10 @@ help` lists `run`, `build`, `new`, `fmt`, `check`, and `test`.
 - **It seems stuck on "building crow".** A release build of the compiler
   takes a few minutes the first time and is quiet while it runs. Later
   runs reuse the cache in `~/.crow/target`.
-- **Upgrading:** `git pull`, then `./install.sh` again. **Removing:**
-  `./install.sh --uninstall`.
+- **Upgrading:** `crow upgrade` replaces the binary in `~/.crow/bin` with
+  the latest release, verified; a crow built from a checkout upgrades by
+  `git pull`, then `./install.sh --source` (or `--dev`) again.
+  **Removing:** `./install.sh --uninstall`.
 
 ## Editor Support
 

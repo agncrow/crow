@@ -47,7 +47,7 @@ rm['ex_migrations']
 ['a', 'b']
 [1, 2]
 3
-name  kind
+name  type
  str   str
 ----  ----
    k   str

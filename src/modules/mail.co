@@ -190,7 +190,9 @@ fn mail[mailer, to, subject, body]
     if not taken.ok
         close[s]
         return error['mail to `to` failed: `taken.reason`', 'mail']
-    ask[s, 'QUIT', [221], 'QUIT', 5.0]
+    --- (the message is taken: a QUIT unanswered changes nothing, so its
+    --- answer is kept, not decided on)
+    parted = ask[s, 'QUIT', [221], 'QUIT', 5.0]
     close[s]
     return true
 

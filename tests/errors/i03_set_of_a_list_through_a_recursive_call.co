@@ -1,0 +1,9 @@
+--- set takes a map: a list handed through a recursive call is refused at the
+--- copy of the function that takes the list, not run to stop
+fn place[n, row, cols]
+    if row eq n
+        return 1
+    return place[n, row + 1, set[cols, row, 0]]
+
+cols = push[push[[], 0], 0]
+log[place[2, 0, cols]]

@@ -8,6 +8,7 @@ another.
 crow new name [--web --ml --db]  scaffold a project (a Crowfile, main.co, css/)
 crow run [-i] [file]             execute: compiled when the compiler is here, else interpreted and told; -i interprets
 crow setup [--check]             fetch the Rust toolchain and the runtime for compiled builds, once; --check says what is present
+crow upgrade [--check]           replace this crow with the latest release, verified; --version X installs that one; --check says what is newer
 crow run --opt N file            the program at optimization level N (0 to 3; 0 unless said, crow build is 3 with LTO)
 crow stop                        stop the served app started by crow run
 crow build [file]                compile to a native binary, ./main
@@ -31,6 +32,13 @@ toolchain that `crow setup`, or the first `crow build`, fetches into
 output by `crow test --parity` over a corpus of programs and by
 `crow test --book` over every code block in this book. Interpret while you
 explore; compile when you ship. That is the whole workflow.
+
+`crow upgrade` keeps the binary current: it replaces the one the install
+line put in `~/.crow/bin` with the latest release, held to its published
+hash, and the new version fetches its own compiler the same way, on its
+first compiled build. A crow built from a checkout upgrades by `git pull`
+and `./install.sh --dev` or `--source` again; `crow upgrade` says so
+rather than replace it.
 
 A project's Crowfile names the entry point and the resources: keys
 `name`, `entry`, `db`, `cpu`, `gpu`, `deps`, `jobs`. The next page makes

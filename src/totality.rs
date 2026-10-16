@@ -42,7 +42,7 @@ fn variant_of(t: &Ty) -> &'static str {
 pub(crate) fn every_arg() -> Vec<Arg> {
     vec![
         Arg::Int, Arg::Float, Arg::Decimal, Arg::Fraction, Arg::Moment, Arg::Moments, Arg::Bytes, Arg::Stream, Arg::Socket, Arg::Mailer, Arg::Chunks,
-        Arg::Json, Arg::Tensor, Arg::Ints, Arg::Floats, Arg::Tensors, Arg::Text, Arg::Texts, Arg::Truth, Arg::Truths,
+        Arg::Json, Arg::Tensor, Arg::Ints, Arg::Floats, Arg::Tensors, Arg::Rows, Arg::Text, Arg::Texts, Arg::Truth, Arg::Truths,
         Arg::Records, Arg::Maps, Arg::Items, Arg::FallibleNumbers, Arg::Fallible, Arg::Column, Arg::Map, Arg::Record,
         Arg::Sparse, Arg::Frame, Arg::Fn, Arg::AnyList, Arg::Unknown,
     ]
@@ -54,7 +54,7 @@ fn arg_variant(a: Arg) -> &'static str {
     match a {
         Arg::Int => "Int", Arg::Float => "Float", Arg::Decimal => "Decimal", Arg::Fraction => "Fraction", Arg::Moment => "Moment", Arg::Moments => "Moments", Arg::Bytes => "Bytes",
         Arg::Stream => "Stream", Arg::Socket => "Socket", Arg::Mailer => "Mailer", Arg::Chunks => "Chunks", Arg::Json => "Json",
-        Arg::Tensor => "Tensor", Arg::Ints => "Ints", Arg::Floats => "Floats", Arg::Tensors => "Tensors", Arg::Text => "Text",
+        Arg::Tensor => "Tensor", Arg::Ints => "Ints", Arg::Floats => "Floats", Arg::Tensors => "Tensors", Arg::Rows => "Rows", Arg::Text => "Text",
         Arg::Texts => "Texts", Arg::Truth => "Truth", Arg::Truths => "Truths", Arg::Records => "Records", Arg::Maps => "Maps",
         Arg::Items => "Items", Arg::FallibleNumbers => "FallibleNumbers", Arg::Fallible => "Fallible", Arg::Column => "Column",
         Arg::Map => "Map", Arg::Record => "Record", Arg::Sparse => "Sparse", Arg::Frame => "Frame", Arg::Fn => "Fn",

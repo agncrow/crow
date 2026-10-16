@@ -1,0 +1,5 @@
+--- a frame that holds a column named like every value's status: the dot
+--- reads the status, never the column, so the read is refused
+use frame
+f = frame.new[n = [1, 2], kind = ['buy', 'sell']]
+log[f.kind]

@@ -491,7 +491,7 @@ fn pg_describe[parts, s, sql]
         return error['postgres describe error: `f.reason`', 'db']
     out = frame.new[]
     out = with[out, 'name', f.columns]
-    out = with[out, 'kind', f.dtypes]
+    out = with[out, 'type', f.dtypes]
     return out
 
 --- `pg_cancel[parts, stream]`: the statement the connection runs stopped
@@ -508,7 +508,8 @@ fn pg_cancel[parts, s]
     other = open[part[parts, 'host'], port_of[parts], false, 10.0]
     if not other.ok
         return error['postgres cancel error: `other.reason`', 'sys']
-    send[other, concat[pack[16, 4], concat[pack[80877102, 4], concat[pack[pid, 4], pack[key, 4]]]]]
+    --- (a cancel is asked, not awaited: the send is kept, not decided on)
+    sent_cancel = send[other, concat[pack[16, 4], concat[pack[80877102, 4], concat[pack[pid, 4], pack[key, 4]]]]]
     close[other]
     return 0
 

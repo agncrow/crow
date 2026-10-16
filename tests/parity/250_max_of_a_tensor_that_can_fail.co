@@ -1,0 +1,13 @@
+--- `max`, `min` or `sum` (a name the core and math share) of a tensor that
+--- can fail is a number that can fail, typed by what the tensor holds: it
+--- had been typed as nothing known, and the compiled program did not build
+--- (the fuzzer's seed 1792144449).
+use math
+w = [0.5, -1.5] + float['1']
+log[max[w]]
+log[min[w]]
+log[sum[w]]
+bad = [0.5, -1.5] + float['x']
+m = max[bad]
+log[m.ok]
+log[m.reason]
