@@ -4707,6 +4707,11 @@ impl<'a> Lowerer<'a> {
                     };
                     self.refuse(format!("{}: {} is a web response, which a route returns — a page shows elements and text: place the text itself, or p[…] or span[…]", name, what));
                 }
+                // (a function is no value a page shows, as `log` shows none:
+                // a control is given its handler by name, `click = f`)
+                if matches!(child.ty().payload(), Ty::Fn(..)) {
+                    self.refuse(format!("{}: a function is no child — a page shows elements and text, and an element is given its handler by name: click = …", name));
+                }
                 types.push(full(&child));
                 children.push(child);
             }
@@ -4802,7 +4807,10 @@ impl<'a> Lowerer<'a> {
                     (true, _) if open && item_at == Some(i) => None,
                     (true, Some(k)) if item_at == Some(i) => Some(k.clone()),
                     // (a response's body is text, `respond`'s status an int:
-                    // forms of web's own, which no row says)
+                    // forms of web's own, which no row says; and `json` of
+                    // a parsed value in a web program answers it as it is,
+                    // where read as text it had been parsed again)
+                    (true, _) if module.is_none() && name == "json" && argc == 1 && self.web_form(&name) => None,
                     (true, _) if module.is_none() && Self::web_form_reads(&name, i).is_some() && self.web_form(&name) => Self::web_form_reads(&name, i),
                     (true, _) => uses::row_says(&name, module.as_deref(), i, argc),
                 };
@@ -4943,6 +4951,13 @@ impl<'a> Lowerer<'a> {
         if (self.ctx.functions.contains_key(&name) || self.ctx.specializations.contains_key(&name)) && visible {
             if let Some(seen) = &mut self.seen {
                 seen.calls.push((name.clone(), full_types.clone()));
+            }
+            // a view draws in a page: a page names it and another view calls
+            // it, and nothing else does (spec, Views) — called from the top
+            // level, a function or a route, the interpreter had answered its
+            // markup and the compiled program had not built
+            if self.pass == Pass::Final && self.ctx.views.contains(&name) && !matches!(self.at, Where::In(FnKind::View)) {
+                self.refuse(format!("{}[] is a view: a page draws it — page['/', {}] — or another view calls it, and nothing else does", crate::lower::shown(&name), crate::lower::shown(&name)));
             }
             // a render reads state and never moves it (spec, Reactive State):
             // the interpreter wrote the fact mid-render, and the compiled

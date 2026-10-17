@@ -892,6 +892,19 @@ steps on every push and must be green.
   adapter. And a ui control named like a module's function (`select` of
   options beside `use frame`) skips that module's kinds check, as the
   lowering reads it (finch's dropdowns had been refused).
+- The views family (`view_cases`, 2026-10-17) draws each case as a page
+  and reads the page root's markup (`page_root`). It found the compiled
+  page unable to draw most kinds of child (a tensor, a map, a record, a
+  moment, a parsed value, a column: handed over raw) — a child is now the
+  text `crow_fmt` writes, a list's items each (`child_items`, nested lists
+  flattened as the interpreter splices them), a column's cells each
+  (`crow_web::view::column_children`, a missing cell failed); the
+  interpreter's `render_element` takes the element's own attributes as its
+  FIRST value, and had read every map child as attributes; the two
+  renderers escaped `"` in text differently (one escape now:
+  `crow_web::view::escape_text`/`escape_attr`); classes join once, an empty
+  one adds none, a computed one merges at run time (`with_class`). A view
+  called outside views is refused (compiled it had no session to read).
 - `nodes[n]` is removed (2026-10-11; its message of its own went
   2026-10-16, as `filter`'s did — a replaced name is an unknown name): the
   process count is `crow launch <n>`'s, a process reads its rank with

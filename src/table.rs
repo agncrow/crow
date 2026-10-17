@@ -2421,7 +2421,10 @@ impl Arg {
     pub fn json_response(&self) -> bool {
         matches!(
             self,
-            Arg::Map
+            // (a parsed value answers as it is: `json[json[text]]` serves
+            // JSON a program holds as text)
+            Arg::Json
+                | Arg::Map
                 | Arg::Record
                 | Arg::Frame
                 | Arg::Ints

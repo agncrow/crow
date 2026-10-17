@@ -26,7 +26,6 @@ impl Emitter {
         if element == "table" && children.len() == 1 && matches!(Self::inner(&self.tt(&children[0])), Ty::Frame(_)) {
             return self.frame_table(attrs, &children[0]);
         }
-        let is_container = crow_runtime::layout::CONTAINERS.contains(&element);
         let rust_name = if element == "main" { "main_el" } else { crow_runtime::layout::html_tag(element) };
         let is_void = VOID_ELEMENTS.contains(&element);
 
@@ -52,7 +51,9 @@ impl Emitter {
         let mut literal_layout: Vec<(String, String)> = Vec::new();
         let mut other: Vec<(String, Expr)> = Vec::new();
         for (k, v) in attrs {
-            let is_layout = crow_runtime::layout::LAYOUT_ATTRS.contains(&k.as_str()) || (is_container && k == "class");
+            // (a class through the table for every element, as the
+            // interpreter renders it: joined to the element's own)
+            let is_layout = crow_runtime::layout::LAYOUT_ATTRS.contains(&k.as_str()) || k == "class";
             match (is_layout, Self::lit(v)) {
                 (true, Some(s)) => literal_layout.push((k.clone(), s)),
                 _ => other.push((k.clone(), v.clone())),
@@ -60,17 +61,19 @@ impl Emitter {
         }
         let rendered = crow_runtime::layout::render(element, &literal_layout);
         let mut result = base;
+        // (each value a Rust string literal: a class or a passed attribute
+        // written with a quote or a backslash had not built)
         if !rendered.class.is_empty() {
-            result = format!("{}.attr(\"class\", \"{}\")", result, rendered.class);
+            result = format!("{}.attr(\"class\", {:?})", result, rendered.class);
         }
         if !rendered.style.is_empty() {
-            result = format!("{}.attr(\"style\", \"{}\")", result, rendered.style.replace('\\', "\\\\").replace('"', "\\\""));
+            result = format!("{}.attr(\"style\", {:?})", result, rendered.style);
         }
         for (k, v) in &rendered.data {
-            result = format!("{}.attr(\"{}\", \"{}\")", result, k, v);
+            result = format!("{}.attr({:?}, {:?})", result, k, v);
         }
         for (k, v) in &rendered.passthrough {
-            result = format!("{}.attr(\"{}\", \"{}\")", result, k, v.replace('"', "\\\""));
+            result = format!("{}.attr({:?}, {:?})", result, k, v);
         }
         if element == "nav" {
             if let Some((_, a)) = literal_layout.iter().find(|(k, _)| k == "active") {
@@ -117,6 +120,11 @@ impl Emitter {
                     let x = self.expr(v);
                     result = format!("{}.bool_attr(\"{}\", {{ let _b: bool = {}; _b }})", result, b, x);
                 }
+                // (a class computed as the page renders joins the element's own)
+                "class" => {
+                    let x = self.expr(v);
+                    result = format!("{}.with_class(&format!(\"{{}}\", {}))", result, x);
+                }
                 "click" => result = if is_fn_ref { format!("{}.on_click({})", result, event) } else { format!("{}.on_click(&{})", result, event) },
                 "input" => result = if is_fn_ref { format!("{}.on_input({})", result, event) } else { format!("{}.on_input(&{})", result, event) },
                 "submit" => result = if is_fn_ref { format!("{}.on_submit({})", result, event) } else { format!("{}.on_submit(&{})", result, event) },
@@ -143,6 +151,10 @@ impl Emitter {
             }
             return (format!("CrowVNode::text(&{})", s), false);
         }
+        // (`[]` contributes nothing, whatever its items would have been)
+        if matches!(raw, Expr::ListLit(items, _) if items.is_empty()) {
+            return ("Vec::<CrowVNode>::new()".to_string(), true);
+        }
         // trees: an element, a view, a chart, a bound input
         let is_node = match raw {
             Expr::Tree { .. } => true,
@@ -165,11 +177,17 @@ impl Emitter {
         let inner = Self::inner(&ty);
         let s = self.expr(raw);
         if let Ty::List(item) = &inner {
-            let place = if matches!(item.as_ref(), Ty::Markup) { "crow_web::view::markup_children" } else { "crow_web::view::children_of" };
             if fallible {
-                return (format!("{{ let _c = &({}); if !_c.ok {{ vec![CrowVNode::failed(&_c.reason)] }} else {{ {}(&_c.value) }} }}", s, place), true);
+                return (format!("{{ let _c = &({}); if !_c.ok {{ vec![CrowVNode::failed(&_c.reason)] }} else {{ {} }} }}", s, Self::child_items("(&_c.value)", item)), true);
             }
-            return (format!("{}(&{})", place, s), true);
+            return (Self::child_items(&format!("(&{})", s), item), true);
+        }
+        // (a frame's column contributes each cell, as a list does)
+        if let Ty::Column(_) = &inner {
+            if fallible {
+                return (format!("{{ let _c = &({}); if !_c.ok {{ vec![CrowVNode::failed(&_c.reason)] }} else {{ crow_web::view::column_children(&_c.value) }} }}", s), true);
+            }
+            return (format!("crow_web::view::column_children(&{})", s), true);
         }
         let text = match inner {
             Ty::Markup if fallible => format!("{{ let _c = &({}); if !_c.ok {{ CrowVNode::failed(&_c.reason) }} else {{ CrowVNode::raw(&_c.value) }} }}", s),
@@ -181,9 +199,28 @@ impl Emitter {
             Ty::Markup => format!("CrowVNode::raw(&{})", s),
             Ty::Str => format!("CrowVNode::text(&{})", s),
             Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Float | Ty::Bool => format!("CrowVNode::text(&format!(\"{{}}\", {}))", s),
-            _ => s,
+            Ty::Node => s,
+            // anything else is text, as `log` writes it (spec, Views): a
+            // tensor, a map, a record, a moment, a parsed value, a frame (it
+            // had been handed over as it is, and the program did not build)
+            _ if fallible => format!("{{ let _c = &({}); if !_c.ok {{ CrowVNode::failed(&_c.reason) }} else {{ CrowVNode::text(&crow_runtime::display::CrowDisplay::crow_fmt(&_c.value)) }} }}", s),
+            _ => format!("CrowVNode::text(&crow_runtime::display::CrowDisplay::crow_fmt(&{}))", s),
         };
         (text, false)
+    }
+
+    /// The nodes a list child contributes, `list` an expression that lends
+    /// it: markup as markup, a list's items each as their kind does (a list
+    /// of lists flattened, as the interpreter splices it), every other item
+    /// as the text `log` writes for it.
+    fn child_items(list: &str, item: &Ty) -> String {
+        match item {
+            Ty::Markup => format!("crow_web::view::markup_children({})", list),
+            Ty::Node => format!("({}).to_vec()", list),
+            Ty::Str => format!("({}).iter().map(|_i| CrowVNode::text(_i)).collect::<Vec<CrowVNode>>()", list),
+            Ty::List(inner) => format!("({}).iter().flat_map(|_l| {}).collect::<Vec<CrowVNode>>()", list, Self::child_items("_l", inner)),
+            _ => format!("({}).iter().map(|_i| CrowVNode::text(&crow_runtime::display::CrowDisplay::crow_fmt(_i))).collect::<Vec<CrowVNode>>()", list),
+        }
     }
 
     /// `widget[name, props = …, on = map[event = handler]]`.

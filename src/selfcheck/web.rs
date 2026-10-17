@@ -65,6 +65,70 @@ fn posted(tail: &str, kind: &str, body: &[u8]) -> Ask {
     Ask { method: "POST", tail: tail.to_string(), headers: vec![("Content-Type".to_string(), kind.to_string())], body: body.to_vec() }
 }
 
+/// The views family's cases: every element with every value of the catalog
+/// as its child (and text that holds what HTML must escape), the attributes
+/// that pass through to HTML with text of every kind, HTML's boolean ones
+/// true and false, and the layout vocabulary's attributes over the values
+/// its words take — each a view drawn as a page at `/cN`.
+pub(super) fn view_cases(all: &[Val]) -> Vec<Case> {
+    let page = || Route { asks: vec![Ask::get("")], page: true, ..Route::default() };
+    let mut cases = Vec::new();
+    // (text a page must escape, and text that looks like a tag)
+    let escaped = [
+        Val { name: "markup".into(), expr: "'a < b & \"c\" \\'d\\' > e'".into(), setup: Vec::new(), imports: Vec::new() },
+        Val { name: "tagtext".into(), expr: "'<b>x</b>'".into(), setup: Vec::new(), imports: Vec::new() },
+    ];
+    let shown: Vec<&Val> = all.iter().chain(escaped.iter()).filter(|v| !matches!(v.name.as_str(), "sizes" | "groups" | "lists" | "maskcmp")).collect();
+    for e in DRAWN {
+        for v in &shown {
+            let n = v.name.as_str();
+            cases.push(Case::new(format!("view/{}/{}", e, n), &[v], vec![format!("return {}[{}]", e, v.expr)]).served(page()).referring(format!("view:{}", e), &[n]));
+        }
+    }
+    // the attributes that pass through, each with text of every kind
+    let texts = ["text", "text0", "textuni", "markup", "tagtext"];
+    for a in PASSED {
+        for t in texts {
+            let Some(v) = all.iter().chain(escaped.iter()).find(|v| v.name == t) else { continue };
+            cases.push(Case::new(format!("view-attr/{}/{}", a, t), &[v], vec![format!("return div['x', {} = {}]", a, v.expr)]).served(page()).referring(format!("view-attr:{}", a), &[t]));
+        }
+    }
+    // a class joins a container's own, written or computed
+    for t in texts {
+        let Some(v) = all.iter().chain(escaped.iter()).find(|v| v.name == t) else { continue };
+        cases.push(Case::new(format!("view-class/stack/{}", t), &[v], vec![format!("return stack['x', class = {}]", v.expr)]).served(page()).referring("view-class:stack", &[t]));
+        cases.push(Case::new(format!("view-class/computed/{}", t), &[v], vec![format!("c = {}", v.expr), "return stack['x', class = c]".to_string()]).served(page()).referring("view-class:stack", &[t]));
+    }
+    // HTML's boolean attributes: present or absent
+    for b in crow_runtime::layout::BOOL_ATTRS {
+        for (truth, word) in [("true", "bool"), ("false", "boolf")] {
+            cases.push(Case::new(format!("view-bool/{}/{}", b, word), &[], vec![format!("return button['x', {} = {}]", b, truth)]).served(page()).referring(format!("view-bool:{}", b), &[word]));
+        }
+    }
+    // the layout vocabulary: each attribute over the words it may take
+    // (one it does not take is refused, alike in both modes)
+    for a in crow_runtime::layout::LAYOUT_ATTRS {
+        for w in LAYOUT_WORDS {
+            cases.push(Case::new(format!("view-layout/{}/{}", a, w.trim_matches('\'')), &[], vec![format!("return stack['x', {} = {}]", a, w)]).served(page()).referring(format!("view-layout:{}", a), &[]));
+        }
+    }
+    cases
+}
+
+/// The elements the views family draws: the vocabulary's own and HTML's,
+/// all but the head's (`title`, `meta`), the void ones (`input`, `img`,
+/// `divider`), a frame's `table` and the program's own `widget`.
+const DRAWN: &[&str] = &[
+    "div", "span", "p", "h1", "h2", "h3", "h4", "h5", "h6", "button", "ul", "ol", "li", "form", "a", "nav", "header", "footer", "section", "tr", "td", "th", "thead",
+    "tbody", "option", "textarea", "label", "pre", "code", "stack", "row", "grid", "overlay", "scroll", "details", "summary", "dropdown", "modal", "drawer", "toast",
+];
+
+/// The attributes that pass through to HTML as they are written.
+const PASSED: &[&str] = &["title", "class", "id", "name", "href", "placeholder", "lang", "role"];
+
+/// The words the layout attributes are tried with.
+const LAYOUT_WORDS: &[&str] = &["'s'", "'m'", "'xl'", "'center'", "'between'", "'true'", "'2'", "'muted'", "'accent'", "'hug'", "'card'", "'nope'", "true", "2"];
+
 /// The routes family's cases.
 pub(super) fn route_cases(all: &[Val]) -> Vec<Case> {
     let mut cases = Vec::new();
@@ -156,8 +220,10 @@ pub(super) fn serve_batch(exe: &Path, dir: &Path, file: &str, binary: Option<&Pa
         let Some(s) = server.as_mut() else { break };
         let mut answers: Vec<String> = Vec::new();
         let mut end = String::new();
+        let page = c.serve.as_ref().is_some_and(|r| r.page);
         for ask in c.serve.as_ref().map(|r| r.asks.as_slice()).unwrap_or(&[]) {
             match crate::served_parity::ask(s.port, ask.method, &format!("/c{}{}", k, ask.tail), &ask.headers, &ask.body) {
+                Ok(a) if page => answers.push(page_root(&a)),
                 Ok(a) => answers.push(a),
                 Err(e) => {
                     end = match s.stopped() {
@@ -180,6 +246,21 @@ pub(super) fn serve_batch(exe: &Path, dir: &Path, file: &str, binary: Option<&Pa
         s.stop();
     }
     seen
+}
+
+/// A page's answer as the views family reads it: its status, then the
+/// markup its view drew — what the page's root holds, the page's scripts,
+/// styles and tokens around it read past. An answer that is no page (a
+/// failure's 500) is itself.
+fn page_root(answer: &str) -> String {
+    const ROOT: &str = "<div id=\"crow-root\">";
+    let Some(status) = answer.split(" | ").next() else { return answer.to_string() };
+    let Some(at) = answer.find(ROOT) else { return answer.to_string() };
+    let rest = &answer[at + ROOT.len()..];
+    match rest.find("</div>\n<script>") {
+        Some(end) => format!("{} | {}", status, &rest[..end]),
+        None => answer.to_string(),
+    }
 }
 
 /// A served batch's server: its process (the leader of its group, so what
@@ -276,6 +357,28 @@ mod tests {
         for name in RESPONSES.iter().filter(|n| **n != "json") {
             assert!(crate::lower_ir::WEB_RESERVED.contains(name), "'{}' is no name web reserves", name);
         }
+    }
+
+    /// A page's answer is its status and the markup its root holds.
+    #[test]
+    fn a_page_is_read_as_its_root() {
+        let answer = "HTTP/1.1 200 OK | content-type: text/html; charset=utf-8 | <!DOCTYPE html><html><head><style>x</style></head><body>\n<div id=\"crow-root\"><div><p>a &lt; b</p></div></div>\n<script>var t = '1f';</script></body></html>";
+        assert_eq!(page_root(answer), "HTTP/1.1 200 OK | <div><p>a &lt; b</p></div>");
+        let failed = "HTTP/1.1 500 Internal Server Error | content-type: text/plain | the request could not be answered";
+        assert_eq!(page_root(failed), failed);
+    }
+
+    /// A view's case is a view drawn as a page; a served batch of them is
+    /// views, their pages and a server.
+    #[test]
+    fn a_view_case_is_a_page() {
+        let cases = view_cases(&values());
+        let picked: Vec<&Case> = cases.iter().filter(|c| c.id == "view/p/markup" || c.id == "view-bool/disabled/bool").collect();
+        assert_eq!(picked.len(), 2);
+        let (src, _) = program(&picked);
+        assert!(src.starts_with("use ui, web\n"), "{}", src);
+        assert!(src.contains("view self_case_0[]\n    return p['a < b & \"c\" \\'d\\' > e']\n"), "{}", src);
+        assert!(src.contains("page['/c1', self_case_1]\n"), "{}", src);
     }
 
     /// A served batch is a program of handlers, their routes and a server.

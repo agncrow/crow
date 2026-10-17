@@ -20,7 +20,7 @@ pub fn takes_text(form: &str, what: &str) -> String {
 /// refuses it with, and the server's log says where the run met one.
 pub fn not_a_response(handler: &str, what: &str) -> String {
     // (`json` of text parses it: the likeliest way to answer a parsed value)
-    let parsed = if what == "a JSON value" { " — json[…] of text parses it, and json[…] of a map, a list or a record answers it" } else { "" };
+    let parsed = if what == "a JSON value" { " — json[…] of text parses it, and json[…] of what it parsed answers it: json[json[text]]" } else { "" };
     format!("{}[] answers {}, not a response: a route's handler returns text[…], html[…], json[…], respond[…], redirect[…], bytes[…], msgpack[…], arrow[…] or stream[…]{}", handler, what, parsed)
 }
 

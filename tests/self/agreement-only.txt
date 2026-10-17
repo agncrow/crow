@@ -292,6 +292,33 @@ text.decode	no reference yet: add its answer to tests/self/reference.py, or say 
 text.encode	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 text.matches	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 text.sub	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+ui.layout.active	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
+ui.layout.align	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
+ui.layout.anchor	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
+ui.layout.aspect	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
+ui.layout.background	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
+ui.layout.becomes	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
+ui.layout.border	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
+ui.layout.color	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
+ui.layout.columns	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
+ui.layout.columns_then	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
+ui.layout.fill	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
+ui.layout.gap	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
+ui.layout.height	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
+ui.layout.justify	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
+ui.layout.lines	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
+ui.layout.margin	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
+ui.layout.max_width	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
+ui.layout.min_width	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
+ui.layout.open	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
+ui.layout.pad	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
+ui.layout.radius	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
+ui.layout.shadow	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
+ui.layout.size	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
+ui.layout.surface	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
+ui.layout.tip	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
+ui.layout.width	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
+ui.layout.wrap	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
 web.auth.sign	a response or a protocol no reference models yet
 web.auth.verify	a response or a protocol no reference models yet
 web.mail.mail	a response or a protocol no reference models yet

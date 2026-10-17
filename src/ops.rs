@@ -1149,6 +1149,12 @@ pub fn render_element(name: &str, vals: &[CrowValue]) -> Result<String, String> 
     // other string is text, escaped, whatever it holds
     fn splice(inner: &mut String, items: &[CrowValue]) {
         for it in items {
+            // (an item that failed — a column's missing cell — shows as a
+            // failed value does: it had shown its placeholder, `0`)
+            if it.is_error() {
+                inner.push_str(&crow_web::core::response::failed_in_view(&it.reason()));
+                continue;
+            }
             match &it.value {
                 Value::Str(s) if it.is_markup() => inner.push_str(s),
                 Value::Array(nested) => splice(inner, nested),
@@ -1172,7 +1178,7 @@ pub fn render_element(name: &str, vals: &[CrowValue]) -> Result<String, String> 
     // input or a form calls, and the arguments a click froze
     let mut events: Vec<(String, String)> = Vec::new();
     let mut confirm: Option<String> = None;
-    for v in vals {
+    for (at, v) in vals.iter().enumerate() {
         if v.is_error() {
             // a view renders what it is given: a failed value shows an id
             // the server's log has its reason under
@@ -1180,7 +1186,10 @@ pub fn render_element(name: &str, vals: &[CrowValue]) -> Result<String, String> 
             continue;
         }
         match &v.value {
-            Value::Map(m) => {
+            // (the element's own attributes come first; a map among its
+            // children is text, as any value is — it had been read as
+            // attributes, which the compiled program did not build)
+            Value::Map(m) if at == 0 => {
                 for (k, val) in m.iter() {
                     if name == "table" {
                         match (k.as_str(), &val.value) {

@@ -1748,7 +1748,8 @@ def route_answer(form, names):
         if isinstance(v, Frame):
             rows = [{k: held(x) for k, x in row.items()} for row in v]
             return STOPPED if failing else answered(200, ["content-type: application/json"], json_text(rows))
-        if isinstance(v, (L, T, M, Rec)):
+        # (a parsed value answers as it is)
+        if isinstance(v, (L, T, M, Rec, J)):
             return STOPPED if failing else answered(200, ["content-type: application/json"], json_text(held(v)))
         raise Err()
     if form == "msgpack":
@@ -1836,6 +1837,137 @@ def read_answer(name):
     return said[name]
 
 
+# ── a view's markup (spec, Views) ──────────────────────────────────
+#
+# A page's answer is its status and the markup its root holds; the markup is
+# read back with Python's own HTML parser, and held to what the spec says:
+# an element draws as its tag (a container as a div, a divider as hr, a
+# dropdown as details), its text — entities decoded — is what the value
+# shows (a list's items each, a column's cells, a failed value an id the
+# log holds), an attribute reads back as it was written, a boolean one is
+# there or not.
+
+from html.parser import HTMLParser as _HTMLParser
+
+CONTAINERS = ("stack", "row", "grid", "overlay", "scroll", "modal", "drawer", "toast")
+FAILED_IN_VIEW = "error: the server's log has why, as <id>"
+
+
+def html_tag(name):
+    if name in CONTAINERS:
+        return "div"
+    return {"divider": "hr", "dropdown": "details"}.get(name, name)
+
+
+class _Node:
+    def __init__(self, tag, attrs):
+        self.tag, self.attrs, self.children = tag, dict(attrs), []
+
+    def text(self):
+        return "".join(c if isinstance(c, str) else c.text() for c in self.children)
+
+
+class _Reader(_HTMLParser):
+    VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.root = _Node("", [])
+        self.stack = [self.root]
+
+    def handle_starttag(self, tag, attrs):
+        node = _Node(tag, [(k, "" if v is None else v) for k, v in attrs])
+        self.stack[-1].children.append(node)
+        if tag not in self.VOID:
+            self.stack.append(node)
+
+    def handle_endtag(self, tag):
+        if len(self.stack) > 1 and self.stack[-1].tag == tag:
+            self.stack.pop()
+
+    def handle_data(self, data):
+        self.stack[-1].children.append(data)
+
+
+def drawn(seen):
+    """The element a page's root holds, read back: None for an answer that
+    is no page."""
+    head = "HTTP/1.1 200 OK | "
+    if not seen.startswith(head):
+        return None
+    r = _Reader()
+    # (a failure's id, read past as `<id>`, is text the page wrote)
+    r.feed(seen[len(head):].replace("<id>", "&lt;id&gt;"))
+    r.close()
+    elements = [c for c in r.root.children if not isinstance(c, str)]
+    return elements[0] if len(elements) == 1 else None
+
+
+def child_text(v):
+    """What a value shows as an element's child (spec, Views): a list's
+    items each (nested lists too), a column's cells (a missing one failed),
+    text as it is, anything else as `log` writes it."""
+    if v is FAIL:
+        return FAILED_IN_VIEW
+    if isinstance(v, C):
+        return "".join(FAILED_IN_VIEW if c is None else child_text(c) for c in v)
+    if isinstance(v, L):
+        return "".join(child_text(x) for x in v)
+    if isinstance(v, Rec):
+        return "SelfP[" + ", ".join("{} = {}".format(k, show(x, False)) for k, x in v.items()) + "]"
+    if isinstance(v, Frame):
+        raise Skip()
+    if isinstance(v, J):
+        return json_shown(v.v, True)
+    if isinstance(v, Exact):
+        return str(v)
+    return show(v, True)
+
+
+class Drawn(str):
+    """An answer held by reading its markup back: `holds(seen)`."""
+
+    def __new__(cls, what, check):
+        self = str.__new__(cls, what)
+        self.check = check
+        return self
+
+    def holds(self, seen):
+        node = drawn(seen)
+        return node is not None and self.check(node)
+
+
+def view_answer(element, names):
+    v = route_value(names[0])
+    if isinstance(v, Frame) or names[0] in ("bytes", "fn"):
+        raise Skip()
+    want = child_text(v)
+    tag = html_tag(element)
+    # (a record's kind is the case's own copy of it: `SelfP_45`)
+    return Drawn("<{}> showing {!r}".format(tag, want), lambda n: n.tag == tag and _re.sub(r"SelfP_\d+", "SelfP", n.text()) == want)
+
+
+def attr_answer(attr, names):
+    v = route_value(names[0])
+    if not isinstance(v, str):
+        raise Skip()
+    if attr == "class":
+        classes = v.split()
+        return Drawn("class {!r}".format(" ".join(classes)), lambda n: n.attrs.get("class") == (" ".join(classes) if classes else None))
+    return Drawn("{} = {!r}".format(attr, v), lambda n: n.attrs.get(attr) == v and n.text() == "x")
+
+
+def class_answer(names):
+    v = route_value(names[0])
+    classes = ["stack"] + v.split()
+    return Drawn("class {!r}".format(" ".join(classes)), lambda n: n.tag == "div" and n.attrs.get("class") == " ".join(classes) and n.text() == "x")
+
+
+def bool_answer(attr, names):
+    on = names[0] == "bool"
+    return Drawn("{} {}".format(attr, "present" if on else "absent"), lambda n: n.tag == "button" and ((n.attrs.get(attr) == "") if on else (attr not in n.attrs)))
+
+
 def placed_past(seen):
     """An answer with where its case's route sits in its batch read past."""
     return _re.sub(r"/c\d+", "/cN", seen)
@@ -1846,6 +1978,16 @@ def answer(what, names):
         return route_answer(what[6:], names)
     if what.startswith("route-read:"):
         return read_answer(what[11:])
+    if what.startswith("view:"):
+        return view_answer(what[5:], names)
+    if what.startswith("view-attr:"):
+        return attr_answer(what[10:], names)
+    if what == "view-class:stack":
+        return class_answer(names)
+    if what.startswith("view-bool:"):
+        return bool_answer(what[10:], names)
+    if what.startswith("view-layout:"):
+        raise Skip()
     args = [value(n) for n in names]
     # (a parsed value is read as each use implies: beyond showing, measuring
     # and indexing it, not answered here)
@@ -1973,7 +2115,7 @@ def main():
                 continue
             if case["what"].startswith("route") and "seen" in case:
                 case["seen"] = placed_past(case["seen"])
-            if isinstance(expected, ArrowOf) and "seen" in case and not case.get("end"):
+            if isinstance(expected, (ArrowOf, Drawn)) and "seen" in case and not case.get("end"):
                 if not expected.holds(case["seen"]):
                     print(json.dumps({"kind": "wrong", "id": case["id"], "expected": str(expected), "seen": case["seen"]}))
                 continue

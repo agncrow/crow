@@ -1,0 +1,13 @@
+--- a function placed in an element: a page shows elements and text
+use web, ui
+
+count = 0
+
+fn bump[]
+    count = count + 1
+
+view home[]
+    return button['+', bump]
+
+page['/', home]
+serve[3000]

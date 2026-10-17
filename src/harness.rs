@@ -4,12 +4,13 @@
 
 use crate::value::*;
 
+/// (the one escape both modes write a page with: crow_web's)
 pub(crate) fn html_escape_text(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    crow_web::view::escape_text(s)
 }
 
 pub(crate) fn html_escape_attr(s: &str) -> String {
-    s.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;").replace('>', "&gt;")
+    crow_web::view::escape_attr(s)
 }
 
 /// A node of the harness's own rendered HTML (well-formed by construction).

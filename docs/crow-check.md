@@ -238,7 +238,12 @@ with no test someone has to remember to write:
   and path, the body as text, as JSON and a field of it, a header, a
   form, a multipart body's files, a status read from the query — and what
   answers no handler's value: a method the route does not name, a path
-  nothing answers, a limit passed, a stop.
+  nothing answers, a limit passed, a stop;
+- views drawn as pages: every element with every value of the catalog as
+  its child, and text holding what HTML escapes; the attributes that pass
+  through to HTML with text of every kind; a class joined to a
+  container's own, written and computed; HTML's boolean attributes true
+  and false; and the layout vocabulary's attributes over its words.
 
 Each case is lowered first, in the process, in seconds. A refusal is held
 to the rules every message keeps (it names a line, and only what the
@@ -290,7 +295,10 @@ it), Rust's float display. A route's answer is computed the same way:
 the status and its words, the content type a form gives (or `text/plain`,
 which a response that names none is served as), the body — JSON as
 `encode` writes it, MessagePack packed as the format says, an Arrow
-stream read back with pyarrow and held to the frame. A case answered
+stream read back with pyarrow and held to the frame. A page's markup is
+read back with Python's own HTML parser: the tag an element draws as, its
+text — entities decoded — what the value shows, an attribute as written,
+a boolean one present or absent. A case answered
 otherwise is a finding, `wrong`; one the reference has no answer for is
 skipped, never guessed. `CROW_SELF_PYTHON` names the Python to ask (by
 default `python3` on the path): one with numpy, scipy and pyarrow

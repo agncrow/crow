@@ -735,7 +735,7 @@ mod tests {
     /// session, where its answer arrives; the call is wrapped in nothing.
     #[test]
     fn a_data_source_fact_carries_what_it_is_held_to() {
-        let src = "use web, ui\n\nfn rows[req]\n    return json['[{\"sym\": \"AAPL\", \"qty\": 100}]']\n\ndata = fetch['/api/rows']\n\nfn shout[t]\n    return upper[t]\n\nview render[]\n    names = for t in data.sym\n        shout[t]\n    total = 0\n    for q in data.qty\n        total = total + q\n    return stack[p['`len[data]` rows'], p[join[names, ', ']], p['total `total`']]\n\nserve[3461]\nroute['/api/rows', rows]\npage['/', render]\n";
+        let src = "use web, ui\n\nfn rows[req]\n    return json[json['[{\"sym\": \"AAPL\", \"qty\": 100}]']]\n\ndata = fetch['/api/rows']\n\nfn shout[t]\n    return upper[t]\n\nview render[]\n    names = for t in data.sym\n        shout[t]\n    total = 0\n    for q in data.qty\n        total = total + q\n    return stack[p['`len[data]` rows'], p[join[names, ', ']], p['total `total`']]\n\nserve[3461]\nroute['/api/rows', rows]\npage['/', render]\n";
         let stmts = crate::build(src).expect("parses");
         let stmts = crate::lower::lower_program(&stmts).expect("lowers");
         let mut ctx = TypeContext::new();

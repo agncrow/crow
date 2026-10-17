@@ -189,7 +189,10 @@ pub fn render(tag: &str, attrs: &[(String, String)]) -> Rendered {
         let v = v.as_str();
         let bad = |what: &str, errors: &mut Vec<String>| errors.push(format!("{} = '{}' is not a {} (see the layout vocabulary in the spec)", k, v, what));
         match k {
-            "class" => classes.push(v.to_string()),
+            // (an empty class adds none: `class = ''` had written a class
+            // attribute of nothing interpreted not at all, and `row`'s own
+            // with a space after it)
+            "class" => classes.extend(v.split_whitespace().map(str::to_string)),
             "gap" => match space_px(v) { Some(px) => css.push(format!("gap:{}px", px)), None => bad("spacing step (xs s m l xl)", &mut errors) },
             "pad" => {
                 // 'm' or 'm l' (vertical horizontal)

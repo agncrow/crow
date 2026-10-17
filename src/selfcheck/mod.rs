@@ -288,13 +288,16 @@ pub(crate) struct Case {
 }
 
 /// A served case's route: its method where it names one, the path past
-/// `/cN` (a param: `/:name`), a limit, and the requests the check sends it.
+/// `/cN` (a param: `/:name`), a limit, and the requests the check sends it
+/// — or a page's: the case's body a view, drawn at `/cN`, its answer the
+/// markup the view drew (the page's root).
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Route {
     method: Option<&'static str>,
     tail: String,
     limit: Option<u32>,
     asks: Vec<Ask>,
+    page: bool,
 }
 
 /// One request a served case is asked: its method, the path past `/cN`,
@@ -332,6 +335,9 @@ impl Case {
     /// The case is a route's handler, asked the route's requests.
     fn served(mut self, route: Route) -> Case {
         self.imports.insert("web");
+        if route.page {
+            self.imports.insert("ui");
+        }
         self.serve = Some(route);
         self
     }
@@ -465,7 +471,11 @@ fn program(cases: &[&Case]) -> (String, Vec<usize>) {
         // (a served case is a route's handler, handed the request, and its
         // body answers the response; any other a function of no parameters
         // whose logs are the case's)
-        out.push_str(&format!("fn self_case_{}[{}]\n", k, if c.serve.is_some() { "req" } else { "" }));
+        match &c.serve {
+            Some(r) if r.page => out.push_str(&format!("view self_case_{}[]\n", k)),
+            Some(_) => out.push_str(&format!("fn self_case_{}[req]\n", k)),
+            None => out.push_str(&format!("fn self_case_{}[]\n", k)),
+        }
         for line in &c.body {
             for l in own(line).lines() {
                 out.push_str("    ");
@@ -484,6 +494,10 @@ fn program(cases: &[&Case]) -> (String, Vec<usize>) {
         out.push_str(&format!("fn self_ready[req]\n    return respond[200, env['{}', '']]\n", web::TOKEN));
         for (k, c) in cases.iter().enumerate() {
             let Some(r) = &c.serve else { continue };
+            if r.page {
+                out.push_str(&format!("page['/c{}', self_case_{}]\n", k, k));
+                continue;
+            }
             let method = r.method.map(|m| format!("'{}', ", m)).unwrap_or_default();
             let limit = r.limit.map(|n| format!(", limit = {}", n)).unwrap_or_default();
             out.push_str(&format!("route['/c{}{}', {}self_case_{}{}]\n", k, r.tail, method, k, limit));
@@ -1187,6 +1201,12 @@ struct Seen {
 
 const LIMIT: Duration = Duration::from_secs(30);
 
+/// A batch's build: the Rust compiler's time, not a case's — a cold build
+/// after the runtime's crates change compiles them again, SQLite's C among
+/// them (held to a case's thirty seconds, one had been killed and named a
+/// build that failed).
+const BUILD_LIMIT: Duration = Duration::from_secs(1200);
+
 /// What the machine lends a check: its memory less 9 GB kept for the system
 /// (55 GB of 64; half of a machine of 18 GB or less) for every process the
 /// check runs at once (`--memory GB` says another amount), and at most a
@@ -1282,7 +1302,12 @@ fn spawn(cmd: Command) -> (Option<i32>, String, String, Ended) {
 }
 
 /// `spawn`, every line of the errors kept.
-fn spawn_all(mut cmd: Command) -> (Option<i32>, String, String, Ended) {
+fn spawn_all(cmd: Command) -> (Option<i32>, String, String, Ended) {
+    spawn_within(cmd, LIMIT)
+}
+
+/// [`spawn_all`] with a time limit of its own.
+fn spawn_within(mut cmd: Command, limit: Duration) -> (Option<i32>, String, String, Ended) {
     let b = budget();
     // (a process starts when the memory the check holds leaves room for it)
     while IN_USE.load(Ordering::SeqCst) + b.each > b.total {
@@ -1317,7 +1342,7 @@ fn spawn_all(mut cmd: Command) -> (Option<i32>, String, String, Ended) {
                     Some(Ended::Memory)
                 } else if over.load(Ordering::SeqCst) {
                     Some(Ended::Output)
-                } else if start.elapsed() > LIMIT {
+                } else if start.elapsed() > limit {
                     Some(Ended::TimeLimit)
                 } else {
                     None
@@ -1836,7 +1861,7 @@ fn build(exe: &Path, dir: &Path, stem: &str, cases: Vec<(usize, Case)>, jobs: &s
         }
         let mut cmd = Command::new(exe);
         cmd.args(["build", &file]).current_dir(dir).env("CROW_BUILD_PROFILE", "dev").env("CARGO_BUILD_JOBS", jobs);
-        let (code, out, err, _) = spawn_all(cmd);
+        let (code, out, err, ended) = spawn_within(cmd, BUILD_LIMIT);
         let binary = dir.join(stem);
         if code == Some(0) && binary.exists() {
             built.push(Built { dir: dir.to_path_buf(), file, binary, members: cases });
@@ -1872,7 +1897,13 @@ fn build(exe: &Path, dir: &Path, stem: &str, cases: Vec<(usize, Case)>, jobs: &s
         }
         if placed.is_empty() {
             if cases.len() == 1 {
-                let why = lines.iter().find(|l| l.starts_with("error")).copied().unwrap_or("the build failed").to_string();
+                let stopped = match ended {
+                    Ended::TimeLimit => "the build ran past its time",
+                    Ended::Memory => "the build ran past its memory",
+                    Ended::Output => "the build wrote past its output",
+                    Ended::Exited => "the build failed",
+                };
+                let why = lines.iter().find(|l| l.starts_with("error")).copied().unwrap_or(stopped).to_string();
                 failed.push((cases[0].0, why));
                 return;
             }
@@ -2009,6 +2040,7 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
     let all = values();
     let mut cases = form_cases(&all);
     cases.extend(web::route_cases(&all));
+    cases.extend(web::view_cases(&all));
     let (rows, unexercised) = row_cases(&all, &only);
     let row_count = rows.len();
     cases.extend(rows);
@@ -2294,6 +2326,12 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
                     Some("row" | "pair") => parts.next().map(str::to_string),
                     Some("route") => parts.next().map(|f| format!("web.{}", f)),
                     Some("route-read") => parts.next().map(|n| format!("web.read.{}", n)),
+                    // (an element, an attribute, a boolean one, a layout word)
+                    Some("view") => parts.next().map(|e| format!("ui.{}", e)),
+                    Some("view-attr") => parts.next().map(|a| format!("ui.attr.{}", a)),
+                    Some("view-class") => Some("ui.attr.class".to_string()),
+                    Some("view-bool") => parts.next().map(|b| format!("ui.bool.{}", b)),
+                    Some("view-layout") => parts.next().map(|a| format!("ui.layout.{}", a)),
                     _ => None,
                 }
             };
@@ -2542,6 +2580,8 @@ fn agreement_reason(row: &str) -> String {
     }
     match module {
         "web" => "a response no reference answers yet".to_string(),
+        "ui.layout" => "the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)".to_string(),
+        "ui" | "ui.attr" | "ui.bool" => "an element no reference reads back yet".to_string(),
         "web.read" => "a way a route reads its request no reference answers yet".to_string(),
         "llm" => "a model's reply: the empty replay answers, and no reference speaks for a model".to_string(),
         "chart" => "an indicator: no reference yet (pandas's rolling and ewm are the plan)".to_string(),

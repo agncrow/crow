@@ -1,0 +1,7 @@
+--- a view called from the top level: a page draws it, or another view
+use web, ui
+
+view card[t]
+    return div[p[t]]
+
+log[card['hello']]

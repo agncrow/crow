@@ -107,6 +107,22 @@ impl CrowVNode {
         self
     }
 
+    /// A class computed as the page renders, joined to the element's own
+    /// as the layout table joins them (crow_runtime::layout::render): each
+    /// class once, single spaces, an empty one adding nothing.
+    pub fn with_class(mut self, value: &str) -> Self {
+        if let CrowVNode::Element { ref mut attrs, .. } = self {
+            let mut classes: Vec<String> = attrs.get("class").map(|c| c.split_whitespace().map(str::to_string).collect()).unwrap_or_default();
+            classes.extend(value.split_whitespace().map(str::to_string));
+            if classes.is_empty() {
+                attrs.remove("class");
+            } else {
+                attrs.insert("class".to_string(), classes.join(" "));
+            }
+        }
+        self
+    }
+
     /// `confirm = 'text'`: the click asks first. The element offers the
     /// question instead of its handler (crow_runtime::layout::confirm_wiring).
     pub fn confirm(self, text: &str) -> Self {
@@ -328,7 +344,7 @@ impl CrowVNode {
     /// Render to HTML string.
     pub fn to_html(&self) -> String {
         match self {
-            CrowVNode::Text(s) => html_escape(s),
+            CrowVNode::Text(s) => escape_text(s),
             CrowVNode::Raw(s) => s.clone(),
             CrowVNode::Element {
                 tag,
@@ -711,7 +727,7 @@ impl Builder {
             Some(last @ CrowVNode::Text(_)) => {
                 if let CrowVNode::Text(prev) = last {
                     if source.contains('&') {
-                        let merged = format!("{}{}", html_escape(prev), source);
+                        let merged = format!("{}{}", escape_text(prev), source);
                         *last = CrowVNode::Raw(merged);
                     } else {
                         prev.push_str(source);
@@ -1334,6 +1350,29 @@ impl<T: ChildList + ?Sized> ChildList for &T {
     fn into_nodes(&self) -> Vec<CrowVNode> { (**self).into_nodes() }
 }
 
+/// The nodes a frame's column contributes as a child: each cell, as a
+/// list's items do — its text as `log` writes it, a missing cell as a
+/// failed value shows in a view (the interpreter had drawn it as 0, and
+/// the compiled page the whole column as one text).
+pub fn column_children(c: &crow_runtime::frame::CrowColumn) -> Vec<CrowVNode> {
+    use crow_runtime::display::CrowDisplay;
+    use crow_runtime::frame::Column;
+    (0..c.len())
+        .map(|i| {
+            if !c.valid[i] {
+                return CrowVNode::failed("missing");
+            }
+            CrowVNode::text(&match c.data.as_ref() {
+                Column::Int(v) => v[i].crow_fmt(),
+                Column::Float(v) => v[i].crow_fmt(),
+                Column::Str(v) => v[i].to_string(),
+                Column::Bool(v) => v[i].crow_fmt(),
+                Column::DateTime(..) => c.data.fmt_cell(i, true),
+            })
+        })
+        .collect()
+}
+
 /// The nodes a list child contributes.
 pub fn children_of<T: ChildList + ?Sized>(list: &T) -> Vec<CrowVNode> {
     list.into_nodes()
@@ -1454,12 +1493,22 @@ fn text_of(children: &[CrowVNode]) -> String {
         .collect()
 }
 
-/// Escape HTML special characters.
+/// Text placed in a page: `&`, `<` and `>` escaped, which is all text
+/// needs — the one escape both modes write a view's text with (the
+/// compiled page had escaped its quotes too, and the interpreter's had
+/// not: crow check --self's views family).
+pub fn escape_text(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+/// An attribute's value placed in a page: text's escapes and its quotes.
+pub fn escape_attr(s: &str) -> String {
+    s.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+/// Escape HTML special characters, as an attribute's value takes them.
 fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-     .replace('<', "&lt;")
-     .replace('>', "&gt;")
-     .replace('"', "&quot;")
+    escape_attr(s)
 }
 
 impl CrowComponent {
