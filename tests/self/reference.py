@@ -68,6 +68,63 @@ class C(list):
     """A frame's column: its cells, None where one is missing."""
 
 
+class J:
+    """A parsed value (spec, JSON): read as the program's use implies; a
+    position past its list, a negative one, or a key it lacks is an error
+    of reason null; never written."""
+
+    def __init__(self, v):
+        self.v = v
+
+
+def json_shown(v, top):
+    if isinstance(v, dict):
+        return "[" + ", ".join("{} = {}".format(k, json_shown(v[k], False)) for k in sorted(v)) + "]"
+    if isinstance(v, list):
+        return "[" + ", ".join(json_shown(x, False) for x in v) + "]"
+    if v is None:
+        raise Skip()
+    return show(v, top)
+
+
+MOST_MS = 8_640_000_000_000_000
+
+
+class Mo:
+    """A moment: milliseconds from 1970 and the offset (minutes east of UTC)
+    it was written in (spec, Moments)."""
+
+    def __init__(self, ms, offset=0):
+        if abs(ms) > MOST_MS:
+            raise Err()
+        self.ms, self.offset = ms, offset
+
+    def shown(self):
+        import datetime
+        local = self.ms + self.offset * 60_000
+        secs, ms = divmod(local, 1000)
+        try:
+            dt = datetime.datetime(1970, 1, 1) + datetime.timedelta(seconds=secs)
+        except OverflowError:
+            raise Skip()
+        if self.offset == 0 and local % 86_400_000 == 0:
+            return dt.strftime("%Y-%m-%d") if 1000 <= dt.year <= 9999 else _skip()
+        if not 1000 <= dt.year <= 9999:
+            raise Skip()
+        text = dt.strftime("%Y-%m-%dT%H:%M:%S")
+        if ms:
+            text += ".%03d" % ms
+        if self.offset == 0:
+            return text + "Z"
+        sign = "+" if self.offset > 0 else "-"
+        h, m = divmod(abs(self.offset), 60)
+        return text + "%s%02d:%02d" % (sign, h, m)
+
+
+def _skip():
+    raise Skip()
+
+
 FAIL = object()
 
 VALUES = {
@@ -102,6 +159,10 @@ VALUES = {
     # the self-check's frame: a = [1, 2, 3], b = ['x', 'y', 'z'],
     # on = [true, false, true], f = [1.5, 2.5, 3.5]; and a left join's
     # column with a missing cell
+    "moment": Mo(1767323045000),
+    "json": J({"a": 1, "b": [1, 2], "c": "x"}),
+    "jsonarr": J([1, 2, 3]),
+    "tensors": L([T([1.0, 2.0], [2]), T([3.0, 4.0], [2])]),
     "colint": C([1, 2, 3]),
     "coltext": C(["x", "y", "z"]),
     "colbool": C([True, False, True]),
@@ -167,6 +228,10 @@ def show(v, top=True):
         return "[" + ", ".join("{} = {}".format(k, show(v[k], False)) for k in sorted(v)) + "]"
     if isinstance(v, Dec):
         return format(v.d, "f")
+    if isinstance(v, Mo):
+        return v.shown()
+    if isinstance(v, J):
+        return json_shown(v.v, top)
     raise Skip()
 
 
@@ -237,6 +302,10 @@ def clamp(i, n):
 
 
 def f_len(x):
+    if isinstance(x, J):
+        if isinstance(x.v, (list, dict, str)):
+            return len(x.v)
+        raise Err()
     if isinstance(x, (str, L, M)):
         return len(x)
     if isinstance(x, T):
@@ -477,6 +546,8 @@ def f_round(x, *rest):
 
 def f_minmax(pick):
     def f(a, b):
+        if isinstance(a, Mo) and isinstance(b, Mo):
+            return pick(a, b, key=lambda m: m.ms)
         if is_num(a) and is_num(b):
             r = pick(a, b)
             return float(r) if isinstance(a, float) or isinstance(b, float) else r
@@ -498,6 +569,8 @@ def column_of(f, x):
 
 
 def f_int(x):
+    if isinstance(x, Mo):
+        return trunc_div(x.ms, 1000)
     if isinstance(x, C):
         return column_of(f_int, x)
     if isinstance(x, bool):
@@ -519,6 +592,8 @@ def f_int(x):
 
 
 def f_float(x):
+    if isinstance(x, Mo):
+        return x.ms / 1000.0
     if isinstance(x, C):
         return column_of(f_float, x)
     if isinstance(x, bool):
@@ -579,6 +654,8 @@ def f_join(xs, sep):
 
 
 def f_str(x):
+    if isinstance(x, J):
+        return json_shown(x.v, True)
     if isinstance(x, C):
         return C(None if c is None else show(c, True) for c in x)
     return show(x, True)
@@ -847,7 +924,150 @@ BUILTINS = {
 BUILTINS.update(MATH)
 
 
+def f_moment(x, *rest):
+    """`moment[…]`: of seconds, in UTC; of a moment, itself; of text, ISO
+    8601 (the catalog's texts write none); of parts in a zone."""
+    if rest:
+        if len(rest) == 6 and all(is_int(v) for v in (x,) + rest[:4]) and is_num(rest[4]) and isinstance(rest[5], str):
+            if rest[5] not in ("UTC", "Z") and not rest[5].startswith(("+", "-")):
+                import zoneinfo
+                try:
+                    zoneinfo.ZoneInfo(rest[5])
+                except Exception:
+                    raise Err()
+            raise Skip()
+        if len(rest) == 1 and isinstance(rest[0], str):
+            # (a zone: one it does not know is an error value)
+            if rest[0] in ("", "abc", "a", "42") or " " in rest[0]:
+                raise Err()
+        raise Skip()
+    if isinstance(x, Mo):
+        return x
+    if isinstance(x, bool):
+        raise Skip()
+    if is_num(x):
+        ms = float(x) * 1000.0
+        if ms != ms or abs(ms) > MOST_MS:
+            raise Err()
+        return Mo(int(round_half_away(ms)) if isinstance(x, float) else int(x) * 1000)
+    if isinstance(x, str):
+        import re
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})?)?", x):
+            raise Err()
+        raise Skip()
+    raise Skip()
+
+
+def f_bucket(t, span):
+    if not isinstance(t, Mo) or not is_num(span) or isinstance(span, bool):
+        raise Skip()
+    if span <= 0:
+        raise Err()
+    span_ms = float(span) * 1000.0
+    if 86_400_000 % span_ms != 0:
+        raise Skip()  # (a span that does not divide a day: aligned as the spec words it, not asked)
+    local = t.ms + t.offset * 60_000
+    day = (local // 86_400_000) * 86_400_000
+    start = day + int((local - day) // span_ms * span_ms)
+    return Mo(start - t.offset * 60_000, t.offset)
+
+
+def f_moment_any(x, *rest):
+    if isinstance(x, C) and not rest:
+        out = []
+        for c in x:
+            try:
+                out.append(None if c is None else f_moment(c))
+            except Err:
+                out.append(None)
+        return C(out)
+    return f_moment(x, *rest)
+
+
+def f_fma(a, b, c):
+    """a × b + c rounded once: exact in fractions, then the nearest float."""
+    from fractions import Fraction
+    if not all(is_num(v) and not isinstance(v, bool) for v in (a, b, c)):
+        raise Skip()
+    a, b, c = float(a), float(b), float(c)
+    if not all(math.isfinite(v) for v in (a, b, c)):
+        raise Skip()
+    r = Fraction(a) * Fraction(b) + Fraction(c)
+    try:
+        return float(r)
+    except OverflowError:
+        return math.inf if r > 0 else -math.inf
+
+
+def f_clip(t, lo, hi):
+    tt = as_tensor(t) if not isinstance(t, bool) else None
+    if tt is None or not all(is_num(v) and not isinstance(v, bool) for v in (lo, hi)) or lo > hi:
+        raise Skip()
+    return T([min(max(v, float(lo)), float(hi)) for v in tt.data], tt.shape)
+
+
+def f_stack(xs, *rest):
+    if rest or not isinstance(xs, L) or not xs or not all(isinstance(v, T) and len(v.shape) == 1 for v in xs):
+        raise Skip()
+    if len({v.shape[0] for v in xs}) != 1:
+        raise Err()
+    return T([n for v in xs for n in v.data], [len(xs), xs[0].shape[0]])
+
+
+def f_mod(t, d):
+    tt = as_tensor(t) if not isinstance(t, bool) else None
+    if tt is None or not is_num(d) or isinstance(d, bool):
+        dd = as_tensor(d) if not isinstance(d, bool) else None
+        if tt is None or dd is None:
+            raise Skip()
+        if any(v < 0 for v in tt.data + dd.data):
+            raise Skip()  # (a negative's remainder: not said)
+        return elementwise(lambda x, y: math.fmod(x, y) if y != 0 else math.nan, tt, dd)
+    if float(d) <= 0 or any(v < 0 for v in tt.data):
+        raise Skip()
+    return T([math.fmod(v, float(d)) for v in tt.data], tt.shape)
+
+
+def f_where_math(cond, a, b):
+    c = cond
+    # (a mask — a list of bools, a column of them, a missing cell false — is
+    # numbers where numbers are asked: true 1, false 0)
+    if isinstance(c, (L, C)) and c and all(isinstance(v, bool) or v is None for v in c):
+        c = T([1.0 if v else 0.0 for v in c], [len(c)])
+    ct = as_tensor(c) if not isinstance(c, bool) else None
+    # (math's `where` takes numbers held together on both sides: a single
+    # number is refused, `0.0 * v` writes zeros)
+    if ct is None or not all(isinstance(v, (L, C, T)) for v in (a, b)):
+        raise Skip()
+    at, bt = as_tensor(a), as_tensor(b)
+    if at is None or bt is None:
+        raise Skip()
+    def pick(i, v):
+        return v.data[i] if isinstance(v, T) else float(v)
+    for v in (at, bt):
+        if isinstance(v, T) and v.shape != ct.shape:
+            raise Err()
+    return T([pick(i, at) if x != 0 else pick(i, bt) for i, x in enumerate(ct.data)], ct.shape)
+
+
+def f_len_json(x):
+    return f_len(x)
+
+
+BUILTINS["moment"] = f_moment_any
+BUILTINS["bucket"] = f_bucket
+BUILTINS["math.fma"] = lambda a, b, c: f_fma(a, b, c)
+BUILTINS["math.clip"] = f_clip
+BUILTINS["math.stack"] = f_stack
+BUILTINS["math.mod"] = f_mod
+BUILTINS["math.where"] = f_where_math
+
+
 def f_type(x):
+    if isinstance(x, J):
+        return {dict: "map", list: "array", str: "str", bool: "bool", int: "int", float: "float"}.get(type(x.v), "none")
+    if isinstance(x, Mo):
+        return "moment"
     if isinstance(x, bool):
         return "bool"
     if is_int(x):
@@ -883,6 +1103,16 @@ def is_mask(i):
 
 def f_index(b, i):
     if isinstance(i, bool):
+        raise Skip()
+    if isinstance(b, J):
+        if isinstance(b.v, list) and is_int(i):
+            if 0 <= i < len(b.v):
+                return J(b.v[i])
+            raise Err()
+        if isinstance(b.v, dict) and isinstance(i, str):
+            if i in b.v:
+                return J(b.v[i])
+            raise Err()
         raise Skip()
     if isinstance(b, (str, L, C, T)):
         n = b.shape[0] if isinstance(b, T) else len(b)
@@ -1241,6 +1471,24 @@ def whole_equal(a, b):
     return True
 
 
+def moment_op(op, a, b):
+    """A moment on or back by seconds, the seconds between two, compared by
+    instant (spec, Moments)."""
+    num = lambda x: is_num(x) and not isinstance(x, bool)
+    if op == "+" and isinstance(a, Mo) and num(b):
+        return Mo(a.ms + round_half_away(float(b) * 1000.0), a.offset)
+    if op == "+" and num(a) and isinstance(b, Mo):
+        return Mo(b.ms + round_half_away(float(a) * 1000.0), b.offset)
+    if op == "-" and isinstance(a, Mo) and num(b):
+        return Mo(a.ms - round_half_away(float(b) * 1000.0), a.offset)
+    if op == "-" and isinstance(a, Mo) and isinstance(b, Mo):
+        return (a.ms - b.ms) / 1000.0
+    if op in ("eq", "ne", "gt", "lt", "gte", "lte") and isinstance(a, Mo) and isinstance(b, Mo):
+        x, y = a.ms, b.ms
+        return {"eq": x == y, "ne": x != y, "gt": x > y, "lt": x < y, "gte": x >= y, "lte": x <= y}[op]
+    raise Skip()
+
+
 def operator(op, args):
     if op in ("neg",):
         (a,) = args
@@ -1256,6 +1504,8 @@ def operator(op, args):
             return not a
         raise Skip()
     a, b = args
+    if isinstance(a, Mo) or isinstance(b, Mo):
+        return moment_op(op, a, b)
     collection = lambda x: isinstance(x, (L, C, T))
     if op in ("+", "-", "*", "/", "%", "^", ".*", "./", ".^"):
         if collection(a) or collection(b):
@@ -1284,6 +1534,10 @@ def operator(op, args):
 
 def answer(what, names):
     args = [value(n) for n in names]
+    # (a parsed value is read as each use implies: beyond showing, measuring
+    # and indexing it, not answered here)
+    if any(isinstance(a, J) for a in args) and what not in ("form:show", "len", "form:index", "type", "str", "form:spliced"):
+        raise Skip()
     if what == "type" and args[0] is FAIL:
         return "error"
     # (what is shown of a failed value names its line, and `str` of one is
