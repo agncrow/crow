@@ -311,6 +311,14 @@ const PUT: &str = "<put>";
 
 /// The pipeline every runner shares: the front end's lowering, inference,
 /// then the lowering to the IR.
+/// Whether the interpreter walks every body (`CROW_WALK=1`), its prepared
+/// form and parallel loops off: a second interpreter for `crow check
+/// --self`, which every program must agree with.
+fn walk_only() -> bool {
+    static WALK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *WALK.get_or_init(|| std::env::var("CROW_WALK").is_ok_and(|v| !v.is_empty() && v != "0"))
+}
+
 pub fn prepare(stmts: &[crate::ast::Stmt], name: &str) -> Result<(Program, crate::type_infer::TypeContext), String> {
     let stmts = crate::lower::lower_program(stmts)?;
     let mut ctx = crate::type_infer::TypeContext::new();
@@ -510,7 +518,10 @@ impl IrInterp {
             in_view: 0,
             texts_known: Vec::new(),
             walker_loops: 0,
-            tracing: false,
+            // (`CROW_WALK=1`: every body walked and every loop run in order,
+            // as a traced run is — the plain path `crow check --self` holds
+            // the prepared form and the parallel loops to)
+            tracing: walk_only(),
             tick: 0,
             engine_loaded: false,
             cancel: None,

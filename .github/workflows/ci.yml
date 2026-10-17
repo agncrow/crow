@@ -171,3 +171,27 @@ jobs:
       - name: Disk used by the run
         if: always()
         run: df -h / | tail -1; du -sh target 2>/dev/null || true
+
+  # Crow held to itself: cases generated from the compiler's own tables, each
+  # run interpreted, walked, unfused, unmoved and compiled; the findings
+  # known are listed in tests/self/known.txt, which only shrinks
+  self:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_INCREMENTAL: 0
+    steps:
+      - name: Free disk space (the batches build programs of their own)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/local/share/boost \
+            /usr/local/.ghcup /usr/share/swift /usr/lib/jvm /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules
+          df -h / | tail -1
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build crow
+        run: cargo build --release
+      - name: crow check --self (every finding new or gone fails; the groups are in target/crow_self/summary.txt)
+        run: ./target/release/crow check --self
+      - name: The findings, grouped
+        if: always()
+        run: cat target/crow_self/summary.txt 2>/dev/null | head -120 || true

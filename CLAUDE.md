@@ -27,6 +27,7 @@ cargo clippy --workspace --all-features
 ./target/release/crow test --packages
 ./target/release/crow test --fuzz 20
 ./target/release/crow test --fuzz 50 --mistakes
+./target/release/crow check --self
 ./target/release/crow test --served
 ./target/release/crow test --docs
 ./target/release/crow test --book
@@ -806,6 +807,31 @@ steps on every push and must be green.
   --filter-platform`, which reads build dependencies for the target, as
   `cargo tree --target` does not) and stubs the rest: a new platform is a
   word there.
+- `crow check --self` (src/selfcheck.rs) holds Crow to itself: cases
+  generated from the compiler's tables (every row × the kinds it takes,
+  from `tried_first`, a `Kind` match with no wildcard; every collection ×
+  every index; every operator × every operand pair; value shapes; a helper
+  at two kinds; ints past 64 bits; linked records), lowered in process
+  (`program_of_source`, a thread each: a panic is a finding), then the ones
+  that lower run in batches — a function per case (`self_case_N`, each case
+  with its OWN copy of every helper, `self_may_N`, so a batch is its cases
+  alone and a rustc error is placed in its case by the number) and a
+  dispatch from `CROW_FROM` to `CROW_TO` — under five configurations:
+  interpreted, walked (`CROW_WALK=1`: the interpreter's traced path, every
+  body walked and every loop in order), unfused (`CROW_NO_FUSE=1`), unmoved
+  (`CROW_NO_MOVES=1`: `place_moves_in` returns at once) and compiled. Every
+  process is held to a memory budget (RAM less 9 GB in all, `--memory GB`
+  says another; 1 GB each, footprint polled through libc; over it the case
+  is a `memory` finding),
+  30 s and 1 MB of output: the first version ran sixteen `range[2^63]`s at
+  once and took the machine down. A run stopped from outside may lose its
+  buffered markers, so the cases from the last marker run one per process
+  until the culprit is found. Findings: `target/crow_self/findings.txt`,
+  grouped in `summary.txt`; refusals in `refusals.txt`; rows not run in
+  `unexercised.txt`. `tests/self/known.txt` is the ratchet (a new finding
+  or a gone one fails; `--bless` rewrites it). `--only word`,
+  `--lower-only` (seconds), `--clean` (the builders' caches under
+  target/crow_self/build/w*, kept between runs).
 - `nodes[n]` is removed (2026-10-11; its message of its own went
   2026-10-16, as `filter`'s did — a replaced name is an unknown name): the
   process count is `crow launch <n>`'s, a process reads its rank with

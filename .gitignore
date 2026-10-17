@@ -77,3 +77,4 @@ editors/vscode/node_modules/
 tests/bench/data/
 editors/vscode/*.vsix
 editors/vscode/node_modules/
+!tests/self/known.txt

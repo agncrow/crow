@@ -119,6 +119,17 @@ repository root points assistants here.
     `scripts/coverage.sh --arms` writes the lines no suite reaches, by file,
     with the match arms among them named: a backend's arm for what the
     lowering must never produce is where the next slip hides.
+23. **Held to itself.** Line coverage says a line ran, not that it ran
+    with every kind it meets: a feature tested where its author expected it
+    passed every suite while it broke beside an older one. `crow check
+    --self` (`src/selfcheck.rs`) writes its cases from the compiler's own
+    tables — every row with every kind it takes, every collection at every
+    index, every operator over every pair of operands, the shapes a value
+    meets — and runs each in every configuration that must agree
+    (interpreted, walked, unfused, unmoved, compiled). A new row, kind or
+    operator is covered by the tables the check reads: a `Kind` names the
+    values it is tried with (the match has no wildcard). The findings known
+    are listed in `tests/self/known.txt`, which only shrinks.
 
 ## Workflow
 

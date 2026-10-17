@@ -41,6 +41,7 @@ mod rust_names;
 mod served;
 mod compiled_harness;
 mod served_parity;
+mod selfcheck;
 mod sql_types;
 #[cfg(test)]
 mod totality;
@@ -173,6 +174,10 @@ fn crow_main() {
         "launch" => cmd_launch(),
         "db" => cmd_db(&args[2..]),
         "check" => {
+            // `crow check --self`: Crow held to itself (src/selfcheck.rs)
+            if args.iter().any(|a| a == "--self") {
+                process::exit(selfcheck::cmd_self_check(&args[2..]));
+            }
             let mut verbose = false;
             let mut strict = false;
             let mut accept_all = false;
@@ -3412,8 +3417,13 @@ fn ir_of_file(entry: &str, describe: bool) -> Result<String, String> {
 
 /// A program's IR, lowered as every pipeline lowers it.
 fn program_of_file(entry: &str, describe: bool) -> Result<ir::Program, String> {
-    let source = read_file(entry);
-    let stmts = build(&source).map_err(|e| e.to_string())?;
+    program_of_source(&read_file(entry), entry, describe)
+}
+
+/// A program's IR from its text, as if read from `entry`: the same pipeline
+/// (`crow check --self` lowers thousands of cases without writing them).
+pub(crate) fn program_of_source(source: &str, entry: &str, describe: bool) -> Result<ir::Program, String> {
+    let stmts = build(source).map_err(|e| e.to_string())?;
     let source_dir = std::path::Path::new(entry).parent().unwrap_or(std::path::Path::new("."));
     let mut visited = std::collections::HashSet::new();
     let stmts = expand_module_imports(&stmts, source_dir, &mut visited);

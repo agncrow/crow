@@ -199,6 +199,64 @@ trading system's bug history:
 The language gaps these point at (background work, freshness, periodicity)
 are documented as reviewable proposals in `discovered-features.md`.
 
+## crow check --self — Crow held to itself
+
+`crow check --self` checks the language rather than a program. It writes
+its cases from the compiler's own description of Crow, so a builtin, a
+kind or an operator added to the compiler is covered the day it is added,
+with no test someone has to remember to write:
+
+- every builtin row (`src/table.rs`) called with a value of each kind its
+  parameters take — the kinds' values tried until a call lowers — then each
+  parameter varied over the catalog's values: the usual one and its edges
+  (zero, negative, empty, past 64 bits, text that reads as a number, a
+  value that can fail, one that failed);
+- every collection read and written at every kind of index: a position,
+  one from the end, past the end, a key, a mask, a column of bools;
+- every operator over every pair of operands, and `in` and `not in`;
+- the shapes a value meets: shown, measured, spliced into text, decided
+  on, walked, collected, handed to a function and back, held in a record,
+  a list and a map, copied, lent, reassigned, written as JSON and read
+  back;
+- a helper called with two kinds in one program (a copy per signature);
+- ints past 64 bits, and records that link records of their kind.
+
+Each case is lowered first, in the process, in seconds. A refusal is held
+to the rules every message keeps (it names a line, and only what the
+program wrote); a panic, an internal error or a verifier finding is a bug
+in Crow. The cases that lower run in batches — a program of one function
+per case, a marker before each — under five configurations that must
+agree:
+
+| Configuration | What differs |
+|---|---|
+| interpreted | `crow run -i`: the prepared form, typed registers, parallel loops |
+| walked | `CROW_WALK=1`: every body walked, every loop in order |
+| unfused | `CROW_NO_FUSE=1`: no fused tensor chains or frame masks |
+| unmoved | `CROW_NO_MOVES=1`: no moves and no early frees |
+| compiled | `crow build`, then the binary |
+
+A disagreement, a crash, a hang, a build the Rust compiler refuses, or an
+internal error in any of them is a finding. Every finding is written to
+`target/crow_self/findings.txt` with each configuration's answer; the
+refusals go to `refusals.txt`, and the rows the check cannot run here —
+effects, servers, files, the network — to `unexercised.txt`.
+
+The findings known are listed in `tests/self/known.txt`, and the list only
+shrinks: a new finding fails the check, and so does a listed one no run
+finds any more (strike it, or `--bless` to write the list again).
+
+Every process the check starts is held to a budget: together they may
+hold the machine's memory less 9 GB kept for the system (half of a
+machine of 18 GB or less; `--memory GB` says another amount), any
+one of them a gigabyte, thirty seconds and a megabyte of output. A case
+past its share is stopped and is a finding (`memory`, `hang`, `output`):
+a program that asks for `range[9223372036854775807]` is one.
+
+Flags: `--only word` (the cases whose ids hold it), `--lower-only` (the
+lowering alone), `--bless`, `--clean` (removes the builders' caches,
+which otherwise stay for the next run), `--memory GB`.
+
 ## crow fix
 
 Without `--hazard`, `crow fix app.co` first mends what the program is refused

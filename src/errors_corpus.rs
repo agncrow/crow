@@ -136,7 +136,7 @@ fn printed(file: &str, out: &str) -> Vec<Entry> {
 /// The names a message speaks of before its advice — quoted, or called
 /// with `[]` — that the program's code does not hold; and any name of the
 /// compiler's own (`'<expression>'`, a token's name).
-fn foreign_names(source: &str, message: &str) -> Vec<String> {
+pub(crate) fn foreign_names(source: &str, message: &str) -> Vec<String> {
     let code: String = source.lines().map(|l| l.split("---").next().unwrap_or("")).collect::<Vec<_>>().join("\n");
     // the part of a message about what was written: before its advice (` —
     // `, `: `, a second sentence, `did you mean`), less the forms it offers

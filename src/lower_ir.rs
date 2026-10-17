@@ -5722,6 +5722,12 @@ fn reads_of_stmts(body: &[S], names: &mut BTreeSet<String>, clock: &mut bool) {
 /// locals (inside a loop body, the ones the body itself defines, since
 /// the body repeats), `None` allows every local the block defines.
 fn place_moves_in(block: &mut Block, live_after: &HashSet<String>, allowed: Option<&HashSet<String>>) {
+    // (`CROW_NO_MOVES=1`: every read a copy and nothing let go early — the
+    // program `crow check --self` holds the move pass to)
+    static NO_MOVES: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *NO_MOVES.get_or_init(|| std::env::var("CROW_NO_MOVES").is_ok_and(|v| !v.is_empty() && v != "0")) {
+        return;
+    }
     let defined: HashSet<String> = defined_in(block);
     let mut allowed_set: HashSet<String> = defined.clone();
     if let Some(a) = allowed {
