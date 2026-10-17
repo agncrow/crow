@@ -1,0 +1,8 @@
+--- respond with a status HTTP has not: 100 to 999
+use web
+
+fn made[req]
+    return respond[1000, 'made']
+
+route['/made', 'POST', made]
+serve[3000]

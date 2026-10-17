@@ -645,6 +645,8 @@ fn safe_div[a, b]
     a / b                    --- implicit return
 ```
 
+**A function answers on every path or on none.** One that returns a value somewhere returns one wherever it ends: a `return` with no value beside it, or a body that can end without one — a loop that finds nothing, an `if` with no `else` — is refused in both modes, at the line where the value is missing (`first_big[] returns an int, and its body can end here without returning one`). A `while true` that only a `return` leaves ends nowhere else. A function that answers nothing, or only fails (`return error[…]`), may end anywhere. (The interpreter had answered `done` where the function's value was an int, and the compiled program had not built.)
+
 
 ### Named Arguments with Defaults
 
@@ -3102,6 +3104,8 @@ A route's handler is handed the request, and nothing else: it is a function, so 
 | `arrow[frame]` | The frame as an Arrow IPC stream (`application/vnd.apache.arrow.stream`), which pandas, polars and every Arrow reader take |
 | `bytes[data]` | Raw binary response (`application/octet-stream`) |
 | `stream[feed]` | A text response sent as `feed` puts it, chunk by chunk; `stream[feed, a, …]` hands `feed` the rest |
+
+**A response's body is text, its status HTTP's.** `text`, `html`, `redirect`, `bytes` and `respond`'s body take text — a value of another kind is written into text first, `` text['`n`'] ``, and refused before the program runs; a parsed value is read as text, as any builtin reads one. `respond`'s status is an int from 100 to 999: one written in the program is refused (`respond[] takes an HTTP status, from 100 to 999, got 1000`), and one computed as it runs stops the handler in the same words — never moved to a status near it. `arrow` takes a frame. A route's handler returns a response: one that returns another value — `json[req.body]` parses the text — is refused before the program runs. A handler that stops, or whose response cannot be sent, answers 500 with the failure's id, its reason in the server's log, in both modes.
 
 **A stream is sent as its feed puts it.** `stream[feed, a, …]` answers at once, and when the response is sent it calls `feed[put, a, …]` on a thread of its own. Each `put[text]` sends that chunk to the reader as it is put, and answers whether the reader still listens: `false` once they have gone, so a long feed can stop early. The arguments after the feed are the values they have when the handler answers, which is how a feed reads the request. A feed puts text — a value is written into text first, ``put['`row`\n']`` — and a `put` handed anything else is refused before the program runs; the chunks go out in the order they are put, a loop's included. A feed that fails or stops ends the body where it is, and the log says why. The body is `text/plain`, sent chunked.
 

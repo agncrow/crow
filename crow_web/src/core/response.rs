@@ -8,6 +8,49 @@ use std::sync::{Arc, Mutex};
 /// database's address or a file's path (Vijay, 2026-10-01).
 pub const LOG_HAS_WHY: &str = "the server's log has why, as ";
 
+/// A response's body is text, as a feed's put takes it (spec, Responses):
+/// the words both modes refuse another kind with, `what` the kind as a
+/// refusal names it (`an int`).
+pub fn takes_text(form: &str, what: &str) -> String {
+    let status = if form == "respond" { "status, " } else { "" };
+    format!("{}[] takes text, got {}: write it into text, {}[{}'`…`']", form, what, form, status)
+}
+
+/// A route's handler that answered no response: the words the lowering
+/// refuses it with, and the server's log says where the run met one.
+pub fn not_a_response(handler: &str, what: &str) -> String {
+    // (`json` of text parses it: the likeliest way to answer a parsed value)
+    let parsed = if what == "a JSON value" { " — json[…] of text parses it, and json[…] of a map, a list or a record answers it" } else { "" };
+    format!("{}[] answers {}, not a response: a route's handler returns text[…], html[…], json[…], respond[…], redirect[…], bytes[…], msgpack[…], arrow[…] or stream[…]{}", handler, what, parsed)
+}
+
+/// `respond[status, body]` handed a status that is no int.
+pub fn takes_status(what: &str) -> String {
+    format!("respond[] takes an HTTP status, an int from 100 to 999, got {}: respond[404, 'no such thing']", what)
+}
+
+/// `arrow[frame]` handed another kind.
+pub fn takes_frame(what: &str) -> String {
+    format!("arrow[] takes a frame, got {}", what)
+}
+
+/// The status `respond` answers with, where HTTP has one (100 to 999): one
+/// it has not is refused in the words both modes say, never moved to a
+/// status near it (the interpreter had answered 1000 as 599, and the
+/// compiled program 65736 as 200).
+pub fn status(n: i64) -> Result<u16, String> {
+    match u16::try_from(n) {
+        Ok(s) if (100..=999).contains(&s) => Ok(s),
+        _ => Err(format!("respond[] takes an HTTP status, from 100 to 999, got {}", n)),
+    }
+}
+
+/// [`status`] in a compiled program: a status HTTP has not stops the
+/// handler at `line`, as the interpreter's does.
+pub fn status_at(n: i64, line: usize) -> u16 {
+    status(n).unwrap_or_else(|why| crow_runtime::stops::halt(line, &why))
+}
+
 /// A failure's id: eight hex digits, random, so the one a reader quotes
 /// finds its line in the log.
 pub fn failure_id() -> String {

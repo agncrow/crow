@@ -872,6 +872,26 @@ steps on every push and must be green.
   connection and a response are argument classes of their own
   (`Arg::Db`, `Arg::Response`): a value shows them, and the kinds check
   refuses them elsewhere — classed as not known, `len[conn]` had passed.
+- The self-check's routes family (`src/selfcheck/web.rs`, 2026-10-17)
+  serves each batch per configuration: ports come from a counter below the
+  system's ephemeral range (a port bound to 0, let go and handed to the
+  server had gone to another batch first, whose server the readiness
+  check then reached), and a server is a batch's only when it answers the
+  run's token at `/self-ready`. What it found: the response forms took any
+  value (`text[3]` did not build compiled; `respond[1000, …]` was 599
+  interpreted, 65736 was 200 compiled) — now text, an HTTP status, a
+  frame for `arrow`, refused in the lowering (`web_form`, `web_form_reads`
+  in checks.rs; words in `crow_web::core::response`); a handler answering
+  no response (an empty 200 compiled) and a function that can end without
+  its value (`done` interpreted, no build compiled) are refused
+  (`check_answered`); a `crow!` row's `Encoded` argument that can fail
+  moves its unwrap mark onto the encode's answer (`crow_call_args`), or
+  the mark is read by no one; `stream[feed, a]` and `later[f, a]` call
+  their function BY NAME — the width pass flows their arguments into its
+  parameters (`called_by_name`), never treating it as a value with an
+  adapter. And a ui control named like a module's function (`select` of
+  options beside `use frame`) skips that module's kinds check, as the
+  lowering reads it (finch's dropdowns had been refused).
 - `nodes[n]` is removed (2026-10-11; its message of its own went
   2026-10-16, as `filter`'s did — a replaced name is an unknown name): the
   process count is `crow launch <n>`'s, a process reads its rank with

@@ -1469,6 +1469,17 @@ impl Walk {
                 self.flow(&place, v);
             }
         }
+        // (and a form that calls a function by its name with the arguments
+        // after it: each flows into the parameter it is handed to)
+        let mut by_name: Vec<(String, Vec<Expr>)> = Vec::new();
+        crate::ir::visit_expr(e, &mut |x| {
+            if let Some((f, skipped, rest)) = called_by_name(x) {
+                let mut handed: Vec<Expr> = vec![Expr::Const(Const::Unit, Ty::Unit); skipped];
+                handed.extend(rest.iter().cloned());
+                by_name.push((f.to_string(), handed));
+            }
+        });
+        calls.extend(by_name);
         for (g, args) in calls {
             let Some(params) = self.fns.get(g.as_str()).cloned() else { continue };
             for (p, a) in params.iter().zip(&args) {
@@ -1839,6 +1850,28 @@ fn counter_of(l: &Expr, op: &str, r: &Expr) -> Option<(String, Expr, bool)> {
     }
 }
 
+/// A form that calls a function of the program by its name with the
+/// arguments after it — `stream[feed, a, …]` calls `feed[put, a, …]`,
+/// `later[f, a, …]` calls `f[a, …]`: the function, how many of its first
+/// parameters the form fills itself (a feed's `put`), and the arguments
+/// handed to the rest.
+fn called_by_name(x: &Expr) -> Option<(&str, usize, &[Expr])> {
+    let (name, args) = match x {
+        Expr::Call { target: Target::Runtime(n), args, .. } => (n.as_str(), args.as_slice()),
+        Expr::Effect { name, args, .. } => (name.as_str(), args.as_slice()),
+        _ => return None,
+    };
+    let skipped = match name {
+        "stream" => 1,
+        "later" => 0,
+        _ => return None,
+    };
+    match args.split_first() {
+        Some((Expr::FnRef(f, _), rest)) => Some((f.as_str(), skipped, rest)),
+        _ => None,
+    }
+}
+
 fn is_int(t: Option<&Ty>) -> bool {
     matches!(t.map(|t| t.payload()), Some(Ty::Int) | Some(Ty::Big))
 }
@@ -1966,11 +1999,18 @@ pub fn widen(program: &mut Program) {
     // (and a function used as a value: the type of the parameter that takes
     // it names its signature, which stays 64-bit — its body converts at its
     // edges, as a builtin's does)
+    // (a function a form calls by its name — `stream[feed, a, …]`,
+    // `later[f, a, …]` — is no value: its parameters take what it is handed)
     let mut handed: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut refs: HashMap<String, usize> = HashMap::new();
+    let mut named: HashMap<String, usize> = HashMap::new();
     for part in program.parts.iter() {
         let mut note = |x: &Expr| {
             if let Expr::FnRef(name, _) = x {
-                handed.insert(name.clone());
+                *refs.entry(name.clone()).or_default() += 1;
+            }
+            if let Some((f, _, _)) = called_by_name(x) {
+                *named.entry(f.to_string()).or_default() += 1;
             }
         };
         for f in &part.fns {
@@ -1987,6 +2027,7 @@ pub fn widen(program: &mut Program) {
             crate::ir::visit_expr(&f.default, &mut note);
         }
     }
+    handed.extend(refs.into_iter().filter(|(f, n)| *n > named.get(f).copied().unwrap_or(0)).map(|(f, _)| f));
     for part in program.parts.iter_mut() {
         for s in part.structs.iter_mut() {
             for (f, ty) in s.fields.iter_mut() {
@@ -2539,6 +2580,17 @@ impl<'a> Retype<'a> {
                             *a = handed(take(a), takes, crate::ir::Who::Row(row.name));
                         }
                     }
+                    // a form that calls a function by its name (`stream[feed,
+                    // a, …]`): each argument after the function as the
+                    // parameter it is handed to takes it, as a call's
+                    Target::Runtime(n) if n == "stream" && matches!(args.first(), Some(Expr::FnRef(..))) => {
+                        let Some(Expr::FnRef(f, _)) = args.first() else { return };
+                        if let Some(ps) = self.sigs.params.get(f.as_str()) {
+                            for (a, p) in args.iter_mut().skip(1).zip(ps.iter().skip(1)) {
+                                *a = to_type(take(a), p);
+                            }
+                        }
+                    }
                     // a form of its own: one that shows a value (`type`) takes
                     // it as it is; any other, its 64 bits
                     other => {
@@ -2552,9 +2604,21 @@ impl<'a> Retype<'a> {
                     }
                 }
             }
-            Expr::Effect { args, row, .. } => {
+            Expr::Effect { args, row, name, .. } => {
                 for a in args.iter_mut() {
                     self.expr(a);
+                }
+                // (`later[f, a, …]` calls f[a, …] by its name: each argument
+                // after the function as the parameter it is handed to takes it)
+                if name == "later"
+                    && let Some(Expr::FnRef(f, _)) = args.first()
+                {
+                    if let Some(ps) = self.sigs.params.get(f.as_str()).cloned() {
+                        for (a, p) in args.iter_mut().skip(1).zip(&ps) {
+                            *a = to_type(take(a), p);
+                        }
+                    }
+                    return;
                 }
                 // an effect takes a big int as its row's parameter does; `log`
                 // shows any value

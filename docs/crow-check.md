@@ -228,7 +228,17 @@ with no test someone has to remember to write:
 - a helper called with two kinds in one program (a copy per signature);
 - `fmt` by its named options, ints past 64 bits, records that link records
   of their kind, and the databases: SQLite in memory, a scratch Postgres
-  cluster (where `initdb` is on the PATH) and a ClickHouse stand-in.
+  cluster (where `initdb` is on the PATH) and a ClickHouse stand-in;
+- programs that serve (`src/selfcheck/web.rs`): every response
+  (`text`, `html`, `json`, `msgpack`, `arrow`, `bytes`, `respond`,
+  `redirect`, `stream` — a unit test holds every name web reserves to
+  this list or the list of names that answer no route) with every value
+  of the catalog, each case a route's handler asked by GET; and every way
+  a handler reads its request — the path's params, the query, the method
+  and path, the body as text, as JSON and a field of it, a header, a
+  form, a multipart body's files, a status read from the query — and what
+  answers no handler's value: a method the route does not name, a path
+  nothing answers, a limit passed, a stop.
 
 Each case is lowered first, in the process, in seconds. A refusal is held
 to the rules every message keeps (it names a line, and only what the
@@ -244,6 +254,15 @@ agree:
 | unfused | `CROW_NO_FUSE=1`: no fused tensor chains or frame masks |
 | unmoved | `CROW_NO_MOVES=1`: no moves and no early frees |
 | compiled | `crow build`, then the binary |
+
+A batch that serves is served by each configuration on a port of its own
+(from a counter below the range the system hands out, each run starting
+at a place of its own), and is the server's only when it answers the
+run's token at `/self-ready`; each case's requests are asked in turn and
+each answer read as `crow test --served` reads one — the status line, the
+content type and location, the body (bytes that are not UTF-8 as their
+hex), a failure's id read past. A server that stops answering ends the
+case it was asking, with what it said, and is started again for the next.
 
 Effects run too, each batch in a directory of its own made anew for every
 configuration — a text, a CSV, a JSON document and a directory to read,
@@ -267,8 +286,15 @@ function, a record, a list, a loop — must show as it shows alone, and
 a write or `fmt` computes from the spec's words, without Crow's runtime:
 Python's own arithmetic and text, the system's libm for a number's
 functions (Crow's), numpy for math's reductions (the spec holds `sum` to
-it), Rust's float display. A case answered otherwise is a finding,
-`wrong`; one the reference has no answer for is skipped, never guessed.
+it), Rust's float display. A route's answer is computed the same way:
+the status and its words, the content type a form gives (or `text/plain`,
+which a response that names none is served as), the body — JSON as
+`encode` writes it, MessagePack packed as the format says, an Arrow
+stream read back with pyarrow and held to the frame. A case answered
+otherwise is a finding, `wrong`; one the reference has no answer for is
+skipped, never guessed. `CROW_SELF_PYTHON` names the Python to ask (by
+default `python3` on the path): one with numpy, scipy and pyarrow
+answers every case that needs them.
 
 A disagreement, a crash, a hang, a build the Rust compiler refuses, or an
 internal error in any of them is a finding. Every finding is written to
@@ -287,12 +313,12 @@ wrote:
 | List | Holds | A new entry means |
 |---|---|---|
 | `tests/self/not-called.txt` | the builtins no case calls, with why | a builtin the cases' kinds and the registry's modules do not reach |
-| `tests/self/agreement-only.txt` | the builtins whose cases run and agree, none of which the reference answers, with why | a builtin with no right answer: give it one in the reference, or say why not |
+| `tests/self/agreement-only.txt` | the builtins whose cases run and agree, none of which the reference answers, with why — and the responses and request reads likewise (`web.json`, `web.read.query`) | a builtin, a response or a request read with no right answer: give it one in the reference, or say why not |
 | `tests/self/forms.txt` | the forms of the language (`src/ast.rs`'s statements, expressions and operators, read from the source) no case reaches | a form with no case |
 
 A builtin the machine cannot reach (no `initdb`, a scratch cluster that
 did not start) and a case the reference answers only with a library the
-machine lacks (numpy) are noted, never failing.
+machine lacks (numpy, pyarrow) are noted, never failing.
 
 Every process the check starts is held to a budget: together they may
 hold the machine's memory less 9 GB kept for the system (half of a

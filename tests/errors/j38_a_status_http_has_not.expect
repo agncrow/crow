@@ -1,0 +1,3 @@
+j38_a_status_http_has_not.co:5:12: respond[] takes an HTTP status, from 100 to 999, got 1000
+  5 │     return respond[1000, 'made']
+    │            ^^^^^^^

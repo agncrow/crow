@@ -91,6 +91,28 @@ fn dechunk(mut body: &[u8]) -> Vec<u8> {
     out
 }
 
+/// One request, as crow check --self's web families send it — any method,
+/// any headers, any body — and its answer as both modes must agree on it
+/// (`answer_of`: the status, the content type and location, the body, a
+/// failure's id read past).
+pub(crate) fn ask(port: u16, method: &str, path: &str, headers: &[(String, String)], body: &[u8]) -> Result<String, String> {
+    let mut http = std::net::TcpStream::connect(("127.0.0.1", port)).map_err(|e| e.to_string())?;
+    let _ = http.set_read_timeout(Some(Duration::from_secs(30)));
+    let extra: String = headers.iter().map(|(k, v)| format!("{}: {}\r\n", k, v)).collect();
+    write!(
+        http,
+        "{} {} HTTP/1.1\r\nHost: 127.0.0.1:{p}\r\n{}Content-Length: {}\r\nConnection: close\r\n\r\n",
+        method,
+        path,
+        extra,
+        body.len(),
+        p = port
+    )
+    .map_err(|e| e.to_string())?;
+    http.write_all(body).map_err(|e| e.to_string())?;
+    read_answer(&mut http).map(|raw| answer_of(&raw))
+}
+
 /// POST a file's bytes, as the page's script sends a picked file.
 fn request_with_body(port: u16, path: &str, body: &[u8]) -> Result<String, String> {
     let mut http = std::net::TcpStream::connect(("127.0.0.1", port)).map_err(|e| e.to_string())?;

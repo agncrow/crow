@@ -42,6 +42,8 @@
 //! (`agreement-only.txt`), and the forms of the language, read from
 //! `src/ast.rs`, no case reaches (`forms.txt`).
 
+mod web;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -279,6 +281,36 @@ pub(crate) struct Case {
     /// Postgres cluster, the ClickHouse stand-in): its run has no replay,
     /// which would answer `connect` in the server's place.
     live: bool,
+    /// A served case: its body is a route's handler (`fn self_case_N[req]`,
+    /// its own `return` the response), served at `/cN` with what the route
+    /// says, and asked the route's requests (the web families).
+    serve: Option<Route>,
+}
+
+/// A served case's route: its method where it names one, the path past
+/// `/cN` (a param: `/:name`), a limit, and the requests the check sends it.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Route {
+    method: Option<&'static str>,
+    tail: String,
+    limit: Option<u32>,
+    asks: Vec<Ask>,
+}
+
+/// One request a served case is asked: its method, the path past `/cN`,
+/// its headers and its body.
+#[derive(Clone, Debug)]
+pub(crate) struct Ask {
+    method: &'static str,
+    tail: String,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+}
+
+impl Ask {
+    fn get(tail: impl Into<String>) -> Ask {
+        Ask { method: "GET", tail: tail.into(), headers: Vec::new(), body: Vec::new() }
+    }
 }
 
 impl Case {
@@ -294,7 +326,14 @@ impl Case {
             }
         }
         body.extend(lines);
-        Case { id: id.into(), imports, body, expect: Vec::new(), refer: None, live: false }
+        Case { id: id.into(), imports, body, expect: Vec::new(), refer: None, live: false, serve: None }
+    }
+
+    /// The case is a route's handler, asked the route's requests.
+    fn served(mut self, route: Route) -> Case {
+        self.imports.insert("web");
+        self.serve = Some(route);
+        self
     }
 
     /// The case talks to a server of the check's own.
@@ -353,6 +392,9 @@ const HELPERS: &[(&str, &str)] = &[
     // (a connection to the check's echo server that has been sent something,
     // and one that has asked it a request: what a read waits for is there)
     ("self_sent", "fn self_sent[]\n    s = open['127.0.0.1', int[env['CROW_SELF_PORT', '9']], false, 5.0]\n    put = send[s, bytes['abc']]\n    return s\n"),
+    // (a stream's feed: the value's text, then a bar — its put named
+    // `out`, since `put` is sys's and a parameter is named like no builtin)
+    ("self_feed", "fn self_feed[out, x]\n    sent = out[str[x]]\n    more = out['|']\n    return\n"),
     ("self_asked", "fn self_asked[]\n    s = open['127.0.0.1', int[env['CROW_SELF_PORT', '9']], false, 5.0]\n    put = send[s, bytes['GET /self HTTP/1.1\\r\\nHost: self\\r\\n\\r\\n']]\n    return s\n"),
 ];
 
@@ -420,7 +462,10 @@ fn program(cases: &[&Case]) -> (String, Vec<usize>) {
             }
         }
         starts.push(out.lines().count() + 1);
-        out.push_str(&format!("fn self_case_{}[]\n", k));
+        // (a served case is a route's handler, handed the request, and its
+        // body answers the response; any other a function of no parameters
+        // whose logs are the case's)
+        out.push_str(&format!("fn self_case_{}[{}]\n", k, if c.serve.is_some() { "req" } else { "" }));
         for line in &c.body {
             for l in own(line).lines() {
                 out.push_str("    ");
@@ -428,7 +473,23 @@ fn program(cases: &[&Case]) -> (String, Vec<usize>) {
                 out.push('\n');
             }
         }
-        out.push_str("    return 0\n");
+        if c.serve.is_none() {
+            out.push_str("    return 0\n");
+        }
+    }
+    // a served batch: each case's route, the route that says whose server
+    // answers (the token the run hands it: a port another server holds is
+    // no batch's), then the server (its port the run's: CROW_PORT)
+    if cases.first().is_some_and(|c| c.serve.is_some()) {
+        out.push_str(&format!("fn self_ready[req]\n    return respond[200, env['{}', '']]\n", web::TOKEN));
+        for (k, c) in cases.iter().enumerate() {
+            let Some(r) = &c.serve else { continue };
+            let method = r.method.map(|m| format!("'{}', ", m)).unwrap_or_default();
+            let limit = r.limit.map(|n| format!(", limit = {}", n)).unwrap_or_default();
+            out.push_str(&format!("route['/c{}{}', {}self_case_{}{}]\n", k, r.tail, method, k, limit));
+        }
+        out.push_str(&format!("route['{}', self_ready]\nserve[3000]\n", web::READY));
+        return (out, starts);
     }
     // (the cases from CROW_FROM on, to CROW_TO where it is given)
     out.push_str("self_from = env['CROW_FROM', 'c0']\nself_to = env['CROW_TO', '']\nself_go = false\n");
@@ -1662,10 +1723,13 @@ fn consult_reference(dir: &Path, cases: &[Case], seen: &HashMap<String, Seen>, r
     if std::fs::write(&input, &lines).is_err() {
         return Referred { said: format!("cannot write {}", input.display()), ..Referred::default() };
     }
-    let out = match Command::new("python3").arg("-E").arg(reference).arg(&input).stdin(Stdio::null()).output() {
+    // (`CROW_SELF_PYTHON` names a Python with more of the libraries the
+    // reference asks — pyarrow, scipy — than the one on the path)
+    let python = std::env::var("CROW_SELF_PYTHON").ok().filter(|p| !p.trim().is_empty()).unwrap_or_else(|| "python3".to_string());
+    let out = match Command::new(&python).arg("-E").arg(reference).arg(&input).stdin(Stdio::null()).output() {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
         Ok(o) => return Referred { said: format!("the reference failed: {}", String::from_utf8_lossy(&o.stderr).lines().last().unwrap_or("")), ..Referred::default() },
-        Err(e) => return Referred { said: format!("no python3 to ask the reference: {}", e), ..Referred::default() },
+        Err(e) => return Referred { said: format!("no {} to ask the reference: {}", python, e), ..Referred::default() },
     };
     let by_id: HashMap<&str, &Case> = cases.iter().map(|c| (c.id.as_str(), c)).collect();
     let (mut wrong, mut said, mut answerable) = (0, String::new(), String::new());
@@ -1944,6 +2008,7 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
     // the cases
     let all = values();
     let mut cases = form_cases(&all);
+    cases.extend(web::route_cases(&all));
     let (rows, unexercised) = row_cases(&all, &only);
     let row_count = rows.len();
     cases.extend(rows);
@@ -2009,7 +2074,7 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
         for &i in &accepted {
             // (a case that talks to the check's own servers runs without
             // the replay: a batch of its own)
-            let key = format!("{}{}", cases[i].imports.iter().copied().collect::<Vec<_>>().join(","), if cases[i].live { "|live" } else { "" });
+            let key = format!("{}{}{}", cases[i].imports.iter().copied().collect::<Vec<_>>().join(","), if cases[i].live { "|live" } else { "" }, if cases[i].serve.is_some() { "|served" } else { "" });
             groups.entry(key).or_default().push(i);
         }
         let mut batches: Vec<Vec<usize>> = Vec::new();
@@ -2114,7 +2179,12 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
                         let config = &CONFIGS[c];
                         let fresh: Vec<bool> = batch.members.iter().map(|(_, c)| c.draws()).collect();
                         let live = batch.members.iter().any(|(_, c)| c.live);
-                        let seen = run_batch(&exe, &batch.dir, &batch.file, if config.compiled { Some(batch.binary.as_path()) } else { None }, config, &fresh, live);
+                        let binary = if config.compiled { Some(batch.binary.as_path()) } else { None };
+                        let seen = if batch.members.first().is_some_and(|(_, c)| c.serve.is_some()) {
+                            web::serve_batch(&exe, &batch.dir, &batch.file, binary, config, &batch.members)
+                        } else {
+                            run_batch(&exe, &batch.dir, &batch.file, binary, config, &fresh, live)
+                        };
                         if let Ok(mut r) = results.lock() {
                             r.insert((b, c), seen);
                         }
@@ -2216,9 +2286,16 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
         // a row whose cases ran, none of them answered (nor waiting on a
         // library this machine lacks), is held to agreement alone
         if referred.ran {
+            // (a response form, and a way a route reads its request, are
+            // entries of their own: `web.json`, `web.read.query`)
             let row_of = |id: &str| -> Option<String> {
                 let mut parts = id.splitn(3, '/');
-                matches!(parts.next(), Some("row" | "pair")).then(|| parts.next().map(str::to_string)).flatten()
+                match parts.next() {
+                    Some("row" | "pair") => parts.next().map(str::to_string),
+                    Some("route") => parts.next().map(|f| format!("web.{}", f)),
+                    Some("route-read") => parts.next().map(|n| format!("web.read.{}", n)),
+                    _ => None,
+                }
             };
             let mut ran: BTreeMap<String, (bool, bool)> = BTreeMap::new();
             for id in agreed_seen.keys() {
@@ -2464,6 +2541,8 @@ fn agreement_reason(row: &str) -> String {
         return "random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)".to_string();
     }
     match module {
+        "web" => "a response no reference answers yet".to_string(),
+        "web.read" => "a way a route reads its request no reference answers yet".to_string(),
         "llm" => "a model's reply: the empty replay answers, and no reference speaks for a model".to_string(),
         "chart" => "an indicator: no reference yet (pandas's rolling and ewm are the plan)".to_string(),
         "sys" => "the standard library's own layer: bytes, streams and protocols no reference models yet".to_string(),
@@ -2478,7 +2557,7 @@ fn agreement_reason(row: &str) -> String {
 /// binary was built from: a variant added there is a form the cases must
 /// reach, or `forms.txt` must name.
 fn ast_variants(name: &str) -> Vec<String> {
-    const AST: &str = include_str!("ast.rs");
+    const AST: &str = include_str!("../ast.rs");
     let Some(start) = AST.find(&format!("pub enum {} {{", name)) else { return Vec::new() };
     let body = &AST[start..];
     let end = body.find("\n}").unwrap_or(body.len());

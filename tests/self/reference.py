@@ -1549,7 +1549,303 @@ def operator(op, args):
 # ── the cases ───────────────────────────────────────────────────────
 
 
+# ── a route's answer (spec, Responses) ──────────────────────────────
+#
+# An answer is read as the self-check reads one (served_parity::answer_of):
+# the status line, the content type and location, the body — text, or
+# bytes that are not UTF-8 as `<n bytes: hex>` — the parts joined by ` | `,
+# a case's answers by a line `—`. Where a case's route sits in its batch
+# (`/c3`) is read past, as `/cN`.
+
+import http as _http
+import re as _re
+import struct as _struct
+
+
+class Exact(str):
+    """A decimal or a fraction: JSON holds it as the text it shows."""
+
+
+class Rec(dict):
+    """A record: JSON holds it as an object of its fields."""
+
+
+class Frame(list):
+    """A frame: its rows, each a dict of its cells."""
+
+
+ROUTE_VALUES = {
+    "path": "self_text.txt",
+    "csvpath": "self_data.csv",
+    "jsonpath": "self_data.json",
+    "dirpath": "self_dir",
+    "url": "http://127.0.0.1:9/self",
+    "sql": "SELECT 1 AS n",
+    "decimal": Exact("1.25"),
+    "fraction": Exact("1/3"),
+    "record": Rec({"x": 1, "y": 2}),
+    "frame": Frame([{"a": 1, "b": "x", "on": True, "f": 1.5}, {"a": 2, "b": "y", "on": False, "f": 2.5}, {"a": 3, "b": "z", "on": True, "f": 3.5}]),
+}
+
+STOPPED = "HTTP/1.1 500 Internal Server Error | content-type: text/plain | the request could not be answered — the server's log has why, as <id>"
+
+
+def route_value(name):
+    bare = name[4:] if name.startswith("may:") else name
+    if bare in ROUTE_VALUES and not name.startswith("fail:"):
+        return ROUTE_VALUES[bare]
+    return value(name)
+
+
+def answered(status, kinds, body):
+    if isinstance(body, bytes):
+        try:
+            body = body.decode("utf-8")
+        except UnicodeDecodeError:
+            body = "<{} bytes: {}>".format(len(body), body.hex())
+    return "HTTP/1.1 {} {} | {} | {}".format(status, _http.HTTPStatus(status).phrase, " | ".join(sorted(kinds)), body)
+
+
+def held(v):
+    """A value as JSON holds it, as `encode` writes it: an int past 64 bits
+    the text of its digits, a float that is not finite null, a moment its
+    ISO text, a decimal or a fraction its text, a tensor's whole numbers
+    ints (a matrix a list of its rows), a map's keys text, a failed value
+    null."""
+    if v is FAIL:
+        return None
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, int):
+        return v if -2**63 <= v < 2**63 else str(v)
+    if isinstance(v, float):
+        return v if math.isfinite(v) else None
+    if isinstance(v, Exact):
+        return str(v)
+    if isinstance(v, str):
+        return v
+    if isinstance(v, Mo):
+        return v.shown()
+    if isinstance(v, T):
+        if len(v.shape) >= 2:
+            return [held(r) for r in v.rows()]
+        return [int(f) if math.isfinite(f) and f == int(f) and -2**63 <= f < 2**63 else held(f) for f in v.data]
+    if isinstance(v, (L, C)):
+        return [held(x) for x in v]
+    if isinstance(v, (M, Rec)):
+        return {str(k): held(x) for k, x in v.items()}
+    if isinstance(v, J):
+        return v.v
+    raise Skip()
+
+
+def json_text(j):
+    """JSON as the runtime writes it (serde_json): compact, an object's keys
+    in order, a float as its shortest digits with an exponent past 1e16 or
+    under 1e-4 (`1e-7`, `1e+21`)."""
+    if j is None:
+        return "null"
+    if j is True:
+        return "true"
+    if j is False:
+        return "false"
+    if isinstance(j, int):
+        return str(j)
+    if isinstance(j, float):
+        r = repr(j)
+        if "e" in r:
+            m, e = r.split("e")
+            r = "{}e{}{}".format(m, "-" if int(e) < 0 else "+", abs(int(e)))
+        return r
+    if isinstance(j, str):
+        return json.dumps(j, ensure_ascii=False)
+    if isinstance(j, list):
+        return "[" + ",".join(json_text(x) for x in j) + "]"
+    if isinstance(j, dict):
+        return "{" + ",".join(json.dumps(k, ensure_ascii=False) + ":" + json_text(j[k]) for k in sorted(j)) + "}"
+    raise Skip()
+
+
+def packed(j):
+    """A JSON value packed as MessagePack, each piece in its smallest form
+    (the format's spec, "Formats"): a float always in 8 bytes."""
+    def counted(fixed, n, small, big):
+        if n <= 15:
+            return bytes([fixed + n])
+        return bytes([small]) + n.to_bytes(2, "big") if n < 65536 else bytes([big]) + n.to_bytes(4, "big")
+    if j is None:
+        return b"\xc0"
+    if j is True:
+        return b"\xc3"
+    if j is False:
+        return b"\xc2"
+    if isinstance(j, int):
+        if 0 <= j < 128 or -32 <= j < 0:
+            return (j & 0xFF).to_bytes(1, "big")
+        if j >= 0:
+            for tag, n in ((0xCC, 1), (0xCD, 2), (0xCE, 4), (0xCF, 8)):
+                if j < 2 ** (8 * n):
+                    return bytes([tag]) + j.to_bytes(n, "big")
+        for tag, n in ((0xD0, 1), (0xD1, 2), (0xD2, 4), (0xD3, 8)):
+            if j >= -(2 ** (8 * n - 1)):
+                return bytes([tag]) + j.to_bytes(n, "big", signed=True)
+        raise Skip()
+    if isinstance(j, float):
+        return b"\xcb" + _struct.pack(">d", j)
+    if isinstance(j, str):
+        b = j.encode("utf-8")
+        n = len(b)
+        if n <= 31:
+            return bytes([0xA0 + n]) + b
+        for tag, w in ((0xD9, 1), (0xDA, 2), (0xDB, 4)):
+            if n < 2 ** (8 * w):
+                return bytes([tag]) + n.to_bytes(w, "big") + b
+    if isinstance(j, list):
+        return counted(0x90, len(j), 0xDC, 0xDD) + b"".join(packed(x) for x in j)
+    if isinstance(j, dict):
+        return counted(0x80, len(j), 0xDE, 0xDF) + b"".join(packed(k) + packed(j[k]) for k in sorted(j))
+    raise Skip()
+
+
+def read_as_text(v):
+    """A body a response takes: text, a parsed value read as text (a number
+    its text; anything else stops), or a refusal."""
+    if isinstance(v, J):
+        if isinstance(v.v, str):
+            return v.v
+        if isinstance(v.v, (int, float)) and not isinstance(v.v, bool):
+            return json_text(v.v)
+        return None
+    if isinstance(v, str) and not isinstance(v, Exact):
+        return v
+    raise Err()
+
+
+def route_answer(form, names):
+    """`return F[v]` in a route's handler, asked once by GET. A kind the form
+    does not take is refused, whether or not the value failed; a value
+    that failed, of a kind it takes, is the handler's failure."""
+    name = names[0]
+    failing = name.startswith("fail:")
+    v = route_value("may:" + name[5:] if failing else name)
+    if form in ("text", "html", "redirect", "bytes", "respond"):
+        body = read_as_text(v)
+        if failing or body is None:
+            return STOPPED
+        if form == "text":
+            return answered(200, ["content-type: text/plain"], body)
+        if form == "html":
+            return answered(200, ["content-type: text/html"], body)
+        if form == "bytes":
+            return answered(200, ["content-type: application/octet-stream"], body.encode("utf-8"))
+        if form == "respond":
+            return answered(201, ["content-type: text/plain"], body)
+        # (a response that names no type of its own is served as text)
+        return answered(302, ["content-type: text/plain", "location: " + body.strip()], "")
+    if form == "json":
+        # a map, a record, a list or a frame; text is parsed, and anything
+        # else refused
+        if isinstance(v, Frame):
+            rows = [{k: held(x) for k, x in row.items()} for row in v]
+            return STOPPED if failing else answered(200, ["content-type: application/json"], json_text(rows))
+        if isinstance(v, (L, T, M, Rec)):
+            return STOPPED if failing else answered(200, ["content-type: application/json"], json_text(held(v)))
+        raise Err()
+    if form == "msgpack":
+        if isinstance(v, (Frame, C)):
+            raise Err()
+        body = packed(held(v))
+        return STOPPED if failing else answered(200, ["content-type: application/msgpack"], body)
+    if form == "arrow":
+        # a frame as an Arrow IPC stream, read back by pyarrow: its columns,
+        # in order, hold the frame's cells
+        if not isinstance(v, Frame):
+            raise Err()
+        if failing:
+            return STOPPED
+        return ArrowOf(v)
+    if form == "stream":
+        # (the feed puts the value's text, then a bar)
+        try:
+            shown = f_str(v)
+        except (Err, TypeError):
+            raise Skip()
+        if not isinstance(shown, str):
+            # (`str` of a column is a column of text, which put does not take)
+            raise Err()
+        return STOPPED if failing else answered(200, ["content-type: text/plain"], shown + "|")
+    raise Skip()
+
+
+class ArrowOf(str):
+    """An answer whose body is a frame's Arrow IPC stream: held to the frame
+    by reading the bytes back (pyarrow's reader), since a writer's padding
+    and metadata are its own."""
+
+    def __new__(cls, frame):
+        try:
+            import pyarrow  # noqa: F401
+        except ImportError:
+            raise Needs("pyarrow")
+        self = str.__new__(cls, "the frame's Arrow stream")
+        self.frame = frame
+        return self
+
+    def holds(self, seen):
+        import pyarrow.ipc
+        head = "HTTP/1.1 200 OK | content-type: application/vnd.apache.arrow.stream | "
+        m = _re.fullmatch(_re.escape(head) + r"<(\d+) bytes: ([0-9a-f]*)>", seen)
+        if not m:
+            return False
+        table = pyarrow.ipc.open_stream(bytes.fromhex(m.group(2))).read_all()
+        names = list(self.frame[0].keys())
+        return table.column_names == names and table.to_pydict() == {n: [row[n] for row in self.frame] for n in names}
+
+
+def asked(*answers):
+    return "\n—\n".join(answers)
+
+
+def read_answer(name):
+    """A route that reads its request, each request it is asked."""
+    ok = lambda kind, body: answered(200, ["content-type: " + kind], body)
+    jsoned = lambda j: ok("application/json", json_text(j))
+    said = {
+        "params": asked(jsoned({"name": "ada", "n": "3"}), jsoned({"name": "héllo w", "n": "0"})),
+        "query": asked(jsoned({"q": "hello world", "n": "3", "e": ""}), jsoned({"q": "a+b"}), jsoned({})),
+        "method-path": asked(jsoned({"m": "GET", "p": "/cN"}), jsoned({"m": "GET", "p": "/cN"})),
+        "body-text": asked(ok("text/plain", "a nest"), ok("text/plain", "héllo"), ok("text/plain", "")),
+        "body-json": asked(ok("text/plain", json_text({"a": [1, 2], "b": "x"})), STOPPED),
+        "body-field": asked(ok("text/plain", "x"), ok("text/plain", "3"), STOPPED),
+        "status-read": asked(answered(404, ["content-type: text/plain"], "x"), STOPPED, STOPPED),
+        "header": asked(ok("text/plain", "hello"), STOPPED),
+        "form": asked(jsoned({"a": "1", "b": "two words", "c": "é"})),
+        "files": asked(jsoned({"n": "1", "f": "field value", "name": "a.txt", "size": "10"})),
+        "method-named": asked(ok("text/plain", "made"), answered(405, [], "")),
+        # (limit = 2: a request a minute's share, 30 s, after the second)
+        "limit": asked(ok("text/plain", "ok"), ok("text/plain", "ok"), answered(429, ["content-type: text/plain; charset=utf-8"], "too many requests: try again in 30 s")),
+        "nowhere": asked(answered(404, ["content-type: text/html; charset=utf-8"], "<!DOCTYPE html><title>Not found</title><p>no page at /cN/nowhere/else</p>")),
+        "stopped": asked(STOPPED),
+    }
+    if name in ("falls-off", "failed", "failed-in-json", "bad-status"):
+        # refused before either mode runs: a handler answers on every path,
+        # a response's body is text, a map holds one kind, a status is HTTP's
+        raise Err()
+    if name not in said:
+        raise Skip()
+    return said[name]
+
+
+def placed_past(seen):
+    """An answer with where its case's route sits in its batch read past."""
+    return _re.sub(r"/c\d+", "/cN", seen)
+
+
 def answer(what, names):
+    if what.startswith("route:"):
+        return route_answer(what[6:], names)
+    if what.startswith("route-read:"):
+        return read_answer(what[11:])
     args = [value(n) for n in names]
     # (a parsed value is read as each use implies: beyond showing, measuring
     # and indexing it, not answered here)
@@ -1674,6 +1970,12 @@ def main():
             if expected is None:
                 if not failed(case):
                     print(json.dumps({"kind": "wrong", "id": case["id"], "expected": "a failure", "seen": case.get("seen", "")}))
+                continue
+            if case["what"].startswith("route") and "seen" in case:
+                case["seen"] = placed_past(case["seen"])
+            if isinstance(expected, ArrowOf) and "seen" in case and not case.get("end"):
+                if not expected.holds(case["seen"]):
+                    print(json.dumps({"kind": "wrong", "id": case["id"], "expected": str(expected), "seen": case["seen"]}))
                 continue
             if case.get("end") or case.get("seen") != expected:
                 seen = case.get("seen", "")

@@ -1,0 +1,3 @@
+j40_a_function_that_can_end_without_its_value.co:3:5: first_big[] returns an int, and its body can end here without returning one: end it with the value it answers then — a function answers on every path or on none
+  3 │     for x in xs
+    │     ^^^^^^^^^^^

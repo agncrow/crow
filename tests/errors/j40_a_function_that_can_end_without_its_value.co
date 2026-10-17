@@ -1,0 +1,7 @@
+--- a function answering an int from inside a loop, and nothing after it
+fn first_big[xs]
+    for x in xs
+        if x gt 3
+            return x
+
+log[first_big[push[push[[], 1], 5]]]

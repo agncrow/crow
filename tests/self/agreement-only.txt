@@ -296,7 +296,6 @@ web.auth.sign	a response or a protocol no reference models yet
 web.auth.verify	a response or a protocol no reference models yet
 web.mail.mail	a response or a protocol no reference models yet
 web.mail.smtp	a response or a protocol no reference models yet
-web.msgpack	a response or a protocol no reference models yet
 web.ws.close_socket	a response or a protocol no reference models yet
 web.ws.recv_for	a response or a protocol no reference models yet
 web.ws.recv_text	a response or a protocol no reference models yet

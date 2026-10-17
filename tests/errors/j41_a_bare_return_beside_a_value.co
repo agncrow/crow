@@ -1,0 +1,7 @@
+--- a function answering an int on one path and nothing on another
+fn half[n]
+    if n lt 0
+        return
+    return n / 2
+
+log[half[8]]

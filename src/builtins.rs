@@ -322,6 +322,16 @@ pub fn crow_to_json(trace: &str, val: &CrowValue) -> Result<serde_json::Value, S
             }
             Ok(serde_json::Value::Object(obj))
         }
+        // a map keyed by ints is an object keyed by their text, as encode
+        // writes it and the compiled program's is (`json[m]` had answered
+        // 500 — crow check --self, the routes family)
+        Value::IntMap(map) => {
+            let mut obj = serde_json::Map::new();
+            for (k, v) in map.iter() {
+                obj.insert(k.to_string(), crow_to_json(trace, v)?);
+            }
+            Ok(serde_json::Value::Object(obj))
+        }
         // a record is an object of its fields, as the compiled program's is
         // (it had been refused here, and did not build compiled)
         Value::StructInstance(si) => {

@@ -1581,6 +1581,7 @@ impl<'a> Lowerer<'a> {
         self.scopes.pop();
         self.v.reactive = false;
         let mut block = block?;
+        self.check_answered(name, kind, &ret, &block);
         if let Some(read) = std::mem::replace(&mut self.route_derived, saved_route) {
             let mut start: Vec<Stmt> = read.into_iter().map(|(d, ty)| Stmt::Let { var: d.clone(), ty: ty.clone(), expr: Expr::Derived(d, ty) }).collect();
             start.append(&mut block);
@@ -1590,6 +1591,31 @@ impl<'a> Lowerer<'a> {
         let param_set: HashSet<String> = params.iter().cloned().collect();
         place_moves_in(&mut block, &HashSet::new(), Some(&param_set));
         Ok(Fn { name: name.to_string(), params: ps, ret, body: block, kind, effects: vec![], tables_written: vec![], recursive: false })
+    }
+
+    /// A function that answers a value answers one on every path (spec,
+    /// Functions): a `return` with no value, and a body that can end
+    /// without one — a loop that finds nothing, an `if` with no `else` —
+    /// are refused in both modes. The interpreter had answered `done` where
+    /// the function's value was an int, the compiled program had not built,
+    /// and a bare `return` had been "the lowered program disagrees with
+    /// itself" (crow check --self, a route's handler that answered on one
+    /// path).
+    fn check_answered(&mut self, name: &str, kind: FnKind, ret: &Ty, body: &[Stmt]) {
+        if self.pass != Pass::Final || matches!(kind, FnKind::View | FnKind::Handler) || matches!(ret.payload(), Ty::Unit | Ty::Unknown) {
+            return;
+        }
+        let what = crate::table::Arg::of_type(ret.payload()).words();
+        let shown = crate::lower::shown(name);
+        let saved = self.v.line;
+        if let Some(line) = bare_return(body, saved) {
+            self.v.line = line;
+            self.refuse(format!("{}[] returns {}, and this `return` returns nothing: return a value here too — a function answers on every path or on none", shown, what));
+        } else if !ends_answered(body) {
+            self.v.line = body.iter().rev().find_map(|s| if let Stmt::Line(n) = s { Some(*n) } else { None }).unwrap_or(saved);
+            self.refuse(format!("{}[] returns {}, and its body can end here without returning one: end it with the value it answers then — a function answers on every path or on none", shown, what));
+        }
+        self.v.line = saved;
     }
 
     /// A body's parameters and locals as its lowering begins with them, kept
@@ -2500,6 +2526,20 @@ impl<'a> Lowerer<'a> {
                 // called for what it writes, as a statement's is
                 if self.at == Where::In(FnKind::Handler) {
                     self.refuse_before_helper(&mut x);
+                }
+                // a route's handler answers a response (spec, Responses): a
+                // value of another kind is refused before either mode runs —
+                // the interpreter had answered 500 as the request came, and
+                // the compiled route an empty 200 (crow check --self: under
+                // `use sys`, `text[bytes[…]]` is sys's text)
+                // (in a web program: without `use web` the route itself is
+                // what is refused)
+                if self.pass == Pass::Final && self.v.route_handlers.contains(&self.current_fn) && self.web_program() {
+                    let t = x.ty();
+                    if !matches!(t.payload(), Ty::Unknown | Ty::WebResponse) {
+                        let what = crate::table::Arg::of_type(t.payload()).words();
+                        self.refuse(crow_web::core::response::not_a_response(&self.current_fn, what));
+                    }
                 }
                 vec![Stmt::Return(Some(x))]
             }
@@ -4761,6 +4801,9 @@ impl<'a> Lowerer<'a> {
                     (false, _) => None,
                     (true, _) if open && item_at == Some(i) => None,
                     (true, Some(k)) if item_at == Some(i) => Some(k.clone()),
+                    // (a response's body is text, `respond`'s status an int:
+                    // forms of web's own, which no row says)
+                    (true, _) if module.is_none() && Self::web_form_reads(&name, i).is_some() && self.web_form(&name) => Self::web_form_reads(&name, i),
                     (true, _) => uses::row_says(&name, module.as_deref(), i, argc),
                 };
                 match kind {
@@ -5182,7 +5225,10 @@ impl<'a> Lowerer<'a> {
         let only_empties = lowered.iter().any(unknown_empty)
             && lowered.iter().all(|x| unknown_empty(x) || !matches!(x.ty().payload(), Ty::List(_) | Ty::Map(..) | Ty::Tensor(..) | Ty::Column(_) | Ty::Unknown | Ty::Json))
             && row.is_some_and(|r| !r.params.iter().any(|k| matches!(k, Kind::Item | Kind::ItemRef)));
-        if name != "type" && !alone && !only_empties && row.is_none_or(|r| r.ret.generic()) {
+        // (`json`'s response is a form of its own, which writes `[]` as
+        // JSON writes an empty array: its items any kind — compiled, they
+        // had had none, and the program did not build)
+        if !matches!(name, "type" | "json") && !alone && !only_empties && row.is_none_or(|r| r.ret.generic()) {
             return lowered;
         }
         // (each list of the kind its parameter takes: `sort[f, []]` a list
@@ -5261,6 +5307,18 @@ impl<'a> Lowerer<'a> {
                 (crate::table::Kind::Encoded, ty) => {
                     let fails = ty.is_result();
                     let Some(encode) = crate::table::core_row("encode", &[crate::table::Arg::Unknown]) else { return x };
+                    // an argument the call marked (`unwrap x`, x can fail):
+                    // the encode reads the mark and hands the failure on, and
+                    // the call reads its answer through a mark of its own —
+                    // left inside an encode that hands nothing on, the mark
+                    // was read by no one, and the compiled program encoded
+                    // the failure's record where the call answered a failure
+                    // (`msgpack[decimal['1.25']]` had not built — crow check
+                    // --self)
+                    if matches!(&x, Expr::Convert { how: Convert::Unwrap, expr, .. } if expr.ty().is_result()) {
+                        let call = Expr::Call { target: Target::Row(encode), args: vec![x], ty: Ty::Result(Box::new(Ty::Str)), propagates: true };
+                        return Expr::Convert { how: Convert::Unwrap, expr: Box::new(call), ty: Ty::Str };
+                    }
                     Expr::Call { target: Target::Row(encode), args: vec![x], ty: if fails { Ty::Result(Box::new(Ty::Str)) } else { Ty::Str }, propagates: fails }
                 }
                 _ => x,
@@ -6328,6 +6386,50 @@ fn own_facts(f: &str, facts: &BTreeSet<String>) -> BTreeSet<String> {
 }
 
 /// The loop variables of a body, at any depth.
+/// The line of the first `return` in a body that returns no value.
+fn bare_return(body: &[Stmt], mut line: usize) -> Option<usize> {
+    for s in body {
+        match s {
+            Stmt::Line(n) => line = *n,
+            Stmt::Return(None) => return Some(line),
+            Stmt::If { then, els, .. } => {
+                if let Some(l) = bare_return(then, line).or_else(|| els.as_ref().and_then(|b| bare_return(b, line))) {
+                    return Some(l);
+                }
+            }
+            Stmt::While { body, .. } | Stmt::For { body, .. } => {
+                if let Some(l) = bare_return(body, line) {
+                    return Some(l);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether a body answers where it ends: its last statement returns a
+/// value (an implicit return of nothing does not), is an `if` whose every
+/// arm ends answered, or is a `while true` that only a `return` leaves.
+fn ends_answered(body: &[Stmt]) -> bool {
+    match body.iter().rev().find(|s| !matches!(s, Stmt::Line(_))) {
+        Some(Stmt::Return(Some(e))) => e.ty() != Ty::Unit,
+        Some(Stmt::If { then, els: Some(els), .. }) => ends_answered(then) && ends_answered(els),
+        Some(Stmt::While { cond: Expr::Const(Const::Bool(true), _), body }) => !breaks(body),
+        _ => false,
+    }
+}
+
+/// Whether a loop's body breaks out of that loop (a `break` of a loop
+/// inside it is that loop's).
+fn breaks(body: &[Stmt]) -> bool {
+    body.iter().any(|s| match s {
+        Stmt::Break => true,
+        Stmt::If { then, els, .. } => breaks(then) || els.as_ref().is_some_and(|b| breaks(b)),
+        _ => false,
+    })
+}
+
 fn loop_vars(body: &[S], out: &mut HashSet<String>) {
     for s in body {
         match s {

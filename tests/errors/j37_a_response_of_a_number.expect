@@ -1,0 +1,3 @@
+j37_a_response_of_a_number.co:6:12: text[] takes text, got an int: write it into text, text['`…`']
+  6 │     return text[n]
+    │            ^^^^

@@ -224,6 +224,37 @@ pub(super) struct Checks {
 }
 
 impl<'a> Lowerer<'a> {
+    /// Whether the program uses web itself, not only through a part.
+    pub(super) fn web_program(&self) -> bool {
+        self.ctx.bare_modules.iter().any(|m| (m == "web" || m.starts_with("web.")) && !self.only_a_part_imports(m))
+    }
+
+    /// Whether a module imported bare provides the name, which then answers
+    /// it: `bytes` and `text` under `use sys` are the standard library's,
+    /// not responses. (Inside a standard module written in Crow, the
+    /// registry's scope is the module's own imports: a provider there is
+    /// one it imported.)
+    pub(super) fn provided_bare(&self, name: &str) -> bool {
+        self.ctx.registry.providers_of(name).iter().any(|m| self.ctx.bare_modules.contains(*m) || crate::modules::is_crow_fn(&self.current_fn))
+    }
+
+    /// Whether a bare call of `name` is web's own form here (a response, a
+    /// route, the server): a web program's, with no function of its own and
+    /// no module imported bare by the name.
+    pub(super) fn web_form(&self, name: &str) -> bool {
+        !self.ctx.functions.contains_key(name) && self.web_program() && !self.provided_bare(name)
+    }
+
+    /// What a response form reads a parsed value handed to it as: its body
+    /// text, `respond`'s status an int.
+    pub(super) fn web_form_reads(name: &str, at: usize) -> Option<Ty> {
+        match (name, at) {
+            ("text" | "html" | "redirect" | "bytes", 0) | ("respond", 1) => Some(Ty::Str),
+            ("respond", 0) => Some(Ty::Int),
+            _ => None,
+        }
+    }
+
     /// An error at the line being lowered, owned by the declaration it is in.
     pub(super) fn refuse(&mut self, msg: String) {
         if self.v.mute > 0 {
@@ -1128,6 +1159,13 @@ impl<'a> Lowerer<'a> {
         }
         let mut modules: Vec<&str> = vec![""];
         modules.extend(providers.iter().map(String::as_str));
+        // (a web program's `json` answers a response too: its refusal names
+        // both uses, where the parse's alone had said it takes text)
+        if name == "json" && web && argc == 1 && crate::table::refusal(&modules, name, &kinds).is_some() {
+            let what = kinds.first().map_or("nothing", |k| k.words());
+            self.refuse(format!("json[] takes text to parse, or a map, a list, a record or a frame to answer with, got {}", what));
+            return;
+        }
         if let Some(e) = crate::table::refusal(&modules, name, &kinds) {
             // the form for these arguments may be a module's the program does
             // not import: it says that module (`abs` of a column is math's —
@@ -1218,15 +1256,49 @@ impl<'a> Lowerer<'a> {
         // a route and its responses are web's: without `use web` neither
         // mode has them (the interpreter had answered msgpack, arrow, bytes
         // and stream with a map that only looked like a response)
-        let web_program = self.ctx.bare_modules.iter().any(|m| (m == "web" || m.starts_with("web.")) && !self.only_a_part_imports(m));
-        // (a module imported bare that provides the name answers it: `bytes`
-        // under `use sys` is the standard library's, not a response)
-        // (inside a standard module written in Crow, the registry's scope is
-        // the module's own imports: a provider there is one it imported)
-        let provided = self.ctx.registry.providers_of(name).iter().any(|m| self.ctx.bare_modules.contains(*m) || crate::modules::is_crow_fn(&self.current_fn));
-        if !own && !web_program && !provided && matches!(name, "route" | "serve" | "respond" | "redirect" | "msgpack" | "arrow" | "bytes" | "stream") {
+        if !own && !self.web_program() && !self.provided_bare(name) && matches!(name, "route" | "serve" | "respond" | "redirect" | "msgpack" | "arrow" | "bytes" | "stream") {
             self.refuse(format!("{}[] is web's: add `use web`", name));
             return;
+        }
+        // a response's body is text, as a feed's put takes it, and its
+        // status an HTTP status; arrow's a frame (spec, Responses) — refused
+        // before either mode runs: the compiled program had not built, and
+        // the interpreter had answered a number's text, a status of 1000 as
+        // 599 (crow check --self, the routes family)
+        if self.web_form(name) {
+            let what = |t: &Ty| crate::table::Arg::of_type(t.payload()).words();
+            // (the outer kind decides — a column or a list is no text,
+            // whatever its items — and a parsed value a text form reads as
+            // text)
+            let known = |t: &Ty| !matches!(t.payload(), Ty::Unknown | Ty::Json);
+            let text_at = match name {
+                "text" | "html" | "redirect" | "bytes" => Some(0),
+                "respond" => Some(1),
+                _ => None,
+            };
+            if let Some(i) = text_at.filter(|i| *i < argc) {
+                let t = arg_type(self, i);
+                // (`html` of a test's app session is the harness's)
+                if known(&t) && !matches!(t.payload(), Ty::Str | Ty::Markup) && !(name == "html" && matches!(t.payload(), Ty::App)) {
+                    self.refuse(crow_web::core::response::takes_text(name, what(&t)));
+                }
+            }
+            if name == "respond" && argc == 2 {
+                let t = arg_type(self, 0);
+                if known(&t) && !matches!(t.payload(), Ty::Int | Ty::Big) {
+                    self.refuse(crow_web::core::response::takes_status(what(&t)));
+                } else if let Some(A::Int(n)) = args.first()
+                    && let Err(e) = crow_web::core::response::status(*n)
+                {
+                    self.refuse(e);
+                }
+            }
+            if name == "arrow" && argc == 1 {
+                let t = arg_type(self, 0);
+                if !matches!(t.payload(), Ty::Unknown | Ty::Frame(_)) {
+                    self.refuse(crow_web::core::response::takes_frame(what(&t)));
+                }
+            }
         }
 
         // stream[feed, a, …] calls feed[put, a, …]: the feed is a function
@@ -1462,6 +1534,15 @@ impl<'a> Lowerer<'a> {
             }
             if let Some(module) = self.ctx.registry.module_name_of(name) {
                 if self.ctx.bare_modules.contains(module) {
+                    // (a ui control named like a module's function — `select`
+                    // of options, not of a frame — is the control's, as the
+                    // lowering reads it: checked as frame's select, a page's
+                    // dropdown had been refused once the view's facts were
+                    // typed)
+                    let first_is_frame = types.first().is_some_and(|t| matches!(t.payload(), Ty::Frame(_)));
+                    if self.in_ui && crate::lower::is_ui_control(name, first_is_frame) {
+                        return;
+                    }
                     // a name the core answers too (frame's sort, math's max)
                     // takes what the core's rows or the module's take
                     self.refuse_kinds(name, argc, types);
@@ -1833,6 +1914,17 @@ mod tests {
         let mut ctx = TypeContext::new();
         ctx.infer_program(&stmts);
         super::super::check(&stmts, &ctx).map_err(|r| r.message())
+    }
+
+    /// A page's `select` of options and the fact it binds is the control,
+    /// beside `use frame` too, where `select` of a frame picks columns (the
+    /// dropdown had been checked as frame's select and refused).
+    #[test]
+    fn a_select_of_options_beside_frame_is_the_control() {
+        let source = "use web, ui, frame\n\nranges = ['a', 'b']\nrandom_range = 'a'\n\nview home[]\n    return stack[select[ranges, random_range]]\n\npage['/', home]\nserve[3000]\n";
+        assert!(check_source(source).is_ok(), "{:?}", check_source(source));
+        let picked = "use frame\nf = frame.new[a = [1], b = [2]]\nlog[select[f, ['a']]]\n";
+        assert!(check_source(picked).is_ok(), "{:?}", check_source(picked));
     }
 
     #[test]

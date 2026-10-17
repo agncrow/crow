@@ -1,0 +1,9 @@
+--- a route's handler answering text of a number: a response's body is text
+use web
+
+fn count[req]
+    n = len[req.query]
+    return text[n]
+
+route['/count', count]
+serve[3000]

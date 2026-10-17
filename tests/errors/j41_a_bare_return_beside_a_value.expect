@@ -1,0 +1,3 @@
+j41_a_bare_return_beside_a_value.co:4:9: half[] returns an int, and this `return` returns nothing: return a value here too — a function answers on every path or on none
+  4 │         return
+    │         ^^^^^^

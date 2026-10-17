@@ -207,10 +207,9 @@ thread_local! {
 /// A route's answer: its handler run on the thread's copy of the program,
 /// handed the request (its method, path, headers, query, body and the
 /// path's params), and what it returns sent as the response. A handler that
-/// stops answers 500 with the reason, as a value that is no response does,
-/// and the copy it stopped in is let go.
+/// stops answers 500, the reason the log's, as a value that is no response
+/// does, and the copy it stopped in is let go.
 fn route_answer(template: &IrInterp, handler: &str, req: crow_web::core::CrowRequest) -> crow_web::core::CrowResponse {
-    use crow_web::core::CrowResponse;
     let pairs = |m: &std::collections::BTreeMap<String, String>| -> CrowValue {
         CrowValue::ok(Value::map(m.iter().map(|(k, v)| (k.clone(), CrowValue::ok(Value::Str(v.clone())))).collect()))
     };
@@ -250,10 +249,15 @@ fn route_answer(template: &IrInterp, handler: &str, req: crow_web::core::CrowReq
     }
     match answered {
         Ok(v) if v.is_error() => crow_web::server::route_stopped(handler, v.reason()),
-        Ok(v) => match v.value {
-            Value::Response(r) => *r,
-            other => CrowResponse::respond(500, format!("{}[] answered {}, not a response: text[…], html[…], json[…], respond[…], redirect[…], bytes[…], msgpack[…], arrow[…] or stream[…]", handler, other.type_name())),
-        },
+        // (one the lowering could not see: a stop, its reason the log's,
+        // as every route's failure is — it had been the answer's body)
+        Ok(v) => {
+            let what = crate::table::Arg::of_value(&v).words();
+            match v.value {
+                Value::Response(r) => *r,
+                _ => crow_web::server::route_stopped(handler, &crow_web::core::response::not_a_response(handler, what)),
+            }
+        }
         Err(e) => crow_web::server::route_stopped(handler, &e),
     }
 }

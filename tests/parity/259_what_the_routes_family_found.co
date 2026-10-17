@@ -1,0 +1,34 @@
+--- What crow check --self's routes family found below the server: a value
+--- that can fail handed to a builtin written in Crow that takes its JSON
+--- (`msgpack`) hands its failure on, as any call does (the mark had been
+--- read by no one, and the compiled program encoded the failure's record
+--- and did not build); `later[f, a]` and `stream[feed, a]` call their
+--- function by its name, so an int past 64 bits reaches its parameter as
+--- it is (it had stopped where the parameter was held in 64 bits); and a
+--- tensor holding exactly 2^63 encodes that number, not one less — in
+--- both modes.
+use web
+
+fn may[x, fail]
+    if fail
+        return error['no']
+    return x
+
+fn packed[x, fail]
+    return msgpack[may[x, fail]]
+
+fn shown[n]
+    log[n + 1]
+
+r = packed[decimal['1.25'], false]
+log[type[r]]
+s = packed[decimal['1.25'], true]
+log[s.ok]
+log[s.reason]
+t = packed[json['[1, 2]'], false]
+log[type[t]]
+
+log[encode[[9223372036854775808.0, -9223372036854775808.0, 3.0]]]
+
+--- (last: a script's later work may run after the lines that follow it)
+later[shown, 2 ^ 70]

@@ -2671,8 +2671,24 @@ impl IrInterp {
         if !self.web {
             return None;
         }
+        use crow_web::core::response as said;
         let text = |v: &CrowValue| format!("{}", v.value);
         let is_text = |v: &CrowValue| matches!(v.value, Value::Str(_));
+        let what = |v: &CrowValue| crate::table::Arg::of_value(v).words();
+        // (a body of another kind is refused in the lowering's words: one
+        // that reached the run had been answered as its text; `html` of a
+        // test's app session is the harness's)
+        let body_at = match name {
+            "text" | "html" | "redirect" | "bytes" => Some(0),
+            "respond" => Some(1),
+            _ => None,
+        };
+        if let Some(body) = body_at.and_then(|i| vals.get(i)) {
+            let session = name == "html" && matches!(body.value, Value::App(_));
+            if !is_text(body) && !body.is_error() && !session {
+                return Some(Err(said::takes_text(name, what(body))));
+            }
+        }
         let response = match (name, vals) {
             ("text", [body]) if is_text(body) => CrowResponse::text(text(body)),
             ("html", [body]) if is_text(body) => CrowResponse::html(text(body)),
@@ -2686,14 +2702,17 @@ impl IrInterp {
                 Err(e) => return Some(Err(e)),
             },
             ("respond", [status, body]) => match status.value {
-                Value::Int(n) => CrowResponse::respond(n.clamp(100, 599) as u16, text(body)),
-                _ => return Some(Err("respond[] takes a status and a body: respond[404, 'no such thing']".into())),
+                Value::Int(n) => match said::status(n) {
+                    Ok(s) => CrowResponse::respond(s, text(body)),
+                    Err(why) => return Some(Err(why)),
+                },
+                _ => return Some(Err(said::takes_status(what(status)))),
             },
             ("redirect", [url]) => CrowResponse::redirect(text(url)),
             ("bytes", [data]) => CrowResponse::binary(200, text(data).into_bytes(), "application/octet-stream"),
             ("arrow", [frame]) => match &frame.value {
                 Value::Frame(f) => CrowResponse::arrow_of(f),
-                other => return Some(Err(format!("arrow[] takes a frame, got {}", other.type_name()))),
+                _ => return Some(Err(said::takes_frame(what(frame)))),
             },
             ("stream", [feed, rest @ ..]) => match &feed.value {
                 Value::Fn(f) => self.stream_response(&f.name, rest),

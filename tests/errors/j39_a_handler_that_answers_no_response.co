@@ -1,0 +1,8 @@
+--- a route's handler answering a parsed value: json of text parses it
+use web
+
+fn echo[req]
+    return json[req.body]
+
+route['/echo', 'POST', echo]
+serve[3000]

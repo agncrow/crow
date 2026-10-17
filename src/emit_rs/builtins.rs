@@ -672,7 +672,9 @@ impl Emitter {
                     format!("{{ {} }}", server)
                 }
             }
-            "respond" if web && n == 2 => format!("CrowResponse::respond({} as u16, {})", a[0], a[1]),
+            // (a status HTTP has not stops the handler, as the interpreter's
+            // does: `as u16` had answered 65736 as 200)
+            "respond" if web && n == 2 => format!("CrowResponse::respond(crow_web::core::response::status_at(({}) as i64, {}), {})", a[0], self.line_now(), a[1]),
             "redirect" if web && n == 1 => format!("CrowResponse::redirect({})", a[0]),
             "html" if web && n == 1 => format!("CrowResponse::html({})", a[0]),
             "text" if web && n == 1 => format!("CrowResponse::text({})", a[0]),

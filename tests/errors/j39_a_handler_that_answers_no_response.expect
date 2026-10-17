@@ -1,0 +1,3 @@
+j39_a_handler_that_answers_no_response.co:5:5: echo[] answers a JSON value, not a response: a route's handler returns text[…], html[…], json[…], respond[…], redirect[…], bytes[…], msgpack[…], arrow[…] or stream[…] — json[…] of text parses it, and json[…] of a map, a list or a record answers it
+  5 │     return json[req.body]
+    │     ^^^^^^^^^^^^^^^^^^^^^

@@ -134,16 +134,19 @@ pub fn float_to_json(f: f64) -> serde_json::Value {
 
 /// How a tensor encodes: a list, whole numbers as ints (a tensor holds
 /// floats, but `[1, 2, 3]` must come back as `[1,2,3]`), the rest as
-/// floats, non-finite cells as `null`.
+/// floats, non-finite cells as `null`. A whole number an int holds is one:
+/// 2^63, past them, had been written as 2^63 - 1, the int `as` saturates
+/// to (the reference of crow check --self).
 pub fn tensor_to_json(t: &crate::tensor::CrowTensor) -> serde_json::Value {
     if t.ndim() >= 2 {
         // a matrix is a list of its rows
         return serde_json::Value::Array(t.rows().iter().map(tensor_to_json).collect());
     }
+    const BEYOND: f64 = 9_223_372_036_854_775_808.0; // 2^63
     serde_json::Value::Array(
         t.to_vec()
             .iter()
-            .map(|&f| if f == (f as i64) as f64 && f.is_finite() { serde_json::json!(f as i64) } else { float_to_json(f) })
+            .map(|&f| if f.fract() == 0.0 && (-BEYOND..BEYOND).contains(&f) { serde_json::json!(f as i64) } else { float_to_json(f) })
             .collect(),
     )
 }
@@ -230,6 +233,9 @@ mod tests {
         map.insert("xs".to_string(), crate::tensor::CrowTensor::from_vec(vec![1.0, 2.0], vec![2]));
         assert_eq!(map.to_json().to_string(), "{\"xs\":[1,2]}");
         assert_eq!(vec!["a".to_string()].to_json().to_string(), "[\"a\"]");
+        // (whole numbers past an int's are floats: 2^63 had been 2^63 - 1)
+        let edge = crate::tensor::CrowTensor::from_vec(vec![9_223_372_036_854_775_808.0, -9_223_372_036_854_775_808.0, 1e300], vec![3]);
+        assert_eq!(tensor_to_json(&edge).to_string(), "[9.223372036854776e+18,-9223372036854775808,1e+300]");
     }
 
     #[test]
