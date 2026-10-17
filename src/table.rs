@@ -1308,6 +1308,7 @@ macro_rules! answer {
     (Sparse, $x:expr) => { write_sparse($x) };
     (List, $x:expr) => { write_list($x) };
     (MapOf, $x:expr) => { write_map_of($x) };
+    (TextMap, $x:expr) => { CrowValue::ok(Value::map($x.into_iter().map(|(k, t)| (k, CrowValue::ok(Value::Str(t)))).collect())) };
     (Ints, $x:expr) => { write_ints($x) };
     (Bigs, $x:expr) => { write_bigs($x) };
     (Floats, $x:expr) => { write_floats($x) };
@@ -1566,6 +1567,7 @@ pub static ROWS: &[Row] = &[
     // Crow, where one of them can fail — reached by the lowering
     row!("core.__sizes", "", "__sizes", crow_runtime::core::sizes, (Sizes) -> Ints, never),
     row!("core.__truncated", "", "__truncated", crow_runtime::core::truncated, (Float) -> Int, never),
+    row!("core.__text_map", "", "__text_map", crow_runtime::sources::texts, (TextMap) -> TextMap, never),
     row!("core.__groups", "", "__groups", crow_runtime::core::groups, (Groups) -> Tensors, never),
     // `map[keys, values]`: the literal's other form, reached by the lowering
     maprow!("core.__map_of", "__map_of", crow_runtime::core::map_of, (Keys, Seq) -> MapOf, stops, maps::map_of, maps::map_of_taken),
@@ -2353,6 +2355,12 @@ pub enum Arg {
     Stream,
     Socket,
     Mailer,
+    /// A database connection (or a transaction's), and a web response: a
+    /// value shows them and a list holds them, and nothing else takes one
+    /// (classed as not known, `len` and `encode` of one had stopped as the
+    /// program ran and not built compiled — crow check --self).
+    Db,
+    Response,
     /// A list of bytes (a connection's chunks).
     Chunks,
     /// A parsed JSON value, whose kind shows only as it runs.
@@ -2465,6 +2473,8 @@ impl Arg {
             Arg::Stream => "a stream",
             Arg::Socket => "a socket",
             Arg::Mailer => "a mailer",
+            Arg::Db => "a database connection",
+            Arg::Response => "a response",
             Arg::Frame => "a frame",
             Arg::Fn => "a function",
             Arg::AnyList => "a list",
@@ -2500,12 +2510,14 @@ impl Arg {
             Ty::Stream => Arg::Stream,
             Ty::Socket => Arg::Socket,
             Ty::Mailer => Arg::Mailer,
+            Ty::Db | Ty::Tx => Arg::Db,
+            Ty::WebResponse => Arg::Response,
             Ty::Frame(_) => Arg::Frame,
             Ty::Fn(..) => Arg::Fn,
             // (no row takes a handle a program cannot hand on, a view's
             // node, nothing, or what is not known: each is read by the
             // value as the program runs)
-            Ty::Db | Ty::Tx | Ty::WebApp | Ty::WebRequest | Ty::WebResponse | Ty::App | Ty::Node | Ty::Unit | Ty::Unknown => Arg::Unknown,
+            Ty::WebApp | Ty::WebRequest | Ty::App | Ty::Node | Ty::Unit | Ty::Unknown => Arg::Unknown,
         }
     }
 
@@ -2552,6 +2564,8 @@ impl Arg {
             Value::Stream(_) => Arg::Stream,
             Value::Socket(_) => Arg::Socket,
             Value::Mailer(_) => Arg::Mailer,
+            Value::DbConn(_) => Arg::Db,
+            Value::Response(_) => Arg::Response,
             Value::Frame(_) => Arg::Frame,
             Value::Fn(_) | Value::GradFn(_) => Arg::Fn,
             Value::Json(_) => Arg::Json,
@@ -2643,6 +2657,7 @@ impl Kind {
                 Kind::Stream => a == Arg::Stream,
                 Kind::Socket => a == Arg::Socket,
                 Kind::Mailer => a == Arg::Mailer,
+                Kind::Response => a == Arg::Response,
                 Kind::Frame => a == Arg::Frame,
                 Kind::Cell => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Json | Arg::Moment),
                 Kind::Cells => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Column | Arg::Moment | Arg::Moments),
@@ -2658,7 +2673,8 @@ impl Kind {
                 Kind::Column => a == Arg::Column,
                 // a function shows as nothing, and JSON holds no function, frame or matrix
                 Kind::Shown | Kind::ShownDyn => a != Arg::Fn,
-                Kind::Encoded => !matches!(a, Arg::Fn | Arg::Frame | Arg::Sparse | Arg::Column),
+                // (nor a connection, a response, a socket, a mailer or a stream)
+                Kind::Encoded => !matches!(a, Arg::Fn | Arg::Frame | Arg::Sparse | Arg::Column | Arg::Db | Arg::Response | Arg::Socket | Arg::Mailer | Arg::Stream),
                 Kind::Operand => matches!(a, Arg::Tensor | Arg::Int | Arg::Float),
                 Kind::Scalar => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth),
                 _ => true,
@@ -2795,6 +2811,7 @@ pub fn form(name: &str) -> String {
         "__sizes" => "a call's sizes (`randn[2, 3]`)".to_string(),
         "__whole" => "a whole number past 64 bits".to_string(),
         "__truncated" => "a number where an int is taken".to_string(),
+        "__text_map" => "a map of text".to_string(),
         "__groups" => "a call's tensors (`anova[a, b]`)".to_string(),
         _ => format!("{}[]", shown(name)),
     }

@@ -1,0 +1,3 @@
+j24_a_sparse_matrix_indexed.co:2:1: this is a sparse matrix, read whole, which has no items — `[…]` reads an item of a list, a map, text or a column
+  2 │ log[sparse[[[1.0, 0.0], [0.0, 2.0]]][0]]
+    │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

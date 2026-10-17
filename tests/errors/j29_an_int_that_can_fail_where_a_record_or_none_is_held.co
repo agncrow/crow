@@ -1,0 +1,9 @@
+struct P [x, y]
+fn may[x, f]
+    if f
+        return error['no']
+    return x
+fn pass[x]
+    return x
+log[pass[P[1, 2]]]
+log[pass[may[3, false]]]

@@ -2356,6 +2356,12 @@ impl<'a> Retype<'a> {
                     if matches!(op.as_str(), "add" | "sub" | "mul" | "div" | "mod" | "pow") {
                         *ty = big_of(ty);
                     }
+                } else if big && op == "pow" && matches!(l.ty().payload(), Ty::Decimal | Ty::Fraction) && matches!(r.ty().payload(), Ty::Big) {
+                    // an exact number's power is by an int of 64 bits: a
+                    // growing one is refused past them, in one wording (it
+                    // had been made a float, and the compiled program had not
+                    // built — crow check --self)
+                    *r = Box::new(handed(take(r), crate::table::TakesBig::Refused, crate::ir::Who::Held));
                 } else if big {
                     // a whole number past 64 bits beside a float: its float
                     for side in [&mut *l, &mut *r] {
@@ -2416,11 +2422,18 @@ impl<'a> Retype<'a> {
                         if let Some(big) = crate::table::big_form(row.id)
                             && (grows || args.iter().any(|a| has_big(&a.ty())))
                         {
+                            let name = row.name;
                             *row = big;
                             for (a, k) in args.iter_mut().zip(big.params) {
                                 match k {
                                     crate::table::Kind::Big => *a = to_type(take(a), &Ty::Big),
                                     crate::table::Kind::Bigs => *a = to_type(take(a), &Ty::List(Box::new(Ty::Big))),
+                                    // (a parameter of 64 bits takes a growing
+                                    // int as any row's does: refused past them,
+                                    // naming the row — `shift[3, 2 ^ 100]`'s
+                                    // amount had reached the growing form as
+                                    // it was, an internal error)
+                                    k if has_big(&a.ty()) => *a = handed(take(a), k.takes_big(), crate::ir::Who::Row(name)),
                                     _ => {}
                                 }
                             }
@@ -2446,6 +2459,25 @@ impl<'a> Retype<'a> {
                             && matches!(item.as_ref(), Ty::Unknown)
                         {
                             collection = Some(ty.payload().clone());
+                            // (one made here holds a growing item as it is:
+                            // `push[[], 2 ^ 100]` had narrowed the item to 64
+                            // bits, the answer's ints, and stopped — crow
+                            // check --self)
+                            let grows = args.iter().zip(&kinds).any(|(a, k)| matches!(k, Kind::Item | Kind::ItemRef) && has_big(&a.ty()));
+                            if grows {
+                                collection = match collection {
+                                    Some(Ty::List(_)) => Some(Ty::List(Box::new(Ty::Big))),
+                                    Some(Ty::Map(key, _)) => Some(Ty::Map(key, Box::new(Ty::Big))),
+                                    other => other,
+                                };
+                                if let (Some(i), Some(c)) = (at, collection.clone()) {
+                                    match &mut args[i] {
+                                        Expr::ListLit(items, t) if items.is_empty() => *t = c,
+                                        Expr::MapLit(pairs, t) if pairs.is_empty() => *t = c,
+                                        _ => {}
+                                    }
+                                }
+                            }
                         }
                         if let Some(Ty::List(item) | Ty::Map(_, item)) = &collection {
                             // (and a collection of 64-bit ints takes an item

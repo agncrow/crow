@@ -1,0 +1,2 @@
+use db
+log[connect['sqlite://:memory:'] eq connect['sqlite://:memory:']]

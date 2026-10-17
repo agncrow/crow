@@ -1,0 +1,2 @@
+use db
+log[len[connect['sqlite://:memory:']]]

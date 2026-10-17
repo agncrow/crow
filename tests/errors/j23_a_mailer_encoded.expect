@@ -1,0 +1,3 @@
+j23_a_mailer_encoded.co:2:5: encode[] takes a value JSON can hold, got a mailer
+  2 │ log[encode[smtp['h', 9, 'u', 'p']]]
+    │     ^^^^^^

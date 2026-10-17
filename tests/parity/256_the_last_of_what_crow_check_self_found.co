@@ -1,0 +1,90 @@
+--- The rest of what `crow check --self` found, answered alike: a list or
+--- a column that can fail made negative; a statement loop over a literal
+--- list of functions types them; a function called with a list and with a
+--- matrix is a copy for each; a bool joined with a mask joins each item;
+--- `[]` measured, shown, compared, sliced or asked about; an int asked
+--- about in floats; a list holding an int past 64 bits keeps it, its
+--- items compared in a loop; a map of ints written a float holds floats,
+--- by text keys or ints; a record field given a list of ints beside a
+--- vector holds floats, and one given 0 beside a record holds none; a
+--- record of a moment shows; a mask is numbers to `sort`; `concat` of a
+--- list that can fail along an axis; and an int other than 0 where a
+--- record or none is held stops, in both modes.
+use math
+use frame
+use bits
+
+fn may[x, fail]
+    if fail
+        return error['no']
+    return x
+
+fn double[x]
+    return x * 2
+
+fn triple[x]
+    return x * 3
+
+fn first[x]
+    return x[0]
+
+struct Box [v]
+struct Bag [v]
+struct Stamp [v]
+struct P [x, y]
+
+f = frame.new[a = [1, 2, 3], on = [true, false, true]]
+
+log[-may[push[push[[], 3], 1], false]]
+log[-may[f.a, false]]
+log[-may[f.a, true]]
+
+for g in [double, triple]
+    log[g[2]]
+
+log[first[push[push[push[[], 3], 1], 2]]]
+log[first[[[1.0, 2.0], [3.0, 4.0]]]]
+log[first[[3.0, 1.0, 2.0]]]
+
+log[true and f.on]
+log[f.on or false]
+
+log[len[[]]]
+log[[]]
+log[type[[]]]
+log[[] eq []]
+log[slice[[], 3, 3]]
+log[pop[[]]]
+log[not []]
+log[len[map[]]]
+log[type[map[]]]
+
+log[may[3, false] in push[push[[], 2.5], 3.0]]
+log[may[3, false] in []]
+log[may[3, true] in []]
+
+big = push[push[[], 2 ^ 100], 3]
+for d in big
+    if d lt 0
+        log['negative']
+    else
+        log[d]
+log[shift[2 ^ 100, 3]]
+
+m = map[a = 1, b = 2]
+m['a'] = 2.5
+log[m]
+n = map[push[push[[], 1], 2], push[push[[], 10], 20]]
+n[0] = 2.5
+log[n]
+
+log[Bag[push[push[[], 3], 1]].v]
+log[Bag[[3.0, 1.0]].v]
+log[Box[0].v]
+log[Box[P[1, 2]].v]
+log[Stamp[moment['2026-01-02']]]
+
+log[sort[push[push[push[[], true], false], true]]]
+log[concat[may[push[push[[], 3], 1], false], push[push[[], 3], 1], 0]]
+
+log[Box[3].v]

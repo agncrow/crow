@@ -1,0 +1,3 @@
+j21_two_connections_compared.co:2:1: a database connection is not compared: a handle is its own, equal to no other — compare what it holds
+  2 │ log[connect['sqlite://:memory:'] eq connect['sqlite://:memory:']]
+    │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

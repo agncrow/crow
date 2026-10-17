@@ -1,0 +1,3 @@
+j19_a_function_taking_a_function_at_two_kinds.co:8:1: `apply` takes a function, so one `apply` serves every call, and its 'x' is a frame's column here where another call makes it a number — a function taking a function is not copied per kind (spec, Specialization): write one for each kind
+  8 │ log[apply[pass, f.a]]
+    │ ^^^^^^^^^^^^^^^^^^^^^

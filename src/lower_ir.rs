@@ -797,6 +797,9 @@ struct Lowerer<'a> {
     /// The locals that hold a gradient (`g = grad[f]`), by the function
     /// each is of: a call of one types that function's parameters.
     grad_of: HashMap<String, String>,
+    /// Lowering `grad`'s arguments: the function it differentiates is typed
+    /// by the run that traces it, as the verifier reads it.
+    differentiating: bool,
     /// The locals holding a decomposition's pieces (`parts = svd[m]`), with
     /// each piece's shape by position (shapes::piece_dims).
     pieces: HashMap<String, Vec<Option<Dims>>>,
@@ -966,6 +969,7 @@ impl<'a> Lowerer<'a> {
             fragment: false,
             yields: HashSet::new(),
             grad_of: HashMap::new(),
+            differentiating: false,
             pieces: HashMap::new(),
             scopes: vec![HashSet::new()],
             pre: Vec::new(),
@@ -1312,7 +1316,13 @@ impl<'a> Lowerer<'a> {
                     for p in params {
                         self.check_reserved(p, "parameter");
                     }
-                    let f = self.lower_fn(name, params, body, *is_view)?;
+                    // (a function copied per signature is called only through
+                    // its copies: its own lowering, at every call's types
+                    // joined, refuses nothing a copy does not — a matrix
+                    // and a vector joined had no rank, and `x[0]` was refused
+                    // where each copy reads its own — crow check --self)
+                    let copied = self.ctx.specializations.get(name).is_some_and(|v| !v.is_empty());
+                    let f = if copied { self.muted(|l| l.lower_fn(name, params, body, *is_view))? } else { self.lower_fn(name, params, body, *is_view)? };
                     part.fns.push(f);
                     // a function called at several signatures is one function
                     // per signature, each typed by its own (F2): the Rust
@@ -2150,6 +2160,15 @@ impl<'a> Lowerer<'a> {
                             PathStep::Index(_) => "[…]".to_string(),
                         }).collect::<String>()
                     );
+                    // (a matrix holds numbers: text or a bool written as its
+                    // row had been cast compiled, and not built)
+                    if positions && !number && !part && !matches!(expr.ty().payload(), Ty::Unknown | Ty::Json) {
+                        self.refuse(format!(
+                            "`{}[…] = …` writes numbers into a tensor, and this is {}",
+                            v,
+                            crate::table::Arg::of_type(expr.ty().payload()).words()
+                        ));
+                    }
                     if positions && number && given == 1 && rank.is_some_and(|r| r >= 2) {
                         self.refuse(format!(
                             "`{0}[…] = …` writes one number, and {0} is a matrix, whose `{0}[i]` is its row i: write a number with {0}[i][j] = …, or a row of its own length with {0}[i] = […]",
@@ -2330,6 +2349,12 @@ impl<'a> Lowerer<'a> {
                 self.check_reserved(var, "loop variable");
                 // a list that can fail is refused like a condition
                 let it = self.lower_expr(iter)?;
+                // (`[]` written as what a loop walks walks no items, of any
+                // kind: ints, for the compiled program to name one)
+                let it = match it {
+                    Expr::ListLit(items, Ty::List(e)) if items.is_empty() && *e == Ty::Unknown => Expr::ListLit(items, Ty::List(Box::new(Ty::Int))),
+                    other => other,
+                };
                 let walks = walked(&it);
                 let it = self.decided(it, Decision::Loop);
                 let mut prelude = std::mem::take(&mut self.pre);
@@ -2344,11 +2369,25 @@ impl<'a> Lowerer<'a> {
                     let shadowed = self.ctx.vars.get(var.as_str()).cloned();
                     self.ctx.scan_loop_var(var, walks);
                     let before = self.detailed_in_view();
-                    let b = if self.pass == Pass::Scan {
-                        self.scan_loop_body(body)?
-                    } else {
-                        self.lower_block(body)?
+                    // a call through the variable of a loop over a literal
+                    // list of named functions types every one of them, as a
+                    // collecting loop's does (`for f in [double, triple]`
+                    // calling `f[2]` had been an internal error)
+                    let fn_list = match iter {
+                        A::Array(elems) if !elems.is_empty() && elems.iter().all(|e| matches!(e, A::Ident(n) if self.calls_fn(n))) => {
+                            Some(elems.iter().filter_map(|e| if let A::Ident(n) = e { Some(n.clone()) } else { None }).collect::<Vec<String>>())
+                        }
+                        _ => None,
                     };
+                    let listed = self.pass == Pass::Scan && fn_list.is_some();
+                    if let (true, Some(fns)) = (listed, fn_list) {
+                        self.fn_lists.push((var.clone(), fns));
+                    }
+                    let b = if self.pass == Pass::Scan { self.scan_loop_body(body) } else { self.lower_block(body) };
+                    if listed {
+                        self.fn_lists.pop();
+                    }
+                    let b = b?;
                     let end = self.detailed_now(&before);
                     self.join_detailed(&before, &end);
                     if let Some(t) = shadowed {
@@ -2858,6 +2897,14 @@ impl<'a> Lowerer<'a> {
                 let ty = as_held(var, failing);
                 Expr::Convert { how: Convert::IntsToFloats, expr: Box::new(expr), ty }
             }
+            // (and a map of ints held as one of floats — written a float
+            // later, `b['a'] = 2.5` — is one of floats from its declaration:
+            // it had been declared a map of ints, and not built — crow check
+            // --self)
+            (Some(var @ Ty::Map(_, item)), Ty::Map(_, e)) if matches!(item.as_ref(), Ty::Float) && *e == Ty::Int => {
+                let ty = as_held(var, failing);
+                Expr::Convert { how: Convert::IntsToFloats, expr: Box::new(expr), ty }
+            }
             _ => expr,
         };
         // a frame given other columns in the block it was bound in is bound
@@ -3226,6 +3273,13 @@ impl<'a> Lowerer<'a> {
     /// modes (the lowered program had handed the int, and disagreed with
     /// itself).
     fn none_of(&mut self, x: Expr, slot: &Ty) -> Expr {
+        // (an int that can fail has no place there: its failure would be
+        // the call's, and the check is made before it — refused where it is
+        // handed; compiled, it had not built — crow check --self)
+        if x.ty().is_result() || matches!(&x, Expr::Convert { how: Convert::Unwrap, expr, .. } if expr.ty().is_result()) {
+            self.refuse("a record or 0 (none) is held here, and this is an int that can fail: decide it first (`if v.ok`)".to_string());
+            return Expr::Const(Const::Int(0), slot.clone());
+        }
         let Some(row) = crate::table::ROWS.iter().find(|r| r.id == "core.__none") else { return x };
         self.pre.push(Stmt::Do(Expr::Call { target: Target::Row(row), args: vec![x], ty: Ty::Int, propagates: false }));
         Expr::Const(Const::Int(0), slot.clone())
@@ -3397,6 +3451,24 @@ impl<'a> Lowerer<'a> {
                     r = self.lower_expr(&as_mask(right))?;
                 }
                 let right_pre = if joins { std::mem::replace(&mut self.pre, outer) } else { Vec::new() };
+                // `[]` compared is a list of the other side's kind, or of ints
+                // where nothing says (`[] eq []` had left the compiled program
+                // no type to give it — crow check --self)
+                if matches!(op, BinOp::Eq | BinOp::Ne) {
+                    let empty = |x: &Expr| matches!(x, Expr::ListLit(items, Ty::List(e)) if items.is_empty() && **e == Ty::Unknown);
+                    let kind_of = |x: &Expr| match x.ty().payload() {
+                        Ty::List(e) if **e != Ty::Unknown => Ty::List(e.clone()),
+                        _ => Ty::List(Box::new(Ty::Int)),
+                    };
+                    if empty(&l) {
+                        let t = kind_of(&r);
+                        l = Expr::ListLit(Vec::new(), t);
+                    }
+                    if empty(&r) {
+                        let t = kind_of(&l);
+                        r = Expr::ListLit(Vec::new(), t);
+                    }
+                }
                 // a parsed value met in an operator is read as the kind the
                 // other side says — a number as a float, `%` an int — and as
                 // a bool by and/or; two parsed values compare as the program
@@ -3564,11 +3636,20 @@ impl<'a> Lowerer<'a> {
                     crate::ast::UnaryOp::Neg => self.read_json(x, &Ty::Float, "made negative"),
                 };
                 // a frame's column made negative is its numbers, as one in
-                // arithmetic is (the compiled program had not built `-f.a`)
+                // arithmetic is (the compiled program had not built `-f.a`),
+                // and so is a list of numbers (a tensor's numbers made
+                // negative); `not []` is the empty mask
                 let x = match (op, x.ty().payload()) {
                     (crate::ast::UnaryOp::Neg, Ty::Column(_)) => {
                         let ty = if x.ty().is_result() { Ty::Result(Box::new(Ty::vector(Ty::Float))) } else { Ty::vector(Ty::Float) };
                         Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty }
+                    }
+                    (crate::ast::UnaryOp::Neg, Ty::List(e)) if matches!(e.payload(), Ty::Int | Ty::Float) => {
+                        let ty = if x.ty().is_result() { Ty::Result(Box::new(Ty::vector(Ty::Float))) } else { Ty::vector(Ty::Float) };
+                        Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty }
+                    }
+                    (crate::ast::UnaryOp::Not, Ty::List(e)) if **e == Ty::Unknown && matches!(&x, Expr::ListLit(items, _) if items.is_empty()) => {
+                        Expr::ListLit(Vec::new(), Ty::List(Box::new(Ty::Bool)))
                     }
                     _ => x,
                 };
@@ -3889,6 +3970,7 @@ impl<'a> Lowerer<'a> {
             return Expr::Derived(name.to_string(), ty);
         }
         if self.calls_fn(name) {
+            self.check_fn_value(name);
             return Expr::FnRef(name.to_string(), ty);
         }
         if self.ctx.registry.has_constant(name) && !self.declared(name) {
@@ -4111,7 +4193,24 @@ impl<'a> Lowerer<'a> {
             // (a growing number, a moment, a record and a response neither:
             // crow check --self)
             if self.pass == Pass::Final
-                && matches!(base.ty().payload(), Ty::Int | Ty::Float | Ty::Bool | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Moment | Ty::Record(_) | Ty::OptRecord(_) | Ty::WebResponse)
+                && matches!(
+                    base.ty().payload(),
+                    Ty::Int
+                        | Ty::Float
+                        | Ty::Bool
+                        | Ty::Big
+                        | Ty::Decimal
+                        | Ty::Fraction
+                        | Ty::Moment
+                        | Ty::Record(_)
+                        | Ty::OptRecord(_)
+                        | Ty::WebResponse
+                        | Ty::Db
+                        | Ty::Tx
+                        | Ty::Socket
+                        | Ty::Mailer
+                        | Ty::Sparse
+                )
                 && !self.contested(&base)
                 && !of_unknown_rank(&base)
             {
@@ -4119,6 +4218,8 @@ impl<'a> Lowerer<'a> {
                     Ty::Record(_) | Ty::OptRecord(_) => "a record, read by its fields' names (p.x)",
                     Ty::Moment => "a moment, read by its fields' names (t.year)",
                     Ty::WebResponse => "a response",
+                    Ty::Db | Ty::Tx => "a database connection",
+                    Ty::Sparse => "a sparse matrix, read whole",
                     t => crate::table::Arg::of_type(t).words(),
                 };
                 match callee {
@@ -4401,10 +4502,20 @@ impl<'a> Lowerer<'a> {
                 // float that can fail: the payload converts, the failure
                 // stays; it had been left an int in a field of floats, and
                 // the compiled program did not build)
+                // (an int where the field holds a record or none is none only
+                // as 0: checked where the record is made, as a parameter's is
+                // — `Box[3]` beside `Box[P[…]]` had not built compiled)
+                let value = match (declared.get(i).map(|t| t.payload().clone()), value.ty().payload()) {
+                    (Some(slot @ Ty::OptRecord(_)), Ty::Int) if self.pass == Pass::Final && !matches!(value, Expr::Const(Const::Int(0), _)) => self.none_of(value, &slot),
+                    _ => value,
+                };
                 let how = match (declared.get(i).map(|t| t.payload()), value.ty().payload()) {
                     (Some(Ty::List(_)), Ty::Tensor(..)) => Some(Convert::ToList),
                     (Some(Ty::Tensor(..)), Ty::List(_)) => Some(Convert::ToTensor),
                     (Some(Ty::Float), Ty::Int) if !matches!(value, Expr::Convert { how: Convert::Unwrap, .. }) => Some(Convert::IntToFloat),
+                    // (a list of ints where the field holds floats — a vector
+                    // given at another record — is a list of floats)
+                    (Some(Ty::List(f)), Ty::List(e)) if **f == Ty::Float && **e == Ty::Int => Some(Convert::IntsToFloats),
                     _ => None,
                 };
                 fields.push(match how {
@@ -4516,7 +4627,11 @@ impl<'a> Lowerer<'a> {
             // mask it makes — `where[f.on, a, b]` is `where[f.on eq true,
             // a, b]`, a missing cell false as the comparison answers it
             // (spec, Frames): lowered as that comparison, in both modes
-            let mut x = self.lower_expr(a)?;
+            let now = self.differentiating || name == "grad";
+            let was = std::mem::replace(&mut self.differentiating, now);
+            let x = self.lower_expr(a);
+            self.differentiating = was;
+            let mut x = x?;
             if !self.ctx.functions.contains_key(&name) && is_bool_column(&x, true) && crate::table::takes_mask_at(&name, i, args.len()) {
                 x = self.lower_expr(&as_mask(a))?;
             }
@@ -4607,6 +4722,22 @@ impl<'a> Lowerer<'a> {
                 }
             }
         }
+        // `[]` asked whether it holds an item is a list of the item's kind:
+        // typed before the call is (the rows of `contains` answer
+        // differently, so a list of nothing known had typed the call as
+        // nothing known — crow check --self)
+        if name == "contains"
+            && module.is_none()
+            && lowered.len() == 2
+            && matches!(&lowered[0], Expr::ListLit(items, Ty::List(e)) if items.is_empty() && **e == Ty::Unknown)
+            && !matches!(lowered[1].ty().payload(), Ty::Unknown)
+        {
+            let item = lowered[1].ty().payload().clone();
+            lowered[0] = Expr::ListLit(Vec::new(), Ty::List(Box::new(item)));
+            arg_types[0] = read(&lowered[0]);
+            full_types[0] = full(&lowered[0]);
+            checks[0] = self.checked(&lowered[0]);
+        }
         self.check_callee(callee, args, &checks);
         self.scan_call(callee, args, &full_types);
         // a list handed to a `?` is sent as (?, ?, …), which only `IN` reads:
@@ -4661,14 +4792,12 @@ impl<'a> Lowerer<'a> {
             }
             let lowered = self.row_arguments(&m, &name, lowered);
             let row = self.builtin_row(Some(&m), &name, &lowered);
+            let ty = Self::typed_by_row(ty, row);
             let lowered = Self::crow_call_args(row, lowered);
             let target = match row {
                 Some(row) if row.is_crow() => self.crow_target(row),
                 Some(row) => Target::Row(row),
-                None => {
-                    self.check_handed_functions(&lowered);
-                    Target::Module(m, name)
-                }
+                None => Target::Module(m, name),
             };
             return Ok(Expr::Call { target, args: lowered, ty, propagates });
         }
@@ -4677,7 +4806,6 @@ impl<'a> Lowerer<'a> {
         // program's `fn answer`)
         let visible = crate::modules::is_crow_fn(&name) || !crate::modules::is_crow_fn(&self.current_fn);
         if (self.ctx.functions.contains_key(&name) || self.ctx.specializations.contains_key(&name)) && visible {
-            self.check_handed_functions(&lowered);
             if let Some(seen) = &mut self.seen {
                 seen.calls.push((name.clone(), full_types.clone()));
             }
@@ -4709,13 +4837,46 @@ impl<'a> Lowerer<'a> {
             // them as a list, or the other way, are converted where they meet
             // (a literal handed where a call elsewhere made the parameter a
             // list did not build)
-            if let Some(sig) = self.ctx.functions.get(&resolved) {
+            if let Some(sig) = self.ctx.functions.get(&resolved).cloned() {
                 let params: Vec<Ty> = sig.params.iter().map(|(_, t)| t.clone()).collect();
+                // a function taking a function is one function for every call
+                // (spec, Specialization: it is not copied per kind), so an
+                // argument of another kind than its other calls give is
+                // refused where it is handed — it had been an internal error
+                // ("hands 'apply' a column for its parameter 'x', which is
+                // a number"; crow check --self)
+                if self.pass == Pass::Final && params.iter().any(|p| matches!(p, Ty::Fn(..))) {
+                    let names: Vec<String> = sig.params.iter().map(|(n, _)| n.clone()).collect();
+                    let whole = |t: &Ty| matches!(t, Ty::Int | Ty::Big);
+                    let misfit = params.iter().zip(lowered.iter()).enumerate().find(|(_, (p, x))| {
+                        let (held, given) = (sans_results(p.payload()), sans_results(x.ty().payload()));
+                        !matches!(held, Ty::Fn(..) | Ty::Unknown)
+                            && !matches!(given, Ty::Unknown | Ty::Json)
+                            && !held.compatible(&given)
+                            && !(whole(&held) && whole(&given))
+                            && !held.compatible(&as_inferred(&given))
+                    });
+                    if let Some((i, (p, x))) = misfit {
+                        let words = |t: &Ty| crate::table::Arg::of_type(t.payload()).words();
+                        let msg = format!(
+                            "`{0}` takes a function, so one `{0}` serves every call, and its '{1}' is {2} here where another call makes it {3} — a function taking a function is not copied per kind (spec, Specialization): write one for each kind",
+                            crate::lower::shown(&name),
+                            names.get(i).cloned().unwrap_or_default(),
+                            words(&x.ty()),
+                            words(p)
+                        );
+                        self.refuse(msg);
+                    }
+                }
                 let mut handed = Vec::with_capacity(lowered.len());
                 for (i, x) in lowered.into_iter().enumerate() {
                     handed.push(match (params.get(i), x.ty()) {
                         (Some(Ty::Float), Ty::Int) => Expr::Convert { how: Convert::IntToFloat, expr: Box::new(x), ty: Ty::Float },
                         (Some(p @ Ty::List(_)), Ty::Tensor(..)) => Expr::Convert { how: Convert::ToList, expr: Box::new(x), ty: (p).clone() },
+                        // (a list of ints where the parameter holds floats —
+                        // a vector handed at another call — is a list of
+                        // floats, as one assigned is)
+                        (Some(p @ Ty::List(pe)), Ty::List(e)) if **pe == Ty::Float && *e == Ty::Int => Expr::Convert { how: Convert::IntsToFloats, expr: Box::new(x), ty: (p).clone() },
                         // (an empty literal, whose items are not known, is
                         // any list the backends need: parity 71)
                         (Some(p @ Ty::Tensor(..)), Ty::List(e)) if *e != Ty::Unknown => Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty: (p).clone() },
@@ -4762,10 +4923,35 @@ impl<'a> Lowerer<'a> {
                 None => self.core_row_arguments(&name, lowered),
             };
             let row = self.builtin_row(None, &name, &lowered);
+            let lowered = Self::concrete_empties(&name, row, lowered);
             let lowered = Self::crow_call_args(row, lowered);
             return Ok(Expr::Effect { name, row, args: lowered, ty, answered: true, propagates });
         }
         if RUNTIME_TABLE.iter().any(|(b, _)| *b == name) {
+            // a list holds one kind: two lists of two kinds are not joined
+            // (the interpreter had made a list of both, `[true, 3]`, and the
+            // compiled program had not built — crow check --self)
+            if name == "concat" && lowered.len() >= 2 && self.pass == Pass::Final {
+                let item = |x: &Expr| match x.ty().payload() {
+                    Ty::List(e) => Some(sans_results(e)),
+                    // (a tensor's are numbers: beside a mask, two kinds)
+                    Ty::Tensor(..) => Some(Ty::Float),
+                    _ => None,
+                };
+                if let (Some(a), Some(b)) = (item(&lowered[0]), item(&lowered[1]))
+                    && !matches!(a, Ty::Unknown)
+                    && !matches!(b, Ty::Unknown)
+                    && !a.compatible(&b)
+                    && !(matches!(a, Ty::Int | Ty::Big) && matches!(b, Ty::Int | Ty::Big))
+                {
+                    let words = |x: &Expr| crate::table::Arg::of_type(x.ty().payload()).words();
+                    self.refuse(format!(
+                        "concat[] joins lists of one kind, and these are {} and {}: a list holds one kind — a record (struct) holds fields of several kinds",
+                        words(&lowered[0]),
+                        words(&lowered[1])
+                    ));
+                }
+            }
             // a list of numbers is held as a list or as a tensor: `concat`
             // joins them in the first's form, so the second is converted
             if name == "concat" && lowered.len() >= 2 {
@@ -4776,7 +4962,15 @@ impl<'a> Lowerer<'a> {
                 };
                 if let Some(how) = how {
                     let second = lowered.remove(1);
-                    lowered.insert(1, Expr::Convert { how, expr: Box::new(second), ty: ty.payload().clone() });
+                    // (typed by what it converts: a tensor of floats beside a
+                    // mask is a list of floats, not the answer's bools —
+                    // which the conversion after it had read as truths)
+                    let converted = match (&how, second.ty().payload()) {
+                        (Convert::ToList, Ty::Tensor(e, _)) => Ty::List(e.clone()),
+                        (Convert::ToTensor, _) => Ty::vector(Ty::Float),
+                        _ => ty.payload().clone(),
+                    };
+                    lowered.insert(1, Expr::Convert { how, expr: Box::new(second), ty: converted });
                 }
             }
             let lowered = self.core_row_arguments(&name, lowered);
@@ -4787,6 +4981,18 @@ impl<'a> Lowerer<'a> {
             // the variable's declaration then disagreed with)
             let ty = in_holders_form(&name, &lowered, ty);
             let row = self.builtin_row(None, &name, &lowered);
+            // (a row answering a tensor answers one, whatever the call's rule
+            // read from a list given it: `concat[xs, ys, 0]` of lists joins
+            // their tensors — typed a list, the compiled program had not
+            // built — crow check --self)
+            let ty = match row {
+                Some(r) if r.ret == crate::table::Kind::Tensor && matches!(ty.payload(), Ty::List(_)) => {
+                    let t = Ty::tensor(Ty::Float);
+                    if ty.is_result() { Ty::Result(Box::new(t)) } else { t }
+                }
+                _ => ty,
+            };
+            let lowered = Self::concrete_empties(&name, row, lowered);
             let (lowered, ty) = match row {
                 Some(row) => Self::widen_items(row, lowered, ty),
                 None => (lowered, ty),
@@ -4824,6 +5030,8 @@ impl<'a> Lowerer<'a> {
             None => self.core_row_arguments(&name, lowered),
         };
         let row = self.builtin_row(None, &name, &lowered);
+        let ty = Self::typed_by_row(ty, row);
+        let lowered = Self::concrete_empties(&name, row, lowered);
         let (lowered, ty) = match row {
             Some(row) => Self::widen_items(row, lowered, ty),
             None => (lowered, ty),
@@ -4839,6 +5047,65 @@ impl<'a> Lowerer<'a> {
             None => Target::Runtime(name),
         };
         Ok(Expr::Call { target, args: lowered, ty, propagates })
+    }
+
+    /// A call nothing typed answers what its row does, where the row's answer
+    /// is no collection of its arguments' items: `unique[f, []]` — the rows
+    /// of the name answering a column or a frame, `[]` saying neither — had
+    /// been typed as nothing known, and the compiled program had not built
+    /// (crow check --self).
+    fn typed_by_row(ty: Ty, row: Option<&'static crate::table::Row>) -> Ty {
+        match row {
+            Some(r) if matches!(ty.payload(), Ty::Unknown) && !r.ret.generic() && !matches!(r.ret.ty(), Ty::Unknown) => {
+                let t = r.ret.ty();
+                if ty.is_result() || matches!(r.fails, crate::table::Fails::Value(_)) { Ty::Result(Box::new(t)) } else { t }
+            }
+            _ => ty,
+        }
+    }
+
+    /// `[]` written where a row's answer says nothing of its items — `len[[]]`,
+    /// `type[[]]`, `encode[[]]`, `log[[]]` — is a list of ints: every kind
+    /// answers alike, and with none the compiled program had had no type to
+    /// give it (crow check --self). A row whose answer carries the items
+    /// (`push`, `concat`, `slice`) leaves the list to its other uses.
+    fn concrete_empties(name: &str, row: Option<&'static crate::table::Row>, lowered: Vec<Expr>) -> Vec<Expr> {
+        use crate::table::Kind;
+        // (`type` is a form of its own, whose answer is a word; a row of
+        // the list alone — `pop[[]]`, `reverse[[]]` — answers a list of
+        // the same nothing)
+        // (or whose other parameters say nothing of the items — `slice[[],
+        // 3, 3]`, its positions ints)
+        let alone = row.is_some_and(|r| {
+            r.params.iter().filter(|k| matches!(k, Kind::List | Kind::Seq | Kind::Item | Kind::ItemRef | Kind::MapOf | Kind::MapRef | Kind::Key | Kind::Keys)).count() == 1
+        });
+        if name != "type" && !alone && row.is_none_or(|r| r.ret.generic()) {
+            return lowered;
+        }
+        // (each list of the kind its parameter takes: `sort[f, []]` a list
+        // of text, which a list of ints had been handed as)
+        let kinds = row.and_then(|r| crate::table::kinds_of(r.params, lowered.len())).unwrap_or_default();
+        let item_of = |i: usize| match kinds.get(i) {
+            Some(Kind::Words | Kind::Strs | Kind::Texts) => Ty::Str,
+            Some(Kind::Floats) => Ty::Float,
+            Some(Kind::Bools) => Ty::Bool,
+            Some(Kind::Chunks) => Ty::Bytes,
+            Some(Kind::Tensors) => Ty::tensor(Ty::Float),
+            _ => Ty::Int,
+        };
+        lowered
+            .into_iter()
+            .enumerate()
+            .map(|(i, x)| match x {
+                Expr::ListLit(items, Ty::List(item)) if items.is_empty() && *item == Ty::Unknown => Expr::ListLit(items, Ty::List(Box::new(item_of(i)))),
+                // (and `map[]`, written or made by its call: a map of ints)
+                Expr::MapLit(pairs, Ty::Map(_, v)) if pairs.is_empty() && *v == Ty::Unknown => Expr::MapLit(pairs, Ty::Map(crate::ir::Key::Text, Box::new(Ty::Int))),
+                Expr::Call { target: Target::Row(row), args, ty: Ty::Map(_, v), .. } if row.id == "core.map_new" && args.is_empty() && *v == Ty::Unknown => {
+                    Expr::MapLit(Vec::new(), Ty::Map(crate::ir::Key::Text, Box::new(Ty::Int)))
+                }
+                other => other,
+            })
+            .collect()
     }
 
     /// A Crow row's arguments as its parameters take them: an int where the
@@ -4858,6 +5125,13 @@ impl<'a> Lowerer<'a> {
                 // ints holding a float)
                 (crate::table::Kind::Int, Ty::Float) => match crate::table::ROWS.iter().find(|r| r.id == "core.__truncated") {
                     Some(row) => Expr::Call { target: Target::Row(row), args: vec![x], ty: Ty::Int, propagates: false },
+                    None => x,
+                },
+                // a map of other values where a map of text is taken: each as
+                // it shows, as a Rust row's parameter makes it (`load[path,
+                // map[a = 1], …]` had not built — crow check --self)
+                (crate::table::Kind::TextMap, Ty::Map(_, v)) if !matches!(v.as_ref(), Ty::Str | Ty::Unknown) => match crate::table::ROWS.iter().find(|r| r.id == "core.__text_map") {
+                    Some(row) => Expr::Call { target: Target::Row(row), args: vec![x], ty: Ty::Map(crate::ir::Key::Text, Box::new(Ty::Str)), propagates: false },
                     None => x,
                 },
                 (crate::table::Kind::Encoded, ty) => {
@@ -5075,8 +5349,10 @@ impl<'a> Lowerer<'a> {
         let mut lowered = Self::typed_empties(&kinds, lowered);
         // the item a list is pushed, and the value a map is set, in the form
         // the collection holds its items (`held_as`)
+        // (`x in xs`: the item asked about is read as the list's items are —
+        // an int in a list of floats a float; compiled, it had not built)
         let (slot, item) = match (name, lowered.len()) {
-            ("push", 2) => (1, match lowered[0].ty().payload() {
+            ("push", 2) | ("contains", 2) => (1, match lowered[0].ty().payload() {
                 Ty::List(item) => Some(item.as_ref().clone()),
                 _ => None,
             }),
@@ -5088,7 +5364,17 @@ impl<'a> Lowerer<'a> {
         };
         if let Some(item) = item {
             let value = lowered.remove(slot);
-            lowered.insert(slot, held_as(value, &item));
+            let value = held_as(value, &item);
+            // (an int asked about in a list of floats is the float it is,
+            // through the mark of one that can fail)
+            let value = match (name, item.payload(), value.ty().payload()) {
+                ("contains", Ty::Float, Ty::Int) => {
+                    let ty = if value.ty().is_result() { Ty::Result(Box::new(Ty::Float)) } else { Ty::Float };
+                    Expr::Convert { how: Convert::IntToFloat, expr: Box::new(value), ty }
+                }
+                _ => value,
+            };
+            lowered.insert(slot, value);
         }
         let floats = kinds.iter().zip(&lowered).any(|(k, x)| match (k, x.ty().payload()) {
             (Kind::List | Kind::Seq, Ty::List(e)) | (Kind::MapOf | Kind::MapRef, Ty::Map(_, e)) => **e == Ty::Float,
@@ -5098,7 +5384,9 @@ impl<'a> Lowerer<'a> {
             .into_iter()
             .zip(kinds)
             .map(|(x, k)| match (k, x.ty()) {
-                (Kind::Tensor, Ty::List(e)) if matches!(e.payload(), Ty::Int | Ty::Float) => Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty: Ty::vector(Ty::Float) },
+                // (a mask too: where numbers are asked it is numbers, true 1
+                // and false 0 — `sort[mask]` had been an internal error)
+                (Kind::Tensor, Ty::List(e)) if matches!(e.payload(), Ty::Int | Ty::Float | Ty::Bool) => Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty: Ty::vector(Ty::Float) },
                 // a list of rows is a matrix where a tensor is taken (spec,
                 // Arrays: a list of rows and a matrix hold numbers alike) —
                 // rows that are tensors, or lists of numbers
@@ -5306,20 +5594,27 @@ impl<'a> Lowerer<'a> {
     /// out, and the call of it did not build), so it is refused with the
     /// fix. A function handed to a builtin — a page's view, a route's
     /// handler, `grad`'s function — is the runtime's to type.
-    fn check_handed_functions(&mut self, args: &[Expr]) {
-        if self.pass != Pass::Final {
+    /// (wherever it is handed: to a function, compared, held in a list, put
+    /// into text — each had been an internal error, crow check --self; a
+    /// view, a handler or a helper is typed by the runtime that calls it,
+    /// a test's by the interpreter that runs it, and `grad`'s function by
+    /// the run that traces it, as the verifier reads them)
+    fn check_fn_value(&mut self, f: &str) {
+        if self.pass != Pass::Final || self.at == Where::Test || self.differentiating {
             return;
         }
-        for a in args {
-            if let Expr::FnRef(f, _) = a
-                && self.ctx.functions.get(f).is_some_and(|sig| sig.params.iter().any(|(_, t)| *t == Ty::Unknown))
-            {
-                self.refuse(format!(
-                    "`{}` is handed as a value, and nothing types its parameters — apply it in the function it is handed to, or call it directly once",
-                    crate::lower::shown(f)
-                ));
-            }
+        let Some(sig) = self.ctx.functions.get(f) else { return };
+        if !sig.params.iter().any(|(_, t)| *t == Ty::Unknown) {
+            return;
         }
+        let body = sig.body.clone();
+        if matches!(self.kind_of(f, &body, false), FnKind::View | FnKind::Handler | FnKind::Helper) {
+            return;
+        }
+        self.refuse(format!(
+            "`{}` is handed as a value, and nothing types its parameters — apply it in the function it is handed to, or call it directly once",
+            crate::lower::shown(f)
+        ));
     }
 
     /// A list or a map of ints handed a float holds floats from then on, as

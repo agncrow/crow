@@ -109,7 +109,14 @@ pub struct CrowResponse {
 /// --self).
 impl crow_runtime::display::CrowDisplay for CrowResponse {
     fn crow_repr(&self) -> String {
-        format!("<response {}>", self.status)
+        self.to_string()
+    }
+}
+
+/// (and in text: `'v=`v`'` had not built)
+impl std::fmt::Display for CrowResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<response {}>", self.status)
     }
 }
 

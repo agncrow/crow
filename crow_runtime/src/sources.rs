@@ -67,6 +67,13 @@ pub fn text_map<T: crate::display::CrowDisplay>(m: &BTreeMap<String, T>) -> BTre
     m.iter().map(|(k, v)| (k.clone(), v.crow_fmt())).collect()
 }
 
+/// A map of any values as the map of text a function written in Crow takes
+/// (a request's headers, a reader's options): each value as it shows. The
+/// row's parameter makes the text (`text_map`); this hands it on.
+pub fn texts(m: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    m.clone()
+}
+
 /// What a request was answered (`request[url, method, body]`): its status,
 /// its body as text, and its headers, their names in lower case. A status
 /// that is no success is an answer like any other — `.status` says it.

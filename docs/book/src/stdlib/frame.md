@@ -78,7 +78,7 @@ Filtering uses ordinary Crow expressions that evaluate to boolean arrays. These 
 
 - `eq ne gt lt gte lte` — column vs scalar → boolean array (the scalar may come first: `50 lt df.age`)
 - `'late' in df.note`, `starts[df.symbol, 'A']`, `ends[df.note, 'k']` — a text column tested cell by cell → boolean array, a missing cell false
-- `and` / `or` — two boolean arrays → boolean array
+- `and` / `or` — two boolean arrays → boolean array; a bool and a boolean array → each item joined with the bool
 - `not` — boolean array → boolean array
 
 ```

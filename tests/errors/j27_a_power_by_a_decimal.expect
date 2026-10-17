@@ -1,0 +1,3 @@
+j27_a_power_by_a_decimal.co:1:1: an exact number's power is by an int, and this is a decimal: `d ^ 2`
+  1 │ log[2 ^ decimal['1.25']]
+    │ ^^^^^^^^^^^^^^^^^^^^^^^^

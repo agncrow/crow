@@ -718,7 +718,7 @@ impl<'a> Lowerer<'a> {
                 let many = |t: &Ty| matches!(t, Ty::Tensor(..) | Ty::Column(_) | Ty::List(_));
                 let hint = if many(&lt) || many(&rt) { " — a tensor's numbers are raised one by one with .^" } else { "" };
                 self.refuse(format!("cannot use '^' with {} and {}{}", lt.crow_name(), rt.crow_name(), hint));
-            } else if matches!(lt, Ty::Decimal | Ty::Fraction) && !matches!(rt, Ty::Int | Ty::Big | Ty::Json) {
+            } else if (matches!(lt, Ty::Decimal | Ty::Fraction) && !matches!(rt, Ty::Int | Ty::Big | Ty::Json)) || matches!(rt, Ty::Decimal | Ty::Fraction) {
                 // (the runtime's words, where it is written: interpreted it
                 // had stopped as it ran, and compiled it had not built)
                 self.refuse(format!("an exact number's power is by an int, and this is {}: `d ^ 2`", crate::table::Arg::of_type(&rt).words()));
@@ -754,6 +754,19 @@ impl<'a> Lowerer<'a> {
         // "expected a decimal, got array", and the compiled program had not
         // built — crow check --self)
         if matches!(op, BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte) {
+            // a handle is its own: two connections, responses, sockets or
+            // mailers are never equal, and none orders (the interpreter had
+            // answered false, and the compiled program had not built)
+            let handle = |t: &Ty| matches!(t, Ty::Db | Ty::Tx | Ty::WebResponse | Ty::Socket | Ty::Mailer | Ty::Stream);
+            if let Some(h) = [&lt, &rt].into_iter().find(|t| handle(t)) {
+                let words = match h {
+                    Ty::Db | Ty::Tx => "a database connection",
+                    Ty::WebResponse => "a response",
+                    t => crate::table::Arg::of_type(t).words(),
+                };
+                self.refuse(format!("{} is not compared: a handle is its own, equal to no other — compare what it holds", words));
+                return;
+            }
             let exact = |t: &Ty| matches!(t, Ty::Decimal | Ty::Fraction);
             let many = |t: &Ty| matches!(t, Ty::Tensor(..) | Ty::Column(_) | Ty::List(_));
             if let Some((e, m)) = [(&lt, &rt), (&rt, &lt)].into_iter().find(|(e, m)| exact(e) && many(m)) {
@@ -965,6 +978,10 @@ impl<'a> Lowerer<'a> {
             && many != others
         {
             self.refuse(format!("{} takes {}: its {} are {}, not {}", crate::table::form(row.name), takes, what, many, one));
+        }
+        // (`[]` is a list of any kind: one only a list of lists holds)
+        if matches!(item.ty().payload(), Ty::List(e) if **e == Ty::Unknown) && !many.starts_with("lists") {
+            self.refuse(format!("{} takes {}: its {} are {}, not a list", crate::table::form(row.name), takes, what, many));
         }
     }
 
@@ -2464,6 +2481,11 @@ pub(crate) fn item_kind(t: &Ty) -> Option<(String, String)> {
         }
         Ty::Map(..) => ("maps".to_string(), "a map".to_string()),
         Ty::Frame(_) => ("frames".to_string(), "a frame".to_string()),
+        // (a moment and a frame's column are kinds of their own: pushed onto
+        // a list of numbers, each had made a list of two kinds — crow check
+        // --self)
+        Ty::Moment => ("moments".to_string(), "a moment".to_string()),
+        Ty::Column(_) => ("frame's columns".to_string(), "a frame's column".to_string()),
         _ => return None,
     })
 }

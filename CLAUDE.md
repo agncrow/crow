@@ -847,6 +847,21 @@ steps on every push and must be green.
   one copy's answer — had typed the parameter of a function handed
   another copy's answer, and stayed. A function taking a function as a
   value is not copied (v1), so it never awaits.
+- A row written in Crow takes its arguments as its function's parameters
+  are typed, with none of the printing a Rust row's kind does
+  (`Kind::print`): `crow_call_args`' `read_as` converts each — an int to
+  a float, a float to its whole part (`__truncated`), any map to a map of
+  text (`__text_map`) — and gathers the rest of the arguments into a list
+  where one can fail through a row (`__sizes`, `__groups`), so the call
+  hands that failure on as any call does. A new kind on a `crow!` row's
+  parameter needs its conversion there, or the compiled call does not build
+  where the interpreter converted (table.rs's own conversion by kind).
+- A function copied per signature is lowered muted at its own joined
+  types (every call reaches a copy, which is checked), and a vector and a
+  matrix are two signatures (`same_signature`'s ranks). A database
+  connection and a response are argument classes of their own
+  (`Arg::Db`, `Arg::Response`): a value shows them, and the kinds check
+  refuses them elsewhere — classed as not known, `len[conn]` had passed.
 - `nodes[n]` is removed (2026-10-11; its message of its own went
   2026-10-16, as `filter`'s did — a replaced name is an unknown name): the
   process count is `crow launch <n>`'s, a process reads its rank with

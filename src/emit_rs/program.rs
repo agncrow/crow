@@ -1180,6 +1180,11 @@ impl Emitter {
         match t {
             Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) | Ty::Frame(_) | Ty::Column(_) => true,
             Ty::Sparse => true,
+            // (a moment, bytes and the handles show as the runtime shows
+            // them, and an item nothing typed is held as text: a record of
+            // one had had no display, and `log[b]` had not built — crow check
+            // --self)
+            Ty::Moment | Ty::Bytes | Ty::Stream | Ty::Socket | Ty::Mailer | Ty::Db | Ty::WebResponse | Ty::Unknown => true,
             Ty::List(i) | Ty::Map(_, i) | Ty::Result(i) => self.ty_shows(i, seen),
             Ty::Record(n) | Ty::OptRecord(n) => self.record_is(n, &|e, t, seen| e.ty_shows(t, seen), seen),
             _ => false,

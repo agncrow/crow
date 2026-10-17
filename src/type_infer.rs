@@ -1155,7 +1155,23 @@ impl TypeContext {
     /// argument fits, and markup meets markup — a view given markup is not
     /// the same view given text.
     pub fn same_signature(a: &[Ty], b: &[Ty]) -> bool {
-        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.compatible(y) && x.has_markup() == y.has_markup() && x.frame_cols() == y.frame_cols())
+        // (numbers held as a list or a tensor are one kind, but a vector and
+        // a matrix are two: one copy for both had typed `first[ints]`'s list
+        // as a matrix, and the interpreter stopped on its shape — crow check
+        // --self)
+        fn rank(t: &Ty) -> Option<usize> {
+            match t {
+                Ty::Tensor(_, Some(dims)) => Some(dims.len()),
+                Ty::List(item) if matches!(item.as_ref(), Ty::Int | Ty::Float | Ty::Big | Ty::Bool) => Some(1),
+                Ty::List(item) if matches!(item.as_ref(), Ty::List(e) if matches!(e.as_ref(), Ty::Int | Ty::Float | Ty::Big)) => Some(2),
+                _ => None,
+            }
+        }
+        let ranks_agree = |x: &Ty, y: &Ty| match (rank(x), rank(y)) {
+            (Some(r), Some(s)) => r == s,
+            _ => true,
+        };
+        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.compatible(y) && ranks_agree(x, y) && x.has_markup() == y.has_markup() && x.frame_cols() == y.frame_cols())
     }
 
     /// The specialization of `name` a call reaches, given its arguments'

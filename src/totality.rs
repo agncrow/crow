@@ -41,7 +41,7 @@ fn variant_of(t: &Ty) -> &'static str {
 /// One of every class of argument a row's kind is asked about.
 pub(crate) fn every_arg() -> Vec<Arg> {
     vec![
-        Arg::Int, Arg::Float, Arg::Decimal, Arg::Fraction, Arg::Moment, Arg::Moments, Arg::Bytes, Arg::Stream, Arg::Socket, Arg::Mailer, Arg::Chunks,
+        Arg::Int, Arg::Float, Arg::Decimal, Arg::Fraction, Arg::Moment, Arg::Moments, Arg::Bytes, Arg::Stream, Arg::Socket, Arg::Mailer, Arg::Db, Arg::Response, Arg::Chunks,
         Arg::Json, Arg::Tensor, Arg::Ints, Arg::Floats, Arg::Tensors, Arg::Rows, Arg::Text, Arg::Texts, Arg::Truth, Arg::Truths,
         Arg::Records, Arg::Maps, Arg::Items, Arg::FallibleNumbers, Arg::Fallible, Arg::Column, Arg::Map, Arg::Record,
         Arg::Sparse, Arg::Frame, Arg::Fn, Arg::AnyList, Arg::Unknown,
@@ -53,7 +53,7 @@ pub(crate) fn every_arg() -> Vec<Arg> {
 fn arg_variant(a: Arg) -> &'static str {
     match a {
         Arg::Int => "Int", Arg::Float => "Float", Arg::Decimal => "Decimal", Arg::Fraction => "Fraction", Arg::Moment => "Moment", Arg::Moments => "Moments", Arg::Bytes => "Bytes",
-        Arg::Stream => "Stream", Arg::Socket => "Socket", Arg::Mailer => "Mailer", Arg::Chunks => "Chunks", Arg::Json => "Json",
+        Arg::Stream => "Stream", Arg::Socket => "Socket", Arg::Mailer => "Mailer", Arg::Db => "Db", Arg::Response => "Response", Arg::Chunks => "Chunks", Arg::Json => "Json",
         Arg::Tensor => "Tensor", Arg::Ints => "Ints", Arg::Floats => "Floats", Arg::Tensors => "Tensors", Arg::Rows => "Rows", Arg::Text => "Text",
         Arg::Texts => "Texts", Arg::Truth => "Truth", Arg::Truths => "Truths", Arg::Records => "Records", Arg::Maps => "Maps",
         Arg::Items => "Items", Arg::FallibleNumbers => "FallibleNumbers", Arg::Fallible => "Fallible", Arg::Column => "Column",
@@ -128,7 +128,9 @@ fn every_type_joins_with_itself_and_with_nothing() {
 fn every_type_has_a_dispatch_class() {
     for t in every_ty() {
         let class = Arg::of_type(&t);
-        let takes_none = matches!(t, Ty::Db | Ty::Tx | Ty::WebApp | Ty::WebRequest | Ty::WebResponse | Ty::App | Ty::Node | Ty::Unit | Ty::Unknown);
+        // (a connection and a response are classes of their own: a value
+        // shows them, and the kinds check refuses them anywhere else)
+        let takes_none = matches!(t, Ty::WebApp | Ty::WebRequest | Ty::App | Ty::Node | Ty::Unit | Ty::Unknown);
         assert_eq!(class == Arg::Unknown, takes_none, "{} is {:?}", variant_of(&t), class);
     }
 }

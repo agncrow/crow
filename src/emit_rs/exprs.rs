@@ -167,7 +167,11 @@ impl Emitter {
                     if matches!(Self::inner(&self.tt(expr)), Ty::Tensor(..)) {
                         return inner;
                     }
+                    // (a map keeps its keys' kind: one keyed by ints had been
+                    // collected keyed by text — crow check --self)
                     let map = match Self::inner(&self.tt(expr)) {
+                        Ty::Map(crate::ir::Key::Int, v) if matches!(v.as_ref(), Ty::Big) => "into_iter().map(|(k, v)| (k, v.to_f64())).collect::<std::collections::BTreeMap<i64, f64>>()",
+                        Ty::Map(crate::ir::Key::Int, _) => "into_iter().map(|(k, v)| (k, v as f64)).collect::<std::collections::BTreeMap<i64, f64>>()",
                         Ty::Map(_, v) if matches!(v.as_ref(), Ty::Big) => "into_iter().map(|(k, v)| (k, v.to_f64())).collect::<std::collections::BTreeMap<String, f64>>()",
                         Ty::Map(..) => "into_iter().map(|(k, v)| (k, v as f64)).collect::<std::collections::BTreeMap<String, f64>>()",
                         Ty::List(i) if matches!(i.as_ref(), Ty::Big) => "into_iter().map(|v| v.to_f64()).collect::<Vec<f64>>()",
@@ -425,9 +429,31 @@ impl Emitter {
             if matches!(t, Ty::Unknown) && self.reactive_event_handlers.contains(&self.cur_fn) {
                 t = Ty::Str;
             }
+            // (a column, a sparse matrix and a handle too: `b = a` of one,
+            // then `a` read again, had moved it — crow check --self)
             let non_copy = matches!(
                 t.text(),
-                Ty::Str | Ty::List(_) | Ty::Tensor(..) | Ty::Map(..) | Ty::Record(_) | Ty::Frame(_) | Ty::Json | Ty::Bytes | Ty::Stream | Ty::Result(_) | Ty::Big | Ty::Decimal | Ty::Fraction
+                Ty::Str
+                    | Ty::Markup
+                    | Ty::List(_)
+                    | Ty::Tensor(..)
+                    | Ty::Map(..)
+                    | Ty::Record(_)
+                    | Ty::OptRecord(_)
+                    | Ty::Frame(_)
+                    | Ty::Column(_)
+                    | Ty::Sparse
+                    | Ty::Json
+                    | Ty::Bytes
+                    | Ty::Stream
+                    | Ty::Socket
+                    | Ty::Mailer
+                    | Ty::Db
+                    | Ty::WebResponse
+                    | Ty::Result(_)
+                    | Ty::Big
+                    | Ty::Decimal
+                    | Ty::Fraction
             );
             if non_copy {
                 return format!("{}.clone()", s);
@@ -631,6 +657,7 @@ impl Emitter {
             let result_type = match op {
                 _ if mask.is_some() => Ty::List(Box::new(Ty::Bool)),
                 "eq" | "ne" | "gt" | "lt" | "gte" | "lte" if !Self::numbers_mix(&lti, &rti) && (tensor_and_number(&lti, &rti) || tensor_and_number(&rti, &lti)) => Ty::List(Box::new(Ty::Bool)),
+                "and" | "or" if matches!(&lti, Ty::List(i) if **i == Ty::Bool) || matches!(&rti, Ty::List(i) if **i == Ty::Bool) => Ty::List(Box::new(Ty::Bool)),
                 "eq" | "ne" | "gt" | "lt" | "gte" | "lte" | "and" | "or" => Ty::Bool,
                 "mod" if matches!(lti, Ty::Big) => Ty::Big,
                 "pow" if matches!(lti, Ty::Decimal | Ty::Fraction) => lti.clone(),
@@ -657,8 +684,9 @@ impl Emitter {
                 _ if self.tensor_arith(op, &l_val, &lti, &r_val, &rti).is_some() => self.tensor_arith(op, &l_val, &lti, &r_val, &rti).unwrap_or_default(),
                 // (a cast before `<` in its own parentheses: `x as f64 < y` reads
                 // `f64<` as a type's arguments, and did not build)
-                (Ty::Int, Ty::Float) => format!("(({}) as f64) {} {}", l_val, op_str, r_val),
-                (Ty::Float, Ty::Int) => format!("{} {} (({}) as f64)", l_val, op_str, r_val),
+                // (a power is the power arm's: `pow` is no Rust operator)
+                (Ty::Int, Ty::Float) if op != "pow" => format!("(({}) as f64) {} {}", l_val, op_str, r_val),
+                (Ty::Float, Ty::Int) if op != "pow" => format!("{} {} (({}) as f64)", l_val, op_str, r_val),
                 // (a growing int beside a float: its nearest float)
                 (Ty::Big, Ty::Float) if op != "pow" => format!("({}).to_f64() {} {}", l_val, op_str, r_val),
                 (Ty::Float, Ty::Big) if op != "pow" => format!("{} {} ({}).to_f64()", l_val, op_str, r_val),
@@ -726,6 +754,14 @@ impl Emitter {
         let bool_list = |t: &Ty| matches!(t, Ty::List(i) if matches!(i.as_ref(), Ty::Bool));
         if matches!(op, "and" | "or") && bool_list(&lti) && bool_list(&rti) {
             return format!("{}.iter().zip({}.iter()).map(|(_a, _b)| *_a {} *_b).collect::<Vec<bool>>()", l, r, op_str);
+        }
+        // (a bool joined with a mask joins each item, as the interpreter
+        // does: `true and f.on` had not built — crow check --self)
+        if matches!(op, "and" | "or") && lti == Ty::Bool && bool_list(&rti) {
+            return format!("{{ let _s: bool = {}; ({}).iter().map(|_b| _s {} *_b).collect::<Vec<bool>>() }}", l, r, op_str);
+        }
+        if matches!(op, "and" | "or") && bool_list(&lti) && rti == Ty::Bool {
+            return format!("{{ let _m = &({}); let _s: bool = {}; _m.iter().map(|_a| *_a {} _s).collect::<Vec<bool>>() }}", l, r, op_str);
         }
         if cmp {
             if let Some(c) = self.comparison(op, &l, &lti, &r, &rti) {
@@ -978,12 +1014,15 @@ impl Emitter {
             "add" | "sub" | "mul" => format!("({}).{}(&({}))", l, op, r),
             "div" | "pow" => format!("({}).{}(&({})).unwrap_or_else(|e| crow_stop({}, e))", l, op, r, line),
             "mod" => format!("({}).rem(&({})).unwrap_or_else(|e| crow_stop({}, e))", l, r, line),
-            "eq" => format!("(({}) == ({}))", l, r),
-            "ne" => format!("(({}) != ({}))", l, r),
-            "gt" => format!("(({}) > ({}))", l, r),
-            "lt" => format!("(({}) < ({}))", l, r),
-            "gte" => format!("(({}) >= ({}))", l, r),
-            "lte" => format!("(({}) <= ({}))", l, r),
+            // (compared through the traits' functions, each side by
+            // reference: a loop's borrowed item, `&Int`, is coerced where `<`
+            // had refused it — crow check --self)
+            "eq" => format!("<crow_runtime::int::Int as PartialEq>::eq(&({}), &({}))", l, r),
+            "ne" => format!("<crow_runtime::int::Int as PartialEq>::ne(&({}), &({}))", l, r),
+            "gt" => format!("<crow_runtime::int::Int as PartialOrd>::gt(&({}), &({}))", l, r),
+            "lt" => format!("<crow_runtime::int::Int as PartialOrd>::lt(&({}), &({}))", l, r),
+            "gte" => format!("<crow_runtime::int::Int as PartialOrd>::ge(&({}), &({}))", l, r),
+            "lte" => format!("<crow_runtime::int::Int as PartialOrd>::le(&({}), &({}))", l, r),
             _ => return None,
         })
     }
@@ -1002,7 +1041,6 @@ impl Emitter {
     }
 
     fn unary(&mut self, op: &str, e: &Expr) -> String {
-        let inner = self.operand(e);
         let ty = Self::inner(&self.tt(e));
         // an operator computes with an error (spec, Errors): a value that
         // failed is the value of `not` and of a minus sign, as of `x + 1` —
@@ -1011,7 +1049,19 @@ impl Emitter {
         if matches!(self.tt(e), Ty::Result(_)) {
             let ctr = self.binop_counter;
             self.binop_counter += 1;
-            let payload = format!("_un_{}.value.clone()", ctr);
+            // (a conversion of a value that can fail — a list or a column
+            // made a tensor to be made negative — converts its payload: the
+            // value that can fail is what is bound)
+            let (inner, payload) = match e {
+                Expr::Convert { how, expr: held, ty: to } if !matches!(how, Convert::Unwrap | Convert::Known) && matches!(self.tt(held), Ty::Result(_)) => {
+                    let name = format!("_unv_{}", ctr);
+                    let local = Expr::Local(name.clone(), self.tt(held).payload().clone());
+                    let conv = Expr::Convert { how: how.clone(), expr: Box::new(local), ty: to.payload().clone() };
+                    let printed = self.expr(&conv);
+                    (self.operand(held), format!("{{ let {} = _un_{}.value.clone(); {} }}", name, ctr, printed))
+                }
+                _ => (self.operand(e), format!("_un_{}.value.clone()", ctr)),
+            };
             let turned = match op {
                 "neg" if matches!(ty, Ty::Tensor(..) | Ty::Big | Ty::Decimal | Ty::Fraction) => format!("({}).neg()", payload),
                 "neg" if matches!(ty, Ty::Int) => format!("crow_runtime::stops::neg({}).unwrap_or_else(|e| crow_stop({}, e))", payload, self.line_now()),
@@ -1028,6 +1078,7 @@ impl Emitter {
                 c = ctr
             );
         }
+        let inner = self.operand(e);
         match op {
             "neg" => {
                 if self.emitting_traced && matches!(ty, Ty::Float | Ty::Tensor(..)) {
@@ -1599,6 +1650,14 @@ impl Emitter {
             if matches!(ty, Ty::Map(_, e) if **e == Ty::Str) {
                 return "BTreeMap::<String, String>::new()".to_string();
             }
+            // (typed where its type is known: `len[map[]]` had left Rust
+            // nothing to infer it from — crow check --self)
+            if let Ty::Map(key, value) = ty
+                && !value.has_unknown()
+            {
+                let key = if matches!(key, crate::ir::Key::Int) { "i64" } else { "String" };
+                return format!("BTreeMap::<{}, {}>::new()", key, value.to_rust_type());
+            }
             return "BTreeMap::new()".to_string();
         }
         let int_keys = matches!(ty, Ty::Map(crate::ir::Key::Int, _));
@@ -2148,6 +2207,7 @@ impl Emitter {
                             | Ty::Json
                             | Ty::Column(_)
                             | Ty::Sparse
+                            | Ty::WebResponse
                     );
                 let s = self.expr(a);
                 let moved = self.moved_local(a);

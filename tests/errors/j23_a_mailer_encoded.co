@@ -1,0 +1,2 @@
+use web.mail
+log[encode[smtp['h', 9, 'u', 'p']]]

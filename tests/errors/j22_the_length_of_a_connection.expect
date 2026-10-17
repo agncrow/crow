@@ -1,0 +1,3 @@
+j22_the_length_of_a_connection.co:2:5: len[] takes a list, text, a map, numbers, a frame or bytes, got a database connection
+  2 │ log[len[connect['sqlite://:memory:']]]
+    │     ^^^

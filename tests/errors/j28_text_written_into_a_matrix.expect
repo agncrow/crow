@@ -1,0 +1,3 @@
+j28_text_written_into_a_matrix.co:2:1: `m[…] = …` writes numbers into a tensor, and this is text
+  2 │ m[0] = 'abc'
+    │ ^^^^^^^^^^^^

@@ -1,0 +1,3 @@
+j26_a_column_pushed_onto_numbers.co:3:5: push[] takes a list and an item of its kind: its items are numbers, not a frame's column
+  3 │ log[push[push[[], 3], f.a]]
+    │     ^^^^ ^^^^

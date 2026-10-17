@@ -1,0 +1,3 @@
+j29_an_int_that_can_fail_where_a_record_or_none_is_held.co:9:1: a record or 0 (none) is held here, and this is an int that can fail: decide it first (`if v.ok`)
+  9 │ log[pass[may[3, false]]]
+    │ ^^^^^^^^^^^^^^^^^^^^^^^^

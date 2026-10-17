@@ -273,8 +273,13 @@ impl TypeContext {
             // is no variable — guessing a function from its call made a
             // builtin one, and a fact not typed yet one a view indexed.
             if !self.functions.contains_key(name) && !self.structs.contains_key(name) {
-                if let Some(existing @ Ty::Fn(_, _)) = self.vars.get(name) {
-                    let fn_type = Ty::Fn(arg_types.to_vec(), Box::new(Ty::Unknown));
+                if let Some(existing @ Ty::Fn(params, _)) = self.vars.get(name) {
+                    // (a call of another count types the parameters it gives:
+                    // its count is refused where it is written, and that is
+                    // the one mistake — nothing typed, the function handed as
+                    // a value had been refused too)
+                    let given: Vec<Ty> = (0..params.len()).map(|i| arg_types.get(i).cloned().unwrap_or(Ty::Unknown)).collect();
+                    let fn_type = Ty::Fn(given, Box::new(Ty::Unknown));
                     let unified = existing.unify(&fn_type);
                     self.vars.insert(name.clone(), unified);
                 }

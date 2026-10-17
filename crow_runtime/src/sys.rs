@@ -331,7 +331,14 @@ impl std::fmt::Debug for Socket {
 
 impl crate::display::CrowDisplay for Socket {
     fn crow_repr(&self) -> String {
-        format!("<socket {}>", self.0.url)
+        self.to_string()
+    }
+}
+
+/// A socket in text, as it shows (`'v=`s`'` had not built compiled).
+impl std::fmt::Display for Socket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<socket {}>", self.0.url)
     }
 }
 

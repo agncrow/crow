@@ -1,0 +1,3 @@
+j25_two_lists_of_two_kinds_joined.co:1:5: concat[] joins lists of one kind, and these are a list of bools and a list of ints: a list holds one kind — a record (struct) holds fields of several kinds
+  1 │ log[concat[push[push[[], true], false], push[push[[], 3], 1]]]
+    │     ^^^^^^

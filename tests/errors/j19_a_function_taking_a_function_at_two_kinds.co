@@ -1,0 +1,8 @@
+use frame
+fn pass[x]
+    return x
+fn apply[g, x]
+    return g[x]
+f = frame.new[a = [1, 2, 3]]
+log[apply[pass, 2.5]]
+log[apply[pass, f.a]]

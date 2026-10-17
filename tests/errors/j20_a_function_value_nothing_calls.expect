@@ -1,0 +1,3 @@
+j20_a_function_value_nothing_calls.co:3:1: `double` is handed as a value, and nothing types its parameters — apply it in the function it is handed to, or call it directly once
+  3 │ log[double eq double]
+    │ ^^^^^^^^^^^^^^^^^^^^^
