@@ -114,36 +114,19 @@ pub(crate) fn slips(a: &str, b: &str) -> usize {
 }
 
 /// The refusals left when the echoes go: a refusal that only says
-/// something is not known — a rank, a function value's parameters — on a
-/// line refused for something else is that mistake seen again (a slip in a
-/// name leaves what is made of it unknown), and one mistake is one
-/// message (spec, Error Messages, rule 3).
+/// something is not known — a rank, a function value's parameters — beside
+/// a refusal of something else is that mistake seen again (a slip in a
+/// name leaves what is made of it unknown, wherever it goes), and one
+/// mistake is one message (spec, Error Messages, rule 3). Alone, an echo is
+/// the mistake itself. (An echo had been dropped only after a refusal on
+/// its own line: a misspelled `reverse` had also said the rank of a
+/// record's field it reached, in a function lowered before the line, and a
+/// misspelled `floor` that a function value nothing types — crow test
+/// --fuzz --mistakes.) An unknown makes no refusal of its own, the checks
+/// passing it by, so no echo is the root of a refusal beside it.
 pub(super) fn without_echoes(errors: Vec<(String, Option<String>)>) -> Vec<(String, Option<String>)> {
     let echo = |m: &str| m.contains("is not known here") || m.contains("nothing types its parameters");
-    let line_of = |m: &str| m.split(':').next().unwrap_or("").to_string();
-    // (a function value nothing types is the whole program's conclusion:
-    // where anything else is wrong, the call that would have typed it may
-    // be the mistake, on any line and before or after it — `relay[h1, 22,
-    // folor[…]]` had said both: crow test --fuzz --mistakes)
-    let whole = |m: &str| m.contains("nothing types its parameters");
-    let errors: Vec<(String, Option<String>)> = if errors.iter().any(|(m, _)| !echo(m)) { errors.into_iter().filter(|(m, _)| !whole(m)).collect() } else { errors };
-    // (an echo follows what it echoes: the slip is refused as its call's
-    // arguments are lowered, before what is made of the call; a rank not
-    // known, refused first, is the mistake itself)
-    let mut firm: Vec<(String, Option<String>)> = Vec::new();
-    let mut kept = Vec::new();
-    for (m, o) in errors {
-        let at = (line_of(&m), o.clone());
-        if echo(&m) {
-            if firm.contains(&at) {
-                continue;
-            }
-        } else {
-            firm.push(at);
-        }
-        kept.push((m, o));
-    }
-    kept
+    if errors.iter().any(|(m, _)| !echo(m)) { errors.into_iter().filter(|(m, _)| !echo(m)).collect() } else { errors }
 }
 
 /// A name as the program wrote it: a part's function without the prefix

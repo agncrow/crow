@@ -1,0 +1,11 @@
+use math, math.nn
+
+struct Bag [t, m]
+
+fn first_of[b]
+    return b.t[1]
+
+v0 = rveerse[zeros[3]]
+g = Bag[relu[v0], [[0.5, 1.0]]]
+log[first_of[g]]
+log[g.t[1] + g.m[0][1]]
