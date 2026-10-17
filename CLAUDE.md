@@ -905,6 +905,17 @@ steps on every push and must be green.
   `crow_web::view::escape_text`/`escape_attr`); classes join once, an empty
   one adds none, a computed one merges at run time (`with_class`). A view
   called outside views is refused (compiled it had no session to read).
+- The state family (`state_cases`, 2026-10-17) serves each case as a
+  page with top-level lines of its own (facts, handlers, derivations,
+  named `@N`) and drives its events through `served_parity::page_steps`
+  (split out of `drive`, which starts the server itself). It found a
+  record fact's field written in a handler lowered as a local's
+  `SetPath` (interpreted "undefined variable", compiled it changed): a
+  path write to a fact is `let _t = load f; _t.… = …; store f ← _t`
+  (`path_write`) — `store` is the one write to state; and a select bound
+  to a fact taking any value a forged event sent: `Offers` keeps each
+  choice's values (a select's options, a radio's value, in elements and in
+  markup) and refuses another, unless a free input binds the same fact.
 - `nodes[n]` is removed (2026-10-11; its message of its own went
   2026-10-16, as `filter`'s did — a replaced name is an unknown name): the
   process count is `crow launch <n>`'s, a process reads its rank with

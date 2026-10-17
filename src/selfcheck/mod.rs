@@ -298,6 +298,11 @@ pub(crate) struct Route {
     limit: Option<u32>,
     asks: Vec<Ask>,
     page: bool,
+    /// A page's own top-level lines — its facts, handlers, derivations —
+    /// their names the case's (`@N` its number), and the events its page
+    /// is driven with (the state family); none, the page is asked once.
+    top: Vec<String>,
+    steps: Vec<serde_json::Value>,
 }
 
 /// One request a served case is asked: its method, the path past `/cN`,
@@ -468,6 +473,14 @@ fn program(cases: &[&Case]) -> (String, Vec<usize>) {
             }
         }
         starts.push(out.lines().count() + 1);
+        // (a page's own facts, handlers and derivations, at the top level:
+        // the case's, as a build error in them is)
+        if let Some(r) = &c.serve {
+            for line in &r.top {
+                out.push_str(&own(line));
+                out.push('\n');
+            }
+        }
         // (a served case is a route's handler, handed the request, and its
         // body answers the response; any other a function of no parameters
         // whose logs are the case's)
@@ -1201,6 +1214,34 @@ struct Seen {
 
 const LIMIT: Duration = Duration::from_secs(30);
 
+/// Each batch's own program removed from the builders' directories: its
+/// binary beside its source and in the cache, and every artifact of its
+/// crate (`self_*`) — what stays is the runtime's crates, built once per
+/// kind of program for the next run.
+fn prune_batches(build_dir: &Path) {
+    let Ok(builders) = std::fs::read_dir(build_dir) else { return };
+    for builder in builders.flatten().map(|e| e.path()).filter(|p| p.is_dir()) {
+        let ours = |p: &Path| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("self_") || n.starts_with("run_self_"));
+        let target = builder.join(".crow_build").join("target");
+        let mut places = vec![builder.clone()];
+        for profile in ["debug", "release"] {
+            let t = target.join(profile);
+            places.extend(["", "deps", "incremental", ".fingerprint", "build"].iter().map(|d| if d.is_empty() { t.clone() } else { t.join(d) }));
+        }
+        for place in places {
+            let Ok(entries) = std::fs::read_dir(&place) else { continue };
+            for e in entries.flatten() {
+                let p = e.path();
+                // (a batch's source stays: the next run writes it anew)
+                if !ours(&p) || p.extension().is_some_and(|x| x == "co") {
+                    continue;
+                }
+                let _ = if p.is_dir() { std::fs::remove_dir_all(&p) } else { std::fs::remove_file(&p) };
+            }
+        }
+    }
+}
+
 /// A batch's build: the Rust compiler's time, not a case's — a cold build
 /// after the runtime's crates change compiles them again, SQLite's C among
 /// them (held to a case's thirty seconds, one had been killed and named a
@@ -1860,7 +1901,9 @@ fn build(exe: &Path, dir: &Path, stem: &str, cases: Vec<(usize, Case)>, jobs: &s
             return;
         }
         let mut cmd = Command::new(exe);
-        cmd.args(["build", &file]).current_dir(dir).env("CROW_BUILD_PROFILE", "dev").env("CARGO_BUILD_JOBS", jobs);
+        // (no incremental data: a batch is built once, and the runtime's
+        // crates kept it once per kind of program)
+        cmd.args(["build", &file]).current_dir(dir).env("CROW_BUILD_PROFILE", "dev").env("CARGO_BUILD_JOBS", jobs).env("CARGO_INCREMENTAL", "0");
         let (code, out, err, ended) = spawn_within(cmd, BUILD_LIMIT);
         let binary = dir.join(stem);
         if code == Some(0) && binary.exists() {
@@ -2041,6 +2084,7 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
     let mut cases = form_cases(&all);
     cases.extend(web::route_cases(&all));
     cases.extend(web::view_cases(&all));
+    cases.extend(web::state_cases());
     let (rows, unexercised) = row_cases(&all, &only);
     let row_count = rows.len();
     cases.extend(rows);
@@ -2332,6 +2376,7 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
                     Some("view-class") => Some("ui.attr.class".to_string()),
                     Some("view-bool") => parts.next().map(|b| format!("ui.bool.{}", b)),
                     Some("view-layout") => parts.next().map(|a| format!("ui.layout.{}", a)),
+                    Some("state") => parts.next().map(|n| format!("ui.state.{}", n)),
                     _ => None,
                 }
             };
@@ -2374,9 +2419,14 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
                 });
             }
         }
-        // (the builders' caches stay for the next run; `--clean` removes them)
+        // (the builders' caches stay for the next run — the runtime's crates
+        // built once per kind of program — but each batch's own program goes:
+        // its binary, beside it and in the cache, and its artifacts, which
+        // had grown the caches past 240 GB; `--clean` removes them all)
         if clean {
             let _ = std::fs::remove_dir_all(&build_dir);
+        } else {
+            prune_batches(&build_dir);
         }
     }
 

@@ -345,6 +345,33 @@ pub(crate) fn drive(exe: &std::path::Path, mode: &[&str], file: &std::path::Path
         if steps.first().is_some_and(|s| s.get("get").is_some() || s.get("post").is_some()) {
             return http_steps(port, steps);
         }
+        page_steps(port, dir, steps)
+    })();
+    // `crow run` alone is stopped, as a person stops it: the program it
+    // runs stops with it (a signal to crow run is handed on), and the port
+    // is free before the next mode takes it
+    let _ = std::process::Command::new("kill").arg("-TERM").arg(child.id().to_string()).output();
+    let _ = child.wait();
+    let free_by = Instant::now() + Duration::from_secs(10);
+    while std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() && Instant::now() < free_by {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let kept_serving = std::net::TcpStream::connect(("127.0.0.1", port)).is_ok();
+    // whatever is left of the group goes, so the next mode can serve
+    let _ = std::process::Command::new("kill").arg("-KILL").arg("--").arg(format!("-{}", child.id())).output();
+    if kept_serving && result.is_ok() {
+        return Err("stopping `crow run` left its program serving".to_string());
+    }
+    result
+}
+
+/// A page a server serves on `port`, driven with `steps` (the first may
+/// open an address other than `/`): the page after each step, as the modes
+/// are compared. `dir` is where an upload's fixture is read from. (crow
+/// check --self's state family drives each case's page so, on a server it
+/// started.)
+pub(crate) fn page_steps(port: u16, dir: &std::path::Path, steps: &[serde_json::Value]) -> Result<Vec<String>, String> {
+    {
         let open = steps.first().and_then(|s| s["open"].as_str()).unwrap_or("/").to_string();
         let mut jar: Option<String> = None;
         let mut files: Vec<(String, String)> = Vec::new();
@@ -416,23 +443,7 @@ pub(crate) fn drive(exe: &std::path::Path, mode: &[&str], file: &std::path::Path
         }
         let _ = ws.close(None);
         Ok(pages)
-    })();
-    // `crow run` alone is stopped, as a person stops it: the program it
-    // runs stops with it (a signal to crow run is handed on), and the port
-    // is free before the next mode takes it
-    let _ = std::process::Command::new("kill").arg("-TERM").arg(child.id().to_string()).output();
-    let _ = child.wait();
-    let free_by = Instant::now() + Duration::from_secs(10);
-    while std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() && Instant::now() < free_by {
-        std::thread::sleep(Duration::from_millis(100));
     }
-    let kept_serving = std::net::TcpStream::connect(("127.0.0.1", port)).is_ok();
-    // whatever is left of the group goes, so the next mode can serve
-    let _ = std::process::Command::new("kill").arg("-KILL").arg("--").arg(format!("-{}", child.id())).output();
-    if kept_serving && result.is_ok() {
-        return Err("stopping `crow run` left its program serving".to_string());
-    }
-    result
 }
 
 /// The reference apps: `examples/<app>/main.co` with a `main.events` beside it.

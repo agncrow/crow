@@ -1968,6 +1968,92 @@ def bool_answer(attr, names):
     return Drawn("{} {}".format(attr, "present" if on else "absent"), lambda n: n.tag == "button" and ((n.attrs.get(attr) == "") if on else (attr not in n.attrs)))
 
 
+# ── a page's state (spec, Reactive State and Events) ───────────────
+#
+# Each case is a page whose first paragraph shows a fact (or a derivation
+# over it); the page after each event is read back, and the paragraph's
+# text held to what the spec says the fact holds then. A handler that
+# stops lands nothing and the page says so; an event the page did not
+# offer changes nothing.
+
+STATE = {
+    "int-inc": ["0", "1", "2"],
+    "int-sub": ["0", "-3", "-6"],
+    "float-half": ["1", "0.5", "0.25"],
+    "text-grow": ["a", "a<b>", "a<b><b>"],
+    "bool-flip": ["false", "true", "false"],
+    "list-push": ["[7]", "[7, 1]", "[7, 1, 2]"],
+    "map-set": ["[a = 1]", "[a = 1, k1 = 1]", "[a = 1, k1 = 1, k2 = 2]"],
+    "big-grow": [str(2**62), str(2**63), str(2**64)],
+    "moment-step": ["2026-01-02T03:04:05Z", "2026-01-02T04:04:05Z", "2026-01-02T05:04:05Z"],
+    "record-field": ["SelfQ[x = 1, y = 2]", "SelfQ[x = 2, y = 2]", "SelfQ[x = 3, y = 2]"],
+    "list-item": ["[1, 2]", "[10, 2]", "[100, 2]"],
+    "map-key": ["[a = 1]", "[a = 2]", "[a = 3]"],
+    "args-int": ["0", "10", "20"],
+    "args-text": ["", "x&y", "x&yx&y"],
+    "derived": ["10", "20", "30"],
+    "derived-chain": ["11", "21", "31"],
+    "helper": ["0", "5", "10"],
+    "stops": ["1", "1", "1"],
+    "later": ["0", "1", "2"],
+    "field-text": ["", "Ada <b> & co", ""],
+    "field-number": ["1", "42", "-2"],
+    "checkbox": ["false", "true", "false"],
+    "select": ["a", "b", "c"],
+    "unoffered": ["a", "a", "a"],
+    "slider": ["5", "7", "0"],
+    # (the page opened again starts a session of its own, from the facts'
+    # first values)
+    "reopened": ["0", "1", "0", "1"],
+}
+
+# (the cases whose handler stops: the page says so after the event)
+STOPS = {"stops"}
+
+
+class Pages(str):
+    """A page's answers after each event, held by reading each back."""
+
+    def __new__(cls, name, want):
+        self = str.__new__(cls, "pages showing " + repr(want))
+        self.name, self.want = name, want
+        return self
+
+    def holds(self, seen):
+        pages = seen.split("\n—\n")
+        if len(pages) != len(self.want):
+            return False
+        for i, (page, want) in enumerate(zip(pages, self.want)):
+            html, _, rest = page.partition(" | title: ")
+            if "address: /cN" not in rest:
+                return False
+            r = _Reader()
+            r.feed(html.replace("<id>", "&lt;id&gt;"))
+            r.close()
+            paras = []
+
+            def walk(n):
+                for c in n.children:
+                    if isinstance(c, _Node):
+                        if c.tag == "p":
+                            paras.append(c.text())
+                        walk(c)
+            walk(r.root)
+            shown = _re.sub(r"SelfQ_\d+", "SelfQ", paras[0]) if paras else None
+            if shown != want:
+                return False
+            stopped = "stopped, and nothing changed" in html
+            if stopped != (self.name in STOPS and i > 0):
+                return False
+        return True
+
+
+def state_answer(name):
+    if name not in STATE:
+        raise Skip()
+    return Pages(name, STATE[name])
+
+
 def placed_past(seen):
     """An answer with where its case's route sits in its batch read past."""
     return _re.sub(r"/c\d+", "/cN", seen)
@@ -1988,6 +2074,8 @@ def answer(what, names):
         return bool_answer(what[10:], names)
     if what.startswith("view-layout:"):
         raise Skip()
+    if what.startswith("state:"):
+        return state_answer(what[6:])
     args = [value(n) for n in names]
     # (a parsed value is read as each use implies: beyond showing, measuring
     # and indexing it, not answered here)
@@ -2113,9 +2201,9 @@ def main():
                 if not failed(case):
                     print(json.dumps({"kind": "wrong", "id": case["id"], "expected": "a failure", "seen": case.get("seen", "")}))
                 continue
-            if case["what"].startswith("route") and "seen" in case:
+            if case["what"].startswith(("route", "state")) and "seen" in case:
                 case["seen"] = placed_past(case["seen"])
-            if isinstance(expected, (ArrowOf, Drawn)) and "seen" in case and not case.get("end"):
+            if isinstance(expected, (ArrowOf, Drawn, Pages)) and "seen" in case and not case.get("end"):
                 if not expected.holds(case["seen"]):
                     print(json.dumps({"kind": "wrong", "id": case["id"], "expected": str(expected), "seen": case["seen"]}))
                 continue

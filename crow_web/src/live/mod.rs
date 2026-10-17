@@ -965,6 +965,13 @@ pub struct Offers {
     /// the handlers a render's widgets name: each takes whatever value its
     /// widget sends, as a field's handler takes its text
     widget_handlers: std::collections::HashSet<String>,
+    /// what a choice — a select's options, a radio's or a tab's — offers
+    /// its fact: a value it did not draw is refused (a select had taken
+    /// any text a forged event sent — crow check --self's state family)
+    choices: HashMap<String, std::collections::HashSet<String>>,
+    /// the bound inputs that take any text (a field), whose fact a choice
+    /// beside them does not hold to its options
+    free: std::collections::HashSet<String>,
 }
 
 impl Offers {
@@ -997,6 +1004,28 @@ impl Offers {
                 if let Some(on) = attrs.get("data-crow-on") {
                     self.note_widget(on);
                 }
+                // a choice's values: a select's options, a radio's value
+                if let (CrowVNode::Element { tag, .. }, Some(event)) = (node, attrs.get("data-crow-change").or_else(|| attrs.get("data-crow-input"))) {
+                    match (tag.as_str(), attrs.get("type").map(String::as_str)) {
+                        ("select", _) => {
+                            let values = self.choices.entry(event.clone()).or_default();
+                            for c in children {
+                                if let CrowVNode::Element { tag, attrs, .. } = c
+                                    && tag == "option"
+                                    && let Some(v) = attrs.get("value")
+                                {
+                                    values.insert(v.clone());
+                                }
+                            }
+                        }
+                        ("input", Some("radio")) => {
+                            self.choices.entry(event.clone()).or_default().extend(attrs.get("value").cloned());
+                        }
+                        _ => {
+                            self.free.insert(event.clone());
+                        }
+                    }
+                }
                 for c in children {
                     self.collect(c);
                 }
@@ -1016,10 +1045,34 @@ impl Offers {
             let len = tag[start..].find('"')?;
             Some(&tag[start..start + len])
         }
+        // (a select's options follow its tag, up to its end)
+        let mut select: Option<String> = None;
         for piece in html.split('<').skip(1) {
             let tag = piece.split('>').next().unwrap_or("");
+            if tag.starts_with("/select") {
+                select = None;
+                continue;
+            }
+            if let Some(event) = &select
+                && tag.starts_with("option")
+            {
+                if let Some(v) = attr(tag, "value") {
+                    self.choices.entry(event.clone()).or_default().insert(unescape_attr(v));
+                }
+                continue;
+            }
             if !tag.contains("data-crow-") {
                 continue;
+            }
+            if let Some(event) = attr(tag, "data-crow-change").or_else(|| attr(tag, "data-crow-input")).map(unescape_attr) {
+                if tag.starts_with("select") {
+                    self.choices.entry(event.clone()).or_default();
+                    select = Some(event);
+                } else if tag.starts_with("input") && attr(tag, "type") == Some("radio") {
+                    self.choices.entry(event).or_default().extend(attr(tag, "value").map(unescape_attr));
+                } else {
+                    self.free.insert(event);
+                }
             }
             if let Some(h) = attr(tag, "data-crow-click") {
                 self.clicks.insert((unescape_attr(h), attr(tag, "data-crow-args").map(unescape_attr)));
@@ -1050,6 +1103,12 @@ impl Offers {
     /// Whether this render offered the event: a bound input, select or form
     /// by name; a click by its handler and exactly the arguments it froze.
     pub fn allows(&self, event: &str, value: Option<&str>) -> bool {
+        // (a choice takes one of the values it drew)
+        if let Some(values) = self.choices.get(event)
+            && !self.free.contains(event)
+        {
+            return value.is_some_and(|v| values.contains(v));
+        }
         if self.named.contains(event) {
             return true;
         }
@@ -4073,7 +4132,9 @@ mod tests {
             CrowVNode::button(vec![CrowVNode::text("Play")]).on_click("toggle_play"),
             CrowVNode::button(vec![CrowVNode::text("10x")]).on_click_args("set_speed", "[10.0]"),
             CrowVNode::input().attr("data-crow-input", "__field:seek_pct"),
-            CrowVNode::select(vec![]).attr("data-crow-change", "__select:sym"),
+            CrowVNode::select_input(&["CHPT".to_string(), "IMRN".to_string()], "sym", "CHPT"),
+            CrowVNode::choice_input(&["day".to_string(), "week".to_string()], "span", "day", false),
+            CrowVNode::Raw("<select data-crow-change=\"__select:raw\"><option value=\"a&amp;b\">a&amp;b</option></select>".into()),
             CrowVNode::Raw("<svg><rect class=\"crow-seek\" data-crow-click=\"jump\" data-crow-args=\"[1788763600]\"/></svg>".into()),
             CrowVNode::Raw("<table><tbody><tr data-crow-click=\"focus\" data-crow-args=\"[&quot;IMRN&quot;]\"><td>IMRN</td></tr></tbody></table>".into()),
         ]);
@@ -4083,6 +4144,11 @@ mod tests {
         assert!(!offers.allows("set_speed", Some("[99.0]")), "arguments the render did not freeze");
         assert!(offers.allows("__field:seek_pct", Some("50")));
         assert!(offers.allows("__select:sym", Some("CHPT")));
+        // (a choice takes only a value it drew: a select's option, a
+        // radio's value — in elements and in markup built as text)
+        assert!(!offers.allows("__select:sym", Some("ZZZZ")), "a value the select did not offer");
+        assert!(offers.allows("__field:span", Some("week")) && !offers.allows("__field:span", Some("year")), "a radio's values");
+        assert!(offers.allows("__select:raw", Some("a&b")) && !offers.allows("__select:raw", Some("a")), "a select drawn as markup");
         assert!(offers.allows("jump", Some("[1788763600]")));
         assert!(offers.allows("focus", Some("[\"IMRN\"]")), "a table row's key, unescaped");
         assert!(!offers.allows("say", Some("[\"hi\"]")), "a helper no button names");

@@ -243,7 +243,16 @@ with no test someone has to remember to write:
   its child, and text holding what HTML escapes; the attributes that pass
   through to HTML with text of every kind; a class joined to a
   container's own, written and computed; HTML's boolean attributes true
-  and false; and the layout vocabulary's attributes over its words.
+  and false; and the layout vocabulary's attributes over its words;
+- a page's state (the state family): its facts — of every kind — moved by
+  its handlers, triggered by a click, a click with the arguments it froze,
+  a bound input (a field, a number, a checkbox, a select, a slider); a
+  record's field, a list's item and a map's key written in a handler; a
+  derivation and a derivation of one; a helper that writes for its
+  handler; a handler that stops (nothing lands, and the page says so);
+  work handed to `later`; an event the page did not offer; and the page
+  opened again — each page driven by its events over its socket, as
+  `crow test --served` drives one, the page after each event the answer.
 
 Each case is lowered first, in the process, in seconds. A refusal is held
 to the rules every message keeps (it names a line, and only what the
@@ -298,7 +307,8 @@ which a response that names none is served as), the body — JSON as
 stream read back with pyarrow and held to the frame. A page's markup is
 read back with Python's own HTML parser: the tag an element draws as, its
 text — entities decoded — what the value shows, an attribute as written,
-a boolean one present or absent. A case answered
+a boolean one present or absent; and a page's state after each event, by
+what its fact holds then. A case answered
 otherwise is a finding, `wrong`; one the reference has no answer for is
 skipped, never guessed. `CROW_SELF_PYTHON` names the Python to ask (by
 default `python3` on the path): one with numpy, scipy and pyarrow

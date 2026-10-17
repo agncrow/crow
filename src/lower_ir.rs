@@ -1929,6 +1929,28 @@ impl<'a> Lowerer<'a> {
         self.ctx.functions.contains_key(name) && (crate::modules::is_crow_fn(name) || !crate::modules::is_crow_fn(&self.current_fn))
     }
 
+    /// A write at a path — a field, an item, a key — of a local, or of a
+    /// fact a handler moves: a fact is written only by `store` (the IR's one
+    /// write to state), so its value is read into a temporary, written
+    /// there, and stored back (a record fact's field had been written as a
+    /// local's: the interpreter stopped, "undefined variable", and the
+    /// compiled page changed it — crow check --self's state family).
+    fn path_write(&mut self, var: String, path: Vec<PathStep>, expr: Expr) -> Vec<Stmt> {
+        if !(self.is_fact(&var) && self.sees_facts()) {
+            return vec![Stmt::SetPath { var, path, expr }];
+        }
+        let ty = self.ctx.vars.get(&var).cloned().unwrap_or(Ty::Unknown);
+        let t = self.fresh();
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(t.clone());
+        }
+        vec![
+            Stmt::Let { var: t.clone(), ty: ty.clone(), expr: Expr::Load(var.clone(), ty.clone()) },
+            Stmt::SetPath { var: t.clone(), path, expr },
+            Stmt::Store { fact: var, expr: Expr::Local(t, ty) },
+        ]
+    }
+
     fn is_fact(&self, name: &str) -> bool {
         // (a standard module's function, inlined, has locals of its own:
         // one named like a fact of the program is still its local)
@@ -2038,7 +2060,7 @@ impl<'a> Lowerer<'a> {
                 let (var, mut path, _) = self.muted_target(object)?;
                 path.push(PathStep::Field(field.clone()));
                 self.forget_shape(&var);
-                vec![Stmt::SetPath { var, path, expr }]
+                self.path_write(var, path, expr)
             }
             S::IndexAssign { object, index, value } => {
                 self.check_target(object);
@@ -2289,7 +2311,7 @@ impl<'a> Lowerer<'a> {
                         }
                         let call = Expr::Call { target: Target::Row(row), args: vec![read, at, value], ty: tensor_ty.clone(), propagates: false };
                         self.forget_shape(&var);
-                        out.push(Stmt::SetPath { var, path, expr: call });
+                        out.extend(self.path_write(var, path, call));
                         return Ok(out);
                     }
                 }
@@ -2316,7 +2338,7 @@ impl<'a> Lowerer<'a> {
                 }
                 path.push(PathStep::Index(idx));
                 self.forget_shape(&var);
-                vec![Stmt::SetPath { var, path, expr }]
+                self.path_write(var, path, expr)
             }
             S::If { condition, then_body, else_body } => {
                 let cond = self.lower_cond(condition)?;

@@ -115,6 +115,124 @@ pub(super) fn view_cases(all: &[Val]) -> Vec<Case> {
     cases
 }
 
+/// The state family's cases: a page's facts moved by its handlers — a
+/// click, a click with the arguments it froze, a bound input — each a
+/// kind of value and a way of changing it; a derivation over them; a
+/// helper that writes for its handler; a handler that stops (nothing it
+/// wrote lands); work handed to `later`; and the page opened again. Each
+/// case is a page at `/cN`, its names its own (`@N`), driven with its
+/// events, the page after each the answer.
+pub(super) fn state_cases() -> Vec<Case> {
+    let click = |h: &str| serde_json::json!({ "event": h });
+    let with = |h: &str, v: &str| serde_json::json!({ "event": h, "value": v });
+    let field = |f: &str, v: &str| serde_json::json!({ "event": format!("__field:{}", f), "value": v });
+    let chosen = |f: &str, v: &str| serde_json::json!({ "event": format!("__select:{}", f), "value": v });
+    let shown = "return stack[p['`self_f_@N`'], button['go', click = self_h_@N]]";
+    // (name, the fact and what moves it, the page's own view, the events)
+    let table: Vec<(&str, Vec<&str>, &str, Vec<serde_json::Value>)> = vec![
+        ("int-inc", vec!["self_f_@N = 0", "fn self_h_@N[]\n    self_f_@N = self_f_@N + 1"], shown, vec![click("self_h_@N"), click("self_h_@N")]),
+        ("int-sub", vec!["self_f_@N = 0", "fn self_h_@N[]\n    self_f_@N = self_f_@N - 3"], shown, vec![click("self_h_@N"), click("self_h_@N")]),
+        ("float-half", vec!["self_f_@N = 1.0", "fn self_h_@N[]\n    self_f_@N = self_f_@N / 2"], shown, vec![click("self_h_@N"), click("self_h_@N")]),
+        ("text-grow", vec!["self_f_@N = 'a'", "fn self_h_@N[]\n    self_f_@N = '`self_f_@N`<b>'"], shown, vec![click("self_h_@N"), click("self_h_@N")]),
+        ("bool-flip", vec!["self_f_@N = false", "fn self_h_@N[]\n    self_f_@N = not self_f_@N"], shown, vec![click("self_h_@N"), click("self_h_@N")]),
+        ("list-push", vec!["self_f_@N = push[[], 7]", "fn self_h_@N[]\n    self_f_@N = push[self_f_@N, len[self_f_@N]]"], shown, vec![click("self_h_@N"), click("self_h_@N")]),
+        ("map-set", vec!["self_f_@N = map[a = 1]", "fn self_h_@N[]\n    self_f_@N = set[self_f_@N, 'k`len[self_f_@N]`', len[self_f_@N]]"], shown, vec![click("self_h_@N"), click("self_h_@N")]),
+        ("big-grow", vec!["self_f_@N = 2 ^ 62", "fn self_h_@N[]\n    self_f_@N = self_f_@N * 2"], shown, vec![click("self_h_@N"), click("self_h_@N")]),
+        ("moment-step", vec!["self_f_@N = moment['2026-01-02T03:04:05Z']", "fn self_h_@N[]\n    self_f_@N = self_f_@N + 3600"], shown, vec![click("self_h_@N"), click("self_h_@N")]),
+        ("record-field", vec!["struct SelfQ_@N [x, y]", "self_f_@N = SelfQ_@N[1, 2]", "fn self_h_@N[]\n    self_f_@N.x = self_f_@N.x + 1"], shown, vec![click("self_h_@N"), click("self_h_@N")]),
+        ("list-item", vec!["self_f_@N = push[push[[], 1], 2]", "fn self_h_@N[]\n    self_f_@N[0] = self_f_@N[0] * 10"], shown, vec![click("self_h_@N"), click("self_h_@N")]),
+        ("map-key", vec!["self_f_@N = map[a = 1]", "fn self_h_@N[]\n    self_f_@N['a'] = self_f_@N['a'] + 1"], shown, vec![click("self_h_@N"), click("self_h_@N")]),
+        (
+            "args-int",
+            vec!["self_f_@N = 0", "fn self_h_@N[n]\n    self_f_@N = self_f_@N + n"],
+            "return stack[p['`self_f_@N`'], button['go', click = self_h_@N[10]]]",
+            vec![with("self_h_@N", "[10]"), with("self_h_@N", "[10]")],
+        ),
+        (
+            "args-text",
+            vec!["self_f_@N = ''", "fn self_h_@N[t]\n    self_f_@N = '`self_f_@N``t`'"],
+            "return stack[p['`self_f_@N`'], button['go', click = self_h_@N['x&y']]]",
+            vec![with("self_h_@N", "[\"x&y\"]"), with("self_h_@N", "[\"x&y\"]")],
+        ),
+        (
+            "derived",
+            vec!["self_f_@N = 1", "derive self_d_@N\n    return self_f_@N * 10", "fn self_h_@N[]\n    self_f_@N = self_f_@N + 1"],
+            "return stack[p['`self_d_@N`'], button['go', click = self_h_@N]]",
+            vec![click("self_h_@N"), click("self_h_@N")],
+        ),
+        (
+            "derived-chain",
+            vec!["self_f_@N = 1", "derive self_d_@N\n    return self_f_@N * 10", "derive self_e_@N\n    return self_d_@N + 1", "fn self_h_@N[]\n    self_f_@N = self_f_@N + 1"],
+            "return stack[p['`self_e_@N`'], button['go', click = self_h_@N]]",
+            vec![click("self_h_@N"), click("self_h_@N")],
+        ),
+        (
+            "helper",
+            vec!["self_f_@N = 0", "fn self_g_@N[]\n    self_f_@N = self_f_@N + 5", "fn self_h_@N[]\n    self_g_@N[]"],
+            shown,
+            vec![click("self_h_@N"), click("self_h_@N")],
+        ),
+        (
+            "stops",
+            vec!["self_f_@N = 1", "fn self_h_@N[]\n    self_f_@N = self_f_@N + 1\n    xs = push[[], 1]\n    y = xs[5]\n    self_f_@N = y"],
+            shown,
+            vec![click("self_h_@N"), click("self_h_@N")],
+        ),
+        ("later", vec!["self_f_@N = 0", "fn self_g_@N[]\n    self_f_@N = self_f_@N + 1", "fn self_h_@N[]\n    later[self_g_@N]"], shown, vec![click("self_h_@N"), click("self_h_@N")]),
+        (
+            "field-text",
+            vec!["self_f_@N = ''"],
+            "return stack[p['`self_f_@N`'], field['F', self_f_@N, type = 'text']]",
+            vec![field("self_f_@N", "Ada <b> & co"), field("self_f_@N", "")],
+        ),
+        (
+            "field-number",
+            vec!["self_f_@N = 0"],
+            "return stack[p['`self_f_@N + 1`'], field['F', self_f_@N, type = 'number']]",
+            vec![field("self_f_@N", "41"), field("self_f_@N", "-3")],
+        ),
+        (
+            "checkbox",
+            vec!["self_f_@N = false"],
+            "return stack[p['`self_f_@N`'], checkbox['C', self_f_@N]]",
+            vec![field("self_f_@N", "true"), field("self_f_@N", "false")],
+        ),
+        (
+            "select",
+            vec!["self_f_@N = 'a'", "self_o_@N = ['a', 'b', 'c']"],
+            "return stack[p['`self_f_@N`'], select[self_o_@N, self_f_@N]]",
+            vec![chosen("self_f_@N", "b"), chosen("self_f_@N", "c")],
+        ),
+        // (an event the page did not offer — a field's for a select — is
+        // refused, and changes nothing)
+        (
+            "unoffered",
+            vec!["self_f_@N = 'a'", "self_o_@N = ['a', 'b', 'c']"],
+            "return stack[p['`self_f_@N`'], select[self_o_@N, self_f_@N]]",
+            vec![field("self_f_@N", "b"), chosen("self_f_@N", "zz")],
+        ),
+        (
+            "slider",
+            vec!["self_f_@N = 5"],
+            "return stack[p['`self_f_@N`'], slider['S', self_f_@N, 0, 10, 1]]",
+            vec![field("self_f_@N", "7"), field("self_f_@N", "0")],
+        ),
+        (
+            "reopened",
+            vec!["self_f_@N = 0", "fn self_h_@N[]\n    self_f_@N = self_f_@N + 1"],
+            shown,
+            vec![click("self_h_@N"), serde_json::json!({ "open": "/c@N" }), click("self_h_@N")],
+        ),
+    ];
+    table
+        .into_iter()
+        .map(|(name, top, view, steps)| {
+            let route = Route { page: true, top: top.into_iter().map(str::to_string).collect(), steps, ..Route::default() };
+            Case::new(format!("state/{}", name), &[], view.lines().map(str::to_string).collect()).served(route).referring(format!("state:{}", name), &[])
+        })
+        .collect()
+}
+
 /// The elements the views family draws: the vocabulary's own and HTML's,
 /// all but the head's (`title`, `meta`), the void ones (`input`, `img`,
 /// `divider`), a frame's `table` and the program's own `widget`.
@@ -221,7 +339,23 @@ pub(super) fn serve_batch(exe: &Path, dir: &Path, file: &str, binary: Option<&Pa
         let mut answers: Vec<String> = Vec::new();
         let mut end = String::new();
         let page = c.serve.as_ref().is_some_and(|r| r.page);
-        for ask in c.serve.as_ref().map(|r| r.asks.as_slice()).unwrap_or(&[]) {
+        // (a page driven with events: the page after each, as `crow test
+        // --served` reads one)
+        let steps: Vec<serde_json::Value> = c.serve.as_ref().map(|r| r.steps.iter().map(|st| numbered(st, k)).collect()).unwrap_or_default();
+        if !steps.is_empty() {
+            let mut opened = vec![serde_json::json!({ "open": format!("/c{}", k) })];
+            opened.extend(steps.iter().cloned());
+            match crate::served_parity::page_steps(s.port, &run_dir, &opened) {
+                Ok(pages) => answers = pages,
+                Err(e) => {
+                    end = match s.stopped() {
+                        Some(said) => format!("crash: {}", said),
+                        None => format!("the page: {}", e),
+                    };
+                }
+            }
+        }
+        for ask in c.serve.as_ref().filter(|_| steps.is_empty()).map(|r| r.asks.as_slice()).unwrap_or(&[]) {
             match crate::served_parity::ask(s.port, ask.method, &format!("/c{}{}", k, ask.tail), &ask.headers, &ask.body) {
                 Ok(a) if page => answers.push(page_root(&a)),
                 Ok(a) => answers.push(a),
@@ -246,6 +380,16 @@ pub(super) fn serve_batch(exe: &Path, dir: &Path, file: &str, binary: Option<&Pa
         s.stop();
     }
     seen
+}
+
+/// A step of a page's script with the case's number in its names (`@N`).
+fn numbered(step: &serde_json::Value, k: usize) -> serde_json::Value {
+    match step {
+        serde_json::Value::String(t) => serde_json::Value::String(t.replace("@N", &k.to_string())),
+        serde_json::Value::Object(m) => serde_json::Value::Object(m.iter().map(|(key, v)| (key.clone(), numbered(v, k))).collect()),
+        serde_json::Value::Array(xs) => serde_json::Value::Array(xs.iter().map(|x| numbered(x, k)).collect()),
+        other => other.clone(),
+    }
 }
 
 /// A page's answer as the views family reads it: its status, then the
