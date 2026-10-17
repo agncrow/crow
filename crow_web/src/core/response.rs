@@ -104,6 +104,15 @@ pub struct CrowResponse {
     pub feed: Option<Feed>,
 }
 
+/// A response shown (`log[json[m]]`): its status, as the interpreter shows
+/// one (compiled, it had no form to show and did not build — crow check
+/// --self).
+impl crow_runtime::display::CrowDisplay for CrowResponse {
+    fn crow_repr(&self) -> String {
+        format!("<response {}>", self.status)
+    }
+}
+
 /// What a feed is handed: `put`, which sends a chunk and answers whether
 /// the reader still listens.
 pub type Put = fn(String) -> bool;

@@ -285,6 +285,12 @@ impl Int {
 
 /// The refusal of a whole number past 64 bits where 64 bits are taken, in
 /// one wording for both modes.
+/// A whole number written past 64 bits (`123456789012345678901234567890`):
+/// the int its digits write (the parser hands it digits alone).
+pub fn whole(digits: &str) -> Int {
+    Int::parse(digits).unwrap_or_default()
+}
+
 pub fn past_64_bits(who: &str, number: &str) -> String {
     format!("a whole number past 64 bits where {}: {}", who, number)
 }

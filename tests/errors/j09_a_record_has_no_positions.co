@@ -1,0 +1,3 @@
+struct P [x, y]
+p = P[1, 2]
+log[p[0]]

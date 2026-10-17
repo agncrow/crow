@@ -1,0 +1,4 @@
+use web.mail
+use frame
+f = frame.new[b = ['x', 'y']]
+log[mail[smtp['h', 9, 'u', 'p'], f.b, 's', 'b']]

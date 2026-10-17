@@ -1,0 +1,75 @@
+--- What `crow check --self` found the modes answering differently, each
+--- answered alike now: `.ok` of a column that can fail is its status, not
+--- its cells' validity; a column handed through a function keeps its
+--- cells' kind, and a loop over it walks ints (compiled, it had walked
+--- text); a failed size handed to a function written in Crow (`randn`,
+--- `anova`) is the call's value (the interpreter had stopped in the
+--- module, the compiled program answered `[]`); a number where such a
+--- function takes an int is its whole part, as a Rust row reads one; a
+--- moment moves by seconds within the moments one holds; an int written
+--- past 64 bits is that int; `.^` takes a number on its left as `.*` and
+--- `./` do; a list of ints written a float holds floats; and a call
+--- evaluates every argument, left to right, before it hands the leftmost
+--- failure on — an argument that stops after a failed one stops the
+--- program (compiled, the failure had skipped it).
+use frame
+use math
+use math.stats
+
+fn may[x, fail]
+    if fail
+        return error['no']
+    return x
+
+fn two[a, b]
+    return a + b
+
+f = frame.new[a = [1, 2, 3], f = [1.5, 2.5, 3.5]]
+
+v = may[f.a, false]
+log[v.ok]
+w = may[f.a, true]
+log[w.ok]
+log[w.reason]
+
+ys = for x in may[f.a, false]
+    x * 2
+log[ys]
+
+log[randn[may[3, true]]]
+log[len[randn[may[3, false], 2]]]
+log[len[randn[2.5]]]
+t = tensor[[1.0, 2.0, 3.0]]
+log[anova[may[t, true], t]]
+
+m = moment['2026-01-02T03:04:05Z']
+log[m + 90]
+log[2.5 + m]
+log[m - 3600]
+
+big = 123456789012345678901234567890
+log[big]
+log[big * 2]
+log[type[big]]
+log[9223372036854775808 - 1]
+
+xs = push[push[push[[], 3], 1], 2]
+log[2.0 .^ xs]
+log[2 ^ 100 .* xs]
+
+c = push[push[[], 1], 2]
+c[0] = 2.5
+log[c]
+log[type[c[1]]]
+fs = push[push[[], 0.5], 1.5]
+fs[0] = may[3, false]
+log[fs]
+
+struct Bag [items]
+parsed = for s in ['1', 'x', '3']
+    int[s]
+log[Bag[parsed].items]
+log[Bag[push[push[[], 7], 8]].items]
+
+log[two[may[1, true], 2]]
+log[two[may[1, true], xs[5]]]

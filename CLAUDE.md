@@ -832,6 +832,21 @@ steps on every push and must be green.
   or a gone one fails; `--bless` rewrites it). `--only word`,
   `--lower-only` (seconds), `--clean` (the builders' caches under
   target/crow_self/build/w*, kept between runs).
+- A call evaluates every argument, left to right, before the leftmost
+  failure is its value (spec, Auto-Propagation; 2026-10-17): the emitter's
+  `propagation_block` binds each argument that can fail (`_prop_N`) and
+  each that can stop or act (`_pa_N`, all but the `quiet` ones) in their
+  order, then checks — a failed argument had skipped the ones after it.
+  A builtin that prints an argument again from the IR reads the bound
+  name (`unwrap_as`, consulted at the top of `expr()`), or it runs twice.
+  A cast beside a comparison is parenthesized (`((x) as f64) < y`: Rust
+  reads `f64<` as a type's arguments).
+- A function called at several signatures answers nothing known until its
+  copies exist (`awaits_clones`, the one rule `new_clones` reads too), and
+  the program is scanned again after copying: the first rounds' guess —
+  one copy's answer — had typed the parameter of a function handed
+  another copy's answer, and stayed. A function taking a function as a
+  value is not copied (v1), so it never awaits.
 - `nodes[n]` is removed (2026-10-11; its message of its own went
   2026-10-16, as `filter`'s did — a replaced name is an unknown name): the
   process count is `crow launch <n>`'s, a process reads its rank with

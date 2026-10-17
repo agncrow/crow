@@ -339,6 +339,11 @@ pub fn crow_fmt_f64(
     percent: bool,
 ) -> Result<String, String> {
     let val = if percent { v * 100.0 } else { v };
+    // (Rust's formatter takes at most 65535 decimals: past them it panicked,
+    // compiled with no line)
+    if decimals > u16::MAX as i64 {
+        return Err(format!("fmt: decimals of at most {} (got {})", u16::MAX, decimals));
+    }
     let mut s = if decimals >= 0 {
         format!("{:.*}", decimals as usize, val)
     } else if val == (val as i64) as f64 && val.is_finite() {
@@ -418,6 +423,9 @@ fn apply_width(s: String, width: i64, align: &str, fill: &str) -> Result<String,
         return Err(format!("fmt: align must be 'left' or 'right', got '{}'", align));
     }
     let Ok(width) = usize::try_from(width) else { return Ok(s) };
+    if width > crate::stops::MOST {
+        return Err(format!("fmt: a width too large to hold ({}; at most {})", width, crate::stops::MOST));
+    }
     let len = s.chars().count();
     if len >= width {
         return Ok(s);

@@ -1,0 +1,3 @@
+j12_mail_handed_a_column.co:4:5: mail[] takes a mailer, text, text and text, got a mailer, a frame's column, text and text
+  4 │ log[mail[smtp['h', 9, 'u', 'p'], f.b, 's', 'b']]
+    │     ^^^^

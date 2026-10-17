@@ -1,0 +1,3 @@
+j11_mail_without_its_module.co:2:5: smtp[] and mail[] are web.mail's: add `use web.mail`
+  2 │ log[mail[smtp['h', 9, 'u', 'p'], 'a@b.c', 's', 'b']]
+    │     ^^^^ ^^^^

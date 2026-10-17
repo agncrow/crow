@@ -56,6 +56,15 @@ impl TypeContext {
                     return clone_sig.return_type.clone();
                 }
             }
+            // a function called at several signatures and not copied per
+            // signature yet answers what its copy will: nothing known until
+            // then (its one signature's answer, a column, had typed the
+            // parameter of a function handed `may[1, …]`, and that guess
+            // stayed: the compiled program handed an int where a column
+            // was taken)
+            if self.awaits_clones(name) {
+                return Ty::Unknown;
+            }
             return sig.return_type.clone();
         }
         // a builtin with a row is typed by its row, the one place that says
@@ -604,12 +613,16 @@ impl TypeContext {
     pub(crate) fn unary_type(&self, op: &UnaryOp, t: Ty) -> Ty {
         match op {
             UnaryOp::Not => {
-                // not on a boolean mask negates element-wise → Array(Bool)
+                // not on a boolean mask negates element-wise → Array(Bool);
+                // a value that can fail stays one (an operator computes with
+                // an error: `not` of one that failed is that error)
+                let fails = t.is_result();
                 let inner = if let Ty::Result(i) = t { *i } else { t };
-                if matches!(&inner, Ty::List(i) if matches!(i.as_ref(), Ty::Bool)) {
-                    Ty::List(Box::new(Ty::Bool))
+                let turned = if matches!(&inner, Ty::List(i) if matches!(i.as_ref(), Ty::Bool)) { Ty::List(Box::new(Ty::Bool)) } else { Ty::Bool };
+                if fails {
+                    Ty::Result(Box::new(turned))
                 } else {
-                    Ty::Bool
+                    turned
                 }
             }
             UnaryOp::Neg => t,

@@ -3,6 +3,8 @@
 pub enum Token {
     // Literals
     Int(i64),
+    /// A whole number written past 64 bits: its digits (an int grows)
+    Whole(String),
     Float(f64),
     Str(String), // raw string content including {expr} for interpolation
     True,
@@ -76,6 +78,7 @@ impl std::fmt::Display for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Token::Int(n) => write!(f, "{}", n),
+            Token::Whole(d) => write!(f, "{}", d),
             Token::Float(n) => write!(f, "{}", n),
             Token::Str(s) => write!(f, "'{}'", s),
             Token::True => write!(f, "true"),
@@ -142,6 +145,7 @@ impl Token {
             Token::Eof => "the end of the file".to_string(),
             Token::Str(_) => "text".to_string(),
             Token::Int(n) => n.to_string(),
+            Token::Whole(d) => d.clone(),
             Token::Float(n) => n.to_string(),
             other => format!("'{}'", other),
         }

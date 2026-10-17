@@ -1,0 +1,2 @@
+use web
+log[mail[smtp['h', 9, 'u', 'p'], 'a@b.c', 's', 'b']]

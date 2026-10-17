@@ -241,6 +241,13 @@ impl Case {
         Case { id: id.into(), imports, body }
     }
 
+    /// Whether the case draws random numbers (it runs in a process of its
+    /// own, the seed fresh).
+    fn draws(&self) -> bool {
+        let text = self.body.join("\n");
+        crate::ir::DRAWS.iter().any(|name| names_word(&text, name) && text.contains(&format!("{}[", name)))
+    }
+
     /// The case's lines, as a program writes them: what an id stands for.
     fn code(&self) -> String {
         self.body.join("\n")
@@ -1049,18 +1056,25 @@ fn case_command(program: &Path, run_dir: &Path, config: &Config) -> Command {
 }
 
 /// A batch's cases run under one configuration, from the first to the
-/// last: a case that stops the run (its words flushed) gets the stop, and
-/// the next run starts after it. A run stopped from outside — its memory,
-/// its time, its output — or one that ends with no case's marker may have
-/// lost what it had not written yet, so the cases from the last marker on
-/// run one to a process until the one that ends so is found.
-fn run_batch(exe: &Path, dir: &Path, file: &str, binary: Option<&Path>, config: &Config, n: usize) -> Vec<Seen> {
+/// last, each run of the batch's program from `CROW_FROM` to `CROW_TO`. A
+/// case that stops the run (its words flushed) gets the stop, and the next
+/// run starts after it; one that calls `exit` ends only its own part. A
+/// case that draws random numbers runs in a process of its own, the seed
+/// fresh, so what it draws is its own and no other case's (one case had
+/// drawn in one mode and not the other, and every later draw differed). A
+/// run stopped from outside — its memory, its time, its output — or one
+/// that ends with no case's marker may have lost what it had not written
+/// yet, so the cases from its last marker run one to a process until the
+/// one that ends so is found.
+fn run_batch(exe: &Path, dir: &Path, file: &str, binary: Option<&Path>, config: &Config, fresh: &[bool]) -> Vec<Seen> {
+    let n = fresh.len();
     let mut seen: Vec<Option<Seen>> = vec![None; n];
     let mut from = 0;
-    let mut single = false;
+    let mut hunting = false;
     let run_dir = sandbox(dir, file, config.name);
     let source = dir.join(file);
     while from < n {
+        let to = if hunting || fresh[from] { from } else { (from + 1..n).find(|&k| fresh[k]).map(|k| k - 1).unwrap_or(n - 1) };
         let mut cmd = match binary {
             Some(b) => case_command(b, &run_dir, config),
             None => {
@@ -1069,10 +1083,7 @@ fn run_batch(exe: &Path, dir: &Path, file: &str, binary: Option<&Path>, config: 
                 c
             }
         };
-        cmd.env("CROW_FROM", format!("c{}", from));
-        if single {
-            cmd.env("CROW_TO", format!("c{}", from));
-        }
+        cmd.env("CROW_FROM", format!("c{}", from)).env("CROW_TO", format!("c{}", to));
         let (code, out, last, ended) = spawn(cmd);
         // the output by case
         let mut marked: Vec<usize> = Vec::new();
@@ -1089,30 +1100,24 @@ fn run_batch(exe: &Path, dir: &Path, file: &str, binary: Option<&Path>, config: 
                 t.push('\n');
             }
         }
-        let clean = code == Some(0) && ended == Ended::Exited;
-        // (a case that called `exit` ended the run early, and well)
-        let early = clean && !single && marked.last().is_some_and(|k| *k + 1 < n);
-        if early && let Some(&k) = marked.last() {
-            for (j, t) in &texts {
-                if *j < n {
-                    seen[*j] = Some(Seen { out: t.clone(), end: String::new() });
-                }
-            }
-            seen[k] = Some(Seen { out: texts.get(&k).cloned().unwrap_or_default(), end: "exit: 0".to_string() });
-            from = k + 1;
-            continue;
-        }
-        if clean {
+        let keep = |seen: &mut Vec<Option<Seen>>, below: usize| {
             for (k, t) in &texts {
-                if *k < n {
+                if *k < below && *k < n {
                     seen[*k] = Some(Seen { out: t.clone(), end: String::new() });
                 }
             }
-            if single {
-                from += 1;
-                continue;
+        };
+        if code == Some(0) && ended == Ended::Exited {
+            keep(&mut seen, n);
+            match marked.last().copied() {
+                // (a case called `exit`: the run ended there, and well)
+                Some(k) if k < to => {
+                    seen[k] = Some(Seen { out: texts.get(&k).cloned().unwrap_or_default(), end: "exit: 0".to_string() });
+                    from = k + 1;
+                }
+                _ => from = to + 1,
             }
-            break;
+            continue;
         }
         let end = if ended == Ended::TimeLimit {
             "hang: the time limit".to_string()
@@ -1130,29 +1135,21 @@ fn run_batch(exe: &Path, dir: &Path, file: &str, binary: Option<&Path>, config: 
             format!("stop: {}", last)
         };
         let flushed = ended == Ended::Exited && code.is_some() && !end.starts_with("crash") && !marked.is_empty();
-        if !single && !flushed {
+        if !flushed && to > from {
             // (what came before the last marker is whole; from it on, one by one)
             let restart = marked.last().copied().unwrap_or(from);
-            for (k, t) in &texts {
-                if *k < restart {
-                    seen[*k] = Some(Seen { out: t.clone(), end: String::new() });
-                }
-            }
-            single = true;
+            keep(&mut seen, restart);
+            hunting = true;
             from = restart;
             continue;
         }
-        let at = if single { from } else { marked.last().copied().unwrap_or(from) };
-        for (k, t) in &texts {
-            if *k < at {
-                seen[*k] = Some(Seen { out: t.clone(), end: String::new() });
-            }
-        }
+        let at = if to == from { from } else { marked.last().copied().unwrap_or(from) };
+        keep(&mut seen, at);
         if at < n {
             seen[at] = Some(Seen { out: texts.get(&at).cloned().unwrap_or_default(), end });
         }
         from = at + 1;
-        single = false;
+        hunting = false;
     }
     seen.into_iter().map(|s| s.unwrap_or(Seen { out: String::new(), end: "not run".to_string() })).collect()
 }
@@ -1515,7 +1512,8 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
                         let (b, c) = jobs[j];
                         let batch = &built[b];
                         let config = &CONFIGS[c];
-                        let seen = run_batch(&exe, &batch.dir, &batch.file, if config.compiled { Some(batch.binary.as_path()) } else { None }, config, batch.members.len());
+                        let fresh: Vec<bool> = batch.members.iter().map(|(_, c)| c.draws()).collect();
+                        let seen = run_batch(&exe, &batch.dir, &batch.file, if config.compiled { Some(batch.binary.as_path()) } else { None }, config, &fresh);
                         if let Ok(mut r) = results.lock() {
                             r.insert((b, c), seen);
                         }

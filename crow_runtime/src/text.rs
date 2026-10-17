@@ -333,6 +333,7 @@ pub fn repeat(s: &str, n: i64) -> Result<String, String> {
     if n < 0 {
         return Err(format!("repeat[] count cannot be negative (got {})", n));
     }
+    crate::stops::cells("repeat", &[s.len(), n as usize])?;
     Ok(s.repeat(n as usize))
 }
 

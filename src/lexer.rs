@@ -502,9 +502,13 @@ impl Lexer {
                 format!("invalid float '{}' at line {}: {}", num_str, line, e)
             })?)
         } else {
-            Token::Int(num_str.parse::<i64>().map_err(|e| {
-                format!("invalid integer '{}' at line {}: {}", num_str, line, e)
-            })?)
+            // (digits past 64 bits are the int they write: an int grows —
+            // they had been refused in Rust's words, "number too large to
+            // fit in target type")
+            match num_str.parse::<i64>() {
+                Ok(n) => Token::Int(n),
+                Err(_) => Token::Whole(num_str),
+            }
         };
 
         Ok(SpannedToken {

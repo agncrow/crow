@@ -1,0 +1,3 @@
+j04_a_position_in_text_is_an_int.co:1:1: a position in text is an int, and this is a bool
+  1 │ log['abc'[true]]
+    │ ^^^^^^^^^^^^^^^^

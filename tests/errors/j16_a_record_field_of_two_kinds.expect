@@ -1,0 +1,3 @@
+j16_a_record_field_of_two_kinds.co:3:14: Box's field 'v' holds a number, and this is text: a field holds one kind, as a variable does
+  3 │ log[Box['a'].v]
+    │              ^

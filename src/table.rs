@@ -1204,6 +1204,11 @@ pub fn read_sizes(group: &[CrowValue]) -> Result<Vec<i64>, String> {
     group.iter().map(read_int).collect()
 }
 
+/// A rest parameter's tensors, each read where it lies.
+pub fn read_groups(group: &[CrowValue]) -> Result<Vec<Cow<'_, CrowTensor>>, String> {
+    group.iter().map(read_tensor).collect()
+}
+
 /// A fused chain's operands: each a tensor, or a number.
 pub fn read_operands(group: &[CrowValue]) -> Result<Vec<crow_runtime::fused::Operand<'_>>, String> {
     group
@@ -1252,6 +1257,7 @@ macro_rules! read {
     (Strs, $g:expr) => { &read_strs(one($g)?)? };
     (Chunks, $g:expr) => { &read_chunks(one($g)?)? };
     (Sizes, $g:expr) => { &read_sizes($g)? };
+    (Groups, $g:expr) => { &read_groups($g)?.iter().map(|t| t.as_ref()).collect::<Vec<&CrowTensor>>() };
     (Bools, $g:expr) => { &read_bools(one($g)?)? };
     (Cell, $g:expr) => { &read_cell(one($g)?)? };
     (Cells, $g:expr) => { read_cells(one($g)?)? };
@@ -1556,6 +1562,11 @@ pub static ROWS: &[Row] = &[
     row!("core.__pick_items", "", "__pick_items", crow_runtime::core::pick_items, (Seq, Bools) -> List, stops),
     row!("core.__pick_rows", "", "__pick_rows", crow_runtime::math::pick_rows, (Tensor, Bools) -> Tensor, stops),
     row!("core.__pick_cells", "", "__pick_cells", crow_runtime::frames::pick_cells, (Column, Bools) -> Column, stops),
+    // the rest of a call's arguments gathered for a function written in
+    // Crow, where one of them can fail — reached by the lowering
+    row!("core.__sizes", "", "__sizes", crow_runtime::core::sizes, (Sizes) -> Ints, never),
+    row!("core.__truncated", "", "__truncated", crow_runtime::core::truncated, (Float) -> Int, never),
+    row!("core.__groups", "", "__groups", crow_runtime::core::groups, (Groups) -> Tensors, never),
     // `map[keys, values]`: the literal's other form, reached by the lowering
     maprow!("core.__map_of", "__map_of", crow_runtime::core::map_of, (Keys, Seq) -> MapOf, stops, maps::map_of, maps::map_of_taken),
     Row { take: lists::slice_taken, ..row!("core.slice", "", "slice", crow_runtime::core::slice, (Seq, Int, Int) -> List, never) },
@@ -1714,6 +1725,8 @@ pub static ROWS: &[Row] = &[
     // `floor`, `ceil`, `round`, `abs`, `min` and `max` where an answer may
     // grow past 64 bits or a whole number past them is handed (int_width,
     // `big_form`); no program names them
+    // a literal past 64 bits, reached by the parser
+    row!("core.__whole", "", "__whole", crow_runtime::int::whole, (Str) -> Big, never),
     row!("core.__int_big", "", "__int_big", crow_runtime::int::int_of, (Cell) -> Big, value "parse"),
     // an int where a record or none is held: 0 is none, another int stops
     // (the lowering's `none_of`, in both modes)
@@ -1748,7 +1761,7 @@ pub static ROWS: &[Row] = &[
     row!("core.fraction_of_decimal", "", "fraction", crow_runtime::fraction::of_dec, (Decimal) -> Fraction, never),
     row!("core.fraction_same", "", "fraction", crow_runtime::fraction::same, (Fraction) -> Fraction, never),
     row!("core.round_decimal", "", "round", crow_runtime::decimal::round, (Decimal) -> Big, never),
-    row!("core.round_decimal_places", "", "round", crow_runtime::decimal::round_places, (Decimal, Whole) -> Decimal, never),
+    row!("core.round_decimal_places", "", "round", crow_runtime::decimal::round_places, (Decimal, Whole) -> Decimal, stops),
     row!("core.floor_decimal", "", "floor", crow_runtime::decimal::floor, (Decimal) -> Big, never),
     row!("core.ceil_decimal", "", "ceil", crow_runtime::decimal::ceil, (Decimal) -> Big, never),
     row!("core.abs_decimal", "", "abs", crow_runtime::decimal::abs, (Decimal) -> Decimal, never),
@@ -2779,6 +2792,10 @@ pub fn form(name: &str) -> String {
         "__set_part" => "`m[i] = row`".to_string(),
         "__sub_len" => "len[sub[…]]".to_string(),
         "__none" => "a record or 0 (none)".to_string(),
+        "__sizes" => "a call's sizes (`randn[2, 3]`)".to_string(),
+        "__whole" => "a whole number past 64 bits".to_string(),
+        "__truncated" => "a number where an int is taken".to_string(),
+        "__groups" => "a call's tensors (`anova[a, b]`)".to_string(),
         _ => format!("{}[]", shown(name)),
     }
 }

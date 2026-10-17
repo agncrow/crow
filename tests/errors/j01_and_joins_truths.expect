@@ -1,0 +1,3 @@
+j01_and_joins_truths.co:1:1: `and` joins truths — two bools, or two masks item by item — and this side is an int: compare it first (x gt 0, x ne '')
+  1 │ log[3 and 3]
+    │ ^^^^^^^^^^^^

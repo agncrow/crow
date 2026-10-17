@@ -2163,7 +2163,17 @@ fn to_type(e: Expr, want: &Ty) -> Expr {
         (Ty::Big, Ty::Float) => Expr::Convert { how: crate::ir::Convert::IntToFloat, expr: Box::new(e), ty: keep(Ty::Float) },
         (Ty::List(a), Ty::List(b)) | (Ty::Map(_, a), Ty::Map(_, b)) if has_big(a) != has_big(b) => {
             let how = if has_big(b) { crate::ir::Convert::ToBig } else { crate::ir::Convert::ToSmall(crate::ir::Who::Held) };
-            Expr::Convert { how, expr: Box::new(e), ty: keep(want.payload().clone()) }
+            // (typed as what it makes: items that can fail only where the
+            // items given could — typed as a field's list whose items can
+            // fail, the record had taken the plain items as such, and the
+            // compiled program did not build)
+            let item = |b: &Ty| if a.is_result() { b.clone() } else { b.payload().clone() };
+            let made = match want.payload() {
+                Ty::List(b) => Ty::List(Box::new(item(b))),
+                Ty::Map(k, b) => Ty::Map(*k, Box::new(item(b))),
+                other => other.clone(),
+            };
+            Expr::Convert { how, expr: Box::new(e), ty: keep(made) }
         }
         _ => e,
     }

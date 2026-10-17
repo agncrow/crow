@@ -221,18 +221,27 @@ impl Dec {
     /// Rounded to `places` places after the point, a half away from zero;
     /// more places than it holds are zeros (`round[decimal['2.5'], 2]` is
     /// 2.50).
-    pub fn round_places(&self, places: i64) -> Dec {
+    pub fn round_places(&self, places: i64) -> Result<Dec, String> {
         if places >= self.scale as i64 {
-            let more = (places - self.scale as i64) as u32;
-            return Dec { digits: &self.digits * ten(more), scale: self.scale + more, prec: self.prec };
+            // places it does not have are zeros written out: as many as a
+            // value may hold (the count had wrapped past 2^32, and a count
+            // near 2^63 grew until the memory ran out — crow check --self)
+            let more = crate::stops::size("round", places - self.scale as i64)?;
+            let more = u32::try_from(more).map_err(|_| crate::stops::too_large("round", more as u128))?;
+            return Ok(Dec { digits: &self.digits * ten(more), scale: self.scale + more, prec: self.prec });
         }
-        let drop = (self.scale as i64 - places) as u32;
+        // every digit rounded away: zero, with no power of ten made for it
+        let drop = self.scale as i128 - places as i128;
+        if drop > digit_count(&self.digits) as i128 {
+            return Ok(Dec { digits: IBig::ZERO, scale: places.max(0) as u32, prec: self.prec });
+        }
+        let drop = drop as u32;
         if places >= 0 {
-            Dec { digits: shed(&self.digits, drop), scale: places as u32, prec: self.prec }
+            Ok(Dec { digits: shed(&self.digits, drop), scale: places as u32, prec: self.prec })
         } else {
             // to tens, hundreds…: the digits rounded there, the zeros kept
             let whole = shed(&self.digits, drop);
-            Dec { digits: whole * ten((-places) as u32), scale: 0, prec: self.prec }
+            Ok(Dec { digits: whole * ten((-places) as u32), scale: 0, prec: self.prec })
         }
     }
 
@@ -364,7 +373,7 @@ pub fn round(d: &Dec) -> Int {
     d.round()
 }
 
-pub fn round_places(d: &Dec, places: i64) -> Dec {
+pub fn round_places(d: &Dec, places: i64) -> Result<Dec, String> {
     d.round_places(places)
 }
 
@@ -512,9 +521,14 @@ mod tests {
         assert_eq!(d("1").div(&d("0")).unwrap_err(), "division by zero");
         let fifty = d("2").with_digits(50).unwrap();
         assert_eq!(fifty.math("sqrt").unwrap().to_string(), "1.4142135623730950488016887242096980785696718753769");
-        assert_eq!(d("2.345").round_places(2).to_string(), "2.35");
-        assert_eq!(d("-2.345").round_places(2).to_string(), "-2.35");
-        assert_eq!(d("2.5").round_places(2).to_string(), "2.50");
+        assert_eq!(d("2.345").round_places(2).unwrap().to_string(), "2.35");
+        assert_eq!(d("-2.345").round_places(2).unwrap().to_string(), "-2.35");
+        assert_eq!(d("2.5").round_places(2).unwrap().to_string(), "2.50");
+        // past what a value holds, refused; every digit rounded away, zero
+        assert!(d("1.25").round_places(i64::MAX).unwrap_err().starts_with("round: a size too large to hold"));
+        assert_eq!(d("1.25").round_places(i64::MIN).unwrap().to_string(), "0");
+        assert_eq!(d("1.25").round_places(-3).unwrap().to_string(), "0");
+        assert_eq!(d("1250").round_places(-3).unwrap().to_string(), "1000");
         assert_eq!(d("2.5").round().to_string(), "3");
         assert_eq!(d("-2.5").round().to_string(), "-3");
         assert_eq!(d("-2.5").floor().to_string(), "-3");

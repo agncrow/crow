@@ -1,0 +1,3 @@
+j03_a_power_of_a_bool.co:1:7: cannot use '^' with int and bool
+  1 │ log[3 ^ true]
+    │       ^

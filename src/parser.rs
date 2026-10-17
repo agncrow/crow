@@ -1028,6 +1028,12 @@ impl Parser {
                 self.advance();
                 Ok(Expr::Int(n))
             }
+            // a whole number past 64 bits: the growing int its digits write,
+            // made by a hidden row (spec, Numbers That Keep Every Digit)
+            Token::Whole(digits) => {
+                self.advance();
+                Ok(Expr::Call { callee: Box::new(Expr::Ident("__whole".to_string())), args: vec![Expr::Str(digits)] })
+            }
             Token::Float(n) => {
                 self.advance();
                 Ok(Expr::Float(n))

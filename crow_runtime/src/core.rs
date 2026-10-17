@@ -11,6 +11,25 @@ use std::collections::BTreeMap;
 
 use rand::RngExt;
 
+/// A number where an int is taken by a function written in Crow (`randn[2.5]`):
+/// its whole part toward zero, as every row that takes an int reads one.
+pub fn truncated(x: f64) -> i64 {
+    x as i64
+}
+
+/// The sizes a call of a function written in Crow is handed (`randn[2,
+/// n]`), gathered as the one list its parameter takes: the lowering's, where
+/// one of them can fail, so the call hands that failure on as any call does.
+pub fn sizes(sizes: &[i64]) -> Vec<i64> {
+    sizes.to_vec()
+}
+
+/// The tensors a call of a function written in Crow is handed (`anova[a,
+/// b]`), gathered as `sizes` gathers sizes.
+pub fn groups(groups: &[&crate::tensor::CrowTensor]) -> Vec<crate::tensor::CrowTensor> {
+    groups.iter().map(|t| (*t).clone()).collect()
+}
+
 /// `range[stop]`, `range[start, stop]`, `range[start, stop, step]`: the
 /// ints from `start` up to (or, with a negative step, down to) `stop`,
 /// exclusive. A zero step is refused.
@@ -18,7 +37,14 @@ pub fn range(start: i64, stop: i64, step: i64) -> Result<Vec<i64>, String> {
     if step == 0 {
         return Err("range[] step cannot be zero".to_string());
     }
-    let mut out = Vec::new();
+    // (its items counted first: a range past what a machine holds is
+    // refused, where it had grown until the memory ran out)
+    let span = if step > 0 { stop as i128 - start as i128 } else { start as i128 - stop as i128 };
+    let count = if span <= 0 { 0 } else { ((span + step.unsigned_abs() as i128 - 1) / step.unsigned_abs() as i128) as u128 };
+    if count > crate::stops::MOST as u128 {
+        return Err(format!("range: a size too large to hold ({} items; at most {})", count, crate::stops::MOST));
+    }
+    let mut out = Vec::with_capacity(count as usize);
     let mut i = start;
     // a step past the last int ends the range: its next value would be
     // beyond `stop` too

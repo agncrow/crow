@@ -1,0 +1,3 @@
+j05_a_map_key_of_another_kind.co:2:1: a map's key is text or an int, and this is a number
+  2 │ m[2.5] = 3
+    │ ^^^^^^^^^^

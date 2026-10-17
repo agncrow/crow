@@ -1018,6 +1018,10 @@ impl Emitter {
                     // the value first, then a copy of the key: `m[k] = m[k] + 1`
                     // reads the key after the insert would have taken it, and
                     // the program may read it again after
+                    // (a map keyed by ints takes its int as it is: the key had
+                    // been made text, and the program did not build — crow
+                    // check --self)
+                    Ty::Map(crate::ir::Key::Int, _) => self.line_after(&found, &format!("{{ let _v = {}; {}.insert(({}) as i64, _v); }}", val, obj, idx)),
                     Ty::Map(..) => self.line_after(&found, &format!("{{ let _v = {}; {}.insert(({}).to_string(), _v); }}", val, obj, idx)),
                     // the value first, then the index, as the interpreter
                     // reads them (a stop in each had reported the other's

@@ -1,0 +1,3 @@
+j09_a_record_has_no_positions.co:3:5: 'p' is a record, read by its fields' names (p.x), which has no items — `[…]` reads an item of a list, a map, text or a column
+  3 │ log[p[0]]
+    │     ^

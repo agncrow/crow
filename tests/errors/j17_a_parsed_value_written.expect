@@ -1,0 +1,3 @@
+j17_a_parsed_value_written.co:2:1: 'j' is a parsed value, which the program reads, never writes: make a map or a list of what it holds and change that
+  2 │ j['a'] = 5
+    │ ^

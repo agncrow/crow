@@ -13,7 +13,9 @@ use crate::tensor::CrowTensor;
 
 /// The sizes a constructor was handed, each a count.
 fn shape(what: &str, sizes: &[i64]) -> Result<Vec<usize>, String> {
-    sizes.iter().map(|&n| stops::size(what, n)).collect()
+    let dims: Vec<usize> = sizes.iter().map(|&n| stops::size(what, n)).collect::<Result<_, _>>()?;
+    stops::cells(what, &dims)?;
+    Ok(dims)
 }
 
 /// A sample's shape: its sizes, or one value when none are given.
@@ -39,7 +41,9 @@ pub fn full(sizes: &[i64], value: f64) -> Result<CrowTensor, String> {
 
 /// `eye[n]`: the n×n identity.
 pub fn eye(n: i64) -> Result<CrowTensor, String> {
-    Ok(CrowTensor::eye(stops::size("eye", n)?))
+    let n = stops::size("eye", n)?;
+    stops::cells("eye", &[n, n])?;
+    Ok(CrowTensor::eye(n))
 }
 
 /// `onehot[targets, classes]`: a row per target, 1 in its class's column
@@ -52,9 +56,9 @@ pub fn onehot(targets: &CrowTensor, classes: i64) -> Result<CrowTensor, String> 
     if targets.ndim() != 1 {
         return Err(format!("onehot: the targets are a vector, got {} dimensions", targets.ndim()));
     }
-    let classes = classes as usize;
+    let classes = stops::size("onehot", classes)?;
     let ts = targets.to_vec();
-    let mut data = vec![0.0; ts.len() * classes];
+    let mut data = vec![0.0; stops::cells("onehot", &[ts.len(), classes])?];
     for (r, &t) in ts.iter().enumerate() {
         if t.fract() != 0.0 || t < 0.0 || t >= classes as f64 {
             return Err(format!("onehot: {} is not a class of {} (0 to {})", t, classes, classes - 1));
@@ -75,6 +79,11 @@ pub fn linspace(start: f64, stop: f64, n: i64) -> Result<CrowTensor, String> {
 pub fn arange(start: f64, stop: f64, step: f64) -> Result<CrowTensor, String> {
     if step == 0.0 {
         return Err("arange: step cannot be zero".to_string());
+    }
+    // as many numbers as a value may hold, counted before any is made
+    let count = ((stop - start) / step).ceil();
+    if count > crate::stops::MOST as f64 {
+        return Err(crate::stops::too_large("arange", count as u128));
     }
     Ok(CrowTensor::arange(start, stop, step))
 }

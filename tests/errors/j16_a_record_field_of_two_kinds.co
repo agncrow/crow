@@ -1,0 +1,3 @@
+struct Box [v]
+log[Box[2.5].v]
+log[Box['a'].v]

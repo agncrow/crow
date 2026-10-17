@@ -697,7 +697,88 @@ impl<'a> Lowerer<'a> {
         if matches!(lt, Ty::Unknown) || matches!(rt, Ty::Unknown) {
             return;
         }
+        // `and` and `or` join truths: two bools, or two masks item by item
+        // (a list of bools; a frame's column of bools is lowered as the mask
+        // it makes). An int is no truth: `3 and 3` had been true
+        // interpreted and 3 compiled (crow check --self).
+        if matches!(op, BinOp::And | BinOp::Or) {
+            let truth = |t: &Ty| matches!(t, Ty::Bool | Ty::Json) || matches!(t, Ty::List(i) | Ty::Column(i) if matches!(i.payload(), Ty::Bool | Ty::Unknown));
+            if let Some(side) = [&lt, &rt].into_iter().find(|t| !truth(t)) {
+                let word = if matches!(op, BinOp::And) { "and" } else { "or" };
+                self.refuse(format!("`{}` joins truths — two bools, or two masks item by item — and this side is {}: compare it first (x gt 0, x ne '')", word, crate::table::Arg::of_type(side).words()));
+            }
+            return;
+        }
+        // `^` is a number's power: two numbers, one at a time (`.^` raises a
+        // tensor's numbers one by one). `3 ^ true` had stopped interpreted
+        // and been 3 compiled; a power of a map or text had not built.
+        if matches!(op, BinOp::Pow) {
+            let number = |t: &Ty| matches!(t, Ty::Int | Ty::Big | Ty::Float | Ty::Decimal | Ty::Fraction | Ty::Json);
+            if !number(&lt) || !number(&rt) {
+                let many = |t: &Ty| matches!(t, Ty::Tensor(..) | Ty::Column(_) | Ty::List(_));
+                let hint = if many(&lt) || many(&rt) { " — a tensor's numbers are raised one by one with .^" } else { "" };
+                self.refuse(format!("cannot use '^' with {} and {}{}", lt.crow_name(), rt.crow_name(), hint));
+            } else if matches!(lt, Ty::Decimal | Ty::Fraction) && !matches!(rt, Ty::Int | Ty::Big | Ty::Json) {
+                // (the runtime's words, where it is written: interpreted it
+                // had stopped as it ran, and compiled it had not built)
+                self.refuse(format!("an exact number's power is by an int, and this is {}: `d ^ 2`", crate::table::Arg::of_type(&rt).words()));
+            }
+            return;
+        }
+        // `.*`, `./` and `.^` work item by item: numbers, at least one side a
+        // tensor, a frame's column or a list of numbers (a mask's truths are
+        // 1 and 0). Two numbers, a bool, text or a map had been written into
+        // the compiled program as they stood, which did not build.
+        if matches!(op, BinOp::ElemMul | BinOp::ElemDiv | BinOp::ElemPow) {
+            let numbers = |t: &Ty| matches!(t, Ty::Int | Ty::Big | Ty::Float | Ty::Json | Ty::Tensor(..) | Ty::Column(_)) || matches!(t, Ty::List(i) if matches!(i.payload(), Ty::Int | Ty::Float | Ty::Bool));
+            let many = |t: &Ty| matches!(t, Ty::Tensor(..) | Ty::Column(_) | Ty::List(_));
+            let word = match op {
+                BinOp::ElemMul => ".*",
+                BinOp::ElemDiv => "./",
+                _ => ".^",
+            };
+            if !numbers(&lt) || !numbers(&rt) {
+                self.refuse(format!("cannot use '{}' with {} and {}", word, lt.crow_name(), rt.crow_name()));
+            } else if !many(&lt) && !many(&rt) {
+                let plain = match op {
+                    BinOp::ElemMul => "*",
+                    BinOp::ElemDiv => "/",
+                    _ => "^",
+                };
+                self.refuse(format!("`{}` works item by item on tensors, and these are two numbers: write {}", word, plain));
+            }
+            return;
+        }
+        // a decimal or a fraction is compared with one number: a mask
+        // compares each cell with a float (the interpreter had stopped,
+        // "expected a decimal, got array", and the compiled program had not
+        // built — crow check --self)
+        if matches!(op, BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte) {
+            let exact = |t: &Ty| matches!(t, Ty::Decimal | Ty::Fraction);
+            let many = |t: &Ty| matches!(t, Ty::Tensor(..) | Ty::Column(_) | Ty::List(_));
+            if let Some((e, m)) = [(&lt, &rt), (&rt, &lt)].into_iter().find(|(e, m)| exact(e) && many(m)) {
+                let words = |t: &Ty| crate::table::Arg::of_type(t).words();
+                self.refuse(format!("{} is compared with one number, and the other side is {}: compare float[…] of it, as a mask compares each cell with a number", words(e), words(m)));
+            }
+            return;
+        }
         if !matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod) {
+            return;
+        }
+        // `%` takes ints (a float is refused where the operator is lowered):
+        // a tensor's or a column's remainders are `mod[t, d]`'s, and the
+        // compiled program had not built them
+        if matches!(op, BinOp::Mod) && [&lt, &rt].iter().any(|t| matches!(t, Ty::Tensor(..) | Ty::Column(_) | Ty::List(_) | Ty::Sparse)) {
+            self.refuse("`%` takes ints and answers the remainder — round a float first (int[x], floor[x], round[x]), or use mod[t, d] on a tensor".to_string());
+            return;
+        }
+        // `/` divides by a number: two tensors — a list of numbers, a frame's
+        // column — are divided item by item with `./` (spec, Operators; the
+        // interpreter had stopped as it ran, and the compiled program had
+        // not built)
+        let many = |t: &Ty| matches!(t, Ty::Tensor(..) | Ty::Column(_)) || matches!(t, Ty::List(i) if matches!(i.payload(), Ty::Int | Ty::Float | Ty::Bool));
+        if matches!(op, BinOp::Div) && many(&lt) && many(&rt) {
+            self.refuse("`/` divides by a number, and these are two tensors: divide item by item with ./".to_string());
             return;
         }
         // String + is not allowed — use interpolation instead
@@ -1000,19 +1081,40 @@ impl<'a> Lowerer<'a> {
     /// core's, and a loaded module's of the same name — refused in the
     /// table's words when none does.
     fn refuse_kinds(&mut self, name: &str, argc: usize, types: &[Ty]) {
-        if !crate::table::has_core_rows(name) {
+        // (a local or a parameter of the name, indexed — `rsi[0]` of a list
+        // named like chart's rsi — is a value read, not the builtin; and a
+        // function of the program's of the name is the call, its own
+        // parameters the contract: math.co's own tests hand `randn` its
+        // sizes as one list)
+        if self.declared(name) || self.ctx.functions.contains_key(name) {
+            return;
+        }
+        // (a module's rows reached by the bare name are checked as the
+        // core's are: web.mail's `mail` had taken an int, a list or a
+        // column where it takes text, and the modes showed it differently)
+        // (a module only a part imports is not the entry's to resolve by)
+        let mut providers: Vec<String> = self.ctx.registry.providers_of(name).into_iter().map(str::to_string).filter(|m| !self.only_a_part_imports(m)).collect();
+        // web's names are its builtins (WEB_RESERVED), their rows its
+        // modules' (web.mail's `mail`, web.ws's `send` and `recv`)
+        let web = self.v.bare_import_lines.keys().any(|p| p == "web" || p.starts_with("web."));
+        if web && WEB_RESERVED.contains(&name) {
+            for r in crate::table::ROWS.iter().filter(|r| r.name == name && r.module.starts_with("web")) {
+                if !providers.iter().any(|m| m == r.module) {
+                    providers.push(r.module.to_string());
+                }
+            }
+        }
+        let module_rows = providers.iter().any(|m| crate::table::ROWS.iter().any(|r| r.module == m.as_str() && r.name == name));
+        if !crate::table::has_core_rows(name) && !module_rows {
             return;
         }
         let kinds: Vec<crate::table::Arg> = (0..argc).map(|i| types.get(i).map_or(crate::table::Arg::Unknown, crate::table::Arg::of_type)).collect();
         // `json[map]` is web's JSON response (use web), a form of its own, as
         // a record's and a list's are (an object, an array); `json[frame]`
         // answers the frame's records
-        let web = self.v.bare_import_lines.keys().any(|p| p == "web" || p.starts_with("web."));
         if name == "json" && web && kinds.first().is_some_and(crate::table::Arg::json_response) {
             return;
         }
-        // (a module only a part imports is not the entry's to resolve by)
-        let providers: Vec<String> = self.ctx.registry.providers_of(name).into_iter().map(str::to_string).filter(|m| !self.only_a_part_imports(m)).collect();
         let mut modules: Vec<&str> = vec![""];
         modules.extend(providers.iter().map(String::as_str));
         if let Some(e) = crate::table::refusal(&modules, name, &kinds) {
@@ -1360,6 +1462,24 @@ impl<'a> Lowerer<'a> {
             return;
         }
 
+        // web's modules' names (web.mail's `mail` and `smtp`, web.ws's
+        // `socket`, web.auth's `sign`) are theirs: under `use web` alone
+        // neither mode had them (the interpreter stopped as it ran, "does
+        // not run 'smtp' yet", and the compiled program did not build) —
+        // refused where it is written, naming the line that brings them
+        if !own && !self.declared(name) && !crate::modules::is_crow_fn(&self.current_fn) {
+            let imported = |m: &str| self.v.bare_import_lines.keys().any(|p| p == m) || self.ctx.module_aliases.values().any(|a| a == m);
+            let rows_of = |m: &str| crate::table::ROWS.iter().any(|r| r.module == m && r.name == name);
+            let web_module = crate::table::ROWS.iter().find(|r| r.name == name && r.module.starts_with("web.")).map(|r| r.module);
+            let answered = crate::table::has_core_rows(name) || self.v.bare_import_lines.keys().any(|m| rows_of(m));
+            if let Some(m) = web_module.filter(|m| !imported(m)) {
+                if !answered {
+                    self.refuse_missing_use(name, m, "");
+                    return;
+                }
+            }
+        }
+
         // Known builtin? Check where it is called and its argument count
         // (a local or a parameter of the name, indexed — `query[0]` of a
         // parameter `query` — is a value read, not the builtin)
@@ -1424,9 +1544,10 @@ impl<'a> Lowerer<'a> {
             // min of a tensor) — refused before either mode runs, in the
             // table's words (the interpreter stopped on the value, the
             // compiled program did not build)
-            if crate::table::has_core_rows(name) {
+            if crate::table::has_core_rows(name) || WEB_RESERVED.contains(&name) {
                 self.refuse_kinds(name, argc, types);
-            } else if !builtin_arity_ok(name, argc) {
+            }
+            if !crate::table::has_core_rows(name) && !builtin_arity_ok(name, argc) {
                 self.refuse(format!("wrong number of arguments for '{}'", name));
             }
             return;

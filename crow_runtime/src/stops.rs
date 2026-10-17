@@ -232,10 +232,34 @@ pub fn prod(xs: &[i64]) -> Result<i64, String> {
 
 // ── sizes ───────────────────────────────────────────────────────────
 
+/// The most items a value may hold: 2^36, more than any machine's memory
+/// holds (512 GB of numbers). A size past it is refused in the same words
+/// on every machine, before anything is made — a constructor given one
+/// had panicked in Rust's words, with no line compiled, or grown until the
+/// machine's memory ran out (crow check --self).
+pub const MOST: usize = 1 << 36;
+
 /// A size the program gives a constructor (`zeros[n]`, `eye[n]`,
-/// `repeat[s, n]`): a count, never negative.
+/// `repeat[s, n]`): a count, never negative, never past [`MOST`].
 pub fn size(what: &str, n: i64) -> Result<usize, String> {
-    usize::try_from(n).map_err(|_| format!("{}: a size cannot be negative (got {})", what, n))
+    let n = usize::try_from(n).map_err(|_| format!("{}: a size cannot be negative (got {})", what, n))?;
+    if n > MOST {
+        return Err(too_large(what, n as u128));
+    }
+    Ok(n)
+}
+
+/// The items a shape holds, its sizes multiplied: refused past [`MOST`].
+pub fn cells(what: &str, dims: &[usize]) -> Result<usize, String> {
+    let n = dims.iter().fold(1u128, |acc, &d| acc.saturating_mul(d as u128));
+    if n > MOST as u128 {
+        return Err(too_large(what, n));
+    }
+    Ok(n as usize)
+}
+
+pub fn too_large(what: &str, n: u128) -> String {
+    format!("{}: a size too large to hold ({} items; at most {})", what, n, MOST)
 }
 
 // ── recursion ───────────────────────────────────────────────────────
@@ -501,6 +525,14 @@ mod tests {
     fn a_size_is_never_negative() {
         assert_eq!(size("zeros", 3), Ok(3));
         assert_eq!(size("zeros", -2), Err("zeros: a size cannot be negative (got -2)".to_string()));
+        // a size past what any machine holds is refused before anything is
+        // made, in the same words everywhere
+        assert_eq!(size("zeros", 1 << 40), Err(format!("zeros: a size too large to hold ({} items; at most {})", 1u64 << 40, MOST)));
+        assert_eq!(cells("eye", &[1 << 20, 1 << 20]), Err(format!("eye: a size too large to hold ({} items; at most {})", 1u64 << 40, MOST)));
+        assert_eq!(cells("eye", &[3, 3]), Ok(9));
+        assert!(crate::core::range(0, i64::MAX, 1).unwrap_err().starts_with("range: a size too large to hold"));
+        assert_eq!(crate::core::range(0, 10, 3), Ok(vec![0, 3, 6, 9]));
+        assert_eq!(crate::core::range(5, 0, -2), Ok(vec![5, 3, 1]));
     }
 
     #[test]

@@ -1,0 +1,3 @@
+j06_a_remainder_of_a_tensor.co:1:1: `%` takes ints and answers the remainder — round a float first (int[x], floor[x], round[x]), or use mod[t, d] on a tensor
+  1 │ log[[1.0, 2.0] % 2]
+    │ ^^^^^^^^^^^^^^^^^^^

@@ -681,6 +681,18 @@ fn walked(it: &Expr) -> Ty {
     }
 }
 
+/// A type with every "can fail" taken off, at any depth (a list of values
+/// that can fail is a list of the values): what a kind check compares when
+/// whether a value can fail is decided elsewhere.
+fn sans_results(t: &Ty) -> Ty {
+    match t {
+        Ty::Result(inner) => sans_results(inner),
+        Ty::List(item) => Ty::List(Box::new(sans_results(item))),
+        Ty::Map(key, value) => Ty::Map(*key, Box::new(sans_results(value))),
+        other => other.clone(),
+    }
+}
+
 /// A lowered value's type as a variable keeps it: a column keeps its
 /// cells' kind (`texts = str[t.at]` is a column of text, so `moment[texts]`
 /// is one of moments and its cell a moment, not a parsed value — the
@@ -886,6 +898,19 @@ fn picked(row: &'static crate::table::Row, base: Expr, mask: Expr, ty: Ty) -> Ex
     let carried = fallible(&base) || fallible(&mask);
     let ty = if carried && !ty.is_result() { Ty::Result(Box::new(ty)) } else { ty };
     Expr::Call { target: Target::Row(row), args: vec![base, mask], ty, propagates: carried }
+}
+
+/// Whether a value can be a map's key: text or an int (or a value the
+/// program reads as one as it runs).
+fn key_like(t: &Ty) -> bool {
+    matches!(t, Ty::Int | Ty::Big | Ty::Str | Ty::Markup | Ty::Json | Ty::Unknown)
+}
+
+/// Whether a value can be a position: an int (or a value the program reads
+/// as one as it runs); a mask is picked before this, and a list of
+/// positions gathers.
+fn position_like(t: &Ty) -> bool {
+    matches!(t, Ty::Int | Ty::Big | Ty::Json | Ty::Unknown | Ty::List(_) | Ty::Tensor(..) | Ty::Column(_))
 }
 
 /// Whether an expression reads a frame's column anywhere in it: a
@@ -1980,12 +2005,113 @@ impl<'a> Lowerer<'a> {
                 let idx = self.lower_expr(index)?;
                 let idx = self.decided_index(idx);
                 let (var, mut path, held) = self.muted_target(object)?;
+                // a map is written at a key of its keys' kind (text or an int),
+                // a list, text or a tensor at an int: `m[2.5] = 3` into a map
+                // of text keys had stopped interpreted and written the key
+                // '2.5' compiled (crow check --self)
+                if self.pass == Pass::Final {
+                    let given = idx.ty().payload().clone();
+                    match held.payload() {
+                        // a parsed value and a frame are read, never written
+                        // where they lie (the interpreter had stopped,
+                        // "cannot index-assign into map", and the compiled
+                        // program had not built — crow check --self)
+                        Ty::Json => {
+                            self.refuse(format!(
+                                "'{}' is a parsed value, which the program reads, never writes: make a map or a list of what it holds and change that",
+                                crate::lower::shown(&var)
+                            ));
+                        }
+                        Ty::Frame(_) => {
+                            self.refuse(format!(
+                                "'{0}' is a frame, whose cells are not written by position: a column is made anew, with[{0}, 'name', values]",
+                                crate::lower::shown(&var)
+                            ));
+                        }
+                        // (a column held in a variable is a frame's column:
+                        // made anew, as the frame's are — the interpreter had
+                        // written the cell, and the compiled program had not
+                        // built)
+                        Ty::Column(_) => {
+                            self.refuse(format!(
+                                "'{}' is a frame's column, whose cells are not written by position: a column is made anew, with[frame, 'name', values]",
+                                crate::lower::shown(&var)
+                            ));
+                        }
+                        // text is made, never written where it lies (the
+                        // interpreter had stopped, "cannot index-assign into
+                        // string", and the compiled program had not built)
+                        Ty::Str | Ty::Markup => {
+                            self.refuse(format!(
+                                "'{}' is text, which is made anew, not written by position: concat[slice[s, 0, i], 'x', slice[s, i + 1, len[s]]]",
+                                crate::lower::shown(&var)
+                            ));
+                        }
+                        Ty::Map(key, _) => {
+                            if !key_like(&given) {
+                                self.refuse(format!("a map's key is text or an int, and this is {}", crate::table::Arg::of_type(&given).words()));
+                            } else if key.unify(crate::type_infer::key_kind_of(&given)).is_none() {
+                                self.refuse(crate::table::wrong_key(*key, &given));
+                            }
+                        }
+                        Ty::Str | Ty::List(_) | Ty::Tensor(..) | Ty::Column(_) if !position_like(&given) => {
+                            self.refuse(format!("a position in '{}' is an int, and this is {}", crate::lower::shown(&var), crate::table::Arg::of_type(&given).words()));
+                        }
+                        // a mask picks what is read (`xs[mask]`), never where
+                        // a write lands: the interpreter had stopped ("array
+                        // index must be an integer") and the compiled program
+                        // had not built (crow check --self)
+                        Ty::Str | Ty::List(_) | Ty::Tensor(..) | Ty::Column(_) if matches!(given, Ty::List(_) | Ty::Tensor(..) | Ty::Column(_)) => {
+                            let v = crate::lower::shown(&var);
+                            self.refuse(format!(
+                                "`{0}[…] = …` writes at one position, an int, and this is {1}: a mask picks what `{0}[mask]` reads, not where a write lands",
+                                v,
+                                crate::table::Arg::of_type(&given).words()
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+                // an item written is of the items' kind: a value that can fail
+                // is decided where it is written, as one assigned to a variable
+                // is; a parsed value is read as the items' kind; another kind
+                // is refused where it is written (text into a list of numbers,
+                // a value that can fail into one that cannot: the lowered
+                // program had disagreed with itself — crow check --self)
+                // (a vector's number is a number: `b[0] = true` had been cast
+                // to a float compiled and not built)
+                let items = match held.payload().clone() {
+                    Ty::Tensor(_, dims) if dims.as_ref().is_none_or(|d| d.len() <= 1) => Some(Ty::Float),
+                    Ty::List(item) | Ty::Map(_, item) => Some(*item),
+                    _ => None,
+                };
+                let expr = match items {
+                    Some(item) if self.pass == Pass::Final && !item.has_unknown() && !item.is_result() => {
+                        let expr = if expr.ty().is_result() { self.decided(expr, Decision::Assign(var.clone())) } else { expr };
+                        let given = expr.ty().payload().clone();
+                        if matches!(given, Ty::Json) {
+                            self.read_json(expr, &item, &format!("written to an item of '{}'", crate::lower::shown(&var)))
+                        } else {
+                            let whole = |t: &Ty| matches!(t, Ty::Int | Ty::Big);
+                            if !item.compatible(&given) && !(whole(&item) && whole(&given)) {
+                                self.refuse(format!(
+                                    "an item of '{}' is {}, and the value written to it is {}",
+                                    crate::lower::shown(&var),
+                                    crate::table::Arg::of_type(&item).words(),
+                                    crate::table::Arg::of_type(&given).words()
+                                ));
+                            }
+                            expr
+                        }
+                    }
+                    _ => expr,
+                };
                 // an int assigned to an item of a list of floats is a float,
                 // where it is written — as one handed to a float parameter
                 // is (the compiled program had not built, and the
                 // interpreter's list had held the int)
                 let expr = match (held.payload(), expr.ty()) {
-                    (Ty::List(item), Ty::Int) if **item == Ty::Float => Expr::Convert { how: Convert::IntToFloat, expr: Box::new(expr), ty: Ty::Float },
+                    (Ty::List(item) | Ty::Map(_, item), Ty::Int) if **item == Ty::Float => Expr::Convert { how: Convert::IntToFloat, expr: Box::new(expr), ty: Ty::Float },
                     _ => expr,
                 };
                 // a tensor written at positions (spec, Arrays): a number at one
@@ -2265,7 +2391,8 @@ impl<'a> Lowerer<'a> {
                 // function's
                 let failure_only = matches!(e, A::Ident(v) if self.failed.contains(v)) && x.ty().is_result();
                 if let (Some(seen), 0) = (&mut self.seen, self.collecting) {
-                    seen.returns.push(if failure_only { Ty::Result(Box::new(Ty::Unknown)) } else { full(&x) });
+                    // (a column with its cells' kind, as a variable keeps it)
+                    seen.returns.push(if failure_only { Ty::Result(Box::new(Ty::Unknown)) } else { kept(&x) });
                 }
                 // an int returned by a function whose value is a float is a
                 // float (spec §1), as one assigned to a float variable is: the
@@ -2987,9 +3114,18 @@ impl<'a> Lowerer<'a> {
     /// value's type, as inference's walk has it.
     fn settled_entry(&mut self, object: &A, value: &Expr) {
         if let A::Ident(var) = object {
-            if let Ty::Map(key, inner) = self.ctx.ident_type(var).text() {
-                let joined = inner.unify(&read(value));
-                self.ctx.vars.insert(var.clone(), Ty::Map(key, Box::new(joined)));
+            match self.ctx.ident_type(var).text() {
+                Ty::Map(key, inner) => {
+                    let joined = inner.unify(&read(value));
+                    self.ctx.vars.insert(var.clone(), Ty::Map(key, Box::new(joined)));
+                }
+                // a list of ints an item of which is written a float holds
+                // floats, as a map's values do (spec §1; `c[0] = 2.5` had
+                // been a list of ints holding a float — crow check --self)
+                Ty::List(inner) if *inner == Ty::Int && read(value).payload() == &Ty::Float => {
+                    self.ctx.vars.insert(var.clone(), Ty::List(Box::new(Ty::Float)));
+                }
+                _ => {}
             }
         }
     }
@@ -3302,7 +3438,13 @@ impl<'a> Lowerer<'a> {
                     l = self.read_json(l, &kind, &how);
                     r = self.read_json(r, &kind, &how);
                 }
-                self.check_binop(op, self.checked(&l), self.checked(&r));
+                // (a column with its cells' kind: `f.a and f.a` of ints had
+                // passed as a column of cells not known, and not built)
+                let with_cells = |s: &Self, x: &Expr| match x.ty() {
+                    Ty::Column(cell) if !cell.has_unknown() => Ty::Column(cell),
+                    _ => s.checked(x),
+                };
+                self.check_binop(op, with_cells(self, &l), with_cells(self, &r));
                 // a record or none compared with the 0 that writes none is
                 // the none test (spec, A Record or None): the 0 is typed as
                 // the link it is compared with; any other record beside a
@@ -3336,6 +3478,26 @@ impl<'a> Lowerer<'a> {
                     };
                     l = numbers(l);
                     r = numbers(r);
+                }
+                // `.*`, `./` and `.^` work on a tensor's numbers: a list of
+                // numbers or of truths (1 and 0) is its tensor, and an int past
+                // 64 bits its nearest float, as a tensor's numbers are floats
+                // (written as they stood, they had not built — crow check
+                // --self)
+                if matches!(op, BinOp::ElemMul | BinOp::ElemDiv | BinOp::ElemPow) {
+                    let operand = |x: Expr| match x.ty() {
+                        Ty::List(item) if matches!(*item, Ty::Int | Ty::Float | Ty::Bool) => {
+                            let ty = Ty::Tensor(Box::new(Ty::Float), shapes::stacked_dims(&x.ty()));
+                            Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty }
+                        }
+                        Ty::Big => match crate::table::row("core.__float_of_big") {
+                            Some(row) => Expr::Call { target: Target::Row(row), args: vec![x], ty: Ty::Float, propagates: false },
+                            None => x,
+                        },
+                        _ => x,
+                    };
+                    l = operand(l);
+                    r = operand(r);
                 }
                 // a list of numbers that can fail — each a map's read, a
                 // function's answer that can — compared whole with a tensor
@@ -3401,6 +3563,33 @@ impl<'a> Lowerer<'a> {
                     crate::ast::UnaryOp::Not => self.read_json(x, &Ty::Bool, "negated"),
                     crate::ast::UnaryOp::Neg => self.read_json(x, &Ty::Float, "made negative"),
                 };
+                // a frame's column made negative is its numbers, as one in
+                // arithmetic is (the compiled program had not built `-f.a`)
+                let x = match (op, x.ty().payload()) {
+                    (crate::ast::UnaryOp::Neg, Ty::Column(_)) => {
+                        let ty = if x.ty().is_result() { Ty::Result(Box::new(Ty::vector(Ty::Float))) } else { Ty::vector(Ty::Float) };
+                        Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty }
+                    }
+                    _ => x,
+                };
+                // `not` turns a truth over (or a mask, item by item), and a
+                // minus sign makes a number negative (or a tensor's numbers):
+                // `not 3` had been false interpreted and -4 compiled, and a
+                // minus before text, a bool or a map had not built (crow
+                // check --self)
+                if self.pass == Pass::Final {
+                    let t = x.ty().payload().clone();
+                    let fits = match op {
+                        crate::ast::UnaryOp::Not => matches!(t, Ty::Bool | Ty::Json | Ty::Unknown) || matches!(&t, Ty::List(i) | Ty::Column(i) if matches!(i.payload(), Ty::Bool | Ty::Unknown)),
+                        crate::ast::UnaryOp::Neg => matches!(t, Ty::Int | Ty::Big | Ty::Float | Ty::Decimal | Ty::Fraction | Ty::Json | Ty::Unknown | Ty::Tensor(..) | Ty::Column(_)) || matches!(&t, Ty::List(i) if matches!(i.payload(), Ty::Int | Ty::Float)),
+                    };
+                    if !fits {
+                        match op {
+                            crate::ast::UnaryOp::Not => self.refuse(format!("`not` turns a truth over — a bool, or a mask item by item — and this is {}: compare it first (not (x eq 0))", crate::table::Arg::of_type(&t).words())),
+                            crate::ast::UnaryOp::Neg => self.refuse(format!("a minus sign makes a number negative, and this is {}", crate::table::Arg::of_type(&t).words())),
+                        }
+                    }
+                }
                 let ty = shapes::shaped(self.ctx.unary_type(op, read(&x)), x.ty().tensor_dims().cloned());
                 Expr::Unary { op: format!("{:?}", op).to_lowercase(), expr: Box::new(x), ty }
             }
@@ -3426,8 +3615,12 @@ impl<'a> Lowerer<'a> {
                         }
                         let which = match field.as_str() {
                             // a frame column's `.ok` is its rows' validity;
-                            // any other value's is its own status
-                            "ok" if matches!(base.ty().payload(), Ty::Column(_)) => Meta::Valid,
+                            // any other value's is its own status — a column
+                            // that can fail included: `.ok` of `may[f.a]` asks
+                            // whether it failed (read as its cells' validity,
+                            // the interpreter stopped on the failure and the
+                            // compiled program answered false)
+                            "ok" if matches!(base.ty(), Ty::Column(_)) => Meta::Valid,
                             "ok" => Meta::Ok,
                             "reason" => Meta::Reason,
                             "kind" => Meta::Kind,
@@ -3915,8 +4108,19 @@ impl<'a> Lowerer<'a> {
             // the interpreter as it ran — `not indexable` — and the compiled
             // program had not built); a builtin's name read as a method,
             // `xs.len[]`, is the call it means, the value first
-            if self.pass == Pass::Final && matches!(base.ty().payload(), Ty::Int | Ty::Float | Ty::Bool) && !self.contested(&base) && !of_unknown_rank(&base) {
-                let words = crate::table::Arg::of_type(base.ty().payload()).words();
+            // (a growing number, a moment, a record and a response neither:
+            // crow check --self)
+            if self.pass == Pass::Final
+                && matches!(base.ty().payload(), Ty::Int | Ty::Float | Ty::Bool | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Moment | Ty::Record(_) | Ty::OptRecord(_) | Ty::WebResponse)
+                && !self.contested(&base)
+                && !of_unknown_rank(&base)
+            {
+                let words = match base.ty().payload() {
+                    Ty::Record(_) | Ty::OptRecord(_) => "a record, read by its fields' names (p.x)",
+                    Ty::Moment => "a moment, read by its fields' names (t.year)",
+                    Ty::WebResponse => "a response",
+                    t => crate::table::Arg::of_type(t).words(),
+                };
                 match callee {
                     A::FieldAccess { object, field } if checks::BUILTINS.contains(&field.as_str()) => {
                         let of = match object.as_ref() {
@@ -4002,6 +4206,11 @@ impl<'a> Lowerer<'a> {
                     ));
                 }
             }
+            // `[]` written and indexed holds nothing to read (its items'
+            // kind unknown, the compiled program had not built)
+            if self.pass == Pass::Final && matches!(&base, Expr::ListLit(items, _) if items.is_empty()) {
+                self.refuse("`[][…]` reads from a list that holds nothing".to_string());
+            }
             // a mask picks: `t[labels eq j]` is the rows (or the numbers)
             // where it is true, `xs[mask]` the items (spec, Arrays) — the
             // index's own rows, typed by the base as a position's read is
@@ -4012,11 +4221,41 @@ impl<'a> Lowerer<'a> {
                 return Ok(picked(row, base, index, ty));
             }
             // a map's keys are one kind: an index of the other kind is
-            // refused before the program runs, in both modes
+            // refused before the program runs, in both modes — and a key is
+            // text or an int
             if let (Ty::Map(key, _), [index]) = (base.ty().payload(), idx.as_slice()) {
                 let given = index.ty().payload().clone();
-                if key.unify(crate::type_infer::key_kind_of(&given)).is_none() {
+                if self.pass == Pass::Final && !key_like(&given) {
+                    self.refuse(format!("a map's key is text or an int, and this is {}", crate::table::Arg::of_type(&given).words()));
+                } else if key.unify(crate::type_infer::key_kind_of(&given)).is_none() {
                     self.refuse(crate::table::wrong_key(*key, &given));
+                }
+            }
+            // a position is an int: text, a list, a tensor, a column read by
+            // a bool or a float had stopped interpreted and been read compiled
+            // as the number the value casts to (`'abc'[true]` was 'b')
+            // (a mask was picked above: what is left of a list is one int —
+            // a list of ints or of text as positions had stopped interpreted,
+            // "array index must be an integer", and not built compiled; a
+            // tensor gathers at a list of ints)
+            if self.pass == Pass::Final
+                && let [index] = idx.as_slice()
+                && matches!(base.ty().payload(), Ty::Str | Ty::List(_) | Ty::Tensor(..) | Ty::Column(_))
+            {
+                let given = index.ty().payload().clone();
+                let gathers = matches!(base.ty().payload(), Ty::Tensor(..))
+                    && matches!(&given, Ty::Tensor(e, _) | Ty::List(e) if matches!(e.payload(), Ty::Int | Ty::Float | Ty::Unknown));
+                let unsettled = matches!(&given, Ty::List(e) | Ty::Column(e) | Ty::Tensor(e, _) if e.has_unknown());
+                if !position_like(&given) || (matches!(given, Ty::List(_) | Ty::Tensor(..) | Ty::Column(_)) && !gathers && !unsettled) {
+                    let what = local_named(&base).map(|n| format!("'{}'", n)).unwrap_or_else(|| crate::table::Arg::of_type(base.ty().payload()).words().to_string());
+                    let given = crate::table::Arg::of_type(&given).words();
+                    self.refuse(format!("a position in {} is an int, and this is {}", what, given));
+                }
+            }
+            if self.pass == Pass::Final && idx.len() == 1 {
+                // a parsed value is read at a key or a position
+                if matches!(base.ty().payload(), Ty::Json) && !key_like(idx[0].ty().payload()) {
+                    self.refuse(format!("a parsed value is read at a key (text) or a position (an int), and this is {}", crate::table::Arg::of_type(idx[0].ty().payload()).words()));
                 }
             }
             let arg_types: Vec<Ty> = idx.iter().map(read).collect();
@@ -4121,6 +4360,37 @@ impl<'a> Lowerer<'a> {
                 }
                 types.push(full(&value));
                 checks.push(self.checked(&value));
+                // a field holds one kind, as a variable does: a value of
+                // another is refused where the record is made (`Box[2.5]`
+                // beside `Box['a']` had run interpreted and not built
+                // compiled — crow check --self)
+                if self.pass == Pass::Final
+                    && let Some(field) = declared.get(i).map(|t| t.payload().clone())
+                    && !matches!(field, Ty::Unknown)
+                {
+                    let given = value.ty().payload().clone();
+                    let whole = |t: &Ty| matches!(t, Ty::Int | Ty::Big);
+                    // (whether items can fail is no kind of its own: a field's
+                    // kind joins every record made, and a list of values that
+                    // cannot fail is held where some can — bm25's index)
+                    let (field_k, given_k) = (sans_results(&field), sans_results(&given));
+                    let fits = matches!(given, Ty::Unknown)
+                        || matches!(given, Ty::Json)
+                        || field_k.compatible(&given_k)
+                        || (whole(&field_k) && whole(&given_k))
+                        || field_k.compatible(&as_inferred(&given_k));
+                    if !fits {
+                        let fname = self.ctx.structs.get(&name).and_then(|s| s.fields.get(i)).map(|(f, _)| f.clone()).unwrap_or_default();
+                        let words = |t: &Ty| crate::table::Arg::of_type(t).words();
+                        self.refuse(format!(
+                            "{}'s field '{}' holds {}, and this is {}: a field holds one kind, as a variable does",
+                            crate::lower::shown(&name),
+                            fname,
+                            words(&field),
+                            words(&given)
+                        ));
+                    }
+                }
                 // a list of numbers is held as a list or as a tensor: a
                 // field holds the form its record was settled on, so a value
                 // in the other is converted (`[h]` beside a list pushed to);
@@ -4251,7 +4521,10 @@ impl<'a> Lowerer<'a> {
                 x = self.lower_expr(&as_mask(a))?;
             }
             arg_types.push(read(&x));
-            full_types.push(full(&x));
+            // a column keeps its cells' kind into the parameter it is handed
+            // to: `for x in may[f.a, …]` walked a column of nothing known,
+            // which the compiled program walked as text
+            full_types.push(kept(&x));
             checks.push(self.checked(&x));
             if propagates && x.ty().is_result() {
                 let rty = x.ty();
@@ -4580,6 +4853,13 @@ impl<'a> Lowerer<'a> {
         let read_as = |k: crate::table::Kind, x: Expr| -> Expr {
             match (k, x.ty()) {
                 (crate::table::Kind::Float, Ty::Int) => Expr::Convert { how: Convert::IntToFloat, expr: Box::new(x), ty: Ty::Float },
+                // a number where an int is taken: its whole part, as a row
+                // written in Rust reads one (`randn[2.5]` had been a list of
+                // ints holding a float)
+                (crate::table::Kind::Int, Ty::Float) => match crate::table::ROWS.iter().find(|r| r.id == "core.__truncated") {
+                    Some(row) => Expr::Call { target: Target::Row(row), args: vec![x], ty: Ty::Int, propagates: false },
+                    None => x,
+                },
                 (crate::table::Kind::Encoded, ty) => {
                     let fails = ty.is_result();
                     let Some(encode) = crate::table::core_row("encode", &[crate::table::Arg::Unknown]) else { return x };
@@ -4599,7 +4879,25 @@ impl<'a> Lowerer<'a> {
                 if k.is_rest() {
                     let items: Vec<Expr> = (a..b).filter_map(|i| rest[i].take()).map(|x| read_as(k.each(), x)).collect();
                     let item = (&k.each().ty()).clone();
-                    bundled.push(Expr::ListLit(items, Ty::List(Box::new(item))));
+                    // one that can fail is gathered by a row's call, which
+                    // hands its failure on as a call does: in a list
+                    // literal the interpreter had handed the failed value to
+                    // the body, which stopped on it, and the compiled
+                    // program its default (`randn[may[3, true]]` was `[]`)
+                    let fails = |x: &Expr| x.ty().is_result() || matches!(x, Expr::Convert { how: Convert::Unwrap, expr, .. } if expr.ty().is_result());
+                    let gather = match k {
+                        crate::table::Kind::Sizes => crate::table::ROWS.iter().find(|r| r.id == "core.__sizes"),
+                        crate::table::Kind::Groups => crate::table::ROWS.iter().find(|r| r.id == "core.__groups"),
+                        _ => None,
+                    };
+                    match gather {
+                        Some(row) if items.iter().any(fails) => {
+                            let list = Ty::List(Box::new(item));
+                            let call = Expr::Call { target: Target::Row(row), args: items, ty: Ty::Result(Box::new(list.clone())), propagates: true };
+                            bundled.push(Expr::Convert { how: Convert::Unwrap, expr: Box::new(call), ty: list });
+                        }
+                        _ => bundled.push(Expr::ListLit(items, Ty::List(Box::new(item)))),
+                    }
                 } else if let Some(x) = rest[a].take() {
                     bundled.push(read_as(*k, x));
                 }
@@ -4866,7 +5164,11 @@ impl<'a> Lowerer<'a> {
             .zip(kinds)
             .map(|(x, k)| {
                 let numbers = match x.ty() {
-                    _ if matches!(x, Expr::Convert { how: Convert::Unwrap, .. }) => false,
+                    // (a list that can fail, marked: converted over the mark,
+                    // which both backends read through — the call hands its
+                    // failure on, and a list of ints that could fail had
+                    // reached a tensor's parameter as it was)
+                    _ if matches!(&x, Expr::Convert { how: Convert::Unwrap, expr, .. } if !matches!(expr.ty().payload(), Ty::List(_))) => false,
                     // numbers that can fail are numbers too, a failed one
                     // stopping where they are read (as a column's missing
                     // cell does)
@@ -5282,8 +5584,32 @@ fn infer_once(ctx: &mut TypeContext, stmts: &[S]) {
             }
         }
     }
-    // F2: a function called at several signatures is one per signature
-    Lowerer::for_inference(ctx, in_ui, stmts).specialize();
+    // F2: a function called at several signatures is one per signature;
+    // then the calls are read again, since what a copy answers can type
+    // the function it is handed to (`two[may[1, …], 2]` beside `may[f.a,
+    // …]`: `two`'s parameter had kept the first rounds' guess, the other
+    // copy's column, and the compiled program did not build), and a
+    // signature that only now shows is copied too
+    for _ in 0..3 {
+        Lowerer::for_inference(ctx, in_ui, stmts).specialize();
+        if ctx.clone_names().is_empty() {
+            break;
+        }
+        let before = ctx.signatures();
+        for _ in 0..8 {
+            let round = ctx.signatures();
+            ctx.sync_derive_types();
+            Lowerer::for_inference(ctx, in_ui, stmts).scan_program(stmts);
+            ctx.propagate_indirect_fn_types(stmts);
+            infer_bodies(ctx, in_ui, stmts);
+            if round == ctx.signatures() {
+                break;
+            }
+        }
+        if before == ctx.signatures() {
+            break;
+        }
+    }
     ctx.sync_derive_types();
     Lowerer::for_inference(ctx, in_ui, stmts).settle_top(stmts);
 }
@@ -5399,6 +5725,8 @@ impl Lowerer<'_> {
 
 fn local_named(e: &Expr) -> Option<String> {
     match e {
+        // (a name the lowering made — `_t1` — is no name the program wrote)
+        Expr::Local(v, _) | Expr::Move(v, _) | Expr::Load(v, _) if v.starts_with("_t") && v[2..].bytes().all(|b| b.is_ascii_digit()) => None,
         Expr::Local(v, _) | Expr::Move(v, _) | Expr::Load(v, _) => Some(v.clone()),
         Expr::Convert { expr, .. } => local_named(expr),
         _ => None,

@@ -37,6 +37,10 @@ fn draws[sizes]
     for d in sizes
         if d lt 0
             halt['randn: a size cannot be negative (got `d`)']
+        --- (counted as floats first: past what a machine holds is refused,
+        --- as the runtime's constructors refuse it — 2^36 items)
+        if float[n] * float[d] gt 68719476736.0
+            halt['randn: a size too large to hold (at most 68719476736 items)']
         n = n * d
     u1 = uniform[0.0, 1.0, n]
     u2 = uniform[0.0, 1.0, n]

@@ -131,6 +131,31 @@ impl<'de> serde::Deserialize<'de> for Moment {
     }
 }
 
+/// The most milliseconds a moment lies from 1970, either way: 100,000,000
+/// days, as JavaScript's dates hold.
+pub const MOST_MS: i64 = 8_640_000_000_000_000;
+
+/// `t + s`: the moment `s` seconds on, in its zone — or the reason it lies
+/// past the moments one holds (the sum had overflowed in Rust's words, the
+/// compiled program's stop naming no line — crow check --self).
+pub fn plus(t: &Moment, s: f64) -> Result<Moment, String> {
+    shifted(t, s, "+")
+}
+
+/// `t - s`: the moment `s` seconds back, as `plus` answers.
+pub fn less(t: &Moment, s: f64) -> Result<Moment, String> {
+    shifted(t, -s, "-")
+}
+
+fn shifted(t: &Moment, by: f64, op: &str) -> Result<Moment, String> {
+    let d = (by * 1000.0).round();
+    let ms = if d.is_finite() && d.abs() <= (2 * MOST_MS) as f64 { t.ms.checked_add(d as i64).filter(|ms| ms.abs() <= MOST_MS) } else { None };
+    match ms {
+        Some(ms) => Ok(Moment { ms, offset: t.offset }),
+        None => Err(format!("{} {} {} seconds lies past the moments a moment holds (100,000,000 days either side of 1970)", t, op, by.abs())),
+    }
+}
+
 /// `t + s` and `t - s`: the moment `s` seconds on or back, in its zone.
 impl std::ops::Add<f64> for Moment {
     type Output = Moment;
@@ -311,11 +336,11 @@ impl Moment {
     }
 
     pub fn plus_seconds(&self, s: f64) -> Moment {
-        Moment { ms: self.ms + (s * 1000.0).round() as i64, offset: self.offset }
+        Moment { ms: self.ms.saturating_add((s * 1000.0).round() as i64), offset: self.offset }
     }
 
     pub fn minus(&self, other: &Moment) -> f64 {
-        (self.ms - other.ms) as f64 / 1000.0
+        (self.ms as i128 - other.ms as i128) as f64 / 1000.0
     }
 
     /// `fmt[t, style = …, tz = …]`: the moment in a style — `'iso'` (as

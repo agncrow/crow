@@ -50,6 +50,15 @@ pub(crate) const DUAL_MATH: &[&str] = &["exp", "ln", "log2", "log10", "sin", "co
 
 impl Emitter {
     pub(crate) fn expr(&mut self, e: &Expr) -> String {
+        // an argument a call bound before checking its arguments (its place
+        // among them kept) is read by the name it is bound to, however a
+        // builtin prints it
+        if !self.unwrap_as.is_empty()
+            && !matches!(e, Expr::Convert { how: Convert::Unwrap, .. })
+            && let Some(bound) = self.unwrap_as.get(&(e as *const Expr as usize))
+        {
+            return bound.clone();
+        }
         match e {
             Expr::Const(c, _) => self.constant(c),
             Expr::Local(v, _) | Expr::Move(v, _) => self.local(v),
@@ -615,8 +624,13 @@ impl Emitter {
             let r_val = if r_res { format!("_binr_{}.value", ctr) } else { format!("(*_binr_{})", ctr) };
             let mask = self.mask(op, &l_val, &lti, &r_val, &rti);
             let compared = mask.clone().or_else(|| self.comparison(op, &l_val, &lti, &r_val, &rti));
+            // (a tensor compared with a number is a mask, as tensor_arith
+            // prints it: a failed number beside one had answered one bool's
+            // default, and the branches had not agreed — crow check --self)
+            let tensor_and_number = |a: &Ty, b: &Ty| matches!(a, Ty::Tensor(..)) && matches!(b, Ty::Int | Ty::Float);
             let result_type = match op {
                 _ if mask.is_some() => Ty::List(Box::new(Ty::Bool)),
+                "eq" | "ne" | "gt" | "lt" | "gte" | "lte" if !Self::numbers_mix(&lti, &rti) && (tensor_and_number(&lti, &rti) || tensor_and_number(&rti, &lti)) => Ty::List(Box::new(Ty::Bool)),
                 "eq" | "ne" | "gt" | "lt" | "gte" | "lte" | "and" | "or" => Ty::Bool,
                 "mod" if matches!(lti, Ty::Big) => Ty::Big,
                 "pow" if matches!(lti, Ty::Decimal | Ty::Fraction) => lti.clone(),
@@ -626,6 +640,11 @@ impl Emitter {
                 // the seconds between two moments; a moment on or back
                 "sub" if matches!((&lti, &rti), (Ty::Moment, Ty::Moment)) => Ty::Float,
                 "add" | "sub" if matches!(lti, Ty::Moment) || matches!(rti, Ty::Moment) => Ty::Moment,
+                // (arithmetic with a tensor on either side is a tensor: a
+                // failed number beside one had answered a number's default,
+                // and the two branches had not agreed — crow check --self)
+                _ if matches!(lti, Ty::Tensor(..)) => lti.clone(),
+                _ if matches!(rti, Ty::Tensor(..)) => rti.clone(),
                 _ => lti.unify(&rti),
             };
             let default_val = result_type.default_rust_value();
@@ -636,14 +655,17 @@ impl Emitter {
                     format!("{}crow_runtime::tensor::numbers_equal(&{}, &{})", not, l_val, r_val)
                 }
                 _ if self.tensor_arith(op, &l_val, &lti, &r_val, &rti).is_some() => self.tensor_arith(op, &l_val, &lti, &r_val, &rti).unwrap_or_default(),
-                (Ty::Int, Ty::Float) => format!("({}) as f64 {} {}", l_val, op_str, r_val),
-                (Ty::Float, Ty::Int) => format!("{} {} ({}) as f64", l_val, op_str, r_val),
+                // (a cast before `<` in its own parentheses: `x as f64 < y` reads
+                // `f64<` as a type's arguments, and did not build)
+                (Ty::Int, Ty::Float) => format!("(({}) as f64) {} {}", l_val, op_str, r_val),
+                (Ty::Float, Ty::Int) => format!("{} {} (({}) as f64)", l_val, op_str, r_val),
                 // (a growing int beside a float: its nearest float)
                 (Ty::Big, Ty::Float) if op != "pow" => format!("({}).to_f64() {} {}", l_val, op_str, r_val),
                 (Ty::Float, Ty::Big) if op != "pow" => format!("{} {} ({}).to_f64()", l_val, op_str, r_val),
                 (Ty::Int, Ty::Int) if self.int_op(op, &l_val, &r_val).is_some() => self.int_op(op, &l_val, &r_val).unwrap_or_default(),
                 (Ty::Big, Ty::Big) if self.big_op(op, &l_val, &r_val).is_some() => self.big_op(op, &l_val, &r_val).unwrap_or_default(),
                 _ if self.exact_op(op, &l_val, &lti, &r_val, &rti).is_some() => self.exact_op(op, &l_val, &lti, &r_val, &rti).unwrap_or_default(),
+                _ if self.moment_op(op, &l_val, &lti, &r_val, &rti).is_some() => self.moment_op(op, &l_val, &lti, &r_val, &rti).unwrap_or_default(),
                 _ if op == "pow" => {
                     let as_float = |v: &str, t: &Ty| if matches!(t, Ty::Big) { format!("({}).to_f64()", v) } else { format!("(({}) as f64)", v) };
                     if lti == Ty::Float || rti == Ty::Float {
@@ -729,6 +751,9 @@ impl Emitter {
         if let Some(code) = self.exact_op(op, &l, &lti, &r, &rti) {
             return code;
         }
+        if let Some(code) = self.moment_op(op, &l, &lti, &r, &rti) {
+            return code;
+        }
         if op == "pow" {
             if lti == Ty::Float || rti == Ty::Float {
                 return format!("(({}) as f64).powf(({}) as f64)", l, r);
@@ -736,10 +761,24 @@ impl Emitter {
             return format!("({}).pow(({}) as u32)", l, r);
         }
         match (&lti, &rti) {
-            (Ty::Int, Ty::Float) => format!("({}) as f64 {} {}", l, op_str, r),
-            (Ty::Float, Ty::Int) => format!("{} {} ({}) as f64", l, op_str, r),
+            (Ty::Int, Ty::Float) => format!("(({}) as f64) {} {}", l, op_str, r),
+            (Ty::Float, Ty::Int) => format!("{} {} (({}) as f64)", l, op_str, r),
             _ => format!("{} {} {}", l, op_str, r),
         }
+    }
+
+    /// `t + s`, `s + t` and `t - s` of a moment and seconds: the moment on
+    /// or back, or the program stops on the line where it lies past the
+    /// moments one holds (the interpreter's ops call the same function).
+    fn moment_op(&self, op: &str, l: &str, lti: &Ty, r: &str, rti: &Ty) -> Option<String> {
+        let secs = |t: &Ty| matches!(t, Ty::Int | Ty::Float);
+        let (t, s, f) = match (op, lti, rti) {
+            ("add", Ty::Moment, s) if secs(s) => (l, r, "plus"),
+            ("add", s, Ty::Moment) if secs(s) => (r, l, "plus"),
+            ("sub", Ty::Moment, s) if secs(s) => (l, r, "less"),
+            _ => return None,
+        };
+        Some(format!("crow_runtime::moments::{}(&({}), ({}) as f64){}", f, t, s, self.or_stop()))
     }
 
     /// Arithmetic and comparison with a tensor on either side, as the
@@ -801,6 +840,8 @@ impl Emitter {
                 "sub" => format!("({}).neg().add_scalar({} as f64)", r, l),
                 "mul" | "elemmul" => format!("{}.mul_scalar({} as f64)", r, l),
                 "div" | "elemdiv" => format!("{{ let _t = &{}; crow_runtime::tensor::CrowTensor::from_vec(_t.to_vec().iter().map(|&v| ({} as f64) / v).collect(), _t.shape().to_vec()) }}", r, l),
+                // (a number raised to each of the tensor's numbers)
+                "elempow" => format!("{{ let _s = {} as f64; {}.map(|x| _s.powf(x)) }}", l, r),
                 _ => format!("{} {} {}", l, op_str, r),
             });
         }
@@ -963,6 +1004,30 @@ impl Emitter {
     fn unary(&mut self, op: &str, e: &Expr) -> String {
         let inner = self.operand(e);
         let ty = Self::inner(&self.tt(e));
+        // an operator computes with an error (spec, Errors): a value that
+        // failed is the value of `not` and of a minus sign, as of `x + 1` —
+        // compiled, `not` of one had stopped the program where the
+        // interpreter answered the error (crow check --self)
+        if matches!(self.tt(e), Ty::Result(_)) {
+            let ctr = self.binop_counter;
+            self.binop_counter += 1;
+            let payload = format!("_un_{}.value.clone()", ctr);
+            let turned = match op {
+                "neg" if matches!(ty, Ty::Tensor(..) | Ty::Big | Ty::Decimal | Ty::Fraction) => format!("({}).neg()", payload),
+                "neg" if matches!(ty, Ty::Int) => format!("crow_runtime::stops::neg({}).unwrap_or_else(|e| crow_stop({}, e))", payload, self.line_now()),
+                "neg" => format!("(-({}))", payload),
+                _ if matches!(&ty, Ty::List(i) if matches!(i.as_ref(), Ty::Bool)) => format!("{}.iter().map(|_b| !*_b).collect::<Vec<bool>>()", payload),
+                _ => format!("(!({}))", payload),
+            };
+            let default_val = ty.default_rust_value();
+            return format!(
+                "{{ let _un_{c} = &({}); if !_un_{c}.ok {{ CrowResult {{ ok: false, value: {}, reason: _un_{c}.reason.clone(), kind: _un_{c}.kind.clone(), trace: _un_{c}.trace.clone(), captured: 0.0 }} }} else {{ CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }} }} }}",
+                inner,
+                default_val,
+                turned,
+                c = ctr
+            );
+        }
         match op {
             "neg" => {
                 if self.emitting_traced && matches!(ty, Ty::Float | Ty::Tensor(..)) {
@@ -1513,6 +1578,20 @@ impl Emitter {
         }
     }
 
+    /// A list of plain values where a list whose items can fail is held (a
+    /// record's field another record gave such items): each item a result
+    /// that did not fail (compiled, `Bag[[7, 8]]` beside `Bag[parsed]` had
+    /// not built — crow check --self).
+    pub(crate) fn as_items(s: String, from: &Ty, held: &Ty) -> String {
+        match (from, held) {
+            (Ty::List(item), Ty::List(wanted)) if wanted.is_result() && !item.is_result() && !matches!(item.as_ref(), Ty::Unknown) => format!(
+                "({}).into_iter().map(|_x| CrowResult {{ ok: true, value: _x, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}).collect::<Vec<_>>()",
+                s
+            ),
+            _ => s,
+        }
+    }
+
     fn map_lit(&mut self, pairs: &[(String, Expr)], ty: &Ty) -> String {
         if pairs.is_empty() {
             // (typed where nothing else would type it: a map of text a
@@ -1576,6 +1655,7 @@ impl Emitter {
                 // ok (`Last[false, …]` where another literal gave it a
                 // fallible comparison)
                 let owned = self.as_item(owned, &self.tt(e), &crate::lower_ir::as_inferred(fty));
+                let owned = Self::as_items(owned, &self.tt(e), &crate::lower_ir::as_inferred(fty));
                 inits.push(format!("{}: {}", Self::rust_field(fname), owned));
             }
         }
@@ -2149,7 +2229,26 @@ impl Emitter {
                         format!("_prop_{}.value.clone()", i)
                     };
                 }
+                // an argument that cannot fail but can stop or act (an index,
+                // a call) is evaluated in its place among those that can: a
+                // call evaluates every argument, left to right, before it
+                // hands the leftmost failure on (spec, Auto-Propagation) —
+                // compiled, a failed argument had skipped every argument
+                // after it, and one printed in the call itself, so
+                // `send[failed, j]` refused the socket where the interpreter
+                // stopped on reading `j`
+                let mut hoisted: Vec<(usize, String)> = Vec::new();
+                for (j, a) in raw_args.iter().enumerate() {
+                    if !result_idx.contains(&j) && !Self::quiet(a) {
+                        let name = format!("_pa_{}", j);
+                        hoisted.push((j, std::mem::replace(&mut unwrapped[j], name.clone())));
+                        self.unwrap_as.insert(a as *const Expr as usize, name);
+                    }
+                }
                 let inner_expr = self.dispatch(&target, &name, &raw_args, &unwrapped, e);
+                for (j, _) in &hoisted {
+                    self.unwrap_as.remove(&(&raw_args[*j] as *const Expr as usize));
+                }
                 let full = self.tt(e);
                 let inner_type = match Self::inner(&full) {
                     Ty::Map(k, v) => Ty::Map(k, Box::new(Self::inner(&v))),
@@ -2171,7 +2270,7 @@ impl Emitter {
                         None => !Emitter::fresh_value(&raw_args[i]) && !self.moved_local(&raw_args[i]),
                     })
                     .collect();
-                return self.propagation_block(&result_idx, &orig, &held, &inner_expr, &inner_type, already, stop_as);
+                return self.propagation_block(&result_idx, &orig, &held, &hoisted, &inner_expr, &inner_type, already, stop_as);
             }
         }
         let out = self.dispatch(&target, &name, &raw_args, &arg_strs, e);
@@ -2186,7 +2285,10 @@ impl Emitter {
     /// conversion (a bare unwrap is read past by `raw`).
     fn unwrapped_through<'a>(&self, a: &'a Expr) -> Option<(&'a Expr, &'a Expr)> {
         match a {
-            Expr::Convert { how: Convert::ToList | Convert::ToTensor | Convert::IntToFloat | Convert::IntsToFloats, expr, .. } => match expr.as_ref() {
+            // (every conversion of a value reads its payload: `big(unwrap
+            // may(…))` had read a failed value's default, 0, where the
+            // interpreter's call failed with it — crow check --self)
+            Expr::Convert { how: Convert::ToList | Convert::ToTensor | Convert::IntToFloat | Convert::IntsToFloats | Convert::ToBig | Convert::ToDecimal | Convert::ToFraction | Convert::Proven | Convert::ToSmall(_), expr, .. } => match expr.as_ref() {
                 node @ Expr::Convert { how: Convert::Unwrap, expr: inner, .. } if matches!(self.tt(inner), Ty::Result(_)) => Some((node, inner)),
                 deeper => self.unwrapped_through(deeper),
             },
@@ -2203,8 +2305,23 @@ impl Emitter {
         printed
     }
 
+    /// An argument whose evaluation can neither stop nor act — a value a
+    /// name holds, a literal of such — whose place among a call's arguments
+    /// does not matter.
+    fn quiet(e: &Expr) -> bool {
+        match e {
+            Expr::Const(..) | Expr::Local(..) | Expr::Move(..) | Expr::Load(..) | Expr::Derived(..) | Expr::Constant(..) | Expr::FnRef(..) => true,
+            Expr::Field { base, .. } | Expr::Meta { base, .. } => Self::quiet(base),
+            Expr::Convert { how, expr, .. } => !matches!(how, Convert::ToSmall(_)) && Self::quiet(expr),
+            Expr::ListLit(items, _) => items.iter().all(Self::quiet),
+            Expr::MapLit(items, _) => items.iter().all(|(_, v)| Self::quiet(v)),
+            Expr::RecordLit { fields, .. } => fields.iter().all(Self::quiet),
+            _ => false,
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
-    fn propagation_block(&self, idx: &[usize], orig: &[String], held: &[bool], inner: &str, inner_type: &Ty, already: bool, stop_as: Option<String>) -> String {
+    fn propagation_block(&self, idx: &[usize], orig: &[String], held: &[bool], hoisted: &[(usize, String)], inner: &str, inner_type: &Ty, already: bool, stop_as: Option<String>) -> String {
         let default_val = inner_type.default_rust_value();
         let trace = self.trace_format_expr();
         let error_result = |i: usize| -> String {
@@ -2240,10 +2357,18 @@ impl Emitter {
         } else {
             format!("CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", inner)
         };
-        for (pos, &i) in idx.iter().enumerate().rev() {
+        // every argument bound in its place, then the leftmost failure is
+        // the call's value
+        let mut lets: Vec<(usize, String)> = hoisted.iter().map(|(j, s)| (*j, format!("let _pa_{} = {};", j, s))).collect();
+        let mut checks = String::new();
+        for (pos, &i) in idx.iter().enumerate() {
             let bound = if held.get(pos).copied().unwrap_or(false) { format!("&({})", orig[pos]) } else { format!("({})", orig[pos]) };
-            result = format!("{{ let _prop_{i} = {}; if !_prop_{i}.ok {{ {} }} else {{ {} }} }}", bound, error_result(i), result, i = i);
+            lets.push((i, format!("let _prop_{i} = {};", bound, i = i)));
+            checks.push_str(&format!("if !_prop_{i}.ok {{ {} }} else ", error_result(i), i = i));
         }
+        lets.sort_by_key(|(at, _)| *at);
+        let lets: Vec<String> = lets.into_iter().map(|(_, l)| l).collect();
+        result = format!("{{ {} {}{{ {} }} }}", lets.join(" "), checks, result);
         result
     }
 

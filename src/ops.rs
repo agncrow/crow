@@ -174,10 +174,8 @@ fn binop_rest(left: &CrowValue, op: &BinOp, right: &CrowValue) -> Result<CrowVal
             (Value::Int(a), Value::Int(b)) => stops::add(*a, *b).map(|n| CrowValue::ok(Value::Int(n))),
             (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a + b))),
             // a moment and seconds: the moment on
-            (Value::Moment(t), Value::Int(s)) => Ok(CrowValue::ok(Value::Moment(*t + *s))),
-            (Value::Moment(t), Value::Float(s)) => Ok(CrowValue::ok(Value::Moment(*t + *s))),
-            (Value::Int(s), Value::Moment(t)) => Ok(CrowValue::ok(Value::Moment(*t + *s))),
-            (Value::Float(s), Value::Moment(t)) => Ok(CrowValue::ok(Value::Moment(*t + *s))),
+            (Value::Moment(t), Value::Int(s)) | (Value::Int(s), Value::Moment(t)) => crow_runtime::moments::plus(t, *s as f64).map(|m| CrowValue::ok(Value::Moment(m))),
+            (Value::Moment(t), Value::Float(s)) | (Value::Float(s), Value::Moment(t)) => crow_runtime::moments::plus(t, *s).map(|m| CrowValue::ok(Value::Moment(m))),
             (Value::NumArray(a), Value::NumArray(b)) => a.try_elementwise(b, "+").map(|t| CrowValue::ok(Value::NumArray(Box::new(t)))),
             (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.add_scalar(*b as f64))))),
             (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.add_scalar(*b))))),
@@ -201,8 +199,8 @@ fn binop_rest(left: &CrowValue, op: &BinOp, right: &CrowValue) -> Result<CrowVal
             (Value::Int(a), Value::Int(b)) => stops::sub(*a, *b).map(|n| CrowValue::ok(Value::Int(n))),
             (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a - b))),
             // a moment back by seconds, and the seconds between two moments
-            (Value::Moment(t), Value::Int(s)) => Ok(CrowValue::ok(Value::Moment(*t - *s))),
-            (Value::Moment(t), Value::Float(s)) => Ok(CrowValue::ok(Value::Moment(*t - *s))),
+            (Value::Moment(t), Value::Int(s)) => crow_runtime::moments::less(t, *s as f64).map(|m| CrowValue::ok(Value::Moment(m))),
+            (Value::Moment(t), Value::Float(s)) => crow_runtime::moments::less(t, *s).map(|m| CrowValue::ok(Value::Moment(m))),
             (Value::Moment(a), Value::Moment(b)) => Ok(CrowValue::ok(Value::Float(*a - *b))),
             (Value::NumArray(a), Value::NumArray(b)) => a.try_elementwise(b, "-").map(|t| CrowValue::ok(Value::NumArray(Box::new(t)))),
             (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.add_scalar(-(*b as f64)))))),
@@ -324,6 +322,13 @@ fn binop_rest(left: &CrowValue, op: &BinOp, right: &CrowValue) -> Result<CrowVal
             (Value::NumArray(a), Value::Float(b)) => {
                 Ok(CrowValue::ok(Value::NumArray(Box::new(a.map(|x| x.powf(*b))))))
             }
+            // a number raised to each of a tensor's numbers, as `.*` and `./`
+            // take a number on either side (the compiled program had not built)
+            (Value::Int(a), Value::NumArray(b)) => {
+                let s = *a as f64;
+                Ok(CrowValue::ok(Value::NumArray(Box::new(b.map(|x| s.powf(x))))))
+            }
+            (Value::Float(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(b.map(|x| a.powf(x)))))),
             _ => Err(".^ requires tensors or tensor and scalar".to_string()),
         },
         BinOp::Eq => equality_values(left, right, false),

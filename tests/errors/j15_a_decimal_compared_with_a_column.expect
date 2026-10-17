@@ -1,0 +1,3 @@
+j15_a_decimal_compared_with_a_column.co:3:1: a decimal is compared with one number, and the other side is a frame's column: compare float[…] of it, as a mask compares each cell with a number
+  3 │ log[f[decimal['1.25'] gt f.a]]
+    │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

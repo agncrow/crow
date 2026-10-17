@@ -1,0 +1,3 @@
+j14_the_empty_list_read.co:1:1: `[][…]` reads from a list that holds nothing
+  1 │ log[[][0]]
+    │ ^^^^^^^^^^

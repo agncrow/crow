@@ -1,0 +1,4 @@
+use frame
+f = frame.new[a = [1, 2, 3]]
+f[0] = 3
+log[f]

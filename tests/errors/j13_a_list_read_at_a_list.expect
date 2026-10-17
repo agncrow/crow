@@ -1,0 +1,3 @@
+j13_a_list_read_at_a_list.co:2:5: a position in 'xs' is an int, and this is numbers
+  2 │ log[xs[[0, 1]]]
+    │     ^^

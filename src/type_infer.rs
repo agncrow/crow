@@ -169,7 +169,9 @@ impl Ty {
             Ty::Result(inner) => format!("CrowResult {{ ok: false, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", inner.default_rust_value()),
             Ty::Json => "serde_json::Value::Null".into(),
             Ty::Tensor(..) => "crow_runtime::tensor::CrowTensor::zeros(vec![0])".into(),
-            Ty::Sparse => "CrowSparse::from_coo(&[], &[], &[], 0, 0)".into(),
+            // (by its path: a program whose sparse matrix is only a value on
+            // its way has no `use` of the name — crow check --self)
+            Ty::Sparse => "crow_runtime::sparse::CrowSparse::from_coo(&[], &[], &[], 0, 0)".into(),
             // a frame whose columns are known starts as the table with no
             // rows in them (a page's data source before its answer arrives)
             Ty::Frame(Some(cols)) if !cols.cols.is_empty() => {
@@ -939,23 +941,28 @@ impl TypeContext {
     /// One round of the F2 monomorphization pass: each function called with
     /// several signatures, not specialized yet, gets a clone per signature.
     /// The clones' names; none when nothing is left to specialize.
+    /// Whether a function is to be copied per signature and is not yet:
+    /// called at several, not a copy itself, and taking no function as a
+    /// value (v1 limitation: a generic higher-order function used at
+    /// several types is not specialized — the predicate's types would
+    /// need per-clone propagation). Inference reads its answer as not
+    /// known until the copies are made (rules.rs).
+    pub(crate) fn awaits_clones(&self, name: &str) -> bool {
+        let Some(sigs) = self.call_signatures.get(name) else { return false };
+        sigs.len() >= 2
+            && !self.specializations.contains_key(name)
+            && !name.contains("__")
+            && self.functions.contains_key(name)
+            && !sigs.iter().any(|sig| sig.iter().any(|t| matches!(t, Ty::Fn(_, _))))
+    }
+
     pub(crate) fn new_clones(&mut self) -> Vec<String> {
         let mut new_clones: Vec<String> = Vec::new();
         for (name, sigs) in self.call_signatures.clone() {
-            if sigs.len() < 2 || self.specializations.contains_key(&name) {
-                continue;
-            }
-            // Don't specialize functions that are themselves clones
-            if name.contains("__") {
+            if !self.awaits_clones(&name) {
                 continue;
             }
             let Some(base) = self.functions.get(&name).cloned() else { continue };
-            // v1 limitation: generic higher-order functions (fn-typed
-            // params) used at multiple types are not specialized — the
-            // predicate's types would need per-clone propagation
-            if sigs.iter().any(|sig| sig.iter().any(|t| matches!(t, Ty::Fn(_, _)))) {
-                continue;
-            }
             for (idx, sig) in sigs.iter().enumerate() {
                 let mangled = format!("{}__{}", name, idx + 1);
                 let params: Vec<(String, Ty)> = base

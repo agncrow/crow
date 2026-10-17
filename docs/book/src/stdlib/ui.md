@@ -3,7 +3,7 @@
 Views and the element vocabulary, reactive state and inputs, the layout vocabulary, charts, and styling.
 
 
-Import sub-modules with `use web.X`. Each sub-module enables only its feature — minimal binary, minimal compile time. See `docs/web-framework.md` for full architecture details.
+Import sub-modules with `use web.X`. Each sub-module enables only its feature — minimal binary, minimal compile time. A sub-module's names are its own: `mail` and `smtp` are web.mail's, `socket`, `send`, `recv` and `close` web.ws's, `sign` and `verify` web.auth's — under `use web` alone each is refused where it is written, with the line that brings it (``smtp[] and mail[] are web.mail's: add `use web.mail` ``; the interpreter had stopped as it ran, and the compiled program had not built), and each takes the kinds its rows do (`mail[]` handed a column where it takes text is refused). See `docs/web-framework.md` for full architecture details.
 
 ### View Blocks — the UI Vocabulary Zone
 
