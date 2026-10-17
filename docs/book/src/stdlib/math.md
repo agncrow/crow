@@ -178,8 +178,8 @@ Negative indices are supported (wrap around from the end). The result tensor has
 | `fft[x]` | 1D FFT → returns [real, imag] tensors | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `ifft[real, imag]` | Inverse 1D FFT → returns real tensor | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `fft2[m]` | 2D FFT → returns [real, imag] tensors | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
-| `conv[a, b]` | 1D convolution (full), length = len(a)+len(b)-1 | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
-| `conv2d[a, b]` | 2D convolution (full) | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
+| `conv[a, b]` | 1D convolution (full), length = len(a)+len(b)-1; an empty signal or kernel stops the program, as numpy's refuses it (`conv[[], []]` had overflowed counting its answer) | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
+| `conv2d[a, b]` | 2D convolution (full); an empty signal or kernel stops the program, as `conv`'s does | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `hamming[n]` | Hamming window of length n | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `hanning[n]` | Hanning (Hann) window of length n | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `stft[x, window_size, hop_size]` | Short-Time Fourier Transform → [real, imag] 2D tensors [frames × window_size] | [Math: random, signal, special, and sparse](../by-example/math-more.md) |

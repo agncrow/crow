@@ -146,13 +146,22 @@ impl TypeContext {
             // (crate::table::module_of_bare: one rule for both)
             let providers = self.registry.providers_of(name);
             let full: Vec<Ty> = args.iter().map(|a| arg_ty(a)).collect();
-            if let Some(m) = crate::table::module_of_bare(name, &providers, &kinds) {
-                if let Some(t) = self.registry.type_of_in(&m, name, &full) {
-                    return t;
+            match crate::table::module_of_bare(name, &providers, &kinds) {
+                Some(m) => {
+                    if let Some(t) = self.registry.type_of_in(&m, name, &full) {
+                        return t;
+                    }
                 }
-            }
-            if let Some(t) = self.registry.type_of(name, &full) {
-                return t;
+                // (the core's, where its rows take these kinds: the module's
+                // type had been the call's — `slice[[], 1, 3]` under `use
+                // sys` typed as the layer's bytes, its `type` `unknown`
+                // compiled where the interpreter said `array`)
+                None if crate::table::core_row(name, &kinds).is_some() => {}
+                None => {
+                    if let Some(t) = self.registry.type_of(name, &full) {
+                        return t;
+                    }
+                }
             }
         }
         // a module's function the program does not import, called bare where

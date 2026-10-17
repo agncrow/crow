@@ -190,14 +190,16 @@ impl CrowTensor {
     /// Any other p → Lp norm (sum |x_i|^p)^(1/p).
     pub fn norm(&self, p: f64) -> f64 {
         let data = self.to_vec();
+        // (sums from +0: Rust's `sum` of no floats is -0, and the norm of
+        // nothing had shown as `-0`)
         if p == 2.0 {
-            data.iter().map(|x| x * x).sum::<f64>().sqrt()
+            data.iter().fold(0.0, |a, x| a + x * x).sqrt()
         } else if p == 1.0 {
-            data.iter().map(|x| x.abs()).sum::<f64>()
+            data.iter().fold(0.0, |a, x| a + x.abs())
         } else if p.is_infinite() && p > 0.0 {
             data.iter().map(|x| x.abs()).fold(0.0_f64, f64::max)
         } else {
-            data.iter().map(|x| x.abs().powf(p)).sum::<f64>().powf(1.0 / p)
+            data.iter().fold(0.0, |a, x| a + x.abs().powf(p)).powf(1.0 / p)
         }
     }
 

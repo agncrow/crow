@@ -350,7 +350,7 @@ pub fn mean_axis(a: &Traced, axis: usize) -> Result<Traced, String> {
     }
     let shape = a.value.shape().to_vec();
     let n = shape[axis].max(1) as f64;
-    let node = record(vec![a.node], move |g| vec![spread(g, &shape, axis).mul_scalar(1.0 / n)]);
+    let node = record(vec![a.node], move |g| vec![spread(g, &shape, axis).div_scalar(n)]);
     Ok(Traced::from(a.value.mean_axis(axis), node))
 }
 

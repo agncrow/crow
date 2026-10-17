@@ -433,8 +433,20 @@ pub fn moment_text_in(text: &str, tz: &str) -> Result<Moment, String> {
 
 /// `moment[seconds]`: the moment `seconds` after the epoch, in UTC — the
 /// reverse of `float[t]`, for a time a program kept as a number.
-pub fn moment_of_seconds(seconds: f64) -> Moment {
-    Moment::of_seconds(seconds)
+pub fn moment_of_seconds(seconds: f64) -> Result<Moment, String> {
+    match ms_within(seconds) {
+        Some(ms) => Ok(Moment { ms, offset: 0 }),
+        None => Err(format!("moment[{}]: the seconds lie past the moments a moment holds (100,000,000 days either side of 1970)", seconds)),
+    }
+}
+
+/// The milliseconds `seconds` after the epoch, where a moment holds them:
+/// none past `MOST_MS` either way, and none of NaN. (`moment[seconds]` had
+/// clamped one past them to the last moment, `292278994-08-17T07:12:55.807Z`,
+/// and read NaN as 1970 — crow check --self's reference.)
+pub fn ms_within(seconds: f64) -> Option<i64> {
+    let ms = (seconds * 1000.0).round();
+    (ms.is_finite() && ms.abs() <= MOST_MS as f64).then_some(ms as i64)
 }
 
 /// `moment[t]` of a moment: itself, so `moment[x]` is the moment of a
@@ -474,6 +486,20 @@ pub fn fmt_time_of(t: Moment, style: &str, tz: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `moment[seconds]` holds 100,000,000 days either side of 1970, and
+    /// past them stops — it had clamped to the year 292278994, and read NaN
+    /// as 1970 (crow check --self's reference).
+    #[test]
+    fn a_moment_of_seconds_past_its_range_stops() {
+        let most = 86_400.0 * 100_000_000.0;
+        assert_eq!(moment_of_seconds(most).map(|t| t.to_string()), Ok("275760-09-13".to_string()));
+        assert!(moment_of_seconds(most + 1.0).is_err());
+        assert!(moment_of_seconds(-most - 1.0).is_err());
+        assert!(moment_of_seconds(f64::NAN).is_err());
+        assert!(moment_of_seconds(9.223372036854776e18).is_err());
+        assert_eq!(moment_of_seconds(3.0).map(|t| t.to_string()), Ok("1970-01-01T00:00:03Z".to_string()));
+    }
 
     #[test]
     fn an_event_reads_one_moment() {

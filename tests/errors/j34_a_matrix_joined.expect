@@ -1,0 +1,3 @@
+j34_a_matrix_joined.co:2:5: join[] joins items that show as text — text, numbers, truths — and a matrix's items are its rows: join[flatten[m], sep] joins its numbers
+  2 │ log[join[m, ', ']]
+    │     ^^^^

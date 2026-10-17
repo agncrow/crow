@@ -286,7 +286,8 @@ steps on every push and must be green.
   is an error of reason `missing` (ops.rs `column_cell`) and its plain
   placeholder is empty text, as the compiled `get_str` answers. A NaN a
   number column holds is a value and shows as `nan`; arithmetic over a
-  column with a missing cell answers a tensor holding NaN there.
+  column with a missing cell stops the program (`row 1 of the column is
+  missing — fill the column first`), as the spec's Frames section says.
 - A parsed value's reads are inserted by the lowering: `read_json`
   (lower_ir.rs) at six sites — a position or key, an operator, not/neg, a
   condition, an assignment to a variable of a kind, a builtin's argument
@@ -336,8 +337,8 @@ steps on every push and must be green.
 - `push[xs, v]` answers a new list: as a bare statement it does nothing.
   Write `xs = push[xs, v]` (a check's list of results stayed empty, and
   every test passed).
-- Crow has no `pass`, `continue` or `lambda` (the parser names each) and
-  no `chars[]`: characters are `split[text, '']` with its empty ends
+- Crow has no `pass` or `lambda` (the parser names each), `continue` and
+  `break` only inside a `while`, and no `chars[]`: characters are `split[text, '']` with its empty ends
   skipped. A module written in Crow sees another module's ROWS, never its
   helpers (`exchange_on` had to become a sys row for the driver to call it).
   A driver's rows are named `ch_*` so they collide with no program name
@@ -869,3 +870,28 @@ steps on every push and must be green.
   function 'nodes'". The runtime's ring (`crow_runtime::distributed`) has no
   builtin yet.
 
+- `crow check --self` holds its cases to the right answer, not only to
+  each other: a case's `refer` names what it computes, the agreed outputs
+  go to `target/crow_self/answers.jsonl`, and `tests/self/reference.py`
+  (run `python3 -E`: numpy lives in the user's site-packages, which `-I`
+  hides) answers from the spec — libm for a number's functions, numpy for
+  math's reductions, Rust's float display — skipping what it has no answer
+  for, never guessing. A value is written into a case as its text, so
+  `big` is `2 ^ 100`: `2 ^ 100 ^ 3` is `2 ^ (100 ^ 3)`. The `pair/` family
+  varies two of a row's parameters at once over `PAIRED` (edges: 0, a
+  negative, past the end, past 64 bits, a float, empty text, `[]`, a
+  vector, a matrix, a value that can fail): one at a time had never met
+  `slice[m, -1, 3]` of a matrix. The check runs servers of its own on the
+  loopback (an echo/HTTP server, a ClickHouse stand-in, a scratch Postgres
+  where `initdb` is on the PATH), and a `live` case runs without the
+  replay, which would answer `connect` in the server's place.
+- A tensor's `len()` is its NUMBER of elements; a collection builtin
+  walks a tensor's items — a vector's numbers, a matrix's rows — so it
+  counts `shape()[0]` (`core::items_of`): slice, reverse and pop had
+  counted a matrix's numbers and answered one axis its type did not say,
+  and sort, `x in m` and join of a matrix are refused (rows have no
+  order, a number is no row, a row shows as no text). A power binds
+  tighter than a leading minus (`-x ^ 2` is `-(x ^ 2)`, parse_unary →
+  parse_power). A tensor divided by a number divides each number
+  (`div_scalar`): a multiply by the reciprocal rounds twice. A Rust `sum`
+  of no floats is -0: a sum a program sees folds from +0.

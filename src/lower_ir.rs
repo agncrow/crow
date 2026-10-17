@@ -2075,14 +2075,14 @@ impl<'a> Lowerer<'a> {
                                 self.refuse(crate::table::wrong_key(*key, &given));
                             }
                         }
-                        Ty::Str | Ty::List(_) | Ty::Tensor(..) | Ty::Column(_) if !position_like(&given) => {
+                        Ty::List(_) | Ty::Tensor(..) if !position_like(&given) => {
                             self.refuse(format!("a position in '{}' is an int, and this is {}", crate::lower::shown(&var), crate::table::Arg::of_type(&given).words()));
                         }
                         // a mask picks what is read (`xs[mask]`), never where
                         // a write lands: the interpreter had stopped ("array
                         // index must be an integer") and the compiled program
                         // had not built (crow check --self)
-                        Ty::Str | Ty::List(_) | Ty::Tensor(..) | Ty::Column(_) if matches!(given, Ty::List(_) | Ty::Tensor(..) | Ty::Column(_)) => {
+                        Ty::List(_) | Ty::Tensor(..) if matches!(given, Ty::List(_) | Ty::Tensor(..) | Ty::Column(_)) => {
                             let v = crate::lower::shown(&var);
                             self.refuse(format!(
                                 "`{0}[…] = …` writes at one position, an int, and this is {1}: a mask picks what `{0}[mask]` reads, not where a write lands",
@@ -3567,20 +3567,34 @@ impl<'a> Lowerer<'a> {
                 // 64 bits its nearest float, as a tensor's numbers are floats
                 // (written as they stood, they had not built — crow check
                 // --self)
+                let operand = |x: Expr| match x.ty() {
+                    Ty::List(item) if matches!(*item, Ty::Int | Ty::Float | Ty::Bool) => {
+                        let ty = Ty::Tensor(Box::new(Ty::Float), shapes::stacked_dims(&x.ty()));
+                        Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty }
+                    }
+                    Ty::Big => match crate::table::row("core.__float_of_big") {
+                        Some(row) => Expr::Call { target: Target::Row(row), args: vec![x], ty: Ty::Float, propagates: false },
+                        None => x,
+                    },
+                    _ => x,
+                };
                 if matches!(op, BinOp::ElemMul | BinOp::ElemDiv | BinOp::ElemPow) {
-                    let operand = |x: Expr| match x.ty() {
-                        Ty::List(item) if matches!(*item, Ty::Int | Ty::Float | Ty::Bool) => {
-                            let ty = Ty::Tensor(Box::new(Ty::Float), shapes::stacked_dims(&x.ty()));
-                            Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty }
-                        }
-                        Ty::Big => match crate::table::row("core.__float_of_big") {
-                            Some(row) => Expr::Call { target: Target::Row(row), args: vec![x], ty: Ty::Float, propagates: false },
-                            None => x,
-                        },
-                        _ => x,
-                    };
                     l = operand(l);
                     r = operand(r);
+                }
+                // `+`, `-`, `*` and `/` of a list of numbers (or of truths, 1
+                // and 0) are its tensor's too: an all-numeric array is a
+                // tensor (spec, Tensor Arithmetic — `[1, 2, 3] + 10`), and a
+                // list grown by `push` had been refused (`cannot use '+' with
+                // array[int] and int`) where `.*` took it — crow check
+                // --self's reference found it
+                if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div) {
+                    let listed = |x: &Expr| matches!(x.ty(), Ty::List(item) if matches!(*item, Ty::Int | Ty::Float | Ty::Bool));
+                    let numbers = |x: &Expr| listed(x) || matches!(x.ty().payload(), Ty::Tensor(..) | Ty::Int | Ty::Float | Ty::Big);
+                    if (listed(&l) && numbers(&r)) || (listed(&r) && numbers(&l)) {
+                        l = operand(l);
+                        r = operand(r);
+                    }
                 }
                 // a list of numbers that can fail — each a map's read, a
                 // function's answer that can — compared whole with a tensor
@@ -4221,6 +4235,8 @@ impl<'a> Lowerer<'a> {
                         | Ty::Socket
                         | Ty::Mailer
                         | Ty::Sparse
+                        | Ty::Bytes
+                        | Ty::Stream
                 )
                 && !self.contested(&base)
                 && !of_unknown_rank(&base)
@@ -4231,6 +4247,10 @@ impl<'a> Lowerer<'a> {
                     Ty::WebResponse => "a response",
                     Ty::Db | Ty::Tx => "a database connection",
                     Ty::Sparse => "a sparse matrix, read whole",
+                    // (the layer's bytes are read by `byte[b, i]` and
+                    // `slice[b, i, j]`; indexed, the interpreter had stopped,
+                    // "not indexable", and the compiled program had not built)
+                    Ty::Bytes => "bytes, read by byte[b, i] and slice[b, i, j]",
                     t => crate::table::Arg::of_type(t).words(),
                 };
                 match callee {
@@ -5067,6 +5087,7 @@ impl<'a> Lowerer<'a> {
                 _ => ty,
             };
             let lowered = Self::concrete_empties(&name, row, lowered);
+            let ty = Self::answered_as_empties(ty, row, &lowered);
             let (lowered, ty) = match row {
                 Some(row) => Self::widen_items(row, lowered, ty),
                 None => (lowered, ty),
@@ -5106,6 +5127,7 @@ impl<'a> Lowerer<'a> {
         let row = self.builtin_row(None, &name, &lowered);
         let ty = Self::typed_by_row(ty, row);
         let lowered = Self::concrete_empties(&name, row, lowered);
+        let ty = Self::answered_as_empties(ty, row, &lowered);
         let (lowered, ty) = match row {
             Some(row) => Self::widen_items(row, lowered, ty),
             None => (lowered, ty),
@@ -5153,7 +5175,14 @@ impl<'a> Lowerer<'a> {
         let alone = row.is_some_and(|r| {
             r.params.iter().filter(|k| matches!(k, Kind::List | Kind::Seq | Kind::Item | Kind::ItemRef | Kind::MapOf | Kind::MapRef | Kind::Key | Kind::Keys)).count() == 1
         });
-        if name != "type" && !alone && row.is_none_or(|r| r.ret.generic()) {
+        // (or whose every list is `[]` and every item none — `concat[[],
+        // []]`: nothing says the items, and the compiled program had had no
+        // type for them — crow check --self's pairs)
+        let unknown_empty = |x: &Expr| matches!(x, Expr::ListLit(items, Ty::List(i)) if items.is_empty() && **i == Ty::Unknown);
+        let only_empties = lowered.iter().any(unknown_empty)
+            && lowered.iter().all(|x| unknown_empty(x) || !matches!(x.ty().payload(), Ty::List(_) | Ty::Map(..) | Ty::Tensor(..) | Ty::Column(_) | Ty::Unknown | Ty::Json))
+            && row.is_some_and(|r| !r.params.iter().any(|k| matches!(k, Kind::Item | Kind::ItemRef)));
+        if name != "type" && !alone && !only_empties && row.is_none_or(|r| r.ret.generic()) {
             return lowered;
         }
         // (each list of the kind its parameter takes: `sort[f, []]` a list
@@ -5180,6 +5209,27 @@ impl<'a> Lowerer<'a> {
                 other => other,
             })
             .collect()
+    }
+
+    /// The answer of a row that answers its list's items — `slice[[], i, j]`,
+    /// `concat[[], []]`, `reverse[[]]` — has the items `concrete_empties`
+    /// gave its `[]` (the answer had kept items of no kind, which the
+    /// compiled program wrote as text beside the list's ints, and a call
+    /// whose argument could fail did not build — crow check --self's pairs).
+    fn answered_as_empties(ty: Ty, row: Option<&'static crate::table::Row>, lowered: &[Expr]) -> Ty {
+        let Some(row) = row else { return ty };
+        if !row.ret.generic() || !matches!(ty.payload(), Ty::List(i) if **i == Ty::Unknown) {
+            return ty;
+        }
+        let given = lowered.iter().find_map(|x| match x {
+            Expr::ListLit(items, t @ Ty::List(i)) if items.is_empty() && **i != Ty::Unknown => Some(t.clone()),
+            _ => None,
+        });
+        match given {
+            Some(t) if ty.is_result() => Ty::Result(Box::new(t)),
+            Some(t) => t,
+            None => ty,
+        }
     }
 
     /// A Crow row's arguments as its parameters take them: an int where the

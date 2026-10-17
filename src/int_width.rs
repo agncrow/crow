@@ -1900,7 +1900,7 @@ fn row_iv(id: &str, ivs: &[Iv]) -> Iv {
             [a, b] => Iv::new(a.lo.max(b.lo), a.hi.max(b.hi)),
             _ => Iv::I64,
         },
-        "core.int" | "core.floor_int" | "core.ceil_int" | "core.round_int" => first,
+        "core.int" | "core.floor_int" | "core.ceil_int" | "core.round_int" | "core.__whole_big" => first,
         // an int's bits: and/or/xor of 64-bit ints are 64-bit, and tighter
         // where a side is not negative; a shift moves a range by its count
         "bits.bitand" | "core.__bitand_big" => match ivs {
@@ -2497,6 +2497,25 @@ impl<'a> Retype<'a> {
                                     }
                                 }
                             }
+                        }
+                        // (a list or a map of 64-bit ints handed an item that
+                        // may grow past them holds every item as it is — spec,
+                        // Numbers That Keep Every Digit: a list's items and a
+                        // map's values take one as it is; `push[xs, 2 ^ 100]`
+                        // had stopped where xs's items were 64-bit)
+                        let grows_past = |me: &mut Self, args: &[Expr]| {
+                            args.iter().zip(&kinds).any(|(a, k)| matches!(k, Kind::Item | Kind::ItemRef) && matches!(a.ty().payload(), Ty::Big) && !me.walk.iv_of(a).fits())
+                        };
+                        if let (Some(i), Some(Ty::List(item) | Ty::Map(_, item))) = (at, &collection)
+                            && matches!(item.payload(), Ty::Int)
+                            && grows_past(self, args)
+                        {
+                            let grown = match &collection {
+                                Some(Ty::Map(key, _)) => Ty::Map(*key, Box::new(Ty::Big)),
+                                _ => Ty::List(Box::new(Ty::Big)),
+                            };
+                            args[i] = to_type(take(&mut args[i]), &grown);
+                            collection = Some(grown);
                         }
                         if let Some(Ty::List(item) | Ty::Map(_, item)) = &collection {
                             // (and a collection of 64-bit ints takes an item

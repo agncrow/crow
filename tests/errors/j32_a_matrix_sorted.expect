@@ -1,0 +1,3 @@
+j32_a_matrix_sorted.co:2:5: sort[] orders numbers or text, and a matrix's items are its rows, which have no order: sort[flatten[m]] orders its numbers
+  2 │ log[sort[m]]
+    │     ^^^^

@@ -1,0 +1,91 @@
+--- What crow check --self's reference found when its cases were held to
+--- the spec's answers, computed in Python: a power binds tighter than a
+--- minus sign before it (`-3 ^ 2` is -9, and a Gaussian falls); a
+--- matrix's items are its rows to `slice`, `reverse` and `pop`, which keep
+--- its shape (they had counted its numbers and answered one axis);
+--- `floor`, `ceil` and `round` of an int past 64 bits are the int; a
+--- list or a map of ints handed one past 64 bits holds it; a list of
+--- numbers grown by `push` is a tensor to `+`, `-`, `*` and `/` as to `.*`
+--- (refused, it had been); a tensor divided by a number divides each
+--- number (it had multiplied by the reciprocal, rounding twice); and
+--- `linspace` ends at its end, `norm` of nothing is 0; and what the
+--- check's pairs of parameters found: `[]` beside `[]`, or beside a
+--- position that could have failed, is a list (neither had built
+--- compiled), and a convolution of nothing stops with its reason (it had
+--- overflowed counting its answer); and `moment` of seconds past the
+--- moments one holds stops (a cell of a column is missing), where it had
+--- been clamped to the year 292278994; and `describe` inside a function,
+--- where the connection can fail, is the frame (it had been wrapped twice
+--- and not built) — in both modes.
+use math, frame, db
+
+fn may[x, fail]
+    if fail
+        return error['no']
+    return x
+
+x = 3
+log[-x ^ 2]
+log[-3 ^ 2]
+log[(-3) ^ 2]
+log[2.0 ^ -1]
+log[-2 ^ 3 ^ 2]
+log[--2]
+log[exp[-x ^ 2 / 2] lt 1.0]
+
+m = [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]
+log[slice[m, -1, len[m]]]
+log[slice[m, 0, 5]]
+log[len[slice[m, 2, 1]]]
+log[reverse[m]]
+r = reverse[m]
+log[r[0]]
+log[pop[m]]
+log[len[pop[pop[pop[pop[m]]]]]]
+for row in reverse[m]
+    log[sum[row]]
+v = [3.0, 1.0, 2.0]
+log[reverse[v]]
+log[pop[v]]
+log[slice[v, -2, 3]]
+log[sort[v]]
+log[2.0 in v]
+
+log[floor[2 ^ 100]]
+log[ceil[-2 ^ 100]]
+log[round[2 ^ 64 + 1]]
+ints = push[push[push[[], 3], 1], 2]
+log[push[ints, 2 ^ 100]]
+grown = push[ints, 2 ^ 70]
+log[grown[3] + 1]
+log[set[map[a = 1, b = 2], 'c', 2 ^ 100]]
+
+fl = push[push[push[[], 3.0], 1.0], 2.0]
+log[ints + 1]
+log[1 - ints]
+log[ints * 2]
+log[ints / 2]
+log[fl - ints]
+log[[true, false, true] + 1]
+log[[3.0, 1.0, 2.0] / 2.5]
+log[fl / 2.5]
+log[mean[[[3.0, 6.0], [1.0, 2.0]], 0]]
+log[linspace[2.0 ^ 63, 2.5, 3]]
+log[norm[slice[[1.0, 2.0], 1, 0]]]
+log[mean[[0.1, 0.2, 0.4]] eq (0.1 + 0.2 + 0.4) / 3.0]
+log[concat[[], []]]
+log[len[concat[[], []]]]
+log[slice[[], may[3, false], 3]]
+log[reverse[[]]]
+log[conv[[1.0, 2.0], [1.0, 1.0]]]
+log[moment[86400 * 100000000]]
+log[moment[0.0 - 86400.0 * 100000000.0]]
+log[moment[frame.new[s = [3, 9223372036854775807]].s]]
+log[fmt[1234567.891, commas = true]]
+log[fmt[-1.5, decimals = 2]]
+fn described[]
+    c = connect['sqlite://:memory:']
+    made = exec[c, 'CREATE TABLE t (n INTEGER, name TEXT)']
+    return describe[c, 'SELECT n, name FROM t WHERE n = ?']
+log[described[]]
+log[conv[[1.0], []]]

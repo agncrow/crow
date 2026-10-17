@@ -492,7 +492,9 @@ impl CrowTensor {
             return Self::from_vec(vec![start], vec![1]);
         }
         let step = (end - start) / (n - 1) as f64;
-        let data: Vec<f64> = (0..n).map(|i| start + step * i as f64).collect();
+        // (the last is `end` itself, as numpy's is: `start + step * (n - 1)`
+        // can lose it — linspace[2.0 ^ 63, 2.5, 3] had ended at 0)
+        let data: Vec<f64> = (0..n).map(|i| if i == n - 1 { end } else { start + step * i as f64 }).collect();
         Self::from_vec(data, vec![n]).maybe_to_gpu()
     }
 
@@ -949,6 +951,13 @@ impl CrowTensor {
         self.map(|x| x - s)
     }
 
+    /// Divide every element by a scalar: each number divided, as `x / s`
+    /// divides one. (A multiply by `1 / s` rounds twice — `[3.0] / 2.5` had
+    /// been `1.2000000000000002`, where numpy and the scalar are `1.2`.)
+    pub fn div_scalar(&self, s: f64) -> CrowTensor {
+        self.map(|x| x / s)
+    }
+
     // ── Additional element-wise math ────────────────────────────────────
 
     pub fn sign(&self) -> CrowTensor {
@@ -1187,7 +1196,7 @@ impl CrowTensor {
     /// Mean along a given axis.
     pub fn mean_axis(&self, axis: usize) -> CrowTensor {
         let axis_size = self.shape[axis] as f64;
-        self.sum_axis(axis).mul_scalar(1.0 / axis_size)
+        self.sum_axis(axis).div_scalar(axis_size)
     }
 
     /// Generic reduction along an axis with an initial value and combining function.

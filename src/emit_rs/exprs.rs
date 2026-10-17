@@ -41,6 +41,10 @@ fn fmt_piece(s: &str) -> String {
 const FALLIBLE_BUILTINS: &[&str] = &[
     "error", "hash", "shell", "request", "find", "input", "read", "write", "mkdir", "ls", "rm", "mv", "cp", "captured", "moment", "env", "json", "encode", "mail", "query",
     "exec", "sign", "verify", "socket", "send", "recv",
+    // (db's `describe` answers its frame or why not: inside a function, where
+    // the connection can fail, it had been wrapped twice and not built —
+    // crow check --self's live cases)
+    "describe",
 ];
 
 /// The math functions a dual number answers with its derivative (the
@@ -861,7 +865,7 @@ impl Emitter {
                 "add" => format!("{}.add_scalar({} as f64)", l, r),
                 "sub" => format!("{}.sub_scalar({} as f64)", l, r),
                 "mul" | "elemmul" => format!("{}.mul_scalar({} as f64)", l, r),
-                "div" | "elemdiv" => format!("{}.mul_scalar(1.0 / ({} as f64))", l, r),
+                "div" | "elemdiv" => format!("{}.div_scalar({} as f64)", l, r),
                 "elempow" => format!("{}.map(|x| x.powf({} as f64))", l, r),
                 _ if cmp => format!("{{ let _s = {} as f64; {}.to_vec().iter().map(|&_v| _v {} _s).collect::<Vec<bool>>() }}", r, l, op_str),
                 _ => format!("{} {} {}", l, op_str, r),
@@ -1509,8 +1513,10 @@ impl Emitter {
                             args.push(format!("{{ use crow_runtime::display::CrowDisplay as _; ({}).crow_fmt() }}", rust));
                         }
                         // a dynamic value as the one display shows it, text
-                        // bare (it had shown with JSON's quotes: `"x"`)
-                        Ty::Json => {
+                        // bare (it had shown with JSON's quotes: `"x"`); and
+                        // the layer's handles and bytes, which have no text of
+                        // Rust's own (a stream interpolated had not built)
+                        Ty::Json | Ty::Bytes | Ty::Stream | Ty::Socket | Ty::Mailer => {
                             self.needs_crow_runtime = true;
                             fmt.push_str("{}");
                             args.push(format!("{{ use crow_runtime::display::CrowDisplay as _; ({}).crow_fmt() }}", rust));

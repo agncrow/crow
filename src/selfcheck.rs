@@ -24,6 +24,17 @@
 //! finding. The findings already known are listed in `tests/self/known.txt`,
 //! which may only shrink: a new finding fails the check, and so does a
 //! known one that no longer happens (strike it, or `--bless`).
+//!
+//! Agreeing is not being right, so the cases that agree are held to the
+//! right answer too: a value handed back — through a function, a record, a
+//! list, a loop — shows as it shows alone, and `tests/self/reference.py`
+//! answers what a builtin, an operator, an index or `fmt` computes from
+//! the spec's words, independently of Crow's runtime (a case it answers
+//! otherwise is a finding, `wrong`). A row's parameters are varied one at a
+//! time and two at a time over their kinds' edges (`PAIRED`), where a
+//! row's assumptions meet. The rows that speak to a server speak to the
+//! check's own, on the loopback: an echo server, a ClickHouse stand-in and
+//! a scratch Postgres cluster (`Servers`).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -47,6 +58,9 @@ struct Val {
 }
 
 const FRAME_SETUP: &str = "sf = frame.new[a = [1, 2, 3], b = ['x', 'y', 'z'], on = [true, false, true], f = [1.5, 2.5, 3.5]]";
+/// The port of the check's own echo server, as a case's process is told it
+/// (`servers`).
+const PORT_SETUP: &str = "self_port = env['CROW_SELF_PORT', '9']";
 const JOIN_SETUP: &str = "sj = join[frame.new[k = [1, 2, 3]], frame.new[k = [1, 3], n = [5, 7]], 'k', 'left']";
 
 fn plain(name: &str, expr: &str) -> Val {
@@ -95,8 +109,20 @@ fn values() -> Vec<Val> {
         plain("decimal", "decimal['1.25']"),
         plain("fraction", "fraction[1, 3]"),
         Val { name: "bytes".into(), expr: "bytes['abc']".into(), setup: Vec::new(), imports: vec!["web"] },
+        // (the standard library's own layer — `use sys`: bytes, a list of
+        // them, a connection to the check's own echo server and its
+        // address; `bytes` under `use web` is a response)
+        Val { name: "sysbytes".into(), expr: "bytes['abc']".into(), setup: Vec::new(), imports: vec!["sys"] },
+        Val { name: "chunks".into(), expr: "push[push[[], bytes['ab']], bytes['c']]".into(), setup: Vec::new(), imports: vec!["sys"] },
+        Val { name: "stream".into(), expr: "open['127.0.0.1', int[self_port], false, 5.0]".into(), setup: vec![PORT_SETUP.to_string()], imports: vec!["sys"] },
+        Val { name: "localurl".into(), expr: "'http://127.0.0.1:`self_port`/self'".into(), setup: vec![PORT_SETUP.to_string()], imports: Vec::new() },
         Val { name: "sparse".into(), expr: "sparse[[[1.0, 0.0], [0.0, 2.0]]]".into(), setup: Vec::new(), imports: vec!["math"] },
         plain("colnames", "['a', 'b']"),
+        // (numbers for `fmt`: thousands with a fraction, a fraction of
+        // eight places, a whole number of seven digits)
+        plain("thousands", "1234567.891"),
+        plain("fraction8", "0.12345678"),
+        plain("whole7", "1234567"),
         plain("scheme", "'base64'"),
         // (the files every run's directory is given, one the case writes —
         // its own, by the case's number — an address nothing answers, and a
@@ -182,18 +208,18 @@ fn tried_first(k: Kind) -> &'static [&'static str] {
         Kind::Json => &["json", "jsonarr"],
         Kind::JsonList => &["jsonarr"],
         Kind::Column => &["colint", "colfloat", "coltext", "colbool"],
-        Kind::Bytes => &["bytes"],
+        Kind::Bytes => &["sysbytes", "bytes"],
+        Kind::Chunks => &["chunks"],
+        Kind::Stream => &["stream"],
         Kind::Shown | Kind::ShownDyn | Kind::Shows => &["int", "text", "ints"],
         Kind::Encoded => &["map", "json"],
-        // given, never taken from a program; or a handle, a stream, a
-        // server's answer, a fused kernel's own: no program value is one
         Kind::Sparse => &["sparse"],
         Kind::Socket => &["socket"],
         Kind::Mailer => &["mailer"],
+        // given, never taken from a program; or a server's answer, a fused
+        // kernel's own: no program value is one
         Kind::FloatMap
         | Kind::Unit
-        | Kind::Stream
-        | Kind::Chunks
         | Kind::Answer
         | Kind::Response
         | Kind::Markup
@@ -212,8 +238,17 @@ fn tried_first(k: Kind) -> &'static [&'static str] {
 const VARIED: &[&str] = &[
     "int", "int0", "intneg", "intmax", "big", "float", "float0", "text", "text0", "textnum", "bool", "ints", "texts", "floats", "bools", "empty", "vector", "matrix", "map",
     "json", "moment", "frame", "colint", "coltext", "colbool", "colmissing", "may:int", "fail:int", "may:ints", "fail:vector", "path", "csvpath", "newpath",
-    "dirpath", "url", "sql",
+    "dirpath", "url", "sql", "sysbytes", "localurl",
 ];
+
+/// The values two parameters of a row are varied over at once: where the
+/// kinds meet their edges — nothing, a negative, one past the end, past 64
+/// bits, a float where an int is, empty text, an empty list, a vector, a
+/// matrix, a value that could have failed. A combination one parameter at
+/// a time never reaches is where a row's assumption breaks: `slice[m, -1,
+/// 3]` of a matrix had counted its numbers, where the matrix and the
+/// negative start had each been tried alone.
+const PAIRED: &[&str] = &["int0", "intneg", "int99", "big", "float", "text0", "empty", "vector", "matrix", "may:int"];
 
 // ── cases ───────────────────────────────────────────────────────────
 
@@ -228,6 +263,16 @@ pub(crate) struct Case {
     /// value handed to a function and back, held in a record or a list and
     /// read out, is itself.
     expect: Vec<String>,
+    /// What the case computes, where tests/self/reference.py answers it
+    /// from the spec without Crow's runtime: a builtin by the name it is
+    /// called by (`len`, `math.sum`), an operator (`op:+`), a form of the
+    /// language (`form:index`, `form:write`, `form:show`, …) — and the
+    /// catalog's values it is given, by name.
+    refer: Option<(String, Vec<String>)>,
+    /// Whether the case talks to a server of the check's own (the scratch
+    /// Postgres cluster, the ClickHouse stand-in): its run has no replay,
+    /// which would answer `connect` in the server's place.
+    live: bool,
 }
 
 impl Case {
@@ -243,7 +288,19 @@ impl Case {
             }
         }
         body.extend(lines);
-        Case { id: id.into(), imports, body, expect: Vec::new() }
+        Case { id: id.into(), imports, body, expect: Vec::new(), refer: None, live: false }
+    }
+
+    /// The case talks to a server of the check's own.
+    fn live(mut self) -> Case {
+        self.live = true;
+        self
+    }
+
+    /// What the reference answers the case by.
+    fn referring(mut self, what: impl Into<String>, names: &[&str]) -> Case {
+        self.refer = Some((what.into(), names.iter().map(|n| n.to_string()).collect()));
+        self
     }
 
     /// The case's first logs show what these values show alone.
@@ -287,6 +344,10 @@ const HELPERS: &[(&str, &str)] = &[
     ("self_loop", "fn self_loop[x]\n    ys = for y in push[[], x]\n        y\n    return ys[0]\n"),
     ("self_held", "fn self_held[x]\n    t = x\n    u = t\n    return u\n"),
     ("self_branch", "fn self_branch[x, c]\n    if c\n        return x\n    return x\n"),
+    // (a connection to the check's echo server that has been sent something,
+    // and one that has asked it a request: what a read waits for is there)
+    ("self_sent", "fn self_sent[]\n    s = open['127.0.0.1', int[env['CROW_SELF_PORT', '9']], false, 5.0]\n    put = send[s, bytes['abc']]\n    return s\n"),
+    ("self_asked", "fn self_asked[]\n    s = open['127.0.0.1', int[env['CROW_SELF_PORT', '9']], false, 5.0]\n    put = send[s, bytes['GET /self HTTP/1.1\\r\\nHost: self\\r\\n\\r\\n']]\n    return s\n"),
 ];
 
 /// Every whole-word `name` in `text` written `to`.
@@ -422,7 +483,25 @@ fn form_cases(all: &[Val]) -> Vec<Case> {
                 "copied" | "lent" | "reassigned" => &[n, n],
                 _ => &[],
             };
-            cases.push(Case::new(format!("shape/{}/{}", shape, n), &[x], lines).expecting(shows));
+            let mut case = Case::new(format!("shape/{}/{}", shape, n), &[x], lines).expecting(shows);
+            // (what the reference answers: the value shown, measured, its
+            // type, compared with itself, negated, put into text, walked)
+            let refer: Option<(&str, Vec<&str>)> = match shape {
+                "shown" => Some(("form:show", vec![n])),
+                "str" | "len" | "type" => Some((shape, vec![n])),
+                "spliced" => Some(("form:spliced", vec![n])),
+                "for" => Some(("form:for", vec![n])),
+                "collect" => Some(("form:collect", vec![n])),
+                "count" => Some(("form:count", vec![n])),
+                "self-eq" => Some(("op:eq", vec![n, n])),
+                "negated" => Some(("op:not", vec![n])),
+                "minus" => Some(("op:neg", vec![n])),
+                _ => None,
+            };
+            if let Some((what, names)) = refer {
+                case = case.referring(what, &names);
+            }
+            cases.push(case);
         }
     }
 
@@ -436,8 +515,8 @@ fn form_cases(all: &[Val]) -> Vec<Case> {
     for b in bases {
         for i in indexes {
             let (bv, iv) = (v(b), v(i));
-            cases.push(Case::new(format!("index/{}/{}", b, i), &[bv, iv], vec![format!("log[{}[{}]]", bv.expr, iv.expr)]));
-            cases.push(Case::new(format!("index-held/{}/{}", b, i), &[bv, iv], vec![format!("b = {}", bv.expr), format!("log[b[{}]]", iv.expr)]));
+            cases.push(Case::new(format!("index/{}/{}", b, i), &[bv, iv], vec![format!("log[{}[{}]]", bv.expr, iv.expr)]).referring("form:index", &[b, i]));
+            cases.push(Case::new(format!("index-held/{}/{}", b, i), &[bv, iv], vec![format!("b = {}", bv.expr), format!("log[b[{}]]", iv.expr)]).referring("form:index", &[b, i]));
         }
     }
     // a two-step read: a row of a matrix, an item of a list's item, a key's
@@ -465,7 +544,10 @@ fn form_cases(all: &[Val]) -> Vec<Case> {
         for i in at {
             for x in put {
                 let (bv, iv, xv) = (v(b), v(i), v(x));
-                cases.push(Case::new(format!("write/{}/{}/{}", b, i, x), &[bv, iv, xv], vec![format!("b = {}", bv.expr), format!("b[{}] = {}", iv.expr, xv.expr), "log[b]".to_string()]));
+                cases.push(
+                    Case::new(format!("write/{}/{}/{}", b, i, x), &[bv, iv, xv], vec![format!("b = {}", bv.expr), format!("b[{}] = {}", iv.expr, xv.expr), "log[b]".to_string()])
+                        .referring("form:write", &[b, i, x]),
+                );
             }
         }
     }
@@ -495,7 +577,7 @@ fn form_cases(all: &[Val]) -> Vec<Case> {
         for a in operands {
             for b in operands {
                 let (av, bv) = (v(a), v(b));
-                cases.push(Case::new(format!("op/{}/{}/{}", op, a, b), &[av, bv], vec![format!("log[{} {} {}]", av.expr, op, bv.expr)]));
+                cases.push(Case::new(format!("op/{}/{}/{}", op, a, b), &[av, bv], vec![format!("log[{} {} {}]", av.expr, op, bv.expr)]).referring(format!("op:{}", op), &[a, b]));
             }
         }
     }
@@ -632,6 +714,63 @@ fn form_cases(all: &[Val]) -> Vec<Case> {
         }
         cases.push(case);
     }
+    // the drivers written in Crow against servers of the check's own: a
+    // scratch Postgres cluster (where initdb is on the PATH) and the
+    // ClickHouse stand-in — a connection, a query of every kind and NULL,
+    // parameters, a table made, written by insert and read back, a
+    // statement described, a failure in the server's words
+    let pg = "self_pg = env['CROW_SELF_PG', '9']\npg = connect['postgres://crow@127.0.0.1:`self_pg`/postgres']";
+    let ch = "self_ch = env['CROW_SELF_CH', '9']\nch = connect['clickhouse://alice:secret@127.0.0.1:`self_ch`/stuff']";
+    let live: &[(&str, &str, &str)] = &[
+        ("postgres-kinds", pg, "log[query[pg, 'SELECT 1 AS n, 2.5::float8 AS x, \\'a\\' AS t, true AS b, NULL::int AS m']]"),
+        ("postgres-params", pg, "rows = query[pg, 'SELECT ?::int + 1 AS n, ? AS t, ?::float8 * 2 AS x', [41, 'b', 1.25]]\nlog[rows]\nlog[rows.n[0]]"),
+        ("postgres-write", pg, "made = exec[pg, 'CREATE TEMP TABLE self_t (n int, name text)']\nput = insert[pg, 'self_t', frame.new[n = [1, 2], name = ['a', 'b']]]\nlog[put]\nlog[exec[pg, 'UPDATE self_t SET n = n + 10']]\nlog[query[pg, 'SELECT n, name FROM self_t ORDER BY n']]"),
+        ("postgres-describe", pg, "log[describe[pg, 'SELECT 1 AS n, ?::text AS t, 2.5::float8 AS x']]"),
+        ("postgres-bad-sql", pg, "bad = query[pg, 'SELECT nope FROM nowhere']\nlog[bad.ok]\nlog[bad.reason]"),
+        ("clickhouse-query", ch, "rows = query[ch, 'SELECT number AS n, number/7 AS x FROM numbers(3)']\nlog[rows]\nlog[int[rows.n[2]] * 2]\nlog[rows.x[1].ok]"),
+        ("clickhouse-write", ch, "f = frame.new[n = [1, 2], name = ['a', 'b']]\nlog[insert[ch, 't', f]]\nlog[exec[ch, 'CREATE TABLE u (n UInt64) ENGINE = Memory']]"),
+        ("clickhouse-describe", ch, "log[describe[ch, 'SELECT n, x FROM t WHERE n = ?']]"),
+        ("clickhouse-bad-sql", ch, "bad = query[ch, 'SELECT nope FROM nowhere']\nlog[bad.ok]\nlog[bad.reason]"),
+    ];
+    for (name, open, body) in live {
+        let mut case = Case::new(format!("db/{}", name), &[], vec![open.to_string(), body.to_string()]).with_import("db").live();
+        if body.contains("frame.new") {
+            case = case.with_import("frame");
+        }
+        cases.push(case);
+    }
+
+    // `fmt` as programs call it, by name: decimals, commas, a width, an
+    // alignment, a fill, a percent — over numbers of every sign and size and
+    // over text (the row's own cases hand its seven slots catalog values,
+    // which name no alignment)
+    let numbers = ["int", "intneg", "float", "floatneg", "float0", "thousands", "fraction8", "whole7"];
+    let number_options = [
+        "decimals = 0",
+        "decimals = 1",
+        "decimals = 2",
+        "decimals = 3",
+        "commas = true",
+        "commas = true, decimals = 2",
+        "width = 10",
+        "width = 10, align = 'left'",
+        "width = 6, fill = '0'",
+        "width = 3",
+        "percent = true",
+        "percent = true, decimals = 1",
+    ];
+    for n in numbers {
+        for o in number_options {
+            let x = v(n);
+            cases.push(Case::new(format!("fmt/{}/{}", n, o), &[x], vec![format!("log[fmt[{}, {}]]", x.expr, o)]).referring(format!("fmt:{}", o), &[n]));
+        }
+    }
+    for n in ["text", "textuni", "text0"] {
+        for o in ["width = 8", "width = 8, align = 'right'", "width = 8, fill = '*'", "width = 2", "width = 8, align = 'right', fill = '.'"] {
+            let x = v(n);
+            cases.push(Case::new(format!("fmt/{}/{}", n, o), &[x], vec![format!("log[fmt[{}, {}]]", x.expr, o)]).referring(format!("fmt:{}", o), &[n]));
+        }
+    }
 
     // records that link records of their kind
     let linked: &[(&str, &str)] = &[
@@ -653,7 +792,6 @@ fn form_cases(all: &[Val]) -> Vec<Case> {
 /// `connect`, `query` and `exec`, the `db` family).
 fn skipped_module(module: &str) -> Option<&'static str> {
     match module {
-        "sys" => Some("the standard library's own layer"),
         "db.postgres" | "db.clickhouse" => Some("a driver's own row, reached through use db (the db family)"),
         _ => None,
     }
@@ -672,31 +810,22 @@ const WRITTEN: &[(&str, &str)] = &[
     ("llm.follow", "follow[reach['anthropic://claude-sonnet-5'], ask['hello'], system = 'One word.']"),
     // (a duration a case can wait out)
     ("core.sleep", "sleep[0.01]"),
+    // (the layer's rows whose answer is the process's or the machine's —
+    // asked so every configuration shows the same — and its digests by the
+    // names they take)
+    ("sys.process", "process[] gt 0"),
+    ("sys.alive", "alive[process[]]"),
+    ("sys.machine", "len[machine[]] gt 0"),
+    ("sys.random", "len[random[16]]"),
+    ("sys.hash", "hash[bytes['abc'], 'sha256']"),
+    ("sys.hmac", "hex[hmac[bytes['key'], bytes['abc'], 'sha256']]"),
+    ("sys.digest", "hex[digest[bytes['abc'], 'sha1']]"),
+    // (a read of what was sent, and of a request's answer: on a connection
+    // with nothing to read, each waits out its time)
+    ("sys.recv", "text[recv[self_sent[], 3, 5.0]]"),
+    ("sys.read_head", "read_head[self_asked[], moment['2030-01-01T00:00:00Z']]"),
     ("core.sleep_ms", "sleep_ms[1]"),
 ];
-
-/// The standard modules written in Crow whose source calls a name.
-fn modules_calling(name: &str) -> Vec<&'static str> {
-    use crate::modules as m;
-    let sources: &[(&str, &str)] = &[
-        ("core", m::CORE_SOURCE),
-        ("sys", m::SYS_SOURCE),
-        ("io", m::IO_SOURCE),
-        ("frame", m::FRAME_SOURCE),
-        ("math", m::MATH_SOURCE),
-        ("math.nn", m::nn::NN_SOURCE),
-        ("math.stats", m::STATS_SOURCE),
-        ("web.auth", m::AUTH_SOURCE),
-        ("web", m::WEB_SOURCE),
-        ("web.ws", m::WS_SOURCE),
-        ("web.mail", m::MAIL_SOURCE),
-        ("llm", m::LLM_SOURCE),
-        ("db.clickhouse", m::CLICKHOUSE_SOURCE),
-        ("db.postgres", m::POSTGRES_SOURCE),
-    ];
-    let call = format!("{}[", name);
-    sources.iter().filter(|(_, src)| src.match_indices(&call).any(|(i, _)| src[..i].chars().last().is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '.')))).map(|(m, _)| *m).collect()
-}
 
 /// The module a row is imported from in a program.
 fn import_of(module: &str) -> Option<&'static str> {
@@ -715,6 +844,9 @@ fn import_of(module: &str) -> Option<&'static str> {
         "web.auth" => Some("web.auth"),
         "web.mail" => Some("web.mail"),
         "web.ws" => Some("web.ws"),
+        // (the standard library's own layer, which the check's process and
+        // its cases' are let import: CROW_SYS)
+        "sys" => Some("sys"),
         _ => None,
     }
 }
@@ -722,7 +854,10 @@ fn import_of(module: &str) -> Option<&'static str> {
 /// A call of a row with the given arguments, as a case.
 fn row_case(id: String, row: &Row, args: &[&Val]) -> Case {
     let call = format!("{}[{}]", row.name, args.iter().map(|a| a.expr.as_str()).collect::<Vec<_>>().join(", "));
-    let mut case = Case::new(id, args, vec![format!("log[{}]", call)]);
+    // (the reference answers a row by the name it is called by)
+    let what = if row.module.is_empty() { row.name.to_string() } else { format!("{}.{}", row.module, row.name) };
+    let names: Vec<&str> = args.iter().map(|a| a.name.as_str()).collect();
+    let mut case = Case::new(id, args, vec![format!("log[{}]", call)]).referring(what, &names);
     if let Some(m) = import_of(row.module) {
         case = case.with_import(m);
         // (a math module's part needs math beside it)
@@ -802,20 +937,24 @@ fn row_cases(all: &[Val], only: &Option<String>) -> (Vec<Case>, Vec<String>) {
     let mut found: Vec<Case> = Vec::new();
     let mut unexercised: Vec<String> = Vec::new();
     // the rows to try, each with its candidate calls
-    let mut trials: Vec<(usize, Vec<Vec<&Val>>)> = Vec::new();
+    // (each row's candidate calls, those another row's trials made already
+    // last, and how many come first)
+    let mut trials: Vec<(usize, Vec<Vec<&Val>>, usize)> = Vec::new();
     let mut seen_calls: HashSet<String> = HashSet::new();
     for (r, row) in ROWS.iter().enumerate() {
         if row.name.starts_with("__") {
             continue;
         }
         if let Some(why) = skipped_module(row.module) {
-            // (the standard modules that reach a layer's row, by its name in
-            // their source: the cases reach it through them)
-            let through: Vec<&str> = if row.module == "sys" { modules_calling(row.name) } else { Vec::new() };
-            if through.is_empty() {
-                unexercised.push(format!("{} — {}", row.id, why));
-            } else {
-                unexercised.push(format!("{} — {}, reached through {}", row.id, why, through.join(", ")));
+            // (a driver's rows are reached through `use db` by the db
+            // family's live cases — Postgres where a scratch cluster can be
+            // made, ClickHouse against the check's stand-in — but its cancel,
+            // which a stop abandoning a statement in flight calls)
+            let reached = if row.module == "db.postgres" { crate::home::on_path("initdb") } else { true };
+            if row.name.ends_with("_cancel") {
+                unexercised.push(format!("{} — {}: a stop abandoning a statement in flight calls it, which tests/query_cancel.rs holds in both modes", row.id, why));
+            } else if !reached {
+                unexercised.push(format!("{} — {}: no initdb on the PATH for a scratch cluster", row.id, why));
             }
             continue;
         }
@@ -871,17 +1010,22 @@ fn row_cases(all: &[Val], only: &Option<String>) -> (Vec<Case>, Vec<String>) {
             next.truncate(27);
             combos = next;
         }
-        // (one name answers several rows: a call tried once)
-        combos.retain(|c| seen_calls.insert(format!("{}[{}]", row.name, c.iter().map(|v| v.name.as_str()).collect::<Vec<_>>().join(","))));
-        if combos.is_empty() {
+        // (one name answers several rows: a call tried once — a row whose
+        // only call that lowers another row's trials made is reached by that
+        // row's cases: `sort[vector]` is `sort_tensor`'s, made by
+        // `sort_floats`'s trials)
+        let (mut fresh, made): (Vec<Vec<&Val>>, Vec<Vec<&Val>>) = combos.into_iter().partition(|c| seen_calls.insert(format!("{}[{}]", row.name, c.iter().map(|v| v.name.as_str()).collect::<Vec<_>>().join(","))));
+        let first = fresh.len();
+        fresh.extend(made);
+        if fresh.is_empty() {
             continue;
         }
-        trials.push((r, combos));
+        trials.push((r, fresh, first));
     }
     // one call that lowers, per row
     let mut sources = Vec::new();
     let mut owners = Vec::new();
-    for (t, (r, combos)) in trials.iter().enumerate() {
+    for (t, (r, combos, _)) in trials.iter().enumerate() {
         for (c, args) in combos.iter().enumerate() {
             let case = row_case(String::new(), &ROWS[*r], args);
             sources.push(program(&[&case]).0);
@@ -902,12 +1046,16 @@ fn row_cases(all: &[Val], only: &Option<String>) -> (Vec<Case>, Vec<String>) {
         }
     }
     let mut ids: HashSet<String> = HashSet::new();
-    for (t, (r, combos)) in trials.iter().enumerate() {
+    for (t, (r, combos, first)) in trials.iter().enumerate() {
         let row = &ROWS[*r];
         let Some(c) = base.get(&t) else {
             unexercised.push(format!("{} — no call of it lowers: {}", row.id, first_refusal.get(&t).cloned().unwrap_or_default()));
             continue;
         };
+        // (its call another row's cases make, with their variations)
+        if *c >= *first {
+            continue;
+        }
         let args = &combos[*c];
         let id = format!("row/{}/base", row.id);
         if ids.insert(id.clone()) {
@@ -924,6 +1072,26 @@ fn row_cases(all: &[Val], only: &Option<String>) -> (Vec<Case>, Vec<String>) {
                 let id = format!("row/{}/{}={}", row.id, p, name);
                 if ids.insert(id.clone()) {
                     found.push(row_case(id, row, &a));
+                }
+            }
+        }
+        // two parameters at once (`PAIRED`)
+        for p in 0..args.len() {
+            for q in p + 1..args.len() {
+                for x in PAIRED {
+                    for y in PAIRED {
+                        let (xv, yv) = (val(all, x), val(all, y));
+                        if xv.name == args[p].name || yv.name == args[q].name {
+                            continue;
+                        }
+                        let mut a = args.clone();
+                        a[p] = xv;
+                        a[q] = yv;
+                        let id = format!("pair/{}/{}={},{}={}", row.id, p, x, q, y);
+                        if ids.insert(id.clone()) {
+                            found.push(row_case(id, row, &a));
+                        }
+                    }
                 }
             }
         }
@@ -1127,8 +1295,10 @@ fn sandbox(dir: &Path, file: &str, config: &str) -> PathBuf {
 /// database's address reaches it — and given the run's own: a seed for the
 /// draws, a clock that stands still, a replay with nothing recorded (every
 /// request and every server's statement answered from it, so nothing goes
-/// out), and the configuration's switches.
-fn case_command(program: &Path, run_dir: &Path, config: &Config) -> Command {
+/// out) unless the case talks to a server of the check's own, the ports of
+/// those servers, the door to the standard library's own layer (CROW_SYS),
+/// and the configuration's switches.
+fn case_command(program: &Path, run_dir: &Path, config: &Config, live: bool) -> Command {
     let mut cmd = Command::new(program);
     cmd.env_clear();
     for keep in ["PATH", "HOME", "TMPDIR", "USER", "LANG"] {
@@ -1136,11 +1306,204 @@ fn case_command(program: &Path, run_dir: &Path, config: &Config) -> Command {
             cmd.env(keep, v);
         }
     }
-    cmd.current_dir(run_dir).env("CROW_SEED", "1").env("CROW_CLOCK", "1767225600").env("CROW_REPLAY", run_dir);
+    cmd.current_dir(run_dir).env("CROW_SEED", "1").env("CROW_CLOCK", "1767225600").env("CROW_SYS", "1");
+    cmd.env("CROW_REPLAY", if live { Path::new("") } else { run_dir });
+    for (k, v) in SERVED.get().map(|s| s.as_slice()).unwrap_or(&[]) {
+        cmd.env(k, v);
+    }
     for (k, v) in config.env {
         cmd.env(k, v);
     }
     cmd
+}
+
+// ── the check's own servers ─────────────────────────────────────────
+
+/// The ports of the check's own servers, as each case's process is told
+/// them: CROW_SELF_PORT (the echo server), CROW_SELF_CH (the ClickHouse
+/// stand-in), CROW_SELF_PG (a scratch Postgres cluster).
+static SERVED: std::sync::OnceLock<Vec<(String, String)>> = std::sync::OnceLock::new();
+
+/// The servers the rows that speak to one are run against, on this
+/// machine's loopback alone: an echo server that answers HTTP with `ok`
+/// (the layer's streams, `exchange`, `fetch`, `put`), a ClickHouse
+/// stand-in that answers its HTTP interface as the server would, and a
+/// scratch Postgres cluster where `initdb` is on the PATH (stopped and
+/// removed when the check ends, and before it starts where a stopped
+/// check left one).
+struct Servers {
+    pg: Option<PathBuf>,
+}
+
+impl Servers {
+    fn start(dir: &Path) -> Servers {
+        let mut env = Vec::new();
+        if let Ok(l) = std::net::TcpListener::bind("127.0.0.1:0") {
+            if let Ok(a) = l.local_addr() {
+                env.push(("CROW_SELF_PORT".to_string(), a.port().to_string()));
+            }
+            std::thread::spawn(move || {
+                for c in l.incoming().flatten() {
+                    std::thread::spawn(move || serve_echo(c));
+                }
+            });
+        }
+        if let Ok(l) = std::net::TcpListener::bind("127.0.0.1:0") {
+            if let Ok(a) = l.local_addr() {
+                env.push(("CROW_SELF_CH".to_string(), a.port().to_string()));
+            }
+            std::thread::spawn(move || {
+                for c in l.incoming().flatten() {
+                    std::thread::spawn(move || serve_clickhouse(c));
+                }
+            });
+        }
+        let pg = scratch_postgres(&dir.join("pg"));
+        if let Some((_, port)) = &pg {
+            env.push(("CROW_SELF_PG".to_string(), port.to_string()));
+        }
+        let _ = SERVED.set(env);
+        Servers { pg: pg.map(|(d, _)| d) }
+    }
+}
+
+impl Drop for Servers {
+    fn drop(&mut self) {
+        if let Some(d) = &self.pg {
+            let _ = Command::new("pg_ctl").arg("-D").arg(d).args(["-m", "immediate", "-w", "stop"]).output();
+            let _ = std::fs::remove_dir_all(d);
+        }
+    }
+}
+
+/// A scratch Postgres cluster: its directory and port, or None where the
+/// machine has no `initdb` (the Postgres cases then reach no server, alike
+/// in every configuration).
+fn scratch_postgres(dir: &Path) -> Option<(PathBuf, u16)> {
+    if !crate::home::on_path("initdb") {
+        return None;
+    }
+    let dir = std::fs::canonicalize(dir.parent()?).ok()?.join(dir.file_name()?);
+    // (a check stopped from outside left its cluster running)
+    if dir.join("postmaster.pid").exists() {
+        let _ = Command::new("pg_ctl").arg("-D").arg(&dir).args(["-m", "immediate", "-w", "stop"]).output();
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    let init = Command::new("initdb").arg("-D").arg(&dir).args(["-U", "crow", "--auth=trust"]).output().ok()?;
+    if !init.status.success() {
+        return None;
+    }
+    let port = std::net::TcpListener::bind("127.0.0.1:0").ok()?.local_addr().ok()?.port();
+    let opts = format!("-p {} -c unix_socket_directories='' -c listen_addresses=127.0.0.1", port);
+    let started = Command::new("pg_ctl").arg("-D").arg(&dir).args(["-o", &opts, "-w", "-l"]).arg(dir.join("log")).arg("start").output().ok()?;
+    started.status.success().then_some((dir, port))
+}
+
+/// One connection to the echo server: an HTTP request — its head, then its
+/// body by its length — answered `200 ok`, the connection kept; anything
+/// else sent back as it came.
+fn serve_echo(mut s: std::net::TcpStream) {
+    use std::io::{Read, Write};
+    let _ = s.set_read_timeout(Some(Duration::from_secs(60)));
+    let mut held: Vec<u8> = Vec::new();
+    let mut buf = vec![0u8; 1 << 16];
+    loop {
+        let n = match s.read(&mut buf) {
+            Ok(0) | Err(_) => return,
+            Ok(n) => n,
+        };
+        held.extend_from_slice(&buf[..n]);
+        let http = [&b"GET "[..], b"POST ", b"PUT ", b"HEAD ", b"DELETE ", b"PATCH ", b"OPTIONS "].iter().any(|m| held.starts_with(m));
+        if !http {
+            if s.write_all(&held).is_err() {
+                return;
+            }
+            held.clear();
+            continue;
+        }
+        while let Some(end) = held.windows(4).position(|w| w == b"\r\n\r\n") {
+            let head = String::from_utf8_lossy(&held[..end]).to_ascii_lowercase();
+            let length = head.lines().find_map(|l| l.strip_prefix("content-length:")).and_then(|v| v.trim().parse::<usize>().ok()).unwrap_or(0);
+            if held.len() < end + 4 + length {
+                break;
+            }
+            held.drain(..end + 4 + length);
+            if s.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nok").is_err() {
+                return;
+            }
+        }
+    }
+}
+
+/// RowBinaryWithNamesAndTypes of two columns, `n UInt64` and `x
+/// Nullable(Float64)`: (1, 2.5), (2, NULL), (3, 0.5).
+fn rows_n_x() -> Vec<u8> {
+    let mut b = vec![2u8, 1, b'n', 1, b'x', 6];
+    b.extend_from_slice(b"UInt64");
+    b.push(17);
+    b.extend_from_slice(b"Nullable(Float64)");
+    for (n, x) in [(1u64, Some(2.5f64)), (2, None), (3, Some(0.5))] {
+        b.extend_from_slice(&n.to_le_bytes());
+        match x {
+            Some(x) => {
+                b.push(0);
+                b.extend_from_slice(&x.to_le_bytes());
+            }
+            None => b.push(1),
+        }
+    }
+    b
+}
+
+/// One connection to the ClickHouse stand-in: each statement answered as
+/// the server's HTTP interface answers it (tests/clickhouse_http.rs holds
+/// the driver to the same answers), the connection kept.
+fn serve_clickhouse(stream: std::net::TcpStream) {
+    use std::io::{BufRead, Read, Write};
+    let Ok(read) = stream.try_clone() else { return };
+    let mut reader = std::io::BufReader::new(read);
+    let mut out = stream;
+    loop {
+        let mut first = String::new();
+        if reader.read_line(&mut first).unwrap_or(0) == 0 {
+            return;
+        }
+        let mut length = 0usize;
+        loop {
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                break;
+            }
+            if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                length = v.trim().parse().unwrap_or(0);
+            }
+        }
+        let mut body = vec![0u8; length];
+        if reader.read_exact(&mut body).is_err() {
+            return;
+        }
+        let end = body.iter().position(|&c| c == b'\n').unwrap_or(body.len());
+        let sql = String::from_utf8_lossy(&body[..end]).to_string();
+        let (status, answer): (&str, Vec<u8>) = if sql.starts_with("SELECT 1") {
+            ("200 OK", b"1\n".to_vec())
+        } else if sql.starts_with("KILL QUERY") || sql.starts_with("SELECT DISTINCT query_id") || sql.starts_with("INSERT INTO") || sql.starts_with("CREATE") {
+            ("200 OK", Vec::new())
+        } else if sql.starts_with("DESCRIBE TABLE t") {
+            ("200 OK", b"n\tUInt64\t\t\t\t\t\nname\tNullable(String)\t\t\t\t\t\n".to_vec())
+        } else if sql.starts_with("DESCRIBE TABLE (") && !sql.contains("nope") {
+            ("200 OK", b"n\tUInt64\t\t\t\t\t\nx\tNullable(Float64)\t\t\t\t\t\n".to_vec())
+        } else if sql.starts_with("SELECT number AS n") {
+            ("200 OK", rows_n_x())
+        } else if sql.contains("nope") {
+            ("404 Not Found", b"Code: 60. DB::Exception: Unknown table expression identifier 'nowhere' in scope SELECT nope FROM nowhere. (UNKNOWN_TABLE)\n".to_vec())
+        } else {
+            ("500 Internal Server Error", format!("Code: 62. DB::Exception: the check's stand-in does not know `{}`\n", sql).into_bytes())
+        };
+        let head = format!("HTTP/1.1 {}\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: Keep-Alive\r\nX-ClickHouse-Query-Id: self\r\n\r\n", status, answer.len());
+        if out.write_all(head.as_bytes()).and_then(|_| out.write_all(&answer)).and_then(|_| out.flush()).is_err() {
+            return;
+        }
+    }
 }
 
 /// A batch's cases run under one configuration, from the first to the
@@ -1154,7 +1517,7 @@ fn case_command(program: &Path, run_dir: &Path, config: &Config) -> Command {
 /// that ends with no case's marker may have lost what it had not written
 /// yet, so the cases from its last marker run one to a process until the
 /// one that ends so is found.
-fn run_batch(exe: &Path, dir: &Path, file: &str, binary: Option<&Path>, config: &Config, fresh: &[bool]) -> Vec<Seen> {
+fn run_batch(exe: &Path, dir: &Path, file: &str, binary: Option<&Path>, config: &Config, fresh: &[bool], live: bool) -> Vec<Seen> {
     let n = fresh.len();
     let mut seen: Vec<Option<Seen>> = vec![None; n];
     let mut from = 0;
@@ -1164,9 +1527,9 @@ fn run_batch(exe: &Path, dir: &Path, file: &str, binary: Option<&Path>, config: 
     while from < n {
         let to = if hunting || fresh[from] { from } else { (from + 1..n).find(|&k| fresh[k]).map(|k| k - 1).unwrap_or(n - 1) };
         let mut cmd = match binary {
-            Some(b) => case_command(b, &run_dir, config),
+            Some(b) => case_command(b, &run_dir, config, live),
             None => {
-                let mut c = case_command(exe, &run_dir, config);
+                let mut c = case_command(exe, &run_dir, config, live);
                 c.arg("run").arg("-i").arg(&source);
                 c
             }
@@ -1242,8 +1605,71 @@ fn run_batch(exe: &Path, dir: &Path, file: &str, binary: Option<&Path>, config: 
     seen.into_iter().map(|s| s.unwrap_or(Seen { out: String::new(), end: "not run".to_string() })).collect()
 }
 
-/// The case a generated name belongs to: `self_case_3`, `self_may_3`,
-/// `self_first_3__2` (a copy per signature), `SelfBox_3`.
+/// The cases the reference answers, written as JSON lines — each one's
+/// computation and what it showed (its own lines, without the `0` its
+/// function's return logged), how it stopped, or what refused it — handed
+/// to tests/self/reference.py. A case it answers otherwise is a finding
+/// (`wrong`); one refused that it answers is listed in `answerable.txt`
+/// (a refusal may be the spec's: a kind the spec does not mix). Answers
+/// what the reference said of its count, and the number wrong.
+fn consult_reference(dir: &Path, cases: &[Case], seen: &HashMap<String, Seen>, refused: &HashMap<String, String>, findings: &mut Vec<Finding>) -> (String, usize) {
+    let reference = Path::new("tests/self/reference.py");
+    if !reference.is_file() {
+        return ("no tests/self/reference.py here: the spec's answers were not asked".to_string(), 0);
+    }
+    let mut lines = String::new();
+    for case in cases {
+        let Some((what, args)) = &case.refer else { continue };
+        let mut entry = serde_json::json!({ "id": case.id, "what": what, "args": args });
+        if let Some(s) = seen.get(&case.id) {
+            let own = if s.end.is_empty() { s.out.strip_suffix("0\n").filter(|r| r.is_empty() || r.ends_with('\n')).unwrap_or(&s.out) } else { &s.out };
+            entry["seen"] = serde_json::Value::String(own.trim_end_matches('\n').to_string());
+            entry["end"] = serde_json::Value::String(s.end.clone());
+        } else if let Some(m) = refused.get(&case.id) {
+            entry["refused"] = serde_json::Value::String(m.clone());
+        } else {
+            continue;
+        }
+        lines.push_str(&entry.to_string());
+        lines.push('\n');
+    }
+    let input = dir.join("answers.jsonl");
+    if std::fs::write(&input, &lines).is_err() {
+        return (format!("cannot write {}", input.display()), 0);
+    }
+    let out = match Command::new("python3").arg("-E").arg(reference).arg(&input).stdin(Stdio::null()).output() {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+        Ok(o) => return (format!("the reference failed: {}", String::from_utf8_lossy(&o.stderr).lines().last().unwrap_or("")), 0),
+        Err(e) => return (format!("no python3 to ask the reference: {}", e), 0),
+    };
+    let by_id: HashMap<&str, &Case> = cases.iter().map(|c| (c.id.as_str(), c)).collect();
+    let (mut wrong, mut said, mut answerable) = (0, String::new(), String::new());
+    for line in out.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        let text = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+        match v.get("kind").and_then(|k| k.as_str()) {
+            Some("wrong") => {
+                let id = text("id");
+                let Some(case) = by_id.get(id.as_str()) else { continue };
+                wrong += 1;
+                findings.push(Finding {
+                    id: id.clone(),
+                    code: case.code(),
+                    class: "wrong",
+                    detail: format!("answers {} where the spec answers {}", text("seen").replace('\n', " | "), text("expected").replace('\n', " | ")),
+                });
+            }
+            Some("refused") => answerable.push_str(&format!("{}\t{}\t{}\n", text("id"), text("expected"), text("seen"))),
+            _ => said = format!("{} answered, {} with no answer of its own", v.get("answered").unwrap_or(&serde_json::Value::Null), v.get("skipped").unwrap_or(&serde_json::Value::Null)),
+        }
+    }
+    let _ = std::fs::write(dir.join("answerable.txt"), &answerable);
+    if !answerable.is_empty() {
+        said = format!("{}; {} refused that it answers (answerable.txt)", said, answerable.lines().count());
+    }
+    (said, wrong)
+}
+
 /// A case's output as two cases compare: the lines a failure names and the
 /// numbers each case's own copy of a helper is given made alike (each case
 /// is placed elsewhere in its batch).
@@ -1254,6 +1680,8 @@ fn comparable(out: &str) -> String {
     COPY.replace_all(&out, "$1").to_string()
 }
 
+/// The case a generated name belongs to: `self_case_3`, `self_may_3`,
+/// `self_first_3__2` (a copy per signature), `SelfBox_3`.
 fn case_number(name: &str) -> Option<usize> {
     if !(name.starts_with("self_") || name.starts_with("Self")) {
         return None;
@@ -1454,6 +1882,11 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
         let _ = MEMORY_GB.set(gb.max(2));
     }
     let start = Instant::now();
+    // the standard library's own layer is the check's to call, as the
+    // book's page on it is (`use sys`, and `use db.postgres`'s rows): the
+    // lowering here, the builds and the cases' processes read the door
+    // SAFETY: set before any thread of the check starts
+    unsafe { std::env::set_var("CROW_SYS", "1") };
     let exe = std::env::current_exe().unwrap_or_default();
     let dir = PathBuf::from("target").join("crow_self");
     let _ = std::fs::create_dir_all(&dir);
@@ -1480,6 +1913,8 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
     let mut accepted: Vec<usize> = Vec::new();
     let (mut refused, mut internal) = (0, 0);
     let mut refusals = String::new();
+    // (what each refused case was told, for the reference)
+    let mut refused_by: HashMap<String, String> = HashMap::new();
     let mut families: BTreeMap<&str, (usize, usize, usize)> = BTreeMap::new();
     for (i, l) in lowered.iter().enumerate() {
         let family = cases[i].id.split('/').next().unwrap_or("");
@@ -1494,6 +1929,7 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
             Lowered::Refused(m) => {
                 refused += 1;
                 refusals.push_str(&format!("{}\t{}\n", cases[i].id, m.lines().next().unwrap_or("")));
+                refused_by.insert(cases[i].id.clone(), m.lines().next().unwrap_or("").to_string());
                 findings.extend(message_findings(&cases[i], &sources[i], m));
             }
             Lowered::Bug(m) => {
@@ -1513,7 +1949,9 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
         const BATCH: usize = 120;
         let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         for &i in &accepted {
-            let key = cases[i].imports.iter().copied().collect::<Vec<_>>().join(",");
+            // (a case that talks to the check's own servers runs without
+            // the replay: a batch of its own)
+            let key = format!("{}{}", cases[i].imports.iter().copied().collect::<Vec<_>>().join(","), if cases[i].live { "|live" } else { "" });
             groups.entry(key).or_default().push(i);
         }
         let mut batches: Vec<Vec<usize>> = Vec::new();
@@ -1595,6 +2033,9 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
         for (i, why) in &unbuilt {
             findings.push(Finding { id: cases[*i].id.clone(), code: cases[*i].code(), class: "no-build", detail: why.clone() });
         }
+        // the check's own servers, for the rows that speak to one (stopped
+        // when the runs are done)
+        let servers = Servers::start(&dir);
         // every configuration over every built batch, across the cores
         let t = Instant::now();
         let jobs: Vec<(usize, usize)> = (0..built.len()).flat_map(|b| (0..CONFIGS.len()).map(move |c| (b, c))).collect();
@@ -1614,7 +2055,8 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
                         let batch = &built[b];
                         let config = &CONFIGS[c];
                         let fresh: Vec<bool> = batch.members.iter().map(|(_, c)| c.draws()).collect();
-                        let seen = run_batch(&exe, &batch.dir, &batch.file, if config.compiled { Some(batch.binary.as_path()) } else { None }, config, &fresh);
+                        let live = batch.members.iter().any(|(_, c)| c.live);
+                        let seen = run_batch(&exe, &batch.dir, &batch.file, if config.compiled { Some(batch.binary.as_path()) } else { None }, config, &fresh, live);
                         if let Ok(mut r) = results.lock() {
                             r.insert((b, c), seen);
                         }
@@ -1626,10 +2068,12 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
             }
         });
         println!("\rran {} batch runs in {:.1}s{}", jobs.len(), t.elapsed().as_secs_f64(), " ".repeat(20));
+        drop(servers);
         let results = results.into_inner().unwrap_or_default();
         let mut agreed = 0;
         // what each case that agreed showed, for the answers it knows
         let mut agreed_out: HashMap<String, String> = HashMap::new();
+        let mut agreed_seen: HashMap<String, Seen> = HashMap::new();
         for (b, batch) in built.iter().enumerate() {
             for (k, (i, case)) in batch.members.iter().enumerate() {
                 let per: Vec<(&str, Seen)> = CONFIGS
@@ -1666,6 +2110,7 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
                     agreed += 1;
                     let s = &per[0].1;
                     agreed_out.insert(case.id.clone(), if s.end.is_empty() { s.out.clone() } else { format!("{}[{}]\n", s.out, s.end) });
+                    agreed_seen.insert(case.id.clone(), s.clone());
                 }
                 let _ = i;
             }
@@ -1701,6 +2146,15 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
             }
         }
         println!("answers: {} cases held to the right answer, {} wrong", answered, wrong);
+        // the spec's answers: tests/self/reference.py computes what a case
+        // computes — a builtin, an operator, an index read or written, a
+        // value shown — from the spec's words, without Crow's runtime, and
+        // names each case that answers otherwise
+        let (said, wrong) = consult_reference(&dir, &cases, &agreed_seen, &refused_by, &mut findings);
+        println!("reference: {} wrong", wrong);
+        if !said.is_empty() {
+            println!("  {}", said);
+        }
         // (the builders' caches stay for the next run; `--clean` removes them)
         if clean {
             let _ = std::fs::remove_dir_all(&build_dir);
@@ -1814,6 +2268,12 @@ mod tests {
         let mut refused = Vec::new();
         for v in &all {
             if matches!(v.name.as_str(), "sizes" | "groups" | "lists" | "fn") {
+                continue;
+            }
+            // (the layer's values are lowered by the check itself, its door
+            // open — CROW_SYS — which a unit test does not open: the
+            // variable is the process's, and another test closes it)
+            if v.imports.contains(&"sys") {
                 continue;
             }
             let case = Case::new(format!("shown/{}", v.name), &[v], vec![format!("log[{}]", v.expr)]);

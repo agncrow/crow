@@ -924,7 +924,7 @@ impl Parser {
     }
 
     fn parse_multiplication(&mut self) -> Result<Expr, String> {
-        let mut left = self.parse_power()?;
+        let mut left = self.parse_unary()?;
         loop {
             let op = match self.peek() {
                 Token::Star => BinOp::Mul,
@@ -935,7 +935,7 @@ impl Parser {
                 _ => break,
             };
             self.advance();
-            let right = self.parse_power()?;
+            let right = self.parse_unary()?;
             left = Expr::BinOp {
                 left: Box::new(left),
                 op,
@@ -945,16 +945,20 @@ impl Parser {
         Ok(left)
     }
 
+    /// A power binds tighter than a sign before it, as in mathematics:
+    /// `-x ^ 2` is `-(x ^ 2)`, and the exponent may carry a sign of its own
+    /// (`2.0 ^ -1`). (The sign had been part of the base: `-3 ^ 2` was 9,
+    /// and a Gaussian's `exp[-x ^ 2 / 2]` grew.)
     fn parse_power(&mut self) -> Result<Expr, String> {
-        let base = self.parse_unary()?;
+        let base = self.parse_postfix()?;
         let op = match self.peek() {
             Token::Caret => BinOp::Pow,
             Token::DotCaret => BinOp::ElemPow,
             _ => return Ok(base),
         };
         self.advance();
-        // Right-associative: parse_power recurses
-        let exp = self.parse_power()?;
+        // Right-associative: the exponent is a power itself, signed or not
+        let exp = self.parse_unary()?;
         Ok(Expr::BinOp {
             left: Box::new(base),
             op,
@@ -979,7 +983,7 @@ impl Parser {
                 expr: Box::new(expr),
             });
         }
-        self.parse_postfix()
+        self.parse_power()
     }
 
     fn parse_postfix(&mut self) -> Result<Expr, String> {

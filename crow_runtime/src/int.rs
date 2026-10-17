@@ -283,14 +283,14 @@ impl Int {
     }
 }
 
-/// The refusal of a whole number past 64 bits where 64 bits are taken, in
-/// one wording for both modes.
 /// A whole number written past 64 bits (`123456789012345678901234567890`):
 /// the int its digits write (the parser hands it digits alone).
 pub fn whole(digits: &str) -> Int {
     Int::parse(digits).unwrap_or_default()
 }
 
+/// The refusal of a whole number past 64 bits where 64 bits are taken, in
+/// one wording for both modes.
 pub fn past_64_bits(who: &str, number: &str) -> String {
     format!("a whole number past 64 bits where {}: {}", who, number)
 }
@@ -328,6 +328,13 @@ pub fn round(x: f64) -> Result<Int, String> {
 
 pub fn abs(n: &Int) -> Int {
     n.abs()
+}
+
+/// `floor[n]`, `ceil[n]` and `round[n]` of an int that grows: the int
+/// itself, every digit (spec, Numbers That Keep Every Digit — it had been
+/// refused past 64 bits, where a float's was kept).
+pub fn itself(n: &Int) -> Int {
+    n.clone()
 }
 
 /// `float[n]` of an int that grows: its nearest float.

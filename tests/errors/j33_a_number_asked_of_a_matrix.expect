@@ -1,0 +1,3 @@
+j33_a_number_asked_of_a_matrix.co:2:1: `x in m` asks whether an item of m is x, and a matrix's items are its rows, which a number is not: `x in flatten[m]` asks its numbers
+  2 │ log[2.0 in m]
+    │ ^^^^^^^^^^^^^

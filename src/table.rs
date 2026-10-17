@@ -1557,7 +1557,7 @@ pub static ROWS: &[Row] = &[
     // entry by entry
     row!("core.contains", "", "contains", crow_runtime::core::contains, (Seq, ItemRef) -> Bool, never),
     row!("core.contains_text", "", "contains", crow_runtime::core::contains_text, (Str, Str) -> Bool, never),
-    row!("core.contains_number", "", "contains", crow_runtime::core::contains_number, (Tensor, Float) -> Bool, never),
+    row!("core.contains_number", "", "contains", crow_runtime::core::contains_number, (Tensor, Float) -> Bool, stops),
     // `xs[mask]` and `t[mask]`: the items, the rows, where it is true — the
     // index's own rows, reached by the lowering, never by name
     row!("core.__pick_items", "", "__pick_items", crow_runtime::core::pick_items, (Seq, Bools) -> List, stops),
@@ -1592,7 +1592,7 @@ pub static ROWS: &[Row] = &[
     row!("core.sort_ints", "", "sort", crow_runtime::core::sort_ints, (Ints) -> Ints, never),
     row!("core.sort_floats", "", "sort", crow_runtime::core::sort_floats, (Floats) -> Floats, never),
     row!("core.sort_strs", "", "sort", crow_runtime::core::sort_strs, (Texts) -> Texts, never),
-    row!("core.sort_tensor", "", "sort", crow_runtime::core::sort_tensor, (Tensor) -> Tensor, never),
+    row!("core.sort_tensor", "", "sort", crow_runtime::core::sort_tensor, (Tensor) -> Tensor, stops),
     row!("core.reverse", "", "reverse", crow_runtime::core::reverse, (List) -> List, never),
     Row { take: texts::reverse_taken, ..row!("core.reverse_text", "", "reverse", crow_runtime::core::reverse_text, (Str) -> Str, never) },
     row!("core.reverse_tensor", "", "reverse", crow_runtime::core::reverse_tensor, (Tensor) -> Tensor, never),
@@ -1738,6 +1738,7 @@ pub static ROWS: &[Row] = &[
     row!("core.__ceil_big", "", "__ceil_big", crow_runtime::int::ceil, (Float) -> Big, stops),
     row!("core.__round_big", "", "__round_big", crow_runtime::int::round, (Float) -> Big, stops),
     row!("core.__abs_big", "", "__abs_big", crow_runtime::int::abs, (Big) -> Big, never),
+    row!("core.__whole_big", "", "__whole_big", crow_runtime::int::itself, (Big) -> Big, never),
     row!("core.__min_big", "", "__min_big", crow_runtime::int::min, (Big, Big) -> Big, never),
     row!("core.__bitand_big", "", "__bitand_big", crow_runtime::bits::and_big, (Big, Big) -> Big, never),
     row!("core.__bitor_big", "", "__bitor_big", crow_runtime::bits::or_big, (Big, Big) -> Big, never),
@@ -1790,7 +1791,7 @@ pub static ROWS: &[Row] = &[
     row!("moments.moment_text", "", "moment", crow_runtime::moments::moment_text, (Str) -> Moment, value "time"),
     row!("moments.moment_in", "", "moment", crow_runtime::moments::moment_in, (Moment, Str) -> Moment, value "time"),
     row!("moments.moment_text_in", "", "moment", crow_runtime::moments::moment_text_in, (Str, Str) -> Moment, value "time"),
-    row!("moments.moment_of_seconds", "", "moment", crow_runtime::moments::moment_of_seconds, (Float) -> Moment, never),
+    row!("moments.moment_of_seconds", "", "moment", crow_runtime::moments::moment_of_seconds, (Float) -> Moment, stops),
     row!("moments.moment_self", "", "moment", crow_runtime::moments::moment_self, (Moment) -> Moment, never),
     row!("moments.bucket", "", "bucket", crow_runtime::moments::bucket, (Moment, Float) -> Moment, stops),
     row!("moments.min", "", "min", crow_runtime::moments::min_of, (Moment, Moment) -> Moment, never),
@@ -2673,8 +2674,10 @@ impl Kind {
                 Kind::Column => a == Arg::Column,
                 // a function shows as nothing, and JSON holds no function, frame or matrix
                 Kind::Shown | Kind::ShownDyn => a != Arg::Fn,
-                // (nor a connection, a response, a socket, a mailer or a stream)
-                Kind::Encoded => !matches!(a, Arg::Fn | Arg::Frame | Arg::Sparse | Arg::Column | Arg::Db | Arg::Response | Arg::Socket | Arg::Mailer | Arg::Stream),
+                // (nor a connection, a response, a socket, a mailer, a stream,
+                // or bytes — which `encode` had written as JSON's null, and
+                // the compiled program had not built: base64[b] is text)
+                Kind::Encoded => !matches!(a, Arg::Fn | Arg::Frame | Arg::Sparse | Arg::Column | Arg::Db | Arg::Response | Arg::Socket | Arg::Mailer | Arg::Stream | Arg::Bytes | Arg::Chunks),
                 Kind::Operand => matches!(a, Arg::Tensor | Arg::Int | Arg::Float),
                 Kind::Scalar => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth),
                 _ => true,
@@ -2726,6 +2729,13 @@ pub fn module_of_bare(name: &str, providers: &[&str], kinds: &[Arg]) -> Option<S
         return None;
     }
     if providers.len() == 1 {
+        // (unless its rows take none of these and the core's do: `slice[[],
+        // 1, 3]` under `use sys` had reached the layer's row of bytes in
+        // inference and the core's of lists in the lowering, and `type` of
+        // it was `unknown` compiled — crow check --self's pairs)
+        if unknown && row_taking(providers[0], name, kinds).is_none() && core_row(name, kinds).is_some() {
+            return None;
+        }
         return Some(providers[0].to_string());
     }
     let taking: Vec<&&str> = providers.iter().filter(|m| row_taking(m, name, kinds).is_some()).collect();
@@ -3091,6 +3101,19 @@ mod tests {
         assert!(core_row("contains", &[Arg::Column, Arg::Int]).is_none());
     }
 
+    /// A call whose list's items are not known stays the core's where the
+    /// one module that names it takes no list (`slice[[], 1, 3]` under `use
+    /// sys` had been typed as the layer's bytes), and JSON holds no bytes
+    /// (`encode` of them had answered null) — crow check --self.
+    #[test]
+    fn a_list_of_nothing_known_stays_the_cores_and_bytes_are_no_json() {
+        assert_eq!(module_of_bare("slice", &["sys"], &[Arg::AnyList, Arg::Int, Arg::Int]), None);
+        assert_eq!(module_of_bare("slice", &["sys"], &[Arg::Bytes, Arg::Int, Arg::Int]), Some("sys".to_string()));
+        assert!(core_row("encode", &[Arg::Bytes]).is_none());
+        assert!(core_row("encode", &[Arg::Chunks]).is_none());
+        assert!(core_row("encode", &[Arg::Map]).is_some());
+    }
+
     /// Every row is reachable: no earlier row of its name and module takes
     /// every argument it takes, or the first-fit lookup would never reach
     /// it (`str[column]` had been listed after the form that shows any
@@ -3169,6 +3192,7 @@ pub fn big_form(id: &str) -> Option<&'static Row> {
         "core.ceil" => "core.__ceil_big",
         "core.round" => "core.__round_big",
         "core.abs_int" => "core.__abs_big",
+        "core.floor_int" | "core.ceil_int" | "core.round_int" => "core.__whole_big",
         "core.min_ints" => "core.__min_big",
         "core.max_ints" => "core.__max_big",
         "core.sort_ints" => "core.__sort_big",

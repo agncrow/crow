@@ -5627,17 +5627,24 @@ fn expand_into(
         let mod_dir = file_path.parent().unwrap_or(source_dir);
         // (a module of the program's may not open the standard library's
         // layer either: the door is the compiler's own modules')
+        // (refused as a part's refusals are, never by leaving the process:
+        // a language server or a test lowering such a part had exited)
         if !sys_allowed(mod_dir) {
             let mut at = 0usize;
+            let mut opens = false;
             for st in &mod_stmts {
                 match st {
                     ast::Stmt::Line(n) => at = *n,
                     ast::Stmt::Use { path, .. } if path == "sys" => {
-                        eprintln!("{}: {}", file_path.display(), sys_refusal(at));
-                        process::exit(1);
+                        ex.refused.push(format!("{}: {}", file_path.display(), sys_refusal(at)));
+                        opens = true;
+                        break;
                     }
                     _ => {}
                 }
+            }
+            if opens {
+                continue;
             }
         }
         ex.depth += 1;

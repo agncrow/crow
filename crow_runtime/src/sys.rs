@@ -612,6 +612,13 @@ fn tls_config() -> Arc<rustls::ClientConfig> {
         .clone()
 }
 
+/// A wait of `seconds`: none where they are 0 or fewer, or more than a clock
+/// holds (`Duration::from_secs_f64` had panicked on `2 ^ 100` seconds, a
+/// stop with no line compiled — crow check --self).
+fn wait_of(seconds: f64) -> Option<std::time::Duration> {
+    if seconds > 0.0 { std::time::Duration::try_from_secs_f64(seconds).ok() } else { None }
+}
+
 /// `sys.open[host, port, tls, seconds]`: a connection to the host's port,
 /// behind TLS when asked, each read and write giving up after the seconds
 /// (none when they are 0), or the reason none could be made.
@@ -620,7 +627,7 @@ pub fn open(host: &str, port: i64, tls: bool, seconds: f64) -> Result<CrowStream
     if !(0..=65535).contains(&port) {
         return Err(format!("port {} is outside 0 to 65535", port));
     }
-    let timeout = (seconds > 0.0).then(|| std::time::Duration::from_secs_f64(seconds));
+    let timeout = wait_of(seconds);
     let addrs: Vec<std::net::SocketAddr> = (host, port as u16).to_socket_addrs().map_err(|e| format!("cannot resolve {}: {}", host, e))?.collect();
     if addrs.is_empty() {
         return Err(format!("cannot resolve {}", host));
@@ -679,12 +686,12 @@ pub fn recv(s: &CrowStream, most: i64, seconds: f64) -> Result<Bytes, String> {
     let Some(conn) = guard.as_mut() else { return Err("the stream is closed".to_string()) };
     // (a read given no seconds waits as the connection was opened to,
     // whatever the read before it waited)
-    let wait = if seconds > 0.0 { Some(std::time::Duration::from_secs_f64(seconds)) } else { s.0.wait };
+    let wait = if seconds > 0.0 { wait_of(seconds) } else { s.0.wait };
     // the wait is taken in slices, and ends with a stop: of the work this
     // is in — a derivation's query, whose flag is raised when nobody waits
     // for it any more — or of the program (the driver written in Crow
     // then tells the server; crow_db::driven lets the connection go)
-    let deadline = wait.map(|w| std::time::Instant::now() + w);
+    let deadline = wait.and_then(|w| std::time::Instant::now().checked_add(w));
     // what arrives is read into the thread's own buffer and copied out at
     // its size: a buffer of `most` bytes zeroed for every read (a driver
     // asks for megabytes, and an answer is often a few hundred bytes) had
@@ -876,6 +883,17 @@ mod file_lines_tests {
 
 #[cfg(test)]
 mod tests {
+    /// A wait of more seconds than a clock holds is none, as 0 is: it had
+    /// panicked converting `2 ^ 100` seconds (crow check --self).
+    #[test]
+    fn a_wait_past_what_a_clock_holds_is_none() {
+        assert_eq!(super::wait_of(0.0), None);
+        assert_eq!(super::wait_of(-1.0), None);
+        assert_eq!(super::wait_of(f64::NAN), None);
+        assert_eq!(super::wait_of(1.2676506002282294e30), None);
+        assert_eq!(super::wait_of(2.5), Some(std::time::Duration::from_millis(2500)));
+    }
+
     /// A plain connection reads ahead: small reads are served from the
     /// buffer, whole and in order, and a read past what arrived waits for
     /// the socket — the bytes a protocol reads a message at a time are the

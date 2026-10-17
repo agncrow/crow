@@ -840,7 +840,12 @@ impl<'a> Lowerer<'a> {
             }
             return;
         }
-        if !is_num_like(&lt) || !is_num_like(&rt) {
+        // a list of numbers (or of truths) beside numbers is its tensor, as
+        // the lowering makes it after this check (spec, Tensor Arithmetic)
+        let listed = |t: &Ty| matches!(t, Ty::List(i) if matches!(**i, Ty::Int | Ty::Float | Ty::Bool));
+        let plain = |t: &Ty| listed(t) || matches!(t, Ty::Int | Ty::Big | Ty::Float | Ty::Tensor(..) | Ty::Column(_));
+        let lists_as_numbers = (listed(&lt) || listed(&rt)) && plain(&lt) && plain(&rt) && !matches!(op, BinOp::Mod);
+        if !lists_as_numbers && (!is_num_like(&lt) || !is_num_like(&rt)) {
             let op_str = match op {
                 BinOp::Add => "+",
                 BinOp::Sub => "-",
@@ -1276,6 +1281,26 @@ impl<'a> Lowerer<'a> {
                         }
                     }
                 }
+            }
+        }
+
+        // a matrix's items are its rows (spec, Collections): `sort` orders
+        // numbers or text, and rows have no order; `x in m` asks whether a
+        // row is x, which a number is not — refused where the rank shows,
+        // in both modes (the runtime stops in the same words where it shows
+        // only as the program runs)
+        if !own {
+            let rows = |t: &Ty| matches!(t.payload(), Ty::Tensor(_, Some(d)) if d.len() >= 2);
+            if name == "sort" && argc == 1 && rows(&arg_type(self, 0)) {
+                self.refuse(crow_runtime::core::SORT_ROWS.to_string());
+            }
+            if name == "contains" && argc == 2 && rows(&arg_type(self, 0)) && matches!(arg_type(self, 1).payload(), Ty::Int | Ty::Big | Ty::Float) {
+                self.refuse(crow_runtime::core::NUMBER_IN_ROWS.to_string());
+            }
+            // (`join` shows each item as text, and a row is no number: it had
+            // joined a matrix's numbers)
+            if name == "join" && argc == 2 && rows(&arg_type(self, 0)) {
+                self.refuse("join[] joins items that show as text — text, numbers, truths — and a matrix's items are its rows: join[flatten[m], sep] joins its numbers".to_string());
             }
         }
 
@@ -2486,6 +2511,9 @@ pub(crate) fn item_kind(t: &Ty) -> Option<(String, String)> {
         // --self)
         Ty::Moment => ("moments".to_string(), "a moment".to_string()),
         Ty::Column(_) => ("frame's columns".to_string(), "a frame's column".to_string()),
+        // (the layer's bytes: pushed onto a list of ints, the compiled
+        // program had not built — crow check --self)
+        Ty::Bytes => ("bytes".to_string(), "bytes".to_string()),
         _ => return None,
     })
 }

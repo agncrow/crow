@@ -549,6 +549,7 @@ pub fn fft2(t: &CrowTensor) -> Result<Vec<CrowTensor>, String> {
 pub fn conv(a: &CrowTensor, k: &CrowTensor) -> Result<CrowTensor, String> {
     dims("conv", a, 1)?;
     dims("conv", k, 1)?;
+    not_empty("conv", a, k)?;
     Ok(a.conv(k))
 }
 
@@ -556,7 +557,18 @@ pub fn conv(a: &CrowTensor, k: &CrowTensor) -> Result<CrowTensor, String> {
 pub fn conv2d(a: &CrowTensor, k: &CrowTensor) -> Result<CrowTensor, String> {
     dims("conv2d", a, 2)?;
     dims("conv2d", k, 2)?;
+    not_empty("conv2d", a, k)?;
     Ok(a.conv2d(k))
+}
+
+/// A convolution's signal and kernel each hold a number, as numpy's do
+/// (`conv[[], []]` had overflowed counting its answer, `0 + 0 - 1`, and one
+/// empty side had answered zeros — crow check --self's pairs).
+fn not_empty(who: &str, a: &CrowTensor, k: &CrowTensor) -> Result<(), String> {
+    if a.is_empty() || k.is_empty() {
+        return Err(format!("{}: a signal and a kernel of one number or more, and {} is empty", who, if a.is_empty() { "the signal" } else { "the kernel" }));
+    }
+    Ok(())
 }
 
 /// `hamming[n]`.

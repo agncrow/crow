@@ -1217,7 +1217,10 @@ impl Emitter {
 
     /// Whether a value shows inside a list, a map or a record.
     fn shows_inside(&self, t: &Ty) -> bool {
-        matches!(t, Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) | Ty::Frame(_) | Ty::Column(_) | Ty::Sparse)
+        // (and the layer's bytes, a stream, a socket, a mailer: a list of
+        // bytes interpolated had shown in Rust's debug form, `Bytes([97,
+        // 98])`, where the interpreter shows `<2 bytes>` — crow check --self)
+        matches!(t, Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) | Ty::Frame(_) | Ty::Column(_) | Ty::Sparse | Ty::Bytes | Ty::Stream | Ty::Socket | Ty::Mailer | Ty::Moment)
             || self.kernel_displayable(t)
     }
 

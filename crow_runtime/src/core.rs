@@ -126,11 +126,25 @@ pub fn slice_taken<T>(mut v: Vec<T>, start: i64, end: i64) -> Vec<T> {
     v
 }
 
-/// `slice[tensor, start, end]` along the first axis, its positions as the
-/// array form's (`slice_bounds`); an empty slice is the empty 1-D tensor.
+/// How many items a collection builtin walks in a tensor: a vector's
+/// numbers, a matrix's rows (spec, Collections — what `len` counts and an
+/// index reads).
+fn items_of(t: &crate::tensor::CrowTensor) -> usize {
+    t.shape().first().copied().unwrap_or(0)
+}
+
+/// `slice[tensor, start, end]`: its items from `start` to `end` — a
+/// vector's numbers, a matrix's rows — their positions as the array form's
+/// (`slice_bounds`), counted in items; an empty slice keeps the rest of
+/// the shape (a matrix of no rows). (The positions had been counted in
+/// numbers: `slice[m, -1, 3]` of three rows was empty, and `slice[m, 0,
+/// 5]` stopped.)
 pub fn slice_tensor(t: &crate::tensor::CrowTensor, start: i64, end: i64) -> crate::tensor::CrowTensor {
-    let (s, e) = slice_bounds(start, end, t.len());
-    if s >= e { crate::tensor::CrowTensor::from_vec(vec![], vec![0]) } else { t.slice(0, s, e) }
+    let (s, e) = slice_bounds(start, end, items_of(t));
+    if t.ndim() == 0 {
+        return crate::tensor::CrowTensor::from_vec(vec![], vec![0]);
+    }
+    t.slice(0, s, e.max(s))
 }
 
 /// `slice[text, start, end]` counts characters, so a slice never lands
@@ -168,13 +182,21 @@ pub fn sort_floats(mut v: Vec<f64>) -> Vec<f64> {
     v
 }
 
-/// `sort[t]` of a tensor: its numbers in order, as one axis. (Compiled,
-/// a NaN among them panicked.)
-pub fn sort_tensor(t: &crate::tensor::CrowTensor) -> crate::tensor::CrowTensor {
+/// `sort[t]` of a vector: its numbers in order. (Compiled, a NaN among
+/// them panicked.) A matrix's items are its rows, which have no order, as
+/// lists have none (spec, Collections): refused before the program runs
+/// where its rank is known, and here where it shows only as it runs.
+pub fn sort_tensor(t: &crate::tensor::CrowTensor) -> Result<crate::tensor::CrowTensor, String> {
+    if t.ndim() >= 2 {
+        return Err(SORT_ROWS.to_string());
+    }
     let v = sort_floats(t.to_vec());
     let n = v.len();
-    crate::tensor::CrowTensor::from_vec(v, vec![n])
+    Ok(crate::tensor::CrowTensor::from_vec(v, vec![n]))
 }
+
+/// The words `sort` of a matrix is refused with, in both modes.
+pub const SORT_ROWS: &str = "sort[] orders numbers or text, and a matrix's items are its rows, which have no order: sort[flatten[m]] orders its numbers";
 
 pub fn sort_strs(mut v: Vec<String>) -> Vec<String> {
     v.sort();
@@ -471,10 +493,19 @@ pub fn contains_text(s: &str, part: &str) -> bool {
     s.contains(part)
 }
 
-/// `x in tensor`.
-pub fn contains_number(t: &crate::tensor::CrowTensor, x: f64) -> bool {
-    t.to_vec().contains(&x)
+/// `x in tensor` of a vector: whether one of its numbers is `x`. A
+/// matrix's items are its rows, and a number is none of them: refused
+/// before the program runs where the rank is known, and here where it
+/// shows only as it runs (it had asked the matrix's numbers).
+pub fn contains_number(t: &crate::tensor::CrowTensor, x: f64) -> Result<bool, String> {
+    if t.ndim() >= 2 {
+        return Err(NUMBER_IN_ROWS.to_string());
+    }
+    Ok(t.numbers().contains(&x))
 }
+
+/// The words `x in m` of a number and a matrix is refused with.
+pub const NUMBER_IN_ROWS: &str = "`x in m` asks whether an item of m is x, and a matrix's items are its rows, which a number is not: `x in flatten[m]` asks its numbers";
 
 /// `keys[map]`, in order.
 pub fn keys<K: Clone, T>(m: &BTreeMap<K, T>) -> Vec<K> {
@@ -512,20 +543,29 @@ pub fn reverse_text_taken(s: String) -> String {
     s.chars().rev().collect()
 }
 
-/// `reverse[tensor]`: its numbers backwards, as one axis.
+/// `reverse[tensor]`: its items backwards — a vector's numbers, a matrix's
+/// rows — the shape kept. (It had answered the numbers backwards as one
+/// axis, which a matrix's type did not say.)
 pub fn reverse_tensor(t: &crate::tensor::CrowTensor) -> crate::tensor::CrowTensor {
-    let mut v = t.to_vec();
-    v.reverse();
-    let n = v.len();
-    crate::tensor::CrowTensor::from_vec(v, vec![n])
+    let rows = items_of(t);
+    let v = t.to_vec();
+    if t.ndim() == 0 || rows == 0 || v.is_empty() {
+        return crate::tensor::CrowTensor::from_vec(v, t.shape().to_vec());
+    }
+    let width = v.len() / rows;
+    let out: Vec<f64> = v.chunks_exact(width).rev().flatten().copied().collect();
+    crate::tensor::CrowTensor::from_vec(out, t.shape().to_vec())
 }
 
-/// `pop[tensor]`: its numbers but the last, as one axis.
+/// `pop[tensor]`: all its items but the last — a vector's numbers, a
+/// matrix's rows — the rest of the shape kept; an empty tensor stays empty.
+/// (It had dropped the last number and answered one axis.)
 pub fn pop_tensor(t: &crate::tensor::CrowTensor) -> crate::tensor::CrowTensor {
-    let mut v = t.to_vec();
-    v.pop();
-    let n = v.len();
-    crate::tensor::CrowTensor::from_vec(v, vec![n])
+    let rows = items_of(t);
+    if t.ndim() == 0 || rows == 0 {
+        return t.clone();
+    }
+    t.slice(0, 0, rows - 1)
 }
 
 /// A vector of whole numbers as a compiled function keeps it (`Vec<i64>`,
@@ -939,6 +979,30 @@ mod tests {
         let t = crate::tensor::CrowTensor::from_vec(vec![1.0, 2.0, 3.0], vec![3]);
         assert_eq!(slice_tensor(&t, 1, 99).to_vec(), vec![2.0, 3.0]);
         assert_eq!(slice_tensor(&t, 2, 1).len(), 0);
+    }
+
+    /// A matrix's items are its rows: `slice`, `reverse` and `pop` count
+    /// and keep rows, and `sort` and `x in m` of a number are refused.
+    #[test]
+    fn a_matrix_is_walked_by_its_rows() {
+        let m = crate::tensor::CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![3, 2]);
+        let last = slice_tensor(&m, -1, 3);
+        assert_eq!((last.shape().to_vec(), last.to_vec()), (vec![1, 2], vec![5.0, 6.0]));
+        assert_eq!(slice_tensor(&m, 0, 5).shape(), &[3, 2]);
+        assert_eq!(slice_tensor(&m, 2, 1).shape(), &[0, 2]);
+        let r = reverse_tensor(&m);
+        assert_eq!((r.shape().to_vec(), r.to_vec()), (vec![3, 2], vec![5.0, 6.0, 3.0, 4.0, 1.0, 2.0]));
+        let p = pop_tensor(&m);
+        assert_eq!((p.shape().to_vec(), p.to_vec()), (vec![2, 2], vec![1.0, 2.0, 3.0, 4.0]));
+        let none = pop_tensor(&pop_tensor(&pop_tensor(&m)));
+        assert_eq!(pop_tensor(&none).shape(), &[0, 2]);
+        assert!(sort_tensor(&m).is_err());
+        assert!(contains_number(&m, 2.0).is_err());
+        let v = crate::tensor::CrowTensor::from_vec(vec![3.0, 1.0, 2.0], vec![3]);
+        assert_eq!(reverse_tensor(&v).to_vec(), vec![2.0, 1.0, 3.0]);
+        assert_eq!(pop_tensor(&v).to_vec(), vec![3.0, 1.0]);
+        assert_eq!(sort_tensor(&v).map(|t| t.to_vec()), Ok(vec![1.0, 2.0, 3.0]));
+        assert_eq!(contains_number(&v, 2.0), Ok(true));
     }
 
     #[test]

@@ -1381,8 +1381,10 @@ pub fn cast_column(c: &CrowColumn, to: &str) -> Result<CrowColumn, String> {
                 } else {
                     match col {
                         Column::DateTime(m, o) => Some((m[i], o[i])),
-                        Column::Int(v) => Some((v[i].saturating_mul(1000), 0)),
-                        Column::Float(v) => v[i].is_finite().then(|| ((v[i] * 1000.0).round() as i64, 0)),
+                        // (a number past the moments one holds is no moment:
+                        // missing, as a cell that cannot be converted is)
+                        Column::Int(v) => v[i].checked_mul(1000).filter(|ms| ms.abs() <= crate::moments::MOST_MS).map(|ms| (ms, 0)),
+                        Column::Float(v) => crate::moments::ms_within(v[i]).map(|ms| (ms, 0)),
                         Column::Str(t) => crate::frame::parse_datetime(t.get(i)),
                         Column::Bool(_) => None,
                     }

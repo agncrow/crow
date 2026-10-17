@@ -253,8 +253,8 @@ fn binop_rest(left: &CrowValue, op: &BinOp, right: &CrowValue) -> Result<CrowVal
             (Value::Float(a), Value::Float(b)) => Ok(CrowValue::ok(Value::Float(a / b))),
             // tensor / tensor → error (use ./ for element-wise)
             (Value::NumArray(_), Value::NumArray(_)) => Err("use ./ for element-wise tensor division".to_string()),
-            (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.mul_scalar(1.0 / *b as f64))))),
-            (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.mul_scalar(1.0 / *b))))),
+            (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.div_scalar(*b as f64))))),
+            (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.div_scalar(*b))))),
             (Value::Int(a), Value::NumArray(b)) => {
                 let scalar_tensor = CrowTensor::full(b.shape().to_vec(), *a as f64);
                 Ok(CrowValue::ok(Value::NumArray(Box::new(scalar_tensor.div(b)))))
@@ -301,8 +301,8 @@ fn binop_rest(left: &CrowValue, op: &BinOp, right: &CrowValue) -> Result<CrowVal
         },
         BinOp::ElemDiv => match (&coerce_numeric_array(l), &coerce_numeric_array(r)) {
             (Value::NumArray(a), Value::NumArray(b)) => a.try_elementwise(b, "./").map(|t| CrowValue::ok(Value::NumArray(Box::new(t)))),
-            (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.mul_scalar(1.0 / *b as f64))))),
-            (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.mul_scalar(1.0 / *b))))),
+            (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.div_scalar(*b as f64))))),
+            (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.div_scalar(*b))))),
             (Value::Int(a), Value::NumArray(b)) => {
                 let scalar_tensor = CrowTensor::full(b.shape().to_vec(), *a as f64);
                 Ok(CrowValue::ok(Value::NumArray(Box::new(scalar_tensor.div(b)))))

@@ -3,8 +3,9 @@
 //! x - 1.0` reads each element of its tensors once and writes one tensor,
 //! where each operator had made a tensor of its own. An element is what the
 //! operators compute, in their order and with their formulas — a tensor
-//! over a number multiplies by the number's reciprocal, as `t / s` does, and
-//! a number minus a tensor adds the number to the tensor's negation — so the
+//! over a number divides each number, as `t / s` does (both had multiplied
+//! by the reciprocal, which rounds twice), and a number minus a tensor adds
+//! the number to the tensor's negation — so the
 //! answer is the operators' to the bit. A shape that does not meet stops
 //! with the words the operator stops with, at the first operator, in the
 //! operators' order, whose operands do not meet. A tensor on the GPU, whose
@@ -312,10 +313,7 @@ fn eval(node: &Node, numbers: &[Option<f64>], reads: &[Option<Reading<'_>>], sha
                     match op {
                         Op::Add => a.iter_mut().for_each(|x| *x += s),
                         Op::Sub => a.iter_mut().for_each(|x| *x += -s),
-                        Op::Div | Op::ElemDiv => {
-                            let reciprocal = 1.0 / s;
-                            a.iter_mut().for_each(|x| *x *= reciprocal)
-                        }
+                        Op::Div | Op::ElemDiv => a.iter_mut().for_each(|x| *x /= s),
                         Op::ElemPow => a.iter_mut().for_each(|x| *x = x.powf(s)),
                         _ => a.iter_mut().for_each(|x| *x *= s),
                     }
@@ -366,7 +364,7 @@ fn by_operators(node: &Node, operands: &[Operand]) -> Result<Value, String> {
                 (Value::Tensor(a), Value::Number(s)) => match op {
                     Op::Add => a.add_scalar(s),
                     Op::Sub => a.add_scalar(-s),
-                    Op::Div | Op::ElemDiv => a.mul_scalar(1.0 / s),
+                    Op::Div | Op::ElemDiv => a.div_scalar(s),
                     Op::ElemPow => a.map(|x| x.powf(s)),
                     _ => a.mul_scalar(s),
                 },
