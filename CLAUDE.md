@@ -832,7 +832,16 @@ steps on every push and must be green.
   `unexercised.txt`. `tests/self/known.txt` is the ratchet (a new finding
   or a gone one fails; `--bless` rewrites it). `--only word`,
   `--lower-only` (seconds), `--clean` (the builders' caches under
-  target/crow_self/build/w*, kept between runs).
+  target/crow_self/build/w*, kept between runs). Three more lists, changed
+  only by `--bless` (which keeps the reasons people wrote), hold what is
+  added later: `tests/self/not-called.txt` (builtins no case calls),
+  `agreement-only.txt` (builtins whose cases run, none answered by
+  `tests/self/reference.py`) and `forms.txt` (the AST's statements,
+  expressions and operators no case reaches, read from `src/ast.rs` by
+  `include_str!`) — a new builtin, module or form is tested or the gate
+  names it. The operator family is the AST's own (`operators`, by serde
+  from the variant names), and a row's import is the registry's
+  (`modules::module_by_path`).
 - A call evaluates every argument, left to right, before the leftmost
   failure is its value (spec, Auto-Propagation; 2026-10-17): the emitter's
   `propagation_block` binds each argument that can fail (`_prop_N`) and

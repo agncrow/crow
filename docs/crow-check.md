@@ -210,16 +210,25 @@ with no test someone has to remember to write:
   parameters take — the kinds' values tried until a call lowers — then each
   parameter varied over the catalog's values: the usual one and its edges
   (zero, negative, empty, past 64 bits, text that reads as a number, a
-  value that can fail, one that failed);
+  value that can fail, one that failed) — and every two of its parameters
+  varied at once over the kinds' edges (`PAIRED`), where a row's
+  assumptions meet (`slice[m, -1, 3]` of a matrix, a matrix and a negative
+  start each tried alone, had counted its numbers);
 - every collection read and written at every kind of index: a position,
   one from the end, past the end, a key, a mask, a column of bools;
-- every operator over every pair of operands, and `in` and `not in`;
+- every operator over every pair of operands — the operators read from
+  the AST itself, so one added there is covered with no word here — and
+  `in` and `not in`;
 - the shapes a value meets: shown, measured, spliced into text, decided
   on, walked, collected, handed to a function and back, held in a record,
-  a list and a map, copied, lent, reassigned, written as JSON and read
-  back;
+  a list and a map, copied, lent, reassigned, assigned two at once, walked
+  by a `while` that skips and stops, written as JSON and read back;
+- a value carried two steps — through a function, a function value, a
+  record, a list, a map, a loop, two variables, a branch;
 - a helper called with two kinds in one program (a copy per signature);
-- ints past 64 bits, and records that link records of their kind.
+- `fmt` by its named options, ints past 64 bits, records that link records
+  of their kind, and the databases: SQLite in memory, a scratch Postgres
+  cluster (where `initdb` is on the PATH) and a ClickHouse stand-in.
 
 Each case is lowered first, in the process, in seconds. A refusal is held
 to the rules every message keeps (it names a line, and only what the
@@ -241,12 +250,25 @@ configuration — a text, a CSV, a JSON document and a directory to read,
 the files a case writes its own — with the environment cleared (no key,
 no token, no database's address), the draws seeded, the clock standing
 still and an empty replay answering every request and every database
-server's statement, so nothing reaches the network or a model. A program
-can call every row this way but two of the standard library's own layer
-no module reaches; the rest of that layer and the database drivers' rows
-are reached through the modules written in Crow, which `unexercised.txt`
-names for each. Every finding shows its case's code beside its id —
-`op/^/int/bool` is `log[3 ^ true]`: the family, then what it holds.
+server's statement, so nothing reaches the network or a model. The rows
+that speak to a server speak to the check's own, on the loopback: an echo
+server that answers HTTP (the standard library's own layer — `use sys`,
+which the check and its cases may open — its streams, `exchange`,
+`fetch`), a ClickHouse stand-in and the scratch Postgres cluster; a case
+against one of them runs without the replay, and fails as a finding of
+its own (`live`) if it fails against a server the check started — two
+modes that cannot reach a server agree. Every finding shows its case's
+code beside its id — `op/^/int/bool` is `log[3 ^ true]`: the family, then
+what it holds.
+
+**Agreeing is not being right.** A value handed back — through a
+function, a record, a list, a loop — must show as it shows alone, and
+`tests/self/reference.py` answers what a builtin, an operator, an index,
+a write or `fmt` computes from the spec's words, without Crow's runtime:
+Python's own arithmetic and text, the system's libm for a number's
+functions (Crow's), numpy for math's reductions (the spec holds `sum` to
+it), Rust's float display. A case answered otherwise is a finding,
+`wrong`; one the reference has no answer for is skipped, never guessed.
 
 A disagreement, a crash, a hang, a build the Rust compiler refuses, or an
 internal error in any of them is a finding. Every finding is written to
@@ -257,6 +279,20 @@ effects, servers, files, the network — to `unexercised.txt`.
 The findings known are listed in `tests/self/known.txt`, and the list only
 shrinks: a new finding fails the check, and so does a listed one no run
 finds any more (strike it, or `--bless` to write the list again).
+
+Three more lists hold what is added later, so it is tested or the gate
+names it — each changed only by `--bless`, which keeps the reasons people
+wrote:
+
+| List | Holds | A new entry means |
+|---|---|---|
+| `tests/self/not-called.txt` | the builtins no case calls, with why | a builtin the cases' kinds and the registry's modules do not reach |
+| `tests/self/agreement-only.txt` | the builtins whose cases run and agree, none of which the reference answers, with why | a builtin with no right answer: give it one in the reference, or say why not |
+| `tests/self/forms.txt` | the forms of the language (`src/ast.rs`'s statements, expressions and operators, read from the source) no case reaches | a form with no case |
+
+A builtin the machine cannot reach (no `initdb`, a scratch cluster that
+did not start) and a case the reference answers only with a library the
+machine lacks (numpy) are noted, never failing.
 
 Every process the check starts is held to a budget: together they may
 hold the machine's memory less 9 GB kept for the system (half of a

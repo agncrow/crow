@@ -15,9 +15,11 @@ an int, no exponent), text is quoted only inside a list or a map.
 
 Usage: reference.py CASES.jsonl — each line {"id", "what", "args", and
 "seen" (the case's own lines) with "end" (how it stopped, or ""), or
-"refused" (what refused it)}. Prints a JSON line per case answered
-otherwise (`kind` "wrong"), per refused case it answers (`kind` "refused":
-a refusal may be the spec's), then `{"answered": n, "skipped": m}`.
+"refused" (what refused it)}. Prints a JSON line per case it answers
+(`kind` "answered"), per case answered otherwise (`kind` "wrong"), per
+refused case it answers (`kind` "refused": a refusal may be the spec's),
+per case it would answer with a library this machine lacks (`kind`
+"needs"), then `{"answered": n, "skipped": m}`.
 """
 
 import json
@@ -40,6 +42,15 @@ class Err(Exception):
 
 class Skip(Exception):
     """No reference for this call."""
+
+
+class Needs(Skip):
+    """A reference this machine lacks the library for (numpy, scipy): the
+    case is not answered here, and its builtin is not one with no answer."""
+
+    def __init__(self, library):
+        super().__init__(library)
+        self.library = library
 
 
 class L(list):
@@ -837,7 +848,9 @@ def math_unary(name):
 
 def reduced(name):
     def g(x):
-        if numpy is None or isinstance(x, bool):
+        if numpy is None:
+            raise Needs("numpy")
+        if isinstance(x, bool):
             raise Skip()
         if isinstance(x, L) and x and all(isinstance(b, bool) for b in x):
             x = T([1.0 if b else 0.0 for b in x], [len(x)])
@@ -858,14 +871,18 @@ def reduced(name):
 
 
 def f_linspace(a, b, n):
-    if not (is_num(a) and is_num(b) and is_int(n)) or numpy is None or n < 0 or n > 1000:
+    if not (is_num(a) and is_num(b) and is_int(n)) or n < 0 or n > 1000:
         raise Skip()
+    if numpy is None:
+        raise Needs("numpy")
     return T([float(v) for v in numpy.linspace(float(a), float(b), n)], [n])
 
 
 def f_arange(a, b, step):
-    if not all(is_num(v) and not isinstance(v, bool) for v in (a, b, step)) or numpy is None:
+    if not all(is_num(v) and not isinstance(v, bool) for v in (a, b, step)):
         raise Skip()
+    if numpy is None:
+        raise Needs("numpy")
     if step == 0:
         raise Err()
     count = (float(b) - float(a)) / float(step)
@@ -1634,12 +1651,17 @@ def main():
             case = json.loads(line)
             try:
                 expected = answer(case["what"], case["args"])
+            except Needs as n:
+                print(json.dumps({"kind": "needs", "id": case["id"], "library": n.library}))
+                skipped += 1
+                continue
             except Skip:
                 skipped += 1
                 continue
             except Err:
                 expected = None
             answered += 1
+            print(json.dumps({"kind": "answered", "id": case["id"]}))
             if isinstance(expected, Near) and "seen" in case and not case.get("end"):
                 if not near(case["seen"], expected):
                     print(json.dumps({"kind": "wrong", "id": case["id"], "expected": str(expected), "seen": case["seen"]}))

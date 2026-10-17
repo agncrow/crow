@@ -1,0 +1,304 @@
+# crow check --self: the builtins whose cases run and agree, none of which
+# tests/self/reference.py answers, one per line (the row, a tab, why). A new builtin
+# gets its answer in the reference, or its line here; one the reference comes to
+# answer fails the check until it is struck (--bless rewrites the list).
+bits.bitand	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+bits.bitcount	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+bits.bitor	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+bits.bitxor	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+bits.char	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+bits.code	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+bits.shift	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+chart.cvd	an indicator: no reference yet (pandas's rolling and ewm are the plan)
+chart.ema	an indicator: no reference yet (pandas's rolling and ewm are the plan)
+chart.macd	an indicator: no reference yet (pandas's rolling and ewm are the plan)
+chart.rolling_sum	an indicator: no reference yet (pandas's rolling and ewm are the plan)
+chart.rsi	an indicator: no reference yet (pandas's rolling and ewm are the plan)
+chart.rsi_buckets	an indicator: no reference yet (pandas's rolling and ewm are the plan)
+chart.sma	an indicator: no reference yet (pandas's rolling and ewm are the plan)
+chart.vwap	an indicator: no reference yet (pandas's rolling and ewm are the plan)
+chart.vwap_trailing	an indicator: no reference yet (pandas's rolling and ewm are the plan)
+core.args	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+core.env	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+core.env_or	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+core.exit	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+core.exit_code	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+core.fraction	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+core.fraction_of_decimal	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+core.fraction_of_int	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+core.fraction_same	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+core.halt	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+core.input	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+core.input_prompt	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+core.map_new	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+core.rand	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
+core.rand_between	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
+core.rand_int	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
+core.request	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+core.round_decimal_places	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+core.shell	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+core.sleep	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+display.fmt	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+display.log	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+doc.chapters	Markdown rendered: no reference renderer
+doc.document	Markdown rendered: no reference renderer
+doc.markdown	Markdown rendered: no reference renderer
+doc.menu	Markdown rendered: no reference renderer
+doc.pager	Markdown rendered: no reference renderer
+doc.plain	Markdown rendered: no reference renderer
+frame.bucket	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.complete	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.complete_in	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.complete_one	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.fill	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.group	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.group_keys	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.head	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.join	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.join_how	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.join_keys	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.join_keys_how	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.load	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.load_asked	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.new	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.pivot	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.rename	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.sample	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.save	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.select	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.sort	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.sort_by	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.sort_keys	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.sort_keys_by	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.sort_keys_each	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.stack	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.stats	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.sub_column	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.tail	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.unique	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.unique_rows	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.unpivot	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.unpivot_one	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.where	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.window	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.window_one	frames: held to pandas by tests/parity/185, no reference per case yet
+frame.with	frames: held to pandas by tests/parity/185, no reference per case yet
+hash.hash	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+io.cp	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+io.csv	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+io.csv_asked	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+io.exists	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+io.lines	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+io.lines_asked	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+io.ls	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+io.mkdir	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+io.mv	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+io.read	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+io.read_asked	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+io.rm	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+io.write	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+json.encode	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+json.parse	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+llm.ask	a model's reply: the empty replay answers, and no reference speaks for a model
+llm.ask_more	a model's reply: the empty replay answers, and no reference speaks for a model
+llm.chat	a model's reply: the empty replay answers, and no reference speaks for a model
+llm.embed	a model's reply: the empty replay answers, and no reference speaks for a model
+llm.follow	a model's reply: the empty replay answers, and no reference speaks for a model
+llm.next_piece	a model's reply: the empty replay answers, and no reference speaks for a model
+llm.reach	a model's reply: the empty replay answers, and no reference speaks for a model
+llm.said	a model's reply: the empty replay answers, and no reference speaks for a model
+llm.told	a model's reply: the empty replay answers, and no reference speaks for a model
+llm.whole	a model's reply: the empty replay answers, and no reference speaks for a model
+math.abs_t	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.argmax	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.argmin	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.argsort	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.atan2	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.bandpass	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.bernoulli	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
+math.bessel	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.beta_dist	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
+math.ceil_t	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.choice	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
+math.cholesky	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.choose	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.complex	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.cond	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.conjugate	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.conv	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.conv2d	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.cumprod	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.cumsum	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.dense	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.dense_of	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.det	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.diag	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.dot	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.eigen	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.exponential	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
+math.eye	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.factorial	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.fft	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.fft2	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.flatten	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.floor_t	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.full	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.gamma	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.gamma_dist	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
+math.hamming	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.hanning	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.highpass	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.ifft	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.imag	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.inv	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.lowpass	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.lstsq	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.magnitude	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.nnz	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.normal	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
+math.onehot	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.ones	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.permutation	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.phase	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.pinv	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.poisson	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
+math.qr	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.randn	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
+math.rank	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.real	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.reshape	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.round_t	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.seed	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.shuffle	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
+math.sign_n	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.sign_t	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.solve	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.solve_sparse	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.sparse	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.sparse_coo	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.spectrogram	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.spmv	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.stft	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.svd	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.tensor	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.tensor_of_columns	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.tensor_of_frame	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.topk	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.transpose	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.tril	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.triu	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.uniform	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
+math.unique	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.zeros	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+moments.now	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+nn.bce	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+nn.crossentropy	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+nn.gelu	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+nn.linear	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+nn.mse	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+nn.relu	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+nn.sigmoid	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+nn.softmax	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+stats.anova	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+stats.chisq	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+stats.corr	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+stats.cov	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+stats.fit	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+stats.kstest	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+stats.linreg	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+stats.median	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+stats.percentile	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+stats.std	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+stats.ttest	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+stats.var	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+stats.zscore	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+sys.alive	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.answer	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.base64	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.base64url	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.betainc	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.binary	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.byte	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.bytes	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.civil	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.close	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.concat	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.concat_all	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.copy_of_frame	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.csv_rows	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.digest	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.exchange	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.exchange_on	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.fetch	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.file	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.file_lines	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.find	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.format_of	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.format_sniffed	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.frame_csv	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.frame_json	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.frame_of_csv	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.frame_of_csv_bytes	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.frame_of_json	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.frame_of_parquet	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.frame_of_postgres	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.frame_of_rowbinary	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.frame_parquet	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.gammainc	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.hash	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.hex	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.hmac	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.ieee	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.leftover	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.lgamma	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.machine	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.mailer_field	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.mask	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.note	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.noted	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.open	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.pack	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.process	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.put	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.random	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
+sys.read_head	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.recorded	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.recording	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.recv	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.redirected	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.rehearsing	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.remote	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.replayed	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.replaying	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.reply	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.rowbinary_of_frame	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.same	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.secure	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.send	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.shaped	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.slice	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.socket_of	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.store	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.stream_of	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.tensor_of_frame	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.text	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.text_with	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.unbase64	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.unread	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.upgrade	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.with_query	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.xor	the standard library's own layer: bytes, streams and protocols no reference models yet
+text.decode	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+text.encode	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+text.matches	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+text.sub	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+web.auth.sign	a response or a protocol no reference models yet
+web.auth.verify	a response or a protocol no reference models yet
+web.mail.mail	a response or a protocol no reference models yet
+web.mail.smtp	a response or a protocol no reference models yet
+web.msgpack	a response or a protocol no reference models yet
+web.ws.close_socket	a response or a protocol no reference models yet
+web.ws.recv_for	a response or a protocol no reference models yet
+web.ws.recv_text	a response or a protocol no reference models yet
+web.ws.send_text	a response or a protocol no reference models yet
+web.ws.socket	a response or a protocol no reference models yet

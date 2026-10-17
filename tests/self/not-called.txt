@@ -1,0 +1,5 @@
+# crow check --self: the builtins no case calls, one per line (the row, a tab, why).
+# A builtin no case reaches fails the check until it is listed here with why, and a
+# listed one the cases reach fails it until it is struck (--bless rewrites the list).
+db.clickhouse.ch_cancel	a driver's own row, reached through use db (the db family): a stop abandoning a statement in flight calls it, which tests/query_cancel.rs holds in both modes
+db.postgres.pg_cancel	a driver's own row, reached through use db (the db family): a stop abandoning a statement in flight calls it, which tests/query_cancel.rs holds in both modes

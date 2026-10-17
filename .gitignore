@@ -78,3 +78,6 @@ tests/bench/data/
 editors/vscode/*.vsix
 editors/vscode/node_modules/
 !tests/self/known.txt
+!tests/self/not-called.txt
+!tests/self/agreement-only.txt
+!tests/self/forms.txt

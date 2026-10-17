@@ -35,6 +35,12 @@
 //! row's assumptions meet. The rows that speak to a server speak to the
 //! check's own, on the loopback: an echo server, a ClickHouse stand-in and
 //! a scratch Postgres cluster (`Servers`).
+//!
+//! And what is added later is tested, or the gate names it: three lists
+//! beside `known.txt`, changed only by `--bless` — the builtins no case
+//! calls (`not-called.txt`), those no case of which the reference answers
+//! (`agreement-only.txt`), and the forms of the language, read from
+//! `src/ast.rs`, no case reaches (`forms.txt`).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -471,6 +477,17 @@ fn form_cases(all: &[Val]) -> Vec<Case> {
             ("json", vec![format!("log[json[encode[{}]]]", e)]),
             ("negated", vec![format!("log[not {}]", e)]),
             ("minus", vec![format!("log[-{}]", e)]),
+            ("multi", vec![format!("a, b = {0}, {0}", e), "log[a]".to_string(), "log[b]".to_string()]),
+            (
+                "while-skip",
+                vec![
+                    format!("v = {}", e),
+                    "i = 0".to_string(),
+                    "n = 0".to_string(),
+                    "while true\n    if i gte len[v]\n        break\n    i = i + 1\n    if i eq 1\n        continue\n    n = n + 1".to_string(),
+                    "log[n]".to_string(),
+                ],
+            ),
         ];
         for (shape, lines) in shapes {
             // (what hands the value back shows it as it shows alone)
@@ -480,7 +497,7 @@ fn form_cases(all: &[Val]) -> Vec<Case> {
             let shows: &[&str] = match shape {
                 "apply" if *n == "big" => &[],
                 "pass" | "apply" | "mapped" | "boxed" => &[n],
-                "copied" | "lent" | "reassigned" => &[n, n],
+                "copied" | "lent" | "reassigned" | "multi" => &[n, n],
                 _ => &[],
             };
             let mut case = Case::new(format!("shape/{}/{}", shape, n), &[x], lines).expecting(shows);
@@ -570,8 +587,9 @@ fn form_cases(all: &[Val]) -> Vec<Case> {
         cases.push(Case::new(format!("write-field/{}", line), &[], vec!["g = SelfBox[[[1.0, 2.0], [3.0, 4.0]]]".to_string(), line.to_string(), "log[g.v]".to_string()]));
     }
 
-    // an operator over every pair of operands
-    let ops = ["+", "-", "*", "/", "%", "^", ".*", "./", ".^", "eq", "ne", "gt", "lt", "gte", "lte", "and", "or"];
+    // an operator over every pair of operands — every operator the AST has
+    // (`operators`: one added there is in this family without a word here)
+    let ops = operators();
     let operands = ["int", "float", "text", "bool", "ints", "vector", "matrix", "map", "moment", "decimal", "big", "colint", "colbool", "coltext", "may:int", "fail:int"];
     for op in ops {
         for a in operands {
@@ -827,28 +845,11 @@ const WRITTEN: &[(&str, &str)] = &[
     ("core.sleep_ms", "sleep_ms[1]"),
 ];
 
-/// The module a row is imported from in a program.
-fn import_of(module: &str) -> Option<&'static str> {
-    match module {
-        "" => None,
-        "math" => Some("math"),
-        "math.stats" => Some("math.stats"),
-        "math.nn" => Some("math.nn"),
-        "frame" => Some("frame"),
-        "doc" => Some("doc"),
-        "bits" => Some("bits"),
-        "chart" => Some("chart"),
-        "io" => Some("io"),
-        "llm" => Some("llm"),
-        "web" => Some("web"),
-        "web.auth" => Some("web.auth"),
-        "web.mail" => Some("web.mail"),
-        "web.ws" => Some("web.ws"),
-        // (the standard library's own layer, which the check's process and
-        // its cases' are let import: CROW_SYS)
-        "sys" => Some("sys"),
-        _ => None,
-    }
+/// The module a row is imported from in a program: its own path, where the
+/// registry knows the module (`modules::module_by_path`) — so a module added
+/// there has its rows' cases import it with no word here.
+fn import_of(module: &'static str) -> Option<&'static str> {
+    (!module.is_empty() && crate::modules::module_by_path(module).is_some()).then_some(module)
 }
 
 /// A call of a row with the given arguments, as a case.
@@ -933,9 +934,9 @@ fn lower_all(sources: Vec<String>) -> Vec<Lowered> {
 /// The rows' cases: a call of each row found that lowers — its parameters
 /// tried with their kinds' values — then each parameter varied over every
 /// value. A row no call of which lowers is listed, with the first refusal.
-fn row_cases(all: &[Val], only: &Option<String>) -> (Vec<Case>, Vec<String>) {
+fn row_cases(all: &[Val], only: &Option<String>) -> (Vec<Case>, Vec<NotCalled>) {
     let mut found: Vec<Case> = Vec::new();
-    let mut unexercised: Vec<String> = Vec::new();
+    let mut unexercised: Vec<NotCalled> = Vec::new();
     // the rows to try, each with its candidate calls
     // (each row's candidate calls, those another row's trials made already
     // last, and how many come first)
@@ -952,9 +953,9 @@ fn row_cases(all: &[Val], only: &Option<String>) -> (Vec<Case>, Vec<String>) {
             // which a stop abandoning a statement in flight calls)
             let reached = if row.module == "db.postgres" { crate::home::on_path("initdb") } else { true };
             if row.name.ends_with("_cancel") {
-                unexercised.push(format!("{} — {}: a stop abandoning a statement in flight calls it, which tests/query_cancel.rs holds in both modes", row.id, why));
+                unexercised.push(NotCalled::new(row.id, format!("{}: a stop abandoning a statement in flight calls it, which tests/query_cancel.rs holds in both modes", why)));
             } else if !reached {
-                unexercised.push(format!("{} — {}: no initdb on the PATH for a scratch cluster", row.id, why));
+                unexercised.push(NotCalled { environment: true, ..NotCalled::new(row.id, format!("{}: no initdb on the PATH for a scratch cluster", why)) });
             }
             continue;
         }
@@ -962,11 +963,11 @@ fn row_cases(all: &[Val], only: &Option<String>) -> (Vec<Case>, Vec<String>) {
         // by an empty replay, the clock and the draws fixed: `sandbox`; what
         // never returns is the served suites')
         if matches!(row.name, "serve" | "listen") {
-            unexercised.push(format!("{} — runs until it is stopped (crow test --served holds it)", row.id));
+            unexercised.push(NotCalled::new(row.id, "runs until it is stopped (crow test --served holds it)"));
             continue;
         }
         if import_of(row.module).is_none() && !row.module.is_empty() {
-            unexercised.push(format!("{} — module '{}' has no import here", row.id, row.module));
+            unexercised.push(NotCalled::new(row.id, format!("module '{}' is no module the registry knows", row.module)));
             continue;
         }
         if let Some(w) = only
@@ -993,7 +994,7 @@ fn row_cases(all: &[Val], only: &Option<String>) -> (Vec<Case>, Vec<String>) {
         let pools: Vec<Vec<&Val>> = row.params.iter().map(|k| tried_first(*k).iter().map(|n| val(all, n)).collect()).collect();
         if pools.iter().any(|p| p.is_empty()) {
             let k = row.params.iter().find(|k| tried_first(**k).is_empty()).map(|k| format!("{:?}", k)).unwrap_or_default();
-            unexercised.push(format!("{} — takes a {} no program value is", row.id, k));
+            unexercised.push(NotCalled::new(row.id, format!("takes a {} no program value is", k)));
             continue;
         }
         // the first few combinations, the first value of each kind first
@@ -1049,7 +1050,7 @@ fn row_cases(all: &[Val], only: &Option<String>) -> (Vec<Case>, Vec<String>) {
     for (t, (r, combos, first)) in trials.iter().enumerate() {
         let row = &ROWS[*r];
         let Some(c) = base.get(&t) else {
-            unexercised.push(format!("{} — no call of it lowers: {}", row.id, first_refusal.get(&t).cloned().unwrap_or_default()));
+            unexercised.push(NotCalled::new(row.id, format!("no call of it lowers: {}", first_refusal.get(&t).cloned().unwrap_or_default())));
             continue;
         };
         // (its call another row's cases make, with their variations)
@@ -1455,6 +1456,27 @@ fn rows_n_x() -> Vec<u8> {
     b
 }
 
+/// RowBinaryWithNamesAndTypes of columns of text, as ClickHouse answers a
+/// query of its own tables (`system.columns`).
+fn rows_of_text(names: &[&str], rows: &[&[&str]]) -> Vec<u8> {
+    let mut b = vec![names.len() as u8];
+    for n in names {
+        b.push(n.len() as u8);
+        b.extend_from_slice(n.as_bytes());
+    }
+    for _ in names {
+        b.push(6);
+        b.extend_from_slice(b"String");
+    }
+    for row in rows {
+        for cell in *row {
+            b.push(cell.len() as u8);
+            b.extend_from_slice(cell.as_bytes());
+        }
+    }
+    b
+}
+
 /// One connection to the ClickHouse stand-in: each statement answered as
 /// the server's HTTP interface answers it (tests/clickhouse_http.rs holds
 /// the driver to the same answers), the connection kept.
@@ -1494,6 +1516,9 @@ fn serve_clickhouse(stream: std::net::TcpStream) {
             ("200 OK", b"n\tUInt64\t\t\t\t\t\nx\tNullable(Float64)\t\t\t\t\t\n".to_vec())
         } else if sql.starts_with("SELECT number AS n") {
             ("200 OK", rows_n_x())
+        } else if sql.starts_with("SELECT name, type FROM system.columns") {
+            // (the columns of a table a statement made: `u`'s one)
+            ("200 OK", rows_of_text(&["name", "type"], &[&["n", "UInt64"]]))
         } else if sql.contains("nope") {
             ("404 Not Found", b"Code: 60. DB::Exception: Unknown table expression identifier 'nowhere' in scope SELECT nope FROM nowhere. (UNKNOWN_TABLE)\n".to_vec())
         } else {
@@ -1612,10 +1637,10 @@ fn run_batch(exe: &Path, dir: &Path, file: &str, binary: Option<&Path>, config: 
 /// (`wrong`); one refused that it answers is listed in `answerable.txt`
 /// (a refusal may be the spec's: a kind the spec does not mix). Answers
 /// what the reference said of its count, and the number wrong.
-fn consult_reference(dir: &Path, cases: &[Case], seen: &HashMap<String, Seen>, refused: &HashMap<String, String>, findings: &mut Vec<Finding>) -> (String, usize) {
+fn consult_reference(dir: &Path, cases: &[Case], seen: &HashMap<String, Seen>, refused: &HashMap<String, String>, findings: &mut Vec<Finding>) -> Referred {
     let reference = Path::new("tests/self/reference.py");
     if !reference.is_file() {
-        return ("no tests/self/reference.py here: the spec's answers were not asked".to_string(), 0);
+        return Referred { said: "no tests/self/reference.py here: the spec's answers were not asked".to_string(), ..Referred::default() };
     }
     let mut lines = String::new();
     for case in cases {
@@ -1635,15 +1660,16 @@ fn consult_reference(dir: &Path, cases: &[Case], seen: &HashMap<String, Seen>, r
     }
     let input = dir.join("answers.jsonl");
     if std::fs::write(&input, &lines).is_err() {
-        return (format!("cannot write {}", input.display()), 0);
+        return Referred { said: format!("cannot write {}", input.display()), ..Referred::default() };
     }
     let out = match Command::new("python3").arg("-E").arg(reference).arg(&input).stdin(Stdio::null()).output() {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
-        Ok(o) => return (format!("the reference failed: {}", String::from_utf8_lossy(&o.stderr).lines().last().unwrap_or("")), 0),
-        Err(e) => return (format!("no python3 to ask the reference: {}", e), 0),
+        Ok(o) => return Referred { said: format!("the reference failed: {}", String::from_utf8_lossy(&o.stderr).lines().last().unwrap_or("")), ..Referred::default() },
+        Err(e) => return Referred { said: format!("no python3 to ask the reference: {}", e), ..Referred::default() },
     };
     let by_id: HashMap<&str, &Case> = cases.iter().map(|c| (c.id.as_str(), c)).collect();
     let (mut wrong, mut said, mut answerable) = (0, String::new(), String::new());
+    let (mut answered, mut needs) = (HashSet::new(), BTreeMap::new());
     for line in out.lines() {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
         let text = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
@@ -1660,6 +1686,12 @@ fn consult_reference(dir: &Path, cases: &[Case], seen: &HashMap<String, Seen>, r
                 });
             }
             Some("refused") => answerable.push_str(&format!("{}\t{}\t{}\n", text("id"), text("expected"), text("seen"))),
+            Some("answered") => {
+                answered.insert(text("id"));
+            }
+            Some("needs") => {
+                needs.insert(text("id"), text("library"));
+            }
             _ => said = format!("{} answered, {} with no answer of its own", v.get("answered").unwrap_or(&serde_json::Value::Null), v.get("skipped").unwrap_or(&serde_json::Value::Null)),
         }
     }
@@ -1667,7 +1699,25 @@ fn consult_reference(dir: &Path, cases: &[Case], seen: &HashMap<String, Seen>, r
     if !answerable.is_empty() {
         said = format!("{}; {} refused that it answers (answerable.txt)", said, answerable.lines().count());
     }
-    (said, wrong)
+    let libraries: BTreeSet<&String> = needs.values().collect();
+    if !libraries.is_empty() {
+        said = format!("{}; {} cases need {} this machine lacks", said, needs.len(), libraries.iter().map(|l| l.as_str()).collect::<Vec<_>>().join(" and "));
+    }
+    Referred { said, wrong, ran: true, answered, needs }
+}
+
+/// What the reference said of a run's cases.
+#[derive(Default)]
+struct Referred {
+    /// A line for the run's report.
+    said: String,
+    wrong: usize,
+    /// Whether the reference ran at all (python3, and the script here).
+    ran: bool,
+    /// The cases it answered.
+    answered: HashSet<String>,
+    /// The cases it would answer with a library this machine lacks, by case.
+    needs: BTreeMap<String, String>,
 }
 
 /// A case's output as two cases compare: the lines a failure names and the
@@ -1943,6 +1993,14 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
         println!("  {:<12} {:>6} accepted {:>6} refused {:>4} a bug in Crow", family, a, r, b);
     }
     let _ = std::fs::write(dir.join("refusals.txt"), &refusals);
+    // the forms of the language the cases that lower reach (the forms guard)
+    let reached = forms_reached(&accepted.iter().map(|&i| &sources[i]).collect::<Vec<_>>());
+    let forms_now: BTreeMap<String, String> = every_form().into_iter().filter(|f| !reached.contains(f)).map(|f| (f, "no case reaches it".to_string())).collect();
+    println!("forms: {} of the language's {} reached", reached.len(), every_form().len());
+    // the builtins held to no right answer, where the reference ran (the
+    // agreement-only guard); and the builtins no case reached at its run
+    let mut agreement_now: Option<BTreeMap<String, String>> = None;
+    let mut not_called = unexercised;
 
     if !lower_only {
         // batches: the cases that lower, by the modules they import
@@ -2150,10 +2208,56 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
         // computes — a builtin, an operator, an index read or written, a
         // value shown — from the spec's words, without Crow's runtime, and
         // names each case that answers otherwise
-        let (said, wrong) = consult_reference(&dir, &cases, &agreed_seen, &refused_by, &mut findings);
-        println!("reference: {} wrong", wrong);
-        if !said.is_empty() {
-            println!("  {}", said);
+        let referred = consult_reference(&dir, &cases, &agreed_seen, &refused_by, &mut findings);
+        println!("reference: {} wrong", referred.wrong);
+        if !referred.said.is_empty() {
+            println!("  {}", referred.said);
+        }
+        // a row whose cases ran, none of them answered (nor waiting on a
+        // library this machine lacks), is held to agreement alone
+        if referred.ran {
+            let row_of = |id: &str| -> Option<String> {
+                let mut parts = id.splitn(3, '/');
+                matches!(parts.next(), Some("row" | "pair")).then(|| parts.next().map(str::to_string)).flatten()
+            };
+            let mut ran: BTreeMap<String, (bool, bool)> = BTreeMap::new();
+            for id in agreed_seen.keys() {
+                if let Some(row) = row_of(id) {
+                    let e = ran.entry(row).or_default();
+                    e.0 |= referred.answered.contains(id);
+                    e.1 |= referred.needs.contains_key(id);
+                }
+            }
+            agreement_now = Some(ran.into_iter().filter(|(_, (answered, needs))| !answered && !needs).map(|(row, _)| {
+                let why = agreement_reason(&row);
+                (row, why)
+            }).collect());
+        }
+        // a live case against a server the check started answers without
+        // failing (agreeing alike is not enough: two modes that cannot
+        // reach the server agree); one whose server did not start leaves
+        // its driver's rows not called, by the machine
+        let served: HashMap<&str, &str> = SERVED.get().map(|v| v.iter().map(|(k, x)| (k.as_str(), x.as_str())).collect()).unwrap_or_default();
+        for case in cases.iter().filter(|c| c.live) {
+            let (driver, port) = if case.id.contains("postgres") { ("db.postgres", "CROW_SELF_PG") } else { ("db.clickhouse", "CROW_SELF_CH") };
+            if !served.contains_key(port) {
+                for row in ROWS.iter().filter(|r| r.module == driver && !r.name.ends_with("_cancel")) {
+                    if !not_called.iter().any(|n| n.id == row.id) {
+                        not_called.push(NotCalled { environment: true, ..NotCalled::new(row.id, "the check's server for it did not start here") });
+                    }
+                }
+                continue;
+            }
+            let Some(s) = agreed_seen.get(&case.id) else { continue };
+            let failed = !s.end.is_empty() || s.out.lines().any(|l| l.starts_with("error:"));
+            if failed {
+                findings.push(Finding {
+                    id: case.id.clone(),
+                    code: case.code(),
+                    class: "live",
+                    detail: format!("failed against the server the check started: {}{}", s.out.trim().replace('\n', " | "), if s.end.is_empty() { String::new() } else { format!(" [{}]", s.end) }),
+                });
+            }
         }
         // (the builders' caches stay for the next run; `--clean` removes them)
         if clean {
@@ -2196,13 +2300,35 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
     for f in &findings {
         *by_class.entry(f.class).or_default() += 1;
     }
-    println!("\nnot exercised: {} rows (listed in {})", unexercised.len(), dir.join("unexercised.txt").display());
-    let _ = std::fs::write(dir.join("unexercised.txt"), unexercised.join("\n") + "\n");
+    let _ = std::fs::write(dir.join("unexercised.txt"), not_called.iter().map(|n| format!("{} — {}\n", n.id, n.why)).collect::<String>());
+    // the builtins no case calls: the machine's lacks noted, the rest held
+    let environment: Vec<&NotCalled> = not_called.iter().filter(|n| n.environment).collect();
+    let not_called_now: BTreeMap<String, String> = not_called.iter().filter(|n| !n.environment).map(|n| (n.id.clone(), n.why.clone())).collect();
+    println!("\nnot called: {} builtins (listed in {}){}", not_called.len(), dir.join("unexercised.txt").display(), if environment.is_empty() { String::new() } else { format!(", {} for what this machine lacks", environment.len()) });
     println!("findings: {} ({}) in {} groups — every one in {}, the groups in {}", findings.len(), by_class.iter().map(|(c, n)| format!("{} {}", n, c)).collect::<Vec<_>>().join(", "), groups.len(), dir.join("findings.txt").display(), dir.join("summary.txt").display());
+    // (each list is held where this run could make it whole: every case,
+    // and for the reference's, a run that asked it)
+    let whole = only.is_none();
+    let lists: Vec<(&Listed, Option<&BTreeMap<String, String>>)> = vec![
+        (&NOT_CALLED, whole.then_some(&not_called_now)),
+        (&AGREEMENT_ONLY, if whole { agreement_now.as_ref() } else { None }),
+        (&FORMS, whole.then_some(&forms_now)),
+    ];
     if bless {
         if only.is_some() || lower_only {
             eprintln!("--bless writes the whole list: run it without --only and --lower-only");
             return 1;
+        }
+        for (list, now) in &lists {
+            if let Some(now) = now {
+                match list.write(now) {
+                    Ok(()) => println!("wrote {} ({} entries)", list.path, now.len()),
+                    Err(e) => {
+                        eprintln!("cannot write {}: {}", list.path, e);
+                        return 1;
+                    }
+                }
+            }
         }
         return match write_known(&findings) {
             Ok(()) => {
@@ -2214,6 +2340,19 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
                 1
             }
         };
+    }
+    // the lists: a new entry or a gone one fails as a finding does
+    let mut listed_off = 0;
+    for (list, now) in &lists {
+        let Some(now) = now else { continue };
+        let (new, gone) = list.held(now);
+        for (id, why) in &new {
+            println!("  NEW   {:<14} {} — {} (list it in {} with why, or make it reached)", "listed", id, why, list.path);
+        }
+        for id in &gone {
+            println!("  GONE  {:<14} {} — strike it from {}", "listed", id, list.path);
+        }
+        listed_off += new.len() + gone.len();
     }
     let known = read_known();
     let now: BTreeSet<(String, String)> = findings.iter().map(|f| (f.class.to_string(), f.id.clone())).collect();
@@ -2229,17 +2368,378 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
     for (c, i) in &gone {
         println!("  GONE  {:<14} {} — fixed: strike it from {}", c, i, known_path().display());
     }
-    println!("\n{} new, {} known, {} gone ({:.1}s)", new.len(), now.len() - new.len(), gone.len(), start.elapsed().as_secs_f64());
-    if new.is_empty() && gone.is_empty() {
+    println!("\n{} new, {} known, {} gone, {} off the lists ({:.1}s)", new.len(), now.len() - new.len(), gone.len(), listed_off, start.elapsed().as_secs_f64());
+    if new.is_empty() && gone.is_empty() && listed_off == 0 {
         0
     } else {
         1
     }
 }
 
+// ── the guards: nothing new slips past unseen ───────────────────────
+
+/// A list a run is held to, one entry a line — an id, a tab, why — that
+/// changes only by `--bless`: an entry the run makes that the list lacks
+/// fails the check, and so does a listed one the run no longer makes. So a
+/// builtin, a module or a form of the language added later is tested by
+/// the cases the compiler's own tables make, or the gate fails and names
+/// it.
+struct Listed {
+    path: &'static str,
+    header: &'static str,
+}
+
+/// The builtins no case calls.
+const NOT_CALLED: Listed = Listed {
+    path: "tests/self/not-called.txt",
+    header: "# crow check --self: the builtins no case calls, one per line (the row, a tab, why).\n# A builtin no case reaches fails the check until it is listed here with why, and a\n# listed one the cases reach fails it until it is struck (--bless rewrites the list).\n",
+};
+
+/// The builtins whose cases run, none of which tests/self/reference.py
+/// answers: they agree across the configurations and are held to no
+/// right answer.
+const AGREEMENT_ONLY: Listed = Listed {
+    path: "tests/self/agreement-only.txt",
+    header: "# crow check --self: the builtins whose cases run and agree, none of which\n# tests/self/reference.py answers, one per line (the row, a tab, why). A new builtin\n# gets its answer in the reference, or its line here; one the reference comes to\n# answer fails the check until it is struck (--bless rewrites the list).\n",
+};
+
+/// The forms of the language — the AST's statements, expressions and
+/// operators, read from src/ast.rs — no case reaches.
+const FORMS: Listed = Listed {
+    path: "tests/self/forms.txt",
+    header: "# crow check --self: the forms of the language (src/ast.rs's statements,\n# expressions and operators) no case reaches, one per line (the form, a tab, why).\n# A new form gets a case, or its line here (--bless rewrites the list).\n",
+};
+
+impl Listed {
+    fn read(&self) -> BTreeMap<String, String> {
+        std::fs::read_to_string(self.path)
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+            .map(|l| match l.split_once('\t') {
+                Some((id, why)) => (id.to_string(), why.to_string()),
+                None => (l.to_string(), String::new()),
+            })
+            .collect()
+    }
+
+    /// The run's entries written, each keeping the reason a person gave it.
+    fn write(&self, now: &BTreeMap<String, String>) -> std::io::Result<()> {
+        let old = self.read();
+        let lines: Vec<String> = now.iter().map(|(id, why)| format!("{}\t{}", id, old.get(id).filter(|w| !w.is_empty()).unwrap_or(why))).collect();
+        std::fs::write(self.path, format!("{}{}\n", self.header, lines.join("\n")))
+    }
+
+    /// What the run makes that the list lacks, and what the list holds that
+    /// the run no longer makes.
+    fn held(&self, now: &BTreeMap<String, String>) -> (Vec<(String, String)>, Vec<String>) {
+        let listed = self.read();
+        let new = now.iter().filter(|(id, _)| !listed.contains_key(*id)).map(|(i, w)| (i.clone(), w.clone())).collect();
+        let gone = listed.keys().filter(|id| !now.contains_key(*id)).cloned().collect();
+        (new, gone)
+    }
+}
+
+/// A builtin no case calls, and why — `environment` where the machine
+/// lacks what it needs (a scratch cluster's `initdb`): noted, never failing.
+struct NotCalled {
+    id: String,
+    why: String,
+    environment: bool,
+}
+
+impl NotCalled {
+    fn new(id: impl Into<String>, why: impl Into<String>) -> NotCalled {
+        NotCalled { id: id.into(), why: why.into(), environment: false }
+    }
+}
+
+/// Why a builtin is held to agreement alone, by what it is, for a line
+/// `--bless` writes (a person may write a better one; `write` keeps it).
+fn agreement_reason(row: &str) -> String {
+    let name = row.rsplit('.').next().unwrap_or(row);
+    let module = row.rsplit_once('.').map(|(m, _)| m).unwrap_or("");
+    let drawn = ["rand", "randn", "randint", "uniform", "normal", "gamma_dist", "beta_dist", "poisson", "exponential", "bernoulli", "choice", "shuffle", "dropout"];
+    if drawn.iter().any(|d| name.starts_with(d)) {
+        return "random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)".to_string();
+    }
+    match module {
+        "llm" => "a model's reply: the empty replay answers, and no reference speaks for a model".to_string(),
+        "chart" => "an indicator: no reference yet (pandas's rolling and ewm are the plan)".to_string(),
+        "sys" => "the standard library's own layer: bytes, streams and protocols no reference models yet".to_string(),
+        "frame" => "frames: held to pandas by tests/parity/185, no reference per case yet".to_string(),
+        "doc" => "Markdown rendered: no reference renderer".to_string(),
+        m if m.starts_with("web") => "a response or a protocol no reference models yet".to_string(),
+        _ => "no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only".to_string(),
+    }
+}
+
+/// The variants of one of the AST's enums, read from the source this
+/// binary was built from: a variant added there is a form the cases must
+/// reach, or `forms.txt` must name.
+fn ast_variants(name: &str) -> Vec<String> {
+    const AST: &str = include_str!("ast.rs");
+    let Some(start) = AST.find(&format!("pub enum {} {{", name)) else { return Vec::new() };
+    let body = &AST[start..];
+    let end = body.find("\n}").unwrap_or(body.len());
+    body[..end]
+        .lines()
+        .skip(1)
+        .filter_map(|l| {
+            // (a variant starts its line four spaces in, capitalized; its
+            // fields and its comments sit deeper or start with a slash)
+            let t = l.strip_prefix("    ")?;
+            let word: String = t.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+            word.chars().next().filter(|c| c.is_uppercase()).map(|_| word)
+        })
+        .collect()
+}
+
+/// Every operator a program writes, as it writes it: the AST's own list,
+/// each spelled by a match that names every one (a new operator does not
+/// compile until it is spelled, and its cases are then made).
+fn operators() -> Vec<&'static str> {
+    ast_variants("BinOp").into_iter().filter_map(|n| serde_json::from_value::<crate::ast::BinOp>(serde_json::Value::String(n)).ok()).map(|op| spelled(&op)).collect()
+}
+
+fn spelled(op: &crate::ast::BinOp) -> &'static str {
+    use crate::ast::BinOp as B;
+    match op {
+        B::Add => "+",
+        B::Sub => "-",
+        B::Mul => "*",
+        B::Div => "/",
+        B::Mod => "%",
+        B::Pow => "^",
+        B::ElemMul => ".*",
+        B::ElemDiv => "./",
+        B::ElemPow => ".^",
+        B::Eq => "eq",
+        B::Ne => "ne",
+        B::Gt => "gt",
+        B::Lt => "lt",
+        B::Gte => "gte",
+        B::Lte => "lte",
+        B::And => "and",
+        B::Or => "or",
+    }
+}
+
+/// The forms a program's statements reach, by name (`Stmt::For`,
+/// `Expr::Call`, `BinOp::Add`).
+fn forms_in(stmts: &[crate::ast::Stmt], seen: &mut BTreeSet<String>) {
+    for st in stmts {
+        form_of_stmt(st, seen);
+    }
+}
+
+fn form_of_stmt(st: &crate::ast::Stmt, seen: &mut BTreeSet<String>) {
+    use crate::ast::Stmt as S;
+    let name = match st {
+        S::Assign { value, .. } => {
+            form_of_expr(value, seen);
+            "Assign"
+        }
+        S::MultiAssign { values, .. } => {
+            values.iter().for_each(|v| form_of_expr(v, seen));
+            "MultiAssign"
+        }
+        S::FnDecl { defaults, body, .. } => {
+            defaults.iter().flatten().for_each(|d| form_of_expr(d, seen));
+            forms_in(body, seen);
+            "FnDecl"
+        }
+        S::Return(value) => {
+            value.iter().for_each(|v| form_of_expr(v, seen));
+            "Return"
+        }
+        S::ExprStmt(e) => {
+            form_of_expr(e, seen);
+            "ExprStmt"
+        }
+        S::If { condition, then_body, else_body } => {
+            form_of_expr(condition, seen);
+            forms_in(then_body, seen);
+            else_body.iter().for_each(|b| forms_in(b, seen));
+            "If"
+        }
+        S::For { iter, body, .. } => {
+            form_of_expr(iter, seen);
+            forms_in(body, seen);
+            "For"
+        }
+        S::While { condition, body } => {
+            form_of_expr(condition, seen);
+            forms_in(body, seen);
+            "While"
+        }
+        S::StructDecl { .. } => "StructDecl",
+        S::FieldAssign { object, value, .. } => {
+            form_of_expr(object, seen);
+            form_of_expr(value, seen);
+            "FieldAssign"
+        }
+        S::IndexAssign { object, index, value } => {
+            form_of_expr(object, seen);
+            form_of_expr(index, seen);
+            form_of_expr(value, seen);
+            "IndexAssign"
+        }
+        S::Derive { body, .. } => {
+            forms_in(body, seen);
+            "Derive"
+        }
+        S::TestBlock { body, .. } => {
+            forms_in(body, seen);
+            "TestBlock"
+        }
+        S::Use { .. } => "Use",
+        S::Resource { count, .. } => {
+            form_of_expr(count, seen);
+            "Resource"
+        }
+        S::Break => "Break",
+        S::Continue => "Continue",
+        S::Line(_) => "Line",
+    };
+    seen.insert(format!("Stmt::{}", name));
+}
+
+fn form_of_expr(e: &crate::ast::Expr, seen: &mut BTreeSet<String>) {
+    use crate::ast::Expr as E;
+    let name = match e {
+        E::Int(_) => "Int",
+        E::Float(_) => "Float",
+        E::Str(_) => "Str",
+        E::Bool(_) => "Bool",
+        E::Ident(_) => "Ident",
+        E::BinOp { left, op, right } => {
+            seen.insert(format!("BinOp::{:?}", op));
+            form_of_expr(left, seen);
+            form_of_expr(right, seen);
+            "BinOp"
+        }
+        E::UnaryOp { op, expr } => {
+            seen.insert(format!("UnaryOp::{:?}", op));
+            form_of_expr(expr, seen);
+            "UnaryOp"
+        }
+        E::Call { callee, args } => {
+            form_of_expr(callee, seen);
+            args.iter().for_each(|a| form_of_expr(a, seen));
+            "Call"
+        }
+        E::FieldAccess { object, .. } => {
+            form_of_expr(object, seen);
+            "FieldAccess"
+        }
+        E::Array(items) => {
+            items.iter().for_each(|i| form_of_expr(i, seen));
+            "Array"
+        }
+        E::Map(pairs) => {
+            pairs.iter().for_each(|(k, v)| {
+                form_of_expr(k, seen);
+                form_of_expr(v, seen)
+            });
+            "Map"
+        }
+        E::Named { value, .. } => {
+            form_of_expr(value, seen);
+            "Named"
+        }
+        E::ForExpr { iter, body, .. } => {
+            form_of_expr(iter, seen);
+            forms_in(body, seen);
+            "ForExpr"
+        }
+    };
+    seen.insert(format!("Expr::{}", name));
+}
+
+/// Every form of the language, by name: the AST's statements, expressions
+/// and operators.
+fn every_form() -> BTreeSet<String> {
+    let mut all = BTreeSet::new();
+    for (prefix, enum_name) in [("Stmt", "Stmt"), ("Expr", "Expr"), ("BinOp", "BinOp"), ("UnaryOp", "UnaryOp")] {
+        for v in ast_variants(enum_name) {
+            all.insert(format!("{}::{}", prefix, v));
+        }
+    }
+    all
+}
+
+/// The forms the programs of these cases reach, each parsed as `crow run`
+/// parses it, across the cores.
+fn forms_reached(sources: &[&String]) -> BTreeSet<String> {
+    let workers = std::thread::available_parallelism().map(|c| c.get()).unwrap_or(4);
+    let chunk = sources.len().div_ceil(workers.max(1)).max(1);
+    let seen: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
+    std::thread::scope(|s| {
+        for part in sources.chunks(chunk) {
+            let seen = &seen;
+            s.spawn(move || {
+                let mut mine = BTreeSet::new();
+                for src in part {
+                    if let Ok(stmts) = crate::build(src) {
+                        forms_in(&stmts, &mut mine);
+                    }
+                }
+                if let Ok(mut all) = seen.lock() {
+                    all.extend(mine);
+                }
+            });
+        }
+    });
+    seen.into_inner().unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The guards read the language from its own source: every operator
+    /// of the AST is in the operator family, each spelled, and the forms
+    /// are the AST's variants — never a field, a type or a comment.
+    #[test]
+    fn the_guards_read_the_language_from_its_source() {
+        let ops = operators();
+        assert_eq!(ops.len(), ast_variants("BinOp").len(), "every operator spelled: {:?}", ops);
+        assert!(ops.contains(&"+") && ops.contains(&".^") && ops.contains(&"or"), "{:?}", ops);
+        let stmts = ast_variants("Stmt");
+        assert!(stmts.contains(&"Assign".to_string()) && stmts.contains(&"Line".to_string()) && stmts.contains(&"Break".to_string()), "{:?}", stmts);
+        assert!(!stmts.iter().any(|v| matches!(v.as_str(), "Vec" | "Option" | "Expr" | "String")), "{:?}", stmts);
+        let all = every_form();
+        for f in ["Stmt::For", "Expr::Call", "BinOp::Add", "UnaryOp::Neg"] {
+            assert!(all.contains(f), "{} in {:?}", f, all);
+        }
+        // a program's forms, by name
+        let mut seen = BTreeSet::new();
+        forms_in(&crate::build("a, b = 1, 2\nwhile a lt 3\n    a = a + 1\n    if a eq 2\n        continue\n    break\nlog[-a]\n").expect("parses"), &mut seen);
+        for f in ["Stmt::MultiAssign", "Stmt::While", "Stmt::Continue", "Stmt::Break", "BinOp::Lt", "UnaryOp::Neg", "Expr::Call"] {
+            assert!(seen.contains(f), "{} in {:?}", f, seen);
+        }
+    }
+
+    /// A list holds a run: what the run makes that the list lacks is new,
+    /// what the list holds that the run no longer makes is gone, and a
+    /// written list keeps the reason a person gave an entry.
+    #[test]
+    fn a_list_holds_a_run_and_keeps_its_reasons() {
+        let path = std::env::temp_dir().join(format!("crow_listed_{}.txt", std::process::id()));
+        let list = Listed { path: Box::leak(path.display().to_string().into_boxed_str()), header: "# a list\n" };
+        let _ = std::fs::write(list.path, "# a list\na\tkept by hand\nb\twhy b\n");
+        let now: BTreeMap<String, String> = [("a".to_string(), "made".to_string()), ("c".to_string(), "why c".to_string())].into_iter().collect();
+        let (new, gone) = list.held(&now);
+        assert_eq!(new, vec![("c".to_string(), "why c".to_string())]);
+        assert_eq!(gone, vec!["b".to_string()]);
+        list.write(&now).expect("written");
+        let read = list.read();
+        assert_eq!(read.get("a").map(String::as_str), Some("kept by hand"));
+        assert_eq!(read.get("c").map(String::as_str), Some("why c"));
+        assert!(!read.contains_key("b"));
+        let _ = std::fs::remove_file(list.path);
+    }
 
     /// The cases are the same every run, each id once, and a case's program
     /// holds the helpers it names and no other

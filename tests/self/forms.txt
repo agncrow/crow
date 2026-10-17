@@ -1,0 +1,7 @@
+# crow check --self: the forms of the language (src/ast.rs's statements,
+# expressions and operators) no case reaches, one per line (the form, a tab, why).
+# A new form gets a case, or its line here (--bless rewrites the list).
+Expr::Map	made by the lowering (an option's empty map, `headers = map[]`), never by the parser: the map literal was removed
+Stmt::Derive	a derivation is a served program's: the web families reach it
+Stmt::Resource	made by nothing: `cpu[n]` and `gpu[n]` are parsed as calls, which the cases reach
+Stmt::TestBlock	a test block runs under `crow test`, not `crow run`: the test-block rerun reaches it
