@@ -232,7 +232,7 @@ impl TypeContext {
                 }
                 // F2: record this call's concrete signature for the
                 // monomorphization pass (skip if anything is unknown)
-                if normalized_sig.len() == sig.params.len() && normalized_sig.iter().all(Self::type_is_concrete) {
+                if normalized_sig.len() == sig.params.len() && normalized_sig.iter().all(|t| Self::type_is_concrete(t) || Self::empty_collection(t)) {
                     self.note_signature(name, normalized_sig);
                 }
                 self.functions.get_mut(name).unwrap().params = new_params;

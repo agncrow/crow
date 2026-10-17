@@ -1,0 +1,3 @@
+j31_a_parsed_value_and_an_int_through_one_function_value.co:6:1: `apply` takes a function, so one `apply` serves every call, and its 'x' is an int here where another call makes it a JSON value — a function taking a function is not copied per kind (spec, Specialization): write one for each kind
+  6 │ log[apply[pass, 2 ^ 100]]
+    │ ^^^^^^^^^^^^^^^^^^^^^^^^^

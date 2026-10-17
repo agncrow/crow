@@ -25,7 +25,7 @@
 //! which may only shrink: a new finding fails the check, and so does a
 //! known one that no longer happens (strike it, or `--bless`).
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -223,6 +223,11 @@ pub(crate) struct Case {
     pub id: String,
     imports: BTreeSet<&'static str>,
     body: Vec<String>,
+    /// The right answer, where the case knows it: its first logs show, one
+    /// by one, what these values show alone (`shape/shown/<name>`) — a
+    /// value handed to a function and back, held in a record or a list and
+    /// read out, is itself.
+    expect: Vec<String>,
 }
 
 impl Case {
@@ -238,7 +243,13 @@ impl Case {
             }
         }
         body.extend(lines);
-        Case { id: id.into(), imports, body }
+        Case { id: id.into(), imports, body, expect: Vec::new() }
+    }
+
+    /// The case's first logs show what these values show alone.
+    fn expecting(mut self, names: &[&str]) -> Case {
+        self.expect = names.iter().map(|n| n.to_string()).collect();
+        self
     }
 
     /// Whether the case draws random numbers (it runs in a process of its
@@ -271,6 +282,11 @@ const HELPERS: &[(&str, &str)] = &[
     ("self_double", "fn self_double[x]\n    return x * 2\n"),
     ("self_fact", "fn self_fact[n]\n    if n lt 2\n        return 1\n    return n * self_fact[n - 1]\n"),
     ("self_count", "fn self_count[n]\n    if n eq 0\n        return 0\n    return 1 + self_count[n - 1]\n"),
+    // (a value carried through a collecting loop, through two variables,
+    // and through a branch: each hands it back)
+    ("self_loop", "fn self_loop[x]\n    ys = for y in push[[], x]\n        y\n    return ys[0]\n"),
+    ("self_held", "fn self_held[x]\n    t = x\n    u = t\n    return u\n"),
+    ("self_branch", "fn self_branch[x, c]\n    if c\n        return x\n    return x\n"),
 ];
 
 /// Every whole-word `name` in `text` written `to`.
@@ -396,7 +412,17 @@ fn form_cases(all: &[Val]) -> Vec<Case> {
             ("minus", vec![format!("log[-{}]", e)]),
         ];
         for (shape, lines) in shapes {
-            cases.push(Case::new(format!("shape/{}/{}", shape, n), &[x], lines));
+            // (what hands the value back shows it as it shows alone)
+            // (a function handed as a value takes ints of 64 bits — spec,
+            // Numbers That Keep Every Digit — so one past them is refused
+            // through `apply`, by design)
+            let shows: &[&str] = match shape {
+                "apply" if *n == "big" => &[],
+                "pass" | "apply" | "mapped" | "boxed" => &[n],
+                "copied" | "lent" | "reassigned" => &[n, n],
+                _ => &[],
+            };
+            cases.push(Case::new(format!("shape/{}/{}", shape, n), &[x], lines).expecting(shows));
         }
     }
 
@@ -514,13 +540,75 @@ fn form_cases(all: &[Val]) -> Vec<Case> {
     // a helper called at two kinds in one program: a copy of it per
     // signature, each typed and lowered on its own (a batch had shown a
     // helper handed one kind for a parameter typed as another)
-    let kinds = ["int", "float", "text", "ints", "texts", "vector", "matrix", "map", "frame", "colint", "record", "may:int"];
+    // (a parsed value, an int past 64 bits, an empty list, a bool, a moment
+    // and a decimal too: `apply` handed a parsed value and a growing int
+    // had been an internal error no pair of the first twelve reached)
+    let kinds = [
+        "int", "float", "text", "ints", "texts", "vector", "matrix", "map", "frame", "colint", "record", "may:int", "json", "big", "empty", "bool", "moment", "decimal",
+    ];
     let helpers = [("pass", "self_pass[@]"), ("first", "self_first[@]"), ("may", "self_may[@, false]"), ("apply", "self_apply[self_pass, @]"), ("boxed", "SelfBox[@].v")];
     for (h, call) in helpers {
         for (i, a) in kinds.iter().enumerate() {
             for b in kinds.iter().skip(i + 1) {
                 let (av, bv) = (v(a), v(b));
-                cases.push(Case::new(format!("twice/{}/{}+{}", h, a, b), &[av, bv], vec![format!("log[{}]", call.replace('@', &av.expr)), format!("log[{}]", call.replace('@', &bv.expr))]));
+                let case = Case::new(format!("twice/{}/{}+{}", h, a, b), &[av, bv], vec![format!("log[{}]", call.replace('@', &av.expr)), format!("log[{}]", call.replace('@', &bv.expr))]);
+                // (by the spec, not the value as it is: a parameter handed a
+                // record and an int holds a record or none, whose int is none
+                // only as 0; one handed a float and an int holds a float, an
+                // int past 64 bits its nearest; a function value takes ints of
+                // 64 bits; and a record's field holds one kind)
+                let pair = |x: &str, y: &str| (*a == x && *b == y) || (*a == y && *b == x);
+                let linked = (*a == "record" || *b == "record") && [*a, *b].iter().any(|k| matches!(*k, "int" | "may:int" | "big"));
+                let widened = pair("float", "big");
+                let handed = h == "apply" && (*a == "big" || *b == "big");
+                let by_design = h == "first" || h == "boxed" || linked || widened || handed;
+                cases.push(if by_design { case } else { case.expecting(&[a, b]) });
+            }
+        }
+    }
+
+    // a value carried two steps — each a way a program hands a value on and
+    // gets it back — shows as it shows alone: the combinations a single
+    // step does not reach (a list holding an int past 64 bits read back, a
+    // helper's answer handed to another helper; crow check --self had
+    // found none of these at one step). Each pair alone, and again with the
+    // first step's helper also called at another kind in the program, so
+    // its copies per signature meet the value.
+    let steps: &[(&str, &str)] = &[
+        ("pass", "self_pass[@]"),
+        ("may", "self_may[@, false]"),
+        ("apply", "self_apply[self_pass, @]"),
+        ("box", "SelfBox[@].v"),
+        ("item", "push[[], @][0]"),
+        ("entry", "set[map[], 'k', @]['k']"),
+        ("loop", "self_loop[@]"),
+        ("held", "self_held[@]"),
+        ("branch", "self_branch[@, true]"),
+    ];
+    let carried = [
+        "int", "int0", "intneg", "intmax", "big", "float", "floatneg", "text", "text0", "textuni", "bool", "ints", "texts", "floats", "bools", "empty", "vector", "vectorint",
+        "matrix", "map", "maptext", "mapint", "json", "jsonarr", "moment", "decimal", "fraction", "record", "colint", "coltext", "colbool", "colmissing", "frame", "may:int",
+        "fail:int", "may:ints", "fail:ints",
+    ];
+    for (a, first) in steps {
+        for (b, second) in steps {
+            for n in carried {
+                let x = v(n);
+                let e = second.replace('@', &first.replace('@', &x.expr));
+                // (a function handed as a value takes ints of 64 bits, by
+                // design: one past them is refused through `apply`)
+                let by_design = n == "big" && (*a == "apply" || *b == "apply");
+                let shows: &[&str] = if by_design { &[] } else { &[n] };
+                cases.push(Case::new(format!("path/{}+{}/{}", a, b, n), &[x], vec![format!("log[{}]", e)]).expecting(shows));
+                // (the first step's helper at another kind too)
+                let other = if matches!(n, "text" | "text0" | "textuni" | "texts") { "int" } else { "text" };
+                let o = v(other);
+                let twin = first.replace('@', &o.expr);
+                // (a record type is one: its field holds the kind the twin
+                // gave it, and a value of another is refused or read as it)
+                let one_record = *a == "box" || *b == "box";
+                let shows: &[&str] = if by_design || one_record { &[other] } else { &[other, n] };
+                cases.push(Case::new(format!("path-twice/{}+{}/{}", a, b, n), &[o, x], vec![format!("log[{}]", twin), format!("log[{}]", e)]).expecting(shows));
             }
         }
     }
@@ -1156,6 +1244,16 @@ fn run_batch(exe: &Path, dir: &Path, file: &str, binary: Option<&Path>, config: 
 
 /// The case a generated name belongs to: `self_case_3`, `self_may_3`,
 /// `self_first_3__2` (a copy per signature), `SelfBox_3`.
+/// A case's output as two cases compare: the lines a failure names and the
+/// numbers each case's own copy of a helper is given made alike (each case
+/// is placed elsewhere in its batch).
+fn comparable(out: &str) -> String {
+    static LINE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"line \d+").unwrap_or_else(|_| unreachable!()));
+    static COPY: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"\b((?:Self|self_)[A-Za-z]*)_\d+\b").unwrap_or_else(|_| unreachable!()));
+    let out = LINE.replace_all(out, "line N");
+    COPY.replace_all(&out, "$1").to_string()
+}
+
 fn case_number(name: &str) -> Option<usize> {
     if !(name.starts_with("self_") || name.starts_with("Self")) {
         return None;
@@ -1299,6 +1397,9 @@ fn group_key(f: &Finding) -> String {
     let family: String = f.id.split('/').take(2).collect::<Vec<_>>().join("/");
     let mut key = if f.class == "disagree" || f.class == "memory" || f.class == "hang" {
         format!("{} — {}", family, first)
+    } else if f.class == "wrong" {
+        // (a wrong answer by where the value went and what it was)
+        format!("{} — {}", family, f.id.rsplit('/').next().unwrap_or(""))
     } else {
         first.to_string()
     };
@@ -1527,6 +1628,8 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
         println!("\rran {} batch runs in {:.1}s{}", jobs.len(), t.elapsed().as_secs_f64(), " ".repeat(20));
         let results = results.into_inner().unwrap_or_default();
         let mut agreed = 0;
+        // what each case that agreed showed, for the answers it knows
+        let mut agreed_out: HashMap<String, String> = HashMap::new();
         for (b, batch) in built.iter().enumerate() {
             for (k, (i, case)) in batch.members.iter().enumerate() {
                 let per: Vec<(&str, Seen)> = CONFIGS
@@ -1561,11 +1664,43 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
                     findings.push(Finding { id: case.id.clone(), code: case.code(), class, detail: format!("{}: {}{}", n, s.out.trim().replace('\n', " | "), if s.end.is_empty() { String::new() } else { format!(" [{}]", s.end) }) });
                 } else {
                     agreed += 1;
+                    let s = &per[0].1;
+                    agreed_out.insert(case.id.clone(), if s.end.is_empty() { s.out.clone() } else { format!("{}[{}]\n", s.out, s.end) });
                 }
                 let _ = i;
             }
         }
         println!("ran: {} agreed in every configuration ({})", agreed, CONFIGS.iter().map(|c| c.name).collect::<Vec<_>>().join(", "));
+        // the right answers the cases know: what hands a value back — a
+        // function, a record, a list, a map, a loop, a variable, a branch,
+        // two of them in a row — shows it as it shows alone
+        let (mut answered, mut wrong) = (0, 0);
+        for case in cases.iter().filter(|c| !c.expect.is_empty()) {
+            let Some(got) = agreed_out.get(&case.id) else { continue };
+            // (each shown alone, without the `0` its case function's return
+            // logged after it)
+            let alone = |n: &String| -> Option<String> {
+                let s = agreed_out.get(&format!("shape/shown/{}", n))?;
+                Some(match s.strip_suffix("0\n") {
+                    Some(rest) if rest.is_empty() || rest.ends_with('\n') => rest.to_string(),
+                    _ => s.clone(),
+                })
+            };
+            let expected: Option<String> = case.expect.iter().map(alone).collect();
+            let Some(expected) = expected else { continue };
+            answered += 1;
+            let (g, e) = (comparable(got), comparable(&expected));
+            if !g.starts_with(&e) {
+                wrong += 1;
+                findings.push(Finding {
+                    id: case.id.clone(),
+                    code: case.code(),
+                    class: "wrong",
+                    detail: format!("shows {} where the value alone shows {}", g.trim_end().replace('\n', " | "), e.trim_end().replace('\n', " | ")),
+                });
+            }
+        }
+        println!("answers: {} cases held to the right answer, {} wrong", answered, wrong);
         // (the builders' caches stay for the next run; `--clean` removes them)
         if clean {
             let _ = std::fs::remove_dir_all(&build_dir);

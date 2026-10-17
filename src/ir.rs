@@ -530,6 +530,8 @@ pub enum Who {
     /// The answer of a function handed as a value (its signature is the
     /// function type of what takes it).
     Handed,
+    /// An argument of a function handed as a value, called through it.
+    HandedArg,
 }
 
 impl Who {
@@ -545,6 +547,7 @@ impl Who {
             Who::Position => "a position or a key is an int of 64 bits".to_string(),
             Who::Held => "an int is held in 64 bits".to_string(),
             Who::Handed => "a function handed as a value answers an int of 64 bits".to_string(),
+            Who::HandedArg => "a function handed as a value takes an int of 64 bits".to_string(),
         }
     }
 }

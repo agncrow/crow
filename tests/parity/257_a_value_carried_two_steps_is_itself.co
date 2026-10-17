@@ -1,0 +1,53 @@
+--- A value carried two steps — through a function and a function value,
+--- a record's field, a list or a map made where it is used, a collecting
+--- loop, two variables, a branch — shows as it shows alone, in both modes
+--- (crow check --self's path family found each of these wrong or not
+--- built): a parsed value through a function value is handed as it is,
+--- not read as a position; a parsed value pushed onto `[]` is kept; a
+--- record made in place lends its field's growing int; a function called
+--- with text and with `[]` is a copy for each; `[]` nested in a list or a
+--- map made in place is a list; a parsed value given a field of text is
+--- read as text; and an int past 64 bits handed through a function value
+--- stops, as a function value takes ints of 64 bits.
+struct Box [v]
+struct Label [v]
+
+fn pass[x]
+    return x
+
+fn same[x]
+    return x
+
+fn apply[g, x]
+    return g[x]
+
+fn apply_big[g, x]
+    return g[x]
+
+fn held[x]
+    t = x
+    u = t
+    return u
+
+fn loop[x]
+    ys = for y in push[[], x]
+        y
+    return ys[0]
+
+log[apply[same, json['[1, 2]']]]
+log[push[[], json['{"a": 1}']][0]]
+log[push[push[[], json['[1]']], json['[2]']]]
+log[held[Box[2 ^ 100].v]]
+log[loop[Box[2 ^ 100].v]]
+log[pass['abc']]
+log[pass[[]]]
+log[push[[], []][0]]
+log[set[map[], 'k', []]['k']]
+log[pass[set[map[], 'k', []]['k']]]
+log[push[push[[], []], []]]
+log[Label['abc'].v]
+log[Label[json['"xyz"']].v]
+ids = push[push[[], 1], 2]
+j = json['{"id": 3}']
+log[push[ids, j.id]]
+log[apply_big[held, 2 ^ 100]]

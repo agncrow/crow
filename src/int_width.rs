@@ -533,7 +533,9 @@ impl Walk {
             Expr::Local(v, _) | Expr::Move(v, _) => Some(self.local(v)),
             Expr::Load(f, _) => Some(Place::Fact(f.clone())),
             Expr::Convert { expr, .. } => self.place_of(expr),
-            Expr::Field { base, name, .. } => match base.ty_ref().map(|t| t.payload()) {
+            // (a record made where it is read — `Box[…].v` — lends no type:
+            // its own is read, or its field had read as any 64-bit int)
+            Expr::Field { base, name, .. } => match Some(base.ty()).as_ref().map(|t| t.payload()) {
                 Some(Ty::Record(s)) => Some(Place::Field(s.clone(), name.clone())),
                 _ => None,
             },
@@ -688,7 +690,9 @@ impl Walk {
             Expr::Local(v, _) | Expr::Move(v, _) => self.local_iv(v),
             Expr::Load(f, _) => self.get(&Place::Fact(f.clone())),
             Expr::Derived(d, _) => self.get(&Place::Ret(derive_fn(d))),
-            Expr::Field { base, name, .. } => match base.ty_ref().map(|t| t.payload()) {
+            // (a record made where it is read — `Box[…].v` — lends no type:
+            // its own is read, or its field had read as any 64-bit int)
+            Expr::Field { base, name, .. } => match Some(base.ty()).as_ref().map(|t| t.payload()) {
                 Some(Ty::Record(s)) => self.get(&Place::Field(s.clone(), name.clone())),
                 // (a frame's column, a parsed value's field: 64-bit cells)
                 _ => Iv::I64,
@@ -1168,7 +1172,9 @@ impl Walk {
             Expr::Local(v, _) | Expr::Move(v, _) => Some(self.local(v)),
             Expr::Load(f, _) => Some(Place::Fact(f.clone())),
             Expr::Convert { expr, .. } => self.read_place(expr),
-            Expr::Field { base, name, .. } => match base.ty_ref().map(|t| t.payload()) {
+            // (a record made where it is read — `Box[…].v` — lends no type:
+            // its own is read, or its field had read as any 64-bit int)
+            Expr::Field { base, name, .. } => match Some(base.ty()).as_ref().map(|t| t.payload()) {
                 Some(Ty::Record(s)) => Some(Place::Field(s.clone(), name.clone())),
                 _ => None,
             },
@@ -2336,9 +2342,22 @@ impl<'a> Retype<'a> {
             }
             Expr::Index { base, indices, ty } => {
                 self.expr(base);
+                // (a function value applied: its arguments are what it takes,
+                // ints of 64 bits as a function handed as a value takes them
+                // — spec, Numbers That Keep Every Digit — not positions; the
+                // refusal had named a position or a key)
+                let applied = matches!(base.ty().payload(), Ty::Fn(..));
                 for i in indices.iter_mut() {
                     self.expr(i);
-                    *i = small_index(take(i));
+                    // (a growing int alone, as a position's: a list of items
+                    // nothing typed is no int to narrow)
+                    *i = if applied && matches!(i.ty().payload(), Ty::Big) {
+                        handed(take(i), crate::table::TakesBig::Refused, crate::ir::Who::HandedArg)
+                    } else if applied {
+                        take(i)
+                    } else {
+                        small_index(take(i))
+                    };
                 }
                 match base.ty().payload() {
                     Ty::List(item) | Ty::Map(_, item) if has_big(item) || has_big(ty) => *ty = (**item).clone(),

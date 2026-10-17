@@ -681,6 +681,17 @@ fn walked(it: &Expr) -> Ty {
     }
 }
 
+/// A collection written where it is used — `[]`, `map[]` — whose items
+/// nothing later can say.
+fn made_here(e: &Expr) -> bool {
+    match e {
+        Expr::ListLit(items, _) => items.is_empty(),
+        Expr::MapLit(pairs, _) => pairs.is_empty(),
+        Expr::Call { target: Target::Row(row), args, .. } => row.id == "core.map_new" && args.is_empty(),
+        _ => false,
+    }
+}
+
 /// A type with every "can fail" taken off, at any depth (a list of values
 /// that can fail is a list of the values): what a kind check compares when
 /// whether a value can fail is decided elsewhere.
@@ -4254,7 +4265,39 @@ impl<'a> Lowerer<'a> {
             // int, a key text, in both modes, stopping with what it holds
             // (the interpreter had read it as it ran and the compiled
             // program had not built; then both had refused it until read)
-            if !matches!(base.ty().payload(), Ty::Json) && idx.iter().any(|x| matches!(x.ty().payload(), Ty::Json)) {
+            // (a function value applied takes its arguments as its own body
+            // reads them, as a call by name does: read as a position, a
+            // parsed value had typed the function's parameter an int, and
+            // stopped — crow check --self)
+            // a function value has one type: an argument of another kind than
+            // its parameter's — `pass[3]` called by name, then handed as `g`
+            // and called `g['abc']` — is refused where it is handed (the
+            // compiled program had not built it — crow check --self)
+            if self.pass == Pass::Final
+                && let Ty::Fn(params, _) = base.ty().payload().clone()
+            {
+                let whole = |t: &Ty| matches!(t, Ty::Int | Ty::Big);
+                let misfit = params.iter().zip(idx.iter()).find(|(p, x)| {
+                    let (held, given) = (sans_results(p.payload()), sans_results(x.ty().payload()));
+                    !held.has_unknown()
+                        && !matches!(held, Ty::Json | Ty::Fn(..))
+                        && !matches!(given, Ty::Unknown | Ty::Json)
+                        && !held.compatible(&given)
+                        && !(whole(&held) && whole(&given))
+                        && !held.compatible(&as_inferred(&given))
+                });
+                if let Some((p, x)) = misfit {
+                    let words = |t: &Ty| crate::table::Arg::of_type(t.payload()).words();
+                    let msg = format!(
+                        "`{}[…]` hands {} to a function value whose parameter is {} — a function value has one type, the one its other calls give it",
+                        local_named(&base).unwrap_or_else(|| "f".to_string()),
+                        words(&x.ty()),
+                        words(p)
+                    );
+                    self.refuse(msg);
+                }
+            }
+            if !applied && !matches!(base.ty().payload(), Ty::Json) && idx.iter().any(|x| matches!(x.ty().payload(), Ty::Json)) {
                 let what = local_named(&base).unwrap_or_else(|| "the value".to_string());
                 let (kind, how) = if let Ty::Map(key, _) = base.ty().payload() { (key.ty(), format!("a key of {}", what)) } else { (Ty::Int, format!("a position in {}", what)) };
                 let mut read_idx = Vec::with_capacity(idx.len());
@@ -4461,6 +4504,17 @@ impl<'a> Lowerer<'a> {
                 }
                 types.push(full(&value));
                 checks.push(self.checked(&value));
+                // a parsed value given to a field of a kind is read as that
+                // kind, as one assigned to a variable of a kind is (spec, a
+                // parsed value is read as its use implies; a field of text
+                // given one had held the parsed value compiled, and not built)
+                let value = match declared.get(i).map(|t| t.payload().clone()) {
+                    Some(kind @ (Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Moment)) if self.pass == Pass::Final && matches!(value.ty().payload(), Ty::Json) => {
+                        let fname = self.ctx.structs.get(&name).and_then(|s| s.fields.get(i)).map(|(f, _)| f.clone()).unwrap_or_default();
+                        self.read_json(value, &kind, &format!("given to {}'s field '{}'", crate::lower::shown(&name), fname))
+                    }
+                    _ => value,
+                };
                 // a field holds one kind, as a variable does: a value of
                 // another is refused where the record is made (`Box[2.5]`
                 // beside `Box['a']` had run interpreted and not built
@@ -4475,8 +4529,12 @@ impl<'a> Lowerer<'a> {
                     // kind joins every record made, and a list of values that
                     // cannot fail is held where some can — bm25's index)
                     let (field_k, given_k) = (sans_results(&field), sans_results(&given));
+                    // (a parsed value given a field of a simple kind was read
+                    // as it above; one given a field of another kind fits no
+                    // more than another value would — a column's field given
+                    // one had not built)
                     let fits = matches!(given, Ty::Unknown)
-                        || matches!(given, Ty::Json)
+                        || (matches!(given, Ty::Json) && matches!(field_k, Ty::Json))
                         || field_k.compatible(&given_k)
                         || (whole(&field_k) && whole(&given_k))
                         || field_k.compatible(&as_inferred(&given_k));
@@ -4664,10 +4722,24 @@ impl<'a> Lowerer<'a> {
                 _ => None,
             };
             let items = item_at.and_then(|_| lowered.first()).and_then(|c| Self::items_kind(&c.ty(), name == "contains"));
+            // (a collection whose items nothing says yet — `[]`, `map[]` —
+            // takes a parsed value as it is: read as the number push's rows
+            // take, `push[[], j]` had stopped on a list or a map — crow check
+            // --self)
+            // (one made here only: a variable's items are what its later
+            // uses make them — a frame's cell pushed onto `hi` is a number
+            // for the `max` after it)
+            // (and one whose items are parsed values holds another as it is)
+            let open = item_at.is_some()
+                && lowered.first().is_some_and(|c| {
+                    matches!(c.ty().payload(), Ty::List(e) | Ty::Map(_, e) if **e == Ty::Json)
+                        || (made_here(c) && matches!(c.ty().payload(), Ty::List(e) | Ty::Map(_, e) if **e == Ty::Unknown))
+                });
             let mut read_args = Vec::with_capacity(argc);
             for (i, x) in lowered.into_iter().enumerate() {
                 let kind = match (matches!(x.ty().payload(), Ty::Json), &items) {
                     (false, _) => None,
+                    (true, _) if open && item_at == Some(i) => None,
                     (true, Some(k)) if item_at == Some(i) => Some(k.clone()),
                     (true, _) => uses::row_says(&name, module.as_deref(), i, argc),
                 };
@@ -4850,8 +4922,10 @@ impl<'a> Lowerer<'a> {
                     let whole = |t: &Ty| matches!(t, Ty::Int | Ty::Big);
                     let misfit = params.iter().zip(lowered.iter()).enumerate().find(|(_, (p, x))| {
                         let (held, given) = (sans_results(p.payload()), sans_results(x.ty().payload()));
+                        // (a parsed value is a kind too: the one function
+                        // cannot read it as each call's kind)
                         !matches!(held, Ty::Fn(..) | Ty::Unknown)
-                            && !matches!(given, Ty::Unknown | Ty::Json)
+                            && !matches!(given, Ty::Unknown)
                             && !held.compatible(&given)
                             && !(whole(&held) && whole(&given))
                             && !held.compatible(&as_inferred(&given))
@@ -5362,6 +5436,32 @@ impl<'a> Lowerer<'a> {
             }),
             _ => (0, None),
         };
+        // (`[]` pushed or set as an item is a list of the items' kind where
+        // the collection says it, or of ints where nothing does: nested in
+        // a collection made here, its type had been nothing known, and the
+        // compiled program had not built — crow check --self)
+        // (into a collection made here: a variable's — a graph's arcs, each
+        // `[]` until an arc is pushed — is typed by its later pushes)
+        if matches!(name, "push" | "set") && lowered.len() == slot + 1 && slot > 0 {
+            let empty = matches!(&lowered[slot], Expr::ListLit(items, Ty::List(e)) if items.is_empty() && **e == Ty::Unknown);
+            // (of text where nothing says, into a collection made here: a
+            // list of items nothing typed is held as one of text, and a
+            // parameter given it is too; one whose items are lists of a
+            // kind says it, however it was made)
+            let as_item = match &item {
+                Some(t @ Ty::List(e)) if **e != Ty::Unknown => Some(t.clone()),
+                _ if made_here(&lowered[0]) => Some(Ty::List(Box::new(Ty::Str))),
+                _ => None,
+            };
+            if let (true, Some(as_item)) = (empty, as_item) {
+                lowered[slot] = Expr::ListLit(Vec::new(), as_item);
+            }
+        }
+        let item = match (&item, name) {
+            // (and the collection holds what it was handed, once typed)
+            (Some(Ty::Unknown), "push" | "set") | (None, "push" | "set") => lowered.get(slot).map(|x| x.ty().payload().clone()),
+            _ => item,
+        };
         if let Some(item) = item {
             let value = lowered.remove(slot);
             let value = held_as(value, &item);
@@ -5601,6 +5701,18 @@ impl<'a> Lowerer<'a> {
     /// the run that traces it, as the verifier reads them)
     fn check_fn_value(&mut self, f: &str) {
         if self.pass != Pass::Final || self.at == Where::Test || self.differentiating {
+            return;
+        }
+        // a function copied per signature has no one type to be held at
+        // (spec, Specialization): refused where it is handed — the
+        // compiled program had refused it as it built
+        if self.ctx.specializations.get(f).is_some_and(|v| !v.is_empty()) {
+            self.refuse(format!(
+                "'{}' is used at several kinds, and is handed as a value here — a function value has one type: hand a function of one kind (fn {}_text[x], calling {}[x])",
+                crate::lower::shown(f),
+                crate::lower::shown(f),
+                crate::lower::shown(f)
+            ));
             return;
         }
         let Some(sig) = self.ctx.functions.get(f) else { return };

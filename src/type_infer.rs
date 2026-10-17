@@ -917,6 +917,14 @@ impl TypeContext {
         t.is_concrete()
     }
 
+    /// A list or a map whose items nothing says — `[]`, `map[]` handed to a
+    /// function — is a kind of its own for a signature: a function called
+    /// with text and with `[]` is two functions (one had been, and `[]`
+    /// reached a parameter of text — crow check --self).
+    pub(crate) fn empty_collection(t: &Ty) -> bool {
+        matches!(t, Ty::List(e) | Ty::Map(_, e) if **e == Ty::Unknown)
+    }
+
     /// A call's signature noted for the monomorphization pass (F2): a new
     /// one, or one an earlier call already reaches, joined with it where a
     /// record, a record or none and the int that writes none meet (a record
@@ -931,6 +939,9 @@ impl TypeContext {
                 for (held, given) in entry[i].iter_mut().zip(&sig) {
                     if linked(held) && linked(given) && !(*held == Ty::Int && *given == Ty::Int) {
                         *held = held.unify(given);
+                    } else if Self::empty_collection(held) && given.is_concrete() {
+                        // (an empty collection's items, once a call says them)
+                        *held = given.clone();
                     }
                 }
             }
@@ -1167,9 +1178,14 @@ impl TypeContext {
                 _ => None,
             }
         }
+        // (and `[]` beside a tensor is a list beside a tensor: `first[m]`
+        // beside `first[[]]` had been one copy, `[]` read as a matrix)
         let ranks_agree = |x: &Ty, y: &Ty| match (rank(x), rank(y)) {
             (Some(r), Some(s)) => r == s,
-            _ => true,
+            _ => {
+                let matrix = |t: &Ty| matches!(t, Ty::Tensor(_, Some(d)) if d.len() >= 2);
+                !(Self::empty_collection(x) && matrix(y) || Self::empty_collection(y) && matrix(x))
+            }
         };
         a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.compatible(y) && ranks_agree(x, y) && x.has_markup() == y.has_markup() && x.frame_cols() == y.frame_cols())
     }

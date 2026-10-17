@@ -1,0 +1,3 @@
+j30_a_function_used_at_two_kinds_handed_as_a_value.co:4:5: `g[…]` hands text to a function value whose parameter is an int — a function value has one type, the one its other calls give it
+  4 │     return g[x]
+    │     ^^^^^^^^^^^

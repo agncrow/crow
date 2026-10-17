@@ -1,0 +1,6 @@
+fn pass[x]
+    return x
+fn apply[g, x]
+    return g[x]
+log[apply[pass, json['[1]']]]
+log[apply[pass, 2 ^ 100]]
