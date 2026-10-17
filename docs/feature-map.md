@@ -96,4 +96,4 @@ census is the book's [Appendix A](book/src/appendix-a-language-at-a-glance.md).
 | Heterogeneous maps, map literals `[k = v]` | structs; `map[k = v]` |
 | Timers, `every[]`, async/await, threads | `later[f]`, `serve[..., refresh = N]`, parallel `for` |
 | Ambient globals inside functions | parameters in, return values out |
-| `chars[s]`, `pad`, `append`, `date`, `elapsed`, `today` | `s[i]` in a `for`; `fmt[s, width = n]`; `concat`; `moment`/subtraction/`fmt[now[], style = 'date']` |
+| `chars[s]` | `s[i]` in a `for` |

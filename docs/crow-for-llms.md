@@ -132,7 +132,7 @@ all_big = all[nums, is_big]
 --- px = query[conn, '...']
 --- if now[] - captured[px] gt 10.0  → refuse (staleness is plain arithmetic)
 --- captured[x] on a computed value is an error value (kind 'no_capture').
---- date[]/elapsed[]/today[] were REMOVED. Timezones are always explicit; default UTC.
+--- a date is moment[y, m, d]; the seconds between are t2 - t1; today's date is fmt[now[], style = 'date']. Timezones are always explicit; default UTC.
 
 --- Styling: pages look right with ZERO css. Blessed classes only:
 --- class = 'card' 'stats' 'controls' 'primary' 'up' 'down' 'stale'

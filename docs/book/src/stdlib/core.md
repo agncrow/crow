@@ -93,7 +93,7 @@ fn money[x]
 log['P&L: `money[pnl]`']
 ```
 
-`decimals`/`percent` on a string is an error. `fmt` replaces the removed `pad` builtin (`pad[s, n]` → `fmt[s, width = n]`).
+`decimals`/`percent` on a string is an error. A width is `fmt`'s to give: `pad` is no name of the language, so a program may give it to a function of its own.
 
 ### Design Note: No Format Mini-Language
 

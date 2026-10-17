@@ -49,7 +49,7 @@ pub(crate) const WEB_EXTRA_FUNCTIONS: &[&str] = &["arrow", "bytes", "stream"];
 pub(crate) const WEB_MODULES: &[&str] = &["auth", "mail", "ws"];
 
 /// Reserved only in files that import ui
-pub(crate) const UI_RESERVED: &[&str] = &["fetch", "poll", "field", "slider", "checkbox", "toggle", "radio", "tabs", "progress", "icon", "today"];
+pub(crate) const UI_RESERVED: &[&str] = &["fetch", "poll", "field", "slider", "checkbox", "toggle", "radio", "tabs", "progress", "icon"];
 
 /// The module functions a program calls bare where their module is
 /// imported, which the checks know by name: a frame's `select` (and the
@@ -1489,21 +1489,6 @@ impl<'a> Lowerer<'a> {
             return;
         }
 
-        // builtins that were removed, each with its replacement
-        let removed = match name {
-            "pad" => Some("pad was removed — use fmt[s, width = n]"),
-            "append" => Some("append was removed — use concat[a, b] (one merge operation)"),
-            // the time builtins the moment replaced (spec, Design Note on moments)
-            "date" => Some("date[] was removed - a moment is a number: moment[y, m, d] (hour/minute/second/tz are named args)"),
-            "elapsed" => Some("elapsed[] was removed - subtract moments: end - start is seconds"),
-            "today" => Some("today[] was removed - use fmt[now[], style = 'date'] (tz = ... for a zone)"),
-            _ => None,
-        };
-        if let Some(msg) = removed {
-            self.refuse(msg.to_string());
-            return;
-        }
-
         // web's modules' names (web.mail's `mail` and `smtp`, web.ws's
         // `socket`, web.auth's `sign`) are theirs: under `use web` alone
         // neither mode had them (the interpreter stopped as it ran, "does
@@ -1798,7 +1783,6 @@ fn builtin_arity_ok(name: &str, argc: usize) -> bool {
         "sign_out" | "__reader" => argc == 0,
         "__known" => argc == 1,
         "chart" => argc == 12,
-        "append" => argc == 2,
         "map" => argc == 0,
         "args" => argc == 0,
         "input" => argc <= 1,
@@ -1815,8 +1799,6 @@ fn builtin_arity_ok(name: &str, argc: usize) -> bool {
         // timeout (the lowering fills in what a call leaves out)
         "request" => argc == 9,
         "find" | "any" | "all" => argc == 2,
-        "date" => argc == 3,
-        "elapsed" => argc == 2,
         // Web
         "route" => (2..=4).contains(&argc), // route[path, handler] / +method / path, method, handler, limit
         "serve" => argc == 1 || argc == 11,  // serve[port] (pre-lower) or serve[port, refresh, budget, theme, density, accent, wide, keep, uploads, cors, files]
@@ -1836,7 +1818,6 @@ fn builtin_arity_ok(name: &str, argc: usize) -> bool {
         "radio" | "tabs" => argc == 2,        // radio[options, var]
         "progress" => argc == 2,              // progress[value, max] (lowered)
         "icon" => argc == 3,                  // icon[name, size, color] (lowered)
-        "today" => argc == 0,                 // today[]
         _ => true,
     }
 }

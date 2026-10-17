@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 /// (`abs`, `sqrt`, `floor`, `ceil` and `round` here are the dual numbers'
 /// form, which a function `grad` differentiates; a plain number's is its row)
 pub const HANDLED: &[&str] = &[
-    "type", "abs", "sqrt", "floor", "ceil", "round", "pad", "append", "assert", "error",
+    "type", "abs", "sqrt", "floor", "ceil", "round", "assert", "error",
     "sign", "exp", "ln", "log2", "log10", "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "erf",
 ];
 
@@ -149,15 +149,9 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
         "erf" => dual_math(name, args, |a| (crow_runtime::special::erf_scalar(a), std::f64::consts::FRAC_2_SQRT_PI * (-a * a).exp())),
         // pow removed — use ^ operator instead
         // --- String builtins ---
-        "pad" => {
-            Err("pad was removed — use fmt[s, width = n]".into())
-        }
         // fmt: value formatting via the shared display kernel. The lowering
         // pass guarantees exactly 7 positional args (sentinel defaults).
         // --- Conversion builtins ---
-        "append" => {
-            Err("append was removed — use concat[a, b] (one merge operation, see language-spec.md)".into())
-        }
         // --- CLI / IO builtins ---
         // --- Hashing builtin ---
         "assert" => {

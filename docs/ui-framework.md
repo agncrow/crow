@@ -5,7 +5,7 @@
 > and style modules shipped. The shipped surface is specified in
 > `language-spec.md` (Built-in Module: web → View Blocks, Charts, Styling)
 > and taught in the book (chapters 11–12). Code sketches below may use
-> pre-current syntax (`page[path, render, handle]`, `today[]`,
+> pre-current syntax (`page[path, render, handle]`,
 > `chart.live[...]`), and the phase sections describe features that may
 > not exist yet.
 
@@ -195,7 +195,7 @@ All frame builtins work in render functions:
 
 ```
 fn performance[trades]
-    today_trades = trades[trades.date eq today[]]
+    today_trades = trades[trades.date eq fmt[now[], style = 'date']]
     summary = group[today_trades, playbook_code, [pnl, sum], [pnl, count], [pnl, mean]]
     summary = sort[summary, pnl_sum, desc]
     table[summary]
@@ -2386,7 +2386,7 @@ fn scanner[data]
     table[sorted]
 
 fn performance[trades]
-    today_trades = trades[trades.date eq today[]]
+    today_trades = trades[trades.date eq fmt[now[], style = 'date']]
     summary = group[today_trades, playbook_code, [pnl, sum], [pnl, count], [pnl, mean]]
     summary = sort[summary, pnl_sum, desc]
     table[summary]
@@ -2450,7 +2450,6 @@ page['/', render]
 | `field[]` | Done | Two-way bound labeled input (`data-crow-input="__field:key"`) |
 | `select[]` (two-way) | Done | Two-way bound dropdown (`data-crow-change="__select:key"`) |
 | `table[frame]` | Done | Auto-render table from headers + rows via `CrowVNode::table_from_data` |
-| `today[]` | Done | Returns today's date via `chrono::Local` |
 | `chart` package (SVG) | Not started | `chart.candle`, `chart.line`, etc. — server-rendered SVG |
 | `chart` package (live) | Not started | `chart.live` — custom Canvas/JS interactive chart engine |
 | Hook mechanism | Not started | Generic bridge for server data → client-side JS widgets |

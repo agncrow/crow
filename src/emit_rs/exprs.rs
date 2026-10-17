@@ -1427,7 +1427,7 @@ impl Emitter {
             return format!("crow_runtime::core::map_key(&{}, &String::from(\"{}\")).unwrap_or_else(|e| crow_stop({}, e))", obj, field, self.line_now());
         }
         if let Ty::Record(sname) = &oty {
-            if matches!(sname.as_str(), "CrowShell" | "CrowFindResult" | "CrowElapsed" | "CrowReply" | "CrowAnswer") {
+            if matches!(sname.as_str(), "CrowShell" | "CrowFindResult" | "CrowReply" | "CrowAnswer") {
                 return format!("{}.{}", obj, field);
             }
         }

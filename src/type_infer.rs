@@ -582,17 +582,6 @@ impl TypeContext {
             },
         );
         structs.insert(
-            "CrowElapsed".to_string(),
-            StructSig {
-                fields: vec![
-                    ("seconds".to_string(), Ty::Float),
-                    ("minutes".to_string(), Ty::Float),
-                    ("hours".to_string(), Ty::Float),
-                    ("days".to_string(), Ty::Float),
-                ],
-            },
-        );
-        structs.insert(
             "CrowFindResult".to_string(),
             StructSig {
                 fields: vec![

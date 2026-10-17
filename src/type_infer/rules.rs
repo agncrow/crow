@@ -417,7 +417,6 @@ impl TypeContext {
             // not, recv the next message or why not (closed, a wait passed)
             // Reactive data sources (UI)
             "poll" | "fetch" => Ty::Frame(None),
-            "today" => Ty::Str,
             // Autograd
             "grad" => {
                 // grad[f] is a function of f's parameters (`gradient_type`)

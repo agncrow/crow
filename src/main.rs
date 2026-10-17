@@ -844,7 +844,7 @@ fn cmd_test_docs() {
     let mut tables: Vec<(&str, Vec<&str>)> = vec![
         ("core", lower_ir::CORE_RESERVED.to_vec()),
         ("web", lower_ir::WEB_RESERVED.iter().chain(lower_ir::WEB_EXTRA_FUNCTIONS.iter()).copied().collect()),
-        ("ui", lower_ir::UI_RESERVED.iter().copied().filter(|n| *n != "today").collect()),
+        ("ui", lower_ir::UI_RESERVED.to_vec()),
         ("element", lower::UI_ELEMENTS.to_vec()),
         ("control", lower::UI_CONTROLS.to_vec()),
         ("math", modules::math::MATH_FUNCTIONS.to_vec()),
@@ -923,7 +923,7 @@ fn cmd_test_docs() {
     // codegen does not build today — documented in the spec, listed here so
     // the gap is visible (they have no example link in the standard library pages).
     const SPEC_ONLY: &[&str] = &[
-        "test", "today",                                    // keyword / removed name
+        "test",                                             // a keyword
         "app", "click",                                     // test-harness names (used in test blocks, not run blocks)
         "contains", "has",                                  // the rows behind `x in xs` and `key in m`: written as the operator
     ];

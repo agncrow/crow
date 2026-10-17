@@ -617,24 +617,6 @@ impl Emitter {
                     a[0], a[1], tr, tr
                 )
             }
-            "date" if n == 3 => {
-                self.needs_chrono = true;
-                format!(
-                    "{{ let _y = {} as i32; let _m = {} as u32; let _d = {} as u32; let _dt = chrono::NaiveDate::from_ymd_opt(_y, _m, _d).expect(\"invalid date\"); let mut _map = std::collections::BTreeMap::new(); _map.insert(\"year\".to_string(), _y as i64); _map.insert(\"month\".to_string(), _m as i64); _map.insert(\"day\".to_string(), _d as i64); _map.insert(\"timestamp\".to_string(), _dt.and_hms_opt(0,0,0).unwrap().and_utc().timestamp()); _map }}",
-                    a[0], a[1], a[2]
-                )
-            }
-            "elapsed" if n == 2 => {
-                self.needs_elapsed_struct = true;
-                format!(
-                    "{{ let _t1 = {}.get(\"timestamp\").copied().unwrap_or(0i64); let _t2 = {}.get(\"timestamp\").copied().unwrap_or(0i64); let _d = (_t2 - _t1) as f64; CrowElapsed {{ seconds: _d, minutes: _d / 60.0, hours: _d / 3600.0, days: _d / 86400.0 }} }}",
-                    a[0], a[1]
-                )
-            }
-            "today" if n == 0 => {
-                self.needs_chrono = true;
-                "chrono::Local::now().format(\"%Y-%m-%d\").to_string()".to_string()
-            }
             _ => return self.web_builtin(name, args, a).or_else(|| self.ui_builtin(name, args, a)),
         })
     }

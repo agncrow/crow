@@ -164,9 +164,7 @@ Crow now has regex, date/time, shell, and hashing builtins in addition to file s
 - [x] **`sub[s, pattern, replacement]`** — regex substitution.
 
 #### Date/time ✅
-- [x] **`now[]`** — current datetime map with `year`, `month`, `day`, `hour`, `minute`, `second`, `timestamp`.
-- [x] **`date[y, m, d]`** — construct date map with `year`, `month`, `day`, `timestamp`.
-- [x] **`elapsed[start, end]`** — duration between two date maps → `{seconds, minutes, hours, days}`.
+- [x] **`now[]`, `moment[…]`** — a moment, a kind of its own (spec, Moments): made from parts, text or seconds; its fields; `t2 - t1` the seconds between.
 
 #### Process / shell ✅
 - [x] **`shell[cmd]`** — run shell command → `{status, stdout, stderr}`. stdout/stderr are trimmed.
@@ -229,7 +227,6 @@ Goal: `fetch[url]`, `poll[url, seconds]`, `field[label, var]`, `select[options, 
 - [x] **`field[label, var]`** — two-way bound labeled input (`data-crow-input="__field:key"`)
 - [x] **`select[options, var]`** — two-way bound dropdown (`data-crow-change="__select:key"`)
 - [x] **`table[frame]`** — auto-render table from headers + rows via `CrowVNode::table_from_data`
-- [x] **`today[]`** — returns today's date via `chrono::Local`
 - [x] **Validator/interpreter/transpiler** — all builtins registered with correct signatures
 - [x] **JS runtime** — `morphChildren` preserves input focus and values during re-render
 - [x] **VNode constructors** — all HTML elements in transpiler have matching `CrowVNode` methods

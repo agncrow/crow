@@ -771,15 +771,6 @@ mod tests {
     }
 
     #[test]
-    fn test_append() {
-        // Regression: append was removed in favor of concat
-        let result = std::panic::catch_unwind(|| {
-            run_program("x = append[[1, 2], [3, 4]]\n")
-        });
-        assert!(result.is_err(), "append should error with removal message");
-    }
-
-    #[test]
     fn test_concat_core() {
         let val = get_var("x = concat[[1, 2], [3, 4]]\n", "x");
         assert_eq!(format!("{}", val.value), "[1, 2, 3, 4]");
@@ -2800,14 +2791,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[test]
-    fn test_pad_removed() {
-        let result = std::panic::catch_unwind(|| {
-            run_program("x = pad['hi', 5]\n")
-        });
-        assert!(result.is_err(), "pad should error with removal message");
-    }
-
     // ===== Errors in conditions + batch semantics (#2) =====
 
     #[test]
@@ -3458,15 +3441,18 @@ mod tests {
         assert!(err.contains("notice[] tells a page's reader something"), "{}", err);
     }
 
+    /// A name the language replaced is no name of it (Vijay, 2026-10-16:
+    /// "remove it entirely"): `pad`, `append`, `date`, `elapsed` and `today`
+    /// are unknown like any other, and a program may give them to functions
+    /// of its own.
     #[test]
-    fn test_removed_time_builtins_teach() {
-        for (src, want) in [
-            ("d = date[2024, 1, 15]", "moment["),
-            ("e = elapsed[1.0, 2.0]", "subtract moments"),
-            ("t = today[]", "fmt[now[]"),
-        ] {
-            let err = run(src).err().expect("a removed builtin is refused");
-            assert!(err.contains(want), "expected teaching error for {}, got {}", src, err);
+    fn a_replaced_name_is_an_unknown_name_and_free() {
+        for name in ["pad", "append", "date", "elapsed", "today"] {
+            let err = run(&format!("x = {}[1, 2]\n", name)).err().expect("an unknown name is refused");
+            assert!(err.contains(&format!("undefined function '{}'", name)), "{}: {}", name, err);
+            assert!(!err.contains("removed"), "{}: no message of its own — {}", name, err);
+            let own = get_var(&format!("fn {0}[a, b]\n    return a + b\nx = {0}[1, 2]\n", name), "x");
+            assert_eq!(format!("{}", own.value), "3", "{}: a program's own function", name);
         }
     }
 

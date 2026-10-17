@@ -844,7 +844,7 @@ impl Emitter {
         // structs
         let structs: Vec<StructDef> = self.part.structs.clone();
         for s in &structs {
-            if !matches!(s.name.as_str(), "CrowFindResult" | "CrowShell" | "CrowElapsed" | "CrowReply" | "CrowAnswer") {
+            if !matches!(s.name.as_str(), "CrowFindResult" | "CrowShell" | "CrowReply" | "CrowAnswer") {
                 self.emit_struct(s);
             }
         }
@@ -1133,7 +1133,7 @@ impl Emitter {
         loop {
             let before = ok.len();
             for (name, def) in &self.structs {
-                if matches!(name.as_str(), "CrowFindResult" | "CrowShell" | "CrowElapsed" | "CrowReply" | "CrowAnswer") || ok.contains(name) {
+                if matches!(name.as_str(), "CrowFindResult" | "CrowShell" | "CrowReply" | "CrowAnswer") || ok.contains(name) {
                     continue;
                 }
                 if def.fields.iter().all(|(_, t)| jsonable(&as_inferred(t), &ok)) {
@@ -1166,7 +1166,6 @@ impl Emitter {
     fn record_is(&self, name: &str, field: &dyn std::ops::Fn(&Emitter, &Ty, &mut BTreeSet<String>) -> bool, seen: &mut BTreeSet<String>) -> bool {
         match name {
             "CrowShell" | "CrowFindResult" | "CrowReply" | "CrowAnswer" => return true,
-            "CrowElapsed" => return false,
             _ => {}
         }
         if !seen.insert(name.to_string()) {
@@ -1807,13 +1806,6 @@ impl Emitter {
             self.line("");
             self.line("#[allow(dead_code)]");
             self.line("type CrowReply = crow_runtime::sources::Reply;");
-        }
-        if self.needs_elapsed_struct {
-            self.line("");
-            self.line("#[derive(Clone, Debug)]");
-            self.line("struct CrowElapsed { seconds: f64, minutes: f64, hours: f64, days: f64 }");
-            self.line("#[allow(dead_code)]");
-            self.line("impl CrowElapsed { fn crow_default() -> Self { CrowElapsed { seconds: 0.0, minutes: 0.0, hours: 0.0, days: 0.0 } } }");
         }
     }
 
