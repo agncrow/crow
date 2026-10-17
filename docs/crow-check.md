@@ -236,6 +236,18 @@ agree:
 | unmoved | `CROW_NO_MOVES=1`: no moves and no early frees |
 | compiled | `crow build`, then the binary |
 
+Effects run too, each batch in a directory of its own made anew for every
+configuration — a text, a CSV, a JSON document and a directory to read,
+the files a case writes its own — with the environment cleared (no key,
+no token, no database's address), the draws seeded, the clock standing
+still and an empty replay answering every request and every database
+server's statement, so nothing reaches the network or a model. A program
+can call every row this way but two of the standard library's own layer
+no module reaches; the rest of that layer and the database drivers' rows
+are reached through the modules written in Crow, which `unexercised.txt`
+names for each. Every finding shows its case's code beside its id —
+`op/^/int/bool` is `log[3 ^ true]`: the family, then what it holds.
+
 A disagreement, a crash, a hang, a build the Rust compiler refuses, or an
 internal error in any of them is a finding. Every finding is written to
 `target/crow_self/findings.txt` with each configuration's answer; the

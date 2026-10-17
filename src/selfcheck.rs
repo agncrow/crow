@@ -98,6 +98,23 @@ fn values() -> Vec<Val> {
         Val { name: "sparse".into(), expr: "sparse[[[1.0, 0.0], [0.0, 2.0]]]".into(), setup: Vec::new(), imports: vec!["math"] },
         plain("colnames", "['a', 'b']"),
         plain("scheme", "'base64'"),
+        // (the files every run's directory is given, one the case writes —
+        // its own, by the case's number — an address nothing answers, and a
+        // database in memory: see `sandbox`)
+        plain("path", "'self_text.txt'"),
+        plain("csvpath", "'self_data.csv'"),
+        plain("jsonpath", "'self_data.json'"),
+        plain("dirpath", "'self_dir'"),
+        plain("newpath", "'self_out_@N.txt'"),
+        plain("url", "'http://127.0.0.1:9/self'"),
+        plain("sql", "'SELECT 1 AS n'"),
+        Val { name: "conn".into(), expr: "connect['sqlite://:memory:']".into(), setup: Vec::new(), imports: vec!["db"] },
+        // (a socket and a mailer to an address nothing answers; a model the
+        // empty replay answers in place of the network)
+        Val { name: "socket".into(), expr: "socket['ws://127.0.0.1:9/self']".into(), setup: Vec::new(), imports: vec!["web.ws"] },
+        Val { name: "mailer".into(), expr: "smtp['127.0.0.1', 9, 'u', 'p']".into(), setup: Vec::new(), imports: vec!["web.mail"] },
+        Val { name: "model".into(), expr: "reach['anthropic://claude-sonnet-5']".into(), setup: Vec::new(), imports: vec!["llm"] },
+        Val { name: "talk".into(), expr: "ask['hello']".into(), setup: Vec::new(), imports: vec!["llm"] },
         plain("record", "SelfP[1, 2]"),
         plain("fn", "self_double"),
         framed("frame", "sf"),
@@ -139,7 +156,7 @@ fn tried_first(k: Kind) -> &'static [&'static str] {
         Kind::Float => &["float", "int", "float0"],
         Kind::Moment => &["moment"],
         Kind::Bool => &["bool", "boolf"],
-        Kind::Str => &["text", "textkey", "textnum", "text0"],
+        Kind::Str => &["text", "path", "textkey", "textnum", "text0"],
         Kind::Tensor => &["vector", "matrix", "floats"],
         Kind::Sizes => &["sizes", "int"],
         Kind::Tensors => &["tensors"],
@@ -171,14 +188,14 @@ fn tried_first(k: Kind) -> &'static [&'static str] {
         // given, never taken from a program; or a handle, a stream, a
         // server's answer, a fused kernel's own: no program value is one
         Kind::Sparse => &["sparse"],
+        Kind::Socket => &["socket"],
+        Kind::Mailer => &["mailer"],
         Kind::FloatMap
         | Kind::Unit
         | Kind::Stream
         | Kind::Chunks
         | Kind::Answer
         | Kind::Response
-        | Kind::Socket
-        | Kind::Mailer
         | Kind::Markup
         | Kind::TextRows
         | Kind::Shell
@@ -194,7 +211,8 @@ fn tried_first(k: Kind) -> &'static [&'static str] {
 /// lowers: each kind's usual value and its edges.
 const VARIED: &[&str] = &[
     "int", "int0", "intneg", "intmax", "big", "float", "float0", "text", "text0", "textnum", "bool", "ints", "texts", "floats", "bools", "empty", "vector", "matrix", "map",
-    "json", "moment", "frame", "colint", "coltext", "colbool", "colmissing", "may:int", "fail:int", "may:ints", "fail:vector",
+    "json", "moment", "frame", "colint", "coltext", "colbool", "colmissing", "may:int", "fail:int", "may:ints", "fail:vector", "path", "csvpath", "newpath",
+    "dirpath", "url", "sql",
 ];
 
 // ── cases ───────────────────────────────────────────────────────────
@@ -221,6 +239,11 @@ impl Case {
         }
         body.extend(lines);
         Case { id: id.into(), imports, body }
+    }
+
+    /// The case's lines, as a program writes them: what an id stands for.
+    fn code(&self) -> String {
+        self.body.join("\n")
     }
 
     fn with_import(mut self, module: &'static str) -> Case {
@@ -295,7 +318,7 @@ fn program(cases: &[&Case]) -> (String, Vec<usize>) {
         let all = c.body.join("\n");
         let used: Vec<&str> = HELPERS.iter().filter(|(n, _)| names_word(&all, n)).map(|(n, _)| *n).collect();
         let own = |text: &str| -> String {
-            let mut t = text.to_string();
+            let mut t = text.replace("@N", &k.to_string());
             for name in &used {
                 t = renamed(&t, name, &format!("{}_{}", name, k));
             }
@@ -495,6 +518,26 @@ fn form_cases(all: &[Val]) -> Vec<Case> {
         }
     }
 
+    // a database: SQLite in memory, its statements and their failures, and a
+    // server's connection, answered by the empty replay every run is given
+    let databases: &[(&str, &str)] = &[
+        ("sqlite-round-trip", "c = connect['sqlite://:memory:']\nmade = exec[c, 'CREATE TABLE t (k TEXT, v REAL, n INTEGER)']\nput = exec[c, 'INSERT INTO t VALUES (?, ?, ?)', ['a', 1.5, 3]]\nrows = query[c, 'SELECT k, v, n FROM t']\nlog[rows]\nlog[rows.v[0] + 1.0]"),
+        ("sqlite-null", "c = connect['sqlite://:memory:']\nmade = exec[c, 'CREATE TABLE t (k TEXT, v REAL)']\nput = exec[c, 'INSERT INTO t VALUES (?, NULL)', ['a']]\nrows = query[c, 'SELECT k, v FROM t']\nlog[rows]\nlog[rows.v.ok]"),
+        ("sqlite-bad-sql", "c = connect['sqlite://:memory:']\nbad = query[c, 'SELECT nope FROM missing']\nlog[bad.ok]\nlog[bad.reason]"),
+        ("sqlite-params-list", "c = connect['sqlite://:memory:']\nmade = exec[c, 'CREATE TABLE t (n INTEGER)']\nfor i in range[5]\n    put = exec[c, 'INSERT INTO t VALUES (?)', [i]]\nlog[query[c, 'SELECT n FROM t WHERE n IN ?', [push[push[[], 1], 3]]]]"),
+        ("sqlite-insert-frame", "c = connect['sqlite://:memory:']\nmade = exec[c, 'CREATE TABLE t (a INTEGER, b TEXT)']\nf = frame.new[a = [1, 2], b = ['x', 'y']]\nput = insert[c, 't', f]\nlog[query[c, 'SELECT a, b FROM t']]"),
+        ("sqlite-count", "c = connect['sqlite://:memory:']\nmade = exec[c, 'CREATE TABLE t (a INTEGER)']\nput = exec[c, 'INSERT INTO t VALUES (1), (2)']\nlog[put]\nlog[len[query[c, 'SELECT a FROM t']]]"),
+        ("postgres-unreached", "c = connect['postgres://u@127.0.0.1:9/x']\nlog[c.ok]"),
+        ("clickhouse-unreached", "c = connect['clickhouse://127.0.0.1:9/x']\nlog[c.ok]"),
+    ];
+    for (name, body) in databases {
+        let mut case = Case::new(format!("db/{}", name), &[], vec![body.to_string()]).with_import("db");
+        if body.contains("frame.new") {
+            case = case.with_import("frame");
+        }
+        cases.push(case);
+    }
+
     // records that link records of their kind
     let linked: &[(&str, &str)] = &[
         ("read", "n = SelfNode[1, SelfNode[2, 0]]\nlog[n.next.v]"),
@@ -509,15 +552,14 @@ fn form_cases(all: &[Val]) -> Vec<Case> {
     cases
 }
 
-/// The rows a program cannot run here, and why: the language's own layer,
-/// the servers and the network, files and the clock.
+/// The rows a program cannot call, and why: the language's own layer (its
+/// rows are reached through the standard modules written in Crow, which
+/// the cases call), and the database drivers' (reached through `use db`'s
+/// `connect`, `query` and `exec`, the `db` family).
 fn skipped_module(module: &str) -> Option<&'static str> {
     match module {
         "sys" => Some("the standard library's own layer"),
-        "db.postgres" | "db.clickhouse" => Some("a database server"),
-        "web" | "web.mail" | "web.auth" | "web.ws" => Some("a server, the network or mail"),
-        "llm" => Some("a model over the network"),
-        "io" => Some("files"),
+        "db.postgres" | "db.clickhouse" => Some("a driver's own row, reached through use db (the db family)"),
         _ => None,
     }
 }
@@ -529,7 +571,37 @@ const WRITTEN: &[(&str, &str)] = &[
     ("text.decode", "decode['YWJj', 'base64']"),
     ("frame.window", "window[sf, 'a', 'sum', n = 2]"),
     ("frame.window_one", "window[sf, 'a', 'lag', n = 1]"),
+    // (an address nothing answers; the empty replay answers a model)
+    ("core.request", "request['http://127.0.0.1:9/self']"),
+    ("llm.chat", "chat[reach['anthropic://claude-sonnet-5'], ask['hello'], system = 'One word.']"),
+    ("llm.follow", "follow[reach['anthropic://claude-sonnet-5'], ask['hello'], system = 'One word.']"),
+    // (a duration a case can wait out)
+    ("core.sleep", "sleep[0.01]"),
+    ("core.sleep_ms", "sleep_ms[1]"),
 ];
+
+/// The standard modules written in Crow whose source calls a name.
+fn modules_calling(name: &str) -> Vec<&'static str> {
+    use crate::modules as m;
+    let sources: &[(&str, &str)] = &[
+        ("core", m::CORE_SOURCE),
+        ("sys", m::SYS_SOURCE),
+        ("io", m::IO_SOURCE),
+        ("frame", m::FRAME_SOURCE),
+        ("math", m::MATH_SOURCE),
+        ("math.nn", m::nn::NN_SOURCE),
+        ("math.stats", m::STATS_SOURCE),
+        ("web.auth", m::AUTH_SOURCE),
+        ("web", m::WEB_SOURCE),
+        ("web.ws", m::WS_SOURCE),
+        ("web.mail", m::MAIL_SOURCE),
+        ("llm", m::LLM_SOURCE),
+        ("db.clickhouse", m::CLICKHOUSE_SOURCE),
+        ("db.postgres", m::POSTGRES_SOURCE),
+    ];
+    let call = format!("{}[", name);
+    sources.iter().filter(|(_, src)| src.match_indices(&call).any(|(i, _)| src[..i].chars().last().is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '.')))).map(|(m, _)| *m).collect()
+}
 
 /// The module a row is imported from in a program.
 fn import_of(module: &str) -> Option<&'static str> {
@@ -542,6 +614,12 @@ fn import_of(module: &str) -> Option<&'static str> {
         "doc" => Some("doc"),
         "bits" => Some("bits"),
         "chart" => Some("chart"),
+        "io" => Some("io"),
+        "llm" => Some("llm"),
+        "web" => Some("web"),
+        "web.auth" => Some("web.auth"),
+        "web.mail" => Some("web.mail"),
+        "web.ws" => Some("web.ws"),
         _ => None,
     }
 }
@@ -636,11 +714,21 @@ fn row_cases(all: &[Val], only: &Option<String>) -> (Vec<Case>, Vec<String>) {
             continue;
         }
         if let Some(why) = skipped_module(row.module) {
-            unexercised.push(format!("{} — {}", row.id, why));
+            // (the standard modules that reach a layer's row, by its name in
+            // their source: the cases reach it through them)
+            let through: Vec<&str> = if row.module == "sys" { modules_calling(row.name) } else { Vec::new() };
+            if through.is_empty() {
+                unexercised.push(format!("{} — {}", row.id, why));
+            } else {
+                unexercised.push(format!("{} — {}, reached through {}", row.id, why, through.join(", ")));
+            }
             continue;
         }
-        if crate::ir::is_effect(row.name) || crate::ir::DRAWS.contains(&row.name) {
-            unexercised.push(format!("{} — an effect or a random draw", row.id));
+        // (every effect runs in a directory of its own, the network answered
+        // by an empty replay, the clock and the draws fixed: `sandbox`; what
+        // never returns is the served suites')
+        if matches!(row.name, "serve" | "listen") {
+            unexercised.push(format!("{} — runs until it is stopped (crow test --served holds it)", row.id));
             continue;
         }
         if import_of(row.module).is_none() && !row.module.is_empty() {
@@ -925,6 +1013,41 @@ fn spawn_all(mut cmd: Command) -> (Option<i32>, String, String, Ended) {
     (code, out, err, ended)
 }
 
+/// The directory a batch runs in under one configuration, made anew: the
+/// files the cases read (a text, a CSV, a JSON document, a directory), and
+/// nothing else — a case that writes, writes there.
+fn sandbox(dir: &Path, file: &str, config: &str) -> PathBuf {
+    let stem = file.trim_end_matches(".co");
+    let s = dir.join(format!("run_{}_{}", stem, config));
+    let _ = std::fs::remove_dir_all(&s);
+    let _ = std::fs::create_dir_all(s.join("self_dir"));
+    let _ = std::fs::write(s.join("self_text.txt"), "hello\nworld\n");
+    let _ = std::fs::write(s.join("self_data.csv"), "a,b,c\n1,x,1.5\n2,y,2.5\n3,z,3.5\n");
+    let _ = std::fs::write(s.join("self_data.json"), "{\"a\": 1, \"b\": [1, 2]}\n");
+    let _ = std::fs::write(s.join("self_dir").join("inside.txt"), "inside\n");
+    s
+}
+
+/// A case's process: its environment cleared — no key, no token, no
+/// database's address reaches it — and given the run's own: a seed for the
+/// draws, a clock that stands still, a replay with nothing recorded (every
+/// request and every server's statement answered from it, so nothing goes
+/// out), and the configuration's switches.
+fn case_command(program: &Path, run_dir: &Path, config: &Config) -> Command {
+    let mut cmd = Command::new(program);
+    cmd.env_clear();
+    for keep in ["PATH", "HOME", "TMPDIR", "USER", "LANG"] {
+        if let Some(v) = std::env::var_os(keep) {
+            cmd.env(keep, v);
+        }
+    }
+    cmd.current_dir(run_dir).env("CROW_SEED", "1").env("CROW_CLOCK", "1767225600").env("CROW_REPLAY", run_dir);
+    for (k, v) in config.env {
+        cmd.env(k, v);
+    }
+    cmd
+}
+
 /// A batch's cases run under one configuration, from the first to the
 /// last: a case that stops the run (its words flushed) gets the stop, and
 /// the next run starts after it. A run stopped from outside — its memory,
@@ -935,21 +1058,20 @@ fn run_batch(exe: &Path, dir: &Path, file: &str, binary: Option<&Path>, config: 
     let mut seen: Vec<Option<Seen>> = vec![None; n];
     let mut from = 0;
     let mut single = false;
+    let run_dir = sandbox(dir, file, config.name);
+    let source = dir.join(file);
     while from < n {
         let mut cmd = match binary {
-            Some(b) => Command::new(b),
+            Some(b) => case_command(b, &run_dir, config),
             None => {
-                let mut c = Command::new(exe);
-                c.args(["run", "-i", file]);
+                let mut c = case_command(exe, &run_dir, config);
+                c.arg("run").arg("-i").arg(&source);
                 c
             }
         };
-        cmd.current_dir(dir).env("CROW_FROM", format!("c{}", from)).env("CROW_SEED", "1");
+        cmd.env("CROW_FROM", format!("c{}", from));
         if single {
             cmd.env("CROW_TO", format!("c{}", from));
-        }
-        for (k, v) in config.env {
-            cmd.env(k, v);
         }
         let (code, out, last, ended) = spawn(cmd);
         // the output by case
@@ -968,6 +1090,18 @@ fn run_batch(exe: &Path, dir: &Path, file: &str, binary: Option<&Path>, config: 
             }
         }
         let clean = code == Some(0) && ended == Ended::Exited;
+        // (a case that called `exit` ended the run early, and well)
+        let early = clean && !single && marked.last().is_some_and(|k| *k + 1 < n);
+        if early && let Some(&k) = marked.last() {
+            for (j, t) in &texts {
+                if *j < n {
+                    seen[*j] = Some(Seen { out: t.clone(), end: String::new() });
+                }
+            }
+            seen[k] = Some(Seen { out: texts.get(&k).cloned().unwrap_or_default(), end: "exit: 0".to_string() });
+            from = k + 1;
+            continue;
+        }
         if clean {
             for (k, t) in &texts {
                 if *k < n {
@@ -990,6 +1124,8 @@ fn run_batch(exe: &Path, dir: &Path, file: &str, binary: Option<&Path>, config: 
             format!("crash: a signal ({})", last)
         } else if last.contains("panicked") || code == Some(101) {
             format!("crash: {}", last)
+        } else if last.is_empty() {
+            format!("exit: {}", code.unwrap_or(0))
         } else {
             format!("stop: {}", last)
         };
@@ -1127,6 +1263,8 @@ fn build(exe: &Path, dir: &Path, stem: &str, cases: Vec<(usize, Case)>, jobs: &s
 #[derive(Clone, Debug)]
 struct Finding {
     id: String,
+    /// The case's own lines, as a program writes them.
+    code: String,
     class: &'static str,
     detail: String,
 }
@@ -1193,16 +1331,16 @@ fn message_findings(case: &Case, source: &str, message: &str) -> Vec<Finding> {
     let mut out = Vec::new();
     let first = message.lines().next().unwrap_or("");
     if !first.contains("line ") && !first.chars().take_while(|c| *c != ' ').any(|c| c == ':') {
-        out.push(Finding { id: case.id.clone(), class: "message-place", detail: first.to_string() });
+        out.push(Finding { id: case.id.clone(), code: case.code(), class: "message-place", detail: first.to_string() });
     }
     // (Rust's words and the compiler's own: a message is in the program's)
     const JARGON: &[&str] = &["target type", "usize", "i64", "f64", "Vec<", "Option<", "Result<", "&str", "BTreeMap", "CrowValue", "CrowTensor", "Ty::", "Expr::", "Kind::", "Arg::", "unwrap", "panicked"];
     if let Some(word) = JARGON.iter().find(|w| first.contains(*w)) {
-        out.push(Finding { id: case.id.clone(), class: "message-jargon", detail: format!("{} — says '{}'", first, word) });
+        out.push(Finding { id: case.id.clone(), code: case.code(), class: "message-jargon", detail: format!("{} — says '{}'", first, word) });
     }
     let foreign = crate::errors_corpus::foreign_names(source, first);
     if !foreign.is_empty() {
-        out.push(Finding { id: case.id.clone(), class: "message-names", detail: format!("{} — names {}", first, foreign.join(", ")) });
+        out.push(Finding { id: case.id.clone(), code: case.code(), class: "message-names", detail: format!("{} — names {}", first, foreign.join(", ")) });
     }
     out
 }
@@ -1262,7 +1400,7 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
             }
             Lowered::Bug(m) => {
                 internal += 1;
-                findings.push(Finding { id: cases[i].id.clone(), class: "internal", detail: m.lines().next().unwrap_or("").to_string() });
+                findings.push(Finding { id: cases[i].id.clone(), code: cases[i].code(), class: "internal", detail: m.lines().next().unwrap_or("").to_string() });
             }
         }
     }
@@ -1299,7 +1437,7 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
                 Lowered::Refused(m) | Lowered::Bug(m) => {
                     splits.push_str(&format!("{} cases: {}\n", b.len(), m.lines().next().unwrap_or("")));
                     if b.len() == 1 {
-                        findings.push(Finding { id: cases[b[0]].id.clone(), class: "batch", detail: format!("lowers alone, not beside other cases: {}", m.lines().next().unwrap_or("")) });
+                        findings.push(Finding { id: cases[b[0]].id.clone(), code: cases[b[0]].code(), class: "batch", detail: format!("lowers alone, not beside other cases: {}", m.lines().next().unwrap_or("")) });
                     } else {
                         let mut left = b;
                         let right = left.split_off(left.len() / 2);
@@ -1357,7 +1495,7 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
         let unbuilt = unbuilt_all.into_inner().unwrap_or_default();
         println!("\rbuilt {} batches in {:.1}s{}", ready.len(), t.elapsed().as_secs_f64(), " ".repeat(20));
         for (i, why) in &unbuilt {
-            findings.push(Finding { id: cases[*i].id.clone(), class: "no-build", detail: why.clone() });
+            findings.push(Finding { id: cases[*i].id.clone(), code: cases[*i].code(), class: "no-build", detail: why.clone() });
         }
         // every configuration over every built batch, across the cores
         let t = Instant::now();
@@ -1408,7 +1546,7 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
                             detail.push_str(&format!("\n      {:<11} {}{}", n, s.out.trim().replace('\n', " | "), if s.end.is_empty() { String::new() } else { format!(" [{}]", s.end) }));
                         }
                     }
-                    findings.push(Finding { id: case.id.clone(), class: "disagree", detail });
+                    findings.push(Finding { id: case.id.clone(), code: case.code(), class: "disagree", detail });
                 } else if let Some((n, s)) = bad {
                     let class = if s.end.starts_with("hang") {
                         "hang"
@@ -1422,7 +1560,7 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
                         // (a bug in Crow said as the program ran, not as it lowered)
                         "internal-run"
                     };
-                    findings.push(Finding { id: case.id.clone(), class, detail: format!("{}: {}{}", n, s.out.trim().replace('\n', " | "), if s.end.is_empty() { String::new() } else { format!(" [{}]", s.end) }) });
+                    findings.push(Finding { id: case.id.clone(), code: case.code(), class, detail: format!("{}: {}{}", n, s.out.trim().replace('\n', " | "), if s.end.is_empty() { String::new() } else { format!(" [{}]", s.end) }) });
                 } else {
                     agreed += 1;
                 }
@@ -1440,19 +1578,31 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
     findings.sort_by(|a, b| (a.class, &a.id).cmp(&(b.class, &b.id)));
     let mut seen_ids = HashSet::new();
     findings.retain(|f| seen_ids.insert((f.class, f.id.clone())));
-    let report: String = findings.iter().map(|f| format!("{:<14} {}\n      {}\n", f.class, f.id, f.detail.replace('\n', "\n      "))).collect();
+    let indent = |text: &str, by: &str| text.lines().map(|l| format!("{}{}", by, l)).collect::<Vec<_>>().join("\n");
+    let report: String = findings.iter().map(|f| format!("{:<14} {}\n{}\n      → {}\n", f.class, f.id, indent(&f.code, "      | "), f.detail.replace('\n', "\n        "))).collect();
     let _ = std::fs::write(dir.join("findings.txt"), &report);
     // the findings by what they share: one line per defect, its count and
     // the cases that show it first
-    let mut groups: BTreeMap<(String, String), Vec<&str>> = BTreeMap::new();
+    let mut groups: BTreeMap<(String, String), Vec<&Finding>> = BTreeMap::new();
     for f in &findings {
-        groups.entry((f.class.to_string(), group_key(f))).or_default().push(f.id.as_str());
+        groups.entry((f.class.to_string(), group_key(f))).or_default().push(f);
     }
-    let mut grouped: Vec<(&(String, String), &Vec<&str>)> = groups.iter().collect();
+    let mut grouped: Vec<(&(String, String), &Vec<&Finding>)> = groups.iter().collect();
     grouped.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(b.0)));
     let summary: String = grouped
         .iter()
-        .map(|((class, key), ids)| format!("{:>5}  {:<10} {}\n       e.g. {}\n", ids.len(), class, key, ids.iter().take(3).copied().collect::<Vec<_>>().join(", ")))
+        .map(|((class, key), members)| {
+            let first = members[0];
+            format!(
+                "{:>5}  {:<10} {}\n       for example {}:\n{}\n       and {}\n",
+                members.len(),
+                class,
+                key,
+                first.id,
+                indent(&first.code, "         | "),
+                members.iter().skip(1).take(3).map(|f| f.id.as_str()).collect::<Vec<_>>().join(", ")
+            )
+        })
         .collect();
     let _ = std::fs::write(dir.join("summary.txt"), &summary);
     let mut by_class: BTreeMap<&str, usize> = BTreeMap::new();
@@ -1487,7 +1637,7 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
     let could_find = |c: &str| !lower_only || matches!(c, "internal" | "message-place" | "message-names" | "message-jargon");
     let gone: Vec<&(String, String)> = known.iter().filter(|(c, i)| ran.contains(i.as_str()) && could_find(c) && !now.contains(&(c.clone(), i.clone()))).collect();
     for f in &new {
-        println!("  NEW   {:<14} {}\n        {}", f.class, f.id, f.detail.replace('\n', "\n        "));
+        println!("  NEW   {:<14} {}\n{}\n        → {}", f.class, f.id, indent(&f.code, "        | "), f.detail.replace('\n', "\n          "));
     }
     for (c, i) in &gone {
         println!("  GONE  {:<14} {} — fixed: strike it from {}", c, i, known_path().display());
