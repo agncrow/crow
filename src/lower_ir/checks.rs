@@ -121,6 +121,12 @@ pub(crate) fn slips(a: &str, b: &str) -> usize {
 pub(super) fn without_echoes(errors: Vec<(String, Option<String>)>) -> Vec<(String, Option<String>)> {
     let echo = |m: &str| m.contains("is not known here") || m.contains("nothing types its parameters");
     let line_of = |m: &str| m.split(':').next().unwrap_or("").to_string();
+    // (a function value nothing types is the whole program's conclusion:
+    // where anything else is wrong, the call that would have typed it may
+    // be the mistake, on any line and before or after it — `relay[h1, 22,
+    // folor[…]]` had said both: crow test --fuzz --mistakes)
+    let whole = |m: &str| m.contains("nothing types its parameters");
+    let errors: Vec<(String, Option<String>)> = if errors.iter().any(|(m, _)| !echo(m)) { errors.into_iter().filter(|(m, _)| !whole(m)).collect() } else { errors };
     // (an echo follows what it echoes: the slip is refused as its call's
     // arguments are lowered, before what is made of the call; a rank not
     // known, refused first, is the mistake itself)

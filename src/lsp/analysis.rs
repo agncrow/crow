@@ -174,6 +174,11 @@ pub fn analyze(
         }
     }
 
+    // (a statement that did not parse takes its calls with it: a function
+    // value only they typed is no second mistake)
+    if !parse_errors.is_empty() {
+        diagnostics.retain(|d| !d.message.contains("nothing types its parameters"));
+    }
     if !unparsed.is_empty() {
         diagnostics.retain(|d| {
             let named = |kind: &str| unparsed.iter().any(|n| d.message.starts_with(&format!("undefined {} '{}'", kind, n)));

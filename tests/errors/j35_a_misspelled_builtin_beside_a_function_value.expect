@@ -1,0 +1,3 @@
+j35_a_misspelled_builtin_beside_a_function_value.co:10:19: undefined function 'folor' — did you mean 'floor'?
+  10 │ log[relay[h1, 22, folor[2.5]]]
+     │                   ^^^^^
