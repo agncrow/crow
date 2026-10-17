@@ -250,6 +250,8 @@ The compiler decides what is GPU-eligible (numeric ops on arrays) and what falls
 
 ### Layer 9: Distributed Computing
 
+*Superseded (2026-10-11, 2026-10-16): the process count is the launch's — `crow launch <n> file.co` starts the processes and each reads its rank with `env['CROW_RANK', '0']`; `nodes` is no builtin (spec, Design Note "the process count is the launch's"). The directives below were not built.*
+
 Training across multiple machines. Crow uses `nodes` as a directive — same philosophy as `gpu`. Specify intent, the compiler handles data sharding, gradient synchronization, and communication.
 
 ```
@@ -623,6 +625,8 @@ Zero overhead for non-gradient code — `grad` is only applied where explicitly 
 19. **Distributed** — `nodes[n]` directive, compiler-managed data sharding and gradient sync
 
 ## Advanced Distributed Patterns
+
+*Superseded (2026-10-11, 2026-10-16): the process count is the launch's — `crow launch <n> file.co` starts the processes and each reads its rank with `env['CROW_RANK', '0']`; `nodes` is no builtin (spec, Design Note "the process count is the launch's"). The directives below were not built.*
 
 `nodes[n]` handles data parallelism — same model, different data on each device. This covers most training. For larger models, Crow provides strategy directives:
 

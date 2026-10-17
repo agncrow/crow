@@ -1511,11 +1511,6 @@ impl<'a> Lowerer<'a> {
                     }
                     candidates.extend(registry.functions_of(module).into_iter().map(|f| (f.to_string(), Some(module.to_string()))));
                 }
-                // (`nodes[n]` retired: the process count is the launch's)
-                if name == "nodes" {
-                    self.refuse("nodes[] is gone: `crow launch <n> file.co` runs n processes, and each reads its rank with env['CROW_RANK', '0']".to_string());
-                    return;
-                }
                 let near = self.near(name, candidates);
                 self.refuse(format!("undefined function '{}'{}", name, near));
             }
@@ -1743,8 +1738,7 @@ mod tests {
     /// A frame is indexed by a mask alone, which picks its rows: `f['a']`
     /// and `f[0]` are refused before the program runs, naming the column
     /// read (the interpreter had stopped as it ran — `not indexable` — and
-    /// the compiled program did not build); `filter` is no name of the
-    /// language
+    /// the compiled program did not build)
     #[test]
     fn a_frame_is_indexed_by_a_mask_alone() {
         let err = check_source("use frame\nf = with[frame.new[], 'a', [1.0, 2.0]]\nx = f['a']\nlog[x]\n").unwrap_err();
@@ -1753,8 +1747,6 @@ mod tests {
         assert!(err.contains("a frame is indexed by a mask"), "{}", err);
         assert!(check_source("use frame\nf = with[frame.new[], 'a', [1.0, 2.0]]\nlog[f.a[0]]\n").is_ok());
         assert!(check_source("use frame\nf = with[frame.new[], 'a', [1.0, 2.0]]\nlog[f[f.a gt 1.0]]\nlog[f.a[f.a gt 1.0]]\n").is_ok());
-        let err = check_source("use frame\nf = with[frame.new[], 'a', [1.0, 2.0]]\nlog[filter[f, f.a gt 1.0]]\n").unwrap_err();
-        assert!(err.contains("undefined function 'filter'"), "{}", err);
     }
 
     /// The order of a list of numbers is a list of ints, and its running

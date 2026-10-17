@@ -35,7 +35,7 @@ fn fail(why: String) -> ! {
     crate::stops::halt(0, &why)
 }
 
-const NOT_STARTED: &str = "the cluster was not started: nodes[n] starts it";
+const NOT_STARTED: &str = "the cluster was not started: `crow launch <n> file.co` starts it";
 
 /// Eight bytes of a message from another rank at `pos`, or the stop a
 /// message cut short is.

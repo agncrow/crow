@@ -806,9 +806,10 @@ steps on every push and must be green.
   --filter-platform`, which reads build dependencies for the target, as
   `cargo tree --target` does not) and stubs the rest: a new platform is a
   word there.
-- `nodes[n]` is retired (2026-10-11): the process count is `crow launch
-  <n>`'s, a process reads its rank with `env['CROW_RANK', '0']`, and
-  `nodes[…]` is refused naming that (checks.rs, before "undefined
-  function"). The runtime's ring (`crow_runtime::distributed`) has no
+- `nodes[n]` is removed (2026-10-11; its message of its own went
+  2026-10-16, as `filter`'s did — a replaced name is an unknown name): the
+  process count is `crow launch <n>`'s, a process reads its rank with
+  `env['CROW_RANK', '0']`, and `nodes[…]` is "undefined
+  function 'nodes'". The runtime's ring (`crow_runtime::distributed`) has no
   builtin yet.
 

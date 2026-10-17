@@ -74,7 +74,7 @@ census is the book's [Appendix A](book/src/appendix-a-language-at-a-glance.md).
 | Background work, periodic refresh | `later[f]`, `serve[p, refresh = 5, budget = 50]` | §15 |
 | Test blocks | `test[n]` under a fn, `test name[]` | §16 |
 | Monomorphization at call sites | automatic | §17 |
-| Resource control, GPU, distributed | `cpu[n] gpu[] nodes[n]`, `crow launch` | §14 |
+| Resource control, GPU, distributed | `cpu[n] gpu[]`, `crow launch` | §14 |
 | `.env` auto-loading | `crow run` / `crow build` | §18 |
 
 ## Not in Crow, on purpose — each has a Design Note in the spec

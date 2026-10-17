@@ -287,7 +287,7 @@ Top-level `db` module (`use db`) with separate `crow_db` crate. All three backen
 
 ### P6 — Distributed runtime (after 1.0)
 
-- [ ] **Multi-node execution**: `crow launch <n>` starts the processes and each reads its rank from `env['CROW_RANK', '0']` (`nodes[n]` was retired on 2026-10-11); the ring in `crow_runtime::distributed` has no builtin yet, and nothing has run across real machines.
+- [ ] **Multi-node execution**: `crow launch <n>` starts the processes and each reads its rank from `env['CROW_RANK', '0']`; the ring in `crow_runtime::distributed` has no builtin yet, and nothing has run across real machines.
 - [ ] **Data sharding**: Verify automatic data partitioning across nodes.
 - [ ] **Gradient synchronization**: Verify all-reduce for distributed training.
 - [ ] **Strategy directives**: Test pipeline parallelism, tensor parallelism beyond data parallelism.

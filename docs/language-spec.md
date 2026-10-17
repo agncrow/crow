@@ -3609,7 +3609,7 @@ builds the binary with `crow build`, then runs `n` processes of it, each with `C
 crow launch 4 train.co     --- build + run on 4 processes
 ```
 
-**Design Note: the process count is the launch's.** Considered: `nodes[n]` in the program, as `cpu[n]` and `gpu[]` are. Decided (Vijay, 2026-10-11): the count is given once, where the processes are started — the program had said it beside the launch's own count, and the core name took `nodes` from every program (graph code reached for it and wrote `all_nodes` instead). `nodes[n]` is refused with where the count went. The runtime's ring operations (`crow_runtime::distributed`: a mean across the ranks, a broadcast, a barrier) are not written as builtins yet.
+**Design Note: the process count is the launch's.** Considered: `nodes[n]` in the program, as `cpu[n]` and `gpu[]` are. Decided (Vijay, 2026-10-11): the count is given once, where the processes are started — the program had said it beside the launch's own count, and the core name took `nodes` from every program (graph code reached for it and wrote `all_nodes` instead). `nodes` is no name of the language, so a program may use it as it likes. The runtime's ring operations (`crow_runtime::distributed`: a mean across the ranks, a broadcast, a barrier) are not written as builtins yet.
 
 #### Backend Detection
 
