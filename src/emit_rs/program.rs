@@ -656,6 +656,8 @@ impl Emitter {
             let saved_line = self.current_line;
             self.current_line = fact.line;
             let text = self.top_level_expr(&value);
+            // (a view's node given to a name held as markup is its HTML)
+            let text = if self.makes_node(&value) && matches!(ty, Ty::Markup | Ty::Str) { format!("({}).to_html()", text) } else { text };
             let text = Self::refused_fact(&fact, text);
             self.current_line = saved_line;
             let open_list = matches!(Emitter::raw(&value), Expr::ListLit(items, _) if items.is_empty());
@@ -1601,8 +1603,10 @@ impl Emitter {
                 self.current_line = fact.line;
                 let v = self.owned_expr(&fact.default);
                 self.current_line = saved_line;
-                let v = Self::refused_fact(fact, v);
                 let ty = as_inferred(&fact.ty).text();
+                // (a view's node given to a name held as markup is its HTML)
+                let v = if self.makes_node(&fact.default) && matches!(ty, Ty::Markup | Ty::Str) { format!("({}).to_html()", v) } else { v };
+                let v = Self::refused_fact(fact, v);
                 let vty = match self.tt(&fact.default) {
                     Ty::Result(inner) if fact.refuses => *inner,
                     other => other,

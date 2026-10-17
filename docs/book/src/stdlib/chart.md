@@ -15,6 +15,8 @@ Import with `use chart`. Technical indicators for the chart element, computed by
 | `vwap[price, vol]` | Cumulative volume-weighted average price from the first row | [Charts and Styling](../ch12-06-charts-and-style.md) |
 | `vwap[ts, price, vol, secs]` | VWAP over the trailing `secs` seconds (rows with `ts >= t − secs`) | [Charts and Styling](../ch12-06-charts-and-style.md) |
 | `rolling_sum[ts, values, secs]` | Sum over the trailing `secs` seconds | [Charts and Styling](../ch12-06-charts-and-style.md) |
+
+A trailing window — `rolling_sum`, `vwap` over seconds, `rsi` on buckets — reads its times in order, each at least the one before, and its seconds are 0 or more: a time that goes back stops the program, saying where (`rolling_sum: the times go back at row 1 (1 after 3)`), as a negative window does.
 | `cvd[close, vol]` | Cumulative volume delta: volume counted positive when the close rose, negative when it fell | [Charts and Styling](../ch12-06-charts-and-style.md) |
 
 `ts` is a column of moments (seconds). A window is 1 row or more, a trailing window 0 seconds or more and a bucket more than 0, and the series an indicator reads row by row are one length; anything else stops the program with the reason (see When a Program Stops), as does a wrong number of arguments, naming the counts the function takes (`rsi[] takes 2 or 4 arguments, got 3`). A negative window had been a huge one compiled and one row interpreted, and a shorter series cut the others.

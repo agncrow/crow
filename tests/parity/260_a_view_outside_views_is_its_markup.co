@@ -1,0 +1,14 @@
+--- A view called outside views is its markup, the HTML a page would draw:
+--- logged, given to a name, measured — in both modes (compiled, a view's
+--- node had been handed to log, which shows no node, and to a name held
+--- as text, and neither had built). Its text is escaped as HTML needs,
+--- by the one escape both modes write with.
+use web, ui
+
+view card[t]
+    return div[p[t], button['go', disabled = true, title = 'a "b" <c>'], gap = 's']
+
+log[card['a < b & "c"']]
+s = card['x']
+log[len[s]]
+log['<p>x</p>' in s]

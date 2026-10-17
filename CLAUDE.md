@@ -904,7 +904,11 @@ steps on every push and must be green.
   renderers escaped `"` in text differently (one escape now:
   `crow_web::view::escape_text`/`escape_attr`); classes join once, an empty
   one adds none, a computed one merges at run time (`with_class`). A view
-  called outside views is refused (compiled it had no session to read).
+  called outside views answers its markup (the book hands one to
+  `doc.document`, a derivation builds rows of one): compiled, a node held
+  where markup is — `log`, a local or a top-level name — is rendered
+  (`CrowDisplay for CrowVNode`, `emit_let_value`, both facts' paths); a
+  refusal of such calls (2aa84fc) broke three book blocks and was undone.
 - The state family (`state_cases`, 2026-10-17) serves each case as a
   page with top-level lines of its own (facts, handlers, derivations,
   named `@N`) and drives its events through `served_parity::page_steps`
@@ -916,6 +920,38 @@ steps on every push and must be green.
   to a fact taking any value a forged event sent: `Offers` keeps each
   choice's values (a select's options, a radio's value, in elements and in
   markup) and refuses another, unless a free input binds the same fact.
+- `tests/self/reference.py`'s keys are the cases' `what`: a module's row
+  by the path it is imported from and its name (`math.stats.median`,
+  `math.abs` for the tensor form), a core row by its bare name (`encode`,
+  `sub`, `hash`, `fraction` — one name for several rows, told apart by
+  arity or kind) — not the row's id (`stats.median`, `math.abs_t`), which
+  the agreement-only list is keyed by. A reference that answers within a
+  tolerance returns `Near` (8 ulps) or `Close` (1e-9 of the answer's
+  largest number); a size no case could hold is `Skip`, or numpy raises and
+  the whole reference run fails. Its first findings: `factorial` of a whole
+  number was inexact (a Lanczos gamma; libm's `tgamma` now, exact to 22!).
+- The check's own servers (`Servers::start`): an echo/HTTP server
+  (`CROW_SELF_PORT`), a ClickHouse stand-in (`CROW_SELF_CH`), a scratch
+  Postgres (`CROW_SELF_PG`), a WebSocket echo (`CROW_SELF_WS`) and a mail
+  server (`CROW_SELF_SMTP`, RFC 5321's replies, `AUTH PLAIN` offered); a
+  live case's id names its server (`ws-live/`, `mail-live/`) in the live
+  check, and `live_rows` says which rows its answers retire from the
+  agreement-only list. A mailer's user is the sender's address (`'u'` is
+  refused, `the mailer's user 'u' is no address`). Two self-checks must not
+  run at once in one tree (they share target/crow_self), and one beside a
+  gate in its worktree halves both: run them in turn.
+- What the reference found once it reached the modules (2026-10-17):
+  `factorial`/`gamma` were a Lanczos approximation (3! was
+  6.000000000000007; libm's `tgamma` now, exact to 22!); a trailing window
+  (`rolling_sum`, `vwap` over seconds, `rsi` on buckets) over times that
+  go back summed rows by no reading of "trailing" — it stops now, saying
+  where (`in_order`, crow_runtime::indicators). The spec gained what the
+  cases asked and it had not said: `onehot`'s classes are 1 or more,
+  `env`'s default is held as a cell (an int past 64 bits refused). The
+  draws family holds random draws to their distributions with a fixed seed
+  (deterministic, so never flaky); the self-check's batch builds keep no
+  debug info (`CARGO_PROFILE_DEV_DEBUG=0`) so their programs stay a few
+  tens of MB and are kept for the next run, the cache let go past 80 GB.
 - `nodes[n]` is removed (2026-10-11; its message of its own went
   2026-10-16, as `filter`'s did — a replaced name is an unknown name): the
   process count is `crow launch <n>`'s, a process reads its rank with

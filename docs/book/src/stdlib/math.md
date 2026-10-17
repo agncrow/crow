@@ -13,7 +13,7 @@ The `math` module is built in — no file needed. It provides tensor creation, e
 | `ones[d1, d2, ...]` | Tensor of ones with given shape | [Math: tensors](../by-example/math.md) |
 | `full[d1, d2, ..., value]` | Tensor filled with `value` (last arg) | [Math: tensors](../by-example/math.md) |
 | `eye[n]` | n×n identity matrix | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: tensors](../by-example/math.md) |
-| `onehot[targets, classes]` | A row per target, 1 in its class's column and 0 elsewhere: the targets a vector of whole numbers from 0 to classes − 1 (a target that is no class stops the program: `onehot: 7 is not a class of 3 (0 to 2)`) | [Math: tensors](../by-example/math.md) |
+| `onehot[targets, classes]` | A row per target, 1 in its class's column and 0 elsewhere: the targets a vector of whole numbers from 0 to classes − 1, and the classes 1 or more (a target that is no class stops the program: `onehot: 7 is not a class of 3 (0 to 2)`) | [Math: tensors](../by-example/math.md) |
 | `diag[tensor]` | Extract diagonal from a 2D tensor | [Math: tensors](../by-example/math.md) |
 | `linspace[start, end, n]` | `n` evenly spaced values from `start` to `end` | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) |
 | `arange[start, end, step]` | Values from `start` to `end` by `step` | [Math: tensors](../by-example/math.md) · [The standard library's layer: `use sys`](../by-example/sys.md) |
@@ -196,7 +196,7 @@ Negative indices are supported (wrap around from the end). The result tensor has
 | `erf[x]` | Error function erf(x), of a number or element-wise over a tensor (it had taken a tensor only) | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `fma[a, b, c]` | a × b + c rounded once: the fused multiply-add a compiled loop accumulates with (pandas's rolling kernels, scikit-learn's row norms, scipy's sparse products), so a sum held to one of them runs with it — `total = fma[x, x, total]` | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `bessel[x, n]` | Bessel function J_n(x), element-wise | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
-| `factorial[x]` | Factorial x! = Γ(x+1), element-wise | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
+| `factorial[x]` | Factorial x! = Γ(x+1), element-wise — a whole number's exactly up to 22! (each a float), and Γ as libm computes it | [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `choose[n, k]` | Binomial coefficient C(n,k), element-wise | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
 
 ### Complex Numbers

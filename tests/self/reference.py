@@ -184,6 +184,8 @@ VALUES = {
     "thousands": 1234567.891,
     "fraction8": 0.12345678,
     "whole7": 1234567,
+    "algo": "sha256",
+    "pattern": "[a-c]+",
 }
 
 
@@ -2054,9 +2056,1061 @@ def state_answer(name):
     return Pages(name, STATE[name])
 
 
+# ── the modules that speak to a server (spec, WebSocket and Mail) ──
+#
+# Against the check's own servers: a WebSocket server that sends back what
+# it is sent, and a mail server that takes every message to an address.
+
+WS = {
+    "echo": "hello",
+    "echo-text": 'a < b & "c" — héllo',
+    "echo-two": "first\nsecond",
+    "echo-empty": "0",
+    # (send answers empty text)
+    "sent-answers": "\n1",
+    "waits": "false\nno message in 1 s",
+    "closed": "false\nthe socket is closed",
+}
+
+MAIL = {
+    "sent": "true",
+    "beyond-ascii": "true",
+    "dot-line": "true",
+    # (a recipient that is no address is refused before the server is asked)
+    "no-address": "false",
+}
+
+
+# ── the layout vocabulary (spec, Layout — the vocabulary) ──────────
+#
+# A layout attribute takes the words its row of the spec's table names,
+# and any other is refused before the program runs; the spacing and the
+# type scales are pixels the spec states, a colour a token's variable.
+
+SPACING = {"xs": 4, "s": 8, "m": 16, "l": 24, "xl": 32}
+TYPE = {"xs": 12, "s": 14, "m": 16, "l": 20, "xl": 24, "xxl": 32}
+TOKENS = ("text", "muted", "accent", "up", "down", "surface", "bg")
+WORDS = {
+    "align": ("start", "center", "end", "stretch"),
+    "justify": ("start", "center", "end", "between", "around"),
+    "radius": ("none", "s", "m", "l", "round"),
+    "shadow": ("s", "m", "l"),
+    "surface": ("card",),
+}
+
+
+class Styled(str):
+    """A stack's markup read back: its style holding what the spec states."""
+
+    def __new__(cls, what, check):
+        self = str.__new__(cls, what)
+        self.check = check
+        return self
+
+    def holds(self, seen):
+        node = drawn(seen)
+        return node is not None and node.tag == "div" and node.text() == "x" and self.check(node)
+
+
+def layout_answer(attr, word):
+    """`stack['x', attr = word]`, the word as the case writes it."""
+    text = word[1:-1] if word.startswith("'") else None
+    if attr in ("gap", "pad", "margin"):
+        if text not in SPACING:
+            raise Err()
+        prop = {"gap": "gap", "pad": "padding", "margin": "margin"}[attr]
+        px = SPACING[text]
+        return Styled("{}:{}px".format(prop, px), lambda n: "{}:{}px".format(prop, px) in n.attrs.get("style", "").replace(" ", ""))
+    if attr == "size":
+        if text not in TYPE:
+            raise Err()
+        px = TYPE[text]
+        return Styled("font-size:{}px".format(px), lambda n: "font-size:{}px".format(px) in n.attrs.get("style", "").replace(" ", ""))
+    if attr in ("color", "background"):
+        if text not in TOKENS:
+            raise Err()
+        return Styled("var(--crow-{})".format(text), lambda n: "var(--crow-{})".format(text) in n.attrs.get("style", ""))
+    if attr in WORDS:
+        if text not in WORDS[attr]:
+            raise Err()
+        if attr == "surface":
+            return Styled("class card", lambda n: "card" in n.attrs.get("class", "").split())
+        # (a word the spec takes: its CSS is the kernel's to choose)
+        return Styled("{} = {}".format(attr, text), lambda n: True)
+    raise Skip()
+
+
+# ── random draws (spec, Random Numbers) ─────────────────────────────
+#
+# 20,000 draws from a fixed seed: their mean within four standard errors
+# of the distribution's, their spread within a few percent, their least
+# and greatest within its support.
+
+N_DRAWN = 20000
+SE = 4 / N_DRAWN ** 0.5
+
+# (mean, standard deviation, least allowed, greatest allowed)
+DRAWS = {
+    "randn": (0.0, 1.0, -math.inf, math.inf),
+    "normal": (3.0, 2.0, -math.inf, math.inf),
+    "uniform": (3.5, 3 / 12 ** 0.5, 2.0, 5.0),
+    "exponential": (0.5, 0.5, 0.0, math.inf),
+    "poisson": (3.0, 3 ** 0.5, 0.0, math.inf),
+    "bernoulli": (0.3, (0.3 * 0.7) ** 0.5, 0.0, 1.0),
+    "beta": (2 / 7, (10 / (49 * 8)) ** 0.5, 0.0, 1.0),
+    "rand": (0.5, 1 / 12 ** 0.5, 0.0, 1.0),
+    "rand-n": (2.5, (35 / 12) ** 0.5, 0.0, 5.0),
+    "rand-between": (0.0, 2.0, -3.0, 3.0),
+}
+
+
+class Drawn20k(str):
+    """Draws held to their distribution."""
+
+    def __new__(cls, name):
+        self = str.__new__(cls, "draws of " + name)
+        self.name = name
+        return self
+
+    def holds(self, seen):
+        try:
+            nums = [float(v) for v in seen.split("\n")]
+        except ValueError:
+            return False
+        mean, sd, lo, hi = DRAWS[self.name]
+        m, s, least, greatest = nums[:4]
+        if abs(m - mean) > SE * sd + 1e-12 or abs(s - sd) > 0.03 * sd:
+            return False
+        if least < lo or greatest > hi or (hi < math.inf and greatest == hi and self.name in ("uniform", "rand")):
+            return False
+        # (a whole number's draws are whole: poisson's, bernoulli's)
+        if self.name in ("poisson", "bernoulli") and (len(nums) < 5 or nums[4] != N_DRAWN):
+            return False
+        return True
+
+
+def draw_answer(name):
+    if name in DRAWS:
+        return Drawn20k(name)
+    return {"shuffle": "true\n5", "choice": "3\n3\ntrue", "permutation": "[0, 1, 2, 3, 4, 5]"}.get(name) or _skip()
+
+
 def placed_past(seen):
     """An answer with where its case's route sits in its batch read past."""
     return _re.sub(r"/c\d+", "/cN", seen)
+
+
+# ── bits (spec, bits) ───────────────────────────────────────────────
+#
+# An int read as two's complement with as many bits as it needs, as
+# Python reads one: Python's own operators are the spec's.
+
+def _whole(x):
+    if isinstance(x, bool) or not isinstance(x, int):
+        raise Skip()
+    return x
+
+
+def _int64(n):
+    """An int handed where one of 64 bits is taken: past them it stops
+    (spec, Numbers That Keep Every Digit)."""
+    if not -2**63 <= n < 2**63:
+        raise Err()
+    return n
+
+
+def f_shift(a, n):
+    a, n = _whole(a), _int64(_whole(n))
+    # (a number past 2^32 bits stops)
+    if n > 0 and a != 0 and a.bit_length() + n > 2**32:
+        raise Err()
+    return a << n if n >= 0 else a >> -n
+
+
+def f_code(ch):
+    if not isinstance(ch, str):
+        raise Skip()
+    if len(ch) != 1:
+        raise Err()
+    return ord(ch)
+
+
+def f_char(n):
+    n = _whole(n)
+    if not 0 <= n <= 0x10FFFF or 0xD800 <= n <= 0xDFFF:
+        raise Err()
+    return chr(n)
+
+
+# ── text written for something else to carry (spec, Text) ──────────
+
+import base64 as _b64
+import urllib.parse as _url
+
+
+def _texts(*xs):
+    if not all(isinstance(x, str) and not isinstance(x, Exact) for x in xs):
+        raise Skip()
+
+
+def f_encode_as(s, scheme):
+    _texts(s, scheme)
+    if scheme == "base64":
+        return _b64.b64encode(s.encode("utf-8")).decode("ascii")
+    if scheme == "url":
+        # (every byte but a letter, a digit and - . _ ~ as %XX)
+        return _url.quote(s, safe="")
+    raise Err()
+
+
+def f_decode_as(s, scheme):
+    _texts(s, scheme)
+    if scheme == "base64":
+        # (the standard or the URL-safe alphabet, padded or not, whitespace
+        # between skipped)
+        t = "".join(s.split()).replace("-", "+").replace("_", "/").rstrip("=")
+        if len(t) % 4 == 1:
+            raise Err()
+        try:
+            raw = _b64.b64decode(t + "=" * (-len(t) % 4), validate=True)
+        except Exception:
+            raise Err()
+    elif scheme == "url":
+        if _re.search(r"%(?![0-9A-Fa-f]{2})", s):
+            raise Err()
+        raw = _url.unquote_to_bytes(s)
+    else:
+        raise Err()
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise Err()
+
+
+def _pattern(p):
+    try:
+        return _re.compile(p)
+    except _re.error:
+        raise Err()
+
+
+def f_matches(s, p):
+    _texts(s, p)
+    return _pattern(p).search(s) is not None
+
+
+def f_sub(s, p, r):
+    _texts(s, p, r)
+    # (a replacement's `$` names a group in Rust's syntax: not answered)
+    if "$" in r:
+        raise Skip()
+    return _pattern(p).sub(lambda m: r, s)
+
+
+# ── json and hash ───────────────────────────────────────────────────
+
+import hashlib as _hashlib
+
+
+def f_json_parse(s):
+    _texts(s)
+    try:
+        return J(json.loads(s))
+    except ValueError:
+        raise Err()
+
+
+def f_hash(s, algo):
+    _texts(s, algo)
+    if algo in ("sha256", "sha512", "md5"):
+        return getattr(_hashlib, algo)(s.encode("utf-8")).hexdigest()
+    if algo == "password" or algo.startswith("$"):
+        # (a password's hash holds a random salt)
+        raise Skip()
+    raise Err()
+
+
+E1 = {
+    "bits.bitand": lambda a, b: _whole(a) & _whole(b),
+    "bits.bitor": lambda a, b: _whole(a) | _whole(b),
+    "bits.bitxor": lambda a, b: _whole(a) ^ _whole(b),
+    "bits.bitcount": lambda a: bin(abs(_whole(a))).count("1"),
+    "bits.shift": f_shift,
+    "bits.code": f_code,
+    "bits.char": f_char,
+    # (the core's rows by their bare names: `encode` of a value is JSON's,
+    # of text and a scheme the scheme's)
+    "encode": lambda *a: f_encode_as(*a) if len(a) == 2 else _skip(),
+    "decode": f_decode_as,
+    "matches": f_matches,
+    "sub": f_sub,
+    "json": f_json_parse,
+    "hash": f_hash,
+}
+
+
+# ── statistics and neural networks (spec, math.stats and math.nn) ──
+#
+# Each a formula the spec states, computed with numpy (whose sums the spec
+# holds math's reductions to); compared within a few units in the last
+# place, as the module computes them in Crow.
+
+
+def _series(x):
+    """A 1D series of numbers: a tensor of one axis, a list of numbers."""
+    if numpy is None:
+        raise Needs("numpy")
+    t = as_tensor(x) if not (isinstance(x, L) and not x) else T([], [0])
+    if t is None or len(t.shape) != 1 or isinstance(x, bool):
+        raise Skip()
+    return numpy.array(t.data, dtype=numpy.float64)
+
+
+def _near(r):
+    return Near(show(r, True))
+
+
+def _nan_if_empty(a, f):
+    if a.size == 0:
+        return float("nan")
+    with numpy.errstate(all="ignore"):
+        return float(f(a))
+
+
+def f_median(x):
+    a = numpy.sort(_series(x))
+    return _nan_if_empty(a, lambda v: v[len(v) // 2] if len(v) % 2 else (v[len(v) // 2 - 1] + v[len(v) // 2]) / 2)
+
+
+def f_var(x):
+    a = _series(x)
+    return _nan_if_empty(a, lambda v: numpy.mean((v - numpy.mean(v)) ** 2))
+
+
+def f_std(x):
+    v = f_var(x)
+    return v ** 0.5 if v == v else v
+
+
+def f_percentile(x, p):
+    a = numpy.sort(_series(x))
+    if isinstance(p, bool) or not is_num(p):
+        raise Skip()
+    if not 0 <= p <= 100:
+        raise Err()
+    return _nan_if_empty(a, lambda v: numpy.percentile(v, p, method="linear"))
+
+
+def f_zscore(x):
+    a = _series(x)
+    if a.size == 0:
+        return T([], [0])
+    with numpy.errstate(all="ignore"):
+        z = (a - numpy.mean(a)) / numpy.sqrt(numpy.mean((a - numpy.mean(a)) ** 2))
+    return T([float(v) for v in z], [len(z)])
+
+
+def _paired(x, y):
+    a, b = _series(x), _series(y)
+    if a.size != b.size:
+        raise Err()
+    return a, b
+
+
+def f_cov(x, y):
+    a, b = _paired(x, y)
+    return _nan_if_empty(a, lambda v: numpy.mean((v - numpy.mean(v)) * (b - numpy.mean(b))))
+
+
+def f_corr(x, y):
+    a, b = _paired(x, y)
+    if a.size == 0:
+        return float("nan")
+    with numpy.errstate(all="ignore"):
+        da, db = a - numpy.mean(a), b - numpy.mean(b)
+        return float(numpy.sum(da * db) / numpy.sqrt(numpy.sum(da * da) * numpy.sum(db * db)))
+
+
+def _tensor_of(x):
+    if numpy is None:
+        raise Needs("numpy")
+    t = as_tensor(x)
+    if t is None or isinstance(x, bool):
+        raise Skip()
+    return numpy.array(t.data, dtype=numpy.float64).reshape(t.shape), t.shape
+
+
+def _as_T(a):
+    return T([float(v) for v in a.ravel()], list(a.shape))
+
+
+def f_relu(x):
+    a, _ = _tensor_of(x)
+    return _as_T(numpy.maximum(a, 0.0))
+
+
+def f_sigmoid(x):
+    a, _ = _tensor_of(x)
+    with numpy.errstate(all="ignore"):
+        return _as_T(1.0 / (1.0 + numpy.exp(-a)))
+
+
+def f_softmax(x):
+    a, _ = _tensor_of(x)
+    if a.size == 0:
+        raise Skip()
+    with numpy.errstate(all="ignore"):
+        e = numpy.exp(a - numpy.max(a))
+        return _as_T(e / numpy.sum(e))
+
+
+def f_gelu(x):
+    a, _ = _tensor_of(x)
+    return _as_T(a * (0.5 * (1.0 + numpy.vectorize(math.erf)(a / math.sqrt(2.0)))) if a.size else a)
+
+
+def f_mse(p, t):
+    a, sa = _tensor_of(p)
+    b, sb = _tensor_of(t)
+    if sa != sb:
+        raise Skip()
+    with numpy.errstate(all="ignore"):
+        return float(numpy.mean((a - b) * (a - b))) if a.size else float("nan")
+
+
+def f_bce(p, t):
+    a, _ = _tensor_of(p)
+    b, _ = _tensor_of(t)
+    a, b = a.ravel(), b.ravel()
+    if a.size != b.size:
+        raise Err()
+    a = numpy.clip(a, 1e-12, 1 - 1e-12)
+    with numpy.errstate(all="ignore"):
+        return float(-numpy.mean(b * numpy.log(a) + (1.0 - b) * numpy.log(1.0 - a))) if a.size else float("nan")
+
+
+def near_of(f):
+    def g(*args):
+        return _near(f(*args))
+    return g
+
+
+E2 = {name: near_of(f) for name, f in {
+    "math.stats.median": f_median,
+    "math.stats.var": f_var,
+    "math.stats.std": f_std,
+    "math.stats.percentile": f_percentile,
+    "math.stats.zscore": f_zscore,
+    "math.stats.cov": f_cov,
+    "math.stats.corr": f_corr,
+    "math.nn.relu": f_relu,
+    "math.nn.sigmoid": f_sigmoid,
+    "math.nn.softmax": f_softmax,
+    "math.nn.gelu": f_gelu,
+    "math.nn.mse": f_mse,
+    "math.nn.bce": f_bce,
+}.items()}
+
+
+# ── math's tensors (spec, math) ─────────────────────────────────────
+#
+# Element-wise forms, scans, sorts, constructors and shapes as the spec
+# states them; linear algebra, convolution, windows and transforms by
+# numpy, held within a tolerance scaled to the answer (two algorithms —
+# an LU, an FFT — agree to their rounding, not to the last digit).
+
+
+class Close(str):
+    """An answer whose numbers are compared within 1e-9 of the largest
+    number it holds (or of 1)."""
+
+
+def close(seen, expected):
+    pat = _re.compile(r"-?(?:inf|NaN|\d+(?:\.\d+)?)")
+    a, b = pat.split(seen), pat.split(expected)
+    if a != b:
+        return False
+    xs = [float(x) for x in pat.findall(seen)]
+    ys = [float(y) for y in pat.findall(expected)]
+    scale = max([1.0] + [abs(y) for y in ys if y == y and abs(y) != float("inf")])
+    for x, y in zip(xs, ys):
+        if x != x and y != y:
+            continue
+        if x == y:
+            continue
+        if abs(x - y) > 1e-9 * scale:
+            return False
+    return True
+
+
+def _np(x):
+    """A tensor's numbers as a numpy array of its shape."""
+    if numpy is None:
+        raise Needs("numpy")
+    if isinstance(x, bool):
+        raise Skip()
+    t = as_tensor(x) if not (isinstance(x, L) and not x) else T([], [0])
+    if t is None:
+        raise Skip()
+    return numpy.array(t.data, dtype=numpy.float64).reshape(t.shape)
+
+
+def _T(a):
+    a = numpy.asarray(a, dtype=numpy.float64)
+    return T([float(v) for v in a.ravel()], list(a.shape))
+
+
+def _each(f):
+    def g(x):
+        a = _np(x)
+        return _T(numpy.vectorize(f, otypes=[float])(a)) if a.size else _T(a)
+    return g
+
+
+def _sign(v):
+    return 1.0 if v > 0 else -1.0 if v < 0 else (0.0 if v == 0 else v)
+
+
+def _size(n):
+    if isinstance(n, bool) or not isinstance(n, int):
+        raise Skip()
+    if n < 0 or n >= 2**63:
+        raise Err()
+    # (a size no case's memory holds: the case stopped, as the check's
+    # budget stops it — not the reference's to answer)
+    if n > 10**6:
+        raise Skip()
+    return n
+
+
+def f_argext(pick):
+    def g(x):
+        a = _np(x).ravel()
+        if a.size == 0 or numpy.isnan(a).any():
+            raise Skip()
+        return int(pick(a))
+    return g
+
+
+def f_argsort(x):
+    a = _np(x)
+    if a.ndim != 1 or numpy.isnan(a).any():
+        raise Skip()
+    return L([int(i) for i in numpy.argsort(a, kind="stable")])
+
+
+def f_topk(x, k):
+    a = _np(x)
+    k = _size(k)
+    if a.ndim != 1 or k > a.size or numpy.isnan(a).any():
+        raise Skip()
+    return _T(numpy.sort(a)[::-1][:k])
+
+
+def f_unique(x):
+    a = _np(x)
+    if numpy.isnan(a).any():
+        raise Skip()
+    return _T(numpy.unique(a.ravel()))
+
+
+def f_scan(op):
+    def g(x):
+        a = _np(x)
+        if a.ndim != 1:
+            raise Skip()
+        out, acc = [], None
+        for v in a:
+            acc = v if acc is None else op(acc, v)
+            out.append(acc)
+        return _T(numpy.array(out))
+    return g
+
+
+def f_filled(value):
+    def g(*sizes):
+        dims = [_size(n) for n in sizes]
+        if not dims or math.prod(dims) > 10**6:
+            raise Skip()
+        return _T(numpy.full(dims, value))
+    return g
+
+
+def f_full(*args):
+    if len(args) < 2 or not is_num(args[-1]) or isinstance(args[-1], bool):
+        raise Skip()
+    dims = [_size(n) for n in args[:-1]]
+    if math.prod(dims) > 10**6:
+        raise Skip()
+    return _T(numpy.full(dims, float(args[-1])))
+
+
+def f_eye(n):
+    return _T(numpy.eye(_size(n)))
+
+
+def _matrix(x):
+    a = _np(x)
+    if a.ndim != 2:
+        raise Skip()
+    return a
+
+
+def f_reshape(x, *sizes):
+    a = _np(x)
+    dims = [_size(n) for n in sizes]
+    if int(numpy.prod(dims)) != a.size:
+        raise Err()
+    return _T(a.reshape(dims))
+
+
+def f_onehot(t, classes):
+    a = _np(t)
+    c = _size(classes)
+    if c < 1:
+        raise Err()
+    if a.ndim != 1 or any(v != int(v) for v in a):
+        raise Skip()
+    if any(not 0 <= int(v) < c for v in a):
+        raise Err()
+    out = numpy.zeros((a.size, c))
+    for i, v in enumerate(a):
+        out[i, int(v)] = 1.0
+    return _T(out)
+
+
+def f_dot(x, y):
+    a, b = _np(x), _np(y)
+    if a.ndim != 1 or b.ndim != 1:
+        raise Skip()
+    if a.size != b.size:
+        raise Err()
+    return Close(show(float(numpy.dot(a, b)), True))
+
+
+def _square(x):
+    a = _matrix(x)
+    if a.shape[0] != a.shape[1] or a.size == 0:
+        raise Skip()
+    return a
+
+
+def _close(f):
+    def g(*args):
+        r = f(*args)
+        return Close(show(r, True))
+    return g
+
+
+def f_det(x):
+    return float(numpy.linalg.det(_square(x)))
+
+
+def f_inv(x):
+    a = _square(x)
+    if abs(numpy.linalg.det(a)) < 1e-12:
+        raise Skip()
+    return _T(numpy.linalg.inv(a))
+
+
+def f_solve(x, y):
+    a, b = _square(x), _np(y)
+    if abs(numpy.linalg.det(a)) < 1e-12 or b.shape[0] != a.shape[0]:
+        raise Skip()
+    return _T(numpy.linalg.solve(a, b))
+
+
+def f_cholesky(x):
+    a = _square(x)
+    try:
+        return _T(numpy.linalg.cholesky(a))
+    except numpy.linalg.LinAlgError:
+        raise Skip()
+
+
+def f_conv(x, y):
+    a, b = _np(x), _np(y)
+    if a.ndim != 1 or b.ndim != 1:
+        raise Skip()
+    if a.size == 0 or b.size == 0:
+        raise Err()
+    return _T(numpy.convolve(a, b))
+
+
+def f_conv2d(x, y):
+    a, b = _np(x), _np(y)
+    if a.ndim != 2 or b.ndim != 2:
+        raise Skip()
+    if a.size == 0 or b.size == 0:
+        raise Err()
+    out = numpy.zeros((a.shape[0] + b.shape[0] - 1, a.shape[1] + b.shape[1] - 1))
+    for i in range(a.shape[0]):
+        for j in range(a.shape[1]):
+            out[i:i + b.shape[0], j:j + b.shape[1]] += a[i, j] * b
+    return _T(out)
+
+
+def f_window(kind):
+    def g(n):
+        n = _size(n)
+        if n == 0:
+            raise Skip()
+        return _T(numpy.hamming(n) if kind == "hamming" else numpy.hanning(n))
+    return g
+
+
+def f_fft(x):
+    a = _np(x)
+    if a.ndim != 1 or a.size == 0:
+        raise Skip()
+    r = numpy.fft.fft(a)
+    return L([_T(r.real), _T(r.imag)])
+
+
+def f_fft2(x):
+    a = _matrix(x)
+    if a.size == 0:
+        raise Skip()
+    r = numpy.fft.fft2(a)
+    return L([_T(r.real), _T(r.imag)])
+
+
+def f_ifft(re_, im):
+    a, b = _np(re_), _np(im)
+    if a.ndim != 1 or a.shape != b.shape or a.size == 0:
+        raise Skip()
+    return _T(numpy.fft.ifft(a + 1j * b).real)
+
+
+def f_factorial(x):
+    """x! = Γ(x + 1), element-wise over a tensor (an int alone is refused:
+    the row takes numbers)."""
+    if not isinstance(x, (T, L, C)):
+        raise Err()
+    a = _np(x)
+    with numpy.errstate(all="ignore"):
+        return _T(numpy.vectorize(lambda v: math.gamma(v + 1) if v + 1 > 0 or v + 1 != int(v + 1) else float("nan"), otypes=[float])(a)) if a.size else _T(a)
+
+
+def f_choose(n, k):
+    """C(n, k) element-wise: n! / (k! (n − k)!), over tensors."""
+    if not isinstance(n, (T, L, C)) or not isinstance(k, (T, L, C)):
+        raise Err()
+    a, b = _np(n), _np(k)
+    if a.shape != b.shape:
+        raise Skip()
+    def c(x, y):
+        if x == int(x) and y == int(y) and 0 <= y <= x:
+            return float(math.comb(int(x), int(y)))
+        raise Skip()
+    return _T(numpy.vectorize(c, otypes=[float])(a, b)) if a.size else _T(a)
+
+
+def f_tensor(x):
+    t = as_tensor(x)
+    if t is None or isinstance(x, (bool, T)):
+        raise Skip()
+    return t
+
+
+E3 = {
+    "math.abs": _each(abs),
+    "math.sign": _each(_sign),
+    "math.floor": _each(math.floor),
+    "math.ceil": _each(math.ceil),
+    "math.round": _each(round_half_away),
+    "math.argmax": f_argext(numpy.argmax) if numpy is not None else _skip,
+    "math.argmin": f_argext(numpy.argmin) if numpy is not None else _skip,
+    "math.argsort": f_argsort,
+    "math.topk": f_topk,
+    "math.unique": f_unique,
+    "math.cumsum": f_scan(lambda a, b: a + b),
+    "math.cumprod": f_scan(lambda a, b: a * b),
+    "math.zeros": f_filled(0.0),
+    "math.ones": f_filled(1.0),
+    "math.full": f_full,
+    "math.eye": f_eye,
+    "math.diag": lambda x: _T(numpy.diag(_matrix(x))),
+    "math.tril": lambda x: _T(numpy.tril(_matrix(x))),
+    "math.triu": lambda x: _T(numpy.triu(_matrix(x))),
+    "math.flatten": lambda x: _T(_np(x).ravel()),
+    "math.transpose": lambda x: _T(_matrix(x).T),
+    "math.reshape": f_reshape,
+    "math.onehot": f_onehot,
+    "math.dot": f_dot,
+    "math.det": _close(f_det),
+    "math.inv": _close(f_inv),
+    "math.solve": _close(f_solve),
+    "math.cholesky": _close(f_cholesky),
+    "math.conv": _close(f_conv),
+    "math.conv2d": _close(f_conv2d),
+    "math.hamming": _close(f_window("hamming")),
+    "math.hanning": _close(f_window("hanning")),
+    "math.fft": _close(f_fft),
+    "math.fft2": _close(f_fft2),
+    "math.ifft": _close(f_ifft),
+    "math.factorial": _close(f_factorial),
+    "math.choose": _close(f_choose),
+    "math.tensor": f_tensor,
+}
+
+
+# ── fractions and the statistics with a test's p (spec) ────────────
+
+from fractions import Fraction as _Fraction
+
+
+def f_fraction(*args):
+    """`fraction[n, d]` of two ints, in lowest terms; of one int, itself."""
+    if not all(isinstance(a, int) and not isinstance(a, bool) for a in args) or not 1 <= len(args) <= 2:
+        raise Skip()
+    if len(args) == 2 and args[1] == 0:
+        raise Err()
+    q = _Fraction(*args)
+    return str(q.numerator) if q.denominator == 1 else "{}/{}".format(q.numerator, q.denominator)
+
+
+def _stats_map(d):
+    return Close(show(M(d), True))
+
+
+def f_linreg(x, y):
+    a, b = _paired(x, y)
+    if a.size == 0:
+        raise Skip()
+    with numpy.errstate(all="ignore"):
+        ma, mb = numpy.mean(a), numpy.mean(b)
+        sxy = numpy.mean((a - ma) * (b - mb))
+        sxx = numpy.mean((a - ma) ** 2)
+        syy = numpy.mean((b - mb) ** 2)
+        slope = sxy / sxx
+        r = sxy / numpy.sqrt(sxx * syy)
+    if not all(math.isfinite(v) for v in (slope, r)):
+        raise Skip()
+    return _stats_map({"slope": float(slope), "intercept": float(mb - slope * ma), "r2": float(r * r)})
+
+
+def f_fit(x, dist):
+    a = _series(x)
+    if not isinstance(dist, str):
+        raise Skip()
+    if dist not in ("normal", "exponential", "uniform", "poisson"):
+        raise Err()
+    if a.size == 0:
+        raise Skip()
+    m = float(numpy.mean(a))
+    if dist == "normal":
+        return _stats_map({"mu": m, "sigma": float(numpy.sqrt(numpy.mean((a - m) ** 2)))})
+    if dist == "exponential":
+        return _stats_map({"lambda": 1.0 / m}) if m else _skip()
+    if dist == "uniform":
+        return _stats_map({"a": float(numpy.min(a)), "b": float(numpy.max(a))})
+    return _stats_map({"lambda": m})
+
+
+def _scipy():
+    try:
+        import scipy.stats
+        return scipy.stats
+    except ImportError:
+        raise Needs("scipy")
+
+
+def f_ttest(x, y):
+    a, b = _series(x), _series(y)
+    if a.size < 2 or b.size < 2:
+        raise Skip()
+    st = _scipy()
+    r = st.ttest_ind(a, b, equal_var=False)
+    if not (math.isfinite(r.statistic) and math.isfinite(r.pvalue)):
+        raise Skip()
+    return _stats_map({"t": float(r.statistic), "p": float(r.pvalue)})
+
+
+def f_chisq(o, e):
+    a, b = _paired(o, e)
+    if a.size < 2 or (b <= 0).any():
+        raise Skip()
+    st = _scipy()
+    chi2 = float(numpy.sum((a - b) ** 2 / b))
+    return _stats_map({"chi2": chi2, "p": float(st.chi2.sf(chi2, a.size - 1))})
+
+
+E4 = {
+    "fraction": f_fraction,
+    "math.stats.linreg": f_linreg,
+    "math.stats.fit": f_fit,
+    "math.stats.ttest": f_ttest,
+    "math.stats.chisq": f_chisq,
+}
+
+
+# ── chart's indicators (spec, chart) ────────────────────────────────
+
+
+def _window(n):
+    if isinstance(n, bool) or not isinstance(n, int):
+        raise Skip()
+    if n < 1 or n >= 2**63:
+        raise Err()
+    return n
+
+
+def _in_order(ts, secs):
+    """A trailing window: its seconds 0 or more, over times in order."""
+    if secs < 0 or any(ts[i + 1] < ts[i] for i in range(len(ts) - 1)):
+        raise Err()
+
+
+def _close_T(xs):
+    return Close(show(T([float(v) for v in xs], [len(xs)]), True))
+
+
+def f_sma(x, n):
+    a, n = _series(x), _window(n)
+    out = [float("nan") if i + 1 < n else float(numpy.mean(a[i + 1 - n:i + 1])) for i in range(a.size)]
+    return _close_T(out)
+
+
+def f_ema(x, n):
+    """Smoothing 2/(n + 1), seeded by the first n rows' mean."""
+    a, n = _series(x), _window(n)
+    alpha = 2.0 / (n + 1)
+    out, prev = [], None
+    for i in range(a.size):
+        if i + 1 < n:
+            out.append(float("nan"))
+            continue
+        prev = float(numpy.mean(a[:n])) if prev is None else alpha * a[i] + (1 - alpha) * prev
+        out.append(prev)
+    return _close_T(out)
+
+
+def f_vwap(*args):
+    if len(args) == 2:
+        p, v = _paired(args[0], args[1])
+        out, pv, vv = [], 0.0, 0.0
+        for i in range(p.size):
+            pv += p[i] * v[i]
+            vv += v[i]
+            out.append(pv / vv if vv else float("nan"))
+        return _close_T(out)
+    if len(args) == 4:
+        ts, p = _paired(args[0], args[1])
+        _, v = _paired(args[0], args[2])
+        secs = args[3]
+        if isinstance(secs, bool) or not is_num(secs):
+            raise Skip()
+        _in_order(ts, secs)
+        out = []
+        for i in range(p.size):
+            idx = [j for j in range(i + 1) if ts[j] >= ts[i] - secs]
+            vv = sum(v[j] for j in idx)
+            out.append(sum(p[j] * v[j] for j in idx) / vv if vv else float("nan"))
+        return _close_T(out)
+    raise Skip()
+
+
+def f_rolling_sum(ts, x, secs):
+    t, a = _paired(ts, x)
+    if isinstance(secs, bool) or not is_num(secs):
+        raise Skip()
+    _in_order(t, secs)
+    return _close_T([sum(a[j] for j in range(i + 1) if t[j] >= t[i] - secs) for i in range(a.size)])
+
+
+def f_cvd(close_, vol):
+    c, v = _paired(close_, vol)
+    out, acc = [], 0.0
+    for i in range(c.size):
+        if i > 0:
+            acc += v[i] if c[i] > c[i - 1] else -v[i] if c[i] < c[i - 1] else 0.0
+        out.append(acc)
+    return _close_T(out)
+
+
+E5 = {
+    "chart.sma": f_sma,
+    "chart.ema": f_ema,
+    "chart.vwap": f_vwap,
+    "chart.rolling_sum": f_rolling_sum,
+    "chart.cvd": f_cvd,
+}
+
+
+# ── the clock, JSON and an exact number's fraction ─────────────────
+
+# (the check's clock stands still: CROW_CLOCK=1767225600)
+E5["now"] = lambda: Mo(1767225600000)
+
+
+def f_encode(*args):
+    """`encode[value]`, JSON as the spec writes it; `encode[text, scheme]`
+    the scheme's."""
+    if len(args) == 2:
+        return f_encode_as(*args)
+    if len(args) != 1 or isinstance(args[0], (C, Frame)):
+        raise Skip()
+    return json_text(held(args[0]))
+
+
+E5["encode"] = f_encode
+
+
+def f_fraction_any(*args):
+    if len(args) == 1 and isinstance(args[0], Dec):
+        q = _Fraction(args[0].d)
+        return str(q.numerator) if q.denominator == 1 else "{}/{}".format(q.numerator, q.denominator)
+    return f_fraction(*args)
+
+
+E5["fraction"] = f_fraction_any
+
+
+# ── the process the check starts (spec, the core) ──────────────────
+#
+# A case's environment is cleared but for the check's own names; it is
+# given no arguments.
+
+SET_BY_CHECK = ("PATH", "HOME", "TMPDIR", "USER", "LANG")
+
+
+def f_env(name, *rest):
+    _texts(name)
+    if name in SET_BY_CHECK or name.startswith("CROW_") or len(rest) > 1:
+        raise Skip()
+    if not rest:
+        # (a variable not set is an error value)
+        raise Err()
+    d = rest[0]
+    if isinstance(d, bool) or d is FAIL:
+        raise Skip()
+    # (the default is held as a cell: an int past 64 bits is refused)
+    if isinstance(d, int) and not -2**63 <= d < 2**63:
+        raise Err()
+    # (the default as text, as the variable would be)
+    if isinstance(d, (str, int, float)):
+        return d if isinstance(d, str) else show(d, True)
+    raise Skip()
+
+
+E6 = {
+    "env": f_env,
+    "args": lambda: L([]),
+    "halt": lambda *a: _texts(*a) or _raise_err(),
+}
+
+
+def _raise_err():
+    raise Err()
+
+
+BUILTINS.update(E1)
+BUILTINS.update(E2)
+BUILTINS.update(E3)
+BUILTINS.update(E4)
+BUILTINS.update(E5)
+BUILTINS.update(E6)
 
 
 def answer(what, names):
@@ -2073,9 +3127,16 @@ def answer(what, names):
     if what.startswith("view-bool:"):
         return bool_answer(what[10:], names)
     if what.startswith("view-layout:"):
-        raise Skip()
+        attr, _, word = what[12:].partition(":")
+        return layout_answer(attr, word)
     if what.startswith("state:"):
         return state_answer(what[6:])
+    if what.startswith("draw:"):
+        return draw_answer(what[5:])
+    if what.startswith("ws:"):
+        return WS[what[3:]] if what[3:] in WS else _skip()
+    if what.startswith("mail:"):
+        return MAIL[what[5:]] if what[5:] in MAIL else _skip()
     args = [value(n) for n in names]
     # (a parsed value is read as each use implies: beyond showing, measuring
     # and indexing it, not answered here)
@@ -2138,6 +3199,10 @@ def answer(what, names):
         r = f(*args)
     except TypeError:
         raise Skip()
+    # (a reference that answers within a few units in the last place, or
+    # within a tolerance scaled to its answer)
+    if isinstance(r, (Near, Close)):
+        return r
     return show(r, True)
 
 
@@ -2188,6 +3253,10 @@ def main():
                 expected = None
             answered += 1
             print(json.dumps({"kind": "answered", "id": case["id"]}))
+            if isinstance(expected, Close) and "seen" in case and not case.get("end"):
+                if not close(case["seen"], expected):
+                    print(json.dumps({"kind": "wrong", "id": case["id"], "expected": str(expected), "seen": case["seen"]}))
+                continue
             if isinstance(expected, Near) and "seen" in case and not case.get("end"):
                 if not near(case["seen"], expected):
                     print(json.dumps({"kind": "wrong", "id": case["id"], "expected": str(expected), "seen": case["seen"]}))
@@ -2203,7 +3272,7 @@ def main():
                 continue
             if case["what"].startswith(("route", "state")) and "seen" in case:
                 case["seen"] = placed_past(case["seen"])
-            if isinstance(expected, (ArrowOf, Drawn, Pages)) and "seen" in case and not case.get("end"):
+            if isinstance(expected, (ArrowOf, Drawn, Pages, Styled, Drawn20k)) and "seen" in case and not case.get("end"):
                 if not expected.holds(case["seen"]):
                     print(json.dumps({"kind": "wrong", "id": case["id"], "expected": str(expected), "seen": case["seen"]}))
                 continue

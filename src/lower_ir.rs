@@ -4974,13 +4974,6 @@ impl<'a> Lowerer<'a> {
             if let Some(seen) = &mut self.seen {
                 seen.calls.push((name.clone(), full_types.clone()));
             }
-            // a view draws in a page: a page names it and another view calls
-            // it, and nothing else does (spec, Views) — called from the top
-            // level, a function or a route, the interpreter had answered its
-            // markup and the compiled program had not built
-            if self.pass == Pass::Final && self.ctx.views.contains(&name) && !matches!(self.at, Where::In(FnKind::View)) {
-                self.refuse(format!("{}[] is a view: a page draws it — page['/', {}] — or another view calls it, and nothing else does", crate::lower::shown(&name), crate::lower::shown(&name)));
-            }
             // a render reads state and never moves it (spec, Reactive State):
             // the interpreter wrote the fact mid-render, and the compiled
             // program did not build

@@ -1,41 +1,29 @@
 //! Special mathematical functions and complex number operations for CrowTensor.
 
 use crate::tensor::CrowTensor;
-use std::f64::consts::PI;
 
 // ── Scalar special functions ───────────────────────────────────────────
 
-/// Lanczos approximation for the gamma function.
+/// The gamma function, libm's: a Lanczos approximation of 15 digits had
+/// served, and `factorial` of a whole number missed by a few units in the
+/// last place (`factorial[[3.0]]` was 6.000000000000007 — crow check
+/// --self's reference, held to Python's `math.gamma`).
 fn gamma_scalar(x: f64) -> f64 {
-    if x < 0.5 {
-        // Reflection formula: Γ(1-z)Γ(z) = π/sin(πz)
-        PI / (PI * x).sin() / gamma_scalar(1.0 - x)
-    } else {
-        let x = x - 1.0;
-        // Lanczos coefficients (g=7, n=9)
-        let p = [
-            0.99999999999980993,
-            676.5203681218851,
-            -1259.1392167224028,
-            771.32342877765313,
-            -176.61502916214059,
-            12.507343278686905,
-            -0.13857109526572012,
-            9.9843695780195716e-6,
-            1.5056327351493116e-7,
-        ];
-        let mut sum = p[0];
-        for (i, &coef) in p[1..].iter().enumerate() {
-            sum += coef / (x + i as f64 + 1.0);
-        }
-        let t = x + 7.5; // g + 0.5
-        (2.0 * PI).sqrt() * t.powf(x + 0.5) * (-t).exp() * sum
-    }
+    libm::tgamma(x)
 }
 
-/// Log-gamma function for numerical stability in choose().
 fn lgamma_scalar(x: f64) -> f64 {
-    gamma_scalar(x).abs().ln()
+    libm::lgamma(x)
+}
+
+/// x! of a whole number up to 22, exactly: every one is a float (22! is
+/// 2^19 times an odd number below 2^53); past them, and of any other
+/// number, Γ(x + 1).
+fn factorial_scalar(x: f64) -> f64 {
+    if x.fract() == 0.0 && (0.0..=22.0).contains(&x) {
+        return (1..=x as u128).product::<u128>() as f64;
+    }
+    gamma_scalar(x + 1.0)
 }
 
 /// The error function, to the last bit (libm's; an approximation good
@@ -80,7 +68,7 @@ impl CrowTensor {
 
     /// Element-wise factorial. Computes Γ(x+1) for each element.
     pub fn factorial(&self) -> CrowTensor {
-        self.map(|x| gamma_scalar(x + 1.0))
+        self.map(factorial_scalar)
     }
 
     /// Element-wise binomial coefficient C(n, k) = n! / (k! * (n-k)!).
@@ -128,6 +116,7 @@ impl CrowTensor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::f64::consts::PI;
 
     #[test]
     fn test_gamma_integers() {
@@ -175,6 +164,17 @@ mod tests {
         let t = CrowTensor::from_vec(vec![0.0], vec![1]);
         let b = t.bessel(1);
         assert!((b.to_vec()[0]).abs() < 1e-10, "J_1(0) = 0");
+    }
+
+    /// A whole number's factorial and gamma are exact: the Lanczos
+    /// approximation had answered 6.000000000000007 for 3!.
+    #[test]
+    fn whole_factorials_and_gammas_are_exact() {
+        let f = CrowTensor::from_vec(vec![0.0, 1.0, 3.0, 10.0, 20.0, 22.0], vec![6]).factorial().to_vec();
+        assert_eq!(f, vec![1.0, 1.0, 6.0, 3628800.0, 2432902008176640000.0, 1124000727777607680000.0]);
+        let g = CrowTensor::from_vec(vec![1.0, 4.0, 11.0], vec![3]).gamma().to_vec();
+        assert_eq!(g, vec![1.0, 6.0, 3628800.0]);
+        assert!((CrowTensor::from_vec(vec![0.5], vec![1]).factorial().to_vec()[0] - PI.sqrt() / 2.0).abs() < 1e-15, "½! = Γ(1.5) = √π / 2");
     }
 
     #[test]

@@ -132,6 +132,9 @@ fn values() -> Vec<Val> {
         plain("fraction8", "0.12345678"),
         plain("whole7", "1234567"),
         plain("scheme", "'base64'"),
+        // (a hash's algorithm and a pattern, for the rows that take them)
+        plain("algo", "'sha256'"),
+        plain("pattern", "'[a-c]+'"),
         // (the files every run's directory is given, one the case writes —
         // its own, by the case's number — an address nothing answers, and a
         // database in memory: see `sandbox`)
@@ -400,6 +403,8 @@ const HELPERS: &[(&str, &str)] = &[
     ("self_loop", "fn self_loop[x]\n    ys = for y in push[[], x]\n        y\n    return ys[0]\n"),
     ("self_held", "fn self_held[x]\n    t = x\n    u = t\n    return u\n"),
     ("self_branch", "fn self_branch[x, c]\n    if c\n        return x\n    return x\n"),
+    // (one of the draws family's five items)
+    ("self_in_five", "fn self_in_five[v]\n    return v in [5.0, 3.0, 9.0, 1.0, 7.0]\n"),
     // (a connection to the check's echo server that has been sent something,
     // and one that has asked it a request: what a read waits for is there)
     ("self_sent", "fn self_sent[]\n    s = open['127.0.0.1', int[env['CROW_SELF_PORT', '9']], false, 5.0]\n    put = send[s, bytes['abc']]\n    return s\n"),
@@ -1214,32 +1219,24 @@ struct Seen {
 
 const LIMIT: Duration = Duration::from_secs(30);
 
-/// Each batch's own program removed from the builders' directories: its
-/// binary beside its source and in the cache, and every artifact of its
-/// crate (`self_*`) — what stays is the runtime's crates, built once per
-/// kind of program for the next run.
-fn prune_batches(build_dir: &Path) {
-    let Ok(builders) = std::fs::read_dir(build_dir) else { return };
-    for builder in builders.flatten().map(|e| e.path()).filter(|p| p.is_dir()) {
-        let ours = |p: &Path| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("self_") || n.starts_with("run_self_"));
-        let target = builder.join(".crow_build").join("target");
-        let mut places = vec![builder.clone()];
-        for profile in ["debug", "release"] {
-            let t = target.join(profile);
-            places.extend(["", "deps", "incremental", ".fingerprint", "build"].iter().map(|d| if d.is_empty() { t.clone() } else { t.join(d) }));
-        }
-        for place in places {
-            let Ok(entries) = std::fs::read_dir(&place) else { continue };
-            for e in entries.flatten() {
-                let p = e.path();
-                // (a batch's source stays: the next run writes it anew)
-                if !ours(&p) || p.extension().is_some_and(|x| x == "co") {
-                    continue;
-                }
-                let _ = if p.is_dir() { std::fs::remove_dir_all(&p) } else { std::fs::remove_file(&p) };
+/// What the builders' caches may hold before a run lets them go.
+const CACHE_BUDGET: u64 = 80 << 30;
+
+/// The bytes a directory holds, every file below it counted once.
+fn cache_size(dir: &Path) -> u64 {
+    let mut total = 0;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else { continue };
+        for e in entries.flatten() {
+            match e.file_type() {
+                Ok(t) if t.is_dir() => stack.push(e.path()),
+                Ok(t) if t.is_file() => total += e.metadata().map(|m| m.len()).unwrap_or(0),
+                _ => {}
             }
         }
     }
+    total
 }
 
 /// A batch's build: the Rust compiler's time, not a case's — a cold build
@@ -1486,6 +1483,28 @@ impl Servers {
                 }
             });
         }
+        // (a WebSocket server that sends back what it is sent: web.ws's rows)
+        if let Ok(l) = std::net::TcpListener::bind("127.0.0.1:0") {
+            if let Ok(a) = l.local_addr() {
+                env.push(("CROW_SELF_WS".to_string(), a.port().to_string()));
+            }
+            std::thread::spawn(move || {
+                for c in l.incoming().flatten() {
+                    std::thread::spawn(move || serve_ws(c));
+                }
+            });
+        }
+        // (a mail server that takes every message: web.mail's rows)
+        if let Ok(l) = std::net::TcpListener::bind("127.0.0.1:0") {
+            if let Ok(a) = l.local_addr() {
+                env.push(("CROW_SELF_SMTP".to_string(), a.port().to_string()));
+            }
+            std::thread::spawn(move || {
+                for c in l.incoming().flatten() {
+                    std::thread::spawn(move || serve_smtp(c));
+                }
+            });
+        }
         let pg = scratch_postgres(&dir.join("pg"));
         if let Some((_, port)) = &pg {
             env.push(("CROW_SELF_PG".to_string(), port.to_string()));
@@ -1525,6 +1544,78 @@ fn scratch_postgres(dir: &Path) -> Option<(PathBuf, u16)> {
     let opts = format!("-p {} -c unix_socket_directories='' -c listen_addresses=127.0.0.1", port);
     let started = Command::new("pg_ctl").arg("-D").arg(&dir).args(["-o", &opts, "-w", "-l"]).arg(dir.join("log")).arg("start").output().ok()?;
     started.status.success().then_some((dir, port))
+}
+
+/// One connection to the mail server, as RFC 5321 has it: a greeting,
+/// `EHLO` answered with `AUTH PLAIN` offered, any credentials taken, the
+/// envelope and the data (to the line holding a lone dot) each answered
+/// 250, a recipient that is no address refused (550), `QUIT` answered.
+fn serve_smtp(s: std::net::TcpStream) {
+    use std::io::{BufRead, Write};
+    let _ = s.set_read_timeout(Some(Duration::from_secs(60)));
+    let Ok(mut out) = s.try_clone() else { return };
+    let mut reader = std::io::BufReader::new(s);
+    if out.write_all(b"220 self ESMTP\r\n").is_err() {
+        return;
+    }
+    let mut data = false;
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {}
+        }
+        let said = line.trim_end_matches(['\r', '\n']);
+        if data {
+            if said == "." {
+                data = false;
+                if out.write_all(b"250 2.0.0 queued\r\n").is_err() {
+                    return;
+                }
+            }
+            continue;
+        }
+        let verb = said.split_whitespace().next().unwrap_or("").to_ascii_uppercase();
+        let reply: &[u8] = match verb.as_str() {
+            "EHLO" | "HELO" => b"250-self\r\n250-AUTH PLAIN\r\n250 8BITMIME\r\n",
+            "AUTH" => b"235 2.7.0 accepted\r\n",
+            "MAIL" => b"250 2.1.0 ok\r\n",
+            "RCPT" if said.contains('@') => b"250 2.1.5 ok\r\n",
+            "RCPT" => b"550 5.1.3 not an address\r\n",
+            "DATA" => {
+                data = true;
+                b"354 go on\r\n"
+            }
+            "RSET" | "NOOP" => b"250 ok\r\n",
+            "QUIT" => {
+                let _ = out.write_all(b"221 bye\r\n");
+                return;
+            }
+            _ => b"502 5.5.2 not that\r\n",
+        };
+        if out.write_all(reply).is_err() {
+            return;
+        }
+    }
+}
+
+/// One connection to the WebSocket server: each text or binary message
+/// sent back as it came, a ping answered, until the client closes.
+fn serve_ws(s: std::net::TcpStream) {
+    let _ = s.set_read_timeout(Some(Duration::from_secs(60)));
+    let Ok(mut ws) = tungstenite::accept(s) else { return };
+    while let Ok(m) = ws.read() {
+        match m {
+            tungstenite::Message::Text(_) | tungstenite::Message::Binary(_) => {
+                if ws.send(m).is_err() {
+                    return;
+                }
+            }
+            tungstenite::Message::Close(_) => return,
+            _ => {}
+        }
+    }
 }
 
 /// One connection to the echo server: an HTTP request — its head, then its
@@ -1901,9 +1992,15 @@ fn build(exe: &Path, dir: &Path, stem: &str, cases: Vec<(usize, Case)>, jobs: &s
             return;
         }
         let mut cmd = Command::new(exe);
-        // (no incremental data: a batch is built once, and the runtime's
-        // crates kept it once per kind of program)
-        cmd.args(["build", &file]).current_dir(dir).env("CROW_BUILD_PROFILE", "dev").env("CARGO_BUILD_JOBS", jobs).env("CARGO_INCREMENTAL", "0");
+        // (no incremental data and no debug info: a batch's program is a few
+        // tens of megabytes kept for the next run, where with them each
+        // was hundreds, and the caches had passed 240 GB)
+        cmd.args(["build", &file])
+            .current_dir(dir)
+            .env("CROW_BUILD_PROFILE", "dev")
+            .env("CARGO_BUILD_JOBS", jobs)
+            .env("CARGO_INCREMENTAL", "0")
+            .env("CARGO_PROFILE_DEV_DEBUG", "0");
         let (code, out, err, ended) = spawn_within(cmd, BUILD_LIMIT);
         let binary = dir.join(stem);
         if code == Some(0) && binary.exists() {
@@ -2085,6 +2182,9 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
     cases.extend(web::route_cases(&all));
     cases.extend(web::view_cases(&all));
     cases.extend(web::state_cases());
+    cases.extend(web::ws_cases());
+    cases.extend(web::mail_cases());
+    cases.extend(draw_cases());
     let (rows, unexercised) = row_cases(&all, &only);
     let row_count = rows.len();
     cases.extend(rows);
@@ -2134,8 +2234,12 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
         println!("  {:<12} {:>6} accepted {:>6} refused {:>4} a bug in Crow", family, a, r, b);
     }
     let _ = std::fs::write(dir.join("refusals.txt"), &refusals);
-    // the forms of the language the cases that lower reach (the forms guard)
-    let reached = forms_reached(&accepted.iter().map(|&i| &sources[i]).collect::<Vec<_>>());
+    // the forms of the language the cases that lower reach (the forms guard),
+    // and the standard modules' own tests where the test-block family runs
+    let mut reaching: Vec<&String> = accepted.iter().map(|&i| &sources[i]).collect();
+    let module_sources: Vec<String> = if !lower_only && only.is_none() { module_files().iter().filter_map(|p| std::fs::read_to_string(p).ok()).collect() } else { Vec::new() };
+    reaching.extend(module_sources.iter());
+    let reached = forms_reached(&reaching);
     let forms_now: BTreeMap<String, String> = every_form().into_iter().filter(|f| !reached.contains(f)).map(|f| (f, "no case reaches it".to_string())).collect();
     println!("forms: {} of the language's {} reached", reached.len(), every_form().len());
     // the builtins held to no right answer, where the reference ran (the
@@ -2381,8 +2485,38 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
                 }
             };
             let mut ran: BTreeMap<String, (bool, bool)> = BTreeMap::new();
+            // (a live family answers every row its cases call: the socket's
+            // and the mailer's rows, against the check's own servers)
+            let live_rows = |id: &str| -> &'static [&'static str] {
+                if id.starts_with("ws-live/") {
+                    &["web.ws.socket", "web.ws.send_text", "web.ws.recv_text", "web.ws.recv_for", "web.ws.close_socket"]
+                } else if id.starts_with("mail-live/") {
+                    &["web.mail.smtp", "web.mail.mail"]
+                } else if let Some(name) = id.strip_prefix("draw/") {
+                    // (the draws family: each distribution's row, and the seed)
+                    match name {
+                        "randn" => &["math.randn", "math.seed"],
+                        "normal" => &["math.normal"],
+                        "uniform" => &["math.uniform"],
+                        "exponential" => &["math.exponential"],
+                        "poisson" => &["math.poisson"],
+                        "bernoulli" => &["math.bernoulli"],
+                        "beta" => &["math.beta_dist"],
+                        "rand" => &["core.rand"],
+                        "rand-n" => &["core.rand_int"],
+                        "rand-between" => &["core.rand_between"],
+                        "shuffle" => &["math.shuffle"],
+                        "choice" => &["math.choice"],
+                        "permutation" => &["math.permutation"],
+                        _ => &[],
+                    }
+                } else {
+                    &[]
+                }
+            };
             for id in agreed_seen.keys() {
-                if let Some(row) = row_of(id) {
+                let rows: Vec<String> = row_of(id).into_iter().chain(live_rows(id).iter().map(|r| r.to_string())).collect();
+                for row in rows {
                     let e = ran.entry(row).or_default();
                     e.0 |= referred.answered.contains(id);
                     e.1 |= referred.needs.contains_key(id);
@@ -2399,7 +2533,15 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
         // its driver's rows not called, by the machine
         let served: HashMap<&str, &str> = SERVED.get().map(|v| v.iter().map(|(k, x)| (k.as_str(), x.as_str())).collect()).unwrap_or_default();
         for case in cases.iter().filter(|c| c.live) {
-            let (driver, port) = if case.id.contains("postgres") { ("db.postgres", "CROW_SELF_PG") } else { ("db.clickhouse", "CROW_SELF_CH") };
+            let (driver, port) = if case.id.starts_with("ws-live/") {
+                ("web.ws", "CROW_SELF_WS")
+            } else if case.id.starts_with("mail-live/") {
+                ("web.mail", "CROW_SELF_SMTP")
+            } else if case.id.contains("postgres") {
+                ("db.postgres", "CROW_SELF_PG")
+            } else {
+                ("db.clickhouse", "CROW_SELF_CH")
+            };
             if !served.contains_key(port) {
                 for row in ROWS.iter().filter(|r| r.module == driver && !r.name.ends_with("_cancel")) {
                     if !not_called.iter().any(|n| n.id == row.id) {
@@ -2419,14 +2561,19 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
                 });
             }
         }
-        // (the builders' caches stay for the next run — the runtime's crates
-        // built once per kind of program — but each batch's own program goes:
-        // its binary, beside it and in the cache, and its artifacts, which
-        // had grown the caches past 240 GB; `--clean` removes them all)
-        if clean {
+        // the standard modules' own tests, under each interpreted
+        // configuration (the test-block family)
+        if only.as_deref().is_none_or(|w| "tests/".contains(w) || w.starts_with("tests")) {
+            let (found, ran) = module_tests(&exe);
+            println!("tests: {} runs of the standard modules' own tests, {} findings", ran, found.len());
+            findings.extend(found);
+        }
+        // (the builders' caches stay for the next run, its batches' programs
+        // among them — a batch whose source is the same is not built again —
+        // and go whole where they pass a budget: they had grown past 240 GB
+        // and filled the disk; `--clean` removes them)
+        if clean || cache_size(&build_dir) > CACHE_BUDGET {
             let _ = std::fs::remove_dir_all(&build_dir);
-        } else {
-            prune_batches(&build_dir);
         }
     }
 
@@ -2633,7 +2780,7 @@ fn agreement_reason(row: &str) -> String {
         "ui.layout" => "the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)".to_string(),
         "ui" | "ui.attr" | "ui.bool" => "an element no reference reads back yet".to_string(),
         "web.read" => "a way a route reads its request no reference answers yet".to_string(),
-        "llm" => "a model's reply: the empty replay answers, and no reference speaks for a model".to_string(),
+        "llm" => "a model's reply: the empty replay answers here; tests/llm_server.rs holds the module to a server speaking both wire formats, in both modes".to_string(),
         "chart" => "an indicator: no reference yet (pandas's rolling and ewm are the plan)".to_string(),
         "sys" => "the standard library's own layer: bytes, streams and protocols no reference models yet".to_string(),
         "frame" => "frames: held to pandas by tests/parity/185, no reference per case yet".to_string(),
@@ -2840,6 +2987,134 @@ fn every_form() -> BTreeSet<String> {
 
 /// The forms the programs of these cases reach, each parsed as `crow run`
 /// parses it, across the cores.
+/// The draws family: each distribution drawn 20,000 times from a fixed
+/// seed, and what the draws show — their mean, their spread, their least
+/// and greatest — logged for the reference to hold to the distribution's
+/// (within four standard errors: the seed fixes the draws, so the check
+/// is never one in a thousand wrong); a shuffle, a choice and a
+/// permutation as what they must be (the same items, distinct, in range).
+fn draw_cases() -> Vec<Case> {
+    let shown = "log[mean[x]]\nlog[std[x]]\nlog[min[x]]\nlog[max[x]]";
+    let table: Vec<(&str, String)> = vec![
+        ("randn", format!("x = randn[20000]\n{}", shown)),
+        ("normal", format!("x = normal[3.0, 2.0, 20000]\n{}", shown)),
+        ("uniform", format!("x = uniform[2.0, 5.0, 20000]\n{}", shown)),
+        ("exponential", format!("x = exponential[2.0, 20000]\n{}", shown)),
+        ("poisson", format!("x = poisson[3.0, 20000]\n{}\nlog[sum[(x - floor[x]) eq 0.0]]", shown)),
+        ("bernoulli", format!("x = bernoulli[0.3, 20000]\n{}\nlog[sum[(x - floor[x]) eq 0.0]]", shown)),
+        ("beta", format!("x = beta_dist[2.0, 5.0, 20000]\n{}", shown)),
+        ("rand", "xs = for i in range[20000]\n    rand[]\nx = tensor[xs]\nlog[mean[x]]\nlog[std[x]]\nlog[min[x]]\nlog[max[x]]".to_string()),
+        ("rand-n", "xs = for i in range[20000]\n    rand[6]\nx = tensor[xs]\nlog[mean[x]]\nlog[std[x]]\nlog[min[x]]\nlog[max[x]]".to_string()),
+        ("rand-between", "xs = for i in range[20000]\n    rand[-3, 3]\nx = tensor[xs]\nlog[mean[x]]\nlog[std[x]]\nlog[min[x]]\nlog[max[x]]".to_string()),
+        ("shuffle", "xs = [5.0, 3.0, 9.0, 1.0, 7.0]\ny = shuffle[xs]\nlog[sort[y] eq sort[xs]]\nlog[len[y]]".to_string()),
+        ("choice", "xs = [5.0, 3.0, 9.0, 1.0, 7.0]\ny = choice[xs, 3]\nlog[len[y]]\nlog[len[unique[y]]]\nlog[all[y, self_in_five]]".to_string()),
+        ("permutation", "y = permutation[6]\nlog[sort[y]]".to_string()),
+    ];
+    table
+        .into_iter()
+        .map(|(name, body)| {
+            let mut lines = vec!["seed[7]".to_string()];
+            lines.extend(body.lines().map(str::to_string));
+            let mut c = Case::new(format!("draw/{}", name), &[], lines).referring(format!("draw:{}", name), &[]);
+            c.imports.insert("math");
+            c.imports.insert("math.stats");
+            c
+        })
+        .collect()
+}
+
+/// The standard modules written in Crow, each with its own tests.
+fn module_files() -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir("src/modules")
+        .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "co")).collect())
+        .unwrap_or_default();
+    files.sort();
+    files
+}
+
+/// The test-block family: every standard module's own tests run by `crow
+/// test` under each interpreted configuration — the walker, no fusion, no
+/// moves — as the gate runs them interpreted: each run passes, and all
+/// say the same. A run that fails, or says otherwise than the interpreted
+/// one, is a finding (`tests`). Answers the findings and how many runs.
+fn module_tests(exe: &Path) -> (Vec<Finding>, usize) {
+    let files = module_files();
+    let interpreted: Vec<&Config> = CONFIGS.iter().filter(|c| !c.compiled).collect();
+    let jobs: Vec<(&PathBuf, &Config)> = files.iter().flat_map(|f| interpreted.iter().map(move |c| (f, *c))).collect();
+    let results: Mutex<Vec<(String, &str, Option<i32>, String)>> = Mutex::new(Vec::new());
+    let next = AtomicUsize::new(0);
+    let workers = std::thread::available_parallelism().map(|c| c.get()).unwrap_or(4).clamp(1, 8);
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| loop {
+                let i = next.fetch_add(1, Ordering::SeqCst);
+                let Some((file, config)) = jobs.get(i) else { break };
+                // (each run in a directory of its own: a module's tests write
+                // files where they run — io's `io-note.csv` — and four runs
+                // at once had read each other's)
+                let name = file.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                let run_dir = Path::new("target/crow_self/tests").join(format!("{}_{}", name, config.name));
+                let _ = std::fs::remove_dir_all(&run_dir);
+                let _ = std::fs::create_dir_all(&run_dir);
+                let absolute = std::fs::canonicalize(file).unwrap_or_else(|_| file.to_path_buf());
+                let mut cmd = Command::new(exe);
+                cmd.arg("test").arg(&absolute).current_dir(&run_dir);
+                for (k, v) in config.env {
+                    cmd.env(k, v);
+                }
+                let (code, out, err, ended) = spawn_within(cmd, Duration::from_secs(600));
+                let said = format!("{}\n{}", out, err);
+                // (the run's last word, its colors read past)
+                let last = said.lines().rev().map(strip_colors).find(|l| !l.trim().is_empty()).unwrap_or_default();
+                let summary = match ended {
+                    Ended::Exited => last,
+                    other => format!("{:?}", other),
+                };
+                let name = file.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                if let Ok(mut r) = results.lock() {
+                    r.push((name, config.name, code, summary));
+                }
+            });
+        }
+    });
+    let results = results.into_inner().unwrap_or_default();
+    let mut findings = Vec::new();
+    for file in &files {
+        let name = file.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let runs: Vec<&(String, &str, Option<i32>, String)> = results.iter().filter(|r| r.0 == name).collect();
+        let first = runs.iter().find(|r| r.1 == "interpreted").map(|r| r.3.clone()).unwrap_or_default();
+        for (_, config, code, summary) in runs {
+            if *code != Some(0) || *summary != first {
+                findings.push(Finding {
+                    id: format!("tests/{}/{}", name, config),
+                    code: format!("crow test {}", file.display()),
+                    class: "tests",
+                    detail: format!("{} — interpreted: {}", summary.trim(), first.trim()),
+                });
+            }
+        }
+    }
+    (findings, results.len())
+}
+
+/// Text with its terminal colors read past.
+fn strip_colors(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            for d in chars.by_ref() {
+                if d.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
 fn forms_reached(sources: &[&String]) -> BTreeSet<String> {
     let workers = std::thread::available_parallelism().map(|c| c.get()).unwrap_or(4);
     let chunk = sources.len().div_ceil(workers.max(1)).max(1);

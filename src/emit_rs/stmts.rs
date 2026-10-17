@@ -680,7 +680,10 @@ impl Emitter {
         }
         let mut text = self.owned_expr(expr);
         let mut holds_markup = false;
-        if self.in_view() && self.makes_node(expr) {
+        // (a view's node held where markup is held — in a view, or outside
+        // one where the name is markup — is its HTML, as the interpreter's
+        // view answers it)
+        if self.makes_node(expr) && (self.in_view() || matches!(as_inferred(ty), Ty::Markup | Ty::Str)) {
             text = format!("({}).to_html()", text);
             holds_markup = true;
         }
@@ -760,7 +763,7 @@ impl Emitter {
         };
         let mut text = self.owned_expr(expr);
         self.move_target = None;
-        if self.in_view() && self.makes_node(expr) {
+        if self.makes_node(expr) && (self.in_view() || self.local_ty(var).is_some_and(|t| matches!(t, Ty::Markup | Ty::Str))) {
             text = format!("({}).to_html()", text);
         }
         let new_ty = self.tt(expr);

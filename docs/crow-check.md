@@ -252,7 +252,24 @@ with no test someone has to remember to write:
   handler; a handler that stops (nothing lands, and the page says so);
   work handed to `later`; an event the page did not offer; and the page
   opened again — each page driven by its events over its socket, as
-  `crow test --served` drives one, the page after each event the answer.
+  `crow test --served` drives one, the page after each event the answer;
+- the modules that speak to a server, against the check's own: a
+  WebSocket server that sends back what it is sent (`web.ws`: a text and
+  its echo, two in order, an empty one, a wait that ends with nothing, a
+  socket closed) and a mail server that takes every message to an address
+  (`web.mail`: a message, one beyond ASCII, a body with a lone dot, a
+  recipient that is no address);
+- random draws (the draws family): each distribution drawn 20,000 times
+  from a fixed seed — `randn`, `normal`, `uniform`, `exponential`,
+  `poisson`, `bernoulli`, `beta_dist`, the core's `rand` in its three
+  forms — its mean, spread, least and greatest held to the distribution's
+  (the mean within four standard errors: the seed fixes the draws, so the
+  check is never one in a thousand wrong), and `shuffle`, `choice` and
+  `permutation` held to what they must be;
+- the standard modules' own tests (`src/modules/*.co`), run by `crow test`
+  under each interpreted configuration — the walker, no fusion, no moves —
+  each run in a directory of its own: every run passes, and all say what
+  the interpreted run says (the test-block family; `--only tests`).
 
 Each case is lowered first, in the process, in seconds. A refusal is held
 to the rules every message keeps (it names a line, and only what the
@@ -300,15 +317,23 @@ function, a record, a list, a loop — must show as it shows alone, and
 a write or `fmt` computes from the spec's words, without Crow's runtime:
 Python's own arithmetic and text, the system's libm for a number's
 functions (Crow's), numpy for math's reductions (the spec holds `sum` to
-it), Rust's float display. A route's answer is computed the same way:
+it), Rust's float display — and for the modules: `bits` by Python's own
+operators, `encode`/`decode`'s schemes by `base64` and `urllib`, regular
+expressions by `re`, `hash` by `hashlib`, statistics and `math.nn` by
+their formulas over numpy (a test's p by scipy), math's tensors —
+element-wise forms, scans, sorts, constructors, shapes, linear algebra,
+convolution, windows and transforms — by numpy within a tolerance scaled
+to the answer, fractions by Python's `fractions`. A route's answer is computed the same way:
 the status and its words, the content type a form gives (or `text/plain`,
 which a response that names none is served as), the body — JSON as
 `encode` writes it, MessagePack packed as the format says, an Arrow
 stream read back with pyarrow and held to the frame. A page's markup is
 read back with Python's own HTML parser: the tag an element draws as, its
 text — entities decoded — what the value shows, an attribute as written,
-a boolean one present or absent; and a page's state after each event, by
-what its fact holds then. A case answered
+a boolean one present or absent; a layout attribute by the spec's table —
+the words its row names (any other refused), the spacing and type scales'
+pixels, a colour's token; and a page's state after each event, by what
+its fact holds then. A case answered
 otherwise is a finding, `wrong`; one the reference has no answer for is
 skipped, never guessed. `CROW_SELF_PYTHON` names the Python to ask (by
 default `python3` on the path): one with numpy, scipy and pyarrow

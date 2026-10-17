@@ -27,6 +27,18 @@ fn trailing(what: &str, secs: f64) -> Result<f64, String> {
     }
 }
 
+/// Times a trailing window reads: in order, each at least the one before.
+/// A window over times that go back answered what no reading of "the
+/// trailing seconds" gives (crow check --self's reference: over 3, 1, 2,
+/// the last row had summed every row); now it stops, saying where.
+fn in_order(what: &str, ts: &CrowTensor) -> Result<(), String> {
+    let t = ts.to_vec();
+    match t.windows(2).position(|w| w[1] < w[0]) {
+        None => Ok(()),
+        Some(i) => Err(format!("{}: the times go back at row {} ({} after {}) — a trailing window reads times in order", what, i + 1, crate::display::CrowDisplay::crow_fmt(&t[i + 1]), crate::display::CrowDisplay::crow_fmt(&t[i]))),
+    }
+}
+
 /// Series an indicator reads row by row: of one length.
 fn aligned(what: &str, names: &str, series: &[&CrowTensor]) -> Result<(), String> {
     let lens: Vec<usize> = series.iter().map(|s| s.len()).collect();
@@ -60,6 +72,7 @@ pub fn rsi(v: &CrowTensor, n: i64) -> Result<CrowTensor, String> {
 /// seconds, `ts` in seconds.
 pub fn rsi_buckets(ts: &CrowTensor, v: &CrowTensor, n: i64, secs: f64) -> Result<CrowTensor, String> {
     aligned("rsi", "ts and values", &[ts, v])?;
+    in_order("rsi", ts)?;
     let n = rows("rsi", n)?;
     if secs.is_nan() || secs <= 0.0 {
         return Err(format!("rsi: a bucket is more than 0 seconds (got {})", secs));
@@ -82,6 +95,7 @@ pub fn vwap(price: &CrowTensor, vol: &CrowTensor) -> Result<CrowTensor, String> 
 /// `vwap[ts, price, vol, secs]`: over the trailing `secs` seconds.
 pub fn vwap_trailing(ts: &CrowTensor, price: &CrowTensor, vol: &CrowTensor, secs: f64) -> Result<CrowTensor, String> {
     aligned("vwap", "ts, price and vol", &[ts, price, vol])?;
+    in_order("vwap", ts)?;
     let secs = trailing("vwap", secs)?;
     Ok(ta::tensor(ta::rolling_vwap(&ts.to_vec(), &price.to_vec(), &vol.to_vec(), secs)))
 }
@@ -89,6 +103,7 @@ pub fn vwap_trailing(ts: &CrowTensor, price: &CrowTensor, vol: &CrowTensor, secs
 /// `rolling_sum[ts, values, secs]`: over the trailing `secs` seconds.
 pub fn rolling_sum(ts: &CrowTensor, v: &CrowTensor, secs: f64) -> Result<CrowTensor, String> {
     aligned("rolling_sum", "ts and values", &[ts, v])?;
+    in_order("rolling_sum", ts)?;
     let secs = trailing("rolling_sum", secs)?;
     Ok(ta::tensor(ta::rolling_sum(&ts.to_vec(), &v.to_vec(), secs)))
 }
@@ -112,6 +127,18 @@ mod tests {
         let v = series(&[1.0, 2.0, 3.0, 4.0]);
         assert_eq!(sma(&v, 2).map(|t| t.to_vec()).expect("a window").get(3).copied(), Some(3.5));
         assert_eq!(macd(&v, 2, 3, 2).map(|f| f.columns.clone()).expect("windows"), vec!["line".to_string(), "signal".to_string(), "hist".to_string()]);
+    }
+
+    /// A trailing window reads times in order: one that goes back stops,
+    /// saying where (it had summed rows a window holds by no reading).
+    #[test]
+    fn a_trailing_window_reads_times_in_order() {
+        let (ts, v) = (series(&[3.0, 1.0, 2.0]), series(&[3.0, 1.0, 2.0]));
+        assert_eq!(rolling_sum(&ts, &v, 0.0).map(|t| t.to_vec()).unwrap_err(), "rolling_sum: the times go back at row 1 (1 after 3) — a trailing window reads times in order");
+        assert!(vwap_trailing(&ts, &v, &v, 1.0).is_err() && rsi_buckets(&ts, &v, 2, 1.0).is_err());
+        let ts = series(&[1.0, 2.0, 2.0, 5.0]);
+        let v = series(&[1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(rolling_sum(&ts, &v, 1.0).map(|t| t.to_vec()).expect("in order"), vec![1.0, 3.0, 6.0, 4.0]);
     }
 
     /// A misuse is the reason: a negative window was a huge one compiled

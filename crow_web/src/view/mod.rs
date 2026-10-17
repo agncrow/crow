@@ -1493,6 +1493,15 @@ fn text_of(children: &[CrowVNode]) -> String {
         .collect()
 }
 
+/// A node shows as its markup, as the interpreter's view answers it: a
+/// view called outside views — logged, handed to `doc.document` — is its
+/// HTML (compiled, `log[card[…]]` had not built).
+impl crow_runtime::display::CrowDisplay for CrowVNode {
+    fn crow_repr(&self) -> String {
+        self.to_html()
+    }
+}
+
 /// Text placed in a page: `&`, `<` and `>` escaped, which is all text
 /// needs — the one escape both modes write a view's text with (the
 /// compiled page had escaped its quotes too, and the interpreter's had

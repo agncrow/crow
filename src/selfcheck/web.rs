@@ -109,7 +109,8 @@ pub(super) fn view_cases(all: &[Val]) -> Vec<Case> {
     // (one it does not take is refused, alike in both modes)
     for a in crow_runtime::layout::LAYOUT_ATTRS {
         for w in LAYOUT_WORDS {
-            cases.push(Case::new(format!("view-layout/{}/{}", a, w.trim_matches('\'')), &[], vec![format!("return stack['x', {} = {}]", a, w)]).served(page()).referring(format!("view-layout:{}", a), &[]));
+            // (the word as written, for the reference: `view-layout:gap:'s'`)
+            cases.push(Case::new(format!("view-layout/{}/{}", a, w.trim_matches('\'')), &[], vec![format!("return stack['x', {} = {}]", a, w)]).served(page()).referring(format!("view-layout:{}:{}", a, w), &[]));
         }
     }
     cases
@@ -229,6 +230,57 @@ pub(super) fn state_cases() -> Vec<Case> {
         .map(|(name, top, view, steps)| {
             let route = Route { page: true, top: top.into_iter().map(str::to_string).collect(), steps, ..Route::default() };
             Case::new(format!("state/{}", name), &[], view.lines().map(str::to_string).collect()).served(route).referring(format!("state:{}", name), &[])
+        })
+        .collect()
+}
+
+/// web.ws's rows against the check's own WebSocket server, which sends
+/// back what it is sent: a text and its echo (with what HTML escapes, and
+/// beyond ASCII), two in their order, an empty one, a wait that ends with
+/// nothing, and a socket closed — each held to what the spec says
+/// (WebSocket, `use web.ws`).
+pub(super) fn ws_cases() -> Vec<Case> {
+    let open = "self_p = env['CROW_SELF_WS', '9']\ns = socket['ws://127.0.0.1:`self_p`/']";
+    let table: &[(&str, &str)] = &[
+        ("echo", "sent = send[s, 'hello']\nlog[recv[s]]"),
+        ("echo-text", "sent = send[s, 'a < b & \"c\" — héllo']\nlog[recv[s]]"),
+        ("echo-two", "one = send[s, 'first']\ntwo = send[s, 'second']\nlog[recv[s]]\nlog[recv[s]]"),
+        ("echo-empty", "sent = send[s, '']\nlog[len[recv[s]]]"),
+        ("sent-answers", "log[send[s, 'x']]\nlog[len[recv[s]]]"),
+        ("waits", "r = recv[s, 1]\nlog[r.ok]\nlog[r.reason]"),
+        ("closed", "c = close[s]\nr = send[s, 'x']\nlog[r.ok]\nlog[r.reason]"),
+    ];
+    table
+        .iter()
+        .map(|(name, body)| {
+            let lines: Vec<String> = open.lines().chain(body.lines()).map(str::to_string).collect();
+            let mut c = Case::new(format!("ws-live/{}", name), &[], lines).live().referring(format!("ws:{}", name), &[]);
+            c.imports.insert("web");
+            c.imports.insert("web.ws");
+            c
+        })
+        .collect()
+}
+
+/// web.mail's rows against the check's own mail server: a message sent
+/// at once and taken, one to a recipient that is no address, a subject and
+/// a body beyond ASCII, a body whose line is a lone dot.
+pub(super) fn mail_cases() -> Vec<Case> {
+    let open = "self_p = env['CROW_SELF_SMTP', '9']\nm = smtp['127.0.0.1', int[self_p], 'self@example.com', 'p']";
+    let table: &[(&str, &str)] = &[
+        ("sent", "r = mail[m, 'ada@example.com', 'Hello', 'a note']\nlog[r.ok]"),
+        ("beyond-ascii", "r = mail[m, 'ada@example.com', 'Héllo — 3 < 4', 'déjà vu\\nça va']\nlog[r.ok]"),
+        ("dot-line", "r = mail[m, 'ada@example.com', 'Dots', 'one\\n.\\ntwo']\nlog[r.ok]"),
+        ("no-address", "r = mail[m, 'nope', 'Hello', 'a note']\nlog[r.ok]"),
+    ];
+    table
+        .iter()
+        .map(|(name, body)| {
+            let lines: Vec<String> = open.lines().chain(body.lines()).map(str::to_string).collect();
+            let mut c = Case::new(format!("mail-live/{}", name), &[], lines).live().referring(format!("mail:{}", name), &[]);
+            c.imports.insert("web");
+            c.imports.insert("web.mail");
+            c
         })
         .collect()
 }

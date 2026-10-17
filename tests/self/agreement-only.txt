@@ -2,38 +2,14 @@
 # tests/self/reference.py answers, one per line (the row, a tab, why). A new builtin
 # gets its answer in the reference, or its line here; one the reference comes to
 # answer fails the check until it is struck (--bless rewrites the list).
-bits.bitand	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-bits.bitcount	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-bits.bitor	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-bits.bitxor	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-bits.char	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-bits.code	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-bits.shift	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-chart.cvd	an indicator: no reference yet (pandas's rolling and ewm are the plan)
-chart.ema	an indicator: no reference yet (pandas's rolling and ewm are the plan)
-chart.macd	an indicator: no reference yet (pandas's rolling and ewm are the plan)
-chart.rolling_sum	an indicator: no reference yet (pandas's rolling and ewm are the plan)
-chart.rsi	an indicator: no reference yet (pandas's rolling and ewm are the plan)
-chart.rsi_buckets	an indicator: no reference yet (pandas's rolling and ewm are the plan)
-chart.sma	an indicator: no reference yet (pandas's rolling and ewm are the plan)
-chart.vwap	an indicator: no reference yet (pandas's rolling and ewm are the plan)
-chart.vwap_trailing	an indicator: no reference yet (pandas's rolling and ewm are the plan)
-core.args	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-core.env	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-core.env_or	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+chart.macd	a frame of three moving averages: no reference reads a frame's display yet
+chart.rsi	Wilder's RSI before n deltas: the spec does not state its warm-up (a question for the spec)
+chart.rsi_buckets	Wilder's RSI on buckets: the spec does not state its warm-up (a question for the spec)
 core.exit	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 core.exit_code	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-core.fraction	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-core.fraction_of_decimal	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-core.fraction_of_int	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-core.fraction_same	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-core.halt	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 core.input	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 core.input_prompt	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 core.map_new	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-core.rand	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
-core.rand_between	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
-core.rand_int	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
 core.request	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 core.round_decimal_places	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 core.shell	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
@@ -73,7 +49,6 @@ frame.sort_keys_by	frames: held to pandas by tests/parity/185, no reference per 
 frame.sort_keys_each	frames: held to pandas by tests/parity/185, no reference per case yet
 frame.stack	frames: held to pandas by tests/parity/185, no reference per case yet
 frame.stats	frames: held to pandas by tests/parity/185, no reference per case yet
-frame.sub_column	frames: held to pandas by tests/parity/185, no reference per case yet
 frame.tail	frames: held to pandas by tests/parity/185, no reference per case yet
 frame.unique	frames: held to pandas by tests/parity/185, no reference per case yet
 frame.unique_rows	frames: held to pandas by tests/parity/185, no reference per case yet
@@ -83,135 +58,62 @@ frame.where	frames: held to pandas by tests/parity/185, no reference per case ye
 frame.window	frames: held to pandas by tests/parity/185, no reference per case yet
 frame.window_one	frames: held to pandas by tests/parity/185, no reference per case yet
 frame.with	frames: held to pandas by tests/parity/185, no reference per case yet
-hash.hash	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-io.cp	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-io.csv	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-io.csv_asked	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-io.exists	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-io.lines	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-io.lines_asked	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-io.ls	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-io.mkdir	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-io.mv	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-io.read	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-io.read_asked	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-io.rm	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-io.write	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-json.encode	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-json.parse	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-llm.ask	a model's reply: the empty replay answers, and no reference speaks for a model
-llm.ask_more	a model's reply: the empty replay answers, and no reference speaks for a model
-llm.chat	a model's reply: the empty replay answers, and no reference speaks for a model
-llm.embed	a model's reply: the empty replay answers, and no reference speaks for a model
-llm.follow	a model's reply: the empty replay answers, and no reference speaks for a model
-llm.next_piece	a model's reply: the empty replay answers, and no reference speaks for a model
-llm.reach	a model's reply: the empty replay answers, and no reference speaks for a model
-llm.said	a model's reply: the empty replay answers, and no reference speaks for a model
-llm.told	a model's reply: the empty replay answers, and no reference speaks for a model
-llm.whole	a model's reply: the empty replay answers, and no reference speaks for a model
-math.abs_t	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.argmax	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.argmin	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.argsort	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+io.cp	the batch's cases share their directory, so an answer depends on the cases before it: an io family with a directory per case is the plan
+io.csv	the batch's cases share their directory, so an answer depends on the cases before it: an io family with a directory per case is the plan
+io.csv_asked	the batch's cases share their directory, so an answer depends on the cases before it: an io family with a directory per case is the plan
+io.exists	the batch's cases share their directory, so an answer depends on the cases before it: an io family with a directory per case is the plan
+io.lines	the batch's cases share their directory, so an answer depends on the cases before it: an io family with a directory per case is the plan
+io.lines_asked	the batch's cases share their directory, so an answer depends on the cases before it: an io family with a directory per case is the plan
+io.ls	the batch's cases share their directory, so an answer depends on the cases before it: an io family with a directory per case is the plan
+io.mkdir	the batch's cases share their directory, so an answer depends on the cases before it: an io family with a directory per case is the plan
+io.mv	the batch's cases share their directory, so an answer depends on the cases before it: an io family with a directory per case is the plan
+io.read	the batch's cases share their directory, so an answer depends on the cases before it: an io family with a directory per case is the plan
+io.read_asked	the batch's cases share their directory, so an answer depends on the cases before it: an io family with a directory per case is the plan
+io.rm	the batch's cases share their directory, so an answer depends on the cases before it: an io family with a directory per case is the plan
+io.write	the batch's cases share their directory, so an answer depends on the cases before it: an io family with a directory per case is the plan
+llm.ask	a model's reply: the empty replay answers here; tests/llm_server.rs holds the module to a server speaking both wire formats, in both modes
+llm.ask_more	a model's reply: the empty replay answers here; tests/llm_server.rs holds the module to a server speaking both wire formats, in both modes
+llm.chat	a model's reply: the empty replay answers here; tests/llm_server.rs holds the module to a server speaking both wire formats, in both modes
+llm.embed	a model's reply: the empty replay answers here; tests/llm_server.rs holds the module to a server speaking both wire formats, in both modes
+llm.follow	a model's reply: the empty replay answers here; tests/llm_server.rs holds the module to a server speaking both wire formats, in both modes
+llm.next_piece	a model's reply: the empty replay answers here; tests/llm_server.rs holds the module to a server speaking both wire formats, in both modes
+llm.reach	a model's reply: the empty replay answers here; tests/llm_server.rs holds the module to a server speaking both wire formats, in both modes
+llm.said	a model's reply: the empty replay answers here; tests/llm_server.rs holds the module to a server speaking both wire formats, in both modes
+llm.told	a model's reply: the empty replay answers here; tests/llm_server.rs holds the module to a server speaking both wire formats, in both modes
+llm.whole	a model's reply: the empty replay answers here; tests/llm_server.rs holds the module to a server speaking both wire formats, in both modes
 math.atan2	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.bandpass	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.bernoulli	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
 math.bessel	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.beta_dist	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
-math.ceil_t	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.choice	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
-math.cholesky	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.choose	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.complex	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.cond	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.conjugate	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.conv	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.conv2d	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.cumprod	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.cumsum	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.dense	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.dense_of	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.det	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.diag	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.dot	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.eigen	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.exponential	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
-math.eye	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.factorial	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.fft	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.fft2	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.flatten	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.floor_t	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.full	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.gamma	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.gamma_dist	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
-math.hamming	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.hanning	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+math.gamma_dist	the spec names alpha and beta, not whether beta is a rate or a scale (a question for the spec)
 math.highpass	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.ifft	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.imag	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.inv	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.lowpass	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.lstsq	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.magnitude	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.nnz	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.normal	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
-math.onehot	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.ones	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.permutation	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.phase	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.pinv	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.poisson	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
 math.qr	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.randn	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
 math.rank	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.real	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.reshape	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.round_t	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.seed	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.shuffle	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
-math.sign_n	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.sign_t	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.solve	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.solve_sparse	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.sparse	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.sparse_coo	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.spectrogram	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.spmv	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.stft	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.svd	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.tensor	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.tensor_of_columns	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.tensor_of_frame	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.topk	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.transpose	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.tril	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.triu	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.uniform	random draws: seeded, and no reference draws the same numbers (a distribution's moments are the plan)
-math.unique	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.zeros	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-moments.now	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-nn.bce	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 nn.crossentropy	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-nn.gelu	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 nn.linear	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-nn.mse	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-nn.relu	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-nn.sigmoid	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-nn.softmax	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 stats.anova	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-stats.chisq	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-stats.corr	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-stats.cov	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-stats.fit	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 stats.kstest	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-stats.linreg	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-stats.median	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-stats.percentile	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-stats.std	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-stats.ttest	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-stats.var	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-stats.zscore	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 sys.alive	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.answer	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.base64	the standard library's own layer: bytes, streams and protocols no reference models yet
@@ -290,41 +192,21 @@ sys.with_query	the standard library's own layer: bytes, streams and protocols no
 sys.xor	the standard library's own layer: bytes, streams and protocols no reference models yet
 text.decode	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 text.encode	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-text.matches	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-text.sub	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 ui.layout.active	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
-ui.layout.align	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
 ui.layout.anchor	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
 ui.layout.aspect	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
-ui.layout.background	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
 ui.layout.becomes	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
 ui.layout.border	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
-ui.layout.color	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
 ui.layout.columns	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
 ui.layout.columns_then	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
 ui.layout.fill	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
-ui.layout.gap	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
 ui.layout.height	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
-ui.layout.justify	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
 ui.layout.lines	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
-ui.layout.margin	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
 ui.layout.max_width	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
 ui.layout.min_width	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
 ui.layout.open	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
-ui.layout.pad	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
-ui.layout.radius	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
-ui.layout.shadow	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
-ui.layout.size	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
-ui.layout.surface	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
 ui.layout.tip	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
 ui.layout.width	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
 ui.layout.wrap	the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)
 web.auth.sign	a response or a protocol no reference models yet
 web.auth.verify	a response or a protocol no reference models yet
-web.mail.mail	a response or a protocol no reference models yet
-web.mail.smtp	a response or a protocol no reference models yet
-web.ws.close_socket	a response or a protocol no reference models yet
-web.ws.recv_for	a response or a protocol no reference models yet
-web.ws.recv_text	a response or a protocol no reference models yet
-web.ws.send_text	a response or a protocol no reference models yet
-web.ws.socket	a response or a protocol no reference models yet
