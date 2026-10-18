@@ -284,6 +284,9 @@ pub(crate) struct Case {
     /// Postgres cluster, the ClickHouse stand-in): its run has no replay,
     /// which would answer `connect` in the server's place.
     live: bool,
+    /// Lines the case puts at the top level before its function — its own
+    /// functions (`@N` its number): the grad family's.
+    top: Vec<String>,
     /// Whether the case works in a directory of its own (`c<N>/`, holding
     /// the run's files): a case that writes cannot change what another
     /// reads (the io family).
@@ -341,7 +344,7 @@ impl Case {
             }
         }
         body.extend(lines);
-        Case { id: id.into(), imports, body, expect: Vec::new(), refer: None, live: false, serve: None, own_dir: false }
+        Case { id: id.into(), imports, body, expect: Vec::new(), refer: None, live: false, serve: None, own_dir: false, top: Vec::new() }
     }
 
     /// The case is a route's handler, asked the route's requests.
@@ -482,8 +485,13 @@ fn program(cases: &[&Case]) -> (String, Vec<usize>) {
             }
         }
         starts.push(out.lines().count() + 1);
-        // (a page's own facts, handlers and derivations, at the top level:
-        // the case's, as a build error in them is)
+        // (a case's own functions, and a page's own facts, handlers and
+        // derivations, at the top level: the case's, as a build error in
+        // them is)
+        for line in &c.top {
+            out.push_str(&own(line));
+            out.push('\n');
+        }
         if let Some(r) = &c.serve {
             for line in &r.top {
                 out.push_str(&own(line));
@@ -2208,6 +2216,7 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
     cases.extend(web::mail_cases());
     cases.extend(draw_cases());
     cases.extend(io_cases());
+    cases.extend(grad_cases());
     let (rows, unexercised) = row_cases(&all, &only);
     let row_count = rows.len();
     cases.extend(rows);
@@ -3063,6 +3072,44 @@ fn draw_cases() -> Vec<Case> {
             let mut c = Case::new(format!("draw/{}", name), &[], lines).referring(format!("draw:{}", name), &[]);
             c.imports.insert("math");
             c.imports.insert("math.stats");
+            c
+        })
+        .collect()
+}
+
+/// The grad family: a function of numbers differentiated at a point —
+/// each differentiable kind the spec lists (arithmetic, a power, sqrt, ln,
+/// exp, sin, tanh, erf, abs, floor, ceil, round), a helper the function
+/// calls, a loop that accumulates, a function of two numbers and functions
+/// of a tensor — its derivative held to the analytic one.
+fn grad_cases() -> Vec<Case> {
+    let table: &[(&str, &str, &str)] = &[
+        ("square", "fn self_f_@N[x]\n    return x * x", "log[grad[self_f_@N][3.0]]"),
+        ("poly", "fn self_f_@N[x]\n    return x ^ 3 - 2 * x", "log[grad[self_f_@N][2.0]]"),
+        ("quotient", "fn self_f_@N[x]\n    return 1.0 / x", "log[grad[self_f_@N][2.0]]"),
+        ("sqrt", "fn self_f_@N[x]\n    return sqrt[x]", "log[grad[self_f_@N][4.0]]"),
+        ("ln", "fn self_f_@N[x]\n    return ln[x]", "log[grad[self_f_@N][2.0]]"),
+        ("sin-exp", "fn self_f_@N[x]\n    return sin[x] * exp[x]", "log[grad[self_f_@N][0.5]]"),
+        ("tanh", "fn self_f_@N[x]\n    return tanh[x]", "log[grad[self_f_@N][0.0]]"),
+        ("erf", "fn self_f_@N[x]\n    return erf[x]", "log[grad[self_f_@N][0.0]]"),
+        ("abs", "fn self_f_@N[x]\n    return abs[x]", "log[grad[self_f_@N][-2.0]]"),
+        ("floor", "fn self_f_@N[x]\n    return floor[x] + x", "log[grad[self_f_@N][2.5]]"),
+        ("helper", "fn self_g_@N[x]\n    return x * x\nfn self_f_@N[x]\n    return self_g_@N[x] + 1.0", "log[grad[self_f_@N][3.0]]"),
+        ("loop", "fn self_f_@N[x]\n    s = 0.0\n    k = 0\n    while k lt 3\n        s = s + x ^ k\n        k = k + 1\n    return s", "log[grad[self_f_@N][2.0]]"),
+        ("two", "fn self_f_@N[x, y]\n    return x * y + y ^ 2", "log[grad[self_f_@N][2.0, 3.0]]"),
+        // (the growing whole number's forms `floor[x]` of a float of any
+        // size takes: the name the program wrote answers a dual)
+        ("ceil-round", "fn self_f_@N[x]\n    return ceil[x] * x + round[x] - abs[x]", "log[grad[self_f_@N][2.5]]"),
+        // a function of a tensor, traced
+        ("tensor", "fn self_f_@N[t]\n    return sum[t .* t]", "log[grad[self_f_@N][tensor[[1.0, 2.0, 3.0]]]]"),
+        ("tensor-floor", "fn self_f_@N[t]\n    s = sum[t]\n    return floor[s] + s * s", "log[grad[self_f_@N][tensor[[1.5, 2.0]]]]"),
+    ];
+    table
+        .iter()
+        .map(|(name, top, body)| {
+            let mut c = Case::new(format!("grad/{}", name), &[], vec![body.to_string()]).referring(format!("grad:{}", name), &[]);
+            c.top = top.lines().map(str::to_string).collect();
+            c.imports.insert("math");
             c
         })
         .collect()

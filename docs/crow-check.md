@@ -271,6 +271,11 @@ with no test someone has to remember to write:
   (the mean within four standard errors: the seed fixes the draws, so the
   check is never one in a thousand wrong), and `shuffle`, `choice` and
   `permutation` held to what they must be;
+- gradients (the grad family): a function of numbers differentiated at a
+  point by `grad` — arithmetic, a power, `sqrt`, `ln`, `exp`, `sin`,
+  `tanh`, `erf`, `abs`, `floor`, `ceil`, `round`, a helper it calls, a
+  loop that accumulates, a function of two numbers — and functions of a
+  tensor, traced; each derivative held to the analytic one;
 - the standard modules' own tests (`src/modules/*.co`) and every
   package's files that hold tests (`packages/*/`), run by `crow test` under
   each interpreted configuration — the walker, no fusion, no moves — a
@@ -341,8 +346,8 @@ read back with Python's own HTML parser: the tag an element draws as, its
 text — entities decoded — what the value shows, an attribute as written,
 a boolean one present or absent; a layout attribute by the spec's table —
 the words its row names (any other refused), the spacing and type scales'
-pixels, a colour's token; and a page's state after each event, by what
-its fact holds then. A case answered
+pixels, a colour's token; a page's state after each event, by what
+its fact holds then; and a gradient, by the derivative worked by hand. A case answered
 otherwise is a finding, `wrong`; one the reference has no answer for is
 skipped, never guessed. `CROW_SELF_PYTHON` names the Python to ask (by
 default `python3` on the path): one with numpy, scipy and pyarrow

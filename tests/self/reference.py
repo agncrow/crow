@@ -2223,6 +2223,42 @@ IO = {
 }
 
 
+# ── gradients (spec, Automatic Differentiation) ────────────────────
+#
+# Each function's derivative at its point, analytically.
+
+GRAD = {
+    "square": 6.0,
+    "poly": 3 * 2.0 ** 2 - 2,
+    "quotient": -1 / 2.0 ** 2,
+    "sqrt": 0.5 / math.sqrt(4.0),
+    "ln": 1 / 2.0,
+    "sin-exp": math.cos(0.5) * math.exp(0.5) + math.sin(0.5) * math.exp(0.5),
+    "tanh": 1.0,
+    "erf": 2 / math.sqrt(math.pi),
+    "abs": -1.0,
+    # (floor's derivative is 0: the sum's is x's)
+    "floor": 1.0,
+    "helper": 6.0,
+    # (1 + x + x², at 2)
+    "loop": 1 + 2 * 2.0,
+    "two": [3.0, 2.0 + 2 * 3.0],
+    # (ceil[x] * x + round[x] - abs[x] at 2.5: ceil 3, the rest 0 and -1)
+    "ceil-round": 3.0 - 1.0,
+    "tensor": [2.0, 4.0, 6.0],
+    # (floor[s] + s², s the sum 3.5: 2s for each item)
+    "tensor-floor": [7.0, 7.0],
+}
+
+
+def grad_answer(name):
+    if name not in GRAD:
+        raise Skip()
+    g = GRAD[name]
+    shown = show(L(g), True) if isinstance(g, list) else show(g, True)
+    return Close(shown)
+
+
 def placed_past(seen):
     """An answer with where its case's route sits in its batch read past."""
     return _re.sub(r"/c\d+", "/cN", seen)
@@ -3303,6 +3339,8 @@ def answer(what, names):
         return state_answer(what[6:])
     if what.startswith("draw:"):
         return draw_answer(what[5:])
+    if what.startswith("grad:"):
+        return grad_answer(what[5:])
     if what.startswith("io:"):
         return IO[what[3:]] if what[3:] in IO else _skip()
     if what.startswith("ws:"):

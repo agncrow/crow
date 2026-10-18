@@ -3210,6 +3210,17 @@ pub fn big_form(id: &str) -> Option<&'static Row> {
     ROWS.iter().find(|r| r.id == big)
 }
 
+/// The name a program wrote for a row the width pass put in another's
+/// place (`__floor_big` is `floor`'s), by `big_form`'s own pairs; a row's
+/// own name otherwise. A dual number a function `grad` differentiates is
+/// answered by that name: the width pass reads its parameter as a float
+/// of any size, and `floor[x]` of one became the growing form, which no
+/// dual reaches (the interpreter did not run it, the compiled program cast
+/// the dual to a float).
+pub fn written_name(row: &'static Row) -> &'static str {
+    ROWS.iter().find(|r| big_form(r.id).is_some_and(|b| std::ptr::eq(b, row))).map_or(row.name, |r| r.name)
+}
+
 /// Whether a row's take path makes its answer of the value handed at
 /// position `i` of `argc` (a list it pushes onto, a map it sets, a text it
 /// changes where it lies): a value read for the last time there is moved

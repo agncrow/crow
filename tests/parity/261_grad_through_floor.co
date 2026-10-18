@@ -1,0 +1,25 @@
+--- floor, ceil, round and abs are differentiable inside a function grad
+--- differentiates, with the derivative the spec gives them: the width pass
+--- reads a float parameter as one of any size, so `floor[x]` of one is the
+--- growing whole number's form, which no dual number and no traced value
+--- had reached (interpreted: "does not run '__floor_big' yet"; compiled:
+--- a dual cast to a float, and "`__floor_big` is not differentiable").
+--- Both modes answer each by the name the program wrote.
+use math
+
+fn f[x]
+    return floor[x] + x
+
+fn h[x]
+    return ceil[x] * x + round[x] - abs[x]
+
+fn g[t]
+    s = sum[t]
+    return floor[s] + s * s
+
+log[grad[f][2.5]]
+log[grad[h][2.5]]
+log[grad[h][-1.25]]
+log[grad[g][tensor[[1.5, 2.0]]]]
+log[f[2.5]]
+log[h[-1.25]]

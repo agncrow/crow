@@ -144,6 +144,15 @@ impl Emitter {
                 }
                 Convert::IntToFloat => {
                     let inner = self.expr(expr);
+                    // a dual number is the float already (the growing whole
+                    // number `floor` of one answers is the dual's own floor)
+                    if self.emitting_dual {
+                        return inner;
+                    }
+                    // (and so is the traced number `floor` of a traced one is)
+                    if self.emitting_traced && self.traced_whole(expr) {
+                        return inner;
+                    }
                     // an int that grows: its nearest float
                     let big = matches!(Self::inner(&self.tt(expr)), Ty::Big);
                     if big && matches!(ty, Ty::Result(_)) {
@@ -152,9 +161,7 @@ impl Emitter {
                     if big {
                         return format!("({}).to_f64()", inner);
                     }
-                    if self.emitting_dual {
-                        inner
-                    } else if self.emitting_traced {
+                    if self.emitting_traced {
                         format!("crow_runtime::autograd::Traced::number(({}) as f64)", inner)
                     } else if matches!(ty, Ty::Result(_)) {
                         // a value that can fail, converted as one: its payload
@@ -2542,7 +2549,10 @@ impl Emitter {
         match target {
             // math on the dual numbers a function grad differentiates is the
             // derivative's own form
-            Target::Row(row) if row.module.is_empty() && self.emitting_dual && matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round") => {
+            // (by the name the program wrote: `floor[x]` of a float of any
+            // size is the growing form's row, which takes no dual)
+            Target::Row(row) if row.module.is_empty() && self.emitting_dual && matches!(crate::table::written_name(row), "abs" | "sqrt" | "floor" | "ceil" | "round") => {
+                let name = crate::table::written_name(row);
                 self.builtin(name, args, arg_strs, whole).unwrap_or_else(|| format!("{}({})", name, arg_strs.join(", ")))
             }
             // (math's functions of a dual number are the dual's own methods,
@@ -2589,6 +2599,16 @@ impl Emitter {
     /// or a tensor there is a traced value (crow_runtime::autograd::Traced).
     fn traced_type(t: &Ty) -> bool {
         matches!(Self::inner(t), Ty::Float | Ty::Tensor(..))
+    }
+
+    /// A growing form's call a traced copy answers by the name the program
+    /// wrote (`floor` of a traced number is a traced number, not the whole
+    /// number the IR types it as).
+    fn traced_whole(&self, e: &Expr) -> bool {
+        match Self::raw(e) {
+            Expr::Call { target: Target::Row(row), args, .. } => crate::table::written_name(row) != row.name && args.iter().any(|a| Self::traced_type(&self.tt(a))),
+            _ => false,
+        }
     }
 
     /// A value as the autograd kernel's operand (`&Traced`): a traced value
@@ -2681,6 +2701,12 @@ impl Emitter {
         let plain = |i: usize| arg_strs.get(i).cloned().unwrap_or_default();
         let stop = self.or_stop();
         let n = args.len();
+        // (by the name the program wrote: `floor[s]` of a float of any size
+        // is the growing form's row)
+        let name = match target {
+            Target::Row(row) => crate::table::written_name(row),
+            _ => name,
+        };
         Some(match (name, n) {
             ("sum", 1) | ("mean", 1) | ("max", 1) | ("min", 1) | ("exp", 1) | ("ln", 1) | ("sqrt", 1) | ("tanh", 1) | ("abs", 1) | ("erf", 1) | ("floor", 1) | ("ceil", 1) | ("round", 1) | ("transpose", 1) | ("flatten", 1)
             | ("sin", 1) | ("cos", 1) | ("tan", 1) | ("asin", 1) | ("acos", 1) | ("atan", 1) | ("sinh", 1) | ("cosh", 1) | ("log2", 1) | ("log10", 1) | ("sign", 1) => {

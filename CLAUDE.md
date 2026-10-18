@@ -547,7 +547,11 @@ steps on every push and must be green.
   (`flow_into`): joined, `report[ones]` and `report[twos]` (twos made of
   ones' items) shared one range that grew round every pass, and every
   count of k-nucleotide became a big int. `int[text]` always answers the
-  growing form; `range[n]` clamps its items below 2^48 (soft).
+  growing form; `range[n]` clamps its items below 2^48 (soft). Inside a
+  function `grad` differentiates, a dual number or a traced value that
+  reaches a growing form's row is answered by the name the program wrote
+  (`table::written_name`): `floor[x]` of a float parameter is
+  `__floor_big` in the IR, which no dual had reached (parity 261).
 - A row can grow what it is given (`Row { take: …, ..row!(…) }`: the
   tensor `push`'s bridge pushes in place when nothing else holds the
   storage). The interpreter hands a row its arguments by value only on

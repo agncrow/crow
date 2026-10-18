@@ -2163,11 +2163,13 @@ impl IrInterp {
             // language the reader is written in)
             return self.call_user(&crate::table::crow_fn_name(row), handed).map(|v| Self::stamp(row.name, v));
         }
+        // (by the name the program wrote: `floor[x]` of a float of any
+        // size is the growing form's row)
         if vals.iter().any(|v| matches!(v.value, Value::Dual(..))) {
-            return self.bare_call(row.name, vals);
+            return self.bare_call(crate::table::written_name(row), vals);
         }
         if crate::autograd_bridge::any_traced(&vals) {
-            return crate::autograd_bridge::call(row.name, &vals);
+            return crate::autograd_bridge::call(crate::table::written_name(row), &vals);
         }
         if row.module.is_empty() {
             // (only a row whose failure is a value reads the trace: for the
