@@ -1,9 +1,18 @@
 # A release (docs/distribution-design.md): on a tag v<version>, the crow
 # binary for each platform, the runtime bundle and the editor extension are
 # built, a fresh machine installs from them and compiles a program with
-# nothing but the binary and a linker, and then the files are attached to
-# the GitHub Release the install line reads. The version is Cargo.toml's,
-# which the binary names when it fetches its runtime.
+# nothing but the binary and a linker, and then the GitHub Release the
+# install line reads is published. The version is Cargo.toml's, which the
+# binary names when it fetches its runtime.
+#
+# No step runs a JavaScript action, so the release needs no Node.js: the
+# commit is fetched with git, Rust installed with the runner's rustup, the
+# files gathered on a draft of the release itself with `gh` (GitHub's CLI,
+# a Go binary) — each job uploads what it built, the fresh machines install
+# from the draft — and the extension packaged by Python's standard library
+# (editors/vscode/package_vsix.py) and sent to Open VSX with curl. Run by
+# hand (workflow_dispatch), the release is a trial: its draft, named
+# trial-<run>, is deleted at the end, and nothing is published.
 name: Release
 on:
   push:
@@ -13,8 +22,24 @@ permissions:
   contents: write
 env:
   RUST_VERSION: "1.93.1"
+  GH_TOKEN: ${{ github.token }}
 jobs:
+  draft:
+    runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - id: tag
+        name: A draft of the release, for the jobs to put their files on
+        run: |
+          case "$GITHUB_REF" in
+            refs/tags/v*) TAG="$GITHUB_REF_NAME" ;;
+            *) TAG="trial-$GITHUB_RUN_ID" ;;
+          esac
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" --title "$TAG" --generate-notes
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
   binaries:
+    needs: draft
     strategy:
       matrix:
         include:
@@ -24,10 +49,14 @@ jobs:
             triple: x86_64-unknown-linux-gnu
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
+      - name: The repository at this commit
+        run: |
+          git init -q .
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" fetch -q --depth 1 --no-tags origin "$GITHUB_SHA"
+          git checkout -q --detach FETCH_HEAD
+      - name: Rust, at the release's version
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
       - name: Build
         run: cargo build --release --locked
       # the binary asks the machine for its C library and nothing more (no
@@ -37,7 +66,7 @@ jobs:
         run: |
           readelf -d target/release/crow | grep NEEDED
           if readelf -d target/release/crow | grep -E 'NEEDED.*(libssl|libcrypto)'; then echo "the binary needs OpenSSL"; exit 1; fi
-      - name: Package
+      - name: Package, onto the draft
         run: |
           VERSION="$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)"
           strip target/release/crow || true
@@ -45,71 +74,40 @@ jobs:
           tar -czf "dist/crow-$VERSION-${{ matrix.triple }}.tar.gz" -C target/release crow
           cd dist && { sha256sum "crow-$VERSION-${{ matrix.triple }}.tar.gz" 2>/dev/null || shasum -a 256 "crow-$VERSION-${{ matrix.triple }}.tar.gz"; } > "crow-$VERSION-${{ matrix.triple }}.tar.gz.sha256"
           ls -la
-      - uses: actions/upload-artifact@v4
-        with:
-          name: crow-${{ matrix.triple }}
-          path: dist/*
+          gh release upload "${{ needs.draft.outputs.tag }}" ./* --repo "$GITHUB_REPOSITORY" --clobber
   runtime:
+    needs: draft
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-      - name: The runtime bundle
-        run: scripts/bundle_runtime.sh "$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)" dist
-      - uses: actions/upload-artifact@v4
-        with:
-          name: crow-runtime
-          path: dist/*
+      - name: The repository at this commit
+        run: |
+          git init -q .
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" fetch -q --depth 1 --no-tags origin "$GITHUB_SHA"
+          git checkout -q --detach FETCH_HEAD
+      - name: Rust, at the release's version
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
+      - name: The runtime bundle, onto the draft
+        run: |
+          scripts/bundle_runtime.sh "$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)" dist
+          gh release upload "${{ needs.draft.outputs.tag }}" dist/* --repo "$GITHUB_REPOSITORY" --clobber
   extension:
+    needs: draft
     runs-on: ubuntu-22.04
-    # the Marketplace is published to by trusted publishing: the job's OIDC
-    # token (id-token: write), which vsce exchanges for a session under the
-    # publisher's policy naming this repository and this workflow file —
-    # no token is stored anywhere. Open VSX takes its token from the
-    # repository's secrets, read here at the job level (a step's own env is
-    # not visible to its `if`; the job's is).
-    permissions:
-      contents: read
-      id-token: write
-    env:
-      OVSX_PAT: ${{ secrets.OVSX_PAT }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Package the VS Code extension, at Crow's version
+      - name: The repository at this commit
+        run: |
+          git init -q .
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" fetch -q --depth 1 --no-tags origin "$GITHUB_SHA"
+          git checkout -q --detach FETCH_HEAD
+      - name: The VS Code extension, at Crow's version, onto the draft
         run: |
           VERSION="$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)"
-          mkdir -p dist
-          cd editors/vscode && npm version "$VERSION" --no-git-tag-version --allow-same-version >/dev/null && npm install --silent && npx --yes @vscode/vsce@4 package -o "../../dist/crow-lang-$VERSION.vsix"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: crow-extension
-          path: dist/*
-      # published on a tag. The Marketplace step runs once the repository
-      # variable MARKETPLACE_TRUSTED is `true`: set it when the publisher's
-      # trusted publishing policy (owner agncrow, repository crow, workflow
-      # .github/workflows/release.yml) is registered on
-      # marketplace.visualstudio.com/manage. Open VSX (Cursor, VSCodium,
-      # Gitpod read from there) publishes when the secret OVSX_PAT is set.
-      - name: Publish to the Visual Studio Marketplace
-        if: startsWith(github.ref, 'refs/tags/v') && vars.MARKETPLACE_TRUSTED == 'true'
-        run: |
-          VERSION="$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)"
-          npx --yes @vscode/vsce@4 publish --oidc --packagePath "dist/crow-lang-$VERSION.vsix"
-      - name: Publish to Open VSX
-        if: startsWith(github.ref, 'refs/tags/v') && env.OVSX_PAT != ''
-        run: |
-          VERSION="$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)"
-          PUBLISHER="$(node -p "require('./editors/vscode/package.json').publisher")"
-          # the namespace is the manifest's publisher, made the first time
-          npx --yes ovsx verify-pat "$PUBLISHER" -p "$OVSX_PAT" >/dev/null 2>&1 || npx --yes ovsx create-namespace "$PUBLISHER" -p "$OVSX_PAT"
-          npx --yes ovsx publish "dist/crow-lang-$VERSION.vsix" -p "$OVSX_PAT"
+          python3 editors/vscode/package_vsix.py "$VERSION" "dist/crow-lang-$VERSION.vsix"
+          gh release upload "${{ needs.draft.outputs.tag }}" dist/* --repo "$GITHUB_REPOSITORY" --clobber
   fresh-machine:
-    needs: [binaries, runtime]
+    needs: [draft, binaries, runtime]
     strategy:
       matrix:
         include:
@@ -122,14 +120,15 @@ jobs:
       # (into a subdirectory: the binary was built at the runner's default
       # checkout path, and a checkout there would be "the checkout this
       # binary was built from" — a user's machine has none)
-      - uses: actions/checkout@v4
-        with:
-          path: checkout
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: crow-*
-          path: dist
-          merge-multiple: true
+      - name: The repository at this commit
+        run: |
+          git init -q checkout
+          cd checkout
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" fetch -q --depth 1 --no-tags origin "$GITHUB_SHA"
+          git checkout -q --detach FETCH_HEAD
+      - name: The release's files, from the draft
+        run: gh release download "${{ needs.draft.outputs.tag }}" --repo "$GITHUB_REPOSITORY" --dir dist --pattern 'crow-*'
       - name: Install from the binary alone, run interpreted, then fetch the compiler and build
         run: |
           VERSION="$(grep '^version' checkout/Cargo.toml | head -1 | cut -d'"' -f2)"
@@ -150,19 +149,37 @@ jobs:
           ./main | grep -q 'hello, hello'
           crow setup --check
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [binaries, runtime, extension, fresh-machine]
+    needs: [draft, binaries, runtime, extension, fresh-machine]
+    runs-on: ubuntu-22.04
+    # Open VSX (Cursor, VSCodium, Gitpod read from there) is published to
+    # when the secret OVSX_PAT is set, read at the job level (a step's own
+    # env is not visible to its `if`; the job's is). The Visual Studio
+    # Marketplace takes the release's .vsix by its web page
+    # (marketplace.visualstudio.com/manage): its own command-line publisher
+    # runs on Node.js.
+    env:
+      OVSX_PAT: ${{ secrets.OVSX_PAT }}
+    steps:
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          gh release view "${{ needs.draft.outputs.tag }}" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'
+          gh release edit "${{ needs.draft.outputs.tag }}" --repo "$GITHUB_REPOSITORY" --draft=false
+      - name: Publish the extension to Open VSX
+        if: startsWith(github.ref, 'refs/tags/v') && env.OVSX_PAT != ''
+        run: |
+          gh release download "${{ needs.draft.outputs.tag }}" --repo "$GITHUB_REPOSITORY" --dir dist --pattern '*.vsix'
+          VSIX="$(ls dist/*.vsix)"
+          PUBLISHER="$(unzip -p "$VSIX" extension/package.json | python3 -c 'import json, sys; print(json.load(sys.stdin)["publisher"])')"
+          # the namespace is the manifest's publisher, made the first time
+          # (Open VSX answers 400 for one that exists)
+          curl -sS -X POST -H 'Content-Type: application/json' -d "{\"name\": \"$PUBLISHER\"}" "https://open-vsx.org/api/-/namespace/create?token=$OVSX_PAT" > /dev/null || true
+          curl -fsS -X POST -H 'Content-Type: application/octet-stream' --data-binary "@$VSIX" "https://open-vsx.org/api/-/publish?token=$OVSX_PAT"
+  # a trial's draft is let go however it ended (a tag's that failed stays,
+  # to be run again or deleted by hand)
+  tidy:
+    needs: [draft, release]
+    if: ${{ always() && !startsWith(github.ref, 'refs/tags/v') && needs.draft.result == 'success' }}
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: crow-*
-          path: dist
-          merge-multiple: true
-      - name: Publish
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          ls -la dist
-          gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
+      - run: gh release delete "${{ needs.draft.outputs.tag }}" --repo "$GITHUB_REPOSITORY" --yes || true

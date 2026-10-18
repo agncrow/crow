@@ -23,9 +23,18 @@ jobs:
             /usr/local/.ghcup /usr/share/swift /usr/lib/jvm /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules
           sudo docker image prune -af > /dev/null 2>&1 || true
           df -h / | tail -1
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      # the commit, with git alone: no step here runs a JavaScript action, so
+      # the workflow needs no Node.js (GitHub's own actions run on it)
+      - name: The repository at this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git init -q .
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" fetch -q --depth 1 --no-tags origin "$GITHUB_SHA"
+          git checkout -q --detach FETCH_HEAD
+      - name: Rust (the runner's rustup)
+        run: rustup toolchain install stable --profile minimal -c clippy && rustup default stable
       - name: Postgres's own tools on the PATH (the driver's tests start a scratch cluster of their own; the image ships PostgreSQL with initdb and pg_ctl off the PATH)
         run: ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1 | tee -a "$GITHUB_PATH"
       - name: A GPU on the CPU (Mesa's lavapipe, a Vulkan device), so the GPU tests run on a runner that has no GPU
@@ -153,11 +162,18 @@ jobs:
             /usr/local/.ghcup /usr/share/swift /usr/lib/jvm /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules
           sudo docker image prune -af > /dev/null 2>&1 || true
           df -h / | tail -1
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
-      - uses: Swatinem/rust-cache@v2
+      # the commit, with git alone: no step here runs a JavaScript action, so
+      # the workflow needs no Node.js (GitHub's own actions run on it)
+      - name: The repository at this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git init -q .
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" fetch -q --depth 1 --no-tags origin "$GITHUB_SHA"
+          git checkout -q --detach FETCH_HEAD
+      - name: Rust and its coverage tools (the runner's rustup)
+        run: rustup toolchain install stable --profile minimal -c llvm-tools-preview && rustup default stable
       - name: The coverage tool
         run: cargo install cargo-llvm-cov --locked
       - name: Postgres's own tools on the PATH (the driver's tests start a scratch cluster of their own; the image ships PostgreSQL with initdb and pg_ctl off the PATH)
@@ -185,18 +201,28 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/local/share/boost \
             /usr/local/.ghcup /usr/share/swift /usr/lib/jvm /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules
           df -h / | tail -1
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      # the commit, with git alone: no step here runs a JavaScript action, so
+      # the workflow needs no Node.js (GitHub's own actions run on it)
+      - name: The repository at this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git init -q .
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" fetch -q --depth 1 --no-tags origin "$GITHUB_SHA"
+          git checkout -q --detach FETCH_HEAD
+      - name: Rust (the runner's rustup)
+        run: rustup toolchain install stable --profile minimal -c clippy && rustup default stable
       - name: Build crow
         run: cargo build --release
-      # the reference's libraries, for the self-check's right answers (the
-      # runner's own Python refuses pip, being the system's)
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: numpy and scipy for tests/self/reference.py
-        run: python -m pip install --quiet numpy scipy pyarrow
+      # the reference's libraries, for the self-check's right answers, in a
+      # virtual environment of the runner's own Python (which refuses pip,
+      # being the system's)
+      - name: numpy, scipy and pyarrow for tests/self/reference.py
+        run: |
+          python3 -m venv "$RUNNER_TEMP/reference" || { sudo apt-get install -y -qq python3-venv > /dev/null && python3 -m venv "$RUNNER_TEMP/reference"; }
+          "$RUNNER_TEMP/reference/bin/pip" install --quiet numpy scipy pyarrow
+          echo "CROW_SELF_PYTHON=$RUNNER_TEMP/reference/bin/python" >> "$GITHUB_ENV"
       - name: crow check --self (every finding new or gone fails; the groups are in target/crow_self/summary.txt)
         run: ./target/release/crow check --self
       - name: The findings, grouped

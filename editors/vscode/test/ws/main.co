@@ -1,0 +1,5 @@
+fn double[x]
+    return x * 2
+
+log[double[3]]
+log[nothing_here[1]]

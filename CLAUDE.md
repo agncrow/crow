@@ -79,7 +79,14 @@ steps on every push and must be green.
   names the binary it runs and when it was written. The extension's installed copy
   is a second process to keep current: any change under `editors/vscode`
   is repackaged and reinstalled (docs/crow-lsp.md), then the window
-  reloaded.
+  reloaded. The extension is plain JavaScript over VS Code's API alone —
+  no npm package, packaged by `editors/vscode/package_vsix.py`, and no
+  workflow runs Node.js (2026-10-18) — and `editors/vscode/test.sh` drives
+  it inside VS Code: run from VS Code's own terminal or an extension, the
+  app inherits `ELECTRON_RUN_AS_NODE=1` and starts as Node ("bad option"
+  for every flag), its profile directory's path must be short (a Unix
+  socket's is at most 103 bytes), and a document's URI is normalized (a
+  `//` in the path the test asks about had found no diagnostics).
 - Every build checks the IR of every program it lowers (`CROW_IR_VERIFY`:
   strict unless set to `off` or `report`; a release binary had skipped
   the check until 2026-10-08, so a lowering slip reached the backends

@@ -35,6 +35,13 @@ history says the rest.
 
 ### Changed
 
+- The VS Code extension depends on no npm package: it speaks LSP to `crow
+  lsp` itself, in one file of plain JavaScript over VS Code's own API, and
+  is packaged by Python's standard library. No workflow runs Node.js: the
+  release, CI and the book's site use git, rustup, `gh`, Python and curl
+  where they used GitHub's JavaScript actions, npm and `vsce`. The
+  extension is published to Open VSX with each release; the Marketplace
+  takes the release's `.vsix` by its web page.
 - `rsi`'s warm-up is the spec's: from the second row, the mean gain and
   loss of the deltas there are until `n` have come, then Wilder's
   smoothing — as it was, now written down and held to a reference.

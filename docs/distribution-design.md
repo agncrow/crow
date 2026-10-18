@@ -160,12 +160,14 @@ other home of the files, which the fresh-machine job uses too.
 2. Build the runtime bundle once: sources, pruned vendor, lockfile, and
    the toolchain version the bundle is held to, in a `manifest.json` the
    binary reads.
-3. Package the VS Code extension.
+3. Package the VS Code extension (Python's standard library alone:
+   `editors/vscode/package_vsix.py`).
 4. On a fresh machine of each platform, install from those very files
    (`CROW_DIST_URL=file://…`), run interpreted, see `crow run` say there is
    no compiler yet, `crow setup` against Rust's real servers, and `crow
    build` a program — nothing but the binary and a linker.
-5. Attach all of it to the GitHub Release; `install.sh` reads the latest
+5. Publish the GitHub Release each job put its files on as a draft (`gh`,
+   GitHub's CLI); `install.sh` reads the latest
    release, or the version it is given. The release is immutable once
    published (the repository setting), so a tag's files never change.
 
@@ -296,3 +298,15 @@ self-hosting note says.
 - Linux x86_64 and macOS arm64 for the alpha; macOS x86_64 and Linux
   aarch64 when a runner is cheap, each then one more word in the bundle
   script's `TARGETS`.
+
+**No Node.js in the pipeline (2026-10-18).** Every workflow step is a shell
+step: the commit fetched with git, Rust installed with the runner's
+rustup, the release's files gathered on a draft of the release with `gh`,
+the extension packaged by Python and sent to Open VSX with curl, and the
+book pushed to the `gh-pages` branch the repository's Pages serve. GitHub's
+JavaScript actions — checkout, setup-node, setup-python, the artifact
+upload and download, the Pages deploy, rust-cache — each ran on the
+runner's Node.js, which GitHub retires a major version at a time; the
+extension's packaging ran npm and vsce. What is given up: the build cache
+(each run compiles its dependencies), and the Marketplace's command-line
+publishing (its `.vsix` is uploaded by its web page).

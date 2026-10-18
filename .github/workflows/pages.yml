@@ -1,6 +1,13 @@
 # The book and the specification, built by Crow itself (docs/book/site.co)
 # and published on GitHub Pages (https://agncrow.github.io/crow/) on every
 # push to main that touches them.
+#
+# No step runs a JavaScript action, so the workflow needs no Node.js: the
+# commit is fetched with git, Rust installed with the runner's rustup, and
+# the rendered site pushed as the one commit of the `gh-pages` branch, which
+# the repository's Pages serve (Settings → Pages → Deploy from a branch:
+# gh-pages, /). GitHub's upload-pages-artifact and deploy-pages actions,
+# which the Actions source of Pages needs, run on Node.js.
 name: Pages
 on:
   push:
@@ -8,19 +15,24 @@ on:
     paths: ['docs/**', 'src/**', 'assets/**', '.github/workflows/pages.yml']
   workflow_dispatch:
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 concurrency:
   group: pages
   cancel-in-progress: true
 jobs:
-  build:
+  publish:
     runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - name: The repository at this commit
+        run: |
+          git init -q .
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" fetch -q --depth 1 --no-tags origin "$GITHUB_SHA"
+          git checkout -q --detach FETCH_HEAD
+      - name: Rust (the runner's rustup)
+        run: rustup toolchain install stable --profile minimal && rustup default stable
       - name: Build crow
         run: cargo build --release --locked
       - name: Render the book
@@ -29,15 +41,14 @@ jobs:
           cp assets/favicon.ico assets/apple-touch-icon.png docs/book/crow-site/
           test -f docs/book/crow-site/index.html && test -f docs/book/crow-site/ch01-01-toolchain.html
           n=$(find docs/book/crow-site -name '*.html' | wc -l); echo "$n pages"; test "$n" -ge 90
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: docs/book/crow-site
-  deploy:
-    needs: build
-    runs-on: ubuntu-22.04
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      # the site as the one commit of gh-pages (no history kept: each push
+      # is the whole site), served as it is written (.nojekyll)
+      - name: Publish the site to the gh-pages branch
+        run: |
+          cd docs/book/crow-site
+          touch .nojekyll
+          git init -q
+          git checkout -q -b gh-pages
+          git add -A
+          git -c user.name="crow pages" -c user.email="crow-pages@users.noreply.github.com" commit -q -m "The book at $GITHUB_SHA"
+          git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" push -q --force "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" gh-pages

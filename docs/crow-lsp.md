@@ -43,21 +43,27 @@ with the compiler.
 
 ## Editor setup
 
-**VS Code** — the extension is published as "Crow" by `crow-lang`: to the
-Visual Studio Marketplace by trusted publishing (the release workflow's
-own OIDC token, exchanged under the publisher's policy naming this
-repository and workflow file; the repository variable
-`MARKETPLACE_TRUSTED` turns the step on once the policy exists — the
-Marketplace's side was still being tested in October 2026), and to Open
-VSX with the token in the secret `OVSX_PAT`. Until then each release
-carries the `.vsix`, installed with
-`code --install-extension crow-lang-<version>.vsix`. From a checkout, the
-extension lives in `editors/vscode`:
+**VS Code** — the extension is published as "Crow" by `crow-lang` to Open
+VSX with each release (the token in the secret `OVSX_PAT`; Cursor,
+VSCodium and Gitpod read from there), and each release carries the
+`.vsix`, installed with `code --install-extension crow-lang-<version>.vsix`
+— the Visual Studio Marketplace takes it by its web page
+(marketplace.visualstudio.com/manage). The extension is one file of plain
+JavaScript, `editors/vscode/extension.js`, which speaks LSP to `crow lsp`
+with VS Code's own API: it depends on no npm package, and packaging it
+needs neither npm nor `vsce` — nor Node.js, which nothing in Crow installs
+(`vscode-languageclient` had been its one dependency, and with it npm in
+the release; 2026-10-18). From a checkout:
 ```
-cd editors/vscode && npm install
-npx --yes @vscode/vsce package --allow-missing-repository --skip-license
-code --install-extension crow-lang-0.1.0.vsix --force
+python3 editors/vscode/package_vsix.py 0.7.0 crow-lang-0.7.0.vsix
+code --install-extension crow-lang-0.7.0.vsix --force
 ```
+`editors/vscode/test.sh` drives the extension inside VS Code itself: VS
+Code's extension test host loads `editors/vscode/test/index.js`, which asks
+every feature through VS Code's own commands — diagnostics, hover,
+completion, definition, symbols, references, signature help, rename, code
+actions — then kills the server and waits for the extension to start it
+again and the diagnostics to come back. A window opens for the run.
 (or open the folder and press F5 for a dev session), then reload the
 window. VS Code runs the copy it installed, not the folder: after any
 change under `editors/vscode`, package and install again. (The `.co` rename
