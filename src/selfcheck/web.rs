@@ -285,6 +285,37 @@ pub(super) fn mail_cases() -> Vec<Case> {
         .collect()
 }
 
+/// web.auth's rows: a token signed under the check's clock (it stands
+/// still, so a token is the same on every run), with claims a map, a
+/// record, a parsed value that says when it expires and none at all; read
+/// back; and refused for each reason the spec gives — a short secret,
+/// claims that are no map, another secret, an expired token, a token
+/// tampered with, one not signed with HS256 and text that is no token —
+/// and a token another library signed (jwt.io's example) read.
+pub(super) fn auth_cases() -> Vec<Case> {
+    let secret = "'a-secret-of-at-least-thirty-two-chars'";
+    let table: Vec<(&str, String)> = vec![
+        ("sign", format!("log[sign[map[user = 'alice', role = 'admin'], {}]]", secret)),
+        ("record", format!("log[sign[SelfP[1, 2], {}]]", secret)),
+        ("no-claims", format!("log[sign[map[], {}]]", secret)),
+        ("read", format!("t = sign[map[user = 'alice'], {0}]\nlog[verify[t, {0}]]", secret)),
+        ("own-times", format!("t = sign[json['{{\"user\": \"bob\", \"exp\": 1000}}'], {0}]\nlog[t]\nr = verify[t, {0}]\nlog[r.ok]\nlog[r.reason]", secret)),
+        ("later", format!("t = sign[json['{{\"user\": \"bob\", \"exp\": 1767300000, \"iat\": 5}}'], {0}]\nlog[verify[t, {0}]]", secret)),
+        ("another-secret", format!("t = sign[map[user = 'alice'], {0}]\nr = verify[t, 'another-secret-of-thirty-two-chars!!']\nlog[r.ok]\nlog[r.reason]", secret)),
+        ("tampered", format!("t = sign[map[user = 'alice'], {0}]\nparts = split[t, '.']\nforged = split[sign[map[user = 'mallory'], {0}], '.']\nr = verify['`parts[0]`.`forged[1]`.`parts[2]`', {0}]\nlog[r.reason]", secret)),
+        ("short-secret", "r = sign[map[user = 'alice'], 'short']\nlog[r.ok]\nlog[r.reason]".to_string()),
+        ("not-claims", format!("r = sign[json['[1, 2]'], {}]\nlog[r.reason]", secret)),
+        ("not-a-token", format!("log[verify['not.a.token', {}].reason]", secret)),
+        ("one-part", format!("log[verify['nothing', {}].reason]", secret)),
+        ("none-alg", format!("log[verify['eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0.', {}].reason]", secret)),
+        ("known", "log[verify['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c', 'your-256-bit-secret']]".to_string()),
+    ];
+    table
+        .into_iter()
+        .map(|(name, body)| Case::new(format!("auth/{}", name), &[], body.lines().map(str::to_string).collect()).referring(format!("auth:{}", name), &[]).with_import("web.auth"))
+        .collect()
+}
+
 /// The elements the views family draws: the vocabulary's own and HTML's,
 /// all but the head's (`title`, `meta`), the void ones (`input`, `img`,
 /// `divider`), a frame's `table` and the program's own `widget`.

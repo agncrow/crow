@@ -1,0 +1,24 @@
+--- With the GPU on, a view of a tensor placed there — a transpose, a slice
+--- from the end — is its own numbers, and a number beside a tensor there
+--- is one operation in both modes (spec, GPU Support): the view had been
+--- read as the storage under it (`transpose[m]` was `m`, `slice[v, -2, 3]`
+--- the first two), the compiled program had subtracted and divided on the
+--- CPU where the interpreter did both on the GPU, so the two showed
+--- different digits, and `sigmoid` and `softmax` with them. Where no GPU
+--- answers, every tensor stays on the CPU and both modes agree there.
+use math, math.nn
+
+gpu[]
+m = reshape[linspace[1.0, 4.0, 4], 2, 2]
+log[transpose[m]]
+log[transpose[m] * m]
+log[exp[transpose[m]]]
+v = linspace[1.0, 3.0, 3]
+log[slice[v, -2, 3]]
+log[sum[slice[v, 1, 3]]]
+log[slice[v, -2, 3] + 1.0]
+log[2.5 ./ v]
+log[2.5 / v]
+log[v - 0.5]
+log[sigmoid[v]]
+log[softmax[v]]

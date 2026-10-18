@@ -33,6 +33,9 @@ impl GpuContext {
 pub enum GpuBuffer {}
 
 impl GpuBuffer {
+    pub fn count(&self) -> usize {
+        match *self {}
+    }
     pub fn from_f32(ctx: &GpuContext, _data: &[f32]) -> Self {
         match *ctx {}
     }

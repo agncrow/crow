@@ -73,6 +73,11 @@ pub struct GpuBuffer {
 }
 
 impl GpuBuffer {
+    /// The numbers the buffer holds.
+    pub fn count(&self) -> usize {
+        self.len
+    }
+
     /// Upload f32 data to GPU.
     pub fn from_f32(ctx: &GpuContext, data: &[f32]) -> Self {
         use wgpu::util::DeviceExt;
@@ -252,7 +257,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
     run_unary_shader(ctx, input, &shader_src)
 }
 
-/// Scalar operation on GPU: out[i] = a[i] op scalar
+/// Scalar operation on GPU: out[i] = a[i] op scalar. The scalar is written
+/// into the shader as the shortest text that reads back as the same f32 (it
+/// had been written to ten places: `t * 1e-12` multiplied by
+/// `0.0000000000`); a scalar no f32 holds is the caller's to keep off the
+/// GPU (`scalar_fits`).
 pub fn gpu_scalar_op(
     ctx: &GpuContext,
     input: &GpuBuffer,
@@ -260,8 +269,8 @@ pub fn gpu_scalar_op(
     op: ScalarOp,
 ) -> GpuBuffer {
     let op_expr = match op {
-        ScalarOp::Add => format!("a[idx] + {scalar:.10}"),
-        ScalarOp::Mul => format!("a[idx] * {scalar:.10}"),
+        ScalarOp::Add => format!("a[idx] + {scalar:?}"),
+        ScalarOp::Mul => format!("a[idx] * {scalar:?}"),
     };
 
     let shader_src = format!(
@@ -738,6 +747,62 @@ mod tests {
         let row = CrowTensor::from_vec(vec![10.0, 20.0], vec![2]);
         assert_eq!(m.zip_with(&row, |a, b| a + b).to_vec(), vec![11.0, 22.0, 13.0, 24.0]);
         assert_eq!(CrowTensor::diag(&m).map(|d| d.to_vec()), Ok(vec![1.0, 4.0]));
+    }
+
+    /// A view of a tensor on the GPU — a transpose, a slice — is its own
+    /// numbers, read and computed with: `transpose[m]` had been read,
+    /// multiplied and taken `exp` of as `m`, and `slice[v, 1, 3]` read from
+    /// the start (crow check --self's gpu family).
+    #[test]
+    fn a_view_of_a_gpu_tensor_is_its_own_numbers() {
+        let Some(_ctx) = skip_if_no_gpu() else { return };
+        use crate::tensor::CrowTensor;
+        let m = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]).to_gpu();
+        let t = m.transpose();
+        assert_eq!(t.to_vec(), vec![1.0, 3.0, 2.0, 4.0]);
+        let exps = t.exp().to_vec();
+        for (got, x) in exps.iter().zip([1.0f64, 3.0, 2.0, 4.0]) {
+            assert!((got - x.exp()).abs() < 1e-5 * x.exp(), "{:?}", exps);
+        }
+        assert_eq!(t.matmul(&m).to_vec(), vec![10.0, 14.0, 14.0, 20.0]);
+        let v = CrowTensor::from_vec(vec![3.0, 1.0, 2.0], vec![3]).to_gpu();
+        let tail = crate::core::slice_tensor(&v, -2, 3);
+        assert_eq!(tail.to_vec(), vec![1.0, 2.0]);
+        assert_eq!(tail.sum(), 3.0);
+        assert_eq!(tail.add_scalar(1.0).to_vec(), vec![2.0, 3.0]);
+    }
+
+    /// A scalar reaches the shader as the f32 it is: written to ten places,
+    /// `t * 1e-12` had multiplied by 0 and `t + 1e-12` added nothing.
+    #[test]
+    fn a_tiny_scalar_reaches_the_shader() {
+        let Some(ctx) = skip_if_no_gpu() else { return };
+        let a = GpuBuffer::from_f64(ctx, &[1.0, 2.0]);
+        let c = gpu_scalar_op(ctx, &a, 1e-12, ScalarOp::Mul).to_f64(ctx);
+        assert!((c[0] - 1e-12).abs() < 1e-18 && (c[1] - 2e-12).abs() < 1e-18, "{:?}", c);
+        let tiny = GpuBuffer::from_f64(ctx, &[1e-12, 2e-12]);
+        let d = gpu_scalar_op(ctx, &tiny, 1e-12, ScalarOp::Add).to_f64(ctx);
+        assert!((d[0] - 2e-12).abs() < 1e-18 && (d[1] - 3e-12).abs() < 1e-18, "{:?}", d);
+    }
+
+    /// A tensor less a number, and a number over a tensor, on the GPU answer
+    /// what the CPU answers to f32's digits — each by one function both
+    /// modes call (the interpreter had added the negative on the GPU and
+    /// divided there, the compiled program subtracted and divided on the
+    /// CPU, and the two showed different digits).
+    #[test]
+    fn a_scalar_beside_a_gpu_tensor_is_one_operation() {
+        let Some(_ctx) = skip_if_no_gpu() else { return };
+        use crate::tensor::CrowTensor;
+        let cpu = CrowTensor::from_vec(vec![3.0, 1.0, 2.0], vec![3]);
+        let gpu = cpu.to_gpu();
+        assert!(gpu.sub_scalar(0.5).is_gpu());
+        assert_eq!(gpu.sub_scalar(0.5).to_vec(), vec![2.5, 0.5, 1.5]);
+        let q = gpu.scalar_div(2.5);
+        assert!(q.is_gpu());
+        for (got, want) in q.to_vec().iter().zip(cpu.scalar_div(2.5).to_vec()) {
+            assert!((got - want).abs() < 1e-6 * want.abs(), "{} against {}", got, want);
+        }
     }
 
     #[test]

@@ -1537,7 +1537,17 @@ impl<'a> Lowerer<'a> {
                 // (the one resolver decides: where it names a module, or the
                 // core's row takes the kinds, nothing is ambiguous)
                 let decided = crate::table::core_row(name, &kinds).is_some() || crate::table::module_of_bare(name, &providers, &kinds).is_some();
-                if taking == 1 || decided || kinds.contains(&crate::table::Arg::Unknown) {
+                let unknown = kinds.iter().any(|k| matches!(k, crate::table::Arg::Unknown | crate::table::Arg::AnyList));
+                if taking == 1 || decided || unknown {
+                    // (decided by the first argument's kind while no row takes
+                    // the arguments: refused in the table's words, as one
+                    // module's call is — `load` of a tensor under `use frame,
+                    // math` had reached math's row of text, stopped
+                    // interpreted and not built compiled; crow check --self's
+                    // gpu family)
+                    if taking == 0 && decided && !unknown {
+                        self.refuse_kinds(name, argc, types);
+                    }
                     return;
                 }
                 let forms: Vec<String> = providers.iter().map(|m| format!("{}.{}[...]", m, name)).collect();

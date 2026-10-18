@@ -273,12 +273,15 @@ impl CrowTensor {
                 let Some(ctx) = crate::gpu::GpuContext::get() else {
                     crate::stops::halt(0, "the GPU holding a tensor went away");
                 };
+                // (the view's own offset and strides read the storage: a
+                // slice or a transpose of a tensor on the GPU had been read
+                // as the storage itself — `transpose[m]` as `m`)
                 let data = gpu_buf.to_f64(ctx);
                 CrowTensor {
                     data: Arc::new(TensorStorage::Cpu(data)),
                     shape: self.shape.clone(),
-                    strides: Self::row_major_strides(&self.shape),
-                    offset: 0,
+                    strides: self.strides.clone(),
+                    offset: self.offset,
                 }
             }
         }
@@ -322,12 +325,22 @@ impl CrowTensor {
         self
     }
 
-    /// Get the GPU buffer, if tensor is on GPU.
+    /// The GPU buffer, when the tensor is on the GPU and is the whole of it
+    /// in row-major order. A view of one — a slice, a transpose — reads its
+    /// numbers through its offset and strides on the CPU: a kernel takes a
+    /// buffer as one row-major run, and a transposed matrix had been
+    /// multiplied, and its `exp` taken, as the matrix it was taken from.
     pub fn gpu_buffer(&self) -> Option<&GpuBuffer> {
         match self.data.as_ref() {
-            TensorStorage::Gpu(buf) => Some(buf),
+            TensorStorage::Gpu(buf) if self.offset == 0 && self.is_contiguous() && buf.count() == self.len() => Some(buf),
             _ => None,
         }
+    }
+
+    /// A scalar the GPU's scalar operation can take: one an f32 holds
+    /// (written into its shader as a literal, which no infinity is).
+    fn scalar_fits(s: f64) -> bool {
+        (s as f32).is_finite()
     }
 
     /// Create a CrowTensor from a GpuBuffer with a given shape.
@@ -927,7 +940,7 @@ impl CrowTensor {
 
     /// Add a scalar to every element.
     pub fn add_scalar(&self, s: f64) -> CrowTensor {
-        if let Some(buf) = self.gpu_buffer() {
+        if let Some(buf) = self.gpu_buffer().filter(|_| Self::scalar_fits(s)) {
             if let Some(ctx) = GpuContext::get() {
                 let out = gpu::gpu_scalar_op(ctx, buf, s as f32, gpu::ScalarOp::Add);
                 return self.from_gpu_buffer(out);
@@ -938,7 +951,7 @@ impl CrowTensor {
 
     /// Multiply every element by a scalar.
     pub fn mul_scalar(&self, s: f64) -> CrowTensor {
-        if let Some(buf) = self.gpu_buffer() {
+        if let Some(buf) = self.gpu_buffer().filter(|_| Self::scalar_fits(s)) {
             if let Some(ctx) = GpuContext::get() {
                 let out = gpu::gpu_scalar_op(ctx, buf, s as f32, gpu::ScalarOp::Mul);
                 return self.from_gpu_buffer(out);
@@ -947,8 +960,29 @@ impl CrowTensor {
         self.map(|x| x * s)
     }
 
+    /// Subtract a scalar from every element: on the GPU as `add_scalar` of
+    /// its negative, which is the same number (`x - s` and `x + -s` round
+    /// alike) — the interpreter had added the negative there and the
+    /// compiled program subtracted on the CPU, and a tensor on the GPU
+    /// answered two ways.
     pub fn sub_scalar(&self, s: f64) -> CrowTensor {
+        if self.gpu_buffer().is_some() {
+            return self.add_scalar(-s);
+        }
         self.map(|x| x - s)
+    }
+
+    /// A scalar divided by every element, `s / x`: the scalar made a tensor
+    /// of the shape and divided where the tensor lies, as `./` divides two
+    /// (both modes call this: the compiled program had divided on the CPU
+    /// where the interpreter divided on the GPU).
+    pub fn scalar_div(&self, s: f64) -> CrowTensor {
+        if self.gpu_buffer().is_some() && Self::scalar_fits(s) {
+            // (the scalar's tensor placed where this one lies, whatever
+            // `gpu[]` said: placement follows the tensor)
+            return CrowTensor::from_vec(vec![s; self.len()], self.shape.clone()).to_gpu().div(self);
+        }
+        self.map(|x| s / x)
     }
 
     /// Divide every element by a scalar: each number divided, as `x / s`

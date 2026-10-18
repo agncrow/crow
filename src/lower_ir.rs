@@ -2825,15 +2825,16 @@ impl<'a> Lowerer<'a> {
     /// is itself. (Each such use had been refused until read by hand, and
     /// a parsed value decided on, negated or joined with and had run
     /// interpreted and not built compiled.)
-    /// A parsed value handed to a parameter, read in the body as a kind:
-    /// noted for the function's tool schema (`tool_schema`).
+    /// A parsed value handed to a parameter, or a parameter typed by
+    /// nothing, read in the body as a kind: noted for the function's tool
+    /// schema (`tool_schema`).
     fn note_param_read(&mut self, expr: &Expr, kind: &Ty) {
         let local = match expr {
             Expr::Convert { expr: inner, .. } => inner.as_ref(),
             other => other,
         };
         if let Expr::Local(p, lt) = local {
-            let is_param = matches!(lt.payload(), Ty::Json) && self.ctx.functions.get(&self.current_fn).is_some_and(|sig| sig.params.iter().any(|(n, _)| n == p));
+            let is_param = matches!(lt.payload(), Ty::Json | Ty::Unknown) && self.ctx.functions.get(&self.current_fn).is_some_and(|sig| sig.params.iter().any(|(n, _)| n == p));
             if is_param && !matches!(kind, Ty::Unknown) {
                 let read = if matches!(kind, Ty::Markup) { Ty::Str } else { kind.clone() };
                 self.ctx.param_reads.entry(self.current_fn.clone()).or_default().insert(p.clone(), read);
@@ -4150,9 +4151,10 @@ impl<'a> Lowerer<'a> {
         let mut properties: Vec<String> = Vec::new();
         let mut required: Vec<String> = Vec::new();
         for (p, ty) in &params {
-            // a parameter handed a parsed value is the kind the body reads it as
+            // a parameter handed a parsed value, or typed by nothing, is the
+            // kind the body reads it as
             let handed = matches!(ty.payload(), Ty::Json);
-            let ty = if handed { self.ctx.param_reads.get(name).and_then(|m| m.get(p)).cloned().unwrap_or(Ty::Unknown) } else { ty.clone() };
+            let ty = if handed || matches!(ty, Ty::Unknown) { self.ctx.param_reads.get(name).and_then(|m| m.get(p)).cloned().unwrap_or(Ty::Unknown) } else { ty.clone() };
             let schema = match self.handed_schema(&ty) {
                 Handed::Schema(s) => s,
                 Handed::Untyped => {
@@ -4791,6 +4793,22 @@ impl<'a> Lowerer<'a> {
                 lowered.push(Expr::Convert { how: Convert::Unwrap, expr: Box::new(x), ty: rty.payload().clone() });
             } else {
                 lowered.push(x);
+            }
+        }
+        // a parameter typed by nothing (a function no call types: a tool only
+        // handed to a model) handed to a builtin whose rows agree on the
+        // kind they take there is read as that kind, noted for the tool's
+        // schema as a parsed value's read is: `upper[city]` types `city` as
+        // text (spec, Tools are the functions — "read it in the body"; the
+        // refusal had said so, and only a call had typed it)
+        if !self.ctx.functions.contains_key(&name) {
+            let argc = lowered.len();
+            for (i, x) in lowered.iter().enumerate() {
+                if matches!(x, Expr::Local(_, Ty::Unknown))
+                    && let Some(k) = uses::row_says(&name, module.as_deref(), i, argc)
+                {
+                    self.note_param_read(x, &k);
+                }
             }
         }
         // a parsed value handed to a builtin whose rows agree on the kind

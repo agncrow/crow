@@ -1,0 +1,3 @@
+j47_a_name_two_modules_give_takes_neither.co:4:5: load[] takes text, got numbers
+  4 │ log[load[linspace[1.0, 4.0, 4]]]
+    │     ^^^^

@@ -30,6 +30,12 @@ from decimal import Decimal
 
 warnings.simplefilter("ignore")  # (numpy's warnings on an empty mean: the answer is NaN, as Crow's)
 
+# (an int shows every digit, as Crow's does: Python 3.11 and later refuse
+# to write one past 4,300 digits, and `2 ^ (100 ^ b)` had stopped the
+# reference halfway through its cases under CROW_SELF_PYTHON)
+if hasattr(sys, "set_int_max_str_digits"):
+    sys.set_int_max_str_digits(0)
+
 try:  # (the spec holds math's reductions to numpy's; without it they are not asked)
     import numpy
 except ImportError:  # pragma: no cover
@@ -2259,6 +2265,66 @@ def grad_answer(name):
     return Close(shown)
 
 
+# ── a language model (spec, section 13: llm) ──────────────────────
+#
+# A conversation is a list of turns, each a map shown with its keys in
+# order; the check's model says back what it was sent — `heard <the user's
+# last words> | <the system prompt, or -> | <max> | <temperature>`, a tool's
+# result as `told <result>`, or a call of the first tool offered with the
+# user's words as `x` — its usage the turns it was sent and the words it
+# answers, and it streams its words one by one.
+
+
+def llm_heard(user, system="", most=1024, temperature=1.0):
+    return "heard {} | {} | {} | {}".format(user, system or "-", show(most, True), show(temperature, True))
+
+
+def llm_pieces(text):
+    words = text.split(" ")
+    pieces = [w + " " for w in words[:-1]] + [words[-1]]
+    return [p for p in pieces if p]
+
+
+def llm_streamed(text, lines):
+    return "\n".join(["piece: [{}]".format(p) for p in llm_pieces(text)] + lines)
+
+
+def llm_answers():
+    hi_there = llm_heard("hi there")
+    one_two = llm_heard("one two")
+    tool = "\n".join(["tool", "true", "hi", "3", "told echo hi", "end", "3"])
+    return {
+        "ask": "[[role = 'user', text = 'hi there']]",
+        "ask-more": "[[role = 'user', text = 'hi'], [role = 'user', text = 'and you']]",
+        "said": "[[role = 'user', text = 'hi'], [calls = [], role = 'assistant', text = 'hello']]",
+        "told": "[[role = 'user', text = 'hi'], [calls = [[args = [x = 1], id = 'c1', name = 'f']], role = 'assistant', text = ''], [id = 'c1', role = 'tool', text = 'done']]\n2",
+        "said-no-reply": "false\na reply is what chat[…] and reply[…] answer",
+        "told-no-call": "false\na call is one of a reply's calls",
+        "no-talk": "false\na conversation is what ask[…] answers, with its turns added by ask, said and told",
+        "reach": "openai\nllama3.2\nhttp://localhost:11434\n/v1\nOPENAI_API_KEY",
+        "reach-options": "org/model\nhttp://127.0.0.1:8000\n/api/v1\nSELF_KEY",
+        "reach-no-key": "cannot reach 'openai://api.example.com/gpt': the key's variable OPENAI_API_KEY is not set",
+        "reach-anthropic-no-key": "cannot reach 'anthropic://claude-x': the key's variable ANTHROPIC_API_KEY is not set",
+        "reach-no-model": "cannot reach 'anthropic://': no model is named — anthropic://claude-sonnet-5",
+        "reach-host-no-model": "cannot reach 'openai://localhost:11434': a model is named after its host — openai://localhost:11434/llama3.2",
+        "reach-scheme": "cannot reach 'http://x': a model's URL is anthropic://<model> or openai://<host>/<model>",
+        "chat": "\n".join([hi_there, "end", "1", str(len(hi_there.split())), "0"]),
+        "chat-options": "\n".join([llm_heard("hi", "be brief", 16, 0.5), "2"]),
+        "tool": tool,
+        "follow": llm_streamed(one_two, [one_two, "end", "1", str(len(one_two.split()))]),
+        "follow-tool": "tool\ntrue\nhi",
+        "embed": "[[3, 0.5, -0.25], [5, 0.5, -0.25]]",
+        "anthropic": "\n".join([llm_heard("hi there", "be brief"), "end", "1", str(len(llm_heard("hi there", "be brief").split()))]),
+        "anthropic-tool": tool,
+        "anthropic-follow": llm_streamed(one_two, [one_two, "end", str(len(one_two.split()))]),
+        "anthropic-follow-tool": "tool\ntoolu_self\nhi",
+        "anthropic-embed": "anthropic serves no embeddings: reach an openai://<host>/<embedding model>",
+        "refused": "false\nthe model's server answered 401: no key here",
+        "no-json": "false\nthe model's server answered no JSON: this is not json",
+        "nobody": "false\nllm",
+    }
+
+
 def placed_past(seen):
     """An answer with where its case's route sits in its batch read past."""
     return _re.sub(r"/c\d+", "/cN", seen)
@@ -3314,6 +3380,95 @@ BUILTINS.update(E4)
 BUILTINS.update(E5)
 BUILTINS.update(E6)
 BUILTINS.update(E7)
+
+
+# ── tokens (spec, section 13: web.auth) ───────────────────────────
+#
+# A JSON Web Token signed with HS256 (RFC 7519): the header and the claims
+# as base64url, the signature an HMAC-SHA256 of the two; `iat` and `exp`
+# (an hour on) added where the claims do not say them, from the check's
+# clock (CROW_CLOCK). The claims reach `sign` as the JSON text the value
+# encodes to: compact, a map's keys in order, a record's fields as declared.
+
+AUTH_SECRET = "a-secret-of-at-least-thirty-two-chars"
+AUTH_NOW = 1767225600
+
+
+def _b64url(b):
+    return _b64.urlsafe_b64encode(b).decode("ascii").rstrip("=")
+
+
+def auth_sign(claims, secret):
+    if len(secret) < 32:
+        raise Err()
+    j = json.loads(claims)
+    if not isinstance(j, dict):
+        raise Err()
+    added = []
+    if "iat" not in j:
+        added.append('"iat":{}'.format(AUTH_NOW))
+    if "exp" not in j:
+        added.append('"exp":{}'.format(AUTH_NOW + 3600))
+    payload = claims
+    if added:
+        inner = claims[1:-1].strip()
+        payload = "{" + (inner + "," if inner else "") + ",".join(added) + "}"
+    head = _b64url(b'{"alg":"HS256","typ":"JWT"}')
+    body = _b64url(payload.encode("utf-8"))
+    signature = _b64url(_hmac.new(secret.encode("utf-8"), (head + "." + body).encode("ascii"), "sha256").digest())
+    return head + "." + body + "." + signature
+
+
+def auth_claims(token):
+    """A token's claims, as `verify` shows them (keys in order)."""
+    body = token.split(".")[1]
+    return json_shown(json.loads(_b64.urlsafe_b64decode(body + "=" * (-len(body) % 4))), True)
+
+
+def auth_answers():
+    a = AUTH_SECRET
+    alice = auth_sign('{"user":"alice"}', a)
+    late = auth_sign('{"exp":1767300000,"iat":5,"user":"bob"}', a)
+    return {
+        "sign": auth_sign('{"role":"admin","user":"alice"}', a),
+        "record": auth_sign('{"x":1,"y":2}', a),
+        "no-claims": auth_sign("{}", a),
+        "read": auth_claims(alice),
+        "own-times": auth_sign('{"exp":1000,"user":"bob"}', a) + "\nfalse\nthe token has expired",
+        "later": auth_claims(late),
+        "another-secret": "false\nthe token's signature does not match",
+        "tampered": "the token's signature does not match",
+        "short-secret": "false\na token's secret is 32 characters or more (got 5)",
+        "not-claims": "a token's claims are a map or a record of them",
+        "not-a-token": "not a token",
+        "one-part": "not a token",
+        "none-alg": "the token is not signed with HS256",
+        "known": "[iat = 1516239022, name = 'John Doe', sub = '1234567890']",
+    }
+
+
+def f_auth_sign(claims, secret):
+    """`sign` of the catalog's values: every text it holds is a secret
+    under 32 characters."""
+    if not isinstance(secret, str):
+        raise Skip()
+    if len(secret) < 32:
+        raise Err()
+    raise Skip()
+
+
+def f_auth_verify(token, secret):
+    """`verify` of the catalog's values: text of other than three parts is
+    no token."""
+    if not isinstance(token, str) or not isinstance(secret, str):
+        raise Skip()
+    if len(token.split(".")) != 3:
+        raise Err()
+    raise Skip()
+
+
+BUILTINS["web.auth.sign"] = f_auth_sign
+BUILTINS["web.auth.verify"] = f_auth_verify
 # (the catalog's bytes: `use sys`'s)
 VALUES["sysbytes"] = B(b"abc")
 VALUES["chunks"] = L([B(b"ab"), B(b"c")])
@@ -3341,6 +3496,10 @@ def answer(what, names):
         return draw_answer(what[5:])
     if what.startswith("grad:"):
         return grad_answer(what[5:])
+    if what.startswith("llm:"):
+        return llm_answers().get(what[4:]) or _skip()
+    if what.startswith("auth:"):
+        return auth_answers().get(what[5:]) or _skip()
     if what.startswith("io:"):
         return IO[what[3:]] if what[3:] in IO else _skip()
     if what.startswith("ws:"):
@@ -3445,6 +3604,25 @@ def near(seen, expected):
     return True
 
 
+def f32_close(seen, expected):
+    """Whether two shown values are the same but for the f32 the GPU
+    computes in (the gpu family's): each number within 1e-5 of the larger
+    of the two, relatively, or 1e-6 of the answer's largest number."""
+    pat = _re.compile(r"-?(?:inf|NaN|\d+(?:\.\d+)?(?:e[+-]?\d+)?)")
+    a, b = pat.split(seen), pat.split(expected)
+    if a != b:
+        return False
+    xs = [float(x) for x in pat.findall(seen)]
+    ys = [float(y) for y in pat.findall(expected)]
+    scale = max([1.0] + [abs(y) for y in ys if y == y and abs(y) != float("inf")])
+    for x, y in zip(xs, ys):
+        if (x != x and y != y) or x == y:
+            continue
+        if abs(x - y) > 1e-5 * max(abs(x), abs(y)) + 1e-6 * scale:
+            return False
+    return True
+
+
 def main():
     answered = skipped = 0
     with open(sys.argv[1], encoding="utf-8") as cases:
@@ -3463,6 +3641,11 @@ def main():
                 expected = None
             answered += 1
             print(json.dumps({"kind": "answered", "id": case["id"]}))
+            # (a case run on the GPU: its twin's answer, within f32)
+            if case["id"].startswith("gpu/") and isinstance(expected, str) and not isinstance(expected, (ArrowOf, Drawn, Pages, Styled, Drawn20k)) and "seen" in case and not case.get("end"):
+                if not f32_close(case["seen"], str(expected)):
+                    print(json.dumps({"kind": "wrong", "id": case["id"], "expected": str(expected), "seen": case["seen"]}))
+                continue
             if isinstance(expected, Close) and "seen" in case and not case.get("end"):
                 if not close(case["seen"], expected):
                     print(json.dumps({"kind": "wrong", "id": case["id"], "expected": str(expected), "seen": case["seen"]}))

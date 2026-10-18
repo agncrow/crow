@@ -203,8 +203,8 @@ fn binop_rest(left: &CrowValue, op: &BinOp, right: &CrowValue) -> Result<CrowVal
             (Value::Moment(t), Value::Float(s)) => crow_runtime::moments::less(t, *s).map(|m| CrowValue::ok(Value::Moment(m))),
             (Value::Moment(a), Value::Moment(b)) => Ok(CrowValue::ok(Value::Float(*a - *b))),
             (Value::NumArray(a), Value::NumArray(b)) => a.try_elementwise(b, "-").map(|t| CrowValue::ok(Value::NumArray(Box::new(t)))),
-            (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.add_scalar(-(*b as f64)))))),
-            (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.add_scalar(-*b))))),
+            (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.sub_scalar(*b as f64))))),
+            (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.sub_scalar(*b))))),
             (Value::Int(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(b.neg().add_scalar(*a as f64))))),
             (Value::Float(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(b.neg().add_scalar(*a))))),
             // Vectorized: Array - scalar
@@ -255,14 +255,8 @@ fn binop_rest(left: &CrowValue, op: &BinOp, right: &CrowValue) -> Result<CrowVal
             (Value::NumArray(_), Value::NumArray(_)) => Err("use ./ for element-wise tensor division".to_string()),
             (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.div_scalar(*b as f64))))),
             (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.div_scalar(*b))))),
-            (Value::Int(a), Value::NumArray(b)) => {
-                let scalar_tensor = CrowTensor::full(b.shape().to_vec(), *a as f64);
-                Ok(CrowValue::ok(Value::NumArray(Box::new(scalar_tensor.div(b)))))
-            }
-            (Value::Float(a), Value::NumArray(b)) => {
-                let scalar_tensor = CrowTensor::full(b.shape().to_vec(), *a);
-                Ok(CrowValue::ok(Value::NumArray(Box::new(scalar_tensor.div(b)))))
-            }
+            (Value::Int(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(b.scalar_div(*a as f64))))),
+            (Value::Float(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(b.scalar_div(*a))))),
             // Vectorized: Array / scalar
             (Value::Array(items), scalar @ (Value::Int(_) | Value::Float(_))) => {
                 array_scalar_arithmetic(items, scalar, |a, b| a / b)
@@ -303,14 +297,8 @@ fn binop_rest(left: &CrowValue, op: &BinOp, right: &CrowValue) -> Result<CrowVal
             (Value::NumArray(a), Value::NumArray(b)) => a.try_elementwise(b, "./").map(|t| CrowValue::ok(Value::NumArray(Box::new(t)))),
             (Value::NumArray(a), Value::Int(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.div_scalar(*b as f64))))),
             (Value::NumArray(a), Value::Float(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(a.div_scalar(*b))))),
-            (Value::Int(a), Value::NumArray(b)) => {
-                let scalar_tensor = CrowTensor::full(b.shape().to_vec(), *a as f64);
-                Ok(CrowValue::ok(Value::NumArray(Box::new(scalar_tensor.div(b)))))
-            }
-            (Value::Float(a), Value::NumArray(b)) => {
-                let scalar_tensor = CrowTensor::full(b.shape().to_vec(), *a);
-                Ok(CrowValue::ok(Value::NumArray(Box::new(scalar_tensor.div(b)))))
-            }
+            (Value::Int(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(b.scalar_div(*a as f64))))),
+            (Value::Float(a), Value::NumArray(b)) => Ok(CrowValue::ok(Value::NumArray(Box::new(b.scalar_div(*a))))),
             _ => Err("./ requires tensors or tensor and scalar".to_string()),
         },
         BinOp::ElemPow => match (&coerce_numeric_array(l), &coerce_numeric_array(r)) {

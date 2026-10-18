@@ -53,12 +53,14 @@ fn send_text[s, said]
 --- exactly `n` bytes of what the socket reads: what it holds unread
 --- first, then the stream's, waiting at most the seconds for each piece
 --- (as the connection does, when 0); what came past the `n` is held for
---- the next read. A server that closed the connection is `closed`.
+--- the next read, and so is what came of the `n` when the wait ends
+--- first. A server that closed the connection is `closed`.
 fn exact[s, n, secs]
     have = leftover[s]
     while len[have] lt n
         got = recv[stream_of[s], n - len[have], secs]
         if not got.ok
+            unread[s, have]
             if starts[got.reason, 'no data']
                 return error['no message in `secs` s', 'socket']
             return error[socket_reason[got.reason], 'socket']
@@ -76,10 +78,16 @@ fn exact[s, n, secs]
 --- let go, and `closed` the reason
 fn recv_for[s, secs]
     message = bytes['']
+    --- (the bytes of the message's frames read so far, put back when a wait
+    --- ends inside the message, so the next read begins it again: its head
+    --- had been lost, and the next read took the payload for a frame)
+    taken = bytes['']
     while true
         head = exact[s, 2, secs]
         if not head.ok
+            unread[s, taken]
             return error[head.reason, 'socket']
+        raw = head
         first = byte[head, 0]
         second = byte[head, 1]
         fin = first gte 128
@@ -88,12 +96,16 @@ fn recv_for[s, secs]
         if n eq 126
             ext = exact[s, 2, secs]
             if not ext.ok
+                unread[s, concat[taken, raw]]
                 return error[ext.reason, 'socket']
+            raw = concat[raw, ext]
             n = byte[ext, 0] * 256 + byte[ext, 1]
         if n eq 127
             wide = exact[s, 8, secs]
             if not wide.ok
+                unread[s, concat[taken, raw]]
                 return error[wide.reason, 'socket']
+            raw = concat[raw, wide]
             n = 0
             for i in range[8]
                 n = n * 256 + byte[wide, i]
@@ -101,10 +113,13 @@ fn recv_for[s, secs]
         if second gte 128
             given = exact[s, 4, secs]
             if not given.ok
+                unread[s, concat[taken, raw]]
                 return error[given.reason, 'socket']
+            raw = concat[raw, given]
             key = given
         payload = exact[s, n, secs]
         if not payload.ok
+            unread[s, concat[taken, raw]]
             return error[payload.reason, 'socket']
         data = payload
         if len[key] eq 4
@@ -125,6 +140,7 @@ fn recv_for[s, secs]
             message = concat[message, data]
             if fin
                 return text[message, '�']
+            taken = concat[taken, concat[raw, payload]]
 
 --- `recv[s]`: the next message, waited for as the connection waits
 fn recv_text[s]

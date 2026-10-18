@@ -363,7 +363,7 @@ fn by_operators(node: &Node, operands: &[Operand]) -> Result<Value, String> {
                 },
                 (Value::Tensor(a), Value::Number(s)) => match op {
                     Op::Add => a.add_scalar(s),
-                    Op::Sub => a.add_scalar(-s),
+                    Op::Sub => a.sub_scalar(s),
                     Op::Div | Op::ElemDiv => a.div_scalar(s),
                     Op::ElemPow => a.map(|x| x.powf(s)),
                     _ => a.mul_scalar(s),
@@ -371,7 +371,7 @@ fn by_operators(node: &Node, operands: &[Operand]) -> Result<Value, String> {
                 (Value::Number(s), Value::Tensor(b)) => match op {
                     Op::Add => b.add_scalar(s),
                     Op::Sub => b.neg().add_scalar(s),
-                    Op::Div | Op::ElemDiv => CrowTensor::full(b.shape().to_vec(), s).div(&b),
+                    Op::Div | Op::ElemDiv => b.scalar_div(s),
                     Op::ElemPow => return Err(".^ requires tensors or tensor and scalar".to_string()),
                     _ => b.mul_scalar(s),
                 },

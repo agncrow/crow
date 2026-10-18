@@ -256,9 +256,29 @@ with no test someone has to remember to write:
 - the modules that speak to a server, against the check's own: a
   WebSocket server that sends back what it is sent (`web.ws`: a text and
   its echo, two in order, an empty one, a wait that ends with nothing, a
-  socket closed) and a mail server that takes every message to an address
+  socket closed), a mail server that takes every message to an address
   (`web.mail`: a message, one beyond ASCII, a body with a lone dot, a
-  recipient that is no address);
+  recipient that is no address), and a language model that speaks both
+  wire formats (`llm`, src/selfcheck/llm.rs: the OpenAI-compatible chat
+  completions and embeddings and Anthropic's messages, plain and streamed
+  as server-sent events in chunks an event straddles, its every answer
+  saying back what it was sent — the user's last words, the system
+  prompt, `max`, `temperature`, a tool's result — so a reply holds what
+  the request said): a reply, its options, a tool called and its result
+  read back, a reply followed piece by piece (a call's too), embeddings,
+  each in both formats, a server that refuses, one that answers no JSON
+  and one nobody answers. Anthropic's base is the check's model in every
+  case's environment, so a model reached as `anthropic://` asks this
+  machine and nothing past it;
+- conversations and tokens with no server (the llm and auth families): a
+  conversation begun, added to by the user, by a reply and by a tool's
+  result, each refused where its value is not what it says, a model's URL
+  read apart and refused for each mistake; and a token signed under the
+  check's still clock — so the same on every run — with claims a map, a
+  record, a parsed value that says when it expires and none, read back,
+  and refused for each reason the spec gives (a short secret, claims that
+  are no map, another secret, an expired token, one tampered with, one not
+  signed with HS256, text that is no token), and jwt.io's example read;
 - files (the io family): `read`, `lines`, `csv`, `exists`, `ls`, `write`,
   `mkdir`, `rm`, `mv` and `cp`, each case in a directory of its own
   holding the run's files (`c<N>/`), so what one writes no other reads,
@@ -276,6 +296,15 @@ with no test someone has to remember to write:
   `tanh`, `erf`, `abs`, `floor`, `ceil`, `round`, a helper it calls, a
   loop that accumulates, a function of two numbers — and functions of a
   tensor, traced; each derivative held to the analytic one;
+- the GPU (the gpu family): every case of the rows, the operators, the
+  shapes, the positions and the writes that is handed the catalog's
+  vector or matrix, run again with `gpu[]` first and those tensors made
+  on the device (only a tensor a constructor makes is placed there, so the
+  vector is `linspace`'s, squared, scaled and shifted to the same numbers,
+  each step exact in f32), its id its twin's under `gpu/`; every
+  configuration agrees, and the reference holds the answer to its twin's
+  within f32 (relatively 1e-5). Where no GPU answers, the tensors stay on
+  the CPU and the twins are their twins again;
 - the standard modules' own tests (`src/modules/*.co`) and every
   package's files that hold tests (`packages/*/`), run by `crow test` under
   each interpreted configuration — the walker, no fusion, no moves — a
@@ -347,7 +376,9 @@ text — entities decoded — what the value shows, an attribute as written,
 a boolean one present or absent; a layout attribute by the spec's table —
 the words its row names (any other refused), the spacing and type scales'
 pixels, a colour's token; a page's state after each event, by what
-its fact holds then; and a gradient, by the derivative worked by hand. A case answered
+its fact holds then; a gradient, by the derivative worked by hand; a
+model's reply, by what the check's model says back; and a token, signed
+again with Python's `hmac` and `base64`. A case answered
 otherwise is a finding, `wrong`; one the reference has no answer for is
 skipped, never guessed. `CROW_SELF_PYTHON` names the Python to ask (by
 default `python3` on the path): one with numpy, scipy and pyarrow

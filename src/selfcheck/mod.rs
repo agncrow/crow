@@ -42,6 +42,7 @@
 //! (`agreement-only.txt`), and the forms of the language, read from
 //! `src/ast.rs`, no case reaches (`forms.txt`).
 
+mod llm;
 mod web;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -287,6 +288,9 @@ pub(crate) struct Case {
     /// Lines the case puts at the top level before its function — its own
     /// functions (`@N` its number): the grad family's.
     top: Vec<String>,
+    /// Whether the case runs with the GPU on (`gpu[]` before any case, in
+    /// a batch of its own): the gpu family's.
+    gpu: bool,
     /// Whether the case works in a directory of its own (`c<N>/`, holding
     /// the run's files): a case that writes cannot change what another
     /// reads (the io family).
@@ -344,7 +348,7 @@ impl Case {
             }
         }
         body.extend(lines);
-        Case { id: id.into(), imports, body, expect: Vec::new(), refer: None, live: false, serve: None, own_dir: false, top: Vec::new() }
+        Case { id: id.into(), imports, body, expect: Vec::new(), refer: None, live: false, serve: None, own_dir: false, top: Vec::new(), gpu: false }
     }
 
     /// The case is a route's handler, asked the route's requests.
@@ -462,6 +466,10 @@ fn program(cases: &[&Case]) -> (String, Vec<usize>) {
     let mut out = String::new();
     if !imports.is_empty() {
         out.push_str(&format!("use {}\n", imports.iter().copied().collect::<Vec<_>>().join(", ")));
+    }
+    // (the gpu family's batch turns the device on before any case runs)
+    if cases.first().is_some_and(|c| c.gpu) {
+        out.push_str("gpu[]\n");
     }
     // each case with its own copy of every helper it names (`self_may_3`,
     // `SelfBox_3`): a helper one case calls at a kind no other case sees,
@@ -1528,6 +1536,20 @@ impl Servers {
                 }
             });
         }
+        // (a model that speaks both wire formats: llm's rows; Anthropic's
+        // base is the model's too, so a model reached as anthropic:// asks
+        // this machine and nothing past it)
+        if let Ok(l) = std::net::TcpListener::bind("127.0.0.1:0") {
+            if let Ok(a) = l.local_addr() {
+                env.push(("CROW_SELF_LLM".to_string(), a.port().to_string()));
+                env.push(("ANTHROPIC_BASE_URL".to_string(), format!("http://127.0.0.1:{}", a.port())));
+            }
+            std::thread::spawn(move || {
+                for c in l.incoming().flatten() {
+                    std::thread::spawn(move || llm::serve_model(c));
+                }
+            });
+        }
         let pg = scratch_postgres(&dir.join("pg"));
         if let Some((_, port)) = &pg {
             env.push(("CROW_SELF_PG".to_string(), port.to_string()));
@@ -2217,12 +2239,19 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
     cases.extend(draw_cases());
     cases.extend(io_cases());
     cases.extend(grad_cases());
-    let (rows, unexercised) = row_cases(&all, &only);
-    let row_count = rows.len();
+    cases.extend(llm::llm_cases());
+    cases.extend(web::auth_cases());
+    // (the gpu family's cases are twins of the rows' and the forms': a word
+    // naming its cases names their twins' rows)
+    let rows_only = only.as_ref().map(|w| w.strip_prefix("gpu/").unwrap_or(w).to_string());
+    let (rows, unexercised) = row_cases(&all, &rows_only);
     cases.extend(rows);
+    let twins = gpu_cases(&cases, &all);
+    cases.extend(twins);
     if let Some(w) = &only {
         cases.retain(|c| c.id.contains(w.as_str()));
     }
+    let row_count = cases.iter().filter(|c| c.id.starts_with("row/") || c.id.starts_with("pair/")).count();
     let mut ids = HashSet::new();
     cases.retain(|c| ids.insert(c.id.clone()));
     println!("memory: {} GB for the cases' processes, 1 GB each at most (--memory GB says another)", budget().total >> 30);
@@ -2287,11 +2316,12 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
             // (a case that talks to the check's own servers runs without
             // the replay: a batch of its own)
             let key = format!(
-                "{}{}{}{}",
+                "{}{}{}{}{}",
                 cases[i].imports.iter().copied().collect::<Vec<_>>().join(","),
                 if cases[i].live { "|live" } else { "" },
                 if cases[i].serve.is_some() { "|served" } else { "" },
-                if cases[i].own_dir { "|own" } else { "" }
+                if cases[i].own_dir { "|own" } else { "" },
+                if cases[i].gpu { "|gpu" } else { "" }
             );
             groups.entry(key).or_default().push(i);
         }
@@ -2531,6 +2561,27 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
                     &["web.ws.socket", "web.ws.send_text", "web.ws.recv_text", "web.ws.recv_for", "web.ws.close_socket"]
                 } else if id.starts_with("mail-live/") {
                     &["web.mail.smtp", "web.mail.mail"]
+                } else if let Some(name) = id.strip_prefix("llm/").or_else(|| id.strip_prefix("llm-live/")) {
+                    // (the llm family: the rows each case calls)
+                    match name {
+                        "ask" => &["llm.ask"],
+                        "ask-more" | "no-talk" => &["llm.ask", "llm.ask_more"],
+                        "said" | "said-no-reply" => &["llm.ask", "llm.said"],
+                        "told" | "told-no-call" => &["llm.ask", "llm.said", "llm.told"],
+                        "chat" | "chat-options" | "anthropic" | "refused" | "no-json" | "nobody" => &["llm.reach", "llm.ask", "llm.chat"],
+                        "tool" | "anthropic-tool" => &["llm.reach", "llm.ask", "llm.chat", "llm.said", "llm.told"],
+                        "follow" | "follow-tool" | "anthropic-follow" | "anthropic-follow-tool" => &["llm.reach", "llm.ask", "llm.follow", "llm.next_piece", "llm.whole"],
+                        "embed" | "anthropic-embed" => &["llm.reach", "llm.embed"],
+                        _ if name.starts_with("reach") => &["llm.reach"],
+                        _ => &[],
+                    }
+                } else if let Some(name) = id.strip_prefix("auth/") {
+                    // (the auth family: a token signed, read, or both)
+                    match name {
+                        "sign" | "record" | "no-claims" | "short-secret" | "not-claims" => &["web.auth.sign"],
+                        "not-a-token" | "one-part" | "none-alg" | "known" => &["web.auth.verify"],
+                        _ => &["web.auth.sign", "web.auth.verify"],
+                    }
                 } else if let Some(name) = id.strip_prefix("io/") {
                     // (the io family: the rows each case calls)
                     match name {
@@ -2591,6 +2642,8 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
                 ("web.ws", "CROW_SELF_WS")
             } else if case.id.starts_with("mail-live/") {
                 ("web.mail", "CROW_SELF_SMTP")
+            } else if case.id.starts_with("llm-live/") {
+                ("llm", "CROW_SELF_LLM")
             } else if case.id.contains("postgres") {
                 ("db.postgres", "CROW_SELF_PG")
             } else {
@@ -3111,6 +3164,43 @@ fn grad_cases() -> Vec<Case> {
             c.top = top.lines().map(str::to_string).collect();
             c.imports.insert("math");
             c
+        })
+        .collect()
+}
+
+/// The tensors the gpu family hands its cases in place of the catalog's
+/// vector and matrix: the same numbers, made on the GPU — only a tensor a
+/// constructor makes (`linspace`, `full`, `eye`, a draw) is placed there,
+/// and an operation on tensors placed there runs there, in f32 — so the
+/// reference answers each case as it answers its twin, within the f32 the
+/// device computes in. (Each step of the vector is exact in f32: `[0, 1,
+/// 2]` squared, scaled and shifted to `[3, 1, 2]`.)
+const GPU_VECTOR: &str = "(linspace[0.0, 2.0, 3] .* linspace[0.0, 2.0, 3] * 1.5 - linspace[0.0, 2.0, 3] * 3.5 + 3.0)";
+const GPU_MATRIX: &str = "reshape[linspace[1.0, 4.0, 4], 2, 2]";
+
+/// The gpu family: every case of the rows, the operators and the forms
+/// (shapes, positions, writes) that is handed the catalog's vector or
+/// matrix, run again with the GPU on (`gpu[]` first, in batches of their
+/// own) and those tensors on the device (`GPU_VECTOR`, `GPU_MATRIX`):
+/// every configuration still agrees, and the reference holds each answer
+/// to its twin's within f32 (`gpu/<twin's id>`). Where no GPU answers,
+/// every tensor stays on the CPU and the twins are their twins' again.
+fn gpu_cases(cases: &[Case], all: &[Val]) -> Vec<Case> {
+    let (vector, matrix) = (&val(all, "vector").expr, &val(all, "matrix").expr);
+    cases
+        .iter()
+        .filter(|c| {
+            let family = c.id.split('/').next().unwrap_or("");
+            matches!(family, "row" | "op" | "shape" | "index" | "index-held" | "write")
+                && c.refer.as_ref().is_some_and(|(_, args)| args.iter().any(|a| a == "vector" || a == "matrix"))
+        })
+        .map(|c| {
+            let mut twin = c.clone();
+            twin.id = format!("gpu/{}", c.id);
+            twin.body = c.body.iter().map(|l| l.replace(matrix.as_str(), GPU_MATRIX).replace(vector.as_str(), GPU_VECTOR)).collect();
+            twin.imports.insert("math");
+            twin.gpu = true;
+            twin
         })
         .collect()
 }

@@ -886,7 +886,7 @@ impl Emitter {
                 "add" => format!("{}.add_scalar({} as f64)", r, l),
                 "sub" => format!("({}).neg().add_scalar({} as f64)", r, l),
                 "mul" | "elemmul" => format!("{}.mul_scalar({} as f64)", r, l),
-                "div" | "elemdiv" => format!("{{ let _t = &{}; crow_runtime::tensor::CrowTensor::from_vec(_t.to_vec().iter().map(|&v| ({} as f64) / v).collect(), _t.shape().to_vec()) }}", r, l),
+                "div" | "elemdiv" => format!("{}.scalar_div({} as f64)", r, l),
                 // (a number raised to each of the tensor's numbers)
                 "elempow" => format!("{{ let _s = {} as f64; {}.map(|x| _s.powf(x)) }}", l, r),
                 _ => format!("{} {} {}", l, op_str, r),

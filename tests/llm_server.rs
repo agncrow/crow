@@ -12,17 +12,6 @@
 use std::io::{Read, Write};
 use std::process::Command;
 
-fn chunked(pieces: &[String]) -> Vec<u8> {
-    let mut out = Vec::new();
-    for p in pieces {
-        out.extend_from_slice(format!("{:x}\r\n", p.len()).as_bytes());
-        out.extend_from_slice(p.as_bytes());
-        out.extend_from_slice(b"\r\n");
-    }
-    out.extend_from_slice(b"0\r\n\r\n");
-    out
-}
-
 /// The whole stream cut into pieces of an odd length, so an event
 /// straddles chunk boundaries (and a multi-byte character may too).
 fn straddled(events: &str, width: usize) -> Vec<String> {
@@ -57,9 +46,19 @@ fn respond(mut stream: std::net::TcpStream, status: &str, body: &str) {
     let _ = stream.write_all(body.as_bytes());
 }
 
+/// The events in chunks of uneven widths, each chunk written on its own
+/// after a pause: an event straddles the reads too, not only the chunks (a
+/// reader that let go of the half event it held, to read the rest, had
+/// lost the event; one write of the whole body had never shown it).
 fn respond_stream(mut stream: std::net::TcpStream, events: &str, width: usize) {
     let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n");
-    let _ = stream.write_all(&chunked(&straddled(events, width)));
+    let _ = stream.flush();
+    for piece in straddled(events, width) {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let _ = write!(stream, "{:x}\r\n{}\r\n", piece.len(), piece);
+        let _ = stream.flush();
+    }
+    let _ = stream.write_all(b"0\r\n\r\n");
 }
 
 fn openai_stream(tool: bool) -> String {

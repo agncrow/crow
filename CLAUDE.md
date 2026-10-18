@@ -59,8 +59,9 @@ steps on every push and must be green.
 
 - `*.csv`, `*.txt`, `*.json` are gitignored. A fixture needs a negation
   rule in `.gitignore` or CI never sees it.
-- `Cargo.lock` is not tracked, and `cargo install` re-resolves unless
-  given `--locked`.
+- `Cargo.lock` is tracked (the release builds `--locked`): a version bump
+  or a dependency change commits it too, and `cargo install` re-resolves
+  unless given `--locked`.
 - The seeded RNG is process-global; tests that draw random numbers take
   the lock in `crow_runtime/src/tensor.rs`'s tests.
 - Map literals are `map[k = v]`; nested numeric literals must be
@@ -633,6 +634,14 @@ steps on every push and must be green.
   program, kept from request to request (`served.rs` `ROUTE_COPY`): a
   handler writes nothing a later request reads, and a stop drops the copy
   (a copy per request had prepared the handler again every time).
+- `sys.leftover[s]` TAKES what a socket holds, and `unread[s, b]` puts
+  bytes back in FRONT of it: a reader that took the leftover and must read
+  more puts back what it holds first. llm's `next` lost every event that
+  straddled two reads, and ws's `recv` lost a message's head when its wait
+  ended inside the message (the next read took the payload for a frame).
+  A test server that writes a whole body at once never shows it:
+  tests/llm_server.rs writes each chunk after a pause, and the check's
+  model (src/selfcheck/llm.rs) writes each chunk's parts apart.
 - A connection's notes are keyed (`note[s, key, text]`, `noted[s, key]`):
   the Postgres driver prepares a statement with parameters once per
   connection under its kinds and text (`statement_sent`, at most 64 names,

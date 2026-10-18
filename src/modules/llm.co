@@ -768,6 +768,10 @@ fn next_piece[s]
             if len[piece] gt 0
                 return piece
         else
+            --- (the event begun is held while the rest of it is read:
+            --- `leftover` takes what the socket holds, and an event that
+            --- straddled two reads had been lost)
+            unread[s, buffer]
             if ended[s]
                 end_call[s]
                 return ''
