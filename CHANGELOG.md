@@ -5,7 +5,11 @@ migrates what it can, and a breaking change bumps the minor version.
 Each release lists what breaks first. This file summarises; the commit
 history says the rest.
 
-## Unreleased
+## v0.7.0 — 2026-10-18
+
+Crow held to itself: `crow check --self` runs about 100,000 cases from the
+compiler's own tables in five configurations, each answer held to the
+spec's, and what it found is fixed. Breaking changes first.
 
 ### Breaking
 
@@ -32,6 +36,43 @@ history says the rest.
   items, `f[f.age gt 30]` (`filter[a, b]` is `a[b]`). A mask that compares
   the frame's own columns is still computed in one pass. A frame's index
   takes a mask alone: `f[0]` and `f['name']` stay refused.
+- `pad`, `append`, `date`, `elapsed`, `today` and `nodes` are unknown
+  names like any other: the messages that named their replacements are
+  gone, and a program may give the names to functions of its own.
+- `-x ^ 2` is `-(x ^ 2)`: the power binds before the sign (`-3 ^ 2` is
+  -9; it had been 9).
+- A matrix's items are its rows: `slice`, `reverse` and `pop` of a matrix
+  take rows (they had counted its numbers), and `sort`, `x in m` and
+  `join` of a matrix are refused.
+- A route's handler answers a response, and a function answers on every
+  path: a handler that answers none is refused in a program that serves
+  (compiled it had been an empty 200), and a function that can end
+  without its value is refused at the line (it had answered `done`
+  interpreted and not built compiled).
+- A response's body is text and its status HTTP's: `text`, `html`,
+  `redirect` and `respond` of another kind are refused (compiled they had
+  not built), and `respond`'s status is 100 to 999 — refused where it is
+  written outside, a stop where it is computed (it had answered 599
+  interpreted and 200 compiled).
+- `later[f, a, b]` in a page's handler is refused: a page's `later[f]`
+  runs `f` on the page's state, which keeps what `f` needs (compiled, the
+  arguments had been dropped and the page had not built). A script's or a
+  server's `later[f, a, b]` is as it was.
+- A select bound to a fact takes only a value it offers (a radio's and a
+  tab's too): a forged event's value is refused, unless a free input binds
+  the same fact.
+- Refused where they are written, in both modes (one had stopped
+  interpreted and not built compiled, or answered differently): a write
+  into text, a frame, a column or a parsed value; a mask as a write's
+  position; an item, a map's value or a record's field of another kind; a
+  function value nothing types, wherever it is handed; a function that
+  takes a function called at two kinds; a field asked of a list that can
+  fail (`csv[…].b`), as one of a list is; `encode` of bytes (it had
+  answered null); handles compared; `tensor / tensor`.
+- A trailing window over times that go back stops, saying where (it had
+  summed rows by no reading of "trailing"); `onehot`'s classes are 1 or
+  more; `moment[seconds]` past 100,000,000 days of 1970 stops (it had
+  clamped to the year 292278994).
 
 ### Added
 
@@ -55,9 +96,37 @@ history says the rest.
   downgrade too), and `--check` says whether a newer one is out. A crow
   installed another way — a checkout's build, `install.sh --dev` or
   `--source` — is left as it is, and the command says how it upgrades.
+- `crow check --self` holds Crow to itself, mechanically: about 100,000
+  cases written from the compiler's own tables — every builtin with the
+  kinds it takes and their edges (one parameter at a time and two at
+  once), every collection at every kind of index, every operator over
+  every pair of operands, the shapes and the paths a value takes — and
+  families for served routes, views drawn as pages, pages driven by their
+  events, files, random draws, gradients, the GPU, the standard library's
+  own layer, both database drivers and a WebSocket server, a mail server
+  and a language model of the check's own, with the standard modules' and
+  the packages' own tests. Each runs in five configurations that must
+  agree (interpreted, walked, unfused, unmoved, compiled), and each answer
+  is held to the spec's by a reference written in Python
+  (tests/self/reference.py: libm, numpy, scipy, pyarrow, hashlib, hmac,
+  re, Python's HTML parser). Any finding fails the gate, and the lists of
+  builtins no case calls, no reference answers and forms no case reaches
+  only shrink (docs/crow-check.md).
+- `json` of a parsed value in a program that serves answers it as it is:
+  `json[json[req.body]]` echoes a body.
+- A view called outside views answers its markup, in both modes: logged,
+  held in a variable, measured.
+- A tool only handed to a model is typed by what its body reads: a
+  parameter handed to `upper` is text, and its schema says so (only a
+  call had typed one).
 
 ### Changed
 
+- A call evaluates every argument, left to right, before the leftmost
+  failure is its value, in both modes (the compiled program had skipped
+  the arguments after a failed one).
+- A tensor divided by a number divides each number (it had multiplied by
+  the reciprocal and rounded twice: `[3.0] / 2.5` was 1.2000000000000002).
 - The runtime bundle carries only what macOS arm64 and Linux x86_64
   build: every other vendored package (Windows', WebAssembly's and a few
   more) is a stub of its manifest, which cargo still reads, and the
@@ -100,6 +169,50 @@ history says the rest.
   serves pages to run from its file.
 - Dependencies with security advisories updated: rustls and its
   certificate checker, rand, and (through Parquet) Thrift; OpenSSL is gone.
+- `follow` and `next` lost a piece of a model's reply whenever one of its
+  events straddled two reads of the connection, and `recv` of a socket
+  lost a message when a wait ended inside it: what a reader held is put
+  back before it reads more.
+- With the GPU on (`gpu[]`), a view of a tensor placed there — a
+  transpose, a slice — is its own numbers: it had been read, multiplied
+  and taken `exp` of as the storage under it (`transpose[m]` was `m`,
+  `slice[v, -2, 3]` the first two). A number taken from or divided by a
+  tensor there is one operation in both modes (they had shown different
+  digits, and `sigmoid` and `softmax` with them), and a small number
+  reaches the device as itself (`t * 1e-12` had multiplied by 0).
+- A name two imported modules give, called with a kind neither module's
+  row takes — `load` of a tensor under `use frame, math` — is refused as
+  one module's call is; it had stopped interpreted and not built compiled.
+- `grad` of a function through `floor`, `ceil`, `round` or `abs` runs in
+  both modes (the interpreter had not run the whole number's form on a
+  dual number, and the compiled program had not built).
+- `factorial` and `gamma` of a whole number are exact (`factorial[3]` had
+  been 6.000000000000007).
+- A compiled page draws a child of any kind — a tensor, a map, a record, a
+  moment, a parsed value, a frame, a column — as the text `log` writes for
+  it (it had not built); the interpreter takes as attributes only the map
+  written first in an element (it had taken every map child so), draws a
+  missing cell as missing (it had drawn 0), and both escape a quote alike;
+  `class = ''` writes no class in both.
+- A record fact's field written in a handler is stored (interpreted it
+  had stopped, compiled it had changed nothing the page saw).
+- `stream[feed, 2 ^ 100]` and `later[f, 2 ^ 70]` hand the whole number on
+  (they had stopped at 64 bits); `msgpack` of a decimal builds; `json` of a
+  map with int keys answers (it had been a 500 interpreted); a tensor
+  holding 2^63 is encoded as 2^63.
+- `linspace` ends at its end; `norm` of nothing is 0 (it had been -0);
+  `conv` of nothing stops with its reason (it had overflowed); `floor`,
+  `ceil` and `round` of an int past 64 bits is itself; `push` or `set` of
+  one onto 64-bit ints holds it; a wait past what a clock holds is none
+  (it had panicked).
+- Programs that had not built compiled now do: an int literal past 64
+  bits, `.^` with a number on its left, a list or a map of ints written a
+  float, a write into a map with int keys, a response logged, a tensor
+  beside a failed number, `describe` inside a function, and a function
+  handed the answer of another called at two kinds.
+- One mistake is one message: a function value nothing types, and a rank
+  the unknown value reached, are no longer said beside the misspelling
+  that caused them.
 
 ## v0.6.1 — 2026-10-14
 
