@@ -132,6 +132,36 @@ impl Ty {
         Ty::Tensor(Box::new(elem), Some(vec![None]))
     }
 
+    /// A mask of any depth: a list of bools, or a list of masks (a matrix
+    /// compared with a number answers its rows of bools).
+    pub fn is_truths(&self) -> bool {
+        match self {
+            Ty::List(item) => matches!(item.as_ref(), Ty::Bool) || item.is_truths(),
+            _ => false,
+        }
+    }
+
+    /// How many lists deep a mask is (a list of bools: 1).
+    pub fn truths_depth(&self) -> usize {
+        match self {
+            Ty::List(item) if item.is_truths() => 1 + item.truths_depth(),
+            Ty::List(_) => 1,
+            _ => 0,
+        }
+    }
+
+    /// The mask a tensor compared with a number answers: of the tensor's
+    /// shape — a list of bools for a vector (and for a tensor whose rank the
+    /// type does not say: the lowering refuses that comparison), a list of
+    /// rows of bools for a matrix, deeper for more axes.
+    pub fn mask_of(&self) -> Ty {
+        let rank = match self.payload() {
+            Ty::Tensor(_, Some(dims)) => dims.len().max(1),
+            _ => 1,
+        };
+        (0..rank).fold(Ty::Bool, |m, _| Ty::List(Box::new(m)))
+    }
+
     /// A tensor's shape, of a tensor or of one that can fail, when its type
     /// knows it.
     pub fn tensor_dims(&self) -> Option<&crate::type_infer::Dims> {

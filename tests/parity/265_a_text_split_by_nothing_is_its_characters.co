@@ -1,0 +1,17 @@
+--- `split[s, '']` is the text's characters, as `len` and `slice` count
+--- them — no empty piece at either end, and none at all of empty text
+--- (there had been an empty piece at each end, as Rust's own splitting
+--- answers, which every walk over characters had stepped around). A
+--- separator that is text splits as it did: its empty pieces are the
+--- text's own.
+s = 'héllo'
+cs = split[s, '']
+log[cs]
+log[len[cs] eq len[s]]
+log[split['', '']]
+log[len[split['', '']]]
+log[split[',a,', ',']]
+n = 0
+for c in split['abc', '']
+    n = n + len[c]
+log[n]

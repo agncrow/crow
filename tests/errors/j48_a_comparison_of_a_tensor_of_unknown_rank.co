@@ -1,0 +1,8 @@
+--- a tensor whose rank the program does not show, compared with a number: its mask's shape is decided by nothing
+use math
+
+struct Holder [t]
+
+a = Holder[[1.0, 2.0]]
+b = Holder[[[1.0, 2.0], [3.0, 4.0]]]
+log[b.t gt 2.0]

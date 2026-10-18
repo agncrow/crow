@@ -61,9 +61,8 @@ use bits
 fn fnv[s]
     h = 2166136261
     for c in split[s, '']
-        if c ne ''
-            h = bitxor[h, code[c]]
-            h = h * 16777619 % 4294967296
+        h = bitxor[h, code[c]]
+        h = h * 16777619 % 4294967296
     return h
 
 log[fnv['crow']]

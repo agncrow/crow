@@ -1,0 +1,21 @@
+--- `min` and `max` answer NaN where a NaN is held — of a tensor, along an
+--- axis, of two numbers — as numpy's and IEEE 754's minimum and maximum
+--- do and as `sum` carries one (a NaN had been passed over); and a tensor
+--- of no numbers has no smallest or largest, so the program stops there,
+--- as numpy and Python raise (it had answered inf and -inf). Both modes
+--- alike.
+use math
+
+n = [1.0, 0.0 / 0.0, 3.0]
+log[min[n]]
+log[max[n]]
+log[sum[n]]
+log[max[2.0, 0.0 / 0.0]]
+log[min[0.0 / 0.0, 2.0]]
+log[max[[[1.0, 2.0], [3.0, 0.0 / 0.0]], 1]]
+log[min[[4.0, 2.0]]]
+log[max[[4, 9, 2]]]
+none = tensor[[]]
+log[len[none]]
+log[max[none]]
+log['not reached']

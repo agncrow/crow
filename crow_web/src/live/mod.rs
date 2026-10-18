@@ -39,7 +39,7 @@ enum LiveAction {
     /// A poll timer fired — time to re-fetch data sources.
     PollTick,
     /// A later[] background fn finished — apply its state writes.
-    LaterDelta(Vec<(String, serde_json::Value)>),
+    LaterDelta(LaterDone),
     /// The serve[…, refresh = N] interval fired — re-render this session.
     RefreshTick,
     /// A background recompute landed, or another session wrote a table
@@ -365,7 +365,7 @@ pub struct CrowLiveState {
     /// Registered data sources (fetch/poll).
     pub sources: Vec<DataSource>,
     /// Session-scoped channel delivering later[] state deltas to the live loop.
-    pub later_tx: Option<tokio::sync::mpsc::UnboundedSender<Vec<(String, serde_json::Value)>>>,
+    pub later_tx: Option<tokio::sync::mpsc::UnboundedSender<LaterDone>>,
     /// Distinguishes sessions in the later[] in-flight registry.
     pub session_id: u64,
     /// MODE_RENDER while a render reads, MODE_FRESH otherwise
@@ -906,6 +906,24 @@ fn later_registry() -> &'static std::sync::Mutex<std::collections::HashSet<Strin
     static R: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
         std::sync::OnceLock::new();
     R.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
+/// The schedules asked for again while in flight: each runs once more when
+/// it ends (spec §15, coalesced). Locked only while `later_registry` is
+/// held, so "it ended with nothing asked" and "it was asked again" are one
+/// decision.
+fn later_pending() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    static P: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    P.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
+/// What a schedule's run sends the page's loop: the facts it changed, and,
+/// when it was asked for again while it ran, the function to run once more
+/// from the state as it then stands (an upload sends its record alone).
+pub struct LaterDone {
+    pub delta: Vec<(String, serde_json::Value)>,
+    pub again: Option<(String, fn(&mut CrowLiveState))>,
 }
 
 /// A bound field or slider always sends its value as text. Store it in the
@@ -2273,46 +2291,84 @@ impl CrowLiveState {
         Ok(value)
     }
 
-    /// Schedule a background fn for this session (skip-if-running). The fn
-    /// runs against a snapshot of state on its own thread; the keys it
-    /// changed are sent back to the live loop, which applies them and
-    /// re-renders. State never mutates concurrently.
+    /// Schedule a background fn for this session, coalesced (spec §15): the
+    /// fn runs against a snapshot of state on its own thread, and the keys
+    /// it changed are sent back to the live loop, which applies them and
+    /// re-renders — state never mutates concurrently. Asked for again while
+    /// it runs, it runs once more when it ends, from the state as it then
+    /// stands, however many ask meanwhile (a schedule skipped in flight had
+    /// left a page with the earlier run's answer, where the interpreter,
+    /// running each inline, showed the latest).
     pub fn spawn_later(&mut self, name: &str, f: fn(&mut CrowLiveState)) -> bool {
         // a handler's schedule waits for its commit, and a stop drops it
         if self.copy {
-            if !self.later_running(name) {
-                self.held.push(Held::Later(name.to_string(), f));
-            }
+            self.held.push(Held::Later(name.to_string(), f));
             return true;
         }
         let key = format!("{}:{}", self.session_id, name);
         {
             let mut reg = crow_runtime::lock(later_registry());
-            if !reg.insert(key.clone()) {
-                return false;
+            if reg.contains(&key) {
+                crow_runtime::lock(later_pending()).insert(key);
+                return true;
             }
+            reg.insert(key.clone());
         }
+        self.run_later(key, name.to_string(), f);
+        true
+    }
+
+    /// The run a schedule asked for again starts, from the loop's state as
+    /// it stands once the last run's writes landed (its key still in
+    /// flight).
+    pub fn rerun_later(&mut self, name: &str, f: fn(&mut CrowLiveState)) {
+        let key = format!("{}:{}", self.session_id, name);
+        crow_runtime::lock(later_registry()).insert(key.clone());
+        self.run_later(key, name.to_string(), f);
+    }
+
+    /// One run of a schedule, on a thread of its own. Its writes are sent
+    /// before its key leaves the registry, so a reader that sees it no
+    /// longer running has them (the harness's settle); a run asked for
+    /// again meanwhile stays in flight and asks the loop for the next one.
+    fn run_later(&self, key: String, name: String, f: fn(&mut CrowLiveState)) {
         let mut snapshot = self.clone();
         let tx = self.later_tx.clone();
         std::thread::spawn(move || {
-            struct InFlight(String);
+            // (a run that panics is let go, and what was asked of it with it)
+            struct InFlight(Option<String>);
             impl Drop for InFlight {
                 fn drop(&mut self) {
-                    crow_runtime::lock(later_registry()).remove(&self.0);
+                    if let Some(k) = self.0.take() {
+                        let mut reg = crow_runtime::lock(later_registry());
+                        crow_runtime::lock(later_pending()).remove(&k);
+                        reg.remove(&k);
+                    }
                 }
             }
-            let _guard = InFlight(key);
+            let mut guard = InFlight(Some(key));
             let before = snapshot.facts_map();
             // a scheduled function is one event and one transaction of its own
             crow_runtime::txn::begin();
             crow_runtime::moments::at(crow_runtime::moments::clock(), || f(&mut snapshot));
             let _ = crow_runtime::txn::finish(!snapshot.is_stopped());
             let delta: Vec<(String, serde_json::Value)> = snapshot.facts_map().into_iter().filter(|(k, v)| before.get(k) != Some(v)).collect();
-            if let Some(tx) = tx {
-                let _ = tx.send(delta);
+            let Some(tx) = tx else { return };
+            let _ = tx.send(LaterDone { delta, again: None });
+            let Some(k) = guard.0.take() else { return };
+            let again = {
+                let mut reg = crow_runtime::lock(later_registry());
+                let asked = crow_runtime::lock(later_pending()).remove(&k);
+                if !asked {
+                    reg.remove(&k);
+                }
+                asked
+            };
+            if again && tx.send(LaterDone { delta: Vec::new(), again: Some((name, f)) }).is_err() {
+                // (the page's loop is gone: nothing will run it again)
+                crow_runtime::lock(later_registry()).remove(&k);
             }
         });
-        true
     }
 
     /// Is a later[] schedule for this session still in flight?
@@ -3441,9 +3497,7 @@ where
                             last_head = head;
                             send_first = true;
                         }
-                        let (later_tx, mut later_rx) = tokio::sync::mpsc::unbounded_channel::<
-                            Vec<(String, serde_json::Value)>,
-                        >();
+                        let (later_tx, mut later_rx) = tokio::sync::mpsc::unbounded_channel::<LaterDone>();
                         state.later_tx = Some(later_tx);
                         // what wakes this loop: a recompute landing, another
                         // session writing a table this page reads
@@ -3645,9 +3699,14 @@ where
                                         }
                                     }
                                 }
-                                LiveAction::LaterDelta(delta) => {
-                                    for (k, v) in delta {
+                                LiveAction::LaterDelta(done) => {
+                                    for (k, v) in done.delta {
                                         state.set(&k, v);
+                                    }
+                                    // (asked for again while it ran: once more,
+                                    // from the state its writes left)
+                                    if let Some((name, f)) = done.again {
+                                        state.rerun_later(&name, f);
                                     }
                                     render = true;
                                 }
@@ -4022,7 +4081,7 @@ where
                         // the field's variable holds the file, as the page's
                         // next render shows
                         let record = serde_json::json!({ "name": up.name, "type": up.kind, "size": up.size.to_string(), "path": path });
-                        let _ = up.tx.send(vec![(up.key, record)]);
+                        let _ = up.tx.send(LaterDone { delta: vec![(up.key, record)], again: None });
                         axum::http::StatusCode::NO_CONTENT.into_response()
                     }
                     Err(e) => {
@@ -4268,6 +4327,56 @@ mod tests {
         assert!(!resumed, "a page's own session: its page already shows the render");
         assert!(pending.claim(&token).is_none(), "a token claims once");
         assert!(pending.claim("not-a-token").is_none());
+    }
+
+    /// A schedule asked for again while it runs runs once more when it ends,
+    /// from the state its run left, however many ask meanwhile: three asks
+    /// are two runs, the second reading the first's write (spec §15). A
+    /// schedule in flight had been skipped, and the page had kept the first
+    /// run's answer where the interpreter, running each inline, showed the
+    /// latest.
+    #[test]
+    fn a_later_asked_while_it_runs_runs_once_more() {
+        fn bump(s: &mut CrowLiveState) {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            let n = s.get_i64("n", 0);
+            s.set("n", serde_json::json!(n + 1));
+        }
+        let mut state = CrowLiveState::new();
+        state.session_id = next_session_id();
+        state.set("n", serde_json::json!(0));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<LaterDone>();
+        state.later_tx = Some(tx);
+        assert!(state.spawn_later("bump", bump));
+        assert!(state.later_running("bump"));
+        assert!(state.spawn_later("bump", bump), "asked again while it runs: taken, to run once more");
+        assert!(state.spawn_later("bump", bump));
+        let land = |state: &mut CrowLiveState, rx: &mut tokio::sync::mpsc::UnboundedReceiver<LaterDone>| {
+            while let Ok(done) = rx.try_recv() {
+                for (k, v) in done.delta {
+                    state.set(&k, v);
+                }
+                if let Some((name, f)) = done.again {
+                    state.rerun_later(&name, f);
+                }
+            }
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while state.later_running("bump") {
+            assert!(std::time::Instant::now() < deadline, "the runs end");
+            land(&mut state, &mut rx);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        land(&mut state, &mut rx);
+        assert_eq!(state.get_i64("n", -1), 2, "the run, then once more from its write");
+        assert!(state.spawn_later("bump", bump), "and a schedule after it ended runs anew");
+        while state.later_running("bump") {
+            assert!(std::time::Instant::now() < deadline, "the run ends");
+            land(&mut state, &mut rx);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        land(&mut state, &mut rx);
+        assert_eq!(state.get_i64("n", -1), 3);
     }
 
     /// A session whose socket closed waits for its tab under the token the

@@ -106,7 +106,7 @@ pub struct Upload {
     pub name: String,
     pub kind: String,
     pub size: u64,
-    pub tx: tokio::sync::mpsc::UnboundedSender<Vec<(String, serde_json::Value)>>,
+    pub tx: tokio::sync::mpsc::UnboundedSender<super::LaterDone>,
 }
 
 fn expected() -> &'static Mutex<HashMap<String, (Instant, Upload)>> {

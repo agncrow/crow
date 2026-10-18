@@ -535,6 +535,126 @@ fn eval(node: &Node, f: &CrowFrame, values: &[Cell], start: usize, out: &mut [bo
     }
 }
 
+// ── a mask of a tensor's shape ──────────────────────────────────────
+
+/// A mask of any depth: a bool, or a list of masks of one shape. A tensor
+/// compared with a number answers one of the tensor's own shape — a list
+/// of bools for a vector, its rows of bools for a matrix (spec, Boolean
+/// Masks: a matrix's had been one flat list of its numbers' answers, which
+/// `where` read as a vector and no index of the matrix took) — and every
+/// reading walks it in row order. The compiled program's masks are these;
+/// the interpreter keeps the same shape in its own values.
+pub trait Truths: Clone {
+    /// How many lists deep it is (a bool: none).
+    fn depth() -> usize;
+    /// Its truths, in row order, onto `out`.
+    fn truths_into(&self, out: &mut Vec<bool>);
+    /// Its shape: each list's length, every list at one depth one length,
+    /// or the reason (a list of rows of two lengths is no mask's).
+    fn shape_of(&self) -> Result<Vec<usize>, String>;
+    /// Made of truths in row order, to a shape of its depth.
+    fn of_truths(flat: &mut std::slice::Iter<'_, bool>, shape: &[usize]) -> Self;
+    /// Each truth turned.
+    fn each(&self, f: &dyn Fn(bool) -> bool) -> Self;
+    /// Two masks of one shape, truth by truth, or the reason.
+    fn with(&self, other: &Self, f: &dyn Fn(bool, bool) -> bool) -> Result<Self, String>;
+}
+
+impl Truths for bool {
+    fn depth() -> usize {
+        0
+    }
+    fn truths_into(&self, out: &mut Vec<bool>) {
+        out.push(*self);
+    }
+    fn shape_of(&self) -> Result<Vec<usize>, String> {
+        Ok(Vec::new())
+    }
+    fn of_truths(flat: &mut std::slice::Iter<'_, bool>, _shape: &[usize]) -> Self {
+        flat.next().copied().unwrap_or(false)
+    }
+    fn each(&self, f: &dyn Fn(bool) -> bool) -> Self {
+        f(*self)
+    }
+    fn with(&self, other: &Self, f: &dyn Fn(bool, bool) -> bool) -> Result<Self, String> {
+        Ok(f(*self, *other))
+    }
+}
+
+impl<T: Truths> Truths for Vec<T> {
+    fn depth() -> usize {
+        1 + T::depth()
+    }
+    fn truths_into(&self, out: &mut Vec<bool>) {
+        for x in self {
+            x.truths_into(out);
+        }
+    }
+    fn shape_of(&self) -> Result<Vec<usize>, String> {
+        let inner = match self.first() {
+            Some(first) => first.shape_of()?,
+            None => vec![0; T::depth()],
+        };
+        for x in self.iter().skip(1) {
+            if x.shape_of()? != inner {
+                return Err("a mask's rows are of different lengths".to_string());
+            }
+        }
+        let mut shape = vec![self.len()];
+        shape.extend(inner);
+        Ok(shape)
+    }
+    fn of_truths(flat: &mut std::slice::Iter<'_, bool>, shape: &[usize]) -> Self {
+        let (n, rest) = match shape.split_first() {
+            Some((n, rest)) => (*n, rest),
+            None => (0, &[][..]),
+        };
+        (0..n).map(|_| T::of_truths(flat, rest)).collect()
+    }
+    fn each(&self, f: &dyn Fn(bool) -> bool) -> Self {
+        self.iter().map(|x| x.each(f)).collect()
+    }
+    fn with(&self, other: &Self, f: &dyn Fn(bool, bool) -> bool) -> Result<Self, String> {
+        if self.len() != other.len() {
+            return Err(format!("masks of {} and {} items are joined truth by truth: they must be one shape", self.len(), other.len()));
+        }
+        self.iter().zip(other).map(|(a, b)| a.with(b, f)).collect()
+    }
+}
+
+/// The mask of a tensor's shape its numbers' answers make (in row order).
+pub fn shaped<T: Truths>(flat: Vec<bool>, shape: &[usize]) -> T {
+    // (a vector's mask is the answers as they are; a number's — no axes —
+    // one answer in a list, as a vector of one)
+    let shape: Vec<usize> = if shape.is_empty() { vec![flat.len()] } else { shape.to_vec() };
+    T::of_truths(&mut flat.iter(), &shape)
+}
+
+/// `not` of a mask: each truth turned.
+pub fn negated<T: Truths>(m: &T) -> T {
+    m.each(&|b| !b)
+}
+
+/// `and`/`or` of two masks of one shape, or the reason.
+pub fn joined<T: Truths>(a: &T, b: &T, both: bool) -> Result<T, String> {
+    a.with(b, &|x, y| if both { x && y } else { x || y })
+}
+
+/// `and`/`or` of a mask and one bool: each truth joined with it.
+pub fn joined_with<T: Truths>(m: &T, s: bool, both: bool) -> T {
+    m.each(&|x| if both { x && s } else { x || s })
+}
+
+/// A mask where numbers are taken: true 1, false 0, of its own shape (a
+/// list of rows of bools is a matrix, as a list of bools is a vector), or
+/// the reason its rows are not one length.
+pub fn tensor_of<T: Truths>(m: &T) -> Result<crate::tensor::CrowTensor, String> {
+    let shape = m.shape_of()?;
+    let mut flat = Vec::new();
+    m.truths_into(&mut flat);
+    Ok(crate::tensor::CrowTensor::from_vec(flat.into_iter().map(|b| if b { 1.0 } else { 0.0 }).collect(), shape))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

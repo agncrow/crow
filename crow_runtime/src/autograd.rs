@@ -563,12 +563,12 @@ fn extreme(a: &Traced, value: f64, better: impl Fn(f64, f64) -> bool) -> Traced 
 
 /// `max[t]`: a number.
 pub fn max(a: &Traced) -> Traced {
-    extreme(a, crate::math::max(&a.value), |x, best| x > best)
+    extreme(a, a.value.max(), |x, best| x > best)
 }
 
 /// `min[t]`: a number.
 pub fn min(a: &Traced) -> Traced {
-    extreme(a, crate::math::min(&a.value), |x, best| x < best)
+    extreme(a, a.value.min(), |x, best| x < best)
 }
 
 /// `max[t, axis = k]`.

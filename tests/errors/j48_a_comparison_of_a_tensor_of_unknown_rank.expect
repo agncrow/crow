@@ -1,0 +1,3 @@
+j48_a_comparison_of_a_tensor_of_unknown_rank.co:8:1: a comparison with a number of `b.t` makes a mask of its shape by its rank, and the rank of `b.t` is not known here — state it: reshape[t, rows, columns] for a matrix, flatten[t] for a vector
+  8 │ log[b.t gt 2.0]
+    │ ^^^^^^^^^^^^^^^

@@ -1562,6 +1562,8 @@ pub static ROWS: &[Row] = &[
     // index's own rows, reached by the lowering, never by name
     row!("core.__pick_items", "", "__pick_items", crow_runtime::core::pick_items, (Seq, Bools) -> List, stops),
     row!("core.__pick_rows", "", "__pick_rows", crow_runtime::math::pick_rows, (Tensor, Bools) -> Tensor, stops),
+    // (a tensor of two axes or more by a mask of its shape: its numbers)
+    row!("core.__pick_numbers", "", "__pick_numbers", crow_runtime::math::pick_numbers, (Tensor, Tensor) -> Tensor, stops),
     row!("core.__pick_cells", "", "__pick_cells", crow_runtime::frames::pick_cells, (Column, Bools) -> Column, stops),
     // the rest of a call's arguments gathered for a function written in
     // Crow, where one of them can fail — reached by the lowering
@@ -1848,9 +1850,9 @@ pub static ROWS: &[Row] = &[
     row!("math.sum_axis", "math", "sum", crow_runtime::math::sum_axis, (Tensor, Int) -> Tensor, stops),
     row!("math.mean", "math", "mean", crow_runtime::math::mean, (Tensor) -> Float, never),
     row!("math.mean_axis", "math", "mean", crow_runtime::math::mean_axis, (Tensor, Int) -> Tensor, stops),
-    row!("math.min", "math", "min", crow_runtime::math::min, (Tensor) -> Float, never),
+    row!("math.min", "math", "min", crow_runtime::math::min, (Tensor) -> Float, stops),
     row!("math.min_axis", "math", "min", crow_runtime::math::min_axis, (Tensor, Int) -> Tensor, stops),
-    row!("math.max", "math", "max", crow_runtime::math::max, (Tensor) -> Float, never),
+    row!("math.max", "math", "max", crow_runtime::math::max, (Tensor) -> Float, stops),
     row!("math.max_axis", "math", "max", crow_runtime::math::max_axis, (Tensor, Int) -> Tensor, stops),
     row!("math.prod", "math", "prod", crow_runtime::math::prod, (Tensor) -> Float, never),
     row!("math.prod_axis", "math", "prod", crow_runtime::math::prod_axis, (Tensor, Int) -> Tensor, stops),
@@ -2497,6 +2499,10 @@ impl Arg {
             Ty::Fraction => Arg::Fraction,
             Ty::Moment => Arg::Moment,
             Ty::Json => Arg::Json,
+            // a mask of a matrix's shape (its rows of bools, deeper for more
+            // axes) is numbers where numbers are taken, as a list of bools
+            // is: a matrix of 1 and 0
+            Ty::List(_) if t.truths_depth() >= 2 => Arg::Rows,
             Ty::List(inner) => match inner.as_ref() {
                 Ty::Unknown => Arg::AnyList,
                 Ty::Result(item) if matches!(item.as_ref(), Ty::Int | Ty::Float) => Arg::FallibleNumbers,

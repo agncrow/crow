@@ -1,0 +1,25 @@
+--- A tensor compared with a number is a mask of its shape (spec, Boolean
+--- Masks): a matrix's is its rows of bools, deeper for more axes, as
+--- numpy's is. `where` over it keeps the matrix (it had answered a vector
+--- of the four numbers), `sum` counts it, `not`, `and` and `or` keep its
+--- rows, and a matrix indexed by a mask of its shape is its numbers where
+--- the mask is true (it had stopped: a mask of four picked from two rows).
+use math
+
+m = [[1.0, 2.0], [3.0, 4.0]]
+k = m gt 2.0
+log[k]
+log[len[k]]
+log[where[m gt 2.0, m, 0.0 * m]]
+log[sum[m gt 2.0]]
+log[not (m gt 2.0)]
+log[(m gt 1.0) and (m lt 4.0)]
+log[(m gt 1.0) or false]
+log[m[m gt 2.0]]
+log[3.0 lt m]
+v = [1.0, 5.0]
+log[v[v gt 2.0]]
+t3 = reshape[linspace[1.0, 8.0, 8], 2, 2, 2]
+log[t3 gt 4.0]
+log[t3[t3 gt 6.0]]
+log[m[m gt 9.0]]

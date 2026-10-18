@@ -108,6 +108,9 @@ pub(super) fn call_dims(name: &str, args: &[Expr]) -> Option<Dims> {
 /// matrix); none where the rows' rank shows only as the program runs.
 pub(super) fn stacked_dims(list: &Ty) -> Option<Dims> {
     match list.payload() {
+        // (a mask of a matrix's shape: a matrix of 1 and 0, deeper for more
+        // axes)
+        t @ Ty::List(_) if t.truths_depth() >= 2 => Some(vec![None; t.truths_depth()]),
         Ty::List(item) => match item.payload() {
             Ty::Tensor(_, Some(d)) => Some(std::iter::once(None).chain(d.iter().cloned()).collect()),
             Ty::List(inner) if matches!(inner.payload(), Ty::Int | Ty::Float) => Some(vec![None, None]),
@@ -331,7 +334,13 @@ impl<'a> Lowerer<'a> {
             },
             _ => "the tensor".to_string(),
         };
-        let read = if what.starts_with("a loop") { "walks rows or numbers" } else { "reads a row or a number" };
+        let read = if what.starts_with("a loop") {
+            "walks rows or numbers"
+        } else if what.starts_with("a comparison") {
+            "makes a mask of its shape"
+        } else {
+            "reads a row or a number"
+        };
         self.refuse(format!(
             "{} {} {} by its rank, and the rank of {} is not known here — state it: reshape[t, rows, columns] for a matrix, flatten[t] for a vector",
             what, name, read, name

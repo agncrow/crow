@@ -81,6 +81,21 @@ Filtering uses ordinary Crow expressions that evaluate to boolean arrays. These 
 - `and` / `or` — two boolean arrays → boolean array; a bool and a boolean array → each item joined with the bool
 - `not` — boolean array → boolean array
 
+A tensor compared with a number is a mask of the tensor's shape, as numpy's
+is: a vector's is a list of bools, a matrix's its rows of bools —
+`[[1.0, 2.0], [3.0, 4.0]] gt 2.0` is `[[false, false], [true, true]]` — and
+deeper for more axes. It keeps that shape through `not`, `and` and `or`
+(two masks of one shape join truth by truth; of two shapes the program
+stops), where numbers are taken it is a tensor of that shape — true 1,
+false 0 — so `where[m gt 0.0, m, 0.0 * m]` is a matrix and `sum[m gt 2.0]`
+counts, and a matrix indexed by a mask of its shape is its numbers where
+the mask is true, in row order (see Indexing). A tensor whose rank the
+program does not show — a field given a vector in one place and a matrix
+in another — compared with a number is refused, naming it: its mask's
+shape would be decided by nothing (`reshape` or `flatten` it first). (Until
+2026-10-18 a matrix's mask had been one flat list of its numbers' answers:
+`where` over it answered a vector, and no index of the matrix took it.)
+
 ```
 use frame
 df = load['people.csv']

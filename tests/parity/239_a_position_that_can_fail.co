@@ -5,8 +5,7 @@
 xs = ['a', 'b', 'c', 'd']
 out = []
 for ch in split['0213', '']
-    if ch ne ''
-        out = push[out, xs[int[ch]]]
+    out = push[out, xs[int[ch]]]
 log[out]
 
 fn pick[t, ys]

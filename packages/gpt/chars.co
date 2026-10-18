@@ -2,11 +2,9 @@
 --- data: the vocabulary is the text's distinct characters in sorted order,
 --- a text encodes to the index of each character, and ids decode back.
 
---- the text's characters (a text split into its characters has an empty
---- end on each side)
+--- the text's characters
 fn characters[text]
-    split_up = split[text, '']
-    return slice[split_up, 1, len[split_up] - 1]
+    return split[text, '']
 
 --- the vocabulary: the distinct characters, sorted
 fn vocab[text]

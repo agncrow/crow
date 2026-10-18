@@ -26,7 +26,7 @@ struct Session {
     /// The session's moment, held by the test (`change[a, 'now', t]`), or
     /// the wall clock when the test never set one.
     clock: Option<f64>,
-    later: tokio::sync::mpsc::UnboundedReceiver<Vec<(String, serde_json::Value)>>,
+    later: tokio::sync::mpsc::UnboundedReceiver<LaterDone>,
 }
 
 struct Control {
@@ -47,15 +47,25 @@ impl Session {
     fn settle(&mut self) {
         let prefix = format!("{}:", self.state.session_id);
         for _ in 0..2000 {
+            self.land();
             let running = later_registry().lock().unwrap_or_else(|p| p.into_inner()).iter().any(|k| k.starts_with(&prefix));
             if !running {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        while let Ok(delta) = self.later.try_recv() {
-            for (k, v) in delta {
+        self.land();
+    }
+
+    /// The writes runs sent, applied as the page's loop applies them — and a
+    /// schedule asked for again while it ran, run once more from here.
+    fn land(&mut self) {
+        while let Ok(done) = self.later.try_recv() {
+            for (k, v) in done.delta {
                 self.state.set(&k, v);
+            }
+            if let Some((name, f)) = done.again {
+                self.state.rerun_later(&name, f);
             }
         }
     }

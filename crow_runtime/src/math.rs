@@ -276,24 +276,42 @@ pub fn mean_axis(t: &CrowTensor, ax: i64) -> Result<CrowTensor, String> {
     Ok(t.mean_axis(axis("mean", t, ax)?))
 }
 
-/// `min[t]` of a tensor.
-pub fn min(t: &CrowTensor) -> f64 {
-    t.min()
+/// `min[t]` of a tensor: its smallest number, NaN where it holds one (as
+/// numpy's); of none the program stops, as numpy's and Python's raise — no
+/// number is the smallest (it had answered +inf).
+pub fn min(t: &CrowTensor) -> Result<f64, String> {
+    if t.len() == 0 {
+        return Err("min of nothing: an empty tensor has no smallest number".to_string());
+    }
+    Ok(t.min())
 }
 
-/// `min[t, axis]`.
+/// `min[t, axis]`: an axis of no numbers stops the program, as `min[t]` of
+/// none does.
 pub fn min_axis(t: &CrowTensor, ax: i64) -> Result<CrowTensor, String> {
-    Ok(t.min_axis(axis("min", t, ax)?))
+    let a = axis("min", t, ax)?;
+    if t.shape().get(a) == Some(&0) {
+        return Err(format!("min along axis {} of nothing: an empty axis has no smallest number", a));
+    }
+    Ok(t.min_axis(a))
 }
 
-/// `max[t]` of a tensor.
-pub fn max(t: &CrowTensor) -> f64 {
-    t.max()
+/// `max[t]` of a tensor: its largest number, NaN where it holds one; of
+/// none the program stops (it had answered -inf).
+pub fn max(t: &CrowTensor) -> Result<f64, String> {
+    if t.len() == 0 {
+        return Err("max of nothing: an empty tensor has no largest number".to_string());
+    }
+    Ok(t.max())
 }
 
-/// `max[t, axis]`.
+/// `max[t, axis]`: an axis of no numbers stops the program.
 pub fn max_axis(t: &CrowTensor, ax: i64) -> Result<CrowTensor, String> {
-    Ok(t.max_axis(axis("max", t, ax)?))
+    let a = axis("max", t, ax)?;
+    if t.shape().get(a) == Some(&0) {
+        return Err(format!("max along axis {} of nothing: an empty axis has no largest number", a));
+    }
+    Ok(t.max_axis(a))
 }
 
 /// `prod[t]`.
@@ -349,6 +367,19 @@ pub fn unique(t: &CrowTensor) -> CrowTensor {
 /// The rows of a matrix, or the numbers of a vector, where the mask is
 /// true: `t[labels eq j]` (spec, Arrays). A mask of another length than the
 /// tensor's first axis stops.
+/// `t[mask]` of a tensor of two axes or more by a mask of its own shape
+/// (what `t gt x` answers): its numbers where the mask is true, in row
+/// order, as a vector — numpy's boolean index. A mask of another shape
+/// stops. The mask arrives as its numbers (true 1, false 0).
+pub fn pick_numbers(t: &CrowTensor, mask: &CrowTensor) -> Result<CrowTensor, String> {
+    if t.shape() != mask.shape() {
+        return Err(format!("a mask of shape {:?} picks from a tensor of shape {:?}: they must be one shape", mask.shape(), t.shape()));
+    }
+    let data: Vec<f64> = t.to_vec().into_iter().zip(mask.to_vec()).filter(|(_, m)| *m != 0.0).map(|(x, _)| x).collect();
+    let n = data.len();
+    Ok(CrowTensor::from_vec(data, vec![n]))
+}
+
 pub fn pick_rows(t: &CrowTensor, mask: &[bool]) -> Result<CrowTensor, String> {
     let shape = t.shape().to_vec();
     let Some(&n) = shape.first() else {

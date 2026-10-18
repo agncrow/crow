@@ -722,7 +722,8 @@ impl<'a> Lowerer<'a> {
         // it makes). An int is no truth: `3 and 3` had been true
         // interpreted and 3 compiled (crow check --self).
         if matches!(op, BinOp::And | BinOp::Or) {
-            let truth = |t: &Ty| matches!(t, Ty::Bool | Ty::Json) || matches!(t, Ty::List(i) | Ty::Column(i) if matches!(i.payload(), Ty::Bool | Ty::Unknown));
+            // (a mask of a matrix's shape, its rows of bools, too)
+            let truth = |t: &Ty| matches!(t, Ty::Bool | Ty::Json) || t.is_truths() || matches!(t, Ty::List(i) | Ty::Column(i) if matches!(i.payload(), Ty::Bool | Ty::Unknown));
             if let Some(side) = [&lt, &rt].into_iter().find(|t| !truth(t)) {
                 let word = if matches!(op, BinOp::And) { "and" } else { "or" };
                 self.refuse(format!("`{}` joins truths — two bools, or two masks item by item — and this side is {}: compare it first (x gt 0, x ne '')", word, crate::table::Arg::of_type(side).words()));

@@ -250,6 +250,13 @@ impl Emitter {
                     }
                     let inner = self.expr(expr);
                     match self.tt(expr) {
+                        // a mask of a matrix's shape (its rows of bools, deeper
+                        // for more axes): a matrix of 1 and 0, or the reason
+                        // its rows are not one length — the interpreter's words
+                        t @ Ty::List(_) if t.truths_depth() >= 2 => {
+                            self.needs_crow_runtime = true;
+                            format!("crow_runtime::mask::tensor_of(&({})){}", inner, self.or_stop())
+                        }
                         // numbers that can fail: a failed one stops where
                         // they are read, with the interpreter's words (a
                         // missing cell's, or the item's reason)
@@ -667,8 +674,13 @@ impl Emitter {
             let tensor_and_number = |a: &Ty, b: &Ty| matches!(a, Ty::Tensor(..)) && matches!(b, Ty::Int | Ty::Float);
             let result_type = match op {
                 _ if mask.is_some() => Ty::List(Box::new(Ty::Bool)),
-                "eq" | "ne" | "gt" | "lt" | "gte" | "lte" if !Self::numbers_mix(&lti, &rti) && (tensor_and_number(&lti, &rti) || tensor_and_number(&rti, &lti)) => Ty::List(Box::new(Ty::Bool)),
-                "and" | "or" if matches!(&lti, Ty::List(i) if **i == Ty::Bool) || matches!(&rti, Ty::List(i) if **i == Ty::Bool) => Ty::List(Box::new(Ty::Bool)),
+                // (of the tensor's shape, as `Ty::mask_of` says for the
+                // lowering: a matrix's is its rows of bools)
+                "eq" | "ne" | "gt" | "lt" | "gte" | "lte" if !Self::numbers_mix(&lti, &rti) && tensor_and_number(&lti, &rti) => lti.mask_of(),
+                "eq" | "ne" | "gt" | "lt" | "gte" | "lte" if !Self::numbers_mix(&lti, &rti) && tensor_and_number(&rti, &lti) => rti.mask_of(),
+                "and" | "or" if lti.is_truths() || rti.is_truths() => {
+                    if lti.truths_depth() >= rti.truths_depth() { lti.clone() } else { rti.clone() }
+                }
                 "eq" | "ne" | "gt" | "lt" | "gte" | "lte" | "and" | "or" => Ty::Bool,
                 "mod" if matches!(lti, Ty::Big) => Ty::Big,
                 "pow" if matches!(lti, Ty::Decimal | Ty::Fraction) => lti.clone(),
@@ -763,6 +775,19 @@ impl Emitter {
             return code;
         }
         let bool_list = |t: &Ty| matches!(t, Ty::List(i) if matches!(i.as_ref(), Ty::Bool));
+        // masks of a matrix's shape joined truth by truth (of two shapes, the
+        // reason, as the interpreter's), or each truth with one bool
+        if matches!(op, "and" | "or") && (lti.truths_depth() >= 2 || rti.truths_depth() >= 2) {
+            self.needs_crow_runtime = true;
+            let both = op == "and";
+            if lti.is_truths() && rti.is_truths() {
+                return format!("crow_runtime::mask::joined(&({}), &({}), {}).unwrap_or_else(|e| crow_stop({}, e))", l, r, both, self.line_now());
+            }
+            if lti.is_truths() {
+                return format!("{{ let _m = &({}); let _s: bool = {}; crow_runtime::mask::joined_with(_m, _s, {}) }}", l, r, both);
+            }
+            return format!("{{ let _s: bool = {}; crow_runtime::mask::joined_with(&({}), _s, {}) }}", l, r, both);
+        }
         if matches!(op, "and" | "or") && bool_list(&lti) && bool_list(&rti) {
             return format!("{}.iter().zip({}.iter()).map(|(_a, _b)| *_a {} *_b).collect::<Vec<bool>>()", l, r, op_str);
         }
@@ -835,6 +860,12 @@ impl Emitter {
     /// None where neither side is a tensor. The same code serves an
     /// operand that can fail: its payload is the tensor (the fuzzer found
     /// `tensor + float[len[f]]` written as a bare `+`, seed 1791237824).
+    /// The Rust type of a mask `depth` lists deep (`Vec<Vec<bool>>` for a
+    /// matrix's).
+    fn truths_type(depth: usize) -> String {
+        (0..depth).fold("bool".to_string(), |t, _| format!("Vec<{}>", t))
+    }
+
     fn tensor_arith(&self, op: &str, l: &str, lti: &Ty, r: &str, rti: &Ty) -> Option<String> {
         let op_str = match op {
             "add" => "+",
@@ -874,11 +905,28 @@ impl Emitter {
                 "mul" | "elemmul" => format!("{}.mul_scalar({} as f64)", l, r),
                 "div" | "elemdiv" => format!("{}.div_scalar({} as f64)", l, r),
                 "elempow" => format!("{}.map(|x| x.powf({} as f64))", l, r),
+                // (a mask of the tensor's shape: a matrix's, its rows)
+                _ if cmp && lti.mask_of().truths_depth() >= 2 => format!(
+                    "{{ let _s = {} as f64; let _t = &({}); let _f: Vec<bool> = _t.to_vec().iter().map(|&_v| _v {} _s).collect(); crow_runtime::mask::shaped::<{}>(_f, _t.shape()) }}",
+                    r,
+                    l,
+                    op_str,
+                    Self::truths_type(lti.mask_of().truths_depth())
+                ),
                 _ if cmp => format!("{{ let _s = {} as f64; {}.to_vec().iter().map(|&_v| _v {} _s).collect::<Vec<bool>>() }}", r, l, op_str),
                 _ => format!("{} {} {}", l, op_str, r),
             });
         }
         if r_t && matches!(lti, Ty::Int | Ty::Float) {
+            if cmp && rti.mask_of().truths_depth() >= 2 {
+                return Some(format!(
+                    "{{ let _s = {} as f64; let _t = &({}); let _f: Vec<bool> = _t.to_vec().iter().map(|&_v| _s {} _v).collect(); crow_runtime::mask::shaped::<{}>(_f, _t.shape()) }}",
+                    l,
+                    r,
+                    op_str,
+                    Self::truths_type(rti.mask_of().truths_depth())
+                ));
+            }
             if cmp {
                 return Some(format!("{{ let _s = {} as f64; {}.to_vec().iter().map(|&_v| _s {} _v).collect::<Vec<bool>>() }}", l, r, op_str));
             }
@@ -1077,6 +1125,7 @@ impl Emitter {
                 "neg" if matches!(ty, Ty::Tensor(..) | Ty::Big | Ty::Decimal | Ty::Fraction) => format!("({}).neg()", payload),
                 "neg" if matches!(ty, Ty::Int) => format!("crow_runtime::stops::neg({}).unwrap_or_else(|e| crow_stop({}, e))", payload, self.line_now()),
                 "neg" => format!("(-({}))", payload),
+                _ if ty.truths_depth() >= 2 => format!("crow_runtime::mask::negated(&({}))", payload),
                 _ if matches!(&ty, Ty::List(i) if matches!(i.as_ref(), Ty::Bool)) => format!("{}.iter().map(|_b| !*_b).collect::<Vec<bool>>()", payload),
                 _ => format!("(!({}))", payload),
             };
@@ -1104,7 +1153,10 @@ impl Emitter {
                 }
             }
             _ => {
-                if matches!(&ty, Ty::List(i) if matches!(i.as_ref(), Ty::Bool)) {
+                if ty.truths_depth() >= 2 {
+                    // (a mask of a matrix's shape: each truth turned)
+                    format!("crow_runtime::mask::negated(&({}))", inner)
+                } else if matches!(&ty, Ty::List(i) if matches!(i.as_ref(), Ty::Bool)) {
                     format!("{}.iter().map(|_b| !*_b).collect::<Vec<bool>>()", inner)
                 } else if matches!(self.tt(e), Ty::Result(_)) {
                     let on_error = self.refuse("_c");

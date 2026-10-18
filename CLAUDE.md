@@ -339,8 +339,8 @@ steps on every push and must be green.
   Write `xs = push[xs, v]` (a check's list of results stayed empty, and
   every test passed).
 - Crow has no `pass` or `lambda` (the parser names each), `continue` and
-  `break` only inside a `while`, and no `chars[]`: characters are `split[text, '']` with its empty ends
-  skipped. A module written in Crow sees another module's ROWS, never its
+  `break` only inside a `while`, and no `chars[]`: characters are `split[text, '']`
+  (no empty piece at either end since 2026-10-18). A module written in Crow sees another module's ROWS, never its
   helpers (`exchange_on` had to become a sys row for the driver to call it).
   A driver's rows are named `ch_*` so they collide with no program name
   (`db`'s `query` beside a driver's `query` was "ambiguous" in every
@@ -361,8 +361,7 @@ steps on every push and must be green.
   NOT listed in `ir::EFFECTS`: the effect path re-encodes the argument
   through the by-name bridge, and the text arrived quoted (`"{\"base\"…`);
   a Crow row's effects are its body's (`request`, `send`, `recv`), which
-  the call graph carries. Inside a module, `split[text, '']` keeps an empty
-  end on each side (`['', '1', 'a', '']`), an interpolation holds no quote
+  the call graph carries. Inside a module, an interpolation holds no quote
   and no backslash (`` `join[xs, ', ']` `` and `` `join[xs, '\n']` `` are
   hoisted into a variable first), a variable set in a branch is not in
   scope after it, `text`, `input`, `args` and (with `use math`) `max` are

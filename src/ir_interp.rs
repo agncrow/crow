@@ -1370,6 +1370,15 @@ impl IrInterp {
                     // CrowColumn::numbers reads them: a missing cell or a
                     // cell of text or a bool is the reason it has none
                     Convert::ToTensor => match &v.value {
+                        // a mask of a matrix's shape (its rows of bools, deeper
+                        // for more axes) is a matrix of 1 and 0, or the reason
+                        // its rows are not one length — the words of the
+                        // compiled program's `crow_runtime::mask::tensor_of`
+                        Value::Array(items) if v.is_ok() && matches!(expr.ty().payload(), t if t.truths_depth() >= 2) => {
+                            let mut flat = Vec::new();
+                            let shape = crate::ops::truths_flat(items, &mut flat)?;
+                            CrowValue::ok(Value::NumArray(Box::new(crow_runtime::tensor::CrowTensor::from_vec(flat, shape))))
+                        }
                         // a list of rows is a matrix: rows of one shape, or
                         // the reason (the compiled program's words)
                         Value::Array(items) if v.is_ok() && !items.is_empty() && items.iter().all(|i| i.is_ok() && matches!(i.value, Value::NumArray(_))) => {

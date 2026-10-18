@@ -527,15 +527,20 @@ impl TypeContext {
             | BinOp::Gte | BinOp::Lte | BinOp::And | BinOp::Or => {
                 // Boolean-mask semantics: comparisons on frame columns and
                 // logical ops on boolean arrays are element-wise → Array(Bool)
-                let is_bool_mask = |t: &Ty| matches!(t, Ty::List(inner) if matches!(inner.as_ref(), Ty::Bool));
-                // Tensor vs scalar comparisons broadcast to masks too
+                let is_bool_mask = |t: &Ty| t.is_truths();
+                // a tensor compared with a number is a mask of its shape (a
+                // matrix's, its rows of bools: spec, Boolean Masks)
                 let tensor_vs_scalar = (matches!(lt_inner, Ty::Tensor(..))
                     && matches!(rt_inner, Ty::Int | Ty::Float))
                     || (matches!(rt_inner, Ty::Tensor(..))
                         && matches!(lt_inner, Ty::Int | Ty::Float));
-                if is_frame_col(&lt_inner) || is_frame_col(&rt_inner)
+                if tensor_vs_scalar {
+                    if matches!(lt_inner, Ty::Tensor(..)) { lt_inner.mask_of() } else { rt_inner.mask_of() }
+                } else if matches!(op, BinOp::And | BinOp::Or) && (lt_inner.truths_depth() > 1 || rt_inner.truths_depth() > 1) {
+                    // (two masks of a matrix's shape joined: that shape)
+                    if lt_inner.truths_depth() >= rt_inner.truths_depth() { lt_inner.clone() } else { rt_inner.clone() }
+                } else if is_frame_col(&lt_inner) || is_frame_col(&rt_inner)
                     || is_bool_mask(&lt_inner) || is_bool_mask(&rt_inner)
-                    || tensor_vs_scalar
                 {
                     Ty::List(Box::new(Ty::Bool))
                 } else {
@@ -626,7 +631,7 @@ impl TypeContext {
                 // an error: `not` of one that failed is that error)
                 let fails = t.is_result();
                 let inner = if let Ty::Result(i) = t { *i } else { t };
-                let turned = if matches!(&inner, Ty::List(i) if matches!(i.as_ref(), Ty::Bool)) { Ty::List(Box::new(Ty::Bool)) } else { Ty::Bool };
+                let turned = if inner.is_truths() { inner.clone() } else { Ty::Bool };
                 if fails {
                     Ty::Result(Box::new(turned))
                 } else {

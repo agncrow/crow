@@ -570,6 +570,10 @@ def f_minmax(pick):
         if isinstance(a, Mo) and isinstance(b, Mo):
             return pick(a, b, key=lambda m: m.ms)
         if is_num(a) and is_num(b):
+            # (NaN where either is, whichever side: Python's own min answers
+            # by the order it is handed)
+            if (isinstance(a, float) and a != a) or (isinstance(b, float) and b != b):
+                return float("nan")
             r = pick(a, b)
             return float(r) if isinstance(a, float) or isinstance(b, float) else r
         raise Skip()
@@ -703,8 +707,8 @@ def f_trim(s):
 def f_split(s, d):
     if isinstance(s, str) and isinstance(d, str):
         if d == "":
-            # (the spec does not say what an empty separator answers)
-            raise Skip()
+            # (by nothing, the characters: no empty piece at either end)
+            return L(list(s))
         return L(s.split(d))
     raise Skip()
 
@@ -869,14 +873,12 @@ def reduced(name):
             raise Skip()
         a = numpy.array(t.data, dtype=numpy.float64).reshape(t.shape)
         if name in ("min", "max") and a.size == 0:
-            raise Skip()  # (an empty tensor's least and greatest: a question for the spec)
+            raise Err()  # (no number is the least or the greatest: the program stops)
         with numpy.errstate(all="ignore"):
             r = {"sum": numpy.sum, "mean": numpy.mean, "prod": numpy.prod, "min": numpy.min, "max": numpy.max,
                  "norm": lambda v: numpy.linalg.norm(v.ravel())}[name](a)
-        r = float(r)
-        if name in ("min", "max") and r != r:
-            raise Skip()  # (numpy's NaN against Crow's: a question for the spec)
-        return r
+        # (a NaN held is the least and the greatest, as numpy's: the spec's)
+        return float(r)
     return g
 
 
@@ -1458,6 +1460,17 @@ def compare_items(op, a, b):
     by item — a missing cell false for every operator."""
     coll, one, flip = (a, b, False) if not is_num(a) and not isinstance(a, str) else (b, a, True)
     if isinstance(coll, T):
+        if len(coll.shape) >= 2:
+            # (a mask of the tensor's shape: a matrix's, its rows of bools)
+            flat = [compare(op, one, c) if flip else compare(op, c, one) for c in coll.data]
+
+            def nest(xs, shape):
+                if len(shape) == 1:
+                    return L(xs)
+                step = len(xs) // shape[0] if shape[0] else 0
+                return L([nest(xs[i * step:(i + 1) * step], shape[1:]) for i in range(shape[0])])
+
+            return nest(flat, coll.shape)
         if len(coll.shape) != 1:
             raise Skip()
         cells = coll.data
@@ -2166,6 +2179,8 @@ DRAWS = {
     "poisson": (3.0, 3 ** 0.5, 0.0, math.inf),
     "bernoulli": (0.3, (0.3 * 0.7) ** 0.5, 0.0, 1.0),
     "beta": (2 / 7, (10 / (49 * 8)) ** 0.5, 0.0, 1.0),
+    # (shape α, rate β: the mean α/β, the spread √α/β)
+    "gamma": (2.0 / 4.0, 2 ** 0.5 / 4.0, 0.0, math.inf),
     "rand": (0.5, 1 / 12 ** 0.5, 0.0, 1.0),
     "rand-n": (2.5, (35 / 12) ** 0.5, 0.0, 5.0),
     "rand-between": (0.0, 2.0, -3.0, 3.0),
@@ -3149,6 +3164,88 @@ def f_rolling_sum(ts, x, secs):
     return _close_T([sum(a[j] for j in range(i + 1) if t[j] >= t[i] - secs) for i in range(a.size)])
 
 
+def _rsi_of(gain, loss):
+    if loss <= 0:
+        return 100.0 if gain > 0 else 50.0
+    return 100.0 - 100.0 / (1.0 + gain / loss)
+
+
+class _Wilder:
+    """Wilder's averages: the first n deltas' mean, then each new delta
+    smoothed in by (n-1)/n; before n, the mean of the deltas there are."""
+
+    def __init__(self, n):
+        self.n, self.seeded, self.gains, self.losses = n, 0, 0.0, 0.0
+        self.gain, self.loss = float("nan"), float("nan")
+
+    def commit(self, delta):
+        g, l = (delta, 0.0) if delta >= 0 else (0.0, -delta)
+        if self.seeded < self.n:
+            self.gains += g
+            self.losses += l
+            self.seeded += 1
+            if self.seeded == self.n:
+                self.gain, self.loss = self.gains / self.n, self.losses / self.n
+            return
+        n = float(self.n)
+        self.gain = (self.gain * (n - 1.0) + g) / n
+        self.loss = (self.loss * (n - 1.0) + l) / n
+
+    def value(self):
+        if self.seeded == 0:
+            return float("nan")
+        if self.seeded < self.n:
+            return _rsi_of(self.gains / self.seeded, self.losses / self.seeded)
+        return _rsi_of(self.gain, self.loss)
+
+    def peek(self, delta):
+        import copy
+        trial = copy.copy(self)
+        trial.commit(delta)
+        return trial.value()
+
+
+def f_rsi(*args):
+    """`rsi[values, n]` and `rsi[ts, values, n, secs]` (spec, chart): from
+    the second row on, the warm-up the mean of the deltas there are."""
+    if len(args) == 2:
+        a, n = _series(args[0]), _window(args[1])
+        w, prev, out = _Wilder(n), float("nan"), []
+        for x in a:
+            x = float(x)
+            if not math.isfinite(x):
+                out.append(float("nan"))
+                continue
+            if math.isfinite(prev):
+                w.commit(x - prev)
+            prev = x
+            out.append(w.value())
+        return _close_T(out)
+    if len(args) == 4:
+        ts, c = _paired(args[0], args[1])
+        n, secs = _window(args[2]), args[3]
+        if isinstance(secs, bool) or not is_num(secs):
+            raise Skip()
+        if any(ts[i + 1] < ts[i] for i in range(len(ts) - 1)) or not secs > 0:
+            raise Err()
+        w, out = _Wilder(n), []
+        committed, bucket, close_ = float("nan"), float("nan"), float("nan")
+        for t, x in zip(ts, c):
+            t, x = float(t), float(x)
+            if not math.isfinite(t) or not math.isfinite(x):
+                out.append(float("nan"))
+                continue
+            b = math.floor(t / secs)
+            if math.isfinite(bucket) and b != bucket:
+                if math.isfinite(committed):
+                    w.commit(close_ - committed)
+                committed = close_
+            bucket, close_ = b, x
+            out.append(w.peek(x - committed) if math.isfinite(committed) else float("nan"))
+        return _close_T(out)
+    raise Skip()
+
+
 def f_cvd(close_, vol):
     c, v = _paired(close_, vol)
     out, acc = [], 0.0
@@ -3160,6 +3257,7 @@ def f_cvd(close_, vol):
 
 
 E5 = {
+    "chart.rsi": f_rsi,
     "chart.sma": f_sma,
     "chart.ema": f_ema,
     "chart.vwap": f_vwap,

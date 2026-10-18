@@ -426,12 +426,9 @@ fn embed[model_text, texts]
 
 --- a hex number's value, or -1 where the text is none
 fn hex_of[s]
-    --- (a text split into its characters has an empty end on each side)
-    all_digits = split['0123456789abcdef', '']
-    digits = slice[all_digits, 1, len[all_digits] - 1]
+    digits = split['0123456789abcdef', '']
     value = 0
-    split_up = split[lower[trim[s]], '']
-    chars = slice[split_up, 1, len[split_up] - 1]
+    chars = split[lower[trim[s]], '']
     if len[chars] eq 0
         return -1
     for ch in chars

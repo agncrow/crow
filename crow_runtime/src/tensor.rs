@@ -45,6 +45,18 @@ fn chunked_sum(data: &[f64]) -> f64 {
 
 /// Chunked reduction with 4 accumulators for SIMD auto-vectorization.
 #[inline]
+/// The larger of two numbers, NaN where either is (IEEE 754's `maximum`):
+/// f64's own `max` answers the other, and a NaN a tensor held had vanished
+/// from its `max` while its `sum` carried it.
+pub fn nan_max(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() { f64::NAN } else { a.max(b) }
+}
+
+/// The smaller of two numbers, NaN where either is (IEEE 754's `minimum`).
+pub fn nan_min(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() { f64::NAN } else { a.min(b) }
+}
+
 fn chunked_reduce(data: &[f64], init: f64, f: impl Fn(f64, f64) -> f64) -> f64 {
     let chunks = data.chunks_exact(4);
     let remainder = chunks.remainder();
@@ -586,9 +598,17 @@ impl CrowTensor {
 
     /// Create a tensor with Gamma-distributed random values.
     /// (its parameters checked: the reason, never a panic)
+    /// Gamma-distributed values of shape α and RATE β (the mean α/β), as
+    /// the (α, β) of the textbooks, Stan, R and PyTorch: `gamma_dist[1, λ]`
+    /// is `exponential[λ]`, which takes a rate. (rand_distr's Gamma takes a
+    /// scale, and β had been handed to it as one: the mean had been α·β.)
     pub fn gamma_dist(shape: Vec<usize>, alpha: f64, beta: f64) -> Result<Self, String> {
         use rand_distr::Gamma;
-        let dist: Gamma<f64> = Gamma::new(alpha, beta).map_err(|_| "gamma_dist: alpha and beta must be > 0".to_string())?;
+        let refused = || "gamma_dist: alpha and beta must be > 0".to_string();
+        if !(beta > 0.0 && beta.is_finite()) {
+            return Err(refused());
+        }
+        let dist: Gamma<f64> = Gamma::new(alpha, 1.0 / beta).map_err(|_| refused())?;
         let n = Self::numel(&shape);
         let data = rng::gen_random_vec(n, |r| dist.sample(r));
         Ok(Self::from_vec(data, shape).maybe_to_gpu())
@@ -1128,7 +1148,9 @@ impl CrowTensor {
         self.sum() / n as f64
     }
 
-    /// Maximum element.
+    /// Maximum element: NaN where the tensor holds one (as numpy's and IEEE
+    /// 754's `maximum` answer, and as `sum` carries one), -inf of none —
+    /// `math::max` stops there, and what reads a tensor it made holds one.
     pub fn max(&self) -> f64 {
         if self.is_gpu() {
             return self.to_cpu().max();
@@ -1136,13 +1158,16 @@ impl CrowTensor {
         let cpu = self.cpu_data();
         if self.is_contiguous() {
             let slice = &cpu[self.offset..self.offset + self.len()];
-            chunked_reduce(slice, f64::NEG_INFINITY, |a, b| a.max(b))
+            // (the fold skips a NaN, as f64's max does, and runs a vector's
+            // width at a time; a second pass says whether there was one)
+            let m = chunked_reduce(slice, f64::NEG_INFINITY, |a, b| a.max(b));
+            if slice.iter().any(|v| v.is_nan()) { f64::NAN } else { m }
         } else {
-            self.reduce(f64::NEG_INFINITY, f64::max)
+            self.reduce(f64::NEG_INFINITY, nan_max)
         }
     }
 
-    /// Minimum element.
+    /// Minimum element: NaN where the tensor holds one, +inf of none.
     pub fn min(&self) -> f64 {
         if self.is_gpu() {
             return self.to_cpu().min();
@@ -1150,9 +1175,10 @@ impl CrowTensor {
         let cpu = self.cpu_data();
         if self.is_contiguous() {
             let slice = &cpu[self.offset..self.offset + self.len()];
-            chunked_reduce(slice, f64::INFINITY, |a, b| a.min(b))
+            let m = chunked_reduce(slice, f64::INFINITY, |a, b| a.min(b));
+            if slice.iter().any(|v| v.is_nan()) { f64::NAN } else { m }
         } else {
-            self.reduce(f64::INFINITY, f64::min)
+            self.reduce(f64::INFINITY, nan_min)
         }
     }
 
@@ -1265,14 +1291,14 @@ impl CrowTensor {
         Self::from_vec(data, new_shape)
     }
 
-    /// Max along a given axis.
+    /// Max along a given axis (NaN where the numbers reduced hold one).
     pub fn max_axis(&self, axis: usize) -> CrowTensor {
-        self.reduce_axis(axis, f64::NEG_INFINITY, f64::max)
+        self.reduce_axis(axis, f64::NEG_INFINITY, nan_max)
     }
 
-    /// Min along a given axis.
+    /// Min along a given axis (NaN where the numbers reduced hold one).
     pub fn min_axis(&self, axis: usize) -> CrowTensor {
-        self.reduce_axis(axis, f64::INFINITY, f64::min)
+        self.reduce_axis(axis, f64::INFINITY, nan_min)
     }
 
     /// Product along a given axis.
@@ -2490,6 +2516,28 @@ pub(crate) mod tests {
         assert!((v[3] - 3.0).abs() < 1e-12);
     }
 
+    /// A NaN a tensor holds is its `min` and `max`, along an axis too, as
+    /// numpy's (it had been passed over, while `sum` carried it); a tensor
+    /// of no numbers has neither, and `math::min`/`max` say so.
+    #[test]
+    fn a_nan_is_the_extreme_and_nothing_has_none() {
+        let t = CrowTensor::from_vec(vec![1.0, f64::NAN, 3.0], vec![3]);
+        assert!(t.max().is_nan() && t.min().is_nan());
+        let strided = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, f64::NAN], vec![2, 2]).transpose();
+        assert!(strided.max().is_nan());
+        let m = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, f64::NAN], vec![2, 2]);
+        let rows = m.max_axis(1).to_vec();
+        assert_eq!(rows[0], 2.0);
+        assert!(rows[1].is_nan());
+        assert!(crate::core::max_floats(2.0, f64::NAN).is_nan() && crate::core::min_floats(f64::NAN, 2.0).is_nan());
+        let none = CrowTensor::from_vec(vec![], vec![0]);
+        assert_eq!(crate::math::max(&none), Err("max of nothing: an empty tensor has no largest number".to_string()));
+        assert!(crate::math::min(&none).is_err());
+        let no_cols = CrowTensor::from_vec(vec![], vec![2, 0]);
+        assert!(crate::math::max_axis(&no_cols, 1).is_err());
+        assert_eq!(crate::math::max(&CrowTensor::from_vec(vec![4.0, 2.0], vec![2])), Ok(4.0));
+    }
+
     // ── gamma_dist ──────────────────────────────────────────────────────
 
     #[test]
@@ -2499,6 +2547,25 @@ pub(crate) mod tests {
         assert_eq!(t.shape, vec![100]);
         // Gamma(alpha, beta) values should all be positive
         assert!(t.to_vec().iter().all(|&x| x > 0.0));
+        crate::rng::clear_seed();
+    }
+
+    /// β is the rate: the mean is α/β, and `gamma_dist[1, λ]` is
+    /// `exponential[λ]`'s distribution (β had been a scale, the mean α·β).
+    #[test]
+    fn gamma_dists_beta_is_a_rate() {
+        let _rng = seeded(7);
+        let n = 20_000;
+        let g = CrowTensor::gamma_dist(vec![n], 2.0, 4.0).expect("its parameters are good").to_vec();
+        let mean = g.iter().sum::<f64>() / n as f64;
+        // (α/β = 0.5, its standard error √(α)/β/√n ≈ 0.0025)
+        assert!((mean - 0.5).abs() < 0.02, "the mean of Gamma(2, rate 4) is 0.5, got {}", mean);
+        let e = CrowTensor::gamma_dist(vec![n], 1.0, 3.0).expect("its parameters are good").to_vec();
+        let x = CrowTensor::exponential(vec![n], 3.0).expect("its parameter is good").to_vec();
+        let (me, mx) = (e.iter().sum::<f64>() / n as f64, x.iter().sum::<f64>() / n as f64);
+        assert!((me - mx).abs() < 0.02 && (me - 1.0 / 3.0).abs() < 0.02, "Gamma(1, rate 3) is Exp(3): {} and {}", me, mx);
+        assert!(CrowTensor::gamma_dist(vec![1], 2.0, 0.0).is_err());
+        assert!(CrowTensor::gamma_dist(vec![1], 2.0, -1.0).is_err());
         crate::rng::clear_seed();
     }
 

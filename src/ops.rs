@@ -442,31 +442,23 @@ pub fn logical_values(
     op: impl Fn(bool, bool) -> bool,
 ) -> Result<CrowValue, String> {
     match (&left.value, &right.value) {
+        // (masks of any depth: a matrix's are its rows of bools)
         (Value::Array(a), Value::Array(b)) => {
-            if a.len() != b.len() {
+            if a.len() != b.len() && !a.iter().chain(b.iter()).any(|x| matches!(x.value, Value::Array(_))) {
                 return Err(format!(
                     "boolean arrays have different lengths ({} vs {})",
                     a.len(), b.len()
                 ));
             }
-            let results: Vec<CrowValue> = a.iter().zip(b.iter()).map(|(x, y)| {
-                CrowValue::ok(Value::Bool(op(is_truthy(x), is_truthy(y))))
-            }).collect();
-            Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(results))))
+            truths_with(a, b, &op).map(CrowValue::ok)
         }
         (Value::Array(a), _) => {
             let s = is_truthy(right);
-            let results: Vec<CrowValue> = a.iter().map(|x| {
-                CrowValue::ok(Value::Bool(op(is_truthy(x), s)))
-            }).collect();
-            Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(results))))
+            Ok(CrowValue::ok(truths_each(a, &|x| op(x, s))))
         }
         (_, Value::Array(b)) => {
             let s = is_truthy(left);
-            let results: Vec<CrowValue> = b.iter().map(|x| {
-                CrowValue::ok(Value::Bool(op(s, is_truthy(x))))
-            }).collect();
-            Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(results))))
+            Ok(CrowValue::ok(truths_each(b, &|x| op(s, x))))
         }
         _ => Ok(CrowValue::ok(Value::Bool(op(
             is_truthy(left),
@@ -523,12 +515,78 @@ pub fn compare_values(l: &Value, r: &Value, cmp: Cmp) -> Result<CrowValue, Strin
 /// A tensor compared with a number: each element by value.
 fn tensor_mask(t: &CrowTensor, cmp: Cmp, s: &Value) -> Result<CrowValue, String> {
     let s = mask_cell(s);
-    let out = t
+    let flat = t
         .to_vec()
         .iter()
-        .map(|&v| crow_runtime::mask::holds(cmp, crow_runtime::mask::Cell::Number(v), true, s).map(|b| CrowValue::ok(Value::Bool(b))))
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(out))))
+        .map(|&v| crow_runtime::mask::holds(cmp, crow_runtime::mask::Cell::Number(v), true, s))
+        .collect::<Result<Vec<bool>, _>>()?;
+    // (of the tensor's shape: a matrix's mask is its rows of bools, as the
+    // compiled program's `crow_runtime::mask::shaped` makes it)
+    Ok(CrowValue::ok(truths_shaped(&flat, t.shape())))
+}
+
+/// A mask of a shape, its truths in row order: a list of bools for one
+/// axis (or none), a list of rows of bools for two, and deeper.
+fn truths_shaped(flat: &[bool], shape: &[usize]) -> Value {
+    if shape.len() <= 1 {
+        return Value::Array(std::sync::Arc::new(flat.iter().map(|b| CrowValue::ok(Value::Bool(*b))).collect()));
+    }
+    let step: usize = shape[1..].iter().product();
+    let rows = (0..shape[0]).map(|i| CrowValue::ok(truths_shaped(flat.get(i * step..(i + 1) * step).unwrap_or(&[]), &shape[1..]))).collect();
+    Value::Array(std::sync::Arc::new(rows))
+}
+
+/// A mask of any depth as its numbers in row order (true 1, false 0) and
+/// its shape, or the reason its rows are not one length.
+pub fn truths_flat(items: &[CrowValue], out: &mut Vec<f64>) -> Result<Vec<usize>, String> {
+    let mut inner: Option<Vec<usize>> = None;
+    for x in items {
+        let shape = match &x.value {
+            Value::Array(xs) if x.is_ok() => truths_flat(xs, out)?,
+            _ => {
+                out.push(if is_truthy(x) { 1.0 } else { 0.0 });
+                Vec::new()
+            }
+        };
+        match &inner {
+            Some(s) if *s != shape => return Err("a mask's rows are of different lengths".to_string()),
+            Some(_) => {}
+            None => inner = Some(shape),
+        }
+    }
+    let mut shape = vec![items.len()];
+    shape.extend(inner.unwrap_or_default());
+    Ok(shape)
+}
+
+/// Each truth of a mask of any depth turned: a list's items, a list of
+/// rows' rows (a matrix's comparison keeps its shape).
+fn truths_each(items: &[CrowValue], f: &dyn Fn(bool) -> bool) -> Value {
+    Value::Array(std::sync::Arc::new(
+        items
+            .iter()
+            .map(|x| match &x.value {
+                Value::Array(inner) if x.is_ok() => CrowValue::ok(truths_each(inner, f)),
+                _ => CrowValue::ok(Value::Bool(f(is_truthy(x)))),
+            })
+            .collect(),
+    ))
+}
+
+/// Two masks of one shape, truth by truth, or the reason (the compiled
+/// program's `crow_runtime::mask::joined` words for one of another shape).
+fn truths_with(a: &[CrowValue], b: &[CrowValue], f: &dyn Fn(bool, bool) -> bool) -> Result<Value, String> {
+    if a.len() != b.len() {
+        return Err(format!("masks of {} and {} items are joined truth by truth: they must be one shape", a.len(), b.len()));
+    }
+    let mut out = Vec::with_capacity(a.len());
+    for (x, y) in a.iter().zip(b.iter()) {
+        out.push(match (&x.value, &y.value) {
+            (Value::Array(xs), Value::Array(ys)) if x.is_ok() && y.is_ok() => CrowValue::ok(truths_with(xs, ys, f)?),
+            _ => CrowValue::ok(Value::Bool(f(is_truthy(x), is_truthy(y)))),
+        });
+    }
+    Ok(Value::Array(std::sync::Arc::new(out)))
 }
 
 /// Apply a scalar arithmetic operation element-wise to an Array of CrowValues.
@@ -583,13 +641,9 @@ pub fn unaryop(
             _ => Err("cannot negate this type".to_string()),
         },
         UnaryOp::Not => match v {
-            // Boolean arrays negate element-wise (mask semantics)
-            Value::Array(items) => {
-                let results: Vec<CrowValue> = items.iter().map(|x| {
-                    CrowValue::ok(Value::Bool(!is_truthy(x)))
-                }).collect();
-                Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(results))))
-            }
+            // Boolean arrays negate element-wise (mask semantics), a
+            // matrix's rows each
+            Value::Array(items) => Ok(CrowValue::ok(truths_each(items, &|x| !x))),
             _ => Ok(CrowValue::ok(Value::Bool(!is_truthy(val)))),
         },
     }

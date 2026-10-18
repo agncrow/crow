@@ -35,14 +35,14 @@ A builtin handed a number of arguments, or a kind of argument, it does not take 
 | `ceil[n]` | Ceiling (returns int) | [Numbers and conversion](../by-example/numbers.md) |
 | `round[n]` | Round to nearest int, a half away from zero (`round[2.5]` is `3`, `round[-2.5]` is `-3`); `floor`, `ceil` and `round` of a float past 64 bits are the whole number it holds, every digit, of NaN `0`, of an infinite float a stop | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) · [Numbers and conversion](../by-example/numbers.md) · [Data Types](../ch03-02-data-types.md) |
 | `base ^ exp` | Exponentiation (use `^` operator) |  |
-| `min[a, b]` | Minimum of two numbers | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Numbers and conversion](../by-example/numbers.md) |
-| `max[a, b]` | Maximum of two numbers | [Frames: `use frame`](../by-example/frames.md) · [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: tensors](../by-example/math.md) · [Neural-network building blocks: `use math.nn`](../by-example/nn.md) · [Numbers and conversion](../by-example/numbers.md) · [Testing](../ch09-00-testing.md) |
+| `min[a, b]` | Minimum of two numbers — NaN where either is | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Numbers and conversion](../by-example/numbers.md) |
+| `max[a, b]` | Maximum of two numbers — NaN where either is | [Frames: `use frame`](../by-example/frames.md) · [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: tensors](../by-example/math.md) · [Neural-network building blocks: `use math.nn`](../by-example/nn.md) · [Numbers and conversion](../by-example/numbers.md) · [Testing](../ch09-00-testing.md) |
 
 ## Strings
 
 | Function | Description | Example |
 |----------|-------------|---|
-| `split[s, delim]` | Split string into array | [Bits and character codes: `use bits`](../by-example/bits.md) · [Strings](../by-example/strings.md) · [Strings and Interpolation](../ch03-03-strings.md) |
+| `split[s, delim]` | Split string into array — by empty text, its characters, as `len` and `slice` count them: `split['héllo', '']` is `['h', 'é', 'l', 'l', 'o']`, and of empty text `[]` (until 2026-10-18 there had been an empty piece at each end, as Rust's own splitting answers, which every walk over characters stepped around) | [Bits and character codes: `use bits`](../by-example/bits.md) · [Strings](../by-example/strings.md) · [Strings and Interpolation](../ch03-03-strings.md) |
 | `trim[s]` | Remove leading/trailing whitespace | [Strings](../by-example/strings.md) |
 | `replace[s, old, new]` | Replace all occurrences | [Strings](../by-example/strings.md) |
 | `occurs[s, part]` | How many times `part` occurs in `s`, not overlapping, as Python's `str.count` counts (`occurs['aaaa', 'aa']` is 2; a part that cannot overlap itself counts every place it is). The search reads the text once at the machine's speed, so counting in a long text costs what reading it does — where `len[s] - len[replace[s, part, '']]` had made a new text for every count. An empty part is refused | [Strings and Interpolation](../ch03-03-strings.md) |

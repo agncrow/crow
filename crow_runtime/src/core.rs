@@ -811,15 +811,16 @@ pub fn max_ints(a: i64, b: i64) -> i64 {
     a.max(b)
 }
 
-/// `min[a, b]` of numbers (an int beside a float is a float): the other
-/// when one is NaN.
+/// `min[a, b]` of numbers (an int beside a float is a float): NaN where
+/// either is, as `min[t]` of a tensor holding one answers (the other had
+/// been the answer, as f64's `min` gives it).
 pub fn min_floats(a: f64, b: f64) -> f64 {
-    a.min(b)
+    crate::tensor::nan_min(a, b)
 }
 
-/// `max[a, b]` of numbers.
+/// `max[a, b]` of numbers: NaN where either is.
 pub fn max_floats(a: f64, b: f64) -> f64 {
-    a.max(b)
+    crate::tensor::nan_max(a, b)
 }
 
 /// `join[items, sep]`: the items' words (`crate::cell::Words`) between

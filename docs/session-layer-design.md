@@ -154,7 +154,8 @@ facts, so a render never sees a handler halfway.
   the program.
 - **One handler at a time per session.** Other events wait behind it,
   in order. A second click on the handler that is running is dropped
-  (the double-click), as `later` already skips a schedule in flight.
+  (the double-click). (A `later` schedule asked again while in flight
+  runs once more when it ends, from 2026-10-18; it had been skipped.)
 - **`later[f]` is the one way to say "other clicks need not wait".** A
   handler holds the session's queue until it ends; a scheduled function
   does not. (Design Note: *Handlers and later*.)

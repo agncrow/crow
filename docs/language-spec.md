@@ -796,7 +796,7 @@ numbers[-1] = 99         --- sets last element
 **A size has a ceiling.** A value holds at most 2^36 items (68,719,476,736 — more numbers than any machine's memory holds): a size past it — `range[2 ^ 40]`, `zeros[n, n]`, `repeat[s, n]`, `arange[…]`, `round[d, places]` of a decimal — stops the program where it is asked for, before anything is made, in the same words on every machine (`range: a size too large to hold (… items; at most 68719476736)`). It had panicked in Rust's words, with no line compiled, or grown until the machine's memory ran out.
 
 
-**A mask picks.** Where the index is a list of bools — what a comparison over a list or a tensor answers — the result is the items where it is true: `names[labels eq j]`. Of a matrix it is the rows, so `mean[x[labels eq j], 0]` is the centre of the rows labelled `j`; of a vector, the numbers: `v[v gt 25.0]`. A mask of another length than the items stops. Of a frame it is the rows — `df[df.age gt 50]` is a frame of every column as it was — and of a frame's column its cells, a column of the same kind with its missing cells kept: `df.name[df.age gt 50]`; a column's `.ok` is a mask too, `df[df.age.ok]` (see Frames). A frame's index is a mask alone: a column is read as `df.name`, a cell as `df.name[i]`. A frame's column of bools is the mask it makes wherever a mask is taken — `df[df.active]`, `where[df.active, a, b]`, `names[df.active]`, and negated or joined, `not df.active`, `df.active and df.age gt 50` — as `df.active eq true` is, a missing cell false (it had been refused, and `eq true` written every time; negated it had been one bool, and joined it had not built compiled).
+**A mask picks.** Where the index is a list of bools — what a comparison over a list or a tensor answers — the result is the items where it is true: `names[labels eq j]`. Of a matrix it is the rows, so `mean[x[labels eq j], 0]` is the centre of the rows labelled `j`; of a vector, the numbers: `v[v gt 25.0]`; and of a matrix by a mask of its own shape — what the matrix compared with a number answers — its numbers where it is true, in row order, as a vector: `m[m gt 2.0]` (numpy's boolean index; a mask of another shape stops). A mask of another length than the items stops. Of a frame it is the rows — `df[df.age gt 50]` is a frame of every column as it was — and of a frame's column its cells, a column of the same kind with its missing cells kept: `df.name[df.age gt 50]`; a column's `.ok` is a mask too, `df[df.age.ok]` (see Frames). A frame's index is a mask alone: a column is read as `df.name`, a cell as `df.name[i]`. A frame's column of bools is the mask it makes wherever a mask is taken — `df[df.active]`, `where[df.active, a, b]`, `names[df.active]`, and negated or joined, `not df.active`, `df.active and df.age gt 50` — as `df.active eq true` is, a missing cell false (it had been refused, and `eq true` written every time; negated it had been one bool, and joined it had not built compiled).
 
 **Design Note: a mask picks, and counts.** Considered: `filter[t, mask]` for tensors and lists (rejected: a second verb where the index already picks — `x[i]` one row, `x[mask]` the rows); `any[mask]` and `all[mask]` (rejected: `sum[mask] gt 0` and `sum[mask] eq len[mask]` say it, once a mask counts). **Decision (Vijay, 2026-10-08):** the index takes a mask, and a mask where numbers are asked is numbers — `true` 1, `false` 0 — so `sum[v gt 2.0]` counts, and math's `where[mask, a, b]` takes one as it takes numbers. The k-means centre, a loop with an index and a count, is one line.
 
@@ -1423,14 +1423,14 @@ A builtin handed a number of arguments, or a kind of argument, it does not take 
 | `ceil[n]` | Ceiling (returns int) |
 | `round[n]` | Round to nearest int, a half away from zero (`round[2.5]` is `3`, `round[-2.5]` is `-3`); `floor`, `ceil` and `round` of a float past 64 bits are the whole number it holds, every digit, of NaN `0`, of an infinite float a stop |
 | `base ^ exp` | Exponentiation (use `^` operator) |
-| `min[a, b]` | Minimum of two numbers |
-| `max[a, b]` | Maximum of two numbers |
+| `min[a, b]` | Minimum of two numbers — NaN where either is |
+| `max[a, b]` | Maximum of two numbers — NaN where either is |
 
 ### Strings
 
 | Function | Description |
 |----------|-------------|
-| `split[s, delim]` | Split string into array |
+| `split[s, delim]` | Split string into array — by empty text, its characters, as `len` and `slice` count them: `split['héllo', '']` is `['h', 'é', 'l', 'l', 'o']`, and of empty text `[]` (until 2026-10-18 there had been an empty piece at each end, as Rust's own splitting answers, which every walk over characters stepped around) |
 | `trim[s]` | Remove leading/trailing whitespace |
 | `replace[s, old, new]` | Replace all occurrences |
 | `occurs[s, part]` | How many times `part` occurs in `s`, not overlapping, as Python's `str.count` counts (`occurs['aaaa', 'aa']` is 2; a part that cannot overlap itself counts every place it is). The search reads the text once at the machine's speed, so counting in a long text costs what reading it does — where `len[s] - len[replace[s, part, '']]` had made a new text for every count. An empty part is refused |
@@ -2051,8 +2051,8 @@ The `math` module is built in — no file needed. It provides tensor creation, e
 |---|---|
 | `sum[t]` | Sum of all elements (float), added as numpy adds them — pairwise, so the error grows as log n and `sum[x]` is `numpy.sum(x)` to the last digit |
 | `mean[t]` | Mean of all elements (float): the sum over the count |
-| `min[t]` | Minimum element (float) |
-| `max[t]` | Maximum element (float) |
+| `min[t]` | Minimum element (float): NaN where the tensor holds one, as numpy's and IEEE 754's `minimum` answer and as `sum` carries one; of no numbers the program stops (`min of nothing: an empty tensor has no smallest number`), as numpy and Python raise — `min[t, axis]` of an empty axis too. (Until 2026-10-18 a NaN had been passed over and an empty tensor answered `inf`.) |
+| `max[t]` | Maximum element (float): NaN where the tensor holds one; of no numbers the program stops (`max of nothing: an empty tensor has no largest number`) |
 | `prod[t]` | Product of all elements (float) |
 | `argmax[t]` | Index of maximum element (int) |
 | `argmin[t]` | Index of minimum element (int) |
@@ -2158,7 +2158,7 @@ Negative indices are supported (wrap around from the end). The result tensor has
 | `uniform[low, high, d1, d2, ...]` | Uniform in [low, high): `uniform[0.0, 1.0, 2, 3]` is a 2×3 tensor of values in [0, 1) |
 | `poisson[lambda, d1, d2, ...]` | Poisson distribution |
 | `bernoulli[p, d1, d2, ...]` | Bernoulli (0.0 or 1.0) |
-| `gamma_dist[alpha, beta, d1, ...]` | Gamma distribution |
+| `gamma_dist[alpha, beta, d1, ...]` | Gamma distribution of shape α and rate β — the mean α/β, as the (α, β) of the textbooks, R, Stan and PyTorch: `gamma_dist[1.0, λ, n]` is `exponential[λ, n]`'s distribution (until 2026-10-18 β was a scale, the mean α·β) |
 | `beta_dist[alpha, beta, d1, ...]` | Beta distribution |
 | `exponential[lambda, d1, ...]` | Exponential distribution |
 | `shuffle[x]` | Random permutation of tensor elements |
@@ -2505,7 +2505,7 @@ Import with `use chart`. Technical indicators for the chart element, computed by
 |----------|-------------|
 | `sma[values, n]` | Simple moving average over the last `n` rows |
 | `ema[values, n]` | Exponential moving average, smoothing `2/(n+1)`, seeded by the first `n` rows' mean |
-| `rsi[values, n]` | Wilder's relative strength index over `n` deltas (0–100; 50 when flat) |
+| `rsi[values, n]` | Wilder's relative strength index over `n` deltas (0–100), from the second row on: until `n` deltas have come, of the mean gain and the mean loss of those there are (the line shows from the open, as a scanner reading the first minutes needs); from the `n`th, each new delta smoothed in by (n−1)/n, as Wilder's is. 100 where there are gains and no losses, 0 where there are losses and no gains, 50 where there are neither (a flat series); a row that is no number is NaN and passed over |
 | `rsi[ts, values, n, secs]` | RSI on clock-aligned buckets of `secs` seconds over finer rows — a 14-period RSI on 3-minute candles drawn over 1-second bars: completed buckets feed the smoothing once, and rows inside the forming bucket see a provisional value from the latest close, so history never changes and the newest value moves with the tape |
 | `macd[values, fast, slow, signal]` | A frame with columns `line` (fast EMA − slow EMA), `signal` (its EMA), `hist` (their difference) |
 | `vwap[price, vol]` | Cumulative volume-weighted average price from the first row |
@@ -2706,6 +2706,21 @@ Filtering uses ordinary Crow expressions that evaluate to boolean arrays. These 
 - `'late' in df.note`, `starts[df.symbol, 'A']`, `ends[df.note, 'k']` — a text column tested cell by cell → boolean array, a missing cell false
 - `and` / `or` — two boolean arrays → boolean array; a bool and a boolean array → each item joined with the bool
 - `not` — boolean array → boolean array
+
+A tensor compared with a number is a mask of the tensor's shape, as numpy's
+is: a vector's is a list of bools, a matrix's its rows of bools —
+`[[1.0, 2.0], [3.0, 4.0]] gt 2.0` is `[[false, false], [true, true]]` — and
+deeper for more axes. It keeps that shape through `not`, `and` and `or`
+(two masks of one shape join truth by truth; of two shapes the program
+stops), where numbers are taken it is a tensor of that shape — true 1,
+false 0 — so `where[m gt 0.0, m, 0.0 * m]` is a matrix and `sum[m gt 2.0]`
+counts, and a matrix indexed by a mask of its shape is its numbers where
+the mask is true, in row order (see Indexing). A tensor whose rank the
+program does not show — a field given a vector in one place and a matrix
+in another — compared with a number is refused, naming it: its mask's
+shape would be decided by nothing (`reshape` or `flatten` it first). (Until
+2026-10-18 a matrix's mask had been one flat list of its numbers' answers:
+`where` over it answered a vector, and no index of the matrix took it.)
 
 ```
 use frame
@@ -2952,7 +2967,7 @@ While the reader is signed out the page draws the sign-in form, and nothing else
 
 **Design Note: no `auth` on a page.** Considered: `page['/admin', admin, auth = true]`, sending a signed-out reader to a login page and back once they sign in (ui-framework.md, Authentication). Rejected: the view's check already does all of it and fails closed. It draws the sign-in form in place, offers none of the page's handlers and runs none of its queries, and a second way to guard a page would leave two places to look for why a page is shown. The page keeps its address while the reader signs in, so there is nowhere to send them back to.
 
-**A handler runs off the page's loop.** While it runs the page stays live — refresh ticks render and landed values render, from the committed facts — and `running[h]`, true while a `later` schedule of `h` is in flight, is also true while `h` runs as a handler: every element that offers `h` renders `disabled` with `aria-busy="true"`, so a button shows it is working with no flag in the program. Events are applied one at a time, in arrival order, bound inputs included: a change that arrives while a handler runs waits its turn, and the browser keeps showing what the reader typed. A second click on the handler that is running is dropped, as `later` skips a schedule in flight. `later[f]` is the one way to say the session's other clicks need not wait for this work (Design Note: *Handlers and later*).
+**A handler runs off the page's loop.** While it runs the page stays live — refresh ticks render and landed values render, from the committed facts — and `running[h]`, true while a `later` schedule of `h` is in flight, is also true while `h` runs as a handler: every element that offers `h` renders `disabled` with `aria-busy="true"`, so a button shows it is working with no flag in the program. Events are applied one at a time, in arrival order, bound inputs included: a change that arrives while a handler runs waits its turn, and the browser keeps showing what the reader typed. A second click on the handler that is running is dropped: the button already shows it is working. `later[f]` is the one way to say the session's other clicks need not wait for this work (Design Note: *Handlers and later*).
 
 **Design Note: no debounce.** Considered: `debounce = ms` on an input or a button, holding its events in the browser until the reader pauses (ui-framework.md, Debounce). Rejected: what it guards against is already kept small where it happens. A derivation over a field's fact has one recompute in flight, and a value its inputs moved past is dropped for the latest, so a search typed a key at a time runs at most one query at a time, always for the latest text; a second click on a handler that is running is dropped; and the events that arrive while a render runs are answered by one render. A delay the program chose would slow every reader to spare a server the runtime already spares.
 
@@ -3691,8 +3706,14 @@ Semantics, in order of importance:
    schedule at a time, as one — state never mutates concurrently, and
    landing writes re-render the page. In scripts (function-scope isolation
    applies) the fn communicates through its arguments and the database.
-2. **Skip-if-running.** A second `later[f]` while `f` is in flight is a
-   no-op. Double-clicks and overlapping polls cannot stack.
+2. **Coalesced, never stacked.** A second `later[f]` while `f` is in
+   flight runs `f` once more when it ends — however many arrive meanwhile
+   — from the state as it then stands, so the work's last run reads every
+   write made before it. Double-clicks and overlapping polls cannot stack,
+   and none is lost: a schedule skipped while in flight (until 2026-10-18)
+   had left a page with the earlier run's answer — a refresh asked after a
+   filter changed showed the old filter's rows — where the interpreter,
+   running each inline, showed the new.
 3. **A failure stops it.** A failing query inside the fn stops it as it
    stops a handler: nothing it wrote lands, the state keeps its last
    value, and the notice says why.
@@ -3768,9 +3789,13 @@ cure).
 **Why this design:** Elixir/LiveView's mailbox model — background work
 communicates by messages the loop applies serially — is the only surveyed
 approach with no colors, no locks, and no shared-state races, and Crow's
-reactive state is already exactly such a mailbox. Skip-if-running is built
-in because the overlap guard is the first thing every production system
-bolts on. The interpreter's inline schedule keeps the parity principle:
+reactive state is already exactly such a mailbox. Coalescing is built in
+because the overlap guard is the first thing every production system bolts
+on — and a guard that skips loses the last ask: a run already in flight
+read the state before it, so its answer is the stale one (until 2026-10-18
+a schedule in flight was skipped; a skip and the interpreter's inline runs
+could end with different facts, where a coalesced run ends where the inline
+ones do). The interpreter's inline schedule keeps the parity principle:
 both modes satisfy the same contract, tests see the simplest legal
 schedule. Deferred deliberately: automatic offload of slow handlers (the
 no-verb endgame — needs the decision-span machinery), cancel-and-restart

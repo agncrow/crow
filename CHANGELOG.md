@@ -5,6 +5,40 @@ migrates what it can, and a breaking change bumps the minor version.
 Each release lists what breaks first. This file summarises; the commit
 history says the rest.
 
+## Unreleased
+
+### Breaking
+
+- A tensor compared with a number is a mask of its shape: a matrix's is
+  its rows of bools (`[[1.0, 2.0], [3.0, 4.0]] gt 2.0` is `[[false,
+  false], [true, true]]`), as numpy's is. `where` over it keeps the matrix
+  (it had answered a vector), `not`, `and` and `or` keep its rows, `sum`
+  counts it, and `m[m gt 2.0]` is the matrix's numbers where it is true
+  (it had stopped). A tensor whose rank the program does not show,
+  compared with a number, is refused, naming it.
+- `min` and `max` answer NaN where a NaN is held — of a tensor, along an
+  axis, of two numbers — as numpy's do and as `sum` carries one (a NaN had
+  been passed over), and of no numbers the program stops (`max of
+  nothing: an empty tensor has no largest number`; they had answered
+  `-inf` and `inf`).
+- `split[s, '']` is the text's characters, with no empty piece at either
+  end (`['', 'a', 'b', 'c', '']` is `['a', 'b', 'c']`), and of empty text
+  `[]`. A walk that skipped the ends by position (`slice[cs, 1, len[cs] -
+  1]`) now drops real characters: walk `split[s, '']` as it is.
+- `gamma_dist[α, β, n]`'s β is the rate, the mean α/β — the textbooks',
+  R's, Stan's and PyTorch's (α, β) — so `gamma_dist[1.0, λ, n]` is
+  `exponential[λ, n]`. It had been the scale, the mean α·β.
+- A `later[f]` asked again while `f` is in flight runs `f` once more when
+  it ends, from the state as it then stands, however many arrive
+  meanwhile; it had been skipped, and a page could keep the earlier run's
+  answer where the interpreter, running each inline, showed the latest.
+
+### Changed
+
+- `rsi`'s warm-up is the spec's: from the second row, the mean gain and
+  loss of the deltas there are until `n` have come, then Wilder's
+  smoothing — as it was, now written down and held to a reference.
+
 ## v0.7.0 — 2026-10-18
 
 Crow held to itself: `crow check --self` runs about 100,000 cases from the

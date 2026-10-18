@@ -3,8 +3,6 @@
 # gets its answer in the reference, or its line here; one the reference comes to
 # answer fails the check until it is struck (--bless rewrites the list).
 chart.macd	a frame of three moving averages: no reference reads a frame's display yet
-chart.rsi	Wilder's RSI before n deltas: the spec does not state its warm-up (a question for the spec)
-chart.rsi_buckets	Wilder's RSI on buckets: the spec does not state its warm-up (a question for the spec)
 core.exit	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 core.exit_code	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 core.input	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
@@ -71,7 +69,6 @@ math.dense	no reference yet: add its answer to tests/self/reference.py, or say h
 math.dense_of	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.eigen	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.gamma	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.gamma_dist	the spec names alpha and beta, not whether beta is a rate or a scale (a question for the spec)
 math.highpass	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.imag	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.lowpass	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only

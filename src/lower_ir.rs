@@ -944,7 +944,19 @@ fn reads_a_column(e: &Expr) -> bool {
 /// map literal in the debug build, parity 48.)
 #[inline(never)]
 fn mask_pick(base: &Ty, index: &Ty) -> Option<(&'static crate::table::Row, Ty)> {
-    if !matches!(index.payload(), Ty::List(item) if **item == Ty::Bool) || index.is_result() || base.is_result() {
+    if index.is_result() || base.is_result() {
+        return None;
+    }
+    // a tensor of two axes or more by a mask of its own depth (what `t gt x`
+    // answers): its numbers where the mask is true, as a vector
+    if let Ty::Tensor(item, Some(dims)) = base.payload()
+        && dims.len() >= 2
+        && index.payload().truths_depth() == dims.len()
+        && index.payload().is_truths()
+    {
+        return crate::table::row("core.__pick_numbers").map(|row| (row, Ty::Tensor(item.clone(), Some(vec![None]))));
+    }
+    if !matches!(index.payload(), Ty::List(item) if **item == Ty::Bool) {
         return None;
     }
     let base_ty = base.payload().clone();
@@ -3688,6 +3700,22 @@ impl<'a> Lowerer<'a> {
                     self.refuse("`%` takes ints and answers the remainder — round a float first (int[x], floor[x], round[x]), or use mod[t, d] on a tensor".to_string());
                 }
                 let ty = shapes::shaped(self.ctx.binop_type(op, read(&l), read(&r)), shapes::binary_dims(op, &l, &r));
+                // a tensor compared with a number is a mask of its shape, by
+                // its rank: one whose rank the program does not show is
+                // refused, as a loop over one is, so both modes build the
+                // mask the type says
+                // (in a function lowered with a parameter nothing types — one
+                // this program or test does not call — a rank is unknown for
+                // that alone: its called copies are lowered at their types,
+                // and checked there)
+                let untyped_params = self.ctx.functions.get(&self.current_fn).is_some_and(|sig| sig.params.iter().any(|(_, t)| t.has_unknown()));
+                if matches!(op, BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte) && !untyped_params {
+                    for (x, other) in [(&l, &r), (&r, &l)] {
+                        if matches!(x.ty().payload(), Ty::Tensor(_, None)) && matches!(other.ty().payload(), Ty::Int | Ty::Float) {
+                            self.check_rank_known(x, "a comparison with a number of");
+                        }
+                    }
+                }
                 let arithmetic = matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::Pow | BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte);
                 if arithmetic && (exact_kind(&l.ty()) || exact_kind(&r.ty())) {
                     let (el, er) = self.exact_operands(op, l, r);
@@ -3749,7 +3777,7 @@ impl<'a> Lowerer<'a> {
                 if self.pass == Pass::Final {
                     let t = x.ty().payload().clone();
                     let fits = match op {
-                        crate::ast::UnaryOp::Not => matches!(t, Ty::Bool | Ty::Json | Ty::Unknown) || matches!(&t, Ty::List(i) | Ty::Column(i) if matches!(i.payload(), Ty::Bool | Ty::Unknown)),
+                        crate::ast::UnaryOp::Not => matches!(t, Ty::Bool | Ty::Json | Ty::Unknown) || t.is_truths() || matches!(&t, Ty::List(i) | Ty::Column(i) if matches!(i.payload(), Ty::Bool | Ty::Unknown)),
                         crate::ast::UnaryOp::Neg => matches!(t, Ty::Int | Ty::Big | Ty::Float | Ty::Decimal | Ty::Fraction | Ty::Json | Ty::Unknown | Ty::Tensor(..) | Ty::Column(_)) || matches!(&t, Ty::List(i) if matches!(i.payload(), Ty::Int | Ty::Float)),
                     };
                     if !fits {
@@ -4445,7 +4473,13 @@ impl<'a> Lowerer<'a> {
             if let [index] = idx.as_slice()
                 && let Some((row, ty)) = mask_pick(&base.ty(), &index.ty())
             {
-                let index = idx.pop().unwrap_or(Expr::Const(Const::Bool(false), Ty::Bool));
+                let mut index = idx.pop().unwrap_or(Expr::Const(Const::Bool(false), Ty::Bool));
+                // (a mask of a matrix's shape reaches its row as its numbers,
+                // true 1 and false 0, in both modes)
+                if row.id == "core.__pick_numbers" {
+                    let dims = base.ty().tensor_dims().cloned();
+                    index = Expr::Convert { how: Convert::ToTensor, expr: Box::new(index), ty: Ty::Tensor(Box::new(Ty::Float), dims) };
+                }
                 return Ok(picked(row, base, index, ty));
             }
             // a map's keys are one kind: an index of the other kind is
@@ -5646,7 +5680,7 @@ impl<'a> Lowerer<'a> {
                 // a list of rows is a matrix where a tensor is taken (spec,
                 // Arrays: a list of rows and a matrix hold numbers alike) —
                 // rows that are tensors, or lists of numbers
-                (Kind::Tensor, Ty::List(e)) if matches!(e.payload(), Ty::Tensor(..)) || matches!(e.as_ref(), Ty::List(i) if matches!(i.as_ref(), Ty::Int | Ty::Float | Ty::Big)) => {
+                (Kind::Tensor, Ty::List(e)) if matches!(e.payload(), Ty::Tensor(..)) || matches!(e.as_ref(), Ty::List(i) if matches!(i.as_ref(), Ty::Int | Ty::Float | Ty::Big)) || x.ty().truths_depth() >= 2 => {
                     let ty = Ty::Tensor(Box::new(Ty::Float), shapes::stacked_dims(&x.ty()));
                     Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty }
                 }

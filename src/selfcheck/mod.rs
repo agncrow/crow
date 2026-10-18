@@ -2607,6 +2607,7 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
                         "poisson" => &["math.poisson"],
                         "bernoulli" => &["math.bernoulli"],
                         "beta" => &["math.beta_dist"],
+                        "gamma" => &["math.gamma_dist"],
                         "rand" => &["core.rand"],
                         "rand-n" => &["core.rand_int"],
                         "rand-between" => &["core.rand_between"],
@@ -3110,6 +3111,8 @@ fn draw_cases() -> Vec<Case> {
         ("poisson", format!("x = poisson[3.0, 20000]\n{}\nlog[sum[(x - floor[x]) eq 0.0]]", shown)),
         ("bernoulli", format!("x = bernoulli[0.3, 20000]\n{}\nlog[sum[(x - floor[x]) eq 0.0]]", shown)),
         ("beta", format!("x = beta_dist[2.0, 5.0, 20000]\n{}", shown)),
+        // (shape 2, rate 4: the mean 0.5, the spread √2 / 4)
+        ("gamma", format!("x = gamma_dist[2.0, 4.0, 20000]\n{}", shown)),
         ("rand", "xs = for i in range[20000]\n    rand[]\nx = tensor[xs]\nlog[mean[x]]\nlog[std[x]]\nlog[min[x]]\nlog[max[x]]".to_string()),
         ("rand-n", "xs = for i in range[20000]\n    rand[6]\nx = tensor[xs]\nlog[mean[x]]\nlog[std[x]]\nlog[min[x]]\nlog[max[x]]".to_string()),
         ("rand-between", "xs = for i in range[20000]\n    rand[-3, 3]\nx = tensor[xs]\nlog[mean[x]]\nlog[std[x]]\nlog[min[x]]\nlog[max[x]]".to_string()),

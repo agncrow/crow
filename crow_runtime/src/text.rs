@@ -234,6 +234,12 @@ pub fn char_at_known(s: &str, known: &Known, i: i64) -> Result<String, String> {
 /// search), where the substring search cost a parser four times as much.
 #[inline]
 pub fn split(s: &str, sep: &str) -> Vec<String> {
+    // by nothing, the text's characters, as `len` and `slice` count them —
+    // no empty piece at either end (Rust's own split by "" answers one at
+    // each, which every program walking characters had stepped around)
+    if sep.is_empty() {
+        return s.chars().map(|c| c.to_string()).collect();
+    }
     let mut chars = sep.chars();
     match (chars.next(), chars.next()) {
         (Some(c), None) => s.split(c).map(|p| p.to_string()).collect(),
@@ -556,6 +562,17 @@ mod sub_len_tests {
 
 #[cfg(test)]
 mod tests {
+
+    /// By nothing, the characters: no empty piece at either end, and none
+    /// at all of empty text (Rust's own split by "" had answered both).
+    #[test]
+    fn a_text_split_by_nothing_is_its_characters() {
+        assert_eq!(split("héllo", ""), vec!["h", "é", "l", "l", "o"]);
+        assert_eq!(split("", ""), Vec::<String>::new());
+        assert_eq!(split("a,b", ","), vec!["a", "b"]);
+        assert_eq!(split(",a,", ","), vec!["", "a", ""]);
+    }
+
     /// `occurs` counts as Python's `str.count` does, by every path: one
     /// byte, two different bytes (across the chunks the compare is run in),
     /// a part that overlaps itself, a longer part, a character of two bytes
@@ -649,7 +666,8 @@ mod tests {
     fn a_separator_of_any_length_splits_the_same() {
         assert_eq!(split("a\tb\t\tc", "\t"), vec!["a", "b", "", "c"]);
         assert_eq!(split("a, b, c", ", "), vec!["a", "b", "c"]);
-        assert_eq!(split("ab", ""), "ab".split("").map(str::to_string).collect::<Vec<_>>());
+        // (by nothing: the characters, with no empty piece at either end)
+        assert_eq!(split("ab", ""), vec!["a", "b"]);
         assert_eq!(split("", "\n"), vec![""]);
         assert_eq!(split("é|ü", "|"), vec!["é", "ü"]);
     }
