@@ -2610,7 +2610,7 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
         // configuration (the test-block family)
         if only.as_deref().is_none_or(|w| "tests/".contains(w) || w.starts_with("tests")) {
             let (found, ran) = module_tests(&exe);
-            println!("tests: {} runs of the standard modules' own tests, {} findings", ran, found.len());
+            println!("tests: {} runs of the standard modules' and the packages' own tests, {} findings", ran, found.len());
             findings.extend(found);
         }
         // (the builders' caches stay for the next run, its batches' programs
@@ -3100,11 +3100,17 @@ fn io_cases() -> Vec<Case> {
         .collect()
 }
 
-/// The standard modules written in Crow, each with its own tests.
+/// The files whose own tests the test-block family runs: the standard
+/// modules written in Crow, and each package's files that hold test blocks.
 fn module_files() -> Vec<PathBuf> {
-    let mut files: Vec<PathBuf> = std::fs::read_dir("src/modules")
-        .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "co")).collect())
-        .unwrap_or_default();
+    let co = |dir: &Path| -> Vec<PathBuf> {
+        std::fs::read_dir(dir).map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "co")).collect()).unwrap_or_default()
+    };
+    let mut files = co(Path::new("src/modules"));
+    let packages: Vec<PathBuf> = std::fs::read_dir("packages").map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.is_dir()).collect()).unwrap_or_default();
+    for package in packages {
+        files.extend(co(&package).into_iter().filter(|f| std::fs::read_to_string(f).unwrap_or_default().lines().any(|l| l.starts_with("test "))));
+    }
     files.sort();
     files
 }
@@ -3129,13 +3135,18 @@ fn module_tests(exe: &Path) -> (Vec<Finding>, usize) {
                 // (each run in a directory of its own: a module's tests write
                 // files where they run — io's `io-note.csv` — and four runs
                 // at once had read each other's)
-                let name = file.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                let run_dir = Path::new("target/crow_self/tests").join(format!("{}_{}", name, config.name));
+                let name = test_name(file);
+                let run_dir = Path::new("target/crow_self/tests").join(format!("{}_{}", name.replace('/', "_"), config.name));
                 let _ = std::fs::remove_dir_all(&run_dir);
                 let _ = std::fs::create_dir_all(&run_dir);
                 let absolute = std::fs::canonicalize(file).unwrap_or_else(|_| file.to_path_buf());
                 let mut cmd = Command::new(exe);
-                cmd.arg("test").arg(&absolute).current_dir(&run_dir);
+                cmd.arg("test").arg(&absolute);
+                // (a package's tests read their references by paths from the
+                // repository's root, and write nothing; a module's may write)
+                if !file.starts_with("packages") {
+                    cmd.current_dir(&run_dir);
+                }
                 for (k, v) in config.env {
                     cmd.env(k, v);
                 }
@@ -3147,7 +3158,6 @@ fn module_tests(exe: &Path) -> (Vec<Finding>, usize) {
                     Ended::Exited => last,
                     other => format!("{:?}", other),
                 };
-                let name = file.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
                 if let Ok(mut r) = results.lock() {
                     r.push((name, config.name, code, summary));
                 }
@@ -3157,7 +3167,7 @@ fn module_tests(exe: &Path) -> (Vec<Finding>, usize) {
     let results = results.into_inner().unwrap_or_default();
     let mut findings = Vec::new();
     for file in &files {
-        let name = file.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let name = test_name(file);
         let runs: Vec<&(String, &str, Option<i32>, String)> = results.iter().filter(|r| r.0 == name).collect();
         let first = runs.iter().find(|r| r.1 == "interpreted").map(|r| r.3.clone()).unwrap_or_default();
         for (_, config, code, summary) in runs {
@@ -3172,6 +3182,16 @@ fn module_tests(exe: &Path) -> (Vec<Finding>, usize) {
         }
     }
     (findings, results.len())
+}
+
+/// A test file's name as the family's findings say it: a module's stem
+/// (`io`), a package's file past `packages/` (`gpt/model`).
+fn test_name(file: &Path) -> String {
+    let stem = file.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    match file.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()) {
+        Some(package) if file.starts_with("packages") => format!("{}/{}", package, stem),
+        _ => stem,
+    }
 }
 
 /// Text with its terminal colors read past.

@@ -271,10 +271,13 @@ with no test someone has to remember to write:
   (the mean within four standard errors: the seed fixes the draws, so the
   check is never one in a thousand wrong), and `shuffle`, `choice` and
   `permutation` held to what they must be;
-- the standard modules' own tests (`src/modules/*.co`), run by `crow test`
-  under each interpreted configuration — the walker, no fusion, no moves —
-  each run in a directory of its own: every run passes, and all say what
-  the interpreted run says (the test-block family; `--only tests`).
+- the standard modules' own tests (`src/modules/*.co`) and every
+  package's files that hold tests (`packages/*/`), run by `crow test` under
+  each interpreted configuration — the walker, no fusion, no moves — a
+  module's run in a directory of its own (its tests write files), a
+  package's from the repository's root (its references are read from
+  there): every run passes, and all say what the interpreted run says (the
+  test-block family; `--only tests`).
 
 Each case is lowered first, in the process, in seconds. A refusal is held
 to the rules every message keeps (it names a line, and only what the
