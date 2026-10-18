@@ -1,0 +1,16 @@
+--- later with arguments in a page's handler: a page's later[f] reads state
+use web, ui
+
+count = 0
+
+fn bump[n]
+    count = count + n
+
+fn go[]
+    later[bump, 2]
+
+view home[]
+    return button['go', click = go]
+
+page['/', home]
+serve[3000]

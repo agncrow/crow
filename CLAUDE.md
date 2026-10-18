@@ -958,7 +958,12 @@ steps on every push and must be green.
   the cases before it. It found a field asked of a value that can fail
   holding a list (`csv[…].b`) refused nowhere — a runtime stop
   interpreted, no build compiled: `check_field` reads the payload now.
-- `nodes[n]` is removed (2026-10-11;- `nodes[n]` is removed (2026-10-11; its message of its own went
+- A page's `later[f]` runs f on the page's state (`spawn_later` takes a
+  plain `fn(&mut CrowLiveState)`), so `later[f, a]` in a page's handler
+  is refused in both modes (errors j45); a script's carries its arguments
+  (parity 25, 259). Compiled, the arguments had been dropped and the page
+  did not build, where the interpreter ran the call inline.
+- `nodes[n]` is removed (2026-10-11; its message of its own went
   2026-10-16, as `filter`'s did — a replaced name is an unknown name): the
   process count is `crow launch <n>`'s, a process reads its rank with
   `env['CROW_RANK', '0']`, and `nodes[…]` is "undefined

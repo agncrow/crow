@@ -3681,7 +3681,7 @@ fn refresh[]
 | Form | Meaning |
 |------|---------|
 | `later[f]` | run `f` off the current loop; returns immediately |
-| `later[f, a, b]` | scripts/servers: capture `a, b` by value, pass to `f` |
+| `later[f, a, b]` | scripts/servers: capture `a, b` by value, pass to `f` — in a page's handler refused, in both modes: a page's work reads the facts it needs |
 | `running[f]` | is a schedule of `f` still in flight? (spinners, disabled buttons); for a derivation, is a recompute of it in flight? |
 
 Semantics, in order of importance:

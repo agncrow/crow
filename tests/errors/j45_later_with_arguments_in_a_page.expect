@@ -1,0 +1,3 @@
+j45_later_with_arguments_in_a_page.co:10:5: later[f, …] hands arguments in a script or a server; a page's later[f] runs f on the page's state — keep what f needs in a fact it reads
+  10 │     later[bump, 2]
+     │     ^^^^^^^^^^^^^^

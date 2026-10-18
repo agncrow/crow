@@ -1307,6 +1307,14 @@ impl<'a> Lowerer<'a> {
 
         // stream[feed, a, …] calls feed[put, a, …]: the feed is a function
         // of the program, taking put and then what the call hands it
+        // a page's `later[f]` runs f on the page's state, which carries what
+        // f needs; arguments are a script's and a server's (spec, Background
+        // Work) — in a page's handler they are refused before either mode
+        // runs (compiled, the work dropped them and the page did not build;
+        // the interpreter ran them inline)
+        if name == "later" && !own && argc > 1 && self.v.ui_mode && matches!(self.at, Where::In(FnKind::Handler | FnKind::Helper)) {
+            self.refuse("later[f, …] hands arguments in a script or a server; a page's later[f] runs f on the page's state — keep what f needs in a fact it reads".to_string());
+        }
         if name == "stream" && !own {
             match args.first() {
                 Some(A::Ident(f)) if self.ctx.functions.contains_key(f) => {
