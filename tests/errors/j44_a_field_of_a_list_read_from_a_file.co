@@ -1,0 +1,5 @@
+--- a field asked of the list of maps csv reads, which can fail
+use io
+
+rows = csv['trades.csv']
+log[rows.price]

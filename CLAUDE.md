@@ -952,7 +952,13 @@ steps on every push and must be green.
   (deterministic, so never flaky); the self-check's batch builds keep no
   debug info (`CARGO_PROFILE_DEV_DEBUG=0`) so their programs stay a few
   tens of MB and are kept for the next run, the cache let go past 80 GB.
-- `nodes[n]` is removed (2026-10-11; its message of its own went
+- The io family (`io_cases`) gives each case a directory of its own
+  (`c<N>/`, the run's files copied in; `Case.own_dir`, a batch of its own):
+  the row family's io cases shared one directory, so an answer depended on
+  the cases before it. It found a field asked of a value that can fail
+  holding a list (`csv[…].b`) refused nowhere — a runtime stop
+  interpreted, no build compiled: `check_field` reads the payload now.
+- `nodes[n]` is removed (2026-10-11;- `nodes[n]` is removed (2026-10-11; its message of its own went
   2026-10-16, as `filter`'s did — a replaced name is an unknown name): the
   process count is `crow launch <n>`'s, a process reads its rank with
   `env['CROW_RANK', '0']`, and `nodes[…]` is "undefined

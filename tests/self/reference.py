@@ -227,6 +227,8 @@ def show(v, top=True):
         return str(v)
     if isinstance(v, float):
         return rust_float(v)
+    if isinstance(v, bytes):
+        return "<{} bytes>".format(len(v))
     if isinstance(v, str):
         return v if top else "'" + v + "'"
     if isinstance(v, C):
@@ -2195,6 +2197,32 @@ def draw_answer(name):
     return {"shuffle": "true\n5", "choice": "3\n3\ntrue", "permutation": "[0, 1, 2, 3, 4, 5]"}.get(name) or _skip()
 
 
+# ── files (spec, Files) ─────────────────────────────────────────────
+#
+# Each case in a directory of its own, holding the run's files: a text of
+# two lines, a CSV of three rows (a, b, c), a JSON document, a directory
+# holding one file.
+
+IO = {
+    "read": "hello\nworld",
+    "read-missing": "false\nio",
+    "lines": "['hello', 'world']",
+    "exists": "true\nfalse\ntrue",
+    "ls": "['inside.txt']",
+    # (a write answers empty text)
+    "write-read": "\nabc\ndef",
+    "write-over": "new",
+    "mkdir": "true\n[]",
+    # (mkdir makes the directory and its parents: one already there is made)
+    "mkdir-twice": "true",
+    "rm": "false",
+    "rm-missing": "false",
+    "mv": "false\nhello\nworld",
+    "cp": "true\nhello\nworld",
+    "csv": "3\nx\n3.5",
+}
+
+
 def placed_past(seen):
     """An answer with where its case's route sits in its batch read past."""
     return _re.sub(r"/c\d+", "/cN", seen)
@@ -3105,12 +3133,154 @@ def _raise_err():
     raise Err()
 
 
+# ── the standard library's own layer: bytes (spec, sys) ────────────
+#
+# Bytes show as `<n bytes>`; what a row answers as text or an int is held
+# to Python's own `base64`, `hashlib`, `hmac` and `struct`.
+
+import hmac as _hmac
+
+
+class B(bytes):
+    """Bytes, as `sys` holds them."""
+
+
+def _bytes(*xs):
+    if not all(isinstance(x, B) for x in xs):
+        raise Skip()
+
+
+def _at(i, n):
+    if isinstance(i, bool) or not isinstance(i, int):
+        raise Skip()
+    at = i + n if i < 0 else i
+    if not 0 <= at < n:
+        raise Err()
+    return at
+
+
+def f_sys_slice(b, i, j):
+    _bytes(b)
+    if any(isinstance(v, bool) or not isinstance(v, int) for v in (i, j)):
+        raise Skip()
+    n = len(b)
+    a = i + n if i < 0 else i
+    z = j + n if j < 0 else j
+    if not (0 <= a <= z <= n):
+        raise Err()
+    return B(b[a:z])
+
+
+def f_sys_text(b, *fill):
+    _bytes(b)
+    if fill:
+        _texts(*fill)
+        return b.decode("utf-8", errors="replace").replace("�", fill[0])
+    try:
+        return b.decode("utf-8")
+    except UnicodeDecodeError:
+        raise Err()
+
+
+def f_sys_concat(*args):
+    if len(args) == 1 and isinstance(args[0], L):
+        if not args[0]:
+            # (an empty literal list holds no kind to join)
+            raise Skip()
+        _bytes(*args[0])
+        return B(b"".join(args[0]))
+    if len(args) == 1 and isinstance(args[0], T) and len(args[0].shape) == 2:
+        # (a literal list of lists — a matrix — is folded, its rows joined:
+        # the core's concat[[a, b]])
+        return T(args[0].data, [len(args[0].data)])
+    if len(args) == 1:
+        # (one value is no list of pieces)
+        raise Err()
+    _bytes(*args)
+    return B(b"".join(args))
+
+
+def f_sys_pack(n, width):
+    if any(isinstance(v, bool) or not isinstance(v, int) for v in (n, width)):
+        raise Skip()
+    if width not in (1, 2, 4, 8):
+        raise Err()
+    return B((n % (1 << (8 * width))).to_bytes(width, "big"))
+
+
+def f_sys_digest(b, algo):
+    _bytes(b)
+    _texts(algo)
+    if algo not in ("sha1", "sha256", "sha512", "md5"):
+        raise Err()
+    return B(getattr(_hashlib, algo)(b).digest())
+
+
+def f_sys_hash(b, algo):
+    _bytes(b)
+    _texts(algo)
+    if algo not in ("sha1", "sha256", "sha512", "md5"):
+        raise Err()
+    return getattr(_hashlib, algo)(b).hexdigest()
+
+
+def f_sys_hmac(key, msg, algo):
+    _bytes(key, msg)
+    _texts(algo)
+    if algo not in ("sha256", "sha512"):
+        raise Err()
+    return B(_hmac.new(key, msg, algo).digest())
+
+
+def f_sys_unbase64(t):
+    _texts(t)
+    s = "".join(t.split()).replace("-", "+").replace("_", "/").rstrip("=")
+    if len(s) % 4 == 1:
+        raise Err()
+    try:
+        return B(_b64.b64decode(s + "=" * (-len(s) % 4), validate=True))
+    except Exception:
+        raise Err()
+
+
+def f_sys_mask(b, key):
+    _bytes(b, key)
+    if len(key) != 4:
+        raise Err()
+    return B(bytes(x ^ key[i % 4] for i, x in enumerate(b)))
+
+
+E7 = {
+    "sys.bytes": lambda t: _texts(t) or B(t.encode("utf-8")),
+    "sys.text": f_sys_text,
+    "sys.slice": f_sys_slice,
+    "sys.find": lambda b, n: _bytes(b, n) or b.find(n),
+    "sys.concat": f_sys_concat,
+    "sys.byte": lambda b, i: _bytes(b) or b[_at(i, len(b))],
+    "sys.hex": lambda b: _bytes(b) or b.hex(),
+    "sys.base64": lambda b: _bytes(b) or _b64.b64encode(b).decode("ascii"),
+    "sys.base64url": lambda b: _bytes(b) or _b64.urlsafe_b64encode(b).decode("ascii").rstrip("="),
+    "sys.unbase64": f_sys_unbase64,
+    "sys.pack": f_sys_pack,
+    "sys.ieee": lambda x: B(_struct.pack(">d", float(x))) if is_num(x) and not isinstance(x, bool) else _skip(),
+    "sys.digest": f_sys_digest,
+    "sys.hash": f_sys_hash,
+    "sys.hmac": f_sys_hmac,
+    "sys.mask": f_sys_mask,
+    "sys.same": lambda a, b: _bytes(a, b) or a == b,
+}
+
+
 BUILTINS.update(E1)
 BUILTINS.update(E2)
 BUILTINS.update(E3)
 BUILTINS.update(E4)
 BUILTINS.update(E5)
 BUILTINS.update(E6)
+BUILTINS.update(E7)
+# (the catalog's bytes: `use sys`'s)
+VALUES["sysbytes"] = B(b"abc")
+VALUES["chunks"] = L([B(b"ab"), B(b"c")])
 
 
 def answer(what, names):
@@ -3133,6 +3303,8 @@ def answer(what, names):
         return state_answer(what[6:])
     if what.startswith("draw:"):
         return draw_answer(what[5:])
+    if what.startswith("io:"):
+        return IO[what[3:]] if what[3:] in IO else _skip()
     if what.startswith("ws:"):
         return WS[what[3:]] if what[3:] in WS else _skip()
     if what.startswith("mail:"):

@@ -284,6 +284,10 @@ pub(crate) struct Case {
     /// Postgres cluster, the ClickHouse stand-in): its run has no replay,
     /// which would answer `connect` in the server's place.
     live: bool,
+    /// Whether the case works in a directory of its own (`c<N>/`, holding
+    /// the run's files): a case that writes cannot change what another
+    /// reads (the io family).
+    own_dir: bool,
     /// A served case: its body is a route's handler (`fn self_case_N[req]`,
     /// its own `return` the response), served at `/cN` with what the route
     /// says, and asked the route's requests (the web families).
@@ -337,7 +341,7 @@ impl Case {
             }
         }
         body.extend(lines);
-        Case { id: id.into(), imports, body, expect: Vec::new(), refer: None, live: false, serve: None }
+        Case { id: id.into(), imports, body, expect: Vec::new(), refer: None, live: false, serve: None, own_dir: false }
     }
 
     /// The case is a route's handler, asked the route's requests.
@@ -1401,6 +1405,17 @@ fn spawn_within(mut cmd: Command, limit: Duration) -> (Option<i32>, String, Stri
     (code, out, err, ended)
 }
 
+/// The run's files — a text, a CSV, a JSON document, a directory — copied
+/// into a case's own directory.
+fn copy_files(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to.join("self_dir"))?;
+    for f in ["self_text.txt", "self_data.csv", "self_data.json"] {
+        std::fs::copy(from.join(f), to.join(f))?;
+    }
+    std::fs::copy(from.join("self_dir").join("inside.txt"), to.join("self_dir").join("inside.txt"))?;
+    Ok(())
+}
+
 /// The directory a batch runs in under one configuration, made anew: the
 /// files the cases read (a text, a CSV, a JSON document, a directory), and
 /// nothing else — a case that writes, writes there.
@@ -1760,12 +1775,19 @@ fn serve_clickhouse(stream: std::net::TcpStream) {
 /// that ends with no case's marker may have lost what it had not written
 /// yet, so the cases from its last marker run one to a process until the
 /// one that ends so is found.
-fn run_batch(exe: &Path, dir: &Path, file: &str, binary: Option<&Path>, config: &Config, fresh: &[bool], live: bool) -> Vec<Seen> {
+#[allow(clippy::too_many_arguments)]
+fn run_batch(exe: &Path, dir: &Path, file: &str, binary: Option<&Path>, config: &Config, fresh: &[bool], live: bool, own: bool) -> Vec<Seen> {
     let n = fresh.len();
     let mut seen: Vec<Option<Seen>> = vec![None; n];
     let mut from = 0;
     let mut hunting = false;
     let run_dir = sandbox(dir, file, config.name);
+    // (each case's own directory, its files the run's)
+    if own {
+        for k in 0..n {
+            let _ = copy_files(&run_dir, &run_dir.join(format!("c{}", k)));
+        }
+    }
     let source = dir.join(file);
     while from < n {
         let to = if hunting || fresh[from] { from } else { (from + 1..n).find(|&k| fresh[k]).map(|k| k - 1).unwrap_or(n - 1) };
@@ -2185,6 +2207,7 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
     cases.extend(web::ws_cases());
     cases.extend(web::mail_cases());
     cases.extend(draw_cases());
+    cases.extend(io_cases());
     let (rows, unexercised) = row_cases(&all, &only);
     let row_count = rows.len();
     cases.extend(rows);
@@ -2254,7 +2277,13 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
         for &i in &accepted {
             // (a case that talks to the check's own servers runs without
             // the replay: a batch of its own)
-            let key = format!("{}{}{}", cases[i].imports.iter().copied().collect::<Vec<_>>().join(","), if cases[i].live { "|live" } else { "" }, if cases[i].serve.is_some() { "|served" } else { "" });
+            let key = format!(
+                "{}{}{}{}",
+                cases[i].imports.iter().copied().collect::<Vec<_>>().join(","),
+                if cases[i].live { "|live" } else { "" },
+                if cases[i].serve.is_some() { "|served" } else { "" },
+                if cases[i].own_dir { "|own" } else { "" }
+            );
             groups.entry(key).or_default().push(i);
         }
         let mut batches: Vec<Vec<usize>> = Vec::new();
@@ -2363,7 +2392,8 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
                         let seen = if batch.members.first().is_some_and(|(_, c)| c.serve.is_some()) {
                             web::serve_batch(&exe, &batch.dir, &batch.file, binary, config, &batch.members)
                         } else {
-                            run_batch(&exe, &batch.dir, &batch.file, binary, config, &fresh, live)
+                            let own = batch.members.first().is_some_and(|(_, c)| c.own_dir);
+                            run_batch(&exe, &batch.dir, &batch.file, binary, config, &fresh, live, own)
                         };
                         if let Ok(mut r) = results.lock() {
                             r.insert((b, c), seen);
@@ -2492,6 +2522,21 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
                     &["web.ws.socket", "web.ws.send_text", "web.ws.recv_text", "web.ws.recv_for", "web.ws.close_socket"]
                 } else if id.starts_with("mail-live/") {
                     &["web.mail.smtp", "web.mail.mail"]
+                } else if let Some(name) = id.strip_prefix("io/") {
+                    // (the io family: the rows each case calls)
+                    match name {
+                        "read" | "read-missing" => &["io.read"],
+                        "lines" => &["io.lines"],
+                        "exists" => &["io.exists"],
+                        "ls" => &["io.ls"],
+                        "write-read" | "write-over" => &["io.write"],
+                        "mkdir" | "mkdir-twice" => &["io.mkdir"],
+                        "rm" | "rm-missing" => &["io.rm"],
+                        "mv" => &["io.mv"],
+                        "cp" => &["io.cp"],
+                        "csv" => &["io.csv"],
+                        _ => &[],
+                    }
                 } else if let Some(name) = id.strip_prefix("draw/") {
                     // (the draws family: each distribution's row, and the seed)
                     match name {
@@ -3018,6 +3063,38 @@ fn draw_cases() -> Vec<Case> {
             let mut c = Case::new(format!("draw/{}", name), &[], lines).referring(format!("draw:{}", name), &[]);
             c.imports.insert("math");
             c.imports.insert("math.stats");
+            c
+        })
+        .collect()
+}
+
+/// The io family: the file rows, each case in a directory of its own
+/// holding the run's files (`c<N>/`), so what one writes no other reads —
+/// read, lines, csv, exists, ls, write, mkdir, rm, mv and cp, each held to
+/// what the spec says (Files).
+fn io_cases() -> Vec<Case> {
+    let table: &[(&str, &str)] = &[
+        ("read", "log[read['c@N/self_text.txt']]"),
+        ("read-missing", "r = read['c@N/nope.txt']\nlog[r.ok]\nlog[r.kind]"),
+        ("lines", "log[lines['c@N/self_text.txt']]"),
+        ("exists", "log[exists['c@N/self_text.txt']]\nlog[exists['c@N/nope.txt']]\nlog[exists['c@N/self_dir']]"),
+        ("ls", "log[ls['c@N/self_dir']]"),
+        ("write-read", "w = write['c@N/out.txt', 'abc\\ndef']\nlog[w]\nlog[read['c@N/out.txt']]"),
+        ("write-over", "w = write['c@N/self_text.txt', 'new']\nlog[read['c@N/self_text.txt']]"),
+        ("mkdir", "m = mkdir['c@N/made']\nlog[exists['c@N/made']]\nlog[ls['c@N/made']]"),
+        ("mkdir-twice", "m = mkdir['c@N/made']\nr = mkdir['c@N/made']\nlog[r.ok]"),
+        ("rm", "r = rm['c@N/self_text.txt']\nlog[exists['c@N/self_text.txt']]"),
+        ("rm-missing", "r = rm['c@N/nope.txt']\nlog[r.ok]"),
+        ("mv", "m = mv['c@N/self_text.txt', 'c@N/moved.txt']\nlog[exists['c@N/self_text.txt']]\nlog[read['c@N/moved.txt']]"),
+        ("cp", "c = cp['c@N/self_text.txt', 'c@N/copy.txt']\nlog[exists['c@N/self_text.txt']]\nlog[read['c@N/copy.txt']]"),
+        ("csv", "rows = csv['c@N/self_data.csv']\nlog[len[rows]]\nlog[rows[0]['b']]\nlog[rows[2]['c']]"),
+    ];
+    table
+        .iter()
+        .map(|(name, body)| {
+            let mut c = Case::new(format!("io/{}", name), &[], body.lines().map(str::to_string).collect()).referring(format!("io:{}", name), &[]);
+            c.own_dir = true;
+            c.imports.insert("io");
             c
         })
         .collect()

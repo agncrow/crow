@@ -259,6 +259,11 @@ with no test someone has to remember to write:
   socket closed) and a mail server that takes every message to an address
   (`web.mail`: a message, one beyond ASCII, a body with a lone dot, a
   recipient that is no address);
+- files (the io family): `read`, `lines`, `csv`, `exists`, `ls`, `write`,
+  `mkdir`, `rm`, `mv` and `cp`, each case in a directory of its own
+  holding the run's files (`c<N>/`), so what one writes no other reads,
+  held to what the spec's Files table says — a missing file's reason, a
+  write over a file, a directory made twice;
 - random draws (the draws family): each distribution drawn 20,000 times
   from a fixed seed — `randn`, `normal`, `uniform`, `exponential`,
   `poisson`, `bernoulli`, `beta_dist`, the core's `rand` in its three
@@ -317,7 +322,8 @@ function, a record, a list, a loop — must show as it shows alone, and
 a write or `fmt` computes from the spec's words, without Crow's runtime:
 Python's own arithmetic and text, the system's libm for a number's
 functions (Crow's), numpy for math's reductions (the spec holds `sum` to
-it), Rust's float display — and for the modules: `bits` by Python's own
+it), Rust's float display — and for the modules: `sys`'s bytes by Python's
+own (`<n bytes>` shown, their text, hex, base64, packing and digests); `bits` by Python's own
 operators, `encode`/`decode`'s schemes by `base64` and `urllib`, regular
 expressions by `re`, `hash` by `hashlib`, statistics and `math.nn` by
 their formulas over numpy (a test's p by scipy), math's tensors —

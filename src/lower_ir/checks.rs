@@ -1017,6 +1017,10 @@ impl<'a> Lowerer<'a> {
         if matches!(field, "ok" | "reason" | "kind" | "trace") {
             return;
         }
+        // (a value that can fail has its payload's fields: a list read from
+        // a file asked `.b` had stopped interpreted and not built compiled —
+        // crow check --self's io family)
+        let obj_type = obj_type.payload();
         if matches!(obj_type, Ty::List(_)) && field != "len" {
             let owner = match field {
                 "shape" | "dtype" | "device" => "a tensor's",
