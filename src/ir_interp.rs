@@ -2541,6 +2541,10 @@ impl IrInterp {
                 let (text, at) = self.session_notice.get(&id).cloned().unwrap_or((String::new(), 0.0));
                 Ok(if name == "__notice_text" { CrowValue::ok(Value::Str(text)) } else { CrowValue::ok(Value::Float(at)) })
             }
+            "__same_fn" => match (&vals[0].value, &vals[1].value) {
+                (Value::Fn(a), Value::Fn(b)) => Ok(CrowValue::ok(Value::Bool(a.name == b.name))),
+                (a, b) => Err(format!("__same_fn compares functions, got {} and {}", a.type_name(), b.type_name())),
+            },
             "running" => Ok(CrowValue::ok(Value::Bool(false))),
             // the resources as calls: gpu[n] turns the device on, cpu[n]
             // bounds the loops

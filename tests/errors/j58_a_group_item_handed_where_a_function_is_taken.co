@@ -1,0 +1,12 @@
+--- a function of a group is held by its name: a builtin that takes a function value cannot take it
+fn odd[x]
+    return x % 2 eq 1
+
+fn big[x, limit = 10]
+    return x gt limit
+
+log[odd[3]]
+log[big[3]]
+checks = [odd, big]
+for c in checks
+    log[any[[1, 2, 3], c]]

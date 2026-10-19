@@ -1,5 +1,6 @@
 --- a tool takes what a model can hand it: a function whose parameter is a
---- frame is refused as a tool, before the program runs
+--- frame cannot be described to one — llm answers an error of kind llm,
+--- which a line that drops it stops on, in both modes
 use llm, frame
 
 --- the rows of the table that match
@@ -9,5 +10,4 @@ fn rows[table]
 m = reach['openai://127.0.0.1:1/llama3.2']
 df = frame.new[n = [1, 2]]
 log[rows[df]]
-r = chat[m, ask['How many?'], tools = [rows]]
-log[r.ok]
+chat[m, ask['How many?'], tools = [rows]]

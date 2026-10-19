@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 mod fuse;
 pub(crate) mod grad;
 mod checks;
+mod named;
 pub(crate) use checks::moment_field_name;
 mod frames;
 pub(crate) mod schema;
@@ -859,6 +860,8 @@ struct Lowerer<'a> {
     /// The collecting loops over a list of named functions the call scan
     /// is inside (`for f in [a, b]`): the loop's variable and the functions.
     fn_lists: Vec<(String, Vec<String>)>,
+    /// The functions refused as undescribable, each once.
+    undescribable: HashSet<String>,
     /// A provisional lowering's locals, each with its first value's type:
     /// with the type it settles on, what it is declared as (`declared_as`).
     first_types: HashMap<String, Ty>,
@@ -984,14 +987,6 @@ fn mask_pick(base: &Ty, index: &Ty) -> Option<(&'static crate::table::Row, Ty)> 
     crate::table::core_row(row_name, &kinds).map(|row| (row, ty))
 }
 
-/// A tool's parameter as a model can hand it: its JSON schema, or why it
-/// cannot be told one.
-enum Handed {
-    Schema(String),
-    Untyped,
-    Unhandable(&'static str),
-}
-
 impl<'a> Lowerer<'a> {
     fn new(ctx: &'a mut TypeContext, in_ui: bool) -> Self {
         let web = ctx.bare_modules.iter().chain(ctx.module_aliases.values()).any(|m| m == "web" || m.starts_with("web."));
@@ -1022,6 +1017,7 @@ impl<'a> Lowerer<'a> {
             collecting: 0,
             unscanned: 0,
             fn_lists: Vec::new(),
+            undescribable: HashSet::new(),
             first_types: HashMap::new(),
             held: Vec::new(),
             clicks: None,
@@ -1166,6 +1162,11 @@ impl<'a> Lowerer<'a> {
     /// function's, the top level's statements in the top level's
     /// environment. A test says nothing of the program's signatures.
     fn scan_program(&mut self, stmts: &[S]) {
+        for s in stmts {
+            if let S::FnDecl { name, defaults, .. } = s {
+                self.ctx.fn_defaults.insert(name.clone(), defaults.clone());
+            }
+        }
         for s in stmts {
             match s {
                 S::FnDecl { name, params, body, is_view, .. } => {
@@ -1315,6 +1316,13 @@ impl<'a> Lowerer<'a> {
         }
         if self.ctx.call_says_of_callee(callee) {
             self.ctx.note_call(callee, args, types);
+        }
+        // (the program's first call of a module's function: where a refusal
+        // inside the module's copy is placed)
+        if let A::Ident(n) = callee {
+            if self.calls_fn(n) && !crate::modules::is_crow_fn(&self.current_fn) && self.v.line > 0 {
+                self.ctx.first_call_line.entry(n.clone()).or_insert(self.v.line);
+            }
         }
         // a call through a loop's variable over a list of named functions
         // types every one of them (an uncalled function would keep its
@@ -4023,6 +4031,27 @@ impl<'a> Lowerer<'a> {
                 }
             }
             A::Array(items) => {
+                // a literal of functions written is a group: each described
+                // and called by name (`describe`, `apply`), a positional call
+                // through one a dispatch over them — compiled, each value is
+                // its name (section 7 of docs/extending-crow.md; a list of
+                // function values had needed each one's parameters typed)
+                let written: Vec<String> = items.iter().filter_map(|i| match i { A::Ident(n) if self.calls_fn(n) && !self.declared(n) => Some(n.clone()), _ => None }).collect();
+                if !written.is_empty() && written.len() == items.len() {
+                    // (a member whose parameter nothing types — not a call of
+                    // its own, not its body's read, not a default — cannot be
+                    // described or called by name: refused where the list is
+                    // written, with the fix; the dispatch that meets it later
+                    // says nothing more)
+                    if self.pass == Pass::Final {
+                        for f in &written {
+                            self.check_describable(f);
+                        }
+                    }
+                    let group = Ty::Fns(written.clone());
+                    let out: Vec<Expr> = written.iter().map(|n| Expr::FnRef(n.clone(), group.clone())).collect();
+                    return Ok(Expr::ListLit(out, Ty::List(Box::new(group))));
+                }
                 let mut out = Vec::with_capacity(items.len());
                 for i in items {
                     out.push(self.lower_expr(i)?);
@@ -4217,16 +4246,6 @@ impl<'a> Lowerer<'a> {
     /// of what each `?` takes, sent one by one), exempt from the rule
     /// that a list holds one kind, whichever path lowers the call
     fn call(&mut self, callee: &A, args: &[A]) -> Result<Expr, String> {
-        // `tools = [weather, search]` handed to a model: the functions
-        // themselves, written as their schemas before the call is lowered
-        let tooled;
-        let args: &[A] = match self.llm_tools(callee, args) {
-            Some(rewritten) => {
-                tooled = rewritten;
-                &tooled
-            }
-            None => args,
-        };
         let saved = self.params_items.take();
         if let (A::Ident(name), Some(A::Array(items))) = (callee, args.get(2)) {
             if matches!(name.as_str(), "query" | "exec") {
@@ -4238,147 +4257,12 @@ impl<'a> Lowerer<'a> {
         out
     }
 
-    /// A call of llm's `chat` or `follow` whose `tools` (the fourth
-    /// argument, filled in from the function's defaults) is a list written
-    /// in the call: the arguments with each function replaced by its
-    /// schema as text — its name, its parameters by name with the kinds
-    /// inference found, and the comment above it as its description (spec,
-    /// section 13: Tools are the functions). A list that is not the
-    /// functions written, and a parameter typed by nothing, are refused.
-    /// (The call names the module's function inlined, however the program
-    /// spelled it: crate::modules::inline_crow_modules. The schema is
-    /// phase 4's `describe`, docs/extending-crow.md.)
-    fn llm_tools(&mut self, callee: &A, args: &[A]) -> Option<Vec<A>> {
-        let asked = matches!(callee, A::Ident(n) if n == "_llm_chat" || n == "_llm_follow");
-        if !asked || args.len() != 6 {
-            return None;
-        }
-        let A::Array(items) = &args[3] else {
-            if self.pass == Pass::Final {
-                self.refuse("tools = […] takes the functions written: tools = [weather, search]".to_string());
-            }
-            return None;
-        };
-        if items.is_empty() {
-            return None;
-        }
-        let mut schemas: Vec<A> = Vec::new();
-        for item in items {
-            match item {
-                A::Ident(f) if self.ctx.functions.contains_key(f) && !self.declared(f) => schemas.push(A::Str(self.tool_schema(f))),
-                _ => {
-                    if self.pass == Pass::Final {
-                        let shown = match item {
-                            A::Ident(f) => format!("'{}' is no function of the program", crate::lower::shown(f)),
-                            A::Str(t) => format!("'{}' is text, not the function", t),
-                            _ => "a value is no function".to_string(),
-                        };
-                        self.refuse(format!("tools = […] takes the functions written: tools = [weather, search] ({})", shown));
-                    }
-                    return None;
-                }
-            }
-        }
-        let mut rewritten = args.to_vec();
-        rewritten[3] = A::Array(schemas);
-        Some(rewritten)
-    }
-
-    /// A function's schema as a model is told it: name, description and
-    /// its parameters as a JSON schema object, every parameter required.
-    fn tool_schema(&mut self, name: &str) -> String {
-        let quoted = |s: &str| serde_json::to_string(s).unwrap_or_default();
-        let params: Vec<(String, Ty)> = self.ctx.functions.get(name).map(|sig| sig.params.clone()).unwrap_or_default();
-        let mut properties: Vec<String> = Vec::new();
-        let mut required: Vec<String> = Vec::new();
-        for (p, ty) in &params {
-            // a parameter handed a parsed value, or typed by nothing, is the
-            // kind the body reads it as
-            let handed = matches!(ty.payload(), Ty::Json);
-            let ty = if handed || matches!(ty, Ty::Unknown) { self.ctx.param_reads.get(name).and_then(|m| m.get(p)).cloned().unwrap_or(Ty::Unknown) } else { ty.clone() };
-            let schema = match self.handed_schema(&ty) {
-                Handed::Schema(s) => s,
-                Handed::Untyped => {
-                    if self.pass == Pass::Final {
-                        if handed {
-                            self.refuse(format!("{0}'s parameter '{1}' is handed a parsed value and read as nothing — read it in the body as what it is (upper[{1}] reads text, {1} + 0 a number, str[{1}] text), or call {0}[…] once with a value of its kind", crate::lower::shown(name), p));
-                        } else {
-                            self.refuse(format!("{0}'s parameter '{1}' is typed by nothing — read it in the body, or call {0}[…] once with a value of its kind", crate::lower::shown(name), p));
-                        }
-                    }
-                    "{\"type\": \"string\"}".to_string()
-                }
-                Handed::Unhandable(what) => {
-                    if self.pass == Pass::Final {
-                        self.refuse(format!("{0}'s parameter '{1}' takes {2}, which a model cannot hand it: a tool takes numbers, text, bools, lists, records and parsed values", crate::lower::shown(name), p, what));
-                    }
-                    "{\"type\": \"string\"}".to_string()
-                }
-            };
-            properties.push(format!("{}: {}", quoted(p), schema));
-            required.push(quoted(p));
-        }
-        let doc = crate::fn_doc(name).unwrap_or_default();
-        format!(
-            "{{\"name\": {}, \"description\": {}, \"parameters\": {{\"type\": \"object\", \"properties\": {{{}}}, \"required\": [{}]}}}}",
-            quoted(&crate::lower::shown(name)),
-            quoted(&doc),
-            properties.join(", "),
-            required.join(", ")
-        )
-    }
-
-    /// The JSON schema of a kind a model can hand a tool, naming every
-    /// variant of the type (design rule 21): a whole number an `integer`,
-    /// a number a `number`, text a `string`, a bool a `boolean`, a list an
-    /// `array` of its items, a tensor an array of numbers, a map an object
-    /// of its values, a record an object of its fields, a parsed value an
-    /// object; a kind typed by nothing, and one a model cannot hand (a
-    /// frame, a handle, a function), are said so.
-    fn handed_schema(&self, ty: &Ty) -> Handed {
-        match ty {
-            Ty::Int | Ty::Big => Handed::Schema("{\"type\": \"integer\"}".to_string()),
-            Ty::Float | Ty::Decimal | Ty::Fraction => Handed::Schema("{\"type\": \"number\"}".to_string()),
-            Ty::Str | Ty::Moment | Ty::Markup | Ty::Bytes => Handed::Schema("{\"type\": \"string\"}".to_string()),
-            Ty::Bool => Handed::Schema("{\"type\": \"boolean\"}".to_string()),
-            Ty::Unit => Handed::Schema("{\"type\": \"null\"}".to_string()),
-            Ty::Json => Handed::Schema("{\"type\": \"object\"}".to_string()),
-            Ty::Tensor(..) | Ty::Column(_) => Handed::Schema("{\"type\": \"array\", \"items\": {\"type\": \"number\"}}".to_string()),
-            Ty::List(item) => match self.handed_schema(item) {
-                Handed::Schema(s) => Handed::Schema(format!("{{\"type\": \"array\", \"items\": {}}}", s)),
-                other => other,
-            },
-            Ty::Map(_, value) => match self.handed_schema(value) {
-                Handed::Schema(s) => Handed::Schema(format!("{{\"type\": \"object\", \"additionalProperties\": {}}}", s)),
-                other => other,
-            },
-            Ty::Result(inner) => self.handed_schema(inner),
-            Ty::Record(name) | Ty::OptRecord(name) => {
-                let fields: Vec<(String, Ty)> = self.ctx.structs.get(name).map(|s| s.fields.clone()).unwrap_or_default();
-                let mut properties: Vec<String> = Vec::new();
-                let mut required: Vec<String> = Vec::new();
-                for (f, fty) in &fields {
-                    match self.handed_schema(fty) {
-                        Handed::Schema(s) => {
-                            properties.push(format!("{}: {}", serde_json::to_string(f).unwrap_or_default(), s));
-                            required.push(serde_json::to_string(f).unwrap_or_default());
-                        }
-                        other => return other,
-                    }
-                }
-                Handed::Schema(format!("{{\"type\": \"object\", \"properties\": {{{}}}, \"required\": [{}]}}", properties.join(", "), required.join(", ")))
-            }
-            Ty::Unknown => Handed::Untyped,
-            Ty::Frame(_) => Handed::Unhandable("a frame"),
-            Ty::Fn(..) => Handed::Unhandable("a function"),
-            Ty::Db | Ty::Tx => Handed::Unhandable("a database connection"),
-            Ty::Sparse => Handed::Unhandable("a sparse matrix"),
-            Ty::WebApp | Ty::WebRequest | Ty::WebResponse | Ty::App | Ty::Node => Handed::Unhandable("the server's own value"),
-            Ty::Mailer | Ty::Socket | Ty::Stream => Handed::Unhandable("a connection"),
-        }
-    }
-
     fn call_inner(&mut self, callee: &A, args: &[A]) -> Result<Expr, String> {
+        if let A::Ident(n) = callee {
+            if let Some(done) = self.described(n, args)? {
+                return Ok(done);
+            }
+        }
         // a variable indexed: xs[0], m['k'], r.symbol[0] — except that
         // inside a view an element name is the element (the vocabulary
         // boundary, spec §12): a session named `a` outside does not turn
@@ -4500,6 +4384,33 @@ impl<'a> Lowerer<'a> {
             // its parameter's — `pass[3]` called by name, then handed as `g`
             // and called `g['abc']` — is refused where it is handed (the
             // compiled program had not built it — crow check --self)
+            // a call through a function of a group (a list literal of
+            // functions): a dispatch over the members — each must take the
+            // arguments, and all answer one kind (section 7 of
+            // docs/extending-crow.md: called by name, never positionally,
+            // where they disagree)
+            if self.pass == Pass::Final
+                && let Ty::Fns(names) = base.ty().payload().clone()
+            {
+                let written: &[A] = args;
+                let answers: Vec<Ty> = names.iter().filter_map(|n| self.ctx.functions.get(n).map(|s| s.return_type.clone())).collect();
+                let arities: std::collections::BTreeSet<usize> = names.iter().filter_map(|n| self.ctx.functions.get(n).map(|s| s.params.len())).collect();
+                let one_kind = answers.windows(2).all(|w| w[0] == w[1]);
+                let answer = answers.first().cloned().unwrap_or(Ty::Unknown);
+                let zero = Self::zero_of(&answer);
+                if arities.len() != 1 || !one_kind || answer.has_unknown() || zero.is_none() {
+                    self.refuse(format!(
+                        "`{}[…]` calls one of {} by position: they take or answer different kinds, or answer a kind no position can hold — call it by name (apply[f, args]), or hand functions of one kind that answer an int, a number, a bool, text, a list or a map",
+                        local_named(&base).unwrap_or_else(|| "f".to_string()),
+                        names.join(", ")
+                    ));
+                    return Ok(Expr::Const(Const::Str(String::new()), Ty::Str));
+                }
+                let written: Vec<A> = written.to_vec();
+                let init = zero.expect("a zero of the answer's kind");
+                let out = self.dispatch(base, &names, answer, init, &|me, cand| me.lower_expr(&A::Call { callee: Box::new(A::Ident(cand.to_string())), args: written.clone() }))?;
+                return Ok(out);
+            }
             if self.pass == Pass::Final
                 && let Ty::Fn(params, _) = base.ty().payload().clone()
             {
@@ -7361,14 +7272,13 @@ fn expr_reads(e: &Expr, out: &mut HashSet<String>) {
 mod tests {
     use super::*;
 
-    /// `tools = [f, g]` handed to a model are the functions' schemas, as
-    /// text: the name, the comment above the function as its description,
-    /// and the parameters by the kinds inference found — an int an integer,
-    /// a float a number, text a string, a bool a boolean, a list an array
-    /// of its items, a record an object of its fields; a parameter handed a
-    /// parsed value is the kind the body reads it as
+    /// `tools = [price, listed, far, weather]` handed to a model is a group:
+    /// each held by its name, and the module describes each through
+    /// `describe` — its name, the comment above it, its parameters' kinds
+    /// as the words errors use (a parameter handed a parsed value is the
+    /// kind the body reads it as; a record's is a record), what it answers
     #[test]
-    fn a_tools_list_of_functions_becomes_their_schemas() {
+    fn a_tools_list_of_functions_is_a_group_each_described() {
         let src = "use llm
 
 --- the price of n units at a rate
@@ -7402,11 +7312,12 @@ if r.ok
 ";
         crate::note_fn_docs("", src);
         let ir = ir_of(src);
-        assert!(ir.contains(r#"{\"name\": \"price\", \"description\": \"the price of n units at a rate\", \"parameters\": {\"type\": \"object\", \"properties\": {\"n\": {\"type\": \"integer\"}, \"rate\": {\"type\": \"number\"}}, \"required\": [\"n\", \"rate\"]}}"#), "{}", ir);
-        assert!(ir.contains(r#"{\"name\": \"listed\", \"description\": \"whether a name is on the list\", \"parameters\": {\"type\": \"object\", \"properties\": {\"name\": {\"type\": \"string\"}, \"names\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"strict\": {\"type\": \"boolean\"}}, \"required\": [\"name\", \"names\", \"strict\"]}}"#), "{}", ir);
-        assert!(ir.contains(r#"{\"name\": \"far\", \"description\": \"how far a point is from home\", \"parameters\": {\"type\": \"object\", \"properties\": {\"p\": {\"type\": \"object\", \"properties\": {\"x\": {\"type\": \"number\"}, \"y\": {\"type\": \"number\"}}, \"required\": [\"x\", \"y\"]}}, \"required\": [\"p\"]}}"#), "{}", ir);
+        assert!(ir.contains("List(Fns(price, listed, far, weather))"), "a group: {}", ir);
+        assert!(ir.contains(r#"{\"name\": \"price\", \"doc\": \"the price of n units at a rate\", \"params\": [{\"name\": \"n\", \"takes\": \"an int\", \"default\": null}, {\"name\": \"rate\", \"takes\": \"a number\", \"default\": null}], \"answers\": \"a number\"}"#), "{}", ir);
+        assert!(ir.contains(r#"{\"name\": \"listed\", \"doc\": \"whether a name is on the list\", \"params\": [{\"name\": \"name\", \"takes\": \"text\", \"default\": null}, {\"name\": \"names\", \"takes\": \"a list of text\", \"default\": null}, {\"name\": \"strict\", \"takes\": \"a bool\", \"default\": null}], \"answers\": \"a bool\"}"#), "{}", ir);
+        assert!(ir.contains(r#"{\"name\": \"far\", \"doc\": \"how far a point is from home\", \"params\": [{\"name\": \"p\", \"takes\": \"a record\", \"default\": null}], \"answers\": \"a number\"}"#), "{}", ir);
         // (handed a parsed value, read as text by upper[])
-        assert!(ir.contains(r#"{\"name\": \"weather\", \"description\": \"the weather in a city\", \"parameters\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"]}}"#), "{}", ir);
+        assert!(ir.contains(r#"{\"name\": \"weather\", \"doc\": \"the weather in a city\", \"params\": [{\"name\": \"city\", \"takes\": \"text\", \"default\": null}], \"answers\": \"text\"}"#), "{}", ir);
     }
 
     fn ir_of(src: &str) -> String {

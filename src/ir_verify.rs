@@ -364,7 +364,9 @@ impl<'p> Verifier<'p> {
             // named a function it did not emit — a predicate handed to
             // `any` over a list that can fail, fuzz seed 1791429824)
             Expr::FnRef(name, t) => {
-                if self.runs && !self.testing && !self.differentiating {
+                // (a function of a group — a list literal's, called by
+                // name — is held as its name, never as a function value)
+                if self.runs && !self.testing && !self.differentiating && !matches!(t, Ty::Fns(_)) {
                     // (a view, a handler or a helper handed to a page or a
                     // control is typed by the runtime that calls it)
                     if let Some(f) = self.fns.get(name.as_str()).filter(|f| !matches!(f.kind, FnKind::View | FnKind::Handler | FnKind::Helper)) {
@@ -759,6 +761,12 @@ fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
             Kind::Bool => *t == Ty::Bool,
             Kind::Bytes => *t == Ty::Bytes,
             Kind::Stream => matches!(t, Ty::Stream),
+            // a function handed where a row takes one, a walked collection,
+            // a connection; a request and a match are answered, never taken
+            Kind::FnOf(_) => matches!(t, Ty::Fn(..)),
+            Kind::Walked => matches!(t, Ty::List(_) | Ty::Tensor(..) | Ty::Column(_)),
+            Kind::Db | Kind::Tx => matches!(t, Ty::Db | Ty::Tx),
+            Kind::Request | Kind::Found => false,
             Kind::Str => matches!(t, Ty::Str | Ty::Markup),
             // a map's key: text or an int, by its map
             Kind::Key => matches!(t, Ty::Str | Ty::Markup | Ty::Int),

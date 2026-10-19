@@ -437,6 +437,13 @@ impl Emitter {
                     "0.0_f64".to_string()
                 }
             }
+            // a function value compared with a function written: by name
+            // where the value is a group's (text), by address where it is a
+            // function value
+            "__same_fn" if n == 2 => match self.tt(&args[0]) {
+                Ty::Fns(_) => format!("({}.as_str() == {}.as_str())", a[0], a[1]),
+                _ => format!("(({}) as usize == ({}) as usize)", a[0], a[1]),
+            },
             "running" if n == 1 => {
                 let fname = match fn_named(&args[0]).map(|s| s.to_string()).or_else(|| if let Expr::Derived(d, _) = Emitter::raw(&args[0]) { Some(d.clone()) } else { None }) {
                     Some(f) => f,

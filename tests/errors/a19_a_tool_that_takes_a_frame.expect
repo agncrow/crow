@@ -1,3 +1,2 @@
-a19_a_tool_that_takes_a_frame.co:12:1: rows's parameter 'table' takes a frame, which a model cannot hand it: a tool takes numbers, text, bools, lists, records and parsed values
-  12 │ r = chat[m, ask['How many?'], tools = [rows]]
-     │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2
+runtime error: line 13: cannot drop an error value — cannot reach the model: the parameter table of rows takes a frame, which a model cannot hand it: a tool takes numbers, text, bools, lists, maps, records and parsed values

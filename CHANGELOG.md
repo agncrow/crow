@@ -65,6 +65,21 @@ history says the rest.
 
 ### Changed
 
+- A builtin that takes a function declares it on its row, with its
+  signature (`any`, `all`, `find`, `later`, `running`, `stream`, `route`,
+  `transact`, a chart's `seek`): inference hands the function its
+  parameters from the declaration, the kinds check refuses anything else
+  in the row's words, the width pass and the classification read the
+  same declaration — each had been a list of the builtins' names in the
+  compiler (docs/extending-crow.md, phase 4). A list literal of functions
+  is a group, held by name: a call through one is a dispatch the compiler
+  writes (the members take and answer one kind), and members of several
+  signatures are described and called by name alone (spec,
+  Specialization). The standard modules describe and call functions
+  through sys's `describe[f]` and `apply[f, args]`; llm's tools are
+  described in the module (`chat`'s and `follow`'s schemas were the
+  compiler's), so a tools list may hold functions of several signatures.
+
 - The compiler holds the language and nothing of any module (design rule
   24; docs/extending-crow.md): what a builtin is — its options and their
   defaults, its effects, its in-place and growing forms, the range of the
@@ -108,6 +123,11 @@ history says the rest.
 
 ### Fixed
 
+- `find['a', 'b']` under `use sys` had reached the layer's `find` of
+  bytes (the one resolver read the core's runtime rows alone, and the
+  core's `find` is a form), and the lowered program disagreed with
+  itself: a core form that declares its kinds comes before a module's
+  row, as a core row does.
 - A derivation indexed (`trades[trades.qty gte min_qty]`, a mask over a
   derived frame) read as a call of the derivation, "'trades' expects 0
   arguments, got 1": a derivation is read like a fact and indexed like

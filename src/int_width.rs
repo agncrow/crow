@@ -1862,13 +1862,11 @@ fn called_by_name(x: &Expr) -> Option<(&str, usize, &[Expr])> {
         Expr::Effect { name, args, .. } => (name.as_str(), args.as_slice()),
         _ => return None,
     };
-    let skipped = match name {
-        "stream" => 1,
-        "later" => 0,
-        _ => return None,
-    };
-    match args.split_first() {
-        Some((Expr::FnRef(f, _), rest)) => Some((f.as_str(), skipped, rest)),
+    // (the row says: a function parameter whose signature takes the rest,
+    // the parameters the row fills itself before them — a feed's put)
+    let (i, sig) = crate::table::fn_params(name, args.len()).into_iter().find(|(_, s)| s.rest)?;
+    match args.get(i) {
+        Some(Expr::FnRef(f, _)) => Some((f.as_str(), sig.params.len(), &args[i + 1..])),
         _ => None,
     }
 }

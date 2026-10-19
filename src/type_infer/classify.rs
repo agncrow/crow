@@ -163,8 +163,9 @@ impl TypeContext {
                         }
                     }
                     Expr::Call { callee, args } => {
-                        // chart[..., seek = jump]: the seek target is a handler
-                        if let Some(f) = crate::lower::chart_seek_handler(callee, args) {
+                        // a function handed to a row's event option (a
+                        // chart's seek) is a handler, as the row declares
+                        for (f, _) in crate::lower::event_handlers(callee, args) {
                             if fns.contains_key(f) {
                                 out.insert(f.to_string());
                             }
@@ -406,7 +407,7 @@ impl TypeContext {
             fn seek_expr(e: &Expr, out: &mut Vec<String>, widgets: &mut Vec<String>) {
                 match e {
                     Expr::Call { callee, args } => {
-                        if let Some(f) = crate::lower::chart_seek_handler(callee, args) {
+                        for (f, _) in crate::lower::event_handlers(callee, args) {
                             out.push(f.to_string());
                         }
                         if matches!(callee.as_ref(), Expr::Ident(n) if n == "grad") {
@@ -493,12 +494,10 @@ impl TypeContext {
     pub(super) fn collect_later_targets_stmts(stmts: &[Stmt], out: &mut std::collections::BTreeSet<String>) {
         fn walk(e: &Expr, out: &mut std::collections::BTreeSet<String>) {
             if let Expr::Call { callee, args } = e {
-                if let Expr::Ident(name) = callee.as_ref() {
-                    if (name == "later" || name == "running") && !args.is_empty() {
-                        if let Expr::Ident(target) = &args[0] {
-                            out.insert(target.clone());
-                        }
-                    }
+                // (the row says which arguments are its deferred work:
+                // later's, running's)
+                for target in crate::lower::deferred_targets(callee, args) {
+                    out.insert(target.to_string());
                 }
                 walk(callee, out);
                 for a in args {

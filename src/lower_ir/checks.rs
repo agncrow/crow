@@ -275,8 +275,21 @@ impl<'a> Lowerer<'a> {
         if self.v.mute > 0 {
             return;
         }
-        let msg = if crate::modules::is_crow_fn(&self.current_fn) { format!("in {}: {}", crate::modules::written_as(&self.current_fn), msg) } else { msg };
-        self.v.errors.push((format!("line {}: {}", self.v.line, msg), self.v.decl.clone()));
+        // (inside a standard module's function, the line is the program's:
+        // its first call of the function, since the module's line is none
+        // of the program's)
+        let (msg, line) = if crate::modules::is_crow_fn(&self.current_fn) {
+            let base = crate::ir::copy_base(&self.current_fn).to_string();
+            // (the module's functions are inlined after the program's
+            // statements, so the program's call of this one is lowered
+            // first: its line is on record; the scan's note is the fallback)
+            let called_at = self.call_lines.iter().find(|((_, callee), _)| crate::ir::copy_base(callee) == base).map(|(_, l)| *l);
+            let line = called_at.or_else(|| self.ctx.first_call_line.get(&base).copied()).unwrap_or(self.v.line);
+            (format!("in {}: {}", crate::modules::written_as(&self.current_fn), msg), line)
+        } else {
+            (msg, self.v.line)
+        };
+        self.v.errors.push((format!("line {}: {}", line, msg), self.v.decl.clone()));
     }
 
     /// A statement of a ui program's top level, after a fact's declaration,
@@ -1182,7 +1195,7 @@ impl<'a> Lowerer<'a> {
             }
         }
         let module_rows = providers.iter().any(|m| crate::table::ROWS.iter().any(|r| r.module == m.as_str() && r.name == name));
-        if !crate::table::has_core_rows(name) && !module_rows {
+        if !crate::table::has_core_rows(name) && !crate::table::has_checked_form(name) && !module_rows {
             return;
         }
         let kinds: Vec<crate::table::Arg> = (0..argc).map(|i| types.get(i).map_or(crate::table::Arg::Unknown, crate::table::Arg::of_type)).collect();
@@ -1243,21 +1256,6 @@ impl<'a> Lowerer<'a> {
         }
         if name == "route" && !self.defined("route") && !matches!(arg_type(self, 0), Ty::Str | Ty::Unknown) {
             self.refuse("route[] takes a path first — the app is implicit: route['/', handler]".to_string());
-        }
-        // any[], all[] and find[] take a list and a function: a value of
-        // another kind — a frame a variable named like the predicate held,
-        // in a generated program — is refused before either mode runs (the
-        // interpreter had stopped as it ran, "expected a function, got
-        // frame", and the compiled program had not built)
-        if matches!(name, "any" | "all" | "find") && args.len() == 2 && !self.defined(name) {
-            // (`find[bytes, needle]` is sys's row, which its own kinds check)
-            let (xs, f) = (arg_type(self, 0), arg_type(self, 1));
-            let items = matches!(xs.payload(), Ty::List(_) | Ty::Tensor(..) | Ty::Column(_));
-            let function = matches!(f.payload(), Ty::Fn(..) | Ty::Unknown);
-            if items && !function {
-                let what = |t: &Ty| crate::table::Arg::of_type(t.payload()).words();
-                self.refuse(format!("{}[] takes a list and a function, got {} and {}", name, what(&xs), what(&f)));
-            }
         }
         // Test-harness builtins exist only inside test blocks (which never
         // reach a build) — accept them there, refuse them anywhere else.
@@ -1686,7 +1684,7 @@ impl<'a> Lowerer<'a> {
             // min of a tensor) — refused before either mode runs, in the
             // table's words (the interpreter stopped on the value, the
             // compiled program did not build)
-            if crate::table::has_core_rows(name) || WEB_RESERVED.contains(&name) {
+            if crate::table::has_core_rows(name) || crate::table::has_checked_form(name) || WEB_RESERVED.contains(&name) {
                 self.refuse_kinds(name, argc, types);
             }
             if !crate::table::has_core_rows(name) && !crate::table::arity_ok(name, argc) {

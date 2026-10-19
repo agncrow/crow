@@ -611,6 +611,56 @@ ground for event handlers on elements (section 9).
 errors corpus, `tests/llm_server.rs` driving the loop against the stand-in
 model, the self-check's routes family with `route` as a row.
 
+### As built (2026-10-19)
+
+The questions, decided by recommendation: (1) a list of functions is a
+literal flowed through parameters, never a fact's value — a group
+(`Ty::Fns(names)`), each value its name compiled, typed before its items
+are lowered; (2) `apply` by name only, from a parsed value or a map; (3)
+`describe` and `apply` are sys's (the self-check's door, `CROW_SYS`, and
+the standard modules reach them); a program's own packages do not, this
+phase. Decided beyond the questions: `describe` answers a parsed value
+(a record would need phase 5's declaration in Crow) whose parameter
+field is `takes`, not `kind`, since a value's `kind` is its error's;
+`apply` answers the value encoded as text, as text that can fail — the
+branches of a dispatch answer one kind; a positional call through a
+group member is a dispatch too, allowed where the members take and
+answer one kind a position can hold, refused otherwise ("call it by
+name"); a group member is no function value, so a row taking a function
+(`any`, `later`) refuses it.
+
+Built: `Kind::FnOf(&Sig)` with the row's declaration (`PRED`, `DEFERRED`,
+`PUT`/`FEED`, `HANDLER`, `TX`, `SEEK`; `Walked`, `Request`, `Db`, `Tx`,
+`Found` beside it; `Prop::Answers` for a form typed by its row;
+`Preset::Event` for an option the page calls); `table::fn_params`,
+`walked_param`, `event_positions`, `deferred_positions`; inference's one
+rule `hand_to_row`; `lower::event_handlers` and `deferred_targets` in the
+classification and the checker; `called_by_name` by signature; the
+dispatch (`described`, `dispatch`, `applied`, `__same_fn`, the `__arg_*`
+and `__ok_text` rows); llm.co's `_schema_of` and `_json_type` over
+`describe`. Gone: the name arms for any/all/find/later/running/stream/
+route/transact in rules.rs, calls.rs and checks.rs; `chart_seek_handler`;
+`llm_tools`, `tool_schema`, `handed_schema`, `Handed`; the width pass's
+names. Kept for a later phase: the backends' arms for these builtins —
+`any`/`all`/`find` run by name in both backends until a function-taking
+row can call back into the interpreter (a `Caller` the runtime's kernels
+take), and `later`/`stream`/`route`/`transact` are the session's, the
+server's and the database's, which phase 7 moves.
+
+The call-by-name lowering is `src/lower_ir/named.rs`, its names (the
+two forms, the hidden rows, `json`, `encode`, `error`) counted there by
+the ratchet; lower_ir.rs ends the phase at the count it began with. The
+self-check's pairs found the one resolver (`module_of_bare`) reading the
+core's runtime rows alone: `find['a', 'b']` under `use sys` reached the
+layer's row of bytes — a core form that declares its kinds comes before
+a module's row now.
+
+Held by: parity 269 (a group's dispatch, both modes), errors j57 (a
+positional call through a group of several signatures) and j58 (a group
+member where a function is taken), llm.co's own tests (`describe` and
+`apply`), tests/llm_server.rs (tools through `describe` in both modes),
+and the gate.
+
 ## 8. Phase 5 — handles declared by modules; records declared in Crow
 
 **Language change.** One type, `Ty::Handle(name)`, and one interpreter

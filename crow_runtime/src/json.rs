@@ -272,6 +272,42 @@ fn not_read(v: &serde_json::Value, what: &str, how: &str) -> String {
 /// row that takes an int): a whole number, a number with nothing after
 /// the point, or text that reads as one; anything else stops with what it
 /// holds and the read that asked. (`__read_int`; spec, JSON.)
+/// A call by name's argument (`apply[f, args]`): the parsed value's field
+/// of the parameter's name, read as the parameter's kind; an error of
+/// kind `call` where it is missing, or of another kind.
+fn arg_of<'a>(args: &'a serde_json::Value, name: &str, f: &str) -> Result<&'a serde_json::Value, String> {
+    match args.get(name) {
+        Some(v) => Ok(v),
+        None => Err(format!("{}[] takes an argument named '{}', which the call lacks", f, name)),
+    }
+}
+
+pub fn arg_int(args: &serde_json::Value, name: &str, f: &str) -> Result<i64, String> {
+    read_int(arg_of(args, name, f)?, &format!("{}[]'s '{}'", f, name))
+}
+
+pub fn arg_float(args: &serde_json::Value, name: &str, f: &str) -> Result<f64, String> {
+    read_float(arg_of(args, name, f)?, &format!("{}[]'s '{}'", f, name))
+}
+
+pub fn arg_str(args: &serde_json::Value, name: &str, f: &str) -> Result<String, String> {
+    read_str(arg_of(args, name, f)?, &format!("{}[]'s '{}'", f, name))
+}
+
+pub fn arg_bool(args: &serde_json::Value, name: &str, f: &str) -> Result<bool, String> {
+    read_bool(arg_of(args, name, f)?, &format!("{}[]'s '{}'", f, name))
+}
+
+pub fn arg_json(args: &serde_json::Value, name: &str, f: &str) -> Result<serde_json::Value, String> {
+    arg_of(args, name, f).map(|v| v.clone())
+}
+
+/// A text as one that can fail, which never does: the branches of a
+/// dispatch answer one kind.
+pub fn ok_text(s: &str) -> Result<String, String> {
+    Ok(s.to_string())
+}
+
 pub fn read_int(v: &serde_json::Value, how: &str) -> Result<i64, String> {
     if let Some(n) = v.as_i64() {
         return Ok(n);

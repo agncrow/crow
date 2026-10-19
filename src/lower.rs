@@ -109,17 +109,31 @@ fn module_of(object: &Expr) -> String {
     }
 }
 
-/// `chart[..., seek = handler]` after lowering: twelve positional args with
-/// the handler's name in the last slot. Every pass that discovers event
-/// handlers asks this so the seek target counts as one.
-pub(crate) fn chart_seek_handler<'a>(callee: &Expr, args: &'a [Expr]) -> Option<&'a str> {
-    match callee {
-        Expr::Ident(n) if n == "chart" && args.len() == 12 => match &args[11] {
-            Expr::Ident(f) => Some(f.as_str()),
+/// The functions a call hands to a row's event options (`Preset::Event`:
+/// a chart's `seek = handler`) after lowering, each with the signature the
+/// option declares. Every pass that discovers event handlers asks this.
+pub(crate) fn event_handlers<'a>(callee: &Expr, args: &'a [Expr]) -> Vec<(&'a str, &'static crate::table::Sig)> {
+    let Expr::Ident(n) = callee else { return Vec::new() };
+    crate::table::event_positions(n, args.len())
+        .into_iter()
+        .filter_map(|(i, sig)| match args.get(i) {
+            Some(Expr::Ident(f)) => Some((f.as_str(), sig)),
             _ => None,
-        },
-        _ => None,
-    }
+        })
+        .collect()
+}
+
+/// The functions a call hands to a row's deferred work (`later[f, …]`,
+/// `running[f]`), as the row declares it (`Sig::deferred`).
+pub(crate) fn deferred_targets<'a>(callee: &Expr, args: &'a [Expr]) -> Vec<&'a str> {
+    let Expr::Ident(n) = callee else { return Vec::new() };
+    crate::table::deferred_positions(n, args.len())
+        .into_iter()
+        .filter_map(|i| match args.get(i) {
+            Some(Expr::Ident(f)) => Some(f.as_str()),
+            _ => None,
+        })
+        .collect()
 }
 
 /// A row's default as the lowering writes it into the call; none where the
@@ -133,6 +147,8 @@ fn default_expr(d: crate::table::Preset) -> Option<Expr> {
         D::Bool(b) => Expr::Bool(b),
         D::List => Expr::Array(vec![]),
         D::Map => Expr::Map(vec![]),
+        // (an event not given: none, as the page reads 0)
+        D::Event(_) => Expr::Int(0),
         D::Asked => return None,
     })
 }
@@ -148,6 +164,7 @@ fn shown_default(d: crate::table::Preset) -> String {
         D::List => "[]".to_string(),
         D::Map => "map[]".to_string(),
         D::Asked => "…".to_string(),
+        D::Event(_) => "0".to_string(),
     }
 }
 

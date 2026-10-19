@@ -85,6 +85,7 @@ impl Ty {
             Ty::List(i) | Ty::Map(_, i) | Ty::Column(i) | Ty::Result(i) | Ty::Tensor(i, _) => i.has_unknown(),
             Ty::Frame(cols) => cols.as_ref().is_some_and(|c| c.cols.values().any(Ty::has_unknown)),
             Ty::Fn(params, ret) => params.iter().any(Ty::has_unknown) || ret.has_unknown(),
+            Ty::Fns(_) => false,
             Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Float | Ty::Bool | Ty::Str | Ty::Moment | Ty::Bytes | Ty::Unit | Ty::Markup | Ty::Json
             | Ty::Record(_) | Ty::OptRecord(_) | Ty::Db | Ty::Tx | Ty::Sparse | Ty::WebApp | Ty::WebRequest
             | Ty::WebResponse | Ty::Mailer | Ty::Socket | Ty::Stream | Ty::App | Ty::Node => false,
@@ -99,6 +100,7 @@ impl Ty {
             Ty::Frame(Some(cols)) => cols.cols.values().all(Ty::is_concrete),
             Ty::List(i) | Ty::Map(_, i) | Ty::Column(i) | Ty::Result(i) | Ty::Tensor(i, _) => i.is_concrete(),
             Ty::Fn(params, ret) => params.iter().all(Ty::is_concrete) && ret.is_concrete(),
+            Ty::Fns(_) => true,
             Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Float | Ty::Bool | Ty::Str | Ty::Moment | Ty::Bytes | Ty::Unit | Ty::Markup | Ty::Json
             | Ty::Record(_) | Ty::OptRecord(_) | Ty::Db | Ty::Tx | Ty::Sparse | Ty::WebApp | Ty::WebRequest
             | Ty::WebResponse | Ty::Mailer | Ty::Socket | Ty::Stream | Ty::App | Ty::Node => true,
@@ -133,6 +135,7 @@ impl Ty {
             Ty::WebApp => "crow_web::server::CrowApp".into(),
             Ty::WebResponse => "crow_web::core::CrowResponse".into(),
             Ty::WebRequest => "crow_web::core::CrowRequest".into(),
+            Ty::Fns(_) => "String".into(),
             Ty::Db => "crow_db::DbHandle".into(),
             Ty::Tx => "&dyn crow_db::DbTx".into(),
             Ty::Mailer => "crow_runtime::sys::Mailer".into(),
@@ -183,6 +186,7 @@ impl Ty {
             Ty::WebApp => "crow_web::server::CrowApp::new()".into(),
             Ty::WebResponse => "crow_web::core::CrowResponse::default()".into(),
             Ty::WebRequest => "crow_web::core::CrowRequest::new()".into(),
+            Ty::Fns(_) => "String::new()".into(),
             Ty::Db => "panic!(\"no default db connection\")".into(),
             Ty::Tx => "panic!(\"no default db transaction\")".into(),
             Ty::Mailer => "crow_runtime::sys::Mailer::default()".into(),
@@ -250,6 +254,7 @@ impl Ty {
             Ty::Map(_, inner) => format!("map[{}]", inner.crow_name()),
             Ty::Record(name) => name.clone(),
             Ty::OptRecord(name) => name.clone(),
+            Ty::Fns(_) => "function".into(),
             Ty::Fn(params, ret) => {
                 let p: Vec<String> = params.iter().map(|p| p.crow_name()).collect();
                 format!("fn[{}] -> {}", p.join(", "), ret.crow_name())
@@ -460,6 +465,14 @@ pub struct TypeContext {
     /// parameter is where inference says only "a parsed value" (noted by
     /// the lowering's passes, read where the schema is written).
     pub param_reads: BTreeMap<String, BTreeMap<String, Ty>>,
+    /// Each function's parameters' defaults as written, for `describe`
+    /// (kept here, since the final pass lowers on a Lowerer of its own).
+    pub fn_defaults: BTreeMap<String, Vec<Option<Expr>>>,
+    /// The program's first line calling each function, by the name
+    /// written: where a refusal inside a standard module's function (a
+    /// copy lowered on its own) is placed, since the module's line is no
+    /// line of the program's.
+    pub first_call_line: BTreeMap<String, usize>,
     /// The kind a list variable's items were first known to be, by function
     /// and variable, as the scan met its pushes in order: what a later push
     /// of another kind is refused against (a variable's settled type is its
@@ -595,6 +608,8 @@ impl TypeContext {
             views: std::collections::BTreeSet::new(),
             grad_forced: std::collections::BTreeSet::new(),
             param_reads: BTreeMap::new(),
+            fn_defaults: BTreeMap::new(),
+            first_call_line: BTreeMap::new(),
             first_items: BTreeMap::new(),
             body_assigned: None,
             in_view: false,

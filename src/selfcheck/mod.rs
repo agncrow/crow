@@ -147,6 +147,7 @@ fn values() -> Vec<Val> {
         plain("url", "'http://127.0.0.1:9/self'"),
         plain("sql", "'SELECT 1 AS n'"),
         Val { name: "conn".into(), expr: "connect['sqlite://:memory:']".into(), setup: Vec::new(), imports: vec!["db"] },
+        Val { name: "pred".into(), expr: "self_true".into(), setup: Vec::new(), imports: vec![] },
         // (a socket and a mailer to an address nothing answers; a model the
         // empty replay answers in place of the network)
         Val { name: "socket".into(), expr: "socket['ws://127.0.0.1:9/self']".into(), setup: Vec::new(), imports: vec!["web.ws"] },
@@ -228,6 +229,12 @@ fn tried_first(k: Kind) -> &'static [&'static str] {
         Kind::Sparse => &["sparse"],
         Kind::Socket => &["socket"],
         Kind::Mailer => &["mailer"],
+        // a function handed to a row: the check's own predicates; a
+        // walked collection: the lists, a tensor, a column; a connection
+        Kind::FnOf(_) => &["pred"],
+        Kind::Walked => &["ints", "texts", "vector", "colint"],
+        Kind::Db | Kind::Tx => &["conn"],
+        Kind::Request | Kind::Found => &[],
         // given, never taken from a program; or a server's answer, a fused
         // kernel's own: no program value is one
         Kind::FloatMap
@@ -404,6 +411,7 @@ const HELPERS: &[(&str, &str)] = &[
     ("SelfNode", "struct SelfNode [v, next]\n"),
     ("self_may", "fn self_may[x, fail]\n    if fail\n        return error['no']\n    return x\n"),
     ("self_pass", "fn self_pass[x]\n    return x\n"),
+    ("self_true", "fn self_true[x]\n    return true\n"),
     ("self_first", "fn self_first[x]\n    return x[0]\n"),
     ("self_apply", "fn self_apply[g, x]\n    return g[x]\n"),
     ("self_double", "fn self_double[x]\n    return x * 2\n"),
@@ -3575,7 +3583,8 @@ mod tests {
         let all = values();
         let mut refused = Vec::new();
         for v in &all {
-            if matches!(v.name.as_str(), "sizes" | "groups" | "lists" | "fn") {
+            // (a function is not shown)
+            if matches!(v.name.as_str(), "sizes" | "groups" | "lists" | "fn" | "pred") {
                 continue;
             }
             // (the layer's values are lowered by the check itself, its door

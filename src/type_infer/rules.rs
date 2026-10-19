@@ -71,6 +71,26 @@ impl TypeContext {
         // what it answers and whether it can fail (crate::table): the row
         // its arguments' kinds pick, as both backends pick it
         let kinds: Vec<crate::table::Arg> = args.iter().map(|a| crate::table::Arg::of_type(&arg_ty(a))).collect();
+        // a form that declares its answer (`Prop::Answers`) likewise; one
+        // answering its walked argument's item (`find`) answers that item
+        if let Some(row) = crate::table::form_answer(name, &kinds) {
+            let t = match row.ret {
+                crate::table::Kind::Item => {
+                    let walked = crate::table::walked_param(name, args.len()).and_then(|i| args.get(i)).map(|a| arg_ty(a)).unwrap_or(Ty::Unknown);
+                    match walked.payload() {
+                        Ty::List(inner) => inner.as_ref().clone(),
+                        Ty::Tensor(inner, dims) => Self::tensor_item(inner, dims),
+                        Ty::Column(cell) => cell.as_ref().clone(),
+                        _ => Ty::Unknown,
+                    }
+                }
+                k => k.ty(),
+            };
+            return match row.fails {
+                crate::table::Fails::Value(_) => Ty::Result(Box::new(t)),
+                _ => t,
+            };
+        }
         if let Some(row) = crate::table::core_row(name, &kinds) {
             // a collection's answer is what it was given — a list of its
             // items, a tensor of its numbers — which its rule below reads
@@ -341,18 +361,6 @@ impl TypeContext {
                 Ty::Unknown
             }
             "len" => Ty::Int,
-            // Regex + search builtins
-            "any" | "all" => Ty::Bool,
-            "find" => {
-                // Dispatch: find[str, pattern] → Result(record with the groups);
-                // find[array, predicate] → Result(element)
-                let arg0 = args.first().map(|a| arg_ty(a)).unwrap_or(Ty::Unknown);
-                match arg0 {
-                    Ty::List(inner) => Ty::Result(inner),
-                    Ty::Tensor(inner, dims) => Ty::Result(Box::new(Self::tensor_item(&inner, &dims))),
-                    _ => Ty::Result(Box::new(Ty::Record("CrowFindResult".to_string()))),
-                }
-            }
             // CLI / IO
             "args" => Ty::List(Box::new(Ty::Str)),
             "input" => Ty::Result(Box::new(Ty::Str)),
@@ -362,10 +370,6 @@ impl TypeContext {
             "captured" => Ty::Result(Box::new(Ty::Moment)),
             "chart" => Ty::Str,
             "sleep" => Ty::Int,
-            // Background work: later[] is fire-and-forget (Void — ask
-            // running[] for in-flight status)
-            "later" => Ty::Unit,
-            "running" => Ty::Bool,
             // the session's notice: an effect held to the handler's commit,
             // and the record the runtime keeps (notice.text, notice.at)
             "notice" => Ty::Unit,
@@ -391,7 +395,7 @@ impl TypeContext {
             "redirect" => Ty::WebResponse,
             // the other responses: a value packed, a frame as Arrow, bytes,
             // and a body its feed puts as it goes
-            "arrow" | "bytes" | "stream" => Ty::WebResponse,
+            "arrow" | "bytes" => Ty::WebResponse,
             // a test's page as its html, from its app session; in a web app,
             // the response
             "html" => match arg_types.first() {

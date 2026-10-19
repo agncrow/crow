@@ -82,6 +82,9 @@ impl Emitter {
                     _ => name.replace('.', "_"),
                 }
             }
+            // (a function of a group — a list of several signatures — is
+            // its name as text, compiled: described and called by name)
+            Expr::FnRef(name, Ty::Fns(_)) => format!("{:?}.to_string()", crate::lower::shown(name)),
             Expr::FnRef(name, _) => self.fn_ref(name),
             Expr::Call { .. } | Expr::Effect { .. } => self.call(e),
             Expr::Convert { how, expr, ty } => match how {
@@ -417,7 +420,7 @@ impl Emitter {
             if Emitter::place_read(base) {
                 let t = self.tt(e);
                 let non_copy = matches!(t, Ty::Result(_))
-                    || matches!(Self::inner(&t), Ty::Tensor(..) | Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Markup | Ty::Frame(_) | Ty::Record(_) | Ty::OptRecord(_) | Ty::Json | Ty::Big | Ty::Decimal | Ty::Fraction);
+                    || matches!(Self::inner(&t), Ty::Tensor(..) | Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Fns(_) | Ty::Markup | Ty::Frame(_) | Ty::Record(_) | Ty::OptRecord(_) | Ty::Json | Ty::Big | Ty::Decimal | Ty::Fraction);
                 if non_copy && !s.ends_with(".clone()") {
                     return format!("{}.clone()", s);
                 }
@@ -446,6 +449,7 @@ impl Emitter {
             let non_copy = matches!(
                 t.text(),
                 Ty::Str
+                    | Ty::Fns(_)
                     | Ty::Markup
                     | Ty::List(_)
                     | Ty::Tensor(..)

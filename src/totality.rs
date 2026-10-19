@@ -19,7 +19,7 @@ fn every_ty() -> Vec<Ty> {
         Ty::List(Box::new(Ty::Int)), Ty::Map(crate::ir::Key::Text, Box::new(Ty::Str)), Ty::Tensor(Box::new(Ty::Float), None),
         Ty::Frame(None), Ty::Frame(Some(cols)), Ty::Column(Box::new(Ty::Int)), Ty::Json,
         Ty::Record("P".to_string()), Ty::OptRecord("P".to_string()), Ty::Result(Box::new(Ty::Int)),
-        Ty::Fn(vec![Ty::Int], Box::new(Ty::Bool)), Ty::Db, Ty::Tx, Ty::Sparse, Ty::WebApp, Ty::WebRequest,
+        Ty::Fn(vec![Ty::Int], Box::new(Ty::Bool)), Ty::Fns(vec!["a".to_string()]), Ty::Db, Ty::Tx, Ty::Sparse, Ty::WebApp, Ty::WebRequest,
         Ty::WebResponse, Ty::Mailer, Ty::Socket, Ty::Stream, Ty::App, Ty::Node, Ty::Unknown,
     ]
 }
@@ -31,7 +31,7 @@ fn variant_of(t: &Ty) -> &'static str {
         Ty::Int => "Int", Ty::Big => "Big", Ty::Decimal => "Decimal", Ty::Fraction => "Fraction", Ty::Float => "Float", Ty::Bool => "Bool", Ty::Str => "Str", Ty::Moment => "Moment",
         Ty::Bytes => "Bytes", Ty::Unit => "Unit", Ty::Markup => "Markup", Ty::List(_) => "List", Ty::Map(..) => "Map",
         Ty::Tensor(..) => "Tensor", Ty::Frame(_) => "Frame", Ty::Column(_) => "Column", Ty::Json => "Json",
-        Ty::Record(_) => "Record", Ty::OptRecord(_) => "OptRecord", Ty::Result(_) => "Result", Ty::Fn(..) => "Fn",
+        Ty::Record(_) => "Record", Ty::OptRecord(_) => "OptRecord", Ty::Result(_) => "Result", Ty::Fn(..) => "Fn", Ty::Fns(_) => "Fns",
         Ty::Db => "Db", Ty::Tx => "Tx", Ty::Sparse => "Sparse", Ty::WebApp => "WebApp", Ty::WebRequest => "WebRequest",
         Ty::WebResponse => "WebResponse", Ty::Mailer => "Mailer", Ty::Socket => "Socket", Ty::Stream => "Stream",
         Ty::App => "App", Ty::Node => "Node", Ty::Unknown => "Unknown",
@@ -44,7 +44,7 @@ pub(crate) fn every_arg() -> Vec<Arg> {
         Arg::Int, Arg::Float, Arg::Decimal, Arg::Fraction, Arg::Moment, Arg::Moments, Arg::Bytes, Arg::Stream, Arg::Socket, Arg::Mailer, Arg::Db, Arg::Response, Arg::Chunks,
         Arg::Json, Arg::Tensor, Arg::Ints, Arg::Floats, Arg::Tensors, Arg::Rows, Arg::Text, Arg::Texts, Arg::Truth, Arg::Truths,
         Arg::Records, Arg::Maps, Arg::Items, Arg::FallibleNumbers, Arg::Fallible, Arg::Column, Arg::Map, Arg::Record,
-        Arg::Sparse, Arg::Frame, Arg::Fn, Arg::AnyList, Arg::Unknown,
+        Arg::Sparse, Arg::Frame, Arg::Fn, Arg::Fns, Arg::AnyList, Arg::Unknown,
     ]
 }
 
@@ -57,7 +57,7 @@ fn arg_variant(a: Arg) -> &'static str {
         Arg::Tensor => "Tensor", Arg::Ints => "Ints", Arg::Floats => "Floats", Arg::Tensors => "Tensors", Arg::Rows => "Rows", Arg::Text => "Text",
         Arg::Texts => "Texts", Arg::Truth => "Truth", Arg::Truths => "Truths", Arg::Records => "Records", Arg::Maps => "Maps",
         Arg::Items => "Items", Arg::FallibleNumbers => "FallibleNumbers", Arg::Fallible => "Fallible", Arg::Column => "Column",
-        Arg::Map => "Map", Arg::Record => "Record", Arg::Sparse => "Sparse", Arg::Frame => "Frame", Arg::Fn => "Fn",
+        Arg::Map => "Map", Arg::Record => "Record", Arg::Sparse => "Sparse", Arg::Frame => "Frame", Arg::Fn => "Fn", Arg::Fns => "Fns",
         Arg::AnyList => "AnyList", Arg::Unknown => "Unknown",
     }
 }

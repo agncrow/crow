@@ -579,12 +579,8 @@ pub fn find_blocking_in_views(
 fn collect_later_target_names(body: &[Stmt], out: &mut BTreeSet<String>) {
     fn walk(e: &Expr, out: &mut BTreeSet<String>) {
         if let Expr::Call { callee, args } = e {
-            if let Expr::Ident(name) = callee.as_ref() {
-                if (name == "later" || name == "running") && !args.is_empty() {
-                    if let Expr::Ident(target) = &args[0] {
-                        out.insert(target.clone());
-                    }
-                }
+            for target in crate::lower::deferred_targets(callee, args) {
+                out.insert(target.to_string());
             }
             walk(callee, out);
             for a in args {

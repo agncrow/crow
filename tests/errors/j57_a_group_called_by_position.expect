@@ -1,0 +1,3 @@
+j57_a_group_called_by_position.co:10:5: `t[…]` calls one of weather, search by position: they take or answer different kinds, or answer a kind no position can hold — call it by name (apply[f, args]), or hand functions of one kind that answer an int, a number, a bool, text, a list or a map
+  10 │     log[t['Paris']]
+     │     ^^^^^^^^^^^^^^^

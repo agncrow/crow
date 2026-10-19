@@ -1,0 +1,3 @@
+j58_a_group_item_handed_where_a_function_is_taken.co:12:9: any[] takes a list and a function, got numbers and a function called by name
+  12 │     log[any[[1, 2, 3], c]]
+     │         ^^^

@@ -1,0 +1,20 @@
+--- A list literal of functions is a group: each is held by its name,
+--- compiled, and a positional call through one is a dispatch the
+--- compiler writes over the members — where they take and answer one
+--- kind (a list of function values had needed each one's parameters typed
+--- by a call of its own; docs/extending-crow.md, section 7).
+fn double[x]
+    return x * 2
+
+fn triple[x]
+    return x * 3
+
+for f in [double, triple]
+    log[f[2]]
+total = 0
+for f in [double, triple]
+    total = total + f[5]
+log[total]
+steps = [double, triple, double]
+picked = steps[2]
+log[picked[7]]

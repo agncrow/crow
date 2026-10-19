@@ -140,8 +140,51 @@ fn told[talk, call, words]
         return error['a call is one of a reply\'s calls', 'llm']
     return _appended[talk, '{"role": "tool", "id": `encode[str[call.id]]`, "text": `encode[words]`}']
 
---- a tool's schema (what the compiler wrote: name, description,
---- parameters) in Anthropic's form
+--- a tool's schema as a model is told it, from the function's
+--- description (`describe`): its name, its doc comment, and its
+--- parameters as a JSON schema object, every one required; a kind a
+--- model cannot hand — a frame, a handle, a function — is an error
+fn _schema_of[d]
+    properties = []
+    required = []
+    for p in d.params
+        kind = _json_type[str[p.takes]]
+        if not kind.ok
+            return error['the parameter `str[p.name]` of `str[d.name]` takes `str[p.takes]`, which a model cannot hand it: a tool takes numbers, text, bools, lists, maps, records and parsed values', 'llm']
+        properties = push[properties, '`encode[str[p.name]]`: `kind`']
+        required = push[required, encode[str[p.name]]]
+    props = join[properties, ', ']
+    req = join[required, ', ']
+    return '{"name": `encode[str[d.name]]`, "description": `encode[str[d.doc]]`, "parameters": {"type": "object", "properties": {`props`}, "required": [`req`]}}'
+
+--- the JSON schema of a kind, by the word errors use for it: an int an
+--- integer, a number a number, text a string, a bool a boolean, a list an
+--- array of its items, numbers an array of numbers, a map or a record or
+--- a parsed value an object
+fn _json_type[word]
+    if word eq 'an int'
+        return '{"type": "integer"}'
+    if word eq 'a number' or word eq 'a decimal' or word eq 'a fraction'
+        return '{"type": "number"}'
+    if word eq 'text' or word eq 'a moment' or word eq 'markup' or word eq 'bytes'
+        return '{"type": "string"}'
+    if word eq 'a bool'
+        return '{"type": "boolean"}'
+    if word eq 'a JSON value' or word eq 'a map' or word eq 'a record' or word eq 'a value'
+        return '{"type": "object"}'
+    if word eq 'numbers' or word eq 'a list of numbers'
+        return '{"type": "array", "items": {"type": "number"}}'
+    if word eq 'a list of ints'
+        return '{"type": "array", "items": {"type": "integer"}}'
+    if word eq 'a list of text'
+        return '{"type": "array", "items": {"type": "string"}}'
+    if word eq 'a list of bools'
+        return '{"type": "array", "items": {"type": "boolean"}}'
+    if word eq 'a list' or word eq 'a list of records' or word eq 'a list of maps'
+        return '{"type": "array", "items": {"type": "object"}}'
+    return error['no schema for `word`', 'llm']
+
+--- a tool's schema (name, description, parameters) in Anthropic's form
 fn _tool_anthropic[schema]
     j = json[schema]
     described_as = ''
@@ -380,7 +423,7 @@ fn chat[m, talk, system = '', tools = [], tokens = 1024, temperature = 1.0]
     --- function named — shown as text here, so a call naming none hands
     --- the wire a list of text all the same)
     schemas = for t in tools
-        '`t`'
+        _schema_of[describe[t]]
     return _chat_with[m, talk, system, schemas, tokens, temperature]
 
 --- the reply to a conversation, the model and the conversation read
@@ -697,7 +740,7 @@ fn follow[m, talk, system = '', tools = [], tokens = 1024, temperature = 1.0]
     if not turns.ok
         return error[turns.reason, 'llm']
     schemas = for t in tools
-        '`t`'
+        _schema_of[describe[t]]
     return _follow_with[m, talk, system, schemas, tokens, temperature]
 
 --- the reply followed, the model and the conversation read
@@ -801,6 +844,34 @@ fn reply[s]
     return json['{"text": `glued15`, "calls": [`calls`], "usage": {"input": `used_in`, "output": `used_out`}, "stop": "`stop`"}']
 
 --- ── the module's own tests ────────────────────────────────────────────
+
+--- a tool the module's own tests describe and call by name
+fn _forecast[city, days = 2]
+    return '`days` days of sun in `upper[city]`'
+
+--- a function described (its name, its comment, its parameters' kinds and
+--- defaults, what it answers) and called by name, with an argument
+--- missing and one of another kind refused as errors of kind call
+test a_function_is_described_and_called_by_name[]
+    d = describe[_forecast]
+    assert[str[d.name] eq '_forecast']
+    assert[str[d.doc] eq 'a tool the module\'s own tests describe and call by name']
+    assert[len[d.params] eq 2]
+    assert[str[d.params[0].name] eq 'city']
+    assert[str[d.params[0].takes] eq 'text']
+    assert[str[d.params[1].takes] eq 'an int']
+    assert[int[d.params[1].default] eq 2]
+    assert[str[d.answers] eq 'text']
+    said = apply[_forecast, json['{"city": "Oslo", "days": 3}']]
+    assert[said eq '"3 days of sun in OSLO"']
+    missing = apply[_forecast, json['{"city": "Oslo"}']]
+    assert[not missing.ok]
+    assert[missing.kind eq 'call']
+    wrong = apply[_forecast, json['{"city": "Oslo", "days": "many"}']]
+    assert[not wrong.ok]
+    schema = _schema_of[d]
+    assert['"required": ["city", "days"]' in schema]
+    assert['"days": {"type": "integer"}' in schema]
 
 --- a model's URL read apart: the provider, the model, where requests go,
 --- and the key's variable; the refusals of a URL that names no model

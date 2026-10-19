@@ -90,6 +90,12 @@ pub enum Ty {
     /// A value that can fail: status lives only here (ir-design.md §3.1).
     Result(Box<Ty>),
     Fn(Vec<Ty>, Box<Ty>),
+    /// A function among the ones a list literal names, of several
+    /// signatures: described and called by name alone (`describe`,
+    /// `apply`), never positionally. Compiled, the value is the
+    /// function's name as text; the dispatch at each site is written by
+    /// the lowering over the names (docs/extending-crow.md, section 7).
+    Fns(Vec<String>),
     /// A database connection (`db.connect`), and a transaction within one.
     Db,
     Tx,
@@ -240,6 +246,7 @@ impl std::fmt::Display for Ty {
                 }
                 write!(f, ") -> {}", r)
             }
+            Ty::Fns(names) => write!(f, "Fns({})", names.join(", ")),
             Ty::Db => write!(f, "Handle(db)"),
             Ty::Tx => write!(f, "Handle(tx)"),
             Ty::Sparse => write!(f, "Handle(sparse)"),

@@ -131,7 +131,16 @@ steps on every push and must be green.
   wording), a loop's order (`table::ordered`), the checker's purity
   (`table::impure`), the baseline's capabilities — never a name; a new
   effect is a kind on its row, or a new kind in effects.rs with its rule
-  in each predicate there. A module is declared once, in `modules::MODULES` (its path and
+  in each predicate there. A builtin that takes a function says so on its
+  row (`Kind::FnOf(&Sig)`: what the function takes, answers, whether the
+  row's remaining arguments are its, whether it runs deferred; an option
+  the page calls is `Preset::Event(&Sig)`): inference (`hand_to_row`),
+  the kinds check, the width pass (`called_by_name`), the classification
+  and the checker (`lower::event_handlers`, `deferred_targets`) read it —
+  never a name. A list literal of functions is a group (`Ty::Fns`), each
+  value its name compiled; `describe`/`apply` and a positional call
+  through a member lower to a dispatch (`dispatch` in lower_ir.rs) over
+  `__same_fn`. A module is declared once, in `modules::MODULES` (its path and
   prefix, its source, what its import brings, the crates it needs, its
   flags, the sentence its book page opens with), which the registry, the
   type checker, the checks, the emitter, the inliner, the docs check and

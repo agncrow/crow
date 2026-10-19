@@ -254,3 +254,39 @@ log[noted[s, 'query']]
 a = exchange_on[s, 'db.example.com:8123', 'POST', '/?default_format=TabSeparated', [], bytes['SELECT 1'], now[] + 30.0, true]
 log[a.status]
 ```
+
+A standard module that hands functions to a model, or runs one by its
+name, has two operations over functions (spec section 13, sys; the
+compiler lowers each to what inference knows, so both modes agree):
+`describe` answers a function's description — its name, the comment above
+it, its parameters with the word errors use for each kind and its default,
+what it answers — and `apply` calls a function with its arguments read by
+name from a parsed value, answering the value encoded as text, or an error
+of kind `call` where an argument is missing or of another kind. A list
+literal of functions is a group, each held by its name, so a loop over it
+describes and calls each.
+
+```crow
+use sys
+
+--- the forecast for a city
+fn forecast[city, days = 2]
+    return '`days` days of sun in `upper[city]`'
+
+--- the time somewhere
+fn clock[zone]
+    return 'noon in `upper[zone]`'
+
+d = describe[forecast]
+log[str[d.name]]
+log[str[d.doc]]
+log[str[d.params[1].name]]
+log[str[d.params[1].takes]]
+log[int[d.params[1].default]]
+log[apply[forecast, json['{"city": "Oslo", "days": 3}']]]
+missing = apply[forecast, json['{"city": "Oslo"}']]
+log[missing.kind]
+for tool in [forecast, clock]
+    log[str[describe[tool].name]]
+log[apply[clock, json['{"zone": "Rome"}']]]
+```

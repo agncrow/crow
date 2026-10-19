@@ -28,6 +28,45 @@ use crow_runtime::tensor::CrowTensor;
 
 /// What a parameter or an answer is, as the runtime function takes or
 /// gives it.
+/// A function a row takes as a value, with its signature — declared on
+/// the row, as everything about a builtin is (design rule 24, phase 4;
+/// docs/extending-crow.md, section 7): what the function takes, in order
+/// (`Item` is the row's walked argument's item, `Request` the request a
+/// route's handler is handed), what it answers, whether the row's
+/// remaining arguments are handed to it after `params` (`later[f, a, b]`
+/// calls `f[a, b]`; `stream[feed, a]` calls `feed[put, a]`), and whether
+/// it runs deferred, off the loop (`later`'s work: the function is a
+/// handler's deferred half). An option the page calls as an event (a
+/// chart's seek) is a `Preset::Event` with its signature. Inference
+/// hands a function written where the row takes one its parameters from
+/// the signature; the kinds check refuses anything else in the row's
+/// words; the width pass, the classification and `crow check` read the
+/// same declaration. Each had been a list of the rows' names.
+#[derive(Debug, PartialEq)]
+pub struct Sig {
+    pub params: &'static [Kind],
+    pub ret: Kind,
+    pub rest: bool,
+    pub deferred: bool,
+}
+
+/// A predicate over a walked collection's items: `any`, `all`, `find`.
+pub const PRED: Sig = Sig { params: &[Kind::Item], ret: Kind::Bool, rest: false, deferred: false };
+/// Work scheduled off the loop, handed the row's remaining arguments:
+/// `later[f, a, …]`, and `running[f]`'s question about it.
+pub const DEFERRED: Sig = Sig { params: &[], ret: Kind::Unit, rest: true, deferred: true };
+/// A stream's `put`: sends one chunk of text, and answers whether the
+/// reader still listens.
+pub const PUT: Sig = Sig { params: &[Kind::Str], ret: Kind::Bool, rest: false, deferred: false };
+/// A stream's feed: handed `put`, then the row's remaining arguments.
+pub const FEED: Sig = Sig { params: &[Kind::FnOf(&PUT)], ret: Kind::Unit, rest: true, deferred: false };
+/// A route's handler: the request to a response, called by the server.
+pub const HANDLER: Sig = Sig { params: &[Kind::Request], ret: Kind::Response, rest: false, deferred: false };
+/// A transaction's body: the connection, inside the transaction, to its value.
+pub const TX: Sig = Sig { params: &[Kind::Tx], ret: Kind::Shown, rest: false, deferred: false };
+/// A chart's seek: handed the clicked bucket's moment, as a number.
+pub const SEEK: Sig = Sig { params: &[Kind::Float], ret: Kind::Unit, rest: false, deferred: false };
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Kind {
     /// A map's key: text or an int, by the map (`set[m, k, v]`, `k in m`);
@@ -161,6 +200,19 @@ pub enum Kind {
     /// headers, the compiled program's `CrowReply` and the interpreter's
     /// record.
     Reply,
+    /// A function, with the signature the row declares (`Sig`).
+    FnOf(&'static Sig),
+    /// What a loop walks: a list, a tensor, a frame's column — the
+    /// argument whose items a function parameter's `Item` names.
+    Walked,
+    /// A route's request (the record a handler is handed).
+    Request,
+    /// A database connection.
+    Db,
+    /// A connection inside a transaction (a transaction's body is handed one).
+    Tx,
+    /// A text search's match: its groups.
+    Found,
     /// `&T` taken, any value that shows (`str`): the compiled program's
     /// `CrowDisplay`, the interpreter's value's.
     Shown,
@@ -218,10 +270,47 @@ pub enum Preset {
     Map,
     /// No default: the row applies to a call that gives the option.
     Asked,
+    /// A function the page calls as an event (a chart's `seek`), with its
+    /// signature; none by default (0). The function is a handler.
+    Event(&'static Sig),
 }
 
 /// A row's options: its last parameters, each by name with its default.
 pub type Options = &'static [(&'static str, Preset)];
+
+/// The positions, in a call of the name lowered to its positional form,
+/// of the options the page calls as events (`Preset::Event`), each with
+/// its signature — the one declaration of what an event handler on a row
+/// takes.
+pub fn event_positions(name: &str, argc: usize) -> Vec<(usize, &'static Sig)> {
+    let bare = name.rsplit('.').next().unwrap_or(name);
+    // (a row's options describe its last parameters, by name)
+    for r in rows_named(bare) {
+        if r.options.is_empty() || r.params.len() != argc || r.options.len() > r.params.len() {
+            continue;
+        }
+        let first = r.params.len() - r.options.len();
+        let found: Vec<(usize, &'static Sig)> = r
+            .options
+            .iter()
+            .enumerate()
+            .filter_map(|(i, (_, p))| match p {
+                Preset::Event(sig) => Some((first + i, *sig)),
+                _ => None,
+            })
+            .collect();
+        if !found.is_empty() {
+            return found;
+        }
+    }
+    Vec::new()
+}
+
+/// The positions of the arguments a call of the name hands to a row's
+/// deferred work (`Sig::deferred`: `later[f, …]`, `running[f]`).
+pub fn deferred_positions(name: &str, argc: usize) -> Vec<usize> {
+    fn_params(name, argc).into_iter().filter(|(_, s)| s.deferred).map(|(i, _)| i).collect()
+}
 
 /// The range of the int a row answers, for the width pass (int_width):
 /// which rule reads its arguments' ranges into its answer's. Any other
@@ -281,6 +370,10 @@ pub enum Prop {
     Varies,
     /// A page's data source, which the session loads.
     Source,
+    /// A form whose `ret` is its answer: inference types the call by the
+    /// row, as a runtime row's call is typed (a form answers nothing by
+    /// default, its answer a rule's).
+    Answers,
     /// Binds the fact in this argument to an input.
     Binds(usize),
     /// Only inside a test block.
@@ -434,6 +527,12 @@ impl Kind {
             Kind::Reply => Ty::Record("CrowReply".to_string()),
             Kind::Answer => Ty::Record("CrowAnswer".to_string()),
             Kind::Response => Ty::WebResponse,
+            Kind::FnOf(sig) => Ty::Fn(sig.params.iter().map(|k| k.ty()).collect(), Box::new(sig.ret.ty())),
+            Kind::Walked => Ty::Unknown,
+            Kind::Request => Ty::WebRequest,
+            Kind::Db => Ty::Db,
+            Kind::Tx => Ty::Tx,
+            Kind::Found => Ty::Record("CrowFindResult".to_string()),
             Kind::Socket => Ty::Socket,
             Kind::Mailer => Ty::Mailer,
             Kind::TextMap => Ty::Map(crate::ir::Key::Text, Box::new(Ty::Str)),
@@ -449,7 +548,7 @@ impl Kind {
     /// call's type is its arguments', which inference reads.
     pub fn generic(self) -> bool {
         // (a map's keys are the map's kind: the rule reads it from the argument)
-        matches!(self, Kind::List | Kind::Seq | Kind::Item | Kind::ItemRef | Kind::MapOf | Kind::MapRef | Kind::Key | Kind::Keys)
+        matches!(self, Kind::List | Kind::Seq | Kind::Item | Kind::ItemRef | Kind::MapOf | Kind::MapRef | Kind::Key | Kind::Keys | Kind::Walked)
     }
 
     /// Whether the function takes the collection itself, to make its
@@ -495,6 +594,7 @@ impl Kind {
             Kind::Scalar => format!("crow_runtime::mask::Cell::from(&({}))", arg),
             // moved or copied (an item kept) where the call is made
             Kind::List | Kind::MapOf | Kind::Ints | Kind::Bigs | Kind::Floats | Kind::Texts | Kind::Item => format!("({})", arg),
+            Kind::FnOf(_) | Kind::Walked => format!("({})", arg),
             // (an item of a list a name holds, read where it lies)
             _ => match borrowed_index(arg) {
                 Some(item) => format!("({})", item),
@@ -506,7 +606,7 @@ impl Kind {
     /// Whether the parameter reads its argument where it lies (printed as a
     /// reference): a value it is handed is not kept, nor copied.
     pub fn borrows(self) -> bool {
-        !self.owned() && !matches!(self.each(), Kind::Int | Kind::Whole | Kind::Float | Kind::Moment | Kind::Bool | Kind::Unit | Kind::Cell | Kind::Cells | Kind::Item | Kind::ItemRef)
+        !self.owned() && !matches!(self.each(), Kind::Int | Kind::Whole | Kind::Float | Kind::Moment | Kind::Bool | Kind::Unit | Kind::Cell | Kind::Cells | Kind::Item | Kind::ItemRef | Kind::FnOf(_) | Kind::Walked)
     }
 
     /// How the parameter takes an int past 64 bits: as it is where it holds
@@ -517,7 +617,7 @@ impl Kind {
     /// and the interpreter's rows refuse by it (`groups_in_place`).
     pub fn takes_big(self) -> TakesBig {
         match self.each() {
-            Kind::Shown | Kind::Encoded | Kind::ShownDyn | Kind::Item | Kind::ItemRef | Kind::List | Kind::Seq | Kind::MapOf | Kind::MapRef | Kind::Big | Kind::Bigs | Kind::Decimal | Kind::Fraction => TakesBig::AsIs,
+            Kind::Shown | Kind::Encoded | Kind::ShownDyn | Kind::Item | Kind::ItemRef | Kind::List | Kind::Seq | Kind::MapOf | Kind::MapRef | Kind::Big | Kind::Bigs | Kind::Decimal | Kind::Fraction | Kind::FnOf(_) | Kind::Walked => TakesBig::AsIs,
             Kind::Float | Kind::Operand | Kind::Tensor | Kind::Floats => TakesBig::AsFloat,
             _ => TakesBig::Refused,
         }
@@ -584,6 +684,8 @@ impl Kind {
             Kind::Response => "crow_web::core::CrowResponse::default()",
             Kind::Socket => "crow_runtime::sys::Socket::closed()",
             Kind::Mailer => "crow_runtime::sys::Mailer::default()",
+            // taken, never given; or answered by the backends' own arms
+            Kind::FnOf(_) | Kind::Walked | Kind::Request | Kind::Db | Kind::Tx | Kind::Found => "unreachable!()",
             Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn | Kind::Operands | Kind::Operand | Kind::Scalars | Kind::Scalar => "unreachable!()",
             Kind::JsonList => "Vec::<serde_json::Value>::new()",
             // a generic answer never fails as a value (its rows answer or stop)
@@ -1808,6 +1910,16 @@ pub static ROWS: &[Row] = &[
     row!("core.__read_str", "", "__read_str", crow_runtime::json::read_str, (Json, Str) -> Str, stops),
     row!("core.__read_bool", "", "__read_bool", crow_runtime::json::read_bool, (Json, Str) -> Bool, stops),
     row!("core.__read_moment", "", "__read_moment", crow_runtime::json::read_moment, (Json, Str) -> Moment, stops),
+    // a call by name (`apply`, lowered to a dispatch the compiler writes):
+    // each argument read from the parsed value by the parameter's name
+    // and kind, an error value of kind `call` where it is missing or of
+    // another kind; the answer's text made one that can fail
+    row!("core.__arg_int", "", "__arg_int", crow_runtime::json::arg_int, (Json, Str, Str) -> Int, value "call"),
+    row!("core.__arg_float", "", "__arg_float", crow_runtime::json::arg_float, (Json, Str, Str) -> Float, value "call"),
+    row!("core.__arg_str", "", "__arg_str", crow_runtime::json::arg_str, (Json, Str, Str) -> Str, value "call"),
+    row!("core.__arg_bool", "", "__arg_bool", crow_runtime::json::arg_bool, (Json, Str, Str) -> Bool, value "call"),
+    row!("core.__arg_json", "", "__arg_json", crow_runtime::json::arg_json, (Json, Str, Str) -> Json, value "call"),
+    row!("core.__ok_text", "", "__ok_text", crow_runtime::json::ok_text, (Str) -> Str, value "call"),
     Row { props: &[Prop::Does(crate::effects::Effect::Clock)], ..row!("moments.now", "", "now", crow_runtime::moments::now_moment, () -> Moment, never) },
     // the file system: an effect, which the session layer performs (held to
     // a handler's commit, recorded in a rehearsal) and whose call inside is
@@ -2353,29 +2465,36 @@ pub static FORMS: &[Row] = &[
     Row { props: &[Prop::Ordered], ..form!("core.assert", "", "assert", (Shown, Shows)) },
     Row { props: &[Prop::Varies], ..form!("core.captured", "", "captured", (Shown)) },
     form!("core.__known", "", "__known", (Shown)),
+    // a function value compared with a function written (the dispatch
+    // `describe` and `apply` lower to): by name interpreted, by the
+    // function's address or its name compiled
+    Row { params: &[Kind::Shown, Kind::Shown], ret: Kind::Bool, props: &[Prop::Answers], ..form!("core.__same_fn", "", "__same_fn", ()) },
     form!("core.cpu", "", "cpu", (Int)),
     Row { feature: Some(("crow_runtime", "gpu")), ..form!("core.gpu", "", "gpu", ()) },
     Row { feature: Some(("crow_runtime", "gpu")), ..form!("core.gpu_count", "", "gpu", (Int)) },
     form!("core.grad", "", "grad", (Shown)),
-    form!("core.find_by", "", "find", (Shown, Shown)),
-    form!("core.any", "", "any", (Shown, Shown)),
-    form!("core.all", "", "all", (Shown, Shown)),
+    // a predicate over what a loop walks (the regex form of `find`, over
+    // text, beside it): each declares the function it takes
+    Row { params: &[Kind::Walked, Kind::FnOf(&PRED)], ret: Kind::Item, fails: Fails::Value("find"), props: &[Prop::Answers], ..form!("core.find_by", "", "find", ()) },
+    Row { params: &[Kind::Str, Kind::Str], ret: Kind::Found, fails: Fails::Value("find"), props: &[Prop::Answers], ..form!("core.find", "", "find", ()) },
+    Row { params: &[Kind::Walked, Kind::FnOf(&PRED)], ret: Kind::Bool, props: &[Prop::Answers], ..form!("core.any", "", "any", ()) },
+    Row { params: &[Kind::Walked, Kind::FnOf(&PRED)], ret: Kind::Bool, props: &[Prop::Answers], ..form!("core.all", "", "all", ()) },
     Row { props: &[Prop::Does(crate::effects::Effect::Session)], ..form!("core.notice", "", "notice", (Str)) },
     form!("core.__notice_text", "", "__notice_text", ()),
     form!("core.__notice_at", "", "__notice_at", ()),
-    Row { props: &[Prop::Ordered, Prop::Varies], ..form!("core.running", "", "running", (Shows)) },
+    Row { params: &[Kind::FnOf(&DEFERRED)], ret: Kind::Bool, props: &[Prop::Ordered, Prop::Varies, Prop::Answers], ..form!("core.running", "", "running", ()) },
     // chart[frame, x = 'ts', candles = [], lines = [], bars_y = '', marker = 0, tz = 'UTC', height = 320, panes = [], levels = 0, points = 0, seek = 0]
     Row {
         options: &[
             ("x", Preset::Str("ts")), ("candles", Preset::List), ("lines", Preset::List), ("bars_y", Preset::Str("")), ("marker", Preset::Int(0)),
-            ("tz", Preset::Str("UTC")), ("height", Preset::Int(320)), ("panes", Preset::List), ("levels", Preset::Int(0)), ("points", Preset::Int(0)), ("seek", Preset::Int(0)),
+            ("tz", Preset::Str("UTC")), ("height", Preset::Int(320)), ("panes", Preset::List), ("levels", Preset::Int(0)), ("points", Preset::Int(0)), ("seek", Preset::Event(&SEEK)),
         ],
         ..form!("core.chart", "", "chart", (Frame, Str, Strs, Strs, Str, Int, Str, Int, Shown, Shown, Shown, Shown))
     },
     // web: routes, the server, the responses, pages, the signed-in reader
-    Row { props: &[Prop::Does(crate::effects::Effect::Serving)], ..form!("web.route", "web", "route", (Str, Shown)) },
-    Row { props: &[Prop::Does(crate::effects::Effect::Serving)], ..form!("web.route_method", "web", "route", (Str, Str, Shown)) },
-    Row { props: &[Prop::Does(crate::effects::Effect::Serving)], ..form!("web.route_limited", "web", "route", (Str, Str, Shown, Int)) },
+    Row { params: &[Kind::Str, Kind::FnOf(&HANDLER)], props: &[Prop::Does(crate::effects::Effect::Serving)], ..form!("web.route", "web", "route", ()) },
+    Row { params: &[Kind::Str, Kind::Str, Kind::FnOf(&HANDLER)], props: &[Prop::Does(crate::effects::Effect::Serving)], ..form!("web.route_method", "web", "route", ()) },
+    Row { params: &[Kind::Str, Kind::Str, Kind::FnOf(&HANDLER), Kind::Int], props: &[Prop::Does(crate::effects::Effect::Serving)], ..form!("web.route_limited", "web", "route", ()) },
     // serve[port, refresh = 0, budget = 0, theme = '', density = '', accent = '', wide = false, keep = false, uploads = 10, cors = [], files = '']
     Row {
         props: &[Prop::Does(crate::effects::Effect::Serving)],
@@ -2385,13 +2504,18 @@ pub static FORMS: &[Row] = &[
         ],
         ..form!("web.serve", "web", "serve", (Int, Int, Int, Str, Str, Str, Bool, Bool, Int, Strs, Str))
     },
+    // the standard modules' two operations over functions (section 7 of
+    // docs/extending-crow.md): a function's description, and a call by
+    // name — each lowered to what inference knows, so both modes agree
+    Row { params: &[Kind::Shown], ret: Kind::Json, fails: Fails::Value("describe"), props: &[Prop::Answers], ..form!("sys.describe", "sys", "describe", ()) },
+    Row { params: &[Kind::Shown, Kind::Json], ret: Kind::Str, fails: Fails::Value("call"), props: &[Prop::Answers], ..form!("sys.apply", "sys", "apply", ()) },
     form!("web.respond", "web", "respond", (Int, Shown)),
     form!("web.redirect", "web", "redirect", (Str)),
     form!("web.html", "web", "html", (Shown)),
     form!("web.text", "web", "text", (Shown)),
     Row { feature: Some(("crow_web", "arrow_ipc")), ..form!("web.arrow", "web", "arrow", (Frame)) },
     form!("web.bytes", "web", "bytes", (Shown)),
-    form!("web.stream", "web", "stream", (Shown, Shows)),
+    Row { params: &[Kind::FnOf(&FEED), Kind::Shows], ret: Kind::Response, props: &[Prop::Answers], ..form!("web.stream", "web", "stream", ()) },
     Row { props: &[Prop::Does(crate::effects::Effect::Serving)], ..form!("web.page", "web", "page", (Str, Shown)) },
     Row { props: &[Prop::Does(crate::effects::Effect::Serving)], ..form!("web.page_with", "web", "page", (Str, Shown, Shown)) },
     Row { props: &[Prop::Does(crate::effects::Effect::Session)], ..form!("web.sign_in", "web", "sign_in", (Shown)) },
@@ -2418,11 +2542,11 @@ pub static FORMS: &[Row] = &[
     Row { props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.exec", "db", "exec", (Shown, Str, Shows)) },
     Row { props: &[Prop::Does(crate::effects::Effect::DbRead)], ..form!("db.query", "db", "query", (Shown, Str, Shows)) },
     Row { props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.insert", "db", "insert", (Shows)) },
-    Row { props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.transact", "db", "transact", (Shows)) },
+    Row { params: &[Kind::Db, Kind::FnOf(&TX)], props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.transact", "db", "transact", ()) },
     Row { props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.migrate", "db", "migrate", (Shows)) },
     form!("db.describe", "db", "describe", (Shows)),
     // (counted by nothing, as before: `later`, a control, the harness verbs)
-    Row { props: &[Prop::Does(crate::effects::Effect::Session)], ..form!("core.later", "", "later", (Shows)) },
+    Row { params: &[Kind::FnOf(&DEFERRED), Kind::Shows], props: &[Prop::Does(crate::effects::Effect::Session), Prop::Answers], ..form!("core.later", "", "later", ()) },
     Row { props: &[Prop::Binds(1), Prop::Unreserved], ..form!("ui.select", "ui", "select", (Shows)) },
     Row { props: &[Prop::TestOnly], ..form!("web.click", "web", "click", (Shows)) },
     Row { props: &[Prop::TestOnly], ..form!("web.elements", "web", "elements", (Shows)) },
@@ -2613,6 +2737,44 @@ pub fn core_row(name: &str, args: &[Arg]) -> Option<&'static Row> {
     ROWS.iter().filter(|r| r.module.is_empty() && r.name == name).find(|r| takes(r, args))
 }
 
+/// A form that says what it answers (`Prop::Answers`), for a call with
+/// these arguments: typed by the row as a runtime row's call is.
+pub fn form_answer(name: &str, args: &[Arg]) -> Option<&'static Row> {
+    FORMS.iter().filter(|r| r.name == name && r.props.contains(&Prop::Answers)).find(|r| takes(r, args))
+}
+
+/// The function parameters of a row of the name taking this many
+/// arguments, each with its position and signature — the one declaration
+/// of what a function handed to a builtin takes and answers.
+pub fn fn_params(name: &str, argc: usize) -> Vec<(usize, &'static Sig)> {
+    let bare = name.rsplit('.').next().unwrap_or(name);
+    for r in rows_named(bare) {
+        if spans(r.params, argc, r.name).is_err() {
+            continue;
+        }
+        let found: Vec<(usize, &'static Sig)> = r
+            .params
+            .iter()
+            .enumerate()
+            .filter_map(|(i, k)| match k {
+                Kind::FnOf(sig) => Some((i, *sig)),
+                _ => None,
+            })
+            .collect();
+        if !found.is_empty() {
+            return found;
+        }
+    }
+    Vec::new()
+}
+
+/// The position of the row's walked argument, whose items a function
+/// parameter's `Item` names.
+pub fn walked_param(name: &str, argc: usize) -> Option<usize> {
+    let bare = name.rsplit('.').next().unwrap_or(name);
+    rows_named(bare).filter(|r| spans(r.params, argc, r.name).is_ok()).find_map(|r| r.params.iter().position(|k| matches!(k, Kind::Walked)))
+}
+
 /// The names a module's rows answer, each once, in order.
 /// A module's forms by name (`db`'s verbs), each once.
 pub fn module_forms(module: &str) -> Vec<&'static str> {
@@ -2651,6 +2813,18 @@ pub fn has_core_rows(name: &str) -> bool {
     core(name).is_some()
 }
 
+/// A form that declares its kinds, checked as a runtime row is: one taking
+/// a function (`Kind::FnOf`), or one that says what it answers
+/// (`Prop::Answers`).
+fn checked_form(r: &Row) -> bool {
+    r.params.iter().any(|k| matches!(k, Kind::FnOf(_))) || r.props.contains(&Prop::Answers)
+}
+
+/// Whether a form of the name declares its kinds (`checked_form`).
+pub fn has_checked_form(name: &str) -> bool {
+    FORMS.iter().any(|r| r.name == name && r.module.is_empty() && checked_form(r))
+}
+
 /// How a parsed JSON value is used where a builtin computes with it: read as
 /// one type first — the words arithmetic on one says, and a list's items
 /// one by one (the builtins that navigate it take it as it is: `len`,
@@ -2662,7 +2836,9 @@ pub const READ_FIRST: &str = " — a value whose type the program does not know 
 /// it, or when an argument's kind is not known before the program runs
 /// (a JSON value's is known only then).
 pub fn refusal(modules: &[&str], name: &str, args: &[Arg]) -> Option<String> {
-    let rows: Vec<&Row> = ROWS.iter().filter(|r| r.name == name && modules.contains(&r.module)).collect();
+    // (a form that declares its kinds — a function parameter, its answer —
+    // is checked as a runtime row is)
+    let rows: Vec<&Row> = ROWS.iter().chain(FORMS.iter().filter(|r| checked_form(r))).filter(|r| r.name == name && modules.contains(&r.module)).collect();
     if rows.is_empty() || rows.iter().any(|r| takes(r, args)) || args.contains(&Arg::Unknown) {
         return None;
     }
@@ -2768,6 +2944,8 @@ pub enum Arg {
     Frame,
     /// A function.
     Fn,
+    /// A function of a list literal's, called by name (`Ty::Fns`).
+    Fns,
     /// A list whose items are not known here — an empty one, or one of
     /// parsed values: any parameter that takes a list takes it, and no
     /// other (it is a list, whatever it holds).
@@ -2844,6 +3022,7 @@ impl Arg {
             Arg::Response => "a response",
             Arg::Frame => "a frame",
             Arg::Fn => "a function",
+            Arg::Fns => "a function called by name",
             Arg::AnyList => "a list",
             Arg::Unknown => "a value",
         }
@@ -2885,6 +3064,7 @@ impl Arg {
             Ty::WebResponse => Arg::Response,
             Ty::Frame(_) => Arg::Frame,
             Ty::Fn(..) => Arg::Fn,
+            Ty::Fns(_) => Arg::Fns,
             // (no row takes a handle a program cannot hand on, a view's
             // node, nothing, or what is not known: each is read by the
             // value as the program runs)
@@ -2988,6 +3168,12 @@ impl Kind {
             Kind::Reply => "a request's answer",
             Kind::Answer => "a connection's answer",
             Kind::Response => "a response",
+            Kind::FnOf(_) => "a function",
+            Kind::Walked => "a list",
+            Kind::Request => "a request",
+            Kind::Db => "a connection",
+            Kind::Tx => "a transaction's connection",
+            Kind::Found => "a match",
             Kind::Socket => "a socket",
             Kind::Mailer => "a mailer",
             Kind::Shown | Kind::Shows | Kind::ShownDyn => "a value",
@@ -3029,6 +3215,10 @@ impl Kind {
                 Kind::Socket => a == Arg::Socket,
                 Kind::Mailer => a == Arg::Mailer,
                 Kind::Response => a == Arg::Response,
+                Kind::FnOf(_) => a == Arg::Fn,
+                Kind::Walked => matches!(a, Arg::Tensor | Arg::Column | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Tensors | Arg::Rows | Arg::Records | Arg::Maps | Arg::Items | Arg::Chunks | Arg::Fallible | Arg::FallibleNumbers | Arg::Moments | Arg::AnyList),
+                Kind::Db | Kind::Tx => a == Arg::Db,
+                Kind::Request | Kind::Found => false,
                 Kind::Frame => a == Arg::Frame,
                 Kind::Cell => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Json | Arg::Moment),
                 Kind::Cells => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Column | Arg::Moment | Arg::Moments),
@@ -3043,11 +3233,11 @@ impl Kind {
                 Kind::Json => a == Arg::Json,
                 Kind::Column => a == Arg::Column,
                 // a function shows as nothing, and JSON holds no function, frame or matrix
-                Kind::Shown | Kind::ShownDyn => a != Arg::Fn,
+                Kind::Shown | Kind::ShownDyn => !matches!(a, Arg::Fn | Arg::Fns),
                 // (nor a connection, a response, a socket, a mailer, a stream,
                 // or bytes — which `encode` had written as JSON's null, and
                 // the compiled program had not built: base64[b] is text)
-                Kind::Encoded => !matches!(a, Arg::Fn | Arg::Frame | Arg::Sparse | Arg::Column | Arg::Db | Arg::Response | Arg::Socket | Arg::Mailer | Arg::Stream | Arg::Bytes | Arg::Chunks),
+                Kind::Encoded => !matches!(a, Arg::Fn | Arg::Fns | Arg::Frame | Arg::Sparse | Arg::Column | Arg::Db | Arg::Response | Arg::Socket | Arg::Mailer | Arg::Stream | Arg::Bytes | Arg::Chunks),
                 Kind::Operand => matches!(a, Arg::Tensor | Arg::Int | Arg::Float),
                 Kind::Scalar => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth),
                 _ => true,
@@ -3095,7 +3285,11 @@ pub fn module_of_bare(name: &str, providers: &[&str], kinds: &[Arg]) -> Option<S
         return None;
     }
     let unknown = kinds.iter().any(|k| matches!(k, Arg::Unknown | Arg::AnyList));
-    if !unknown && core_row(name, kinds).is_some() {
+    // (a core form that declares its kinds — `find` of text, `any` of a
+    // list and a function — is the core's as a row is: `find['a', 'b']`
+    // under `use sys` had reached the layer's row of bytes, and the
+    // lowered program disagreed with itself — crow check --self's pairs)
+    if !unknown && (core_row(name, kinds).is_some() || form_answer(name, kinds).is_some_and(|r| r.module.is_empty())) {
         return None;
     }
     if providers.len() == 1 {
@@ -3103,7 +3297,7 @@ pub fn module_of_bare(name: &str, providers: &[&str], kinds: &[Arg]) -> Option<S
         // 1, 3]` under `use sys` had reached the layer's row of bytes in
         // inference and the core's of lists in the lowering, and `type` of
         // it was `unknown` compiled — crow check --self's pairs)
-        if unknown && row_taking(providers[0], name, kinds).is_none() && core_row(name, kinds).is_some() {
+        if unknown && row_taking(providers[0], name, kinds).is_none() && (core_row(name, kinds).is_some() || form_answer(name, kinds).is_some_and(|r| r.module.is_empty())) {
             return None;
         }
         return Some(providers[0].to_string());

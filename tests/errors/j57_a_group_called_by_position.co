@@ -1,0 +1,10 @@
+--- a list literal of functions of different signatures is a group, each described and called by name: a positional call through one is refused
+fn weather[city]
+    return 'sunny in `upper[city]`'
+
+fn search[query, limit = 3]
+    return '`limit` hits for `upper[query]`'
+
+tools = [weather, search]
+for t in tools
+    log[t['Paris']]

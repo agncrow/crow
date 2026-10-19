@@ -107,97 +107,23 @@ impl TypeContext {
                 }
             }
 
-            // Search builtins: the predicate's parameter is the
-            // array's element type (any[arr, pred] etc.)
-            if matches!(name.as_str(), "any" | "all" | "find") && args.len() == 2 {
-                if let Expr::Ident(fn_name) = &args[1] {
-                    // (a list that can fail — a chain through a frame's
-                    // length — hands its items too: the predicate had stayed
-                    // untyped, and the compiled program named a function it
-                    // had not emitted; fuzz seed 1791429824)
-                    let elem = match arg_types.first().map(|t| t.payload()) {
-                        Some(Ty::List(inner)) => Some(inner.as_ref().clone()),
-                        Some(Ty::Tensor(inner, dims)) => Some(Self::tensor_item(inner, dims)),
-                        _ => None,
-                    };
-                    if let Some(elem) = elem {
-                        if let Some(sig) = self.functions.get_mut(fn_name) {
-                            if let Some(p) = sig.params.first_mut() {
-                                p.1 = p.1.unify(&elem);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // later[f, args…] IS a call of f with those args — read it
-            // as one so f's params unify and monomorphization emits it
-            // even when later[] is its only call site.
-            if name == "later" && !args.is_empty() {
-                if let Expr::Ident(target) = &args[0] {
-                    if self.functions.contains_key(target) {
-                        let callee = Expr::Ident(target.clone());
-                        self.note_call(&callee, &args[1..], arg_types.get(1..).unwrap_or(&[]));
-                    }
-                }
-            }
-
-            // route[path, handler], route[path, method, handler]: the
-            // handler's parameter is the request
-            // (route[path, method, handler, limit]: the handler before the limit)
-            let handler = match (name.as_str(), args.len()) {
-                ("route", 2 | 3) => match args.last() {
-                    Some(Expr::Ident(f)) => Some(f.clone()),
-                    _ => None,
-                },
-                ("route", 4) => match &args[2] {
-                    Expr::Ident(f) => Some(f.clone()),
-                    _ => None,
-                },
-                _ => None,
-            };
-            if let Some(p) = handler.and_then(|f| self.functions.get_mut(&f)).and_then(|sig| sig.params.first_mut()) {
-                p.1 = Ty::WebRequest;
-            }
-
-            // stream[feed, a, …] IS a call of feed[put, a, …], read as one
-            // (as later's is): put takes a chunk of text and answers whether
-            // the reader still listens, and the rest are the arguments given,
-            // an error among them the stream call's own
-            if name == "stream"
-                && let Some(Expr::Ident(feed)) = args.first()
-                && let Some(sig) = self.functions.get(feed).cloned()
-            {
-                let mut given = vec![Ty::Fn(vec![Ty::Str], Box::new(Ty::Bool))];
-                given.extend(arg_types.get(1..).unwrap_or(&[]).iter().map(|t| match t {
-                    Ty::Result(inner) if matches!(inner.as_ref(), Ty::Unit) => Ty::Unknown,
-                    Ty::Result(inner) => *inner.clone(),
-                    other => other.clone(),
-                }));
-                let mut params = sig.params.clone();
-                for (i, (p, t)) in params.iter_mut().zip(&given).enumerate() {
-                    // put is the runtime's, whatever an earlier round guessed
-                    p.1 = if i == 0 { t.clone() } else { p.1.unify(t) };
-                }
-                if given.len() == params.len() && given.iter().all(Self::type_is_concrete) {
-                    let entry = self.call_signatures.entry(feed.clone()).or_default();
-                    if !entry.iter().any(|existing| Self::same_signature(existing, &given)) {
-                        entry.push(given);
-                    }
-                }
-                if let Some(sig) = self.functions.get_mut(feed) {
-                    sig.params = params;
-                }
-            }
-
-            // db transact[conn, fn]: the callback's parameter is a
-            // db connection handle
-            if name == "transact" && args.len() == 2 {
-                if let Expr::Ident(fn_name) = &args[1] {
-                    if let Some(sig) = self.functions.get_mut(fn_name) {
-                        if let Some(p) = sig.params.first_mut() {
-                            p.1 = Ty::Tx;
-                        }
+            // a function handed where a row takes one (`Kind::FnOf`): its
+            // parameters are what the row's signature declares — an `Item`
+            // the walked argument's item (a predicate over a list that can
+            // fail is handed its items; fuzz seed 1791429824), a request
+            // the request, a connection the transaction's — and where the
+            // signature takes the row's remaining arguments (`later[f, a]`
+            // is a call of f[a]; `stream[feed, a]` of feed[put, a]) the
+            // call is read as one, so f's parameters unify and its copies
+            // are made though the row's call is its only call site
+            self.hand_to_row(name, args, arg_types);
+            // (an option the page calls as an event — a chart's seek — hands
+            // its function what the option's signature says)
+            for (f, sig) in crate::lower::event_handlers(callee, args) {
+                let given: Vec<Ty> = sig.params.iter().map(|k| k.ty()).collect();
+                if let Some(fsig) = self.functions.get_mut(f) {
+                    for (p, t) in fsig.params.iter_mut().zip(&given) {
+                        p.1 = p.1.unify(t);
                     }
                 }
             }
@@ -380,6 +306,66 @@ impl TypeContext {
     /// function handed to `crossval.crossval[…]` had stayed untyped, and
     /// the compiled program left it out; one handed on had been read as
     /// text.)
+    /// A function handed where a row takes one, typed by the row's
+    /// signature (`crate::table::Sig`, the one declaration): see note_call.
+    fn hand_to_row(&mut self, name: &str, args: &[Expr], arg_types: &[Ty]) {
+        for (i, sig) in crate::table::fn_params(name, args.len()) {
+            let Some(Expr::Ident(f)) = args.get(i) else { continue };
+            if !self.functions.contains_key(f) || !self.calls_fn(f) {
+                continue;
+            }
+            let walked = crate::table::walked_param(name, args.len()).and_then(|w| arg_types.get(w)).map(|t| t.payload().clone());
+            let resolved: Vec<Ty> = sig
+                .params
+                .iter()
+                .map(|k| match k {
+                    crate::table::Kind::Item => match &walked {
+                        Some(Ty::List(inner)) => inner.as_ref().clone(),
+                        Some(Ty::Tensor(inner, dims)) => Self::tensor_item(inner, dims),
+                        Some(Ty::Column(cell)) => cell.as_ref().clone(),
+                        _ => Ty::Unknown,
+                    },
+                    k => k.ty(),
+                })
+                .collect();
+            if sig.rest && sig.params.is_empty() {
+                // the row's remaining arguments are the function's, as a
+                // call of it hands them
+                let callee = Expr::Ident(f.clone());
+                self.note_call(&callee, &args[i + 1..], arg_types.get(i + 1..).unwrap_or(&[]));
+                continue;
+            }
+            let Some(fsig) = self.functions.get(f).cloned() else { continue };
+            let mut given: Vec<Ty> = resolved.clone();
+            if sig.rest {
+                given.extend(arg_types.get(i + 1..).unwrap_or(&[]).iter().map(|t| match t {
+                    Ty::Result(inner) if matches!(inner.as_ref(), Ty::Unit) => Ty::Unknown,
+                    Ty::Result(inner) => *inner.clone(),
+                    other => other.clone(),
+                }));
+            }
+            let mut params = fsig.params.clone();
+            for (j, (p, t)) in params.iter_mut().zip(&given).enumerate() {
+                // what the row fills itself (a feed's put) is the row's,
+                // whatever an earlier round guessed; the rest unify
+                if j < sig.params.len() && !matches!(t, Ty::Unknown) {
+                    p.1 = t.clone();
+                } else if !matches!(t, Ty::Unknown) {
+                    p.1 = p.1.unify(t);
+                }
+            }
+            if sig.rest && given.len() == params.len() && given.iter().all(Self::type_is_concrete) {
+                let entry = self.call_signatures.entry(f.clone()).or_default();
+                if !entry.iter().any(|existing| Self::same_signature(existing, &given)) {
+                    entry.push(given);
+                }
+            }
+            if let Some(s) = self.functions.get_mut(f) {
+                s.params = params;
+            }
+        }
+    }
+
     pub(crate) fn hand_functions(&mut self, callee: &str, args: &[Expr]) {
         let handed_to = callee;
         let Some(sig) = self.functions.get(callee).cloned() else { return };
