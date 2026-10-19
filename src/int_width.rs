@@ -604,15 +604,17 @@ impl Walk {
     /// times, nor holds a list that long. A range bounded by that alone (a
     /// bound parsed from text, which grows) rests on ROUNDS: `soft` is
     /// marked on the place its items go to.
-    fn range_items(&mut self, id: &str, args: &[Expr], to: &Place) -> Iv {
+    fn range_items(&mut self, args: &[Expr], to: &Place) -> Iv {
         let ivs: Vec<Iv> = args.iter().map(|a| self.iv_of(a)).collect();
-        let (r, counted) = match (id, ivs.as_slice()) {
-            ("core.range_to", [n]) => (Iv::new(0, (n.hi - 1).max(0)), Iv::new(0, COUNT - 1)),
-            ("core.range_from", [a, b]) => {
+        // (a range's forms by their count: to a bound, from one to another,
+        // and by a step)
+        let (r, counted) = match ivs.as_slice() {
+            [n] => (Iv::new(0, (n.hi - 1).max(0)), Iv::new(0, COUNT - 1)),
+            [a, b] => {
                 let r = Iv::new(a.lo, (b.hi - 1).max(a.lo));
                 (r, Iv::new(a.lo.max(b.lo.saturating_sub(COUNT)), (b.hi - 1).min(a.hi.saturating_add(COUNT)).max(a.lo)))
             }
-            ("core.range", [a, b, _]) => (a.join(*b), Iv::I64),
+            [a, b, _] => (a.join(*b), Iv::I64),
             _ => (Iv::I64, Iv::I64),
         };
         if r.is_empty() {
@@ -654,16 +656,16 @@ impl Walk {
                     self.flow(&items, y);
                 }
             }
-            Expr::Call { target: Target::Row(row), args, .. } => match row.id {
+            Expr::Call { target: Target::Row(row), args, .. } => match row.props.contains(&crate::table::Prop::Range) {
                 // the items of a range lie between its bounds
-                "core.range_to" | "core.range_from" | "core.range" => {
-                    let r = self.range_items(row.id, args, &items);
+                true => {
+                    let r = self.range_items(args, &items);
                     self.widen_base(&items, r);
                 }
                 // a list the row makes of the lists it is given (push, concat,
                 // slice, sort, reverse…): their items and its own share a range,
                 // and a pushed item is written into them
-                _ => {
+                false => {
                     for a in args {
                         if holds_ints(a.ty_ref()) && same_shape(a.ty_ref(), e.ty_ref()) {
                             if let Some(p) = self.place_of(a) {
@@ -750,7 +752,7 @@ impl Walk {
                 }
                 match target {
                     Target::User(g) => self.get(&Place::Ret(g.clone())),
-                    Target::Row(row) => row_iv(row.id, &ivs),
+                    Target::Row(row) => row_iv(row, &ivs),
                     // (a call its values pick a row for, a module's own form:
                     // an int it answers fits 64 bits)
                     _ => Iv::I64,
@@ -1049,8 +1051,8 @@ impl Walk {
                 self.types.insert((self.fun.clone(), var.clone()), item);
                 let place = self.local(var);
                 let (r, rounds) = match iter {
-                    Expr::Call { target: Target::Row(row), args, .. } if matches!(row.id, "core.range_to" | "core.range_from" | "core.range") => {
-                        let r = self.range_items(row.id, args, &place);
+                    Expr::Call { target: Target::Row(row), args, .. } if row.props.contains(&crate::table::Prop::Range) => {
+                        let r = self.range_items(args, &place);
                         (r, r.sub(r).count_bits() + 1)
                     }
                     _ => {
@@ -1494,7 +1496,7 @@ impl Walk {
         if let Expr::ForExpr { var, iter, body, .. } = e {
             let place = self.local(var);
             let r = match iter.as_ref() {
-                Expr::Call { target: Target::Row(row), args, .. } if matches!(row.id, "core.range_to" | "core.range_from" | "core.range") => Some(self.range_items(row.id, args, &place)),
+                Expr::Call { target: Target::Row(row), args, .. } if row.props.contains(&crate::table::Prop::Range) => Some(self.range_items(args, &place)),
                 _ => self.place_of(iter).map(|p| {
                     self.made_items(&p, iter);
                     self.get(&Place::Items(Box::new(p)))
@@ -1912,44 +1914,44 @@ fn bits_span(a: Iv, b: Iv) -> Iv {
     Iv::new(-p, p - 1)
 }
 
-/// The range of an int a builtin answers: a count or a position from -1 to
-/// 2^48, a whole number of any size where it reads one from text or a
-/// float, the arguments' where the row keeps them, any other a 64-bit int.
-fn row_iv(id: &str, ivs: &[Iv]) -> Iv {
+/// The range of an int a builtin answers, by the rule its row declares
+/// (`IntRange`): a count or a position from -1 to 2^48, a whole number of
+/// any size where it reads one from text or a float, the arguments' where
+/// the row keeps them, any other a 64-bit int.
+fn row_iv(row: &crate::table::Row, ivs: &[Iv]) -> Iv {
+    use crate::table::IntRange as R;
     let first = ivs.first().copied().unwrap_or(Iv::I64);
-    match id {
-        "core.len" | "core.len_text" | "core.len_tensor" | "core.len_frame" | "core.len_map" | "core.len_column" | "core.len_bytes" => Iv::new(0, COUNT),
-        "sys.find" => Iv::new(-1, COUNT),
-        "text.occurs" => Iv::new(0, COUNT),
-        "core.abs_int" | "core.__abs_big" => {
+    match row.range {
+        R::Count => Iv::new(0, COUNT),
+        R::Position => Iv::new(-1, COUNT),
+        R::Abs => {
             if first.lo >= 0 { first } else { Iv::new(0, first.mag()) }
         }
-        "core.min_ints" | "core.__min_big" => match ivs {
+        R::Min => match ivs {
             [a, b] => Iv::new(a.lo.min(b.lo), a.hi.min(b.hi)),
             _ => Iv::I64,
         },
-        "core.max_ints" | "core.__max_big" => match ivs {
+        R::Max => match ivs {
             [a, b] => Iv::new(a.lo.max(b.lo), a.hi.max(b.hi)),
             _ => Iv::I64,
         },
-        "core.int" | "core.floor_int" | "core.ceil_int" | "core.round_int" | "core.__whole_big" => first,
+        R::Keeps | R::Same => first,
         // an int's bits: and/or/xor of 64-bit ints are 64-bit, and tighter
         // where a side is not negative; a shift moves a range by its count
-        "bits.bitand" | "core.__bitand_big" => match ivs {
+        R::And => match ivs {
             [a, b] if a.lo >= 0 && b.lo >= 0 => Iv::new(0, a.hi.min(b.hi)),
             [a, _] if a.lo >= 0 => Iv::new(0, a.hi),
             [_, b] if b.lo >= 0 => Iv::new(0, b.hi),
             [a, b] => bits_span(*a, *b),
             _ => Iv::I64,
         },
-        "bits.bitor" | "bits.bitxor" | "core.__bitor_big" | "core.__bitxor_big" => match ivs {
+        R::OrXor => match ivs {
             [a, b] if a.lo >= 0 && b.lo >= 0 => Iv::new(0, pow2_above(a.hi.max(b.hi)) - 1),
             [a, b] => bits_span(*a, *b),
             _ => Iv::I64,
         },
-        "bits.bitcount" | "core.__bitcount_big" => Iv::new(0, COUNT),
-        "bits.code" => Iv::new(0, 0x10FFFF),
-        "bits.shift" | "core.__shift_big" => match ivs {
+        R::Code => Iv::new(0, 0x10FFFF),
+        R::Shift => match ivs {
             [a, n] if n.hi < 100 => {
                 // a left shift multiplies by 2^n for n between its ends; a
                 // right one moves toward 0 (or -1), rounding down
@@ -1966,11 +1968,9 @@ fn row_iv(id: &str, ivs: &[Iv]) -> Iv {
             }
             _ => Iv::TOP,
         },
-        "core.int_of_bool" => Iv::BOOL,
-        // text read as an int, a float cut to one, an exact number rounded:
-        // any size
-        "core.int_of" | "core.int_of_float" | "core.round" | "core.floor" | "core.ceil" | "core.__int_big" | "core.__int_of_float_big" | "core.__floor_big" | "core.__ceil_big" | "core.__round_big" | "core.round_decimal" | "core.floor_decimal" | "core.ceil_decimal" | "core.int_of_decimal" | "core.round_fraction" | "core.floor_fraction" | "core.ceil_fraction" | "core.int_of_fraction" => Iv::TOP,
-        _ => Iv::I64,
+        R::Bool => Iv::BOOL,
+        R::Any => Iv::TOP,
+        R::I64 => Iv::I64,
     }
 }
 
@@ -2465,7 +2465,7 @@ impl<'a> Retype<'a> {
                     Target::Row(row) => {
                         // `int[n]` of a big int is itself (`float[n]`, its nearest
                         // float, is a row's: the call keeps a failure riding on n)
-                        if row.id == "core.int" && args.len() == 1 && matches!(args[0].ty().payload(), Ty::Big) {
+                        if row.range == crate::table::IntRange::Same && args.len() == 1 && matches!(args[0].ty().payload(), Ty::Big) {
                             // (n that can fail, as the call answered it)
                             let fails = ty.is_result();
                             *e = match take(&mut args[0]) {
@@ -2477,7 +2477,7 @@ impl<'a> Retype<'a> {
                         // the row that keeps every digit: where its answer may
                         // grow (`int[text]`, `floor[x]`), or a big int is
                         // handed to one that keeps it (`abs`, `min`, `max`)
-                        let grows = matches!(row.id, "core.int_of" | "core.int_of_float" | "core.floor" | "core.ceil" | "core.round") || (row.id == "bits.shift" && wide);
+                        let grows = (row.range == crate::table::IntRange::Any && row.big.is_some()) || (row.range == crate::table::IntRange::Shift && wide);
                         if let Some(big) = crate::table::big_form(row.id)
                             && (grows || args.iter().any(|a| has_big(&a.ty())))
                         {
@@ -2593,7 +2593,8 @@ impl<'a> Retype<'a> {
                     // a form of its own: one that shows a value (`type`) takes
                     // it as it is; any other, its 64 bits
                     other => {
-                        let shows = matches!(other, Target::Runtime(n) if matches!(n.as_str(), "type" | "core.type" | "str" | "display.str"));
+                        // (a form that takes any value as it is: `type`, `str`)
+                        let shows = matches!(other, Target::Runtime(n) if crate::table::rows_named(n.rsplit('.').next().unwrap_or(n)).any(|r| r.params.first().is_some_and(|k| k.takes_big() == crate::table::TakesBig::AsIs)));
                         let takes = if shows { crate::table::TakesBig::AsIs } else { crate::table::TakesBig::Refused };
                         for a in args.iter_mut() {
                             if has_big(&a.ty()) {

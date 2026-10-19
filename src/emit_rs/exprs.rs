@@ -46,11 +46,6 @@ const FALLIBLE_BUILTINS: &[&str] = &[
     "describe",
 ];
 
-/// The math functions a dual number answers with its derivative (the
-/// generated `CrowDual`'s methods), beside the core's `abs`, `sqrt`,
-/// `floor`, `ceil` and `round`.
-pub(crate) const DUAL_MATH: &[&str] = &["exp", "ln", "log2", "log10", "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "erf", "sign"];
-
 impl Emitter {
     pub(crate) fn expr(&mut self, e: &Expr) -> String {
         // an argument a call bound before checking its arguments (its place
@@ -2018,28 +2013,26 @@ impl Emitter {
         }
     }
 
-    /// A compiled program reads a Parquet table only where it is built to
-    /// (crow_runtime's `parquet` feature, crow_runtime::sources): a builtin
-    /// that reads or writes a table asks for it, unless its path is text
-    /// that shows it names no Parquet — a literal, or an interpolation
-    /// whose first text is a local path and whose last text an extension
-    /// other than Parquet's (a remote table's server may answer one). The
-    /// layer's own Parquet kernels, called as themselves (a module's test),
-    /// ask too; inside a module's function, inlined, the program's call
-    /// has decided. A URL or an S3 object needs nothing built in: the
-    /// protocol is written in Crow.
+    /// What a call needs built into the runtime: the feature its row
+    /// declares (a response as Arrow, the GPU, the Parquet kernels called as
+    /// themselves in a module's own test — inside a module's function,
+    /// inlined, the program's call has decided), and the format a table's
+    /// path may name (`Prop::Table`): a literal says it, an interpolation
+    /// whose first text is a local path and whose last an extension says
+    /// it, any other may name one (crow_runtime::sources::table_feature). A
+    /// URL or an S3 object needs nothing built in: the protocol is written
+    /// in Crow.
     fn note_sources(&mut self, name: &str, args: &[Expr]) {
-        use crow_runtime::sources::{format_of, is_remote, Format};
-        if matches!(name, "frame_parquet" | "frame_of_parquet") && !self.in_crow_fn {
-            self.runtime_features.insert("parquet".to_string());
-            return;
+        use crow_runtime::sources::{format_of, is_remote, table_feature};
+        if !self.in_crow_fn {
+            self.note_feature(name);
         }
-        let at = match name {
-            "read" | "write" | "lines" | "csv" | "load" => 0,
-            "save" => 1,
-            _ => return,
+        let Some(at) = crate::table::rows_named(name).flat_map(|r| r.props.iter()).find_map(|p| match p {
+            crate::table::Prop::Table(i) => Some(*i),
+            _ => None,
+        }) else {
+            return;
         };
-        let tables = matches!(name, "load" | "save");
         // whether the path may be remote, and the format it names: known to
         // be none (an extensionless path), one, or not known at all
         let (remote, named) = match args.get(at) {
@@ -2055,14 +2048,8 @@ impl Emitter {
             }
             _ => (true, None),
         };
-        // a Parquet table: named so, or a remote one whose server may answer one
-        let parquet = match named {
-            Some(Some(f)) => f == Format::Parquet,
-            Some(None) => remote,
-            None => true,
-        };
-        if tables && parquet {
-            self.runtime_features.insert("parquet".to_string());
+        if let Some(f) = table_feature(remote, named) {
+            self.runtime_features.insert(f.to_string());
         }
     }
 
@@ -2122,7 +2109,7 @@ impl Emitter {
         // a qualified call to a registry module is its bare call, pinned
         let mut pinned: Option<String> = None;
         if let Target::Module(m, f) = &target {
-            if matches!(m.as_str(), "math" | "io" | "frame" | "doc" | "chart" | "math.stats" | "math.nn" | "bits") && self.registry.has_function(f) {
+            if crate::modules::by_path(m).is_some_and(|e| e.pinned) && self.registry.has_function(f) {
                 pinned = Some(m.clone());
                 target = Target::Runtime(f.clone());
             }
@@ -2380,8 +2367,7 @@ impl Emitter {
                     o => o,
                 };
                 let already = self.base_is_result(&name, &target, &raw_args);
-                const HELD: &[&str] = &["query", "exec", "insert", "transact", "read", "write", "fetch", "shell", "request", "mail", "later", "notice", "sign_in", "download"];
-                let stop_as = (self.reactive_epilogue.is_some() && HELD.contains(&name.as_str())).then(|| self.shown_fn_name());
+                let stop_as = (self.reactive_epilogue.is_some() && crate::table::has(&name, crate::table::Prop::Held)).then(|| self.shown_fn_name());
                 self.pinned_module = saved_pin;
                 // a value a name holds is borrowed to be checked and read; any
                 // other (a call's answer) is bound as it is
@@ -2608,7 +2594,7 @@ impl Emitter {
             }
             // (math's functions of a dual number are the dual's own methods,
             // each carrying its derivative: `sin`, `exp`, `ln`, …)
-            Target::Row(_) | Target::Runtime(_) if self.emitting_dual && arg_strs.len() == 1 && DUAL_MATH.contains(&name) => format!("({}).{}()", arg_strs[0], name),
+            Target::Row(_) | Target::Runtime(_) if self.emitting_dual && arg_strs.len() == 1 && crate::table::has(name, crate::table::Prop::Dual) => format!("({}).{}()", arg_strs[0], name),
             // a builtin written in Crow: the program's function its body is
             // inlined as (an effect's row reaches here too); a reader's
             // value carries the moment it was read, as a Rust reader's does
@@ -2617,7 +2603,7 @@ impl Emitter {
             Target::Row(row) if row.is_crow() && row.id == "web.mail.mail" => self.builtin("mail", args, arg_strs, whole).unwrap_or_default(),
             Target::Row(row) if row.is_crow() => {
                 let call = self.user_call(&crate::table::crow_fn_name(row), args, arg_strs.to_vec());
-                if crate::table::READERS.contains(&row.name) && matches!(row.fails, crate::table::Fails::Value(_)) {
+                if crate::table::has(row.name, crate::table::Prop::Reads) && matches!(row.fails, crate::table::Fails::Value(_)) {
                     self.needs_crow_runtime = true;
                     format!("{{ let mut _r = {}; if _r.ok {{ _r.captured = crow_runtime::moments::now(); }} _r }}", call)
                 } else {

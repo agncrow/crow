@@ -4,55 +4,27 @@ use crate::modules::CrowModule;
 
 pub struct DbModule;
 
-pub(crate) const DB_FUNCTIONS: &[&str] = &[
-    "connect", "query", "exec", "insert", "migrate", "transact", "describe",
-];
-
-/// The ClickHouse driver written in Crow (src/modules/clickhouse.co), as
-/// the registry answers its rows: a program never imports it — `use db`
-/// carries it — and crow_db::driven calls it (docs/db-in-crow-design.md).
-pub struct ClickhouseDriver;
-
-pub(crate) const CLICKHOUSE_FUNCTIONS: &[&str] = &["ch_open", "ch_check", "ch_query", "ch_exec", "ch_insert", "ch_describe", "ch_cancel"];
-
-/// The Postgres driver written in Crow (src/modules/postgres.co), as the
-/// registry answers its rows.
-pub struct PostgresDriver;
-
-pub(crate) const POSTGRES_FUNCTIONS: &[&str] = &["pg_open", "pg_check", "pg_query", "pg_exec", "pg_insert", "pg_describe", "pg_cancel"];
-
-impl CrowModule for PostgresDriver {
-    fn name(&self) -> &str {
-        "db.postgres"
-    }
-
-    fn functions(&self) -> &[&str] {
-        POSTGRES_FUNCTIONS
-    }
-}
-
-impl CrowModule for ClickhouseDriver {
-    fn name(&self) -> &str {
-        "db.clickhouse"
-    }
-
-    fn functions(&self) -> &[&str] {
-        CLICKHOUSE_FUNCTIONS
-    }
-}
+/// The database's verbs: forms of their own (crate::table::FORMS), which
+/// the compiler answers.
+pub(crate) static DB_FUNCTIONS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| crate::table::module_forms("db"));
 
 /// The modules a program that imports `db` carries: the drivers written
 /// in Crow its connection URLs name — every driver when a URL is not a
 /// literal the source spells, or no connection is made (the tooling's
 /// `use db` alone).
 pub fn drivers_for(urls: &[String]) -> Vec<&'static str> {
-    const ALL: &[(&str, &str)] = &[("clickhouse://", "db.clickhouse"), ("postgres://", "db.postgres"), ("postgresql://", "db.postgres")];
-    let spelled = |u: &String| ALL.iter().any(|(s, _)| u.starts_with(s)) || u.starts_with("sqlite://");
+    // (the drivers and their schemes are the manifest's, crate::modules::MODULES)
+    let all: Vec<(&'static str, &'static str)> = crate::modules::MODULES
+        .iter()
+        .filter_map(|m| m.driver.as_ref().map(|d| (m.path, d.schemes)))
+        .flat_map(|(path, schemes)| schemes.iter().map(move |s| (*s, path)))
+        .collect();
+    let spelled = |u: &String| all.iter().any(|(s, _)| u.starts_with(s)) || u.starts_with("sqlite://");
     let mut out: Vec<&'static str> = Vec::new();
     let wanted: Vec<&'static str> = if urls.is_empty() || urls.iter().any(|u| !spelled(u)) {
-        ALL.iter().map(|(_, m)| *m).collect()
+        all.iter().map(|(_, m)| *m).collect()
     } else {
-        ALL.iter().filter(|(s, _)| urls.iter().any(|u| u.starts_with(s))).map(|(_, m)| *m).collect()
+        all.iter().filter(|(s, _)| urls.iter().any(|u| u.starts_with(s))).map(|(_, m)| *m).collect()
     };
     for m in wanted {
         if !out.contains(&m) {
@@ -65,7 +37,7 @@ pub fn drivers_for(urls: &[String]) -> Vec<&'static str> {
 impl CrowModule for DbModule {
     fn name(&self) -> &str { "db" }
 
-    fn functions(&self) -> &[&str] { DB_FUNCTIONS }
+    fn functions(&self) -> &[&str] { &DB_FUNCTIONS }
 
     fn call(&self, name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
         // Propagate errors

@@ -317,7 +317,7 @@ fn crow_main() {
             // the harnesses check every program's IR before running it
             // (ir_verify): a lowering that disagrees with itself fails its
             // program as the bug it is, in whichever suite reaches it
-            if args.iter().any(|a| matches!(a.as_str(), "--parity" | "--served" | "--book" | "--bench" | "--packages" | "--fuzz" | "--errors")) && std::env::var_os("CROW_IR_VERIFY").is_none() {
+            if args.iter().any(|a| matches!(a.as_str(), "--parity" | "--served" | "--book" | "--bench" | "--packages" | "--modules" | "--fuzz" | "--errors")) && std::env::var_os("CROW_IR_VERIFY").is_none() {
                 // Rust 2024: the environment is process-global; nothing else
                 // runs yet
                 unsafe { std::env::set_var("CROW_IR_VERIFY", "strict") };
@@ -349,6 +349,11 @@ fn crow_main() {
                 // `crow test --packages models`: only the packages named
                 let only: Vec<String> = args[2..].iter().filter(|a| !a.starts_with("--")).cloned().collect();
                 cmd_test_packages(&only);
+            } else if args.iter().any(|a| a == "--modules") {
+                // `crow test --modules [llm]`: every standard module written
+                // in Crow, each its own tests (crate::modules::MODULES)
+                let only: Vec<String> = args[2..].iter().filter(|a| !a.starts_with("--")).cloned().collect();
+                cmd_test_modules(&only);
             } else if args.iter().any(|a| a == "--bench") {
                 cmd_test_bench();
             } else if args.iter().any(|a| a == "--book") {
@@ -808,22 +813,21 @@ fn reference_tables(h2: &str, h3: &str, h4: &str) -> Option<Vec<&'static str>> {
         return None;
     }
     let sub = |module: &str| h4.contains(&format!("`{}`", module));
-    Some(match h3 {
-        "math" if sub("math.stats") => vec!["math.stats"],
-        "math" if sub("math.nn") => vec!["math.nn"],
-        "math" => vec!["math"],
-        "io" => vec!["io"],
-        "doc" => vec!["doc"],
-        "bits" => vec!["bits"],
-        "chart" => vec!["chart"],
-        "sys" => vec!["sys"],
-        "frame" => vec!["frame"],
-        "db" => vec!["db"],
-        "llm" => vec!["llm"],
-        h if h == "web" || h.starts_with("Layout") => vec!["web", "ui", "element", "control", "chart"],
-        // the section's opening, before any module's heading
-        _ => vec!["core", "web", "ui", "element", "control", "math", "math.stats", "math.nn", "frame", "db", "io", "doc", "bits", "chart", "sys", "llm"],
-    })
+    // the web section documents the page too (the elements, the controls,
+    // the charts), through its Layout section
+    if h3 == "web" || h3.starts_with("Layout") {
+        return Some(vec!["web", "ui", "element", "control", "chart"]);
+    }
+    // a module's section; a sub-module documented under its heading
+    // (`#### … (sub-module: \`math.stats\`)`) is its own table
+    if let Some(m) = modules::by_path(h3).filter(|m| m.docs.is_some()) {
+        let child = modules::MODULES.iter().find(|c| c.docs.is_some() && modules::parent_of(c.path) == Some(m.path) && sub(c.path));
+        return Some(vec![child.map_or(m.path, |c| c.path)]);
+    }
+    // the section's opening, before any module's heading
+    let mut every = vec!["core", "element", "control"];
+    every.extend(modules::MODULES.iter().filter(|m| m.docs.is_some()).map(|m| m.path));
+    Some(every)
 }
 
 /// `crow test --docs` — the documentation cannot drift from the compiler.
@@ -842,24 +846,17 @@ fn cmd_test_docs() {
         eprintln!("error: docs/language-spec.md not found (run from the project root)");
         process::exit(1);
     });
+    // the compiler's tables: the core's names, the elements and controls,
+    // and every documented module's (crate::modules::MODULES) — its rows
+    // and forms, and those of the modules documented under it
     let mut tables: Vec<(&str, Vec<&str>)> = vec![
         ("core", lower_ir::CORE_RESERVED.to_vec()),
-        ("web", lower_ir::WEB_RESERVED.to_vec()),
-        ("ui", lower_ir::UI_RESERVED.to_vec()),
         ("element", lower::UI_ELEMENTS.to_vec()),
         ("control", lower::UI_CONTROLS.to_vec()),
-        ("math", modules::math::MATH_FUNCTIONS.to_vec()),
-        ("math.stats", modules::stats::STATS_FUNCTIONS.to_vec()),
-        ("math.nn", modules::nn::NN_FUNCTIONS.to_vec()),
-        ("frame", modules::frame::FRAME_FUNCTIONS.to_vec()),
-        ("db", modules::db::DB_FUNCTIONS.to_vec()),
-        ("io", modules::io::IO_FUNCTIONS.to_vec()),
-        ("doc", modules::doc::DOC_FUNCTIONS.to_vec()),
-        ("bits", modules::bits::BITS_FUNCTIONS.to_vec()),
-        ("chart", modules::chart::CHART_FUNCTIONS.to_vec()),
-        ("sys", modules::sys::SYS_FUNCTIONS.to_vec()),
-        ("llm", modules::llm::LLM_FUNCTIONS.to_vec()),
     ];
+    for m in modules::MODULES.iter().filter(|m| m.docs.is_some()) {
+        tables.push((m.path, lower_ir::names_of(m.path)));
+    }
     for (_, names) in tables.iter_mut() { names.sort(); names.dedup(); }
     let known: BTreeSet<&str> = tables.iter().flat_map(|(_, ns)| ns.iter().copied()).collect();
     let mut failures = 0;
@@ -911,7 +908,7 @@ fn cmd_test_docs() {
             page_blocks.push((p.strip_prefix(book_dir).unwrap_or(p).to_string_lossy().to_string(), title, mine));
         }
     }
-    for m in ["math", "math.stats", "math.nn", "frame", "io", "db", "doc", "bits", "chart", "sys", "web", "ui", "llm"] {
+    for m in modules::MODULES.iter().filter(|m| m.docs.is_some()).map(|m| m.path) {
         let used = blocks.lines().any(|l| l.starts_with("use ") && l[4..].split(',').any(|part| {
             let part = part.trim();
             let base = part.split(" as ").next().unwrap_or(part).trim();
@@ -1037,23 +1034,23 @@ fn cmd_test_docs() {
     };
     let one = |r: Option<(usize, usize)>| -> Vec<(usize, usize, bool)> { r.map(|(a, b)| vec![(a, b, false)]).unwrap_or_default() };
     if let Some(core) = section("## 11. Core Builtins") { add("core", "Core builtins", "(none)", "core", "Always available, no import. The tables below are the spec's, with the book pages whose verified code uses each name.", one(Some(core)), vec![]); }
-    if let Some(m) = section("### math") { let ex: Vec<(usize, usize)> = [stats, nn].iter().flatten().copied().collect(); add("math", "math", "use math", "math", "Tensors, element-wise math, reductions, linear algebra, random numbers, signal processing, sparse arrays, and numeric loading.", one(Some(m)), ex); }
-    if stats.is_some() { add("math-stats", "math.stats", "use math.stats", "math.stats", "Descriptive statistics, correlation, tests, and fitting over tensors and frame columns.", one(stats), vec![]); }
-    if nn.is_some() { add("math-nn", "math.nn", "use math.nn", "math.nn", "Activation functions, losses, and a linear layer for small networks with autograd.", one(nn), vec![]); }
-    if let Some(f) = section("### frame") { add("frame", "frame", "use frame", "frame", "Column-oriented data frames: load, select, masks, sort, group, join, and time handling.", one(Some(f)), vec![]); }
-    if let Some(d) = section("### db") { add("db", "db", "use db", "db", "Databases as connections: query, exec, bulk insert, transactions, migrations, and pooling.", one(Some(d)), vec![]); }
-    if let Some(l) = section("### llm") { add("llm", "llm", "use llm", "llm", "A language model as a connection: conversations, replies, tools as the functions themselves, a reply followed piece by piece, and embeddings, over Anthropic's and the OpenAI-compatible wire formats.", one(Some(l)), vec![]); }
-    if let Some(i) = section("### io") { add("io", "io", "use io", "io", "Structured file parsing beyond the built-in read and write.", one(Some(i)), vec![]); }
-    if let Some(d) = section("### doc") { add("doc", "doc", "use doc", "doc", "Documentation from Markdown, rendered by the kernel so both execution modes write the same pages.", one(Some(d)), vec![]); }
-    if let Some(b) = section("### bits") { add("bits", "bits", "use bits", "bits", "An int's bits — read as two's complement of any width — and a character's code.", one(Some(b)), vec![]); }
-    if let Some(c) = section("### chart") { add("chart", "chart", "use chart", "chart", "Technical indicators for the chart element, computed by the kernel so both execution modes draw the same numbers.", one(Some(c)), vec![]); }
-    if let Some(y) = section("### sys") { add("sys", "sys", "use sys", "sys", "The standard library's own layer: bytes, and a connection to a host, for the modules written in Crow — a program may not import it.", one(Some(y)), vec![]); }
+    if let Some(m) = section("### math") { let ex: Vec<(usize, usize)> = [stats, nn].iter().flatten().copied().collect(); add("math", "math", "use math", "math", modules::by_path("math").and_then(|m| m.docs).unwrap_or_default(), one(Some(m)), ex); }
+    if stats.is_some() { add("math-stats", "math.stats", "use math.stats", "math.stats", modules::by_path("math.stats").and_then(|m| m.docs).unwrap_or_default(), one(stats), vec![]); }
+    if nn.is_some() { add("math-nn", "math.nn", "use math.nn", "math.nn", modules::by_path("math.nn").and_then(|m| m.docs).unwrap_or_default(), one(nn), vec![]); }
+    if let Some(f) = section("### frame") { add("frame", "frame", "use frame", "frame", modules::by_path("frame").and_then(|m| m.docs).unwrap_or_default(), one(Some(f)), vec![]); }
+    if let Some(d) = section("### db") { add("db", "db", "use db", "db", modules::by_path("db").and_then(|m| m.docs).unwrap_or_default(), one(Some(d)), vec![]); }
+    if let Some(l) = section("### llm") { add("llm", "llm", "use llm", "llm", modules::by_path("llm").and_then(|m| m.docs).unwrap_or_default(), one(Some(l)), vec![]); }
+    if let Some(i) = section("### io") { add("io", "io", "use io", "io", modules::by_path("io").and_then(|m| m.docs).unwrap_or_default(), one(Some(i)), vec![]); }
+    if let Some(d) = section("### doc") { add("doc", "doc", "use doc", "doc", modules::by_path("doc").and_then(|m| m.docs).unwrap_or_default(), one(Some(d)), vec![]); }
+    if let Some(b) = section("### bits") { add("bits", "bits", "use bits", "bits", modules::by_path("bits").and_then(|m| m.docs).unwrap_or_default(), one(Some(b)), vec![]); }
+    if let Some(c) = section("### chart") { add("chart", "chart", "use chart", "chart", modules::by_path("chart").and_then(|m| m.docs).unwrap_or_default(), one(Some(c)), vec![]); }
+    if let Some(y) = section("### sys") { add("sys", "sys", "use sys", "sys", modules::by_path("sys").and_then(|m| m.docs).unwrap_or_default(), one(Some(y)), vec![]); }
     // web splits where the spec does: the view side (`use ui`) and the server side (`use web`)
     // (the spec's `### web` runs, through the `### Layout` section, up to `### db`)
     if let (Some((w0, _)), Some((d0, _))) = (section("### web"), section("### db")) {
         let server = (w0..d0).find(|&i| lines[i].trim_end() == "#### Core (Server)").unwrap_or(d0);
-        add("ui", "ui", "use ui", "ui", "Views and the element vocabulary, reactive state and inputs, the layout vocabulary, charts, and styling.", vec![(w0, server, false)], vec![]);
-        if server < d0 { add("web", "web", "use web", "web", "The server: routes and responses, auth, CORS, sessions, templates, cache, rate limits, uploads, SSE, sockets, pages, static files, mail, queues, API docs, and the HTTP client.", vec![(server, d0, true)], vec![]); }
+        add("ui", "ui", "use ui", "ui", modules::by_path("ui").and_then(|m| m.docs).unwrap_or_default(), vec![(w0, server, false)], vec![]);
+        if server < d0 { add("web", "web", "use web", "web", modules::by_path("web").and_then(|m| m.docs).unwrap_or_default(), vec![(server, d0, true)], vec![]); }
     }
     pages.push(("index.md".to_string(), index));
     let stdlib_dir = book_dir.join("stdlib");
@@ -1086,6 +1083,51 @@ fn cmd_test_docs() {
 /// package's `example.co` runs in both modes with the same output. The
 /// example is the compiled side: a test block runs in the interpreter, only
 /// the apps it opens compiled.
+/// `crow test --modules`: the standard modules written in Crow, each its
+/// own `test` blocks (`crow test src/modules/<name>.co`), from the
+/// manifest — a module added is tested with no line written here.
+fn cmd_test_modules(only: &[String]) {
+    let files: Vec<(String, std::path::PathBuf)> = modules::MODULES
+        .iter()
+        .filter(|m| m.source.is_some())
+        .map(|m| {
+            let name = if m.path.is_empty() { "core" } else { m.path.rsplit('.').next().unwrap_or(m.path) };
+            (if m.path.is_empty() { "core".to_string() } else { m.path.to_string() }, std::path::Path::new("src/modules").join(format!("{name}.co")))
+        })
+        .filter(|(path, _)| only.is_empty() || only.iter().any(|w| path.contains(w.as_str())))
+        .collect();
+    if files.iter().any(|(_, f)| !f.exists()) {
+        eprintln!("error: the modules' sources are under src/modules/ (run from the repository's root)");
+        process::exit(1);
+    }
+    let exe = std::env::current_exe().unwrap_or_else(|e| {
+        eprintln!("error locating crow binary: {}", e);
+        process::exit(1);
+    });
+    let last = |text: &str| text.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string();
+    let start = std::time::Instant::now();
+    let mut failures = 0;
+    println!("modules: {} written in Crow, each its own test blocks\n", files.len());
+    for (path, file) in &files {
+        let (ok, out, err) = match std::process::Command::new(&exe).arg("test").arg(file).env("CROW_BUILD_PROFILE", "dev").output() {
+            Ok(o) => (o.status.success(), String::from_utf8_lossy(&o.stdout).to_string(), String::from_utf8_lossy(&o.stderr).to_string()),
+            Err(e) => (false, String::new(), format!("failed to spawn: {}", e)),
+        };
+        if ok {
+            println!("  ok    {} ({})", path, last(&out));
+        } else {
+            failures += 1;
+            println!("  FAIL  {}\n{}\n{}", path, out.trim_end(), err.trim_end());
+        }
+    }
+    if failures == 0 {
+        println!("\n✓ {} modules' tests pass ({:.1}s)", files.len(), start.elapsed().as_secs_f64());
+    } else {
+        println!("\n✗ {} of {} modules failed ({:.1}s)", failures, files.len(), start.elapsed().as_secs_f64());
+        process::exit(1);
+    }
+}
+
 fn cmd_test_packages(only: &[String]) {
     let dir = std::path::Path::new("packages");
     let mut packages: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
@@ -2013,10 +2055,9 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
         let runtime_path = format!("{}/crow_runtime", rt_dir);
         // what the program's paths may name (sources), and Arrow for a
         // response in it
-        let mut features: Vec<String> = emitted.runtime_features.iter().cloned().collect();
-        if emitted.web_features.contains("arrow_ipc") {
-            features.push("arrow".to_string());
-        }
+        // (a response as Arrow asks crow_web's arrow_ipc, which carries the
+        // runtime's arrow with it)
+        let features: Vec<String> = emitted.runtime_features.iter().cloned().collect();
         if features.is_empty() {
             dep_list.push(format!("crow_runtime = {{ path = \"{}\" }}", runtime_path));
         } else {

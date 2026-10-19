@@ -1,41 +1,232 @@
-pub mod bits;
-pub mod chart;
 pub mod db;
-pub mod doc;
-pub mod frame;
-pub mod io;
-pub mod llm;
 pub mod math;
-pub mod nn;
-pub mod stats;
-pub mod sys;
-pub mod web;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use crate::value::CrowValue;
 use crate::type_infer::Ty;
 
+/// A module of the standard library, declared once (design rule 24): what
+/// every place that had listed modules by name reads — the registry, the
+/// type checker, the lowering's checks, the emitter, the inliner, the docs
+/// check, the database drivers. Several flags transcribe lists the
+/// compiler had kept apart, each named for what its readers make of it;
+/// unifying them is a later phase's (docs/extending-crow.md).
+pub struct Module {
+    /// The import path (`math.stats`); "" the core, imported by no `use`.
+    pub path: &'static str,
+    /// The prefix its inlined functions carry (`_math_stats`).
+    pub prefix: &'static str,
+    /// Its source, where it is written in Crow (design rule 20): inlined
+    /// into the program that imports it.
+    pub source: Option<&'static str>,
+    /// The modules its import brings beside its parent: `db` its drivers.
+    pub loads: &'static [&'static str],
+    /// The runtime crates its import needs built in, each with the
+    /// crate's features.
+    pub needs: &'static [(&'static str, &'static [&'static str])],
+    /// Only the standard library may import it (`sys`), or nothing does (a
+    /// driver, carried by `use db`).
+    pub internal: bool,
+    /// Its functions and constants are names a bare `use` brings into
+    /// scope through the registry.
+    pub registry: bool,
+    /// Every function of it is a row of the table, which the registry
+    /// answers by name; a module of own forms is answered by the compiler.
+    pub rows: bool,
+    /// Loaded into the tooling's default registry (`with_stdlib`): its
+    /// functions are known names without an import.
+    pub known: bool,
+    /// A qualified call to it is its bare call, pinned to it (the emitter).
+    pub pinned: bool,
+    /// A qualified call to it is typed through the registry.
+    pub typed: bool,
+    /// Its import makes a page program: views, facts, the live runtime.
+    pub ui: bool,
+    /// The sentence its page of the book opens with; none for a module
+    /// documented under another's section (`under`) or under none.
+    pub docs: Option<&'static str>,
+    /// The module whose section of the spec documents it.
+    pub under: Option<&'static str>,
+    /// A database driver written in Crow, carried by `use db`.
+    pub driver: Option<Driver>,
+    /// The registry's object for it, where it has one.
+    pub module: Option<fn() -> Arc<dyn CrowModule>>,
+}
+
+/// A database driver: the backend's name as crow_db knows it, the URL
+/// schemes that name it, and the prefix its rows carry (`ch_query`).
+pub struct Driver {
+    pub backend: &'static str,
+    pub schemes: &'static [&'static str],
+    pub rows: &'static str,
+}
+
+impl Module {
+    /// A module with nothing declared but its path and prefix.
+    const fn plain(path: &'static str, prefix: &'static str) -> Module {
+        Module { path, prefix, source: None, loads: &[], needs: &[], internal: false, registry: false, rows: true, known: false, pinned: false, typed: false, ui: false, docs: None, under: None, driver: None, module: None }
+    }
+}
+
+const RUNTIME: (&str, &[&str]) = ("crow_runtime", &[]);
+
+/// The standard library, module by module.
+pub static MODULES: &[Module] = &[
+    // the core's own functions written in Crow (`request`): no import
+    // brings them, the source is inlined into a program that calls one
+    Module { source: Some(CORE_SOURCE), ..Module::plain("", "_core") },
+    Module {
+        source: Some(MATH_SOURCE), needs: &[RUNTIME], registry: true, known: true, pinned: true, typed: true,
+        docs: Some("Tensors, element-wise math, reductions, linear algebra, random numbers, signal processing, sparse arrays, and numeric loading."),
+        module: Some(|| Arc::new(math::MathModule)),
+        ..Module::plain("math", "_math")
+    },
+    Module {
+        source: Some(STATS_SOURCE), loads: &["math"], needs: &[RUNTIME], registry: true, known: true, pinned: true, typed: true,
+        docs: Some("Descriptive statistics, correlation, tests, and fitting over tensors and frame columns."),
+        module: Some(|| Arc::new(Named::new("math.stats"))),
+        ..Module::plain("math.stats", "_math_stats")
+    },
+    Module {
+        source: Some(NN_SOURCE), loads: &["math"], needs: &[RUNTIME], registry: true, known: true, pinned: true, typed: true,
+        docs: Some("Activation functions, losses, and a linear layer for small networks with autograd."),
+        module: Some(|| Arc::new(Named::new("math.nn"))),
+        ..Module::plain("math.nn", "_math_nn")
+    },
+    Module {
+        source: Some(IO_SOURCE), needs: &[RUNTIME], registry: true, known: true, pinned: true, typed: true,
+        docs: Some("Structured file parsing beyond the built-in read and write."),
+        module: Some(|| Arc::new(Named::new("io"))),
+        ..Module::plain("io", "_io")
+    },
+    Module {
+        source: Some(SYS_SOURCE), internal: true, registry: true, typed: true,
+        docs: Some("The standard library's own layer: bytes, and a connection to a host, for the modules written in Crow — a program may not import it."),
+        module: Some(|| Arc::new(Named::new("sys"))),
+        ..Module::plain("sys", "_sys")
+    },
+    Module {
+        source: Some(FRAME_SOURCE), needs: &[RUNTIME], registry: true, known: true, pinned: true, typed: true,
+        docs: Some("Column-oriented data frames: load, select, masks, sort, group, join, and time handling."),
+        module: Some(|| Arc::new(Named::new("frame"))),
+        ..Module::plain("frame", "_frame")
+    },
+    Module {
+        needs: &[RUNTIME], registry: true, known: true, pinned: true, typed: true,
+        docs: Some("Documentation from Markdown, rendered by the kernel so both execution modes write the same pages."),
+        module: Some(|| Arc::new(Named::new("doc"))),
+        ..Module::plain("doc", "_doc")
+    },
+    Module {
+        needs: &[RUNTIME], registry: true, known: true, pinned: true, typed: true,
+        docs: Some("Technical indicators for the chart element, computed by the kernel so both execution modes draw the same numbers."),
+        module: Some(|| Arc::new(Named::new("chart"))),
+        ..Module::plain("chart", "_chart")
+    },
+    Module {
+        needs: &[RUNTIME], registry: true, known: true, pinned: true,
+        docs: Some("An int's bits — read as two's complement of any width — and a character's code."),
+        module: Some(|| Arc::new(Named::new("bits"))),
+        ..Module::plain("bits", "_bits")
+    },
+    Module {
+        source: Some(LLM_SOURCE), needs: &[RUNTIME], registry: true,
+        docs: Some("A language model as a connection: conversations, replies, tools as the functions themselves, a reply followed piece by piece, and embeddings, over Anthropic's and the OpenAI-compatible wire formats."),
+        module: Some(|| Arc::new(Named::new("llm"))),
+        ..Module::plain("llm", "_llm")
+    },
+    // the database: its verbs are forms of their own, its drivers written
+    // in Crow are carried by its import
+    Module {
+        loads: &["db.clickhouse", "db.postgres"], needs: &[("crow_db", &["sqlite"]), RUNTIME], rows: false, known: true, typed: true,
+        docs: Some("Databases as connections: query, exec, bulk insert, transactions, migrations, and pooling."),
+        module: Some(|| Arc::new(db::DbModule)),
+        ..Module::plain("db", "_db")
+    },
+    Module {
+        source: Some(CLICKHOUSE_SOURCE), internal: true, driver: Some(Driver { backend: "clickhouse", schemes: &["clickhouse://"], rows: "ch" }),
+        module: Some(|| Arc::new(Named::new("db.clickhouse"))),
+        ..Module::plain("db.clickhouse", "_db_clickhouse")
+    },
+    Module {
+        source: Some(POSTGRES_SOURCE), internal: true, driver: Some(Driver { backend: "postgres", schemes: &["postgres://", "postgresql://"], rows: "pg" }),
+        module: Some(|| Arc::new(Named::new("db.postgres"))),
+        ..Module::plain("db.postgres", "_db_postgres")
+    },
+    // the server and its modules: its names written in Crow are rows, the
+    // routes, pages and responses forms of their own
+    Module {
+        source: Some(WEB_SOURCE), needs: &[("crow_web", &["http"]), RUNTIME],
+        docs: Some("The server: routes and responses, auth, CORS, sessions, templates, cache, rate limits, uploads, SSE, sockets, pages, static files, mail, queues, API docs, and the HTTP client."),
+        module: Some(|| Arc::new(Named::new("web"))),
+        ..Module::plain("web", "_web")
+    },
+    Module { source: Some(AUTH_SOURCE), needs: &[("crow_web", &[]), RUNTIME], under: Some("web"), module: Some(|| Arc::new(Named::new("web.auth"))), ..Module::plain("web.auth", "_web_auth") },
+    Module { source: Some(WS_SOURCE), needs: &[("crow_web", &[]), RUNTIME], under: Some("web"), module: Some(|| Arc::new(Named::new("web.ws"))), ..Module::plain("web.ws", "_web_ws") },
+    Module { source: Some(MAIL_SOURCE), needs: &[("crow_web", &[]), RUNTIME], under: Some("web"), module: Some(|| Arc::new(Named::new("web.mail"))), ..Module::plain("web.mail", "_web_mail") },
+    // the page: views, facts and the live runtime, by either import
+    Module {
+        needs: &[("crow_web", &["live"])], rows: false, ui: true,
+        docs: Some("Views and the element vocabulary, reactive state and inputs, the layout vocabulary, charts, and styling."),
+        ..Module::plain("ui", "_ui")
+    },
+    Module { needs: &[("crow_web", &["live"])], rows: false, ui: true, under: Some("web"), ..Module::plain("web.ui", "_web_ui") },
+];
+
+/// A module by its import path.
+pub fn by_path(path: &str) -> Option<&'static Module> {
+    MODULES.iter().find(|m| m.path == path)
+}
+
+/// The module a path is a module of (`math` of `math.stats`), where that
+/// is a module.
+pub fn parent_of(path: &str) -> Option<&'static str> {
+    let (parent, _) = path.rsplit_once('.')?;
+    by_path(parent).map(|m| m.path)
+}
+
+/// What importing a module brings with it: its parent, and what it loads.
+pub fn brought_by(path: &str) -> Vec<&'static str> {
+    let mut out: Vec<&'static str> = parent_of(path).into_iter().collect();
+    if let Some(m) = by_path(path) {
+        out.extend(m.loads.iter().copied());
+    }
+    out
+}
+
+/// The modules written in Crow, each with the prefix its functions carry.
+pub fn crow_modules() -> impl Iterator<Item = (&'static str, &'static str)> {
+    MODULES.iter().filter(|m| m.source.is_some()).map(|m| (m.path, m.prefix))
+}
+
 /// The source of a standard module written in Crow (design rule 20), by
 /// its import path. Each is inlined into the program that imports it, its
 /// functions named by `crate::table::crow_fn_name` (`_math_nn_relu`).
 pub fn crow_source(path: &str) -> Option<&'static str> {
-    match path {
-        "math.nn" => Some(nn::NN_SOURCE),
-        "" => Some(CORE_SOURCE),
-        "sys" => Some(SYS_SOURCE),
-        "io" => Some(IO_SOURCE),
-        "frame" => Some(FRAME_SOURCE),
-        "math" => Some(MATH_SOURCE),
-        "web.auth" => Some(AUTH_SOURCE),
-        "web.ws" => Some(WS_SOURCE),
-        "web.mail" => Some(MAIL_SOURCE),
-        "math.stats" => Some(STATS_SOURCE),
-        "web" => Some(WEB_SOURCE),
-        "db.clickhouse" => Some(CLICKHOUSE_SOURCE),
-        "db.postgres" => Some(POSTGRES_SOURCE),
-        "llm" => Some(LLM_SOURCE),
-        _ => None,
+    by_path(path)?.source
+}
+
+/// A module every function of which is a row of the table: the registry
+/// answers it by its rows' names.
+pub struct Named {
+    path: &'static str,
+    names: Vec<&'static str>,
+}
+
+impl Named {
+    pub fn new(path: &'static str) -> Self {
+        Self { path, names: crate::table::module_names(path) }
+    }
+}
+
+impl CrowModule for Named {
+    fn name(&self) -> &str {
+        self.path
+    }
+
+    fn functions(&self) -> &[&str] {
+        &self.names
     }
 }
 
@@ -53,6 +244,9 @@ pub(crate) const MAIL_SOURCE: &str = include_str!("mail.co");
 
 /// The statistics, written in Crow (`use math.stats`).
 pub(crate) const STATS_SOURCE: &str = include_str!("stats.co");
+
+/// The neural networks, written in Crow over the math builtins (`use math.nn`).
+pub(crate) const NN_SOURCE: &str = include_str!("nn.co");
 
 /// The ClickHouse driver, written in Crow (carried by `use db`).
 pub(crate) const CLICKHOUSE_SOURCE: &str = include_str!("clickhouse.co");
@@ -77,10 +271,6 @@ pub(crate) const MATH_SOURCE: &str = include_str!("math.co");
 /// so the source is inlined into a program that calls one of them.
 pub(crate) const CORE_SOURCE: &str = include_str!("core.co");
 
-/// The modules written in Crow, with the prefix their functions carry (the
-/// core's, imported by no `use`, carries `_core`).
-const CROW_MODULES: &[(&str, &str)] = &[("math.nn", "_math_nn"), ("", "_core"), ("sys", "_sys"), ("io", "_io"), ("frame", "_frame"), ("math", "_math"), ("web.auth", "_web_auth"), ("web.ws", "_web_ws"), ("web.mail", "_web_mail"), ("web", "_web"), ("math.stats", "_math_stats"), ("db.clickhouse", "_db_clickhouse"), ("db.postgres", "_db_postgres"), ("llm", "_llm")];
-
 thread_local! {
     /// What each inlined module imports (its own `use` lines), by its
     /// prefix: the registry loads them into the module's scope.
@@ -89,26 +279,7 @@ thread_local! {
 
 /// A standard module by its import path, for a registry's scope.
 pub fn module_by_path(path: &str) -> Option<Arc<dyn CrowModule>> {
-    Some(match path {
-        "math" => Arc::new(math::MathModule),
-        "math.stats" => Arc::new(stats::StatsModule),
-        "math.nn" => Arc::new(nn::NnModule),
-        "io" => Arc::new(io::IoModule),
-        "sys" => Arc::new(sys::SysModule),
-        "frame" => Arc::new(frame::FrameModule),
-        "doc" => Arc::new(doc::DocModule),
-        "bits" => Arc::new(bits::BitsModule),
-        "chart" => Arc::new(chart::ChartModule),
-        "db" => Arc::new(db::DbModule),
-        "db.clickhouse" => Arc::new(db::ClickhouseDriver),
-        "db.postgres" => Arc::new(db::PostgresDriver),
-        "web" => Arc::new(web::WebModule),
-        "web.auth" => Arc::new(web::AuthModule),
-        "web.ws" => Arc::new(web::WsModule),
-        "web.mail" => Arc::new(web::MailModule),
-        "llm" => Arc::new(llm::LlmModule),
-        _ => return None,
-    })
+    Some((by_path(path)?.module?)())
 }
 
 /// Every function of every module a program can import, by name: what the
@@ -116,8 +287,7 @@ pub fn module_by_path(path: &str) -> Option<Arc<dyn CrowModule>> {
 /// the core set; the modules a program imports by path — llm, web.ws, … —
 /// are read here, or a part's `reach` and `chat` were "undefined").
 pub fn every_module_function() -> Vec<String> {
-    const PATHS: &[&str] = &["math", "math.stats", "math.nn", "io", "frame", "doc", "bits", "chart", "db", "db.clickhouse", "db.postgres", "web", "web.auth", "web.ws", "web.mail", "llm"];
-    PATHS.iter().filter_map(|p| module_by_path(p)).flat_map(|m| m.functions().iter().map(|f| f.to_string()).collect::<Vec<_>>()).collect()
+    MODULES.iter().filter(|m| !m.internal).filter_map(|m| m.module).flat_map(|make| make().functions().iter().map(|f| f.to_string()).collect::<Vec<_>>()).collect()
 }
 
 /// The standard modules written in Crow that a program carries, by the
@@ -129,7 +299,7 @@ pub fn crow_modules_carried<'a>(fn_names: impl Iterator<Item = &'a str>) -> Vec<
     prefixes
         .into_iter()
         .filter_map(|prefix| {
-            let (path, _) = CROW_MODULES.iter().find(|(_, p)| *p == prefix)?;
+            let (path, _) = crow_modules().find(|(_, p)| *p == prefix)?;
             let imports: Vec<String> = crow_source(path)?
                 .lines()
                 .filter_map(|l| l.strip_prefix("use "))
@@ -148,14 +318,14 @@ pub fn load_crow_scopes<'a>(registry: &mut ModuleRegistry, fn_names: impl Iterat
     for (prefix, imports) in crow_modules_carried(fn_names) {
         // (a module's own rows are in its scope: the protocol written in
         // sys.co calls sys's primitives)
-        if let Some((own, _)) = CROW_MODULES.iter().find(|(_, p)| *p == prefix) {
+        if let Some((own, _)) = crow_modules().find(|(_, p)| *p == prefix) {
             if let Some(m) = module_by_path(own) {
                 registry.load_for(&prefix, m);
             }
         }
         for path in imports {
-            if path.starts_with("math.") {
-                if let Some(m) = module_by_path("math") {
+            for brought in brought_by(&path) {
+                if let Some(m) = module_by_path(brought) {
                     registry.load_for(&prefix, m);
                 }
             }
@@ -180,11 +350,10 @@ pub fn crow_imports() -> Vec<(String, Vec<String>)> {
 /// `crow_scope_of`, borrowed: the module's prefix as the table holds it.
 pub fn crow_scope_str(name: &str) -> Option<&'static str> {
     let name = name.strip_prefix("_traced_").unwrap_or(name);
-    CROW_MODULES
-        .iter()
+    crow_modules()
         .filter(|(_, prefix)| name.starts_with(prefix) && name.len() > prefix.len() && name.as_bytes()[prefix.len()] == b'_')
         .max_by_key(|(_, prefix)| prefix.len())
-        .map(|(_, p)| *p)
+        .map(|(_, p)| p)
 }
 
 /// The scope a call of the named function runs in: its standard module's,
@@ -196,8 +365,7 @@ pub fn scope_of_call(name: &str) -> &'static str {
 pub fn crow_scope_of(name: &str) -> Option<String> {
     let name = name.strip_prefix("_traced_").unwrap_or(name);
     // (the longest prefix that fits: `_web_auth_sign` is web.auth's, not web's)
-    CROW_MODULES
-        .iter()
+    crow_modules()
         .filter(|(_, prefix)| name.starts_with(prefix) && name.len() > prefix.len() && name.as_bytes()[prefix.len()] == b'_')
         .max_by_key(|(_, prefix)| prefix.len())
         .map(|(_, p)| p.to_string())
@@ -207,7 +375,7 @@ pub fn crow_scope_of(name: &str) -> Option<String> {
 /// stops name the line it was called from, not a line of the module's.
 pub fn is_crow_fn(name: &str) -> bool {
     let name = name.strip_prefix("_traced_").unwrap_or(name);
-    CROW_MODULES.iter().any(|(_, prefix)| name.starts_with(prefix) && name.len() > prefix.len() && name.as_bytes()[prefix.len()] == b'_')
+    crow_modules().any(|(_, prefix)| name.starts_with(prefix) && name.len() > prefix.len() && name.as_bytes()[prefix.len()] == b'_')
 }
 
 /// The program with every standard module it imports that is written in
@@ -242,8 +410,8 @@ pub fn inline_crow_modules(stmts: &[crate::ast::Stmt]) -> Result<Vec<crate::ast:
         if let Stmt::Use { path, .. } = s {
             todo.push(path.clone());
             // (`use math.nn` is math's too, as the registry reads it)
-            if path.starts_with("math.") {
-                todo.push("math".to_string());
+            if let Some(parent) = parent_of(path) {
+                todo.push(parent.to_string());
             }
         }
     }
@@ -267,7 +435,7 @@ pub fn inline_crow_modules(stmts: &[crate::ast::Stmt]) -> Result<Vec<crate::ast:
             continue;
         }
         let Some(source) = crow_source(&path) else { continue };
-        let prefix = CROW_MODULES.iter().find(|(m, _)| *m == path).map(|(_, p)| *p).unwrap_or("_");
+        let prefix = by_path(&path).map(|m| m.prefix).unwrap_or("_");
         let mut lexer = crate::lexer::Lexer::new(source);
         let tokens = lexer.tokenize().map_err(|e| format!("a bug in Crow: the module {} does not lex: {}", path, e))?;
         let mut parser = crate::parser::Parser::new(tokens);
@@ -749,15 +917,11 @@ impl ModuleRegistry {
     /// LSP) that needs the full export vocabulary without a `use` context.
     pub fn with_stdlib() -> Self {
         let mut r = Self::new();
-        r.load(Arc::new(crate::modules::math::MathModule));
-        r.load(Arc::new(crate::modules::stats::StatsModule));
-        r.load(Arc::new(crate::modules::nn::NnModule));
-        r.load(Arc::new(crate::modules::io::IoModule));
-        r.load(Arc::new(crate::modules::frame::FrameModule));
-        r.load(Arc::new(crate::modules::db::DbModule));
-        r.load(Arc::new(crate::modules::doc::DocModule));
-        r.load(Arc::new(crate::modules::chart::ChartModule));
-        r.load(Arc::new(crate::modules::bits::BitsModule));
+        for m in MODULES.iter().filter(|m| m.known) {
+            if let Some(make) = m.module {
+                r.load(make());
+            }
+        }
         r
     }
 
@@ -947,6 +1111,25 @@ impl ModuleRegistry {
 
 #[cfg(test)]
 mod tests {
+    /// A module written in Crow declares, in its source, every function
+    /// its rows name, each named behind the module's prefix; the prefix is
+    /// the path's own.
+    #[test]
+    fn a_crow_written_modules_rows_are_its_sources_functions() {
+        for m in super::MODULES.iter().filter(|m| !m.path.is_empty()) {
+            assert_eq!(m.prefix, format!("_{}", m.path.replace('.', "_")), "{}'s prefix", m.path);
+            let Some(source) = m.source else { continue };
+            let declared: Vec<&str> = source.lines().filter_map(|l| l.strip_prefix("fn ")).map(|l| l.split('[').next().unwrap_or("")).collect();
+            for row in crate::table::ROWS.iter().filter(|r| r.module == m.path && r.is_crow()) {
+                // (the function is named by the row's id, which tells apart
+                // the rows of one name: `load_asked` beside `load`)
+                let function = row.id.rsplit('.').next().unwrap_or(row.id);
+                assert!(declared.contains(&function), "{} declares {}", m.path, function);
+                assert_eq!(crate::table::crow_fn_name(row), format!("{}_{}", m.prefix, function));
+            }
+        }
+    }
+
     use super::*;
     use crate::ast::Stmt;
 

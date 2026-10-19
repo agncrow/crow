@@ -39,20 +39,7 @@ cargo clippy --workspace --all-features
 ./target/release/crow test --book
 ./target/release/crow test tests/layout/conformance.co
 ./target/release/crow test tests/parity/185_frames_held_to_pandas.co
-./target/release/crow test src/modules/nn.co
-./target/release/crow test src/modules/core.co
-./target/release/crow test src/modules/sys.co
-./target/release/crow test src/modules/io.co
-./target/release/crow test src/modules/frame.co
-./target/release/crow test src/modules/math.co
-./target/release/crow test src/modules/auth.co
-./target/release/crow test src/modules/web.co
-./target/release/crow test src/modules/ws.co
-./target/release/crow test src/modules/mail.co
-./target/release/crow test src/modules/llm.co
-./target/release/crow test src/modules/stats.co
-./target/release/crow test src/modules/clickhouse.co
-./target/release/crow test src/modules/postgres.co
+./target/release/crow test --modules
 (cd examples/rag && ../../target/release/crow test chat/corpus.co && ../../target/release/crow test chat/retrieve.co && ../../target/release/crow test --fixtures chat/page.co && ../../target/release/crow test --fixtures --compiled chat/page.co)
 scripts/coverage.sh
 ```
@@ -124,17 +111,27 @@ steps on every push and must be green.
   class that produced "the lowered program disagrees with itself" and a
   compiled program the Rust compiler refused; the scalar-overlap list
   (abs, sqrt, …) had been written four times.
-- A builtin's name lives in the table and nowhere else: `CORE_RESERVED`,
-  `BUILTINS` and every module's function list (`MATH_FUNCTIONS`,
-  `STATS_FUNCTIONS`, `NN_FUNCTIONS`, `IO_FUNCTIONS`, `DOC_FUNCTIONS`,
-  `CHART_FUNCTIONS`, `FRAME_FUNCTIONS`, `SYS_FUNCTIONS`) are derived from
-  `ROWS` (plus `OWN_FORM`, the web and ui lists, `MODULE_BARE` and
-  `INTERNAL_FORMS` in checks.rs; db's and web's lists stay written, being
-  own forms), and the checker's purity reads `ir::EFFECTS` and
-  `ir::DRAWS`. A hand-kept copy had held `pad` and `append` long after
-  they went, lacked `bucket` the day it came, and lacked `fma` the hour
-  it came: "undefined function" in a package, "documented but the
-  compiler has no such builtin" in the docs check.
+- A builtin's name, and everything about it, lives in its row and nowhere
+  else (`table::ROWS`; a form with no runtime row — the db verbs, the
+  routes and responses, the controls, the harness verbs, the core's own
+  forms — is a row of `table::FORMS`): its options and their defaults
+  (`Preset`, read by one filler in lower.rs), its properties (`Prop`:
+  effect, draws, reads the world, held to the commit, session, blocks,
+  outside, a source, binds, test-only, in place, a mask, a range, a table,
+  differentiable, constructs, dual, unreserved), its in-place and growing
+  forms (`taken`, `big`), the range of the int it answers (`IntRange`),
+  the crate feature it needs. `CORE_RESERVED`, `WEB_RESERVED`,
+  `UI_RESERVED`, `BUILTINS` and every table of the docs check are derived
+  from it. A module is declared once, in `modules::MODULES` (its path and
+  prefix, its source, what its import brings, the crates it needs, its
+  flags, the sentence its book page opens with), which the registry, the
+  type checker, the checks, the emitter, the inliner, the docs check and
+  the database drivers read. A hand-kept copy had held `pad` and `append`
+  long after they went, lacked `bucket` the day it came, and lacked `fma`
+  the hour it came: "undefined function" in a package, "documented but the
+  compiler has no such builtin" in the docs check; the lists that said
+  which builtins were effects, readers or in place had disagreed with each
+  other (design rule 24, docs/extending-crow.md).
 - A package's files call each other qualified (`words.counts[…]`, with
   `use words`); a bare sibling name is undefined even inside the package.
   A parameter may not be named like a builtin (`values`), a module
@@ -735,15 +732,14 @@ steps on every push and must be green.
   `optbox_comparison` asks `is_none()`/`is_some()` where the link lies (a
   record: always one); the interpreter's `values_equal` already answers.
 - `use bits` (bitand, bitor, bitxor, bitcount, shift, code, char) is a
-  module like `doc`: rows in table.rs, `crow_runtime::bits`, the module
-  registered at the dozen places `doc` is (modules/mod.rs `module_by_path`
-  and `with_stdlib`, emit_rs/program.rs `load_module` and the `use` arm,
-  type_infer/classify.rs, checks.rs `REGISTRY_MODULES`, emit_rs/exprs.rs's
-  pinned list, main.rs's docs tables and stdlib pages). Its growing forms
-  are hidden CORE rows (`core.__bitand_big`, …: a module's `__` rows would
-  be listed as its functions), reached through `table::big_form`; a shift
+  module like `doc`: rows in table.rs, `crow_runtime::bits`, one entry in
+  `modules::MODULES` (it had been registered at a dozen places, which
+  disagreed with each other). Its growing forms are hidden CORE rows
+  (`core.__bitand_big`, …: a module's `__` rows would be listed as its
+  functions), each named by its row's `big`; a shift
   whose range may pass 64 bits is `wide` (`wide_arith`) and takes
-  `__shift_big`. `row_iv` gives and/or/xor/shift their ranges: a mask cut
+  `__shift_big`. A row's `IntRange` names the rule `row_iv` reads its
+  arguments' ranges into its answer's (and/or/xor/shift's rules): a mask cut
   with `bitand` after a shift stays 64-bit (`shift[1, 13]` is exactly
   8192 — an end from 0 had made every mask look negative).
 - `scripts/coverage.sh` had been a zsh script, and GitHub's Linux runner

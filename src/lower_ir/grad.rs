@@ -14,20 +14,6 @@ use std::collections::BTreeSet;
 
 use crate::ir::*;
 
-/// The builtins a traced function may call with a traced value.
-pub(crate) const DIFFERENTIABLE: &[&str] = &[
-    "sum", "mean", "max", "min", "exp", "ln", "sqrt", "tanh", "abs", "erf", "clip", "transpose", "reshape", "flatten",
-    "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "log2", "log10", "sign",
-    // piecewise constant: a constant of the tape (derivative 0)
-    "floor", "ceil", "round",
-    // read, never differentiated: a length, a conversion of a number, the
-    // one-hot rows of classes
-    "len", "float", "int", "log", "onehot",
-];
-
-/// The builtins that make constants: their arguments are sizes or lists.
-pub(crate) const CONSTRUCTORS: &[&str] = &["zeros", "ones", "full", "eye", "randn", "tensor", "linspace", "range"];
-
 /// The functions `grad` differentiates, with those they reach, settled:
 /// `program.traced` names them, their loops run in order, and what they
 /// may not do is the refusals answered (each with its line).
@@ -179,8 +165,11 @@ fn check_expr(fname: &str, e: &Expr, line: usize, refusals: &mut Vec<(String, St
             match target {
                 Target::User(_) => {}
                 _ if name == "grad" => refuse("calls grad, and a function grad differentiates cannot".to_string()),
-                _ if traced_arg && !DIFFERENTIABLE.contains(&name.as_str()) && !CONSTRUCTORS.contains(&name.as_str()) => {
-                    refuse(format!("calls `{}`, which is not differentiable — a function grad differentiates may use {}", name, DIFFERENTIABLE.join(", ")))
+                // (the rows say which builtins a traced value may reach:
+                // differentiated, or read and never differentiated, and the
+                // constructors of the tape's constants)
+                _ if traced_arg && !crate::table::has(&name, crate::table::Prop::Differentiable) && !crate::table::has(&name, crate::table::Prop::Constructs) => {
+                    refuse(format!("calls `{}`, which is not differentiable — a function grad differentiates may use {}", name, crate::table::with(crate::table::Prop::Differentiable).join(", ")))
                 }
                 _ => {}
             }

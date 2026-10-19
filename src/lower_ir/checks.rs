@@ -11,32 +11,36 @@ use super::*;
 use std::collections::HashMap;
 
 /// True core — reserved in every Crow file, forever (frozen by the budget
-/// rule). Names here can never be user definitions.
-/// The core's reserved names: every core row's name and the forms of
-/// their own (table::OWN_FORM) — derived from the table, not written
-/// beside it (a builtin added as a row had to be listed here too, and
-/// the list and the table drifted: `bucket` reached one before the other).
-pub(crate) static CORE_RESERVED: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
-    let mut names: Vec<&'static str> = crate::table::ROWS.iter().filter(|r| r.module.is_empty() && !r.name.starts_with("__")).map(|r| r.name).collect();
-    names.extend(crate::table::OWN_FORM.iter().copied());
+/// rule). Names here can never be user definitions: every core row's and
+/// form's name (table::ROWS, table::FORMS) and the test block's word,
+/// derived from the table, not written beside it (a builtin added as a
+/// row had to be listed here too, and the list and the table drifted:
+/// `bucket` reached one before the other).
+pub(crate) static CORE_RESERVED: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| reserved_by(|m| m.is_empty(), &["test"]));
+
+/// The names a module's bare import reserves: its rows' and forms', the
+/// hidden ones apart, and those its control shares with another module
+/// (`Prop::Unreserved`).
+fn reserved_by(module: impl std::ops::Fn(&str) -> bool, more: &[&'static str]) -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = crate::table::ROWS
+        .iter()
+        .chain(crate::table::FORMS.iter())
+        .filter(|r| module(r.module) && !r.name.starts_with("__") && !r.props.contains(&crate::table::Prop::Unreserved))
+        .map(|r| r.name)
+        .collect();
+    names.extend(more.iter().copied());
     names.sort_unstable();
     names.dedup();
     names
-});
+}
 
 /// Why `mail` is refused in a view or a derivation, directly or through a
 /// function it calls.
 pub(super) const MAIL_IN_A_RENDER: &str = "mail[] sends a message, and a view or a derivation runs whenever the page needs it: send it from a handler, or a function a handler calls";
 
-/// Reserved only in files that import web (use web / use web.*)
-pub(crate) const WEB_RESERVED: &[&str] = &[
-    "route", "serve", "respond", "redirect", "html", "text",
-    "sign", "verify",
-    "app", "click", "elements", "change", "box", "fits", "style",
-    "socket", "send", "recv", "close",
-    "page", "smtp", "mail", "mails", "msgpack", "arrow", "bytes", "stream",
-    "reader", "sign_in", "sign_out", "download", "downloads",
-];
+/// Reserved only in files that import web (use web / use web.*): web's
+/// rows and forms, and its modules' (auth, ws, mail).
+pub(crate) static WEB_RESERVED: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| reserved_by(|m| m == "web" || m.starts_with("web."), &[]));
 
 
 /// The web module's modules, `use web.auth` and the rest: what web does
@@ -44,44 +48,55 @@ pub(crate) const WEB_RESERVED: &[&str] = &[
 /// `serve`'s and `route`'s, not modules of their own.
 pub(crate) const WEB_MODULES: &[&str] = &["auth", "mail", "ws"];
 
-/// Reserved only in files that import ui
-pub(crate) const UI_RESERVED: &[&str] = &["fetch", "poll", "field", "slider", "checkbox", "toggle", "radio", "tabs", "progress", "icon"];
+/// The names a module's section of the spec documents: its rows and
+/// forms, and those of the modules documented under it (web's modules).
+pub(crate) fn names_of(path: &str) -> Vec<&'static str> {
+    reserved_by(|m| m == path || crate::modules::by_path(m).is_some_and(|e| e.under == Some(path)), &[])
+}
 
-/// The module functions a program calls bare where their module is
-/// imported, which the checks know by name: a frame's `select` (and the
-/// page's widget), the database's verbs.
-const MODULE_BARE: &[&str] = &["select", "exec", "query", "connect"];
+/// Reserved only in files that import ui.
+pub(crate) static UI_RESERVED: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| reserved_by(|m| m == "ui", &[]));
 
-/// The forms the compiler itself writes into a program: a value a guard
-/// made known good (lower::KNOWN), a notice's text and time, the page's
-/// reader.
-const INTERNAL_FORMS: &[&str] = &["__known", "__notice_text", "__notice_at", "__reader"];
-
-/// Every name the compiler answers as a builtin, bare: the core's names
-/// and its internal forms, web's and ui's, and the module functions called
-/// bare — derived from the lists each keeps, not written again (this list
-/// had kept `pad` and `append` long after they went, and lacked `bucket`
-/// the day it came).
+/// Every name the compiler answers as a builtin, bare: the core's names,
+/// web's and ui's, every form's — the module functions called bare where
+/// their module is imported (a frame's `select`, the database's verbs) and
+/// the forms the compiler itself writes into a program (a value a guard
+/// made known good, a notice's text and time, the page's reader) — and the
+/// core's hidden rows; derived from the table, not written again (this
+/// list had kept `pad` and `append` long after they went, and lacked
+/// `bucket` the day it came).
 pub(crate) static BUILTINS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
     let mut names: Vec<&'static str> = CORE_RESERVED.iter().copied().collect();
     names.extend(crate::table::ROWS.iter().filter(|r| r.module.is_empty() && r.name.starts_with("__")).map(|r| r.name));
     names.extend(WEB_RESERVED.iter().copied());
     names.extend(UI_RESERVED.iter().copied());
-    names.extend(MODULE_BARE.iter().copied());
-    names.extend(INTERNAL_FORMS.iter().copied());
+    names.extend(crate::table::FORMS.iter().map(|r| r.name));
     names.sort_unstable();
     names.dedup();
     names
 });
 
-/// The modules whose functions and constants a bare `use` makes names.
-const REGISTRY_MODULES: &[&str] = &["math", "math.stats", "math.nn", "io", "frame", "doc", "chart", "sys", "bits", "llm"];
+/// Whether a module's functions and constants are names a bare `use`
+/// makes (the manifest's `registry`).
+fn registry_module(path: &str) -> bool {
+    crate::modules::by_path(path).is_some_and(|m| m.registry)
+}
 
-/// Whether a `use` names a standard module: one the registry loads, one
-/// written in Crow (src/modules/*.co), or db, ui and web.ui, which the
-/// compiler holds itself.
+/// Whether the registry knows a module's functions: one a bare `use`
+/// makes names of, or one the tooling knows without an import (`db`).
+fn known_module(path: &str) -> bool {
+    crate::modules::by_path(path).is_some_and(|m| m.registry || m.known)
+}
+
+/// The modules a program may import, for a suggestion.
+fn importable() -> Vec<(String, Option<String>)> {
+    crate::modules::MODULES.iter().filter(|m| !m.internal && !m.path.is_empty()).map(|m| (m.path.to_string(), None)).collect()
+}
+
+/// Whether a `use` names a standard module: one of the manifest's
+/// (crate::modules::MODULES).
 pub(crate) fn is_standard_module(path: &str) -> bool {
-    !path.is_empty() && (REGISTRY_MODULES.contains(&path) || crate::modules::crow_source(path).is_some() || matches!(path, "db" | "ui" | "web.ui"))
+    !path.is_empty() && crate::modules::by_path(path).is_some()
 }
 
 /// The edits between two names, a swapped pair of neighbours counting as
@@ -310,8 +325,7 @@ impl<'a> Lowerer<'a> {
                     // nearest standard module, if one is a slip away
                     if crate::UNRESOLVED_USES.with(|u| u.borrow().iter().any(|(l, p)| *l == line && p == path)) {
                         self.v.line = line;
-                        let mut standard: Vec<(String, Option<String>)> = REGISTRY_MODULES.iter().map(|m| (m.to_string(), None)).collect();
-                        standard.extend(["db", "web", "ui"].iter().map(|m| (m.to_string(), None)));
+                        let standard = importable();
                         let near = self.near(path, standard);
                         if let Some(meant) = near.split("did you mean '").nth(1).and_then(|r| r.split('\'').next()) {
                             self.v.meant.insert(meant.to_string());
@@ -348,7 +362,7 @@ impl<'a> Lowerer<'a> {
         // the names imports make, as the context loaded them (a fragment of
         // the REPL sees the modules an earlier one imported)
         let imported: Vec<String> = self.ctx.bare_modules.iter().chain(self.ctx.module_aliases.values()).cloned().collect();
-        if imported.iter().any(|p| REGISTRY_MODULES.contains(&p.as_str())) {
+        if imported.iter().any(|p| registry_module(p)) {
             let registry = self.ctx.registry.clone();
             self.v.used.extend(registry.fn_names().iter().map(|n| n.to_string()));
             self.v.used.extend(registry.const_names().iter().map(|n| n.to_string()));
@@ -1066,8 +1080,7 @@ impl<'a> Lowerer<'a> {
             self.refuse("web.new[] is gone: the app is implicit — route[…], page[…] and serve[…] need none".to_string());
             return;
         }
-        let registry_module = REGISTRY_MODULES.contains(&real.as_str()) || real == "db";
-        let registry_module = registry_module && self.ctx.registry.has_function(field);
+        let registry_module = known_module(&real) && self.ctx.registry.has_function(field);
         // the module's names reach the entry only through a part's import
         if registry_module && !self.ctx.functions.contains_key(&prefixed) && self.only_a_part_imports(&real) {
             self.refuse_missing_use(&format!("{}.{}", module, field), &real, "");
@@ -1076,7 +1089,7 @@ impl<'a> Lowerer<'a> {
         if registry_module || self.ctx.functions.contains_key(&prefixed) || self.ctx.structs.contains_key(&prefixed) || self.defined(module) {
             return;
         }
-        let known = REGISTRY_MODULES.contains(&real.as_str()) || real == "db";
+        let known = known_module(&real);
         let providers = stdlib_providers(field);
         if known {
             if CORE_RESERVED.contains(&field) {
@@ -1106,7 +1119,7 @@ impl<'a> Lowerer<'a> {
         // not a module the program has: the last name of one whose functions
         // are called by their own (`stats.mean` for math.stats's), or a slip
         // in a module's name
-        if let Some(full) = REGISTRY_MODULES.iter().find(|m| m.contains('.') && m.rsplit('.').next() == Some(module)) {
+        if let Some(full) = crate::modules::MODULES.iter().filter(|m| m.registry).map(|m| m.path).find(|m| m.contains('.') && m.rsplit('.').next() == Some(module)) {
             match providers.first() {
                 Some(m) if m == full => self.refuse(format!("'{}' is {}, whose functions are called by their own names: add `use {}`, then {}[…]", module, full, full, field)),
                 Some(m) => self.refuse(format!("{}[] is {}'s, called by its own name: add `use {}`, then {}[…]", field, m, m, field)),
@@ -1114,9 +1127,7 @@ impl<'a> Lowerer<'a> {
             }
             return;
         }
-        let mut names: Vec<(String, Option<String>)> = REGISTRY_MODULES.iter().map(|m| (m.to_string(), None)).collect();
-        names.extend(["db", "web", "ui"].iter().map(|m| (m.to_string(), None)));
-        let near = self.near(module, names);
+        let near = self.near(module, importable());
         self.refuse(format!("undefined module or variable '{}'{}", module, near));
     }
 
@@ -1234,7 +1245,7 @@ impl<'a> Lowerer<'a> {
         }
         // Test-harness builtins exist only inside test blocks (which never
         // reach a build) — accept them there, refuse them anywhere else.
-        if matches!(name, "app" | "click" | "elements" | "change" | "box" | "fits" | "style" | "downloads" | "mails") {
+        if crate::table::has(name, crate::table::Prop::TestOnly) {
             if self.at != Where::Test {
                 self.refuse(format!("'{}' is a test-harness builtin — it only works inside a test block", name));
             }
@@ -1664,7 +1675,7 @@ impl<'a> Lowerer<'a> {
             if crate::table::has_core_rows(name) || WEB_RESERVED.contains(&name) {
                 self.refuse_kinds(name, argc, types);
             }
-            if !crate::table::has_core_rows(name) && !builtin_arity_ok(name, argc) {
+            if !crate::table::has_core_rows(name) && !crate::table::arity_ok(name, argc) {
                 self.refuse(format!("wrong number of arguments for '{}'", name));
             }
             return;
@@ -1743,8 +1754,8 @@ impl<'a> Lowerer<'a> {
                 candidates.extend(self.v.used.iter().map(|n| (n.clone(), None)));
                 candidates.extend(self.ctx.functions.keys().filter(|f| self.calls_fn(f)).map(|f| (f.clone(), None)));
                 let registry = crate::modules::ModuleRegistry::with_stdlib();
-                for module in REGISTRY_MODULES {
-                    if self.v.bare_import_lines.contains_key(*module) {
+                for module in crate::modules::MODULES.iter().filter(|m| m.registry).map(|m| m.path) {
+                    if self.v.bare_import_lines.contains_key(module) {
                         continue;
                     }
                     candidates.extend(registry.functions_of(module).into_iter().map(|f| (f.to_string(), Some(module.to_string()))));
@@ -1854,49 +1865,6 @@ fn returns_value(body: &[S]) -> bool {
 /// The fields of a moment, read of one or over a column of them.
 pub(crate) fn moment_field_name(field: &str) -> bool {
     matches!(field, "year" | "month" | "day" | "hour" | "minute" | "second" | "weekday" | "offset")
-}
-
-/// Whether a builtin takes this many arguments (after named arguments are
-/// lowered to positions); a builtin with rows is counted by them
-/// (crate::table), so no arm here names one (fifteen had, unreached).
-fn builtin_arity_ok(name: &str, argc: usize) -> bool {
-    match name {
-        "assert" => argc >= 1,
-        "type" => argc == 1,
-        "captured" => argc == 1,
-        "notice" => argc == 1,
-        "__notice_text" | "__notice_at" => argc == 0,
-        "sign_in" => argc == 1,
-        "download" => argc == 2,
-        "sign_out" | "__reader" => argc == 0,
-        "__known" => argc == 1,
-        "chart" => argc == 12,
-        "error" => (1..=2).contains(&argc),
-        "cpu" => argc == 1,
-        "gpu" => argc <= 1,
-        "grad" => argc == 1,
-        "find" | "any" | "all" => argc == 2,
-        // Web
-        "route" => (2..=4).contains(&argc), // route[path, handler] / +method / path, method, handler, limit
-        "serve" => argc == 1 || argc == 11,  // serve[port] (pre-lower) or serve[port, refresh, budget, theme, density, accent, wide, keep, uploads, cors, files]
-        "respond" => argc == 2,
-        "redirect" | "html" | "text" => argc == 1,
-        "arrow" | "bytes" => argc == 1,
-        "stream" => argc >= 1, // stream[feed, a, …] calls feed[put, a, …]
-        "exec" | "query" => argc >= 2,
-        "connect" => argc == 1,               // connect[url] (db)
-        "page" => argc == 2 || argc == 3,     // page[path, render] or page[path, render, handle]
-        // UI reactive builtins
-        "fetch" => argc == 1,                 // fetch[url]
-        "poll" => argc == 2,                  // poll[url, seconds]
-        "field" => argc == 4,                 // field[label, var, type, lines] (lowered)
-        "slider" => argc == 5,                // slider[label, var, min, max, step] (lowered)
-        "checkbox" | "toggle" => argc == 2,   // checkbox[label, var]
-        "radio" | "tabs" => argc == 2,        // radio[options, var]
-        "progress" => argc == 2,              // progress[value, max] (lowered)
-        "icon" => argc == 3,                  // icon[name, size, color] (lowered)
-        _ => true,
-    }
 }
 
 /// The name a top-level statement declares, which module expansion prefixes

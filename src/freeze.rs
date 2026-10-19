@@ -49,9 +49,12 @@ mod tests {
     /// and the forms that are not rows.
     fn names() -> BTreeSet<String> {
         let mut names = BTreeSet::new();
-        for row in crate::table::ROWS {
+        for row in crate::table::ROWS.iter().chain(crate::table::FORMS) {
             names.insert(row.name.to_string());
             names.insert(row.id.to_string());
+            if !row.written.is_empty() {
+                names.insert(row.written.to_string());
+            }
             for path in [row.module, row.id.rsplit_once('.').map_or("", |(m, _)| m)] {
                 if path.is_empty() {
                     continue;
@@ -62,14 +65,7 @@ mod tests {
                 }
             }
         }
-        for n in crate::table::OWN_FORM {
-            names.insert(n.to_string());
-        }
-        for (m, n) in crate::table::MODULE_OWN_FORM {
-            names.insert(m.to_string());
-            names.insert(n.to_string());
-        }
-        for list in [crate::lower_ir::WEB_RESERVED, crate::lower_ir::UI_RESERVED, crate::lower::UI_ELEMENTS, crate::lower::UI_CONTROLS] {
+        for list in [crate::lower::UI_ELEMENTS, crate::lower::UI_CONTROLS] {
             for n in list {
                 names.insert(n.to_string());
             }
@@ -124,13 +120,13 @@ mod tests {
         out
     }
 
-    /// The rows table is the registry: its `ROWS` array names every
-    /// builtin by right, so table.rs is read without it.
+    /// The rows table is the registry: its `ROWS` and `FORMS` arrays name
+    /// every builtin by right, so table.rs is read without them.
     fn without_rows(source: &str) -> String {
         let mut out = String::new();
         let mut inside = false;
         for line in source.lines() {
-            if line.starts_with("pub static ROWS") {
+            if line.starts_with("pub static ROWS") || line.starts_with("pub static FORMS") {
                 inside = true;
             }
             if !inside {

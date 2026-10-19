@@ -105,7 +105,7 @@ fn is_load(e: &A) -> bool {
     match e {
         A::Call { callee, args } => match callee.as_ref() {
             A::FieldAccess { object, field } => matches!(object.as_ref(), A::Ident(m) if m == "frame") && field == "load",
-            A::Ident(n) => n == "load" || (n == "fetch" && args.len() == 1) || (n == "poll" && args.len() == 2),
+            A::Ident(n) => n == "load" || crate::table::source(n, args.len()),
             _ => false,
         },
         _ => false,

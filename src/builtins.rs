@@ -9,15 +9,6 @@ use crate::value::*;
 use crow_runtime::tensor::CrowTensor;
 use std::collections::BTreeMap;
 
-/// The names answered here (a builtin with a row in crate::table is
-/// answered by its row, before this).
-/// (`abs`, `sqrt`, `floor`, `ceil` and `round` here are the dual numbers'
-/// form, which a function `grad` differentiates; a plain number's is its row)
-pub const HANDLED: &[&str] = &[
-    "type", "abs", "sqrt", "floor", "ceil", "round", "assert", "error",
-    "sign", "exp", "ln", "log2", "log10", "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "erf",
-];
-
 /// Math on the dual number a function `grad` differentiates carries: the
 /// value and its derivative, by each function's rule.
 fn dual_math(name: &str, args: &[CrowValue], rule: fn(f64) -> (f64, f64)) -> Result<CrowValue, String> {
@@ -36,7 +27,11 @@ fn dual_math(name: &str, args: &[CrowValue], rule: fn(f64) -> (f64, f64)) -> Res
 /// A state-free builtin by name, or `None` when the name is one the
 /// walker itself must handle.
 pub fn call(name: &str, args: &[CrowValue], trace: &str) -> Option<Result<CrowValue, String>> {
-    if !HANDLED.contains(&name) {
+    // the names answered here (a builtin with a row is answered by its row,
+    // before this): the language's own forms, and the dual numbers' forms
+    // of math (`Prop::Dual`) and of the core's `abs`, `sqrt`, `floor`,
+    // `ceil` and `round` — a plain number's is its row
+    if !(crate::table::has(name, crate::table::Prop::Dual) || matches!(name, "type" | "abs" | "sqrt" | "floor" | "ceil" | "round" | "assert" | "error")) {
         return None;
     }
     Some(dispatch(name, args, trace))

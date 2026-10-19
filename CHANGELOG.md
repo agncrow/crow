@@ -35,6 +35,22 @@ history says the rest.
 
 ### Changed
 
+- The compiler holds the language and nothing of any module (design rule
+  24; docs/extending-crow.md): what a builtin is — its options and their
+  defaults, its effects, its in-place and growing forms, the range of the
+  int it answers, the crate feature it needs — is declared on its row, and
+  what a module is on its manifest (`modules::MODULES`); the compiler's
+  hand-kept lists of names, which had disagreed with each other, are
+  gone, and `src/freeze.rs` fails when a compiler file learns a module's
+  or a builtin's name. No program behaves differently, except where a
+  call's options are refused: the wording comes from the rows now
+  (`window[] takes 3 arguments, then n = 0, by = [], span = 0.0, on = ''
+  by name`), and `fmt[t, 'HH:mm']` with the style given by position is
+  the time style's, where it had been refused. `use web.ui` is a ui
+  program to every check, as it was to the lowering.
+- `crow test --modules` runs every standard module written in Crow
+  against its own test blocks, from the manifest.
+
 - The VS Code extension depends on no npm package: it speaks LSP to `crow
   lsp` itself, in one file of plain JavaScript over VS Code's own API, and
   is packaged by Python's standard library. No workflow runs Node.js: the

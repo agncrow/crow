@@ -93,7 +93,7 @@ pub fn call(name: &str, vals: &[CrowValue]) -> Result<CrowValue, String> {
             let x = one(0)?.as_number().ok_or_else(|| "int[] takes a number".to_string())?;
             CrowValue::ok(Value::Int(x as i64))
         }
-        _ => return Err(format!("grad: `{}` is not differentiable — a function grad differentiates may use {}", name, crate::lower_ir::grad::DIFFERENTIABLE.join(", "))),
+        _ => return Err(format!("grad: `{}` is not differentiable — a function grad differentiates may use {}", name, crate::table::with(crate::table::Prop::Differentiable).join(", "))),
     })
 }
 

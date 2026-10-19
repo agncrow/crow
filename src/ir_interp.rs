@@ -1717,7 +1717,7 @@ impl IrInterp {
     }
 
     /// `x = push[move x, v]` and the other in-place builtins on a list or a
-    /// map (ast::IN_PLACE_BUILTINS): the value is taken out of its slot and
+    /// map (`Prop::InPlace`): the value is taken out of its slot and
     /// moved into the row its values pick, whose function grows it, as the
     /// compiled mode does. Only a row that makes its answer of the
     /// collection takes this path; anything else (a frame, a tensor, a
@@ -1742,7 +1742,7 @@ impl IrInterp {
             Some(Expr::Convert { how: Convert::Unwrap, expr, .. }) => Some(expr.as_ref()),
             other => other,
         };
-        if !crate::ast::IN_PLACE_BUILTINS.contains(&name) || !matches!(list, Some(Expr::Move(v, _)) if v == var) {
+        if !crate::table::has(name, crate::table::Prop::InPlace) || !matches!(list, Some(Expr::Move(v, _)) if v == var) {
             return Ok(false);
         }
         if named.is_none() && self.registry.has_function(name) && name != "sort" {
@@ -2149,7 +2149,7 @@ impl IrInterp {
     }
 
     fn stamp(name: &str, v: CrowValue) -> CrowValue {
-        if crate::table::READERS.contains(&name) && v.is_ok() {
+        if crate::table::has(name, crate::table::Prop::Reads) && v.is_ok() {
             v.stamp_captured()
         } else {
             v
@@ -3152,8 +3152,7 @@ impl IrInterp {
     /// parameter list included — stops the handler: an error never reaches
     /// the world outside the session (core-design.md §2.1).
     fn effect_refused(&mut self, name: &str, vals: &[CrowValue]) -> Option<Result<CrowValue, String>> {
-        const EFFECTS: &[&str] = &["query", "exec", "insert", "transact", "read", "write", "fetch", "shell", "request", "mail", "later", "notice", "sign_in", "download"];
-        if self.held.is_none() || !EFFECTS.contains(&name) {
+        if self.held.is_none() || !crate::table::has(name, crate::table::Prop::Held) {
             return None;
         }
         let err = vals.iter().find_map(|v| {

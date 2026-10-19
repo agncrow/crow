@@ -383,7 +383,7 @@ impl Case {
     /// own, the seed fresh).
     fn draws(&self) -> bool {
         let text = self.body.join("\n");
-        crate::ir::DRAWS.iter().any(|name| names_word(&text, name) && text.contains(&format!("{}[", name)))
+        crate::table::with(crate::table::Prop::Draws).into_iter().any(|name| names_word(&text, name) && text.contains(&format!("{}[", name)))
     }
 
     /// The case's lines, as a program writes them: what an id stands for.

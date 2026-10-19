@@ -123,7 +123,7 @@ pub fn unheld(what: String) -> bool {
 /// sent in a recording, its answer kept (`crow_runtime::fixtures`).
 pub fn outside(name: &str, vals: &[crate::value::CrowValue]) -> Option<crate::value::CrowValue> {
     use crate::value::{CrowValue, Value};
-    if !matches!(name, "shell" | "request" | "write" | "mkdir" | "rm" | "mv" | "cp") {
+    if !crate::table::has(name, crate::table::Prop::Outside) {
         return None;
     }
     let r = active()?;

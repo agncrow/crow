@@ -30,7 +30,18 @@ static TEMPLATE: Mutex<Option<Arc<Template>>> = Mutex::new(None);
 
 /// The backends whose driver the program carries, by the functions it has.
 fn backends_in(fns: &HashMap<String, Arc<crate::ir::Fn>, crate::ir_interp::Names>) -> Vec<&'static str> {
-    [("clickhouse", "_db_clickhouse_ch_query"), ("postgres", "_db_postgres_pg_query")].iter().filter(|(_, f)| fns.contains_key(*f)).map(|(b, _)| *b).collect()
+    drivers().filter(|(_, prefix)| fns.contains_key(&format!("{prefix}_query"))).map(|(backend, _)| backend).collect()
+}
+
+/// The drivers the manifest declares (crate::modules::MODULES): each
+/// backend's name, and the prefix its rows' functions carry in a program
+/// (`_db_clickhouse_ch`).
+fn drivers() -> impl Iterator<Item = (&'static str, &'static str)> {
+    crate::modules::MODULES.iter().filter_map(|m| {
+        let d = m.driver.as_ref()?;
+        let prefix: &'static str = Box::leak(format!("{}_{}", m.prefix, d.rows).into_boxed_str());
+        Some((d.backend, prefix))
+    })
 }
 
 /// The interpreter loaded a program: what it carries is what a child is
@@ -47,11 +58,7 @@ pub(crate) fn set_template(t: Template) {
             if !backends_in(&t.fns).contains(&backend) {
                 return None;
             }
-            let prefix = match backend {
-                "clickhouse" => "_db_clickhouse_ch",
-                "postgres" => "_db_postgres_pg",
-                _ => return None,
-            };
+            let (_, prefix) = drivers().find(|(b, _)| *b == backend)?;
             let child = IrInterp::from_template(&t);
             Some(Rc::new(InterpCalls { interp: RefCell::new(child), prefix }) as Rc<dyn Calls>)
         }));

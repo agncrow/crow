@@ -22,7 +22,8 @@ mod frames;
 pub(crate) mod schema;
 mod shapes;
 pub(crate) mod uses;
-pub(crate) use checks::{is_standard_module, slips, BUILTINS, CORE_RESERVED, UI_RESERVED, WEB_RESERVED};
+#[allow(unused_imports)] // (the reserved lists are the self-check's and the docs check's)
+pub(crate) use checks::{is_standard_module, names_of, slips, BUILTINS, CORE_RESERVED, UI_RESERVED, WEB_RESERVED};
 
 /// Lower a whole (expanded, lowered, inferred) program.
 pub fn lower(stmts: &[S], ctx: &mut TypeContext, part_name: &str) -> Result<Program, String> {
@@ -640,7 +641,7 @@ fn shows_order(e: &Expr) -> bool {
         Expr::Effect { .. } => true,
         Expr::Call { target: Target::Runtime(_) | Target::Row(_) | Target::Module(..), .. } => {
             let n = call_name(e).unwrap_or_default();
-            is_effect(&n) || DRAWS.contains(&n.as_str()) || matches!(n.as_str(), "assert" | "running")
+            is_effect(&n) || crate::table::has(&n, crate::table::Prop::Draws) || matches!(n.as_str(), "assert" | "running")
         }
         Expr::Tree { element, attrs, .. } => element == "table" && attrs.iter().any(|(k, _)| k == "page" || k == "sort"),
         _ => false,
@@ -2587,7 +2588,7 @@ impl<'a> Lowerer<'a> {
                     && let Expr::Call { target: Target::Row(row), .. } = &x
                 {
                     let answers_anew = row.params.first() == Some(&row.ret) && !matches!(row.ret, crate::table::Kind::Unit);
-                    if answers_anew && !crate::ir::is_effect(row.name) && !crate::ir::DRAWS.contains(&row.name) {
+                    if answers_anew && !crate::ir::is_effect(row.name) && !crate::table::has(row.name, crate::table::Prop::Draws) {
                         let first = match e {
                             A::Call { args, .. } => match args.first() {
                                 Some(A::Ident(v)) => Some(v.clone()),
@@ -3304,7 +3305,7 @@ impl<'a> Lowerer<'a> {
     }
 
     /// `x = set[x, k, v]` (or another builtin that answers the collection
-    /// it takes, `ast::IN_PLACE_BUILTINS`) whose later arguments read `x`
+    /// it takes, `Prop::InPlace`) whose later arguments read `x`
     /// (`counts = set[counts, w, counts[w] + 1]`): those arguments computed
     /// first, in order, into temporaries, so the call takes `x` where it
     /// lies in both backends — reading a variable has no effect, so the
@@ -3320,7 +3321,7 @@ impl<'a> Lowerer<'a> {
         let takes_var = matches!(args.first(), Some(Expr::Local(n, _) | Expr::Move(n, _)) if n == var);
         // (a tensor too: `d[i][j] = d[i - 1][j] + 1.0` reads `d` in the
         // value, which had made every write a copy of the whole matrix)
-        if !(row.module.is_empty() && crate::ast::IN_PLACE_BUILTINS.contains(&row.name) && row.params.first().is_some_and(|k| k.owned() || *k == crate::table::Kind::Tensor) && takes_var && args[1..].iter().any(reads_var)) {
+        if !(row.module.is_empty() && row.props.contains(&crate::table::Prop::InPlace) && row.params.first().is_some_and(|k| k.owned() || *k == crate::table::Kind::Tensor) && takes_var && args[1..].iter().any(reads_var)) {
             return vec![stmt];
         }
         let mut out = Vec::with_capacity(args.len() + 1);
@@ -6111,8 +6112,7 @@ pub(crate) fn infer_by_lowering(ctx: &mut TypeContext, stmts: &[S]) {
 /// A page's data source: `fetch[url]` or `poll[url, seconds]`, as the
 /// emitter tells them too.
 fn is_source_call(e: &Expr) -> bool {
-    let n = crate::ir::call_args(e).len();
-    matches!(crate::ir::call_name(e).as_deref(), Some("fetch")) && n == 1 || matches!(crate::ir::call_name(e).as_deref(), Some("poll")) && n == 2
+    crate::ir::call_name(e).is_some_and(|n| crate::table::source(&n, crate::ir::call_args(e).len()))
 }
 
 fn apply_shapes(ctx: &mut TypeContext, stmts: &[S]) -> usize {
@@ -7563,7 +7563,7 @@ if r.ok
         // refused as the call is read, before the lowering)
         let front = |src: &str| crate::lower::lower_program(&crate::build(src).expect("parses")).err().map(|e| format!("{}", e)).unwrap_or_default();
         assert!(front(&format!("{}log[window[t, 'px', 'sum', rows = 2]]\n", t)).contains("window[] has no option 'rows' — its options are n, by, span, on"));
-        assert!(front(&format!("{}log[window[t, 'px']]\n", t)).contains("window[] takes a frame, a column and what to compute"));
+        assert!(front(&format!("{}log[window[t, 'px']]\n", t)).contains("window[] takes 3 arguments, then n = 0, by = [], span = 0.0, on = '' by name"));
     }
 
     /// A function named like an element (`h3`, `p`) is a call outside a

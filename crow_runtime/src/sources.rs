@@ -12,6 +12,20 @@ use std::collections::BTreeMap;
 /// Whether a path names something not on this machine (the emitter asks,
 /// to build a program that may read Parquet from a server; the readers
 /// themselves are written in Crow, src/modules/sys.co).
+/// The feature of the runtime a table at a path may need: Parquet's, where
+/// the path names a Parquet file, or where it may — a remote table, whose
+/// server may answer one, or a path not known before the program runs.
+/// `named` is what the path's text says of its format: nothing known, known
+/// to be none (an extensionless name), or the format.
+pub fn table_feature(remote: bool, named: Option<Option<Format>>) -> Option<&'static str> {
+    let parquet = match named {
+        Some(Some(f)) => f == Format::Parquet,
+        Some(None) => remote,
+        None => true,
+    };
+    parquet.then_some("parquet")
+}
+
 pub fn is_remote(path: &str) -> bool {
     path.starts_with("http://") || path.starts_with("https://") || path.starts_with("s3://")
 }

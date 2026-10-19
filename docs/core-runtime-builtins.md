@@ -101,7 +101,7 @@ side only.
   `range`, `push`, `pop`, `reverse`, `concat`, `slice`, `slice_str`,
   `slice_tensor`, `sort_by`, `sort_ints/floats/strs`, `map_set`,
   `map_del`; both modes call it; `x = push[x, v]` and the other
-  in-place shapes (`ast::IN_PLACE_BUILTINS`, `ast::in_place_call_on`)
+  in-place shapes (the row's `Prop::InPlace`, `in_place_call_on`)
   move the collection into the call in both modes (the interpreter
   takes it out of its variable for the call; the transpiler emits the
   move); parity 41 pins the edges. Decisions: `pop` of an empty array

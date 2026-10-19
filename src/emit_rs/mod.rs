@@ -497,3 +497,20 @@ fn raw(e: &Expr) -> &Expr {
 }
 
 pub(crate) use crate::ir::in_place_builtin;
+
+impl Emitter {
+    /// The crate feature a row's call needs, declared on the row (table): a
+    /// response as Arrow, the GPU, the Parquet kernels.
+    pub(crate) fn note_feature(&mut self, name: &str) {
+        for row in crate::table::rows_named(name) {
+            if let Some((krate, feature)) = row.feature {
+                let set = match krate {
+                    "crow_runtime" => &mut self.runtime_features,
+                    "crow_web" => &mut self.web_features,
+                    _ => &mut self.db_features,
+                };
+                set.insert(feature.to_string());
+            }
+        }
+    }
+}

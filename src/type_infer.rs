@@ -36,7 +36,6 @@ pub(crate) mod settle;
 use frames::*;
 pub use frames::describe_with_tables;
 
-const SESSION_EFFECTS: &[&str] = &["notice", "sign_in", "sign_out", "download", "mail"];
 
 /// What a type knows beyond its kind that an assignment can change
 /// (`Ty::detail`).

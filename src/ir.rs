@@ -480,7 +480,7 @@ pub fn in_place_builtin(path: &str) -> bool {
         "map_del" => "del",
         other => other,
     };
-    crate::ast::IN_PLACE_BUILTINS.contains(&name)
+    crate::table::has(name, crate::table::Prop::InPlace)
 }
 
 #[derive(Debug, Clone)]
@@ -755,17 +755,11 @@ pub fn runtime_name(builtin: &str) -> String {
     builtin.to_string()
 }
 
-/// The builtins that reach outside the program's values. Their calls
-/// lower to `Expr::Effect`; the session layer performs them.
-pub const EFFECTS: &[&str] = &[
-    "query", "exec", "insert", "transact", "migrate", "connect", "read", "write", "mkdir", "ls",
-    "rm", "mv", "cp", "fetch", "poll", "shell", "request", "mail", "later", "notice", "sign_in", "sign_out", "download", "now",
-    "input", "env", "sleep", "exit", "log", "csv", "lines", "load", "save", "send", "recv",
-    "serve", "page", "route", "args",
-];
-
+/// Whether a builtin reaches outside the program's values (its row says:
+/// `Prop::Effect`): its call lowers to `Expr::Effect`, which the session
+/// layer performs.
 pub fn is_effect(name: &str) -> bool {
-    EFFECTS.contains(&name)
+    crate::table::has(name, crate::table::Prop::Effect)
 }
 
 /// The functions that answer without waiting on anything or looping: no
@@ -824,13 +818,6 @@ pub fn derivations_read(block: &[Stmt]) -> std::collections::BTreeSet<String> {
     out
 }
 
-/// The builtins that draw from the program's random generator, or seed
-/// it: a seeded program's draws repeat only in the order written, so a
-/// loop that draws runs in order (spec §14, For Loops).
-pub const DRAWS: &[&str] = &[
-    "rand", "seed", "randn", "normal", "uniform", "poisson", "bernoulli", "gamma_dist", "beta_dist", "exponential", "shuffle", "choice",
-    "permutation",
-];
 
 // ── walking the IR ──────────────────────────────────────────────────
 

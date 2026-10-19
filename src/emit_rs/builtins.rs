@@ -668,7 +668,7 @@ impl Emitter {
             // as Arrow by crow_web, as the interpreter's is (msgpack is a row
             // written in Crow, src/modules/web.co)
             "arrow" if web && n == 1 => {
-                self.web_features.insert("arrow_ipc".to_string());
+                self.note_feature("arrow");
                 format!("CrowResponse::arrow_of(&{})", a[0])
             }
             "bytes" if web && n == 1 => format!("CrowResponse::binary(200, {}.into_bytes(), \"application/octet-stream\")", a[0]),

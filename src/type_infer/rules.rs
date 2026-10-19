@@ -738,7 +738,7 @@ impl TypeContext {
         // Registry-module prefixed call (math.zeros[...],
         // or via alias: m.zeros after `use math as m`)
         let real = self.module_aliases.get(module).cloned().unwrap_or_else(|| module.to_string());
-        if matches!(real.as_str(), "math" | "io" | "frame" | "db" | "doc" | "chart" | "sys" | "math.stats" | "math.nn") && self.registry.has_function(field) {
+        if crate::modules::by_path(&real).is_some_and(|m| m.typed) && self.registry.has_function(field) {
             if let Some(t) = self.registry.type_of_in(&real, field, arg_types) {
                 // auto-propagation applies to qualified calls too:
                 // a fallible argument makes the result fallible
@@ -752,7 +752,7 @@ impl TypeContext {
         // name, is refused (add `use m`): the call is typed as the module's,
         // so what the program goes on to do with the value is judged in the
         // same run (spec, Error Messages, rule 3)
-        if matches!(real.as_str(), "math" | "io" | "frame" | "db" | "doc" | "chart" | "math.stats" | "math.nn") && !self.registry.has_function(field) {
+        if crate::modules::by_path(&real).is_some_and(|m| m.typed && !m.internal) && !self.registry.has_function(field) {
             let stdlib = crate::modules::ModuleRegistry::with_stdlib();
             if stdlib.providers_of(field).contains(&real.as_str()) {
                 if let Some(t) = stdlib.type_of_in(&real, field, arg_types) {

@@ -78,103 +78,69 @@ impl Emitter {
 
     // ── what the program needs ──────────────────────────────────────
 
+    /// A module whose functions are rows, loaded into the registry (the
+    /// manifest's `rows`: a module of own forms is answered by the
+    /// compiler's own arms, not the registry's).
     fn load_module(&mut self, name: &str) {
         if self.registry.is_loaded(name) {
             return;
         }
-        let m: std::sync::Arc<dyn crate::modules::CrowModule> = match name {
-            "math" => std::sync::Arc::new(crate::modules::math::MathModule),
-            "math.stats" => std::sync::Arc::new(crate::modules::stats::StatsModule),
-            "math.nn" => std::sync::Arc::new(crate::modules::nn::NnModule),
-            "frame" => std::sync::Arc::new(crate::modules::frame::FrameModule),
-            "doc" => std::sync::Arc::new(crate::modules::doc::DocModule),
-            "bits" => std::sync::Arc::new(crate::modules::bits::BitsModule),
-            "chart" => std::sync::Arc::new(crate::modules::chart::ChartModule),
-            "io" => std::sync::Arc::new(crate::modules::io::IoModule),
-            "web" => std::sync::Arc::new(crate::modules::web::WebModule),
-            "web.auth" => std::sync::Arc::new(crate::modules::web::AuthModule),
-            "web.ws" => std::sync::Arc::new(crate::modules::web::WsModule),
-            "web.mail" => std::sync::Arc::new(crate::modules::web::MailModule),
-            "db.clickhouse" => std::sync::Arc::new(crate::modules::db::ClickhouseDriver),
-            "db.postgres" => std::sync::Arc::new(crate::modules::db::PostgresDriver),
-            "llm" => std::sync::Arc::new(crate::modules::llm::LlmModule),
-            _ => return,
-        };
-        self.registry.load(m);
+        if let Some(m) = crate::modules::by_path(name).filter(|m| m.rows).and_then(|m| m.module) {
+            self.registry.load(m());
+        }
     }
 
     /// `use` paths: the crates and features they bring, the modules the
-    /// registry answers for.
+    /// registry answers for — each as the manifest declares it
+    /// (crate::modules::MODULES).
     fn read_uses(&mut self) {
         self.registry = crate::modules::ModuleRegistry::new();
         let uses: Vec<String> = self.part.uses.clone();
         for u in uses {
             let path = u.split(" as ").next().unwrap_or(&u).trim().to_string();
-            let module_name = path.rsplit('/').next().unwrap_or(&path).to_string();
-            if module_name == "math" || path.starts_with("math.") {
-                self.needs_crow_runtime = true;
-            }
-            match path.as_str() {
-                "math" => self.load_module("math"),
-                "math.stats" => {
-                    self.load_module("math");
-                    self.load_module("math.stats");
-                    self.modules.insert("math".to_string());
-                }
-                "math.nn" => {
-                    self.load_module("math");
-                    self.load_module("math.nn");
-                    self.modules.insert("math".to_string());
-                }
-                "io" => {
-                    self.needs_crow_runtime = true;
-                    self.load_module("io");
-                }
-                "frame" | "doc" | "chart" | "bits" | "llm" => {
-                    self.needs_crow_runtime = true;
+            match crate::modules::by_path(&path) {
+                Some(m) => {
+                    for (krate, features) in m.needs {
+                        let set = match *krate {
+                            "crow_runtime" => {
+                                self.needs_crow_runtime = true;
+                                &mut self.runtime_features
+                            }
+                            "crow_web" => {
+                                self.needs_crow_web = true;
+                                &mut self.web_features
+                            }
+                            _ => {
+                                self.needs_crow_db = true;
+                                &mut self.db_features
+                            }
+                        };
+                        set.extend(features.iter().map(|f| f.to_string()));
+                    }
+                    if m.ui {
+                        self.needs_ui = true;
+                    }
+                    // what the import brings first (its parent, its drivers),
+                    // then the module itself
+                    for brought in crate::modules::brought_by(&path) {
+                        self.load_module(brought);
+                    }
                     self.load_module(&path);
+                    if let Some(parent) = crate::modules::parent_of(&path) {
+                        self.modules.insert(parent.to_string());
+                    }
                 }
-                "db" => {
-                    self.needs_crow_db = true;
-                    self.needs_crow_runtime = true;
-                    self.db_features.insert("sqlite".to_string());
-                    self.modules.insert("db".to_string());
-                    // the drivers written in Crow, whose rows the program carries
-                    self.load_module("db.clickhouse");
-                    self.load_module("db.postgres");
-                }
-                "ui" => {
-                    self.needs_ui = true;
+                // (a module of web's with no entry is a feature of crow_web's)
+                None if path.starts_with("web.") => {
                     self.needs_crow_web = true;
-                    self.web_features.insert("live".to_string());
-                    self.modules.insert("ui".to_string());
-                }
-                "web" => {
-                    self.needs_crow_web = true;
-                    self.needs_crow_runtime = true;
-                    self.web_features.insert("http".to_string());
-                    self.modules.insert("web".to_string());
-                    self.load_module("web");
-                }
-                // a module of web's written in Crow: its rows, no feature
-                // of crow_web's to build in
-                "web.auth" | "web.ws" | "web.mail" => {
-                    self.needs_crow_web = true;
-                    self.needs_crow_runtime = true;
-                    self.modules.insert("web".to_string());
-                    self.load_module("web");
-                    self.load_module(&path);
-                }
-                p if p.starts_with("web.") => {
-                    self.needs_crow_web = true;
-                    let sub = &p[4..];
+                    let sub = &path[4..];
                     let feature = if sub == "static" { "static_files" } else { sub };
                     self.web_features.insert(feature.to_string());
                     self.modules.insert("web".to_string());
                 }
-                _ => {}
+                None => {}
             }
-            self.modules.insert(module_name);
+            self.modules.insert(path);
         }
         crate::modules::load_crow_scopes(&mut self.registry, self.part.fns.iter().map(|f| f.name.as_str()));
     }
@@ -1497,7 +1463,7 @@ impl Emitter {
             self.line(&format!("crow_runtime::cores::set_default({});", n));
         }
         if self.part.gpu.is_some() {
-            self.runtime_features.insert("gpu".to_string());
+            self.note_feature("gpu");
             self.needs_crow_runtime = true;
             self.line("crow_runtime::gpu::set_gpu_enabled(true);");
         }

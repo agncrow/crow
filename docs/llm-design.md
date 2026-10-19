@@ -42,7 +42,7 @@ log[r.usage.input]                           --- 21
 | `embed[m, texts]` | The texts' embeddings, a matrix with a row per text, from an OpenAI-compatible embeddings endpoint (`openai://host/<embedding model>`); an Anthropic connection is refused, since it serves none |
 
 Every function works identically in both modes, and `chat`, `stream`,
-`next` and `embed` are effects (`ir::EFFECTS`): a route's handler calling
+`next` and `embed` are effects (their rows' `Prop::Effect`): a route's handler calling
 one runs off the server's threads, and `crow check` sees the call.
 
 ### Tools are the functions
@@ -218,10 +218,10 @@ Anthropic-side providers (Voyage) once one speaks a second format.
 
 ## The pieces
 
-- `src/modules/llm.co` — the module; `src/modules/llm.rs` — `LlmModule`
-  and `LLM_FUNCTIONS`; `src/modules/mod.rs` — `CROW_MODULES` (`("llm",
-  "_llm")`), `module_by_path`, the source; `src/emit_rs/program.rs` and
-  `src/type_infer/classify.rs` — registration, as `web.mail`'s.
+- `src/modules/llm.co` — the module; `src/modules/mod.rs` — its one
+  entry in the manifest (`MODULES`: the path, the prefix `_llm`, the
+  source, what the import needs), which the registry, the type checker,
+  the emitter and the docs check read (design rule 24).
 - `src/table.rs` — the `crow!` rows: `llm.connect (Str) -> Json`,
   `llm.user (Str) -> Json`, `llm.user_more (Json, Str) -> Json`, `llm.said
   (Json, Json) -> Json`, `llm.result (Json, Json, Str) -> Json`, `llm.chat

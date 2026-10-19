@@ -200,6 +200,118 @@ pub enum Fails {
     Value(&'static str),
 }
 
+/// A named option's default, where the row has one for it: the lowering
+/// fills in what a call leaves out, so the row is handed every argument
+/// (`request[url]` reaches its row with a method, a body, four maps, a
+/// path and a count). An option with no default is given, or the row is
+/// not the call's: `sum[x, axis = 0]` reaches `sum_axis`, `sum[x]` never
+/// does.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Preset {
+    Int(i64),
+    Float(f64),
+    Str(&'static str),
+    Bool(bool),
+    /// An empty list.
+    List,
+    /// An empty map.
+    Map,
+    /// No default: the row applies to a call that gives the option.
+    Asked,
+}
+
+/// A row's options: its last parameters, each by name with its default.
+pub type Options = &'static [(&'static str, Preset)];
+
+/// The range of the int a row answers, for the width pass (int_width):
+/// which rule reads its arguments' ranges into its answer's. Any other
+/// row's int is 64-bit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IntRange {
+    /// Any 64-bit int.
+    I64,
+    /// A count: 0 to 2^48.
+    Count,
+    /// A position, or -1 for none: -1 to 2^48.
+    Position,
+    /// The first argument's, made non-negative.
+    Abs,
+    /// The smaller of two arguments'.
+    Min,
+    /// The larger of two arguments'.
+    Max,
+    /// The first argument's (a whole number kept, or rounded).
+    Keeps,
+    /// The first argument itself, as it is: the identity.
+    Same,
+    /// The bits two arguments share.
+    And,
+    /// The bits of either of two arguments.
+    OrXor,
+    /// A character's code: 0 to 0x10FFFF.
+    Code,
+    /// The first argument's bits moved by the second.
+    Shift,
+    /// 0 or 1.
+    Bool,
+    /// A whole number of any size: read from text or a float, or rounded
+    /// from an exact number.
+    Any,
+}
+
+/// What a builtin does beyond answering its value, declared on its row
+/// (design rule 24): each had been a list of names in the compiler, read
+/// by name — any row of the name has the property.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Prop {
+    /// Reaches outside the program's values: its call lowers to
+    /// `Expr::Effect`, which the session layer performs.
+    Effect,
+    /// Draws from the random generator: a loop over it keeps its order.
+    Draws,
+    /// Reads the world: its answer is stamped with its capture moment.
+    Reads,
+    /// Held to the handler's commit; an error among its arguments stops
+    /// the handler.
+    Held,
+    /// Acts for the session: a function calling it is a handler.
+    Session,
+    /// Blocks: a view or a handler reaching it freezes the live loop.
+    Blocks,
+    /// A rehearsal records it instead of running it.
+    Outside,
+    /// A page's data source, which the session loads.
+    Source,
+    /// Binds the fact in this argument to an input.
+    Binds(usize),
+    /// Only inside a test block.
+    TestOnly,
+    /// Takes its collection by value, so `x = f[x, …]` moves `x` in and
+    /// grows it where it lies (the text forms through `taken`).
+    InPlace,
+    /// This argument is a mask, one bool per row: a frame's column of bools
+    /// there is read as the mask it makes.
+    Mask(usize),
+    /// Answers the whole numbers from its first bound to its last, in order
+    /// (`range`): a loop over it is counted, its items lie between the bounds.
+    Range,
+    /// This argument names a table by its path: the format the path may
+    /// name is built into the runtime (crow_runtime::sources::table_feature).
+    Table(usize),
+    /// A function `grad` differentiates may call it with a traced value:
+    /// it is differentiated, or read and never differentiated (a length, a
+    /// conversion), or piecewise constant.
+    Differentiable,
+    /// Makes a constant of the tape: its arguments are sizes or lists.
+    Constructs,
+    /// A dual number (forward mode) answers it with its derivative, by the
+    /// function's own rule.
+    Dual,
+    /// Its name is not reserved by its module's import: a frame's `select`
+    /// shares the control's.
+    Unreserved,
+}
+
 pub struct Row {
     /// The id the IR names the row by (`Target::Row`, an effect's `row`).
     pub id: &'static str,
@@ -212,6 +324,29 @@ pub struct Row {
     pub params: &'static [Kind],
     pub ret: Kind,
     pub fails: Fails,
+    /// The last of its parameters that a call names, each with its
+    /// default (`Preset`); empty for a row every argument of which is
+    /// positional.
+    pub options: Options,
+    /// What it does beyond answering (`Prop`).
+    pub props: &'static [Prop],
+    /// The runtime function its call is printed as when its first argument
+    /// is a text nothing else holds, or a tensor pushed onto: changed where
+    /// it lies, as the interpreter's `take` bridge changes it.
+    pub taken: Option<&'static str>,
+    /// The id of the row that keeps every digit in place of this one, which
+    /// answers 64 bits (int_width: `int` of text, `floor`, `abs`, …).
+    pub big: Option<&'static str>,
+    /// The range of the int it answers (`IntRange`).
+    pub range: IntRange,
+    /// The crate feature its call needs built in, by crate: a response as
+    /// Arrow, the GPU, the Parquet kernels.
+    pub feature: Option<(&'static str, &'static str)>,
+    /// The name a program writes to reach a row whose own name is hidden
+    /// (`__fmt_time` is `fmt` with a time style: one name, the row an
+    /// option picks, and its lowered form told from the plain row's by the
+    /// hidden name); "" where the row's name is the written one.
+    pub written: &'static str,
     /// The interpreter's call: the arguments read by kind, the function
     /// applied, the failure dispatched as the row says. `trace` is where an
     /// error value is made.
@@ -625,12 +760,6 @@ pub fn groups_mut_in_place<'a>(params: &[Kind], args: &'a mut [CrowValue], name:
 }
 
 
-/// The builtins that read the world outside the program: a value one
-/// answers is stamped with its capture moment (`captured[x]`), in both
-/// modes — the interpreter stamps what its call answers, the compiled
-/// program's printing of a row stamps it (the compiled `rm` had stamped its
-/// empty answer while the interpreter did not).
-pub const READERS: &[&str] = &["query", "read", "fetch", "recv", "input", "load", "env", "shell", "ls", "csv", "lines", "request"];
 
 /// A row's call as the compiled program prints it: each argument as its
 /// kind takes it, the failure as the row says. `line` is the stop's line
@@ -650,7 +779,7 @@ pub fn print(row: &Row, args: &[String], line: &str, trace: Option<&str>) -> Res
         return Err(format!("a bug in Crow: `{}` is written in Crow, and its call was left to the runtime (an argument's kind not known before the program runs)", row.name));
     }
     let call = format!("{}({})", row.rust_path(), printed.join(", "));
-    let captured = if READERS.contains(&row.name) { "crow_runtime::moments::now()" } else { "0.0" };
+    let captured = if has(row.name, Prop::Reads) { "crow_runtime::moments::now()" } else { "0.0" };
     Ok(match row.fails {
         Fails::Never => call,
         Fails::Stops => format!("{}.unwrap_or_else(|e| crow_stop({}, e))", call, line),
@@ -1471,7 +1600,7 @@ macro_rules! crow {
     ($id:literal, $module:literal, $name:literal, ($($k:ident),*) -> $r:ident, $($fails:tt)+) => {
         Row {
             id: $id, name: $name, module: $module, path: IN_CROW,
-            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($($fails)+),
+            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($($fails)+), options: &[], written: "", props: &[], taken: None, big: None, range: IntRange::I64, feature: None,
             call: |_args: &[CrowValue], _trace: &str| Err(written_in_crow($name)),
             take: |_args: Vec<CrowValue>, _trace: &str| Err(written_in_crow($name)),
         }
@@ -1486,7 +1615,7 @@ macro_rules! maprow {
     ($id:literal, $name:literal, $f:path, ($($k:ident),*) -> $r:ident, $fails:tt, $call:path, $take:path) => {
         Row {
             id: $id, name: $name, module: "", path: stringify!($f),
-            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($fails),
+            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($fails), options: &[], written: "", props: &[], taken: None, big: None, range: IntRange::I64, feature: None,
             call: $call,
             take: $take,
         }
@@ -1497,7 +1626,7 @@ macro_rules! row {
     ($id:literal, $module:literal, $name:literal, $f:path, ($($k:ident),*) -> $r:ident, $($fails:tt)+) => {
         Row {
             id: $id, name: $name, module: $module, path: stringify!($f),
-            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($($fails)+),
+            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($($fails)+), options: &[], written: "", props: &[], taken: None, big: None, range: IntRange::I64, feature: None,
             call: |args: &[CrowValue], trace: &str| {
                 let _ = trace;
                 let groups = groups_in_place(&[$(Kind::$k),*], args, $name)?;
@@ -1528,11 +1657,11 @@ pub static ROWS: &[Row] = &[
     // how many times a part occurs (not overlapping: Python's str.count),
     // and each character of one set mapped to the one at its place in
     // another, in one pass (DNA's complement: tr, Python's translate)
-    row!("text.occurs", "", "occurs", crow_runtime::text::count, (Str, Str) -> Int, stops),
-    Row { take: texts::translate_taken, ..row!("text.translate", "", "translate", crow_runtime::text::translate, (Str, Str, Str) -> Str, stops) },
-    Row { take: texts::replace_taken, ..row!("text.replace", "", "replace", crow_runtime::text::replace, (Str, Str, Str) -> Str, never) },
-    Row { take: texts::upper_taken, ..row!("text.upper", "", "upper", crow_runtime::text::upper, (Str) -> Str, never) },
-    Row { take: texts::lower_taken, ..row!("text.lower", "", "lower", crow_runtime::text::lower, (Str) -> Str, never) },
+    Row { range: IntRange::Count, ..row!("text.occurs", "", "occurs", crow_runtime::text::count, (Str, Str) -> Int, stops) },
+    Row { taken: Some("crow_runtime::text::translate_taken"), take: texts::translate_taken, ..row!("text.translate", "", "translate", crow_runtime::text::translate, (Str, Str, Str) -> Str, stops) },
+    Row { taken: Some("crow_runtime::text::replace_taken"), props: &[Prop::InPlace], take: texts::replace_taken, ..row!("text.replace", "", "replace", crow_runtime::text::replace, (Str, Str, Str) -> Str, never) },
+    Row { taken: Some("crow_runtime::text::upper_taken"), props: &[Prop::InPlace], take: texts::upper_taken, ..row!("text.upper", "", "upper", crow_runtime::text::upper, (Str) -> Str, never) },
+    Row { taken: Some("crow_runtime::text::lower_taken"), props: &[Prop::InPlace], take: texts::lower_taken, ..row!("text.lower", "", "lower", crow_runtime::text::lower, (Str) -> Str, never) },
     row!("text.starts", "", "starts", crow_runtime::text::starts, (Str, Str) -> Bool, never),
     row!("text.ends", "", "ends", crow_runtime::text::ends, (Str, Str) -> Bool, never),
     row!("core.join", "", "join", crow_runtime::core::join_words, (Words, Str) -> Str, never),
@@ -1542,17 +1671,17 @@ pub static ROWS: &[Row] = &[
     // no row takes is refused before the program runs: compiled, `has` of a
     // list and `len` of a number did not build, and `contains` of a record
     // did not compare.
-    row!("core.len", "", "len", crow_runtime::core::len, (Seq) -> Int, never),
-    row!("core.len_text", "", "len", crow_runtime::core::len_text, (Str) -> Int, never),
-    maprow!("core.len_map", "len", crow_runtime::core::len_map, (MapRef) -> Int, never, maps::len, maps::len_taken),
-    row!("core.len_column", "", "len", crow_runtime::core::len_column, (Column) -> Int, never),
-    row!("core.len_tensor", "", "len", crow_runtime::core::len_tensor, (Tensor) -> Int, never),
-    row!("core.len_frame", "", "len", crow_runtime::core::len_frame, (Frame) -> Int, never),
+    Row { props: &[Prop::Differentiable], range: IntRange::Count, ..row!("core.len", "", "len", crow_runtime::core::len, (Seq) -> Int, never) },
+    Row { props: &[Prop::Differentiable], range: IntRange::Count, ..row!("core.len_text", "", "len", crow_runtime::core::len_text, (Str) -> Int, never) },
+    Row { props: &[Prop::Differentiable], range: IntRange::Count, ..maprow!("core.len_map", "len", crow_runtime::core::len_map, (MapRef) -> Int, never, maps::len, maps::len_taken) },
+    Row { props: &[Prop::Differentiable], range: IntRange::Count, ..row!("core.len_column", "", "len", crow_runtime::core::len_column, (Column) -> Int, never) },
+    Row { props: &[Prop::Differentiable], range: IntRange::Count, ..row!("core.len_tensor", "", "len", crow_runtime::core::len_tensor, (Tensor) -> Int, never) },
+    Row { props: &[Prop::Differentiable], range: IntRange::Count, ..row!("core.len_frame", "", "len", crow_runtime::core::len_frame, (Frame) -> Int, never) },
     // a JSON value's kind shows as the program runs: of a number or a bool,
     // the refusal the interpreter gives the value it parsed to (compiled,
     // its length was 0)
-    row!("core.len_json", "", "len", crow_runtime::core::len_json, (Json) -> Int, stops),
-    row!("core.len_bytes", "", "len", crow_runtime::sys::len_bytes, (Bytes) -> Int, never),
+    Row { props: &[Prop::Differentiable], ..row!("core.len_json", "", "len", crow_runtime::core::len_json, (Json) -> Int, stops) },
+    Row { props: &[Prop::Differentiable], range: IntRange::Count, ..row!("core.len_bytes", "", "len", crow_runtime::sys::len_bytes, (Bytes) -> Int, never) },
     // an item compared as `eq` compares it: a record field by field, a map
     // entry by entry
     row!("core.contains", "", "contains", crow_runtime::core::contains, (Seq, ItemRef) -> Bool, never),
@@ -1573,48 +1702,48 @@ pub static ROWS: &[Row] = &[
     row!("core.__groups", "", "__groups", crow_runtime::core::groups, (Groups) -> Tensors, never),
     // `map[keys, values]`: the literal's other form, reached by the lowering
     maprow!("core.__map_of", "__map_of", crow_runtime::core::map_of, (Keys, Seq) -> MapOf, stops, maps::map_of, maps::map_of_taken),
-    Row { take: lists::slice_taken, ..row!("core.slice", "", "slice", crow_runtime::core::slice, (Seq, Int, Int) -> List, never) },
+    Row { taken: Some("crow_runtime::core::slice_taken"), take: lists::slice_taken, ..row!("core.slice", "", "slice", crow_runtime::core::slice, (Seq, Int, Int) -> List, never) },
     row!("core.slice_str", "", "slice", crow_runtime::core::slice_str, (Str, Int, Int) -> Str, never),
     row!("core.slice_tensor", "", "slice", crow_runtime::core::slice_tensor, (Tensor, Int, Int) -> Tensor, never),
-    row!("core.push", "", "push", crow_runtime::core::push, (List, Item) -> List, never),
-    row!("core.push_row", "", "push", crow_runtime::core::push_row, (Tensor, Tensor) -> Tensor, stops),
+    Row { props: &[Prop::InPlace], ..row!("core.push", "", "push", crow_runtime::core::push, (List, Item) -> List, never) },
+    Row { props: &[Prop::InPlace], ..row!("core.push_row", "", "push", crow_runtime::core::push_row, (Tensor, Tensor) -> Tensor, stops) },
     // (given the tensor — `x = push[move x, n]` — it grows where it lies)
-    Row { take: tensors::push_number_taken, ..row!("core.push_number", "", "push", crow_runtime::core::push_number, (Tensor, Float) -> Tensor, stops) },
+    Row { taken: Some("crow_runtime::core::push_number_taken"), props: &[Prop::InPlace], take: tensors::push_number_taken, ..row!("core.push_number", "", "push", crow_runtime::core::push_number, (Tensor, Float) -> Tensor, stops) },
     // `m[i][j] = x`, as the lowering writes it (`m = __set_at[m, [i, j], x]`):
     // a number of a tensor at one position per axis, written in place
-    Row { take: tensors::set_at_taken, ..row!("core.__set_at", "", "__set_at", crow_runtime::core::set_at, (Tensor, Ints, Float) -> Tensor, stops) },
+    Row { taken: Some("crow_runtime::core::set_at_taken"), props: &[Prop::InPlace], take: tensors::set_at_taken, ..row!("core.__set_at", "", "__set_at", crow_runtime::core::set_at, (Tensor, Ints, Float) -> Tensor, stops) },
     // `m[i] = row` (`m = __set_part[m, [i], row]`): a part of a tensor — a
     // matrix's row — replaced by one of its own shape, in place
-    Row { take: tensors::set_part_taken, ..row!("core.__set_part", "", "__set_part", crow_runtime::core::set_part, (Tensor, Ints, Tensor) -> Tensor, stops) },
-    row!("core.pop", "", "pop", crow_runtime::core::pop, (List) -> List, never),
-    row!("core.pop_tensor", "", "pop", crow_runtime::core::pop_tensor, (Tensor) -> Tensor, never),
+    Row { taken: Some("crow_runtime::core::set_part_taken"), props: &[Prop::InPlace], take: tensors::set_part_taken, ..row!("core.__set_part", "", "__set_part", crow_runtime::core::set_part, (Tensor, Ints, Tensor) -> Tensor, stops) },
+    Row { props: &[Prop::InPlace], ..row!("core.pop", "", "pop", crow_runtime::core::pop, (List) -> List, never) },
+    Row { props: &[Prop::InPlace], ..row!("core.pop_tensor", "", "pop", crow_runtime::core::pop_tensor, (Tensor) -> Tensor, never) },
     // numbers ascending with NaN last, text by its characters; a list of
     // anything else has no order (a record's was the interpreter's
     // unchanged list, and the compiled program's missing Ord)
-    row!("core.sort_ints", "", "sort", crow_runtime::core::sort_ints, (Ints) -> Ints, never),
-    row!("core.sort_floats", "", "sort", crow_runtime::core::sort_floats, (Floats) -> Floats, never),
-    row!("core.sort_strs", "", "sort", crow_runtime::core::sort_strs, (Texts) -> Texts, never),
-    row!("core.sort_tensor", "", "sort", crow_runtime::core::sort_tensor, (Tensor) -> Tensor, stops),
-    row!("core.reverse", "", "reverse", crow_runtime::core::reverse, (List) -> List, never),
-    Row { take: texts::reverse_taken, ..row!("core.reverse_text", "", "reverse", crow_runtime::core::reverse_text, (Str) -> Str, never) },
-    row!("core.reverse_tensor", "", "reverse", crow_runtime::core::reverse_tensor, (Tensor) -> Tensor, never),
-    row!("core.concat", "", "concat", crow_runtime::core::concat, (List, Seq) -> List, never),
-    row!("core.concat_text", "", "concat", crow_runtime::core::concat_text, (Str, Str) -> Str, never),
-    row!("core.concat_tensors", "", "concat", crow_runtime::core::concat_tensors, (Tensor, Tensor) -> Tensor, stops),
-    row!("core.concat_axis", "", "concat", crow_runtime::core::concat_axis, (Tensor, Tensor, Int) -> Tensor, stops),
+    Row { big: Some("core.__sort_big"), props: &[Prop::InPlace], ..row!("core.sort_ints", "", "sort", crow_runtime::core::sort_ints, (Ints) -> Ints, never) },
+    Row { props: &[Prop::InPlace], ..row!("core.sort_floats", "", "sort", crow_runtime::core::sort_floats, (Floats) -> Floats, never) },
+    Row { props: &[Prop::InPlace], ..row!("core.sort_strs", "", "sort", crow_runtime::core::sort_strs, (Texts) -> Texts, never) },
+    Row { props: &[Prop::InPlace], ..row!("core.sort_tensor", "", "sort", crow_runtime::core::sort_tensor, (Tensor) -> Tensor, stops) },
+    Row { props: &[Prop::InPlace], ..row!("core.reverse", "", "reverse", crow_runtime::core::reverse, (List) -> List, never) },
+    Row { taken: Some("crow_runtime::core::reverse_text_taken"), props: &[Prop::InPlace], take: texts::reverse_taken, ..row!("core.reverse_text", "", "reverse", crow_runtime::core::reverse_text, (Str) -> Str, never) },
+    Row { props: &[Prop::InPlace], ..row!("core.reverse_tensor", "", "reverse", crow_runtime::core::reverse_tensor, (Tensor) -> Tensor, never) },
+    Row { props: &[Prop::InPlace], ..row!("core.concat", "", "concat", crow_runtime::core::concat, (List, Seq) -> List, never) },
+    Row { props: &[Prop::InPlace], ..row!("core.concat_text", "", "concat", crow_runtime::core::concat_text, (Str, Str) -> Str, never) },
+    Row { props: &[Prop::InPlace], ..row!("core.concat_tensors", "", "concat", crow_runtime::core::concat_tensors, (Tensor, Tensor) -> Tensor, stops) },
+    Row { props: &[Prop::InPlace], options: &[("axis", Preset::Asked)], ..row!("core.concat_axis", "", "concat", crow_runtime::core::concat_axis, (Tensor, Tensor, Int) -> Tensor, stops) },
     // ints only (compiled, a float was cut to an int where the interpreter
     // refused it)
-    row!("core.range_to", "", "range", crow_runtime::core::range_to, (Whole) -> Ints, stops),
-    row!("core.range_from", "", "range", crow_runtime::core::range_from, (Whole, Whole) -> Ints, stops),
-    row!("core.range", "", "range", crow_runtime::core::range, (Whole, Whole, Whole) -> Ints, stops),
+    Row { props: &[Prop::Constructs, Prop::Range], ..row!("core.range_to", "", "range", crow_runtime::core::range_to, (Whole) -> Ints, stops) },
+    Row { props: &[Prop::Constructs, Prop::Range], ..row!("core.range_from", "", "range", crow_runtime::core::range_from, (Whole, Whole) -> Ints, stops) },
+    Row { props: &[Prop::Constructs, Prop::Range], ..row!("core.range", "", "range", crow_runtime::core::range, (Whole, Whole, Whole) -> Ints, stops) },
     maprow!("core.keys", "keys", crow_runtime::core::keys, (MapRef) -> Keys, never, maps::keys, maps::keys_taken),
     maprow!("core.values", "values", crow_runtime::core::values, (MapRef) -> List, never, maps::values, maps::values_taken),
     maprow!("core.has", "has", crow_runtime::core::has, (MapRef, Key) -> Bool, never, maps::has, maps::has_taken),
     // `key in m`: the map's membership, the same function (the name `has`
     // is the lowering's own; a program writes the operator)
     maprow!("core.contains_key", "contains", crow_runtime::core::has, (MapRef, Key) -> Bool, never, maps::has, maps::has_taken),
-    maprow!("core.set", "set", crow_runtime::core::set, (MapOf, Key, Item) -> MapOf, never, maps::set, maps::set_taken),
-    maprow!("core.del", "del", crow_runtime::core::map_del, (MapOf, Key) -> MapOf, never, maps::del, maps::del_taken),
+    Row { props: &[Prop::InPlace], ..maprow!("core.set", "set", crow_runtime::core::set, (MapOf, Key, Item) -> MapOf, never, maps::set, maps::set_taken) },
+    Row { props: &[Prop::InPlace], ..maprow!("core.del", "del", crow_runtime::core::map_del, (MapOf, Key) -> MapOf, never, maps::del, maps::del_taken) },
     // a parsed JSON object's keys, values and entries: the compiled program
     // holds the parsed value, the interpreter what it parsed to, whose map
     // rows it picks (compiled, these did not build)
@@ -1643,33 +1772,33 @@ pub static ROWS: &[Row] = &[
     row!("text.decode", "", "decode", crow_runtime::text::decode_as, (Str, Str) -> Str, value "parse"),
     // log: the values as they show, one display for both modes (compiled,
     // an error without a value among several did not build)
-    row!("display.log", "", "log", crow_runtime::display::log, (Shows) -> Unit, never),
+    Row { props: &[Prop::Differentiable, Prop::Effect], ..row!("display.log", "", "log", crow_runtime::display::log, (Shows) -> Unit, never) },
     maprow!("core.map_new", "map", crow_runtime::core::map_new, () -> MapOf, never, maps::new, maps::new_taken),
     // a plain number's math (on the dual numbers a function grad
     // differentiates, each keeps the derivative's own form)
-    row!("core.abs_int", "", "abs", crow_runtime::core::abs_int, (Whole) -> Int, stops),
-    row!("core.abs", "", "abs", crow_runtime::core::abs_float, (Float) -> Float, never),
-    row!("core.sqrt", "", "sqrt", crow_runtime::core::sqrt, (Float) -> Float, never),
-    row!("core.floor_int", "", "floor", crow_runtime::core::whole, (Whole) -> Int, never),
-    row!("core.floor", "", "floor", crow_runtime::core::floor, (Float) -> Int, never),
-    row!("core.ceil_int", "", "ceil", crow_runtime::core::whole, (Whole) -> Int, never),
-    row!("core.ceil", "", "ceil", crow_runtime::core::ceil, (Float) -> Int, never),
-    row!("core.round_int", "", "round", crow_runtime::core::whole, (Whole) -> Int, never),
-    row!("core.round", "", "round", crow_runtime::core::round, (Float) -> Int, never),
+    Row { props: &[Prop::Differentiable], range: IntRange::Abs, big: Some("core.__abs_big"), ..row!("core.abs_int", "", "abs", crow_runtime::core::abs_int, (Whole) -> Int, stops) },
+    Row { props: &[Prop::Differentiable], ..row!("core.abs", "", "abs", crow_runtime::core::abs_float, (Float) -> Float, never) },
+    Row { props: &[Prop::Differentiable], ..row!("core.sqrt", "", "sqrt", crow_runtime::core::sqrt, (Float) -> Float, never) },
+    Row { props: &[Prop::Differentiable], range: IntRange::Keeps, big: Some("core.__whole_big"), ..row!("core.floor_int", "", "floor", crow_runtime::core::whole, (Whole) -> Int, never) },
+    Row { props: &[Prop::Differentiable], range: IntRange::Any, big: Some("core.__floor_big"), ..row!("core.floor", "", "floor", crow_runtime::core::floor, (Float) -> Int, never) },
+    Row { props: &[Prop::Differentiable], range: IntRange::Keeps, big: Some("core.__whole_big"), ..row!("core.ceil_int", "", "ceil", crow_runtime::core::whole, (Whole) -> Int, never) },
+    Row { props: &[Prop::Differentiable], range: IntRange::Any, big: Some("core.__ceil_big"), ..row!("core.ceil", "", "ceil", crow_runtime::core::ceil, (Float) -> Int, never) },
+    Row { props: &[Prop::Differentiable], range: IntRange::Keeps, big: Some("core.__whole_big"), ..row!("core.round_int", "", "round", crow_runtime::core::whole, (Whole) -> Int, never) },
+    Row { props: &[Prop::Differentiable], range: IntRange::Any, big: Some("core.__round_big"), ..row!("core.round", "", "round", crow_runtime::core::round, (Float) -> Int, never) },
     // the program and its system: effects, which the session layer
     // performs, and whose call inside is the row (compiled, env's default
     // had been text of any value, and a negative sleep panicked or slept
     // forever in both modes)
-    row!("core.args", "", "args", crow_runtime::core::args, () -> Strs, never),
-    row!("core.env", "", "env", crow_runtime::core::env, (Str) -> Str, value "env"),
-    row!("core.env_or", "", "env", crow_runtime::core::env_or, (Str, Cell) -> Str, value "env"),
-    row!("core.input", "", "input", crow_runtime::core::input, () -> Str, value "io"),
-    row!("core.input_prompt", "", "input", crow_runtime::core::input_prompt, (Str) -> Str, value "io"),
-    row!("core.exit", "", "exit", crow_runtime::core::exit, () -> Unit, never),
-    row!("core.exit_code", "", "exit", crow_runtime::core::exit_code, (Whole) -> Unit, never),
+    Row { props: &[Prop::Effect], ..row!("core.args", "", "args", crow_runtime::core::args, () -> Strs, never) },
+    Row { props: &[Prop::Effect, Prop::Reads], ..row!("core.env", "", "env", crow_runtime::core::env, (Str) -> Str, value "env") },
+    Row { props: &[Prop::Effect, Prop::Reads], ..row!("core.env_or", "", "env", crow_runtime::core::env_or, (Str, Cell) -> Str, value "env") },
+    Row { props: &[Prop::Effect, Prop::Reads, Prop::Blocks], ..row!("core.input", "", "input", crow_runtime::core::input, () -> Str, value "io") },
+    Row { props: &[Prop::Effect, Prop::Reads, Prop::Blocks], ..row!("core.input_prompt", "", "input", crow_runtime::core::input_prompt, (Str) -> Str, value "io") },
+    Row { props: &[Prop::Effect], ..row!("core.exit", "", "exit", crow_runtime::core::exit, () -> Unit, never) },
+    Row { props: &[Prop::Effect], ..row!("core.exit_code", "", "exit", crow_runtime::core::exit_code, (Whole) -> Unit, never) },
     row!("core.halt", "", "halt", crow_runtime::core::halt, (Str) -> Unit, stops),
-    row!("core.sleep_ms", "", "sleep", crow_runtime::core::sleep_ms, (Whole) -> Unit, stops),
-    row!("core.sleep", "", "sleep", crow_runtime::core::sleep_secs, (Float) -> Unit, stops),
+    Row { props: &[Prop::Effect, Prop::Blocks], ..row!("core.sleep_ms", "", "sleep", crow_runtime::core::sleep_ms, (Whole) -> Unit, stops) },
+    Row { props: &[Prop::Effect, Prop::Blocks], ..row!("core.sleep", "", "sleep", crow_runtime::core::sleep_secs, (Float) -> Unit, stops) },
     // (the lowering's: a loaded frame held to the columns the program's
     // reads say it has, where it is bound — lower_ir/uses.rs)
     row!("core.__expect_frame", "", "__expect_frame", crow_runtime::frames::expect, (Frame, Strs, Strs, Strs) -> Frame, stops),
@@ -1680,74 +1809,74 @@ pub static ROWS: &[Row] = &[
     row!("core.__read_str", "", "__read_str", crow_runtime::json::read_str, (Json, Str) -> Str, stops),
     row!("core.__read_bool", "", "__read_bool", crow_runtime::json::read_bool, (Json, Str) -> Bool, stops),
     row!("core.__read_moment", "", "__read_moment", crow_runtime::json::read_moment, (Json, Str) -> Moment, stops),
-    row!("moments.now", "", "now", crow_runtime::moments::now_moment, () -> Moment, never),
+    Row { props: &[Prop::Effect], ..row!("moments.now", "", "now", crow_runtime::moments::now_moment, () -> Moment, never) },
     // the file system: an effect, which the session layer performs (held to
     // a handler's commit, recorded in a rehearsal) and whose call inside is
     // the row; a failure is an error value of kind 'io', a success of a
     // write empty text, as its type says (it had been `done` interpreted)
-    crow!("io.read", "", "read", (Str) -> Str, value "io"),
+    Row { props: &[Prop::Effect, Prop::Reads, Prop::Held], ..crow!("io.read", "", "read", (Str) -> Str, value "io") },
     // a URL read with options: `read[url, headers = map[…], query = map[…],
     // timeout = s]` (the lowering fills in what the call leaves out)
-    crow!("io.read_asked", "", "read", (Str, TextMap, TextMap, Float) -> Str, value "io"),
-    crow!("io.write", "", "write", (Str, Str) -> Str, value "io"),
+    Row { props: &[Prop::Effect, Prop::Reads, Prop::Held], options: &[("headers", Preset::Map), ("query", Preset::Map), ("timeout", Preset::Float(0.0))], ..crow!("io.read_asked", "", "read", (Str, TextMap, TextMap, Float) -> Str, value "io") },
+    Row { props: &[Prop::Effect, Prop::Held, Prop::Outside], ..crow!("io.write", "", "write", (Str, Str) -> Str, value "io") },
     row!("io.exists", "", "exists", crow_runtime::io::exists, (Str) -> Bool, never),
-    row!("io.mkdir", "", "mkdir", crow_runtime::io::mkdir, (Str) -> Str, value "io"),
-    row!("io.ls", "", "ls", crow_runtime::io::ls, (Str) -> Strs, value "io"),
-    row!("io.rm", "", "rm", crow_runtime::io::rm, (Str) -> Str, value "io"),
-    row!("io.mv", "", "mv", crow_runtime::io::mv, (Str, Str) -> Str, value "io"),
-    row!("io.cp", "", "cp", crow_runtime::io::cp, (Str, Str) -> Str, value "io"),
+    Row { props: &[Prop::Effect, Prop::Outside], ..row!("io.mkdir", "", "mkdir", crow_runtime::io::mkdir, (Str) -> Str, value "io") },
+    Row { props: &[Prop::Effect, Prop::Reads], ..row!("io.ls", "", "ls", crow_runtime::io::ls, (Str) -> Strs, value "io") },
+    Row { props: &[Prop::Effect, Prop::Outside], ..row!("io.rm", "", "rm", crow_runtime::io::rm, (Str) -> Str, value "io") },
+    Row { props: &[Prop::Effect, Prop::Outside], ..row!("io.mv", "", "mv", crow_runtime::io::mv, (Str, Str) -> Str, value "io") },
+    Row { props: &[Prop::Effect, Prop::Outside], ..row!("io.cp", "", "cp", crow_runtime::io::cp, (Str, Str) -> Str, value "io") },
     // a command that cannot start is an error value of kind 'shell'; a
     // non-zero exit is an answer, read from `.status`
-    row!("core.shell", "", "shell", crow_runtime::core::shell, (Str) -> Shell, value "shell"),
+    Row { props: &[Prop::Effect, Prop::Reads, Prop::Held, Prop::Blocks, Prop::Outside], ..row!("core.shell", "", "shell", crow_runtime::core::shell, (Str) -> Shell, value "shell") },
     // an HTTP request, answered whatever its status: its URL, method and
     // body, then its headers, query, form, files, save and timeout (the
     // lowering fills in what the call leaves out: `request[url]` is a GET)
     // written in Crow (src/modules/core.co) on the sys layer
-    crow!("core.request", "", "request", (Str, Str, Str, TextMap, TextMap, TextMap, TextMap, Str, Float) -> Reply, value "http"),
+    Row { props: &[Prop::Effect, Prop::Reads, Prop::Held, Prop::Outside], options: &[("method", Preset::Str("GET")), ("body", Preset::Str("")), ("headers", Preset::Map), ("query", Preset::Map), ("form", Preset::Map), ("files", Preset::Map), ("save", Preset::Str("")), ("timeout", Preset::Float(0.0))], ..crow!("core.request", "", "request", (Str, Str, Str, TextMap, TextMap, TextMap, TextMap, Str, Float) -> Reply, value "http") },
     // min and max of numbers (text was compared compiled and refused
     // interpreted: min['a', 'b'] is refused before the program runs)
-    row!("core.min_ints", "", "min", crow_runtime::core::min_ints, (Whole, Whole) -> Int, never),
-    row!("core.min", "", "min", crow_runtime::core::min_floats, (Float, Float) -> Float, never),
-    row!("core.max_ints", "", "max", crow_runtime::core::max_ints, (Whole, Whole) -> Int, never),
-    row!("core.max", "", "max", crow_runtime::core::max_floats, (Float, Float) -> Float, never),
+    Row { props: &[Prop::Differentiable], range: IntRange::Min, big: Some("core.__min_big"), ..row!("core.min_ints", "", "min", crow_runtime::core::min_ints, (Whole, Whole) -> Int, never) },
+    Row { props: &[Prop::Differentiable], ..row!("core.min", "", "min", crow_runtime::core::min_floats, (Float, Float) -> Float, never) },
+    Row { props: &[Prop::Differentiable], range: IntRange::Max, big: Some("core.__max_big"), ..row!("core.max_ints", "", "max", crow_runtime::core::max_ints, (Whole, Whole) -> Int, never) },
+    Row { props: &[Prop::Differentiable], ..row!("core.max", "", "max", crow_runtime::core::max_floats, (Float, Float) -> Float, never) },
     row!("hash.hash", "", "hash", crow_runtime::hash::hash, (Str, Str) -> Str, value "hash"),
     // fmt: a number's or a text's options, or a moment's time style, which
     // can fail (kind 'time'; compiled, the failure was the text "[fmt: …]")
-    row!("display.fmt", "", "fmt", crow_runtime::display::fmt_value, (Cell, Int, Bool, Int, Str, Str, Bool) -> Str, stops),
-    row!("display.fmt_time", "", "__fmt_time", crow_runtime::moments::fmt_time_of, (Moment, Str, Str) -> Str, value "time"),
+    Row { options: &[("decimals", Preset::Int(-1)), ("commas", Preset::Bool(false)), ("width", Preset::Int(0)), ("align", Preset::Str("")), ("fill", Preset::Str(" ")), ("percent", Preset::Bool(false))], ..row!("display.fmt", "", "fmt", crow_runtime::display::fmt_value, (Cell, Int, Bool, Int, Str, Str, Bool) -> Str, stops) },
+    Row { written: "fmt", options: &[("style", Preset::Asked), ("tz", Preset::Str(""))], ..row!("display.fmt_time", "", "__fmt_time", crow_runtime::moments::fmt_time_of, (Moment, Str, Str) -> Str, value "time") },
     // conversions: of a number or a bool, plain; of text or a JSON value,
     // fallible (kind 'parse'), read by one rule (compiled, JSON text was
     // trimmed and a JSON bool refused)
-    row!("core.int", "", "int", crow_runtime::cell::int_of_int, (Whole) -> Int, never),
-    row!("core.int_of_float", "", "int", crow_runtime::cell::int_of_float, (Float) -> Int, never),
-    row!("core.int_of_decimal", "", "int", crow_runtime::decimal::trunc, (Decimal) -> Big, never),
-    row!("core.int_of_fraction", "", "int", crow_runtime::fraction::trunc, (Fraction) -> Big, never),
-    row!("core.int_of_bool", "", "int", crow_runtime::cell::int_of_bool, (Bool) -> Int, never),
-    row!("core.int_of_moment", "", "int", crow_runtime::cell::int_of_moment, (Moment) -> Int, never),
-    row!("core.int_of", "", "int", crow_runtime::cell::int_of, (Cell) -> Int, value "parse"),
+    Row { props: &[Prop::Differentiable], range: IntRange::Same, ..row!("core.int", "", "int", crow_runtime::cell::int_of_int, (Whole) -> Int, never) },
+    Row { props: &[Prop::Differentiable], range: IntRange::Any, big: Some("core.__int_of_float_big"), ..row!("core.int_of_float", "", "int", crow_runtime::cell::int_of_float, (Float) -> Int, never) },
+    Row { props: &[Prop::Differentiable], range: IntRange::Any, ..row!("core.int_of_decimal", "", "int", crow_runtime::decimal::trunc, (Decimal) -> Big, never) },
+    Row { props: &[Prop::Differentiable], range: IntRange::Any, ..row!("core.int_of_fraction", "", "int", crow_runtime::fraction::trunc, (Fraction) -> Big, never) },
+    Row { props: &[Prop::Differentiable], range: IntRange::Bool, ..row!("core.int_of_bool", "", "int", crow_runtime::cell::int_of_bool, (Bool) -> Int, never) },
+    Row { props: &[Prop::Differentiable], ..row!("core.int_of_moment", "", "int", crow_runtime::cell::int_of_moment, (Moment) -> Int, never) },
+    Row { props: &[Prop::Differentiable], range: IntRange::Any, big: Some("core.__int_big"), ..row!("core.int_of", "", "int", crow_runtime::cell::int_of, (Cell) -> Int, value "parse") },
     // every digit kept: the rows the width pass calls in place of `int`,
     // `floor`, `ceil`, `round`, `abs`, `min` and `max` where an answer may
     // grow past 64 bits or a whole number past them is handed (int_width,
     // `big_form`); no program names them
     // a literal past 64 bits, reached by the parser
     row!("core.__whole", "", "__whole", crow_runtime::int::whole, (Str) -> Big, never),
-    row!("core.__int_big", "", "__int_big", crow_runtime::int::int_of, (Cell) -> Big, value "parse"),
+    Row { range: IntRange::Any, ..row!("core.__int_big", "", "__int_big", crow_runtime::int::int_of, (Cell) -> Big, value "parse") },
     // an int where a record or none is held: 0 is none, another int stops
     // (the lowering's `none_of`, in both modes)
     row!("core.__none", "", "__none", crow_runtime::core::none_of, (Int) -> Int, stops),
-    row!("core.__int_of_float_big", "", "__int_of_float_big", crow_runtime::int::int_of_float, (Float) -> Big, stops),
-    row!("core.__floor_big", "", "__floor_big", crow_runtime::int::floor, (Float) -> Big, stops),
-    row!("core.__ceil_big", "", "__ceil_big", crow_runtime::int::ceil, (Float) -> Big, stops),
-    row!("core.__round_big", "", "__round_big", crow_runtime::int::round, (Float) -> Big, stops),
-    row!("core.__abs_big", "", "__abs_big", crow_runtime::int::abs, (Big) -> Big, never),
-    row!("core.__whole_big", "", "__whole_big", crow_runtime::int::itself, (Big) -> Big, never),
-    row!("core.__min_big", "", "__min_big", crow_runtime::int::min, (Big, Big) -> Big, never),
-    row!("core.__bitand_big", "", "__bitand_big", crow_runtime::bits::and_big, (Big, Big) -> Big, never),
-    row!("core.__bitor_big", "", "__bitor_big", crow_runtime::bits::or_big, (Big, Big) -> Big, never),
-    row!("core.__bitxor_big", "", "__bitxor_big", crow_runtime::bits::xor_big, (Big, Big) -> Big, never),
-    row!("core.__bitcount_big", "", "__bitcount_big", crow_runtime::bits::count_big, (Big) -> Int, never),
-    row!("core.__shift_big", "", "__shift_big", crow_runtime::bits::shift_big, (Big, Whole) -> Big, stops),
-    row!("core.__max_big", "", "__max_big", crow_runtime::int::max, (Big, Big) -> Big, never),
+    Row { range: IntRange::Any, ..row!("core.__int_of_float_big", "", "__int_of_float_big", crow_runtime::int::int_of_float, (Float) -> Big, stops) },
+    Row { range: IntRange::Any, ..row!("core.__floor_big", "", "__floor_big", crow_runtime::int::floor, (Float) -> Big, stops) },
+    Row { range: IntRange::Any, ..row!("core.__ceil_big", "", "__ceil_big", crow_runtime::int::ceil, (Float) -> Big, stops) },
+    Row { range: IntRange::Any, ..row!("core.__round_big", "", "__round_big", crow_runtime::int::round, (Float) -> Big, stops) },
+    Row { range: IntRange::Abs, ..row!("core.__abs_big", "", "__abs_big", crow_runtime::int::abs, (Big) -> Big, never) },
+    Row { range: IntRange::Keeps, ..row!("core.__whole_big", "", "__whole_big", crow_runtime::int::itself, (Big) -> Big, never) },
+    Row { range: IntRange::Min, ..row!("core.__min_big", "", "__min_big", crow_runtime::int::min, (Big, Big) -> Big, never) },
+    Row { range: IntRange::And, ..row!("core.__bitand_big", "", "__bitand_big", crow_runtime::bits::and_big, (Big, Big) -> Big, never) },
+    Row { range: IntRange::OrXor, ..row!("core.__bitor_big", "", "__bitor_big", crow_runtime::bits::or_big, (Big, Big) -> Big, never) },
+    Row { range: IntRange::OrXor, ..row!("core.__bitxor_big", "", "__bitxor_big", crow_runtime::bits::xor_big, (Big, Big) -> Big, never) },
+    Row { range: IntRange::Count, ..row!("core.__bitcount_big", "", "__bitcount_big", crow_runtime::bits::count_big, (Big) -> Int, never) },
+    Row { range: IntRange::Shift, ..row!("core.__shift_big", "", "__shift_big", crow_runtime::bits::shift_big, (Big, Whole) -> Big, stops) },
+    Row { range: IntRange::Max, ..row!("core.__max_big", "", "__max_big", crow_runtime::int::max, (Big, Big) -> Big, never) },
     row!("core.__sort_big", "", "__sort_big", crow_runtime::int::sort, (Bigs) -> Bigs, never),
     row!("core.__float_of_big", "", "__float_of_big", crow_runtime::int::float_of, (Big) -> Float, never),
     // exact numbers (spec, Numbers That Keep Every Digit): a decimal of text,
@@ -1765,40 +1894,40 @@ pub static ROWS: &[Row] = &[
     row!("core.fraction_of_int", "", "fraction", crow_runtime::fraction::of_int, (Big) -> Fraction, never),
     row!("core.fraction_of_decimal", "", "fraction", crow_runtime::fraction::of_dec, (Decimal) -> Fraction, never),
     row!("core.fraction_same", "", "fraction", crow_runtime::fraction::same, (Fraction) -> Fraction, never),
-    row!("core.round_decimal", "", "round", crow_runtime::decimal::round, (Decimal) -> Big, never),
-    row!("core.round_decimal_places", "", "round", crow_runtime::decimal::round_places, (Decimal, Whole) -> Decimal, stops),
-    row!("core.floor_decimal", "", "floor", crow_runtime::decimal::floor, (Decimal) -> Big, never),
-    row!("core.ceil_decimal", "", "ceil", crow_runtime::decimal::ceil, (Decimal) -> Big, never),
-    row!("core.abs_decimal", "", "abs", crow_runtime::decimal::abs, (Decimal) -> Decimal, never),
-    row!("core.min_decimals", "", "min", crow_runtime::decimal::min, (Decimal, Decimal) -> Decimal, never),
-    row!("core.max_decimals", "", "max", crow_runtime::decimal::max, (Decimal, Decimal) -> Decimal, never),
-    row!("core.sqrt_decimal", "", "sqrt", crow_runtime::decimal::sqrt, (Decimal) -> Decimal, value "math"),
-    row!("core.round_fraction", "", "round", crow_runtime::fraction::round, (Fraction) -> Big, never),
-    row!("core.floor_fraction", "", "floor", crow_runtime::fraction::floor, (Fraction) -> Big, never),
-    row!("core.ceil_fraction", "", "ceil", crow_runtime::fraction::ceil, (Fraction) -> Big, never),
-    row!("core.abs_fraction", "", "abs", crow_runtime::fraction::abs, (Fraction) -> Fraction, never),
-    row!("core.min_fractions", "", "min", crow_runtime::fraction::min, (Fraction, Fraction) -> Fraction, never),
-    row!("core.max_fractions", "", "max", crow_runtime::fraction::max, (Fraction, Fraction) -> Fraction, never),
-    row!("core.float_of_int", "", "float", crow_runtime::cell::float_of_int, (Whole) -> Float, never),
-    row!("core.float_of_decimal", "", "float", crow_runtime::decimal::to_float, (Decimal) -> Float, never),
-    row!("core.float_of_fraction", "", "float", crow_runtime::fraction::to_float, (Fraction) -> Float, never),
-    row!("core.float", "", "float", crow_runtime::cell::float_of_float, (Float) -> Float, never),
-    row!("core.float_of_bool", "", "float", crow_runtime::cell::float_of_bool, (Bool) -> Float, never),
-    row!("core.float_of_moment", "", "float", crow_runtime::cell::float_of_moment, (Moment) -> Float, never),
-    row!("core.float_of", "", "float", crow_runtime::cell::float_of, (Cell) -> Float, value "parse"),
+    Row { props: &[Prop::Differentiable], range: IntRange::Any, ..row!("core.round_decimal", "", "round", crow_runtime::decimal::round, (Decimal) -> Big, never) },
+    Row { props: &[Prop::Differentiable], ..row!("core.round_decimal_places", "", "round", crow_runtime::decimal::round_places, (Decimal, Whole) -> Decimal, stops) },
+    Row { props: &[Prop::Differentiable], range: IntRange::Any, ..row!("core.floor_decimal", "", "floor", crow_runtime::decimal::floor, (Decimal) -> Big, never) },
+    Row { props: &[Prop::Differentiable], range: IntRange::Any, ..row!("core.ceil_decimal", "", "ceil", crow_runtime::decimal::ceil, (Decimal) -> Big, never) },
+    Row { props: &[Prop::Differentiable], ..row!("core.abs_decimal", "", "abs", crow_runtime::decimal::abs, (Decimal) -> Decimal, never) },
+    Row { props: &[Prop::Differentiable], ..row!("core.min_decimals", "", "min", crow_runtime::decimal::min, (Decimal, Decimal) -> Decimal, never) },
+    Row { props: &[Prop::Differentiable], ..row!("core.max_decimals", "", "max", crow_runtime::decimal::max, (Decimal, Decimal) -> Decimal, never) },
+    Row { props: &[Prop::Differentiable], ..row!("core.sqrt_decimal", "", "sqrt", crow_runtime::decimal::sqrt, (Decimal) -> Decimal, value "math") },
+    Row { props: &[Prop::Differentiable], range: IntRange::Any, ..row!("core.round_fraction", "", "round", crow_runtime::fraction::round, (Fraction) -> Big, never) },
+    Row { props: &[Prop::Differentiable], range: IntRange::Any, ..row!("core.floor_fraction", "", "floor", crow_runtime::fraction::floor, (Fraction) -> Big, never) },
+    Row { props: &[Prop::Differentiable], range: IntRange::Any, ..row!("core.ceil_fraction", "", "ceil", crow_runtime::fraction::ceil, (Fraction) -> Big, never) },
+    Row { props: &[Prop::Differentiable], ..row!("core.abs_fraction", "", "abs", crow_runtime::fraction::abs, (Fraction) -> Fraction, never) },
+    Row { props: &[Prop::Differentiable], ..row!("core.min_fractions", "", "min", crow_runtime::fraction::min, (Fraction, Fraction) -> Fraction, never) },
+    Row { props: &[Prop::Differentiable], ..row!("core.max_fractions", "", "max", crow_runtime::fraction::max, (Fraction, Fraction) -> Fraction, never) },
+    Row { props: &[Prop::Differentiable], big: Some("core.__float_of_big"), ..row!("core.float_of_int", "", "float", crow_runtime::cell::float_of_int, (Whole) -> Float, never) },
+    Row { props: &[Prop::Differentiable], ..row!("core.float_of_decimal", "", "float", crow_runtime::decimal::to_float, (Decimal) -> Float, never) },
+    Row { props: &[Prop::Differentiable], ..row!("core.float_of_fraction", "", "float", crow_runtime::fraction::to_float, (Fraction) -> Float, never) },
+    Row { props: &[Prop::Differentiable], ..row!("core.float", "", "float", crow_runtime::cell::float_of_float, (Float) -> Float, never) },
+    Row { props: &[Prop::Differentiable], ..row!("core.float_of_bool", "", "float", crow_runtime::cell::float_of_bool, (Bool) -> Float, never) },
+    Row { props: &[Prop::Differentiable], ..row!("core.float_of_moment", "", "float", crow_runtime::cell::float_of_moment, (Moment) -> Float, never) },
+    Row { props: &[Prop::Differentiable], ..row!("core.float_of", "", "float", crow_runtime::cell::float_of, (Cell) -> Float, value "parse") },
     // draws from the program's generator
-    row!("core.rand", "", "rand", crow_runtime::core::rand_float, () -> Float, never),
-    row!("core.rand_int", "", "rand", crow_runtime::core::rand_int, (Int) -> Int, stops),
-    row!("core.rand_between", "", "rand", crow_runtime::core::rand_between, (Int, Int) -> Int, stops),
+    Row { props: &[Prop::Draws], ..row!("core.rand", "", "rand", crow_runtime::core::rand_float, () -> Float, never) },
+    Row { props: &[Prop::Draws], ..row!("core.rand_int", "", "rand", crow_runtime::core::rand_int, (Int) -> Int, stops) },
+    Row { props: &[Prop::Draws], ..row!("core.rand_between", "", "rand", crow_runtime::core::rand_between, (Int, Int) -> Int, stops) },
     row!("moments.moment_text", "", "moment", crow_runtime::moments::moment_text, (Str) -> Moment, value "time"),
-    row!("moments.moment_in", "", "moment", crow_runtime::moments::moment_in, (Moment, Str) -> Moment, value "time"),
-    row!("moments.moment_text_in", "", "moment", crow_runtime::moments::moment_text_in, (Str, Str) -> Moment, value "time"),
+    Row { options: &[("tz", Preset::Asked)], ..row!("moments.moment_in", "", "moment", crow_runtime::moments::moment_in, (Moment, Str) -> Moment, value "time") },
+    Row { options: &[("tz", Preset::Asked)], ..row!("moments.moment_text_in", "", "moment", crow_runtime::moments::moment_text_in, (Str, Str) -> Moment, value "time") },
     row!("moments.moment_of_seconds", "", "moment", crow_runtime::moments::moment_of_seconds, (Float) -> Moment, stops),
     row!("moments.moment_self", "", "moment", crow_runtime::moments::moment_self, (Moment) -> Moment, never),
     row!("moments.bucket", "", "bucket", crow_runtime::moments::bucket, (Moment, Float) -> Moment, stops),
-    row!("moments.min", "", "min", crow_runtime::moments::min_of, (Moment, Moment) -> Moment, never),
-    row!("moments.max", "", "max", crow_runtime::moments::max_of, (Moment, Moment) -> Moment, never),
-    row!("moments.moment", "", "moment", crow_runtime::moments::moment_parts, (Int, Int, Int, Int, Int, Float, Str) -> Moment, value "time"),
+    Row { props: &[Prop::Differentiable], ..row!("moments.min", "", "min", crow_runtime::moments::min_of, (Moment, Moment) -> Moment, never) },
+    Row { props: &[Prop::Differentiable], ..row!("moments.max", "", "max", crow_runtime::moments::max_of, (Moment, Moment) -> Moment, never) },
+    Row { options: &[("hour", Preset::Int(0)), ("minute", Preset::Int(0)), ("second", Preset::Int(0)), ("tz", Preset::Str("UTC"))], ..row!("moments.moment", "", "moment", crow_runtime::moments::moment_parts, (Int, Int, Int, Int, Int, Float, Str) -> Moment, value "time") },
     row!("text.repeat", "", "repeat", crow_runtime::text::repeat, (Str, Int) -> Str, stops),
     // an invalid pattern is an error value of kind 'regex', as find[]'s is
     // (the interpreter answered one while the compiled program stopped)
@@ -1809,22 +1938,22 @@ pub static ROWS: &[Row] = &[
     // math: the constructors and the distributions (a size, a parameter, a
     // rank the interpreter refused and the compiled program cast or
     // panicked on is one check)
-    row!("math.zeros", "math", "zeros", crow_runtime::math::zeros, (Sizes) -> Tensor, stops),
-    row!("math.ones", "math", "ones", crow_runtime::math::ones, (Sizes) -> Tensor, stops),
-    crow!("math.randn", "math", "randn", (Sizes) -> Tensor, stops),
-    row!("math.full", "math", "full", crow_runtime::math::full, (Sizes, Float) -> Tensor, stops),
-    row!("math.eye", "math", "eye", crow_runtime::math::eye, (Int) -> Tensor, stops),
-    row!("math.onehot", "math", "onehot", crow_runtime::math::onehot, (Tensor, Int) -> Tensor, stops),
-    row!("math.linspace", "math", "linspace", crow_runtime::math::linspace, (Float, Float, Int) -> Tensor, stops),
+    Row { props: &[Prop::Constructs], ..row!("math.zeros", "math", "zeros", crow_runtime::math::zeros, (Sizes) -> Tensor, stops) },
+    Row { props: &[Prop::Constructs], ..row!("math.ones", "math", "ones", crow_runtime::math::ones, (Sizes) -> Tensor, stops) },
+    Row { props: &[Prop::Constructs, Prop::Draws], ..crow!("math.randn", "math", "randn", (Sizes) -> Tensor, stops) },
+    Row { props: &[Prop::Constructs], ..row!("math.full", "math", "full", crow_runtime::math::full, (Sizes, Float) -> Tensor, stops) },
+    Row { props: &[Prop::Constructs], ..row!("math.eye", "math", "eye", crow_runtime::math::eye, (Int) -> Tensor, stops) },
+    Row { props: &[Prop::Differentiable], ..row!("math.onehot", "math", "onehot", crow_runtime::math::onehot, (Tensor, Int) -> Tensor, stops) },
+    Row { props: &[Prop::Constructs], ..row!("math.linspace", "math", "linspace", crow_runtime::math::linspace, (Float, Float, Int) -> Tensor, stops) },
     row!("math.arange", "math", "arange", crow_runtime::math::arange, (Float, Float, Float) -> Tensor, stops),
     row!("math.diag", "math", "diag", crow_runtime::math::diag, (Tensor) -> Tensor, stops),
-    crow!("math.normal", "math", "normal", (Float, Float, Sizes) -> Tensor, stops),
-    row!("math.uniform", "math", "uniform", crow_runtime::math::uniform, (Float, Float, Sizes) -> Tensor, stops),
-    row!("math.poisson", "math", "poisson", crow_runtime::math::poisson, (Float, Sizes) -> Tensor, stops),
-    row!("math.bernoulli", "math", "bernoulli", crow_runtime::math::bernoulli, (Float, Sizes) -> Tensor, stops),
-    row!("math.gamma_dist", "math", "gamma_dist", crow_runtime::math::gamma_dist, (Float, Float, Sizes) -> Tensor, stops),
-    row!("math.beta_dist", "math", "beta_dist", crow_runtime::math::beta_dist, (Float, Float, Sizes) -> Tensor, stops),
-    row!("math.exponential", "math", "exponential", crow_runtime::math::exponential, (Float, Sizes) -> Tensor, stops),
+    Row { props: &[Prop::Draws], ..crow!("math.normal", "math", "normal", (Float, Float, Sizes) -> Tensor, stops) },
+    Row { props: &[Prop::Draws], ..row!("math.uniform", "math", "uniform", crow_runtime::math::uniform, (Float, Float, Sizes) -> Tensor, stops) },
+    Row { props: &[Prop::Draws], ..row!("math.poisson", "math", "poisson", crow_runtime::math::poisson, (Float, Sizes) -> Tensor, stops) },
+    Row { props: &[Prop::Draws], ..row!("math.bernoulli", "math", "bernoulli", crow_runtime::math::bernoulli, (Float, Sizes) -> Tensor, stops) },
+    Row { props: &[Prop::Draws], ..row!("math.gamma_dist", "math", "gamma_dist", crow_runtime::math::gamma_dist, (Float, Float, Sizes) -> Tensor, stops) },
+    Row { props: &[Prop::Draws], ..row!("math.beta_dist", "math", "beta_dist", crow_runtime::math::beta_dist, (Float, Float, Sizes) -> Tensor, stops) },
+    Row { props: &[Prop::Draws], ..row!("math.exponential", "math", "exponential", crow_runtime::math::exponential, (Float, Sizes) -> Tensor, stops) },
     // math: linear algebra (a vector, a rank-3 tensor or a rectangle where a
     // square is needed, a matrix that is not positive definite: the reason,
     // where a kernel panicked)
@@ -1846,16 +1975,16 @@ pub static ROWS: &[Row] = &[
     // math: reductions (an axis out of range is the reason), sorting and
     // selection, shapes (a reshape that does not fill, a transpose of a
     // vector: the reason, where a kernel asserted)
-    row!("math.sum", "math", "sum", crow_runtime::math::sum, (Tensor) -> Float, never),
-    row!("math.sum_axis", "math", "sum", crow_runtime::math::sum_axis, (Tensor, Int) -> Tensor, stops),
-    row!("math.mean", "math", "mean", crow_runtime::math::mean, (Tensor) -> Float, never),
-    row!("math.mean_axis", "math", "mean", crow_runtime::math::mean_axis, (Tensor, Int) -> Tensor, stops),
-    row!("math.min", "math", "min", crow_runtime::math::min, (Tensor) -> Float, stops),
-    row!("math.min_axis", "math", "min", crow_runtime::math::min_axis, (Tensor, Int) -> Tensor, stops),
-    row!("math.max", "math", "max", crow_runtime::math::max, (Tensor) -> Float, stops),
-    row!("math.max_axis", "math", "max", crow_runtime::math::max_axis, (Tensor, Int) -> Tensor, stops),
+    Row { props: &[Prop::Differentiable], ..row!("math.sum", "math", "sum", crow_runtime::math::sum, (Tensor) -> Float, never) },
+    Row { props: &[Prop::Differentiable], options: &[("axis", Preset::Asked)], ..row!("math.sum_axis", "math", "sum", crow_runtime::math::sum_axis, (Tensor, Int) -> Tensor, stops) },
+    Row { props: &[Prop::Differentiable], ..row!("math.mean", "math", "mean", crow_runtime::math::mean, (Tensor) -> Float, never) },
+    Row { props: &[Prop::Differentiable], options: &[("axis", Preset::Asked)], ..row!("math.mean_axis", "math", "mean", crow_runtime::math::mean_axis, (Tensor, Int) -> Tensor, stops) },
+    Row { props: &[Prop::Differentiable], ..row!("math.min", "math", "min", crow_runtime::math::min, (Tensor) -> Float, stops) },
+    Row { props: &[Prop::Differentiable], options: &[("axis", Preset::Asked)], ..row!("math.min_axis", "math", "min", crow_runtime::math::min_axis, (Tensor, Int) -> Tensor, stops) },
+    Row { props: &[Prop::Differentiable], ..row!("math.max", "math", "max", crow_runtime::math::max, (Tensor) -> Float, stops) },
+    Row { props: &[Prop::Differentiable], options: &[("axis", Preset::Asked)], ..row!("math.max_axis", "math", "max", crow_runtime::math::max_axis, (Tensor, Int) -> Tensor, stops) },
     row!("math.prod", "math", "prod", crow_runtime::math::prod, (Tensor) -> Float, never),
-    row!("math.prod_axis", "math", "prod", crow_runtime::math::prod_axis, (Tensor, Int) -> Tensor, stops),
+    Row { options: &[("axis", Preset::Asked)], ..row!("math.prod_axis", "math", "prod", crow_runtime::math::prod_axis, (Tensor, Int) -> Tensor, stops) },
     row!("math.argmax", "math", "argmax", crow_runtime::math::argmax, (Tensor) -> Int, never),
     row!("math.argmin", "math", "argmin", crow_runtime::math::argmin, (Tensor) -> Int, never),
     row!("math.cumsum", "math", "cumsum", crow_runtime::math::cumsum, (Tensor) -> Tensor, never),
@@ -1863,57 +1992,57 @@ pub static ROWS: &[Row] = &[
     row!("math.argsort", "math", "argsort", crow_runtime::math::argsort, (Tensor) -> Ints, never),
     row!("math.topk", "math", "topk", crow_runtime::math::topk, (Tensor, Int) -> Tensor, stops),
     row!("math.unique", "math", "unique", crow_runtime::math::unique, (Tensor) -> Tensor, never),
-    row!("math.where", "math", "where", crow_runtime::math::where_, (Tensor, Tensor, Tensor) -> Tensor, stops),
-    row!("math.reshape", "math", "reshape", crow_runtime::math::reshape, (Tensor, Sizes) -> Tensor, stops),
-    row!("math.flatten", "math", "flatten", crow_runtime::math::flatten, (Tensor) -> Tensor, never),
-    row!("math.transpose", "math", "transpose", crow_runtime::math::transpose, (Tensor) -> Tensor, stops),
-    row!("math.clip", "math", "clip", crow_runtime::math::clip, (Tensor, Float, Float) -> Tensor, never),
+    Row { props: &[Prop::Mask(0)], ..row!("math.where", "math", "where", crow_runtime::math::where_, (Tensor, Tensor, Tensor) -> Tensor, stops) },
+    Row { props: &[Prop::Differentiable], ..row!("math.reshape", "math", "reshape", crow_runtime::math::reshape, (Tensor, Sizes) -> Tensor, stops) },
+    Row { props: &[Prop::Differentiable], ..row!("math.flatten", "math", "flatten", crow_runtime::math::flatten, (Tensor) -> Tensor, never) },
+    Row { props: &[Prop::Differentiable], ..row!("math.transpose", "math", "transpose", crow_runtime::math::transpose, (Tensor) -> Tensor, stops) },
+    Row { props: &[Prop::Differentiable], ..row!("math.clip", "math", "clip", crow_runtime::math::clip, (Tensor, Float, Float) -> Tensor, never) },
     row!("math.atan2", "math", "atan2", crow_runtime::math::atan2, (Tensor, Tensor) -> Tensor, stops),
     // element-wise: a number and a tensor share one rule (the number's row
     // first, so a number never reaches the tensor's)
-    row!("math.exp_decimal", "math", "exp", crow_runtime::decimal::exp, (Decimal) -> Decimal, value "math"),
-    row!("math.ln_decimal", "math", "ln", crow_runtime::decimal::ln, (Decimal) -> Decimal, value "math"),
-    row!("math.sin_decimal", "math", "sin", crow_runtime::decimal::sin, (Decimal) -> Decimal, value "math"),
-    row!("math.cos_decimal", "math", "cos", crow_runtime::decimal::cos, (Decimal) -> Decimal, value "math"),
-    row!("math.tan_decimal", "math", "tan", crow_runtime::decimal::tan, (Decimal) -> Decimal, value "math"),
-    row!("math.atan_decimal", "math", "atan", crow_runtime::decimal::atan, (Decimal) -> Decimal, value "math"),
-    row!("math.exp_n", "math", "exp", crow_runtime::math::exp_n, (Float) -> Float, never),
-    row!("math.exp_t", "math", "exp", crow_runtime::math::exp_t, (Tensor) -> Tensor, never),
-    row!("math.ln_n", "math", "ln", crow_runtime::math::ln_n, (Float) -> Float, never),
-    row!("math.ln_t", "math", "ln", crow_runtime::math::ln_t, (Tensor) -> Tensor, never),
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.exp_decimal", "math", "exp", crow_runtime::decimal::exp, (Decimal) -> Decimal, value "math") },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.ln_decimal", "math", "ln", crow_runtime::decimal::ln, (Decimal) -> Decimal, value "math") },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.sin_decimal", "math", "sin", crow_runtime::decimal::sin, (Decimal) -> Decimal, value "math") },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.cos_decimal", "math", "cos", crow_runtime::decimal::cos, (Decimal) -> Decimal, value "math") },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.tan_decimal", "math", "tan", crow_runtime::decimal::tan, (Decimal) -> Decimal, value "math") },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.atan_decimal", "math", "atan", crow_runtime::decimal::atan, (Decimal) -> Decimal, value "math") },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.exp_n", "math", "exp", crow_runtime::math::exp_n, (Float) -> Float, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.exp_t", "math", "exp", crow_runtime::math::exp_t, (Tensor) -> Tensor, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.ln_n", "math", "ln", crow_runtime::math::ln_n, (Float) -> Float, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.ln_t", "math", "ln", crow_runtime::math::ln_t, (Tensor) -> Tensor, never) },
     // (a × b + c rounded once: what a compiled loop accumulates with, and
     // a sum held to one must too — scikit-learn's row norms and scipy's
     // sparse products differed in the last digit from a plain sum)
     row!("math.fma", "math", "fma", crow_runtime::math::fma, (Float, Float, Float) -> Float, never),
-    row!("math.log2_n", "math", "log2", crow_runtime::math::log2_n, (Float) -> Float, never),
-    row!("math.log2_t", "math", "log2", crow_runtime::math::log2_t, (Tensor) -> Tensor, never),
-    row!("math.log10_n", "math", "log10", crow_runtime::math::log10_n, (Float) -> Float, never),
-    row!("math.log10_t", "math", "log10", crow_runtime::math::log10_t, (Tensor) -> Tensor, never),
-    row!("math.sin_n", "math", "sin", crow_runtime::math::sin_n, (Float) -> Float, never),
-    row!("math.sin_t", "math", "sin", crow_runtime::math::sin_t, (Tensor) -> Tensor, never),
-    row!("math.cos_n", "math", "cos", crow_runtime::math::cos_n, (Float) -> Float, never),
-    row!("math.cos_t", "math", "cos", crow_runtime::math::cos_t, (Tensor) -> Tensor, never),
-    row!("math.tan_n", "math", "tan", crow_runtime::math::tan_n, (Float) -> Float, never),
-    row!("math.tan_t", "math", "tan", crow_runtime::math::tan_t, (Tensor) -> Tensor, never),
-    row!("math.asin_n", "math", "asin", crow_runtime::math::asin_n, (Float) -> Float, never),
-    row!("math.asin_t", "math", "asin", crow_runtime::math::asin_t, (Tensor) -> Tensor, never),
-    row!("math.acos_n", "math", "acos", crow_runtime::math::acos_n, (Float) -> Float, never),
-    row!("math.acos_t", "math", "acos", crow_runtime::math::acos_t, (Tensor) -> Tensor, never),
-    row!("math.atan_n", "math", "atan", crow_runtime::math::atan_n, (Float) -> Float, never),
-    row!("math.atan_t", "math", "atan", crow_runtime::math::atan_t, (Tensor) -> Tensor, never),
-    row!("math.sinh_n", "math", "sinh", crow_runtime::math::sinh_n, (Float) -> Float, never),
-    row!("math.sinh_t", "math", "sinh", crow_runtime::math::sinh_t, (Tensor) -> Tensor, never),
-    row!("math.cosh_n", "math", "cosh", crow_runtime::math::cosh_n, (Float) -> Float, never),
-    row!("math.cosh_t", "math", "cosh", crow_runtime::math::cosh_t, (Tensor) -> Tensor, never),
-    row!("math.tanh_n", "math", "tanh", crow_runtime::math::tanh_n, (Float) -> Float, never),
-    row!("math.tanh_t", "math", "tanh", crow_runtime::math::tanh_t, (Tensor) -> Tensor, never),
-    row!("math.sign_n", "math", "sign", crow_runtime::math::sign_n, (Float) -> Float, never),
-    row!("math.sign_t", "math", "sign", crow_runtime::math::sign_t, (Tensor) -> Tensor, never),
-    row!("math.abs_t", "math", "abs", crow_runtime::math::abs_t, (Tensor) -> Tensor, never),
-    row!("math.sqrt_t", "math", "sqrt", crow_runtime::math::sqrt_t, (Tensor) -> Tensor, never),
-    row!("math.floor_t", "math", "floor", crow_runtime::math::floor_t, (Tensor) -> Tensor, never),
-    row!("math.ceil_t", "math", "ceil", crow_runtime::math::ceil_t, (Tensor) -> Tensor, never),
-    row!("math.round_t", "math", "round", crow_runtime::math::round_t, (Tensor) -> Tensor, never),
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.log2_n", "math", "log2", crow_runtime::math::log2_n, (Float) -> Float, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.log2_t", "math", "log2", crow_runtime::math::log2_t, (Tensor) -> Tensor, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.log10_n", "math", "log10", crow_runtime::math::log10_n, (Float) -> Float, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.log10_t", "math", "log10", crow_runtime::math::log10_t, (Tensor) -> Tensor, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.sin_n", "math", "sin", crow_runtime::math::sin_n, (Float) -> Float, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.sin_t", "math", "sin", crow_runtime::math::sin_t, (Tensor) -> Tensor, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.cos_n", "math", "cos", crow_runtime::math::cos_n, (Float) -> Float, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.cos_t", "math", "cos", crow_runtime::math::cos_t, (Tensor) -> Tensor, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.tan_n", "math", "tan", crow_runtime::math::tan_n, (Float) -> Float, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.tan_t", "math", "tan", crow_runtime::math::tan_t, (Tensor) -> Tensor, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.asin_n", "math", "asin", crow_runtime::math::asin_n, (Float) -> Float, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.asin_t", "math", "asin", crow_runtime::math::asin_t, (Tensor) -> Tensor, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.acos_n", "math", "acos", crow_runtime::math::acos_n, (Float) -> Float, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.acos_t", "math", "acos", crow_runtime::math::acos_t, (Tensor) -> Tensor, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.atan_n", "math", "atan", crow_runtime::math::atan_n, (Float) -> Float, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.atan_t", "math", "atan", crow_runtime::math::atan_t, (Tensor) -> Tensor, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.sinh_n", "math", "sinh", crow_runtime::math::sinh_n, (Float) -> Float, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.sinh_t", "math", "sinh", crow_runtime::math::sinh_t, (Tensor) -> Tensor, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.cosh_n", "math", "cosh", crow_runtime::math::cosh_n, (Float) -> Float, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.cosh_t", "math", "cosh", crow_runtime::math::cosh_t, (Tensor) -> Tensor, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.tanh_n", "math", "tanh", crow_runtime::math::tanh_n, (Float) -> Float, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.tanh_t", "math", "tanh", crow_runtime::math::tanh_t, (Tensor) -> Tensor, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.sign_n", "math", "sign", crow_runtime::math::sign_n, (Float) -> Float, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.sign_t", "math", "sign", crow_runtime::math::sign_t, (Tensor) -> Tensor, never) },
+    Row { props: &[Prop::Differentiable], ..row!("math.abs_t", "math", "abs", crow_runtime::math::abs_t, (Tensor) -> Tensor, never) },
+    Row { props: &[Prop::Differentiable], ..row!("math.sqrt_t", "math", "sqrt", crow_runtime::math::sqrt_t, (Tensor) -> Tensor, never) },
+    Row { props: &[Prop::Differentiable], ..row!("math.floor_t", "math", "floor", crow_runtime::math::floor_t, (Tensor) -> Tensor, never) },
+    Row { props: &[Prop::Differentiable], ..row!("math.ceil_t", "math", "ceil", crow_runtime::math::ceil_t, (Tensor) -> Tensor, never) },
+    Row { props: &[Prop::Differentiable], ..row!("math.round_t", "math", "round", crow_runtime::math::round_t, (Tensor) -> Tensor, never) },
     // math: signal, special functions, complex numbers, draws (a rank, a
     // window or a count the kernels asserted is the reason)
     row!("math.fft", "math", "fft", crow_runtime::math::fft, (Tensor) -> Tensors, stops),
@@ -1929,8 +2058,8 @@ pub static ROWS: &[Row] = &[
     row!("math.highpass", "math", "highpass", crow_runtime::math::highpass, (Tensor, Float, Float) -> Tensor, stops),
     row!("math.bandpass", "math", "bandpass", crow_runtime::math::bandpass, (Tensor, Float, Float, Float) -> Tensor, stops),
     row!("math.gamma", "math", "gamma", crow_runtime::math::gamma, (Tensor) -> Tensor, never),
-    row!("math.erf_n", "math", "erf", crow_runtime::math::erf_n, (Float) -> Float, never),
-    row!("math.erf", "math", "erf", crow_runtime::math::erf, (Tensor) -> Tensor, never),
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.erf_n", "math", "erf", crow_runtime::math::erf_n, (Float) -> Float, never) },
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.erf", "math", "erf", crow_runtime::math::erf, (Tensor) -> Tensor, never) },
     row!("math.factorial", "math", "factorial", crow_runtime::math::factorial, (Tensor) -> Tensor, never),
     row!("math.bessel", "math", "bessel", crow_runtime::math::bessel, (Tensor, Int) -> Tensor, never),
     row!("math.choose", "math", "choose", crow_runtime::math::choose, (Tensor, Tensor) -> Tensor, stops),
@@ -1940,10 +2069,10 @@ pub static ROWS: &[Row] = &[
     row!("math.magnitude", "math", "magnitude", crow_runtime::math::magnitude, (Tensors) -> Tensor, stops),
     row!("math.phase", "math", "phase", crow_runtime::math::phase, (Tensors) -> Tensor, stops),
     row!("math.conjugate", "math", "conjugate", crow_runtime::math::conjugate, (Tensors) -> Tensors, stops),
-    row!("math.seed", "math", "seed", crow_runtime::math::seed, (Int) -> Unit, never),
-    row!("math.shuffle", "math", "shuffle", crow_runtime::math::shuffle, (Tensor) -> Tensor, never),
-    row!("math.choice", "math", "choice", crow_runtime::math::choice, (Tensor, Int) -> Tensor, stops),
-    row!("math.permutation", "math", "permutation", crow_runtime::math::permutation, (Int) -> Tensor, stops),
+    Row { props: &[Prop::Draws], ..row!("math.seed", "math", "seed", crow_runtime::math::seed, (Int) -> Unit, never) },
+    Row { props: &[Prop::Draws], ..row!("math.shuffle", "math", "shuffle", crow_runtime::math::shuffle, (Tensor) -> Tensor, never) },
+    Row { props: &[Prop::Draws], ..row!("math.choice", "math", "choice", crow_runtime::math::choice, (Tensor, Int) -> Tensor, stops) },
+    Row { props: &[Prop::Draws], ..row!("math.permutation", "math", "permutation", crow_runtime::math::permutation, (Int) -> Tensor, stops) },
     row!("math.mod", "math", "mod", crow_runtime::math::modulo, (Tensor, Tensor) -> Tensor, stops),
     row!("math.mod_by", "math", "mod", crow_runtime::math::modulo_by, (Tensor, Float) -> Tensor, never),
     // math: sparse matrices, solving, stacking, conversion (an entry outside
@@ -1959,12 +2088,12 @@ pub static ROWS: &[Row] = &[
     row!("math.solve_sparse", "math", "solve", crow_runtime::math::solve_sparse, (Sparse, Tensor) -> Tensor, stops),
     row!("math.solve", "math", "solve", crow_runtime::math::solve, (Tensor, Tensor) -> Tensor, stops),
     row!("math.stack", "math", "stack", crow_runtime::math::stack, (Tensors) -> Tensor, stops),
-    row!("math.stack_axis", "math", "stack", crow_runtime::math::stack_axis, (Tensors, Int) -> Tensor, stops),
+    Row { options: &[("axis", Preset::Asked)], ..row!("math.stack_axis", "math", "stack", crow_runtime::math::stack_axis, (Tensors, Int) -> Tensor, stops) },
     row!("math.stack_rows", "math", "stack", crow_runtime::math::stack_rows, (Tensor) -> Tensor, stops),
     row!("math.stack_rows_axis", "math", "stack", crow_runtime::math::stack_rows_axis, (Tensor, Int) -> Tensor, stops),
-    row!("math.tensor_of_frame", "math", "tensor", crow_runtime::math::tensor_of_frame, (Frame) -> Tensor, stops),
-    row!("math.tensor_of_columns", "math", "tensor", crow_runtime::math::tensor_of_columns, (Frame, Strs) -> Tensor, stops),
-    row!("math.tensor", "math", "tensor", crow_runtime::math::tensor, (Tensor) -> Tensor, never),
+    Row { props: &[Prop::Constructs], ..row!("math.tensor_of_frame", "math", "tensor", crow_runtime::math::tensor_of_frame, (Frame) -> Tensor, stops) },
+    Row { props: &[Prop::Constructs], ..row!("math.tensor_of_columns", "math", "tensor", crow_runtime::math::tensor_of_columns, (Frame, Strs) -> Tensor, stops) },
+    Row { props: &[Prop::Constructs], ..row!("math.tensor", "math", "tensor", crow_runtime::math::tensor, (Tensor) -> Tensor, never) },
     // math.stats (series of two lengths, a percent past 100, a distribution
     // no test knows: the reason, where they were answered NaN, 0.5 or an
     // empty map; anova of one group was NaN compiled and refused
@@ -2010,16 +2139,16 @@ pub static ROWS: &[Row] = &[
     // `use sys`: the standard library's own layer (crow_runtime::sys) — a
     // program may not import it (spec, The standard library's layer)
     row!("sys.open", "sys", "open", crow_runtime::sys::open, (Str, Int, Bool, Float) -> Stream, value "sys"),
-    row!("sys.send", "sys", "send", crow_runtime::sys::send, (Stream, Bytes) -> Int, value "sys"),
-    row!("sys.recv", "sys", "recv", crow_runtime::sys::recv, (Stream, Int, Float) -> Bytes, value "sys"),
+    Row { props: &[Prop::Effect], ..row!("sys.send", "sys", "send", crow_runtime::sys::send, (Stream, Bytes) -> Int, value "sys") },
+    Row { props: &[Prop::Effect, Prop::Reads], ..row!("sys.recv", "sys", "recv", crow_runtime::sys::recv, (Stream, Int, Float) -> Bytes, value "sys") },
     row!("sys.close", "sys", "close", crow_runtime::sys::close, (Stream) -> Unit, never),
     row!("sys.bytes", "sys", "bytes", crow_runtime::sys::bytes_of_text, (Str) -> Bytes, never),
     row!("sys.text", "sys", "text", crow_runtime::sys::text_of_bytes, (Bytes) -> Str, value "parse"),
     row!("sys.slice", "sys", "slice", crow_runtime::sys::slice, (Bytes, Int, Int) -> Bytes, stops),
-    row!("sys.find", "sys", "find", crow_runtime::sys::find, (Bytes, Bytes) -> Int, never),
-    row!("sys.concat", "sys", "concat", crow_runtime::sys::concat, (Bytes, Bytes) -> Bytes, never),
+    Row { range: IntRange::Position, ..row!("sys.find", "sys", "find", crow_runtime::sys::find, (Bytes, Bytes) -> Int, never) },
+    Row { props: &[Prop::InPlace], ..row!("sys.concat", "sys", "concat", crow_runtime::sys::concat, (Bytes, Bytes) -> Bytes, never) },
     row!("sys.byte", "sys", "byte", crow_runtime::sys::byte, (Bytes, Int) -> Int, stops),
-    row!("sys.concat_all", "sys", "concat", crow_runtime::sys::gather, (Chunks) -> Bytes, never),
+    Row { props: &[Prop::InPlace], ..row!("sys.concat_all", "sys", "concat", crow_runtime::sys::gather, (Chunks) -> Bytes, never) },
     row!("sys.file", "sys", "file", crow_runtime::sys::file, (Str) -> Bytes, value "sys"),
     row!("sys.file_lines", "sys", "file_lines", crow_runtime::sys::file_lines, (Str) -> Strs, value "sys"),
     row!("sys.store", "sys", "store", crow_runtime::sys::store, (Str, Bytes) -> Unit, value "sys"),
@@ -2095,19 +2224,19 @@ pub static ROWS: &[Row] = &[
     row!("sys.frame_of_csv", "sys", "frame_of_csv", crow_runtime::sys::frame_of_csv, (Str) -> Frame, value "frame"),
     row!("sys.frame_of_csv_bytes", "sys", "frame_of_csv_bytes", crow_runtime::sys::frame_of_csv_bytes, (Bytes) -> Frame, value "frame"),
     row!("sys.frame_of_json", "sys", "frame_of_json", crow_runtime::sys::frame_of_json, (Str) -> Frame, value "frame"),
-    row!("sys.frame_of_parquet", "sys", "frame_of_parquet", crow_runtime::sys::frame_of_parquet, (Bytes) -> Frame, value "frame"),
+    Row { feature: Some(("crow_runtime", "parquet")), ..row!("sys.frame_of_parquet", "sys", "frame_of_parquet", crow_runtime::sys::frame_of_parquet, (Bytes) -> Frame, value "frame") },
     row!("sys.frame_of_rowbinary", "sys", "frame_of_rowbinary", crow_runtime::sys::frame_of_rowbinary, (Bytes) -> Frame, value "frame"),
     row!("sys.frame_of_postgres", "sys", "frame_of_postgres", crow_runtime::sys::frame_of_postgres, (Bytes) -> Frame, value "frame"),
     row!("sys.frame_csv", "sys", "frame_csv", crow_runtime::sys::frame_csv, (Frame) -> Str, value "frame"),
     row!("sys.frame_json", "sys", "frame_json", crow_runtime::sys::frame_json, (Frame) -> Str, never),
-    row!("sys.frame_parquet", "sys", "frame_parquet", crow_runtime::sys::frame_parquet, (Frame) -> Bytes, value "frame"),
+    Row { feature: Some(("crow_runtime", "parquet")), ..row!("sys.frame_parquet", "sys", "frame_parquet", crow_runtime::sys::frame_parquet, (Frame) -> Bytes, value "frame") },
     row!("sys.tensor_of_frame", "sys", "tensor_of_frame", crow_runtime::sys::tensor_of_frame, (Frame) -> Tensor, value "load"),
     // the protocol, written in Crow (src/modules/sys.co): one request sent
     // and answered; a remote source read with a reader's options, or an S3
     // object; bytes written to an S3 object
     crow!("sys.exchange", "sys", "exchange", (Str, Str, Strs, Bytes, Float) -> Answer, value "sys"),
     crow!("sys.exchange_on", "sys", "exchange_on", (Stream, Str, Str, Str, Strs, Bytes, Moment, Bool) -> Answer, value "sys"),
-    crow!("sys.fetch", "sys", "fetch", (Str, TextMap, TextMap, Float) -> Answer, value "sys"),
+    Row { props: &[Prop::Effect, Prop::Reads, Prop::Held, Prop::Source], ..crow!("sys.fetch", "sys", "fetch", (Str, TextMap, TextMap, Float) -> Answer, value "sys") },
     crow!("sys.put", "sys", "put", (Str, Bytes) -> Str, value "sys"),
     crow!("sys.format_of", "sys", "format_of", (Str) -> Str, never),
     crow!("sys.remote", "sys", "remote", (Str) -> Bool, never),
@@ -2119,18 +2248,18 @@ pub static ROWS: &[Row] = &[
     crow!("sys.civil", "sys", "civil", (Int) -> Ints, never),
     // web's rows written in Crow: a token signed and read (src/modules/auth.co),
     // a value packed as MessagePack (src/modules/web.co)
-    crow!("web.auth.sign", "web.auth", "sign", (Encoded, Str) -> Str, value "auth"),
+    Row { props: &[Prop::Differentiable, Prop::Dual], ..crow!("web.auth.sign", "web.auth", "sign", (Encoded, Str) -> Str, value "auth") },
     crow!("web.auth.verify", "web.auth", "verify", (Str, Str) -> Json, value "auth"),
     crow!("web.msgpack", "web", "msgpack", (Encoded) -> Response, never),
     // the WebSocket client written in Crow (src/modules/ws.co): a socket's
     // row is named as the program calls it, its function by the row's id
     crow!("web.ws.socket", "web.ws", "socket", (Str) -> Socket, value "socket"),
-    crow!("web.ws.send_text", "web.ws", "send", (Socket, Str) -> Str, value "socket"),
-    crow!("web.ws.recv_text", "web.ws", "recv", (Socket) -> Str, value "socket"),
-    crow!("web.ws.recv_for", "web.ws", "recv", (Socket, Float) -> Str, value "socket"),
+    Row { props: &[Prop::Effect], ..crow!("web.ws.send_text", "web.ws", "send", (Socket, Str) -> Str, value "socket") },
+    Row { props: &[Prop::Effect, Prop::Reads], ..crow!("web.ws.recv_text", "web.ws", "recv", (Socket) -> Str, value "socket") },
+    Row { props: &[Prop::Effect, Prop::Reads], ..crow!("web.ws.recv_for", "web.ws", "recv", (Socket, Float) -> Str, value "socket") },
     crow!("web.ws.close_socket", "web.ws", "close", (Socket) -> Str, never),
     // mail written in Crow (src/modules/mail.co): SMTP over the sys layer
-    crow!("web.mail.mail", "web.mail", "mail", (Mailer, Str, Str, Str) -> Bool, value "mail"),
+    Row { props: &[Prop::Effect, Prop::Held, Prop::Session], ..crow!("web.mail.mail", "web.mail", "mail", (Mailer, Str, Str, Str) -> Bool, value "mail") },
     // a language model as a connection, written in Crow (src/modules/llm.co):
     // the model's description, a conversation and a reply are parsed values
     // in one shape; `chat`'s and `follow`'s options (system, tools, max,
@@ -2144,8 +2273,8 @@ pub static ROWS: &[Row] = &[
     crow!("llm.ask_more", "llm", "ask", (Encoded, Str) -> Json, value "llm"),
     crow!("llm.said", "llm", "said", (Encoded, Encoded) -> Json, value "llm"),
     crow!("llm.told", "llm", "told", (Encoded, Encoded, Str) -> Json, value "llm"),
-    crow!("llm.chat", "llm", "chat", (Encoded, Encoded, Str, Strs, Int, Float) -> Json, value "llm"),
-    crow!("llm.follow", "llm", "follow", (Encoded, Encoded, Str, Strs, Int, Float) -> Socket, value "llm"),
+    Row { options: &[("system", Preset::Str("")), ("tools", Preset::List), ("max", Preset::Int(1024)), ("temperature", Preset::Float(1.0))], ..crow!("llm.chat", "llm", "chat", (Encoded, Encoded, Str, Strs, Int, Float) -> Json, value "llm") },
+    Row { options: &[("system", Preset::Str("")), ("tools", Preset::List), ("max", Preset::Int(1024)), ("temperature", Preset::Float(1.0))], ..crow!("llm.follow", "llm", "follow", (Encoded, Encoded, Str, Strs, Int, Float) -> Socket, value "llm") },
     crow!("llm.next_piece", "llm", "next", (Socket) -> Str, value "llm"),
     crow!("llm.whole", "llm", "reply", (Socket) -> Json, value "llm"),
     crow!("llm.embed", "llm", "embed", (Encoded, Strs) -> Tensor, value "llm"),
@@ -2157,22 +2286,22 @@ pub static ROWS: &[Row] = &[
     // value, as text that is no time is)
     row!("frame.new", "frame", "new", crow_runtime::frames::new, () -> Frame, never),
     row!("frame.with", "frame", "with", crow_runtime::frames::with, (Frame, Str, Cells) -> Frame, value "frame"),
-    row!("frame.select", "frame", "select", crow_runtime::frames::select, (Frame, Strs) -> Frame, stops),
+    Row { props: &[Prop::Binds(1)], ..row!("frame.select", "frame", "select", crow_runtime::frames::select, (Frame, Strs) -> Frame, stops) },
     // `f[mask]`, a frame's rows picked by a mask (the lowering's, at a
     // frame's index), and its fused form where the mask compares the
     // frame's own columns, computed in one pass (lower_ir/fuse.rs)
     row!("core.__pick_frame", "", "__pick_frame", crow_runtime::frames::pick_rows, (Frame, Bools) -> Frame, stops),
     row!("core.__pick_where", "", "__pick_where", crow_runtime::mask::pick_where, (Frame, Str, Strs, Scalars) -> Frame, stops),
-    row!("frame.sort", "frame", "sort", crow_runtime::frames::sort, (Frame, Str) -> Frame, stops),
-    row!("frame.sort_by", "frame", "sort", crow_runtime::frames::sort_by, (Frame, Str, Bool) -> Frame, stops),
-    row!("frame.sort_keys", "frame", "sort", crow_runtime::frames::sort_keys, (Frame, Strs) -> Frame, stops),
-    row!("frame.sort_keys_by", "frame", "sort", crow_runtime::frames::sort_keys_by, (Frame, Strs, Bool) -> Frame, stops),
-    row!("frame.sort_keys_each", "frame", "sort", crow_runtime::frames::sort_keys_each, (Frame, Strs, Bools) -> Frame, stops),
+    Row { props: &[Prop::InPlace], ..row!("frame.sort", "frame", "sort", crow_runtime::frames::sort, (Frame, Str) -> Frame, stops) },
+    Row { props: &[Prop::InPlace], options: &[("desc", Preset::Asked)], ..row!("frame.sort_by", "frame", "sort", crow_runtime::frames::sort_by, (Frame, Str, Bool) -> Frame, stops) },
+    Row { props: &[Prop::InPlace], ..row!("frame.sort_keys", "frame", "sort", crow_runtime::frames::sort_keys, (Frame, Strs) -> Frame, stops) },
+    Row { props: &[Prop::InPlace], options: &[("desc", Preset::Asked)], ..row!("frame.sort_keys_by", "frame", "sort", crow_runtime::frames::sort_keys_by, (Frame, Strs, Bool) -> Frame, stops) },
+    Row { props: &[Prop::InPlace], ..row!("frame.sort_keys_each", "frame", "sort", crow_runtime::frames::sort_keys_each, (Frame, Strs, Bools) -> Frame, stops) },
     row!("frame.group", "frame", "group", crow_runtime::frames::group, (Frame, Str, Lists) -> Frame, stops),
     row!("frame.group_keys", "frame", "group", crow_runtime::frames::group_keys, (Frame, Strs, Lists) -> Frame, stops),
     row!("frame.pivot", "frame", "pivot", crow_runtime::frames::pivot, (Frame, Str, Str, Str) -> Frame, stops),
-    row!("frame.window", "frame", "window", crow_runtime::frames::window, (Frame, Str, Str, Int, Strs, Float, Str) -> Column, stops),
-    row!("frame.window_one", "frame", "window", crow_runtime::frames::window_one, (Frame, Str, Str, Int, Str, Float, Str) -> Column, stops),
+    Row { options: &[("n", Preset::Int(0)), ("by", Preset::List), ("span", Preset::Float(0.0)), ("on", Preset::Str(""))], ..row!("frame.window", "frame", "window", crow_runtime::frames::window, (Frame, Str, Str, Int, Strs, Float, Str) -> Column, stops) },
+    Row { options: &[("n", Preset::Int(0)), ("by", Preset::List), ("span", Preset::Float(0.0)), ("on", Preset::Str(""))], ..row!("frame.window_one", "frame", "window", crow_runtime::frames::window_one, (Frame, Str, Str, Int, Str, Float, Str) -> Column, stops) },
     row!("frame.join", "frame", "join", crow_runtime::frames::join, (Frame, Frame, Str) -> Frame, stops),
     row!("frame.join_how", "frame", "join", crow_runtime::frames::join_how, (Frame, Frame, Str, Str) -> Frame, stops),
     row!("frame.join_keys", "frame", "join", crow_runtime::frames::join_keys, (Frame, Frame, Strs) -> Frame, stops),
@@ -2184,14 +2313,14 @@ pub static ROWS: &[Row] = &[
     row!("frame.complete_in", "frame", "complete", crow_runtime::frames::complete_in, (Frame, Strs) -> Frame, stops),
     row!("frame.sample", "frame", "sample", crow_runtime::frames::sample, (Frame, Int) -> Frame, stops),
     row!("frame.bucket", "frame", "bucket", crow_runtime::frames::bucket, (Column, Float) -> Column, stops),
-    row!("frame.where", "frame", "where", crow_runtime::frames::choose, (Bools, Cells, Cells) -> Column, stops),
-    row!("frame.int_column", "", "int", crow_runtime::frames::int_column, (Column) -> Column, stops),
-    row!("frame.float_column", "", "float", crow_runtime::frames::float_column, (Column) -> Column, stops),
+    Row { props: &[Prop::Mask(0)], ..row!("frame.where", "frame", "where", crow_runtime::frames::choose, (Bools, Cells, Cells) -> Column, stops) },
+    Row { props: &[Prop::Differentiable], ..row!("frame.int_column", "", "int", crow_runtime::frames::int_column, (Column) -> Column, stops) },
+    Row { props: &[Prop::Differentiable], ..row!("frame.float_column", "", "float", crow_runtime::frames::float_column, (Column) -> Column, stops) },
     row!("frame.moment_column", "", "moment", crow_runtime::frames::moment_column, (Column) -> Column, stops),
-    row!("frame.lower_column", "", "lower", crow_runtime::verbs::lower_column, (Column) -> Column, stops),
-    row!("frame.upper_column", "", "upper", crow_runtime::verbs::upper_column, (Column) -> Column, stops),
+    Row { props: &[Prop::InPlace], ..row!("frame.lower_column", "", "lower", crow_runtime::verbs::lower_column, (Column) -> Column, stops) },
+    Row { props: &[Prop::InPlace], ..row!("frame.upper_column", "", "upper", crow_runtime::verbs::upper_column, (Column) -> Column, stops) },
     row!("frame.trim_column", "", "trim", crow_runtime::verbs::trim_column, (Column) -> Column, stops),
-    row!("frame.replace_column", "", "replace", crow_runtime::verbs::replace_column, (Column, Str, Str) -> Column, stops),
+    Row { props: &[Prop::InPlace], ..row!("frame.replace_column", "", "replace", crow_runtime::verbs::replace_column, (Column, Str, Str) -> Column, stops) },
     row!("frame.sub_column", "", "sub", crow_runtime::verbs::sub_column, (Column, Str, Str) -> Column, stops),
     row!("frame.contains_column", "", "contains", crow_runtime::verbs::contains_column, (Column, Str) -> Bools, stops),
     row!("frame.starts_column", "", "starts", crow_runtime::verbs::starts_column, (Column, Str) -> Bools, stops),
@@ -2209,15 +2338,15 @@ pub static ROWS: &[Row] = &[
     // it stopped the program)
     // the readers, written in Crow on the sys layer (src/modules/frame.co,
     // io.co, math.co): a file, a URL or an S3 object
-    crow!("frame.load", "frame", "load", (Str) -> Frame, value "frame"),
-    crow!("frame.load_asked", "frame", "load", (Str, TextMap, TextMap, Float) -> Frame, value "frame"),
-    crow!("frame.save", "frame", "save", (Frame, Str) -> Str, value "frame"),
-    crow!("io.csv", "io", "csv", (Str) -> TextRows, value "io"),
-    crow!("io.csv_asked", "io", "csv", (Str, TextMap, TextMap, Float) -> TextRows, value "io"),
-    crow!("io.lines", "io", "lines", (Str) -> Strs, value "io"),
-    crow!("io.lines_asked", "io", "lines", (Str, TextMap, TextMap, Float) -> Strs, value "io"),
-    crow!("math.load", "math", "load", (Str) -> Tensor, value "load"),
-    crow!("math.load_asked", "math", "load", (Str, TextMap, TextMap, Float) -> Tensor, value "load"),
+    Row { props: &[Prop::Table(0), Prop::Effect, Prop::Reads], ..crow!("frame.load", "frame", "load", (Str) -> Frame, value "frame") },
+    Row { props: &[Prop::Table(0), Prop::Effect, Prop::Reads], options: &[("headers", Preset::Map), ("query", Preset::Map), ("timeout", Preset::Float(0.0))], ..crow!("frame.load_asked", "frame", "load", (Str, TextMap, TextMap, Float) -> Frame, value "frame") },
+    Row { props: &[Prop::Table(1), Prop::Effect], ..crow!("frame.save", "frame", "save", (Frame, Str) -> Str, value "frame") },
+    Row { props: &[Prop::Effect, Prop::Reads], ..crow!("io.csv", "io", "csv", (Str) -> TextRows, value "io") },
+    Row { props: &[Prop::Effect, Prop::Reads], options: &[("headers", Preset::Map), ("query", Preset::Map), ("timeout", Preset::Float(0.0))], ..crow!("io.csv_asked", "io", "csv", (Str, TextMap, TextMap, Float) -> TextRows, value "io") },
+    Row { props: &[Prop::Effect, Prop::Reads], ..crow!("io.lines", "io", "lines", (Str) -> Strs, value "io") },
+    Row { props: &[Prop::Effect, Prop::Reads], options: &[("headers", Preset::Map), ("query", Preset::Map), ("timeout", Preset::Float(0.0))], ..crow!("io.lines_asked", "io", "lines", (Str, TextMap, TextMap, Float) -> Strs, value "io") },
+    Row { props: &[Prop::Table(0), Prop::Effect, Prop::Reads], ..crow!("math.load", "math", "load", (Str) -> Tensor, value "load") },
+    Row { props: &[Prop::Table(0), Prop::Effect, Prop::Reads], options: &[("headers", Preset::Map), ("query", Preset::Map), ("timeout", Preset::Float(0.0))], ..crow!("math.load_asked", "math", "load", (Str, TextMap, TextMap, Float) -> Tensor, value "load") },
     // doc: markdown rendered by the kernel
     row!("doc.markdown", "doc", "markdown", crow_runtime::markdown::to_html, (Str) -> Markup, never),
     row!("doc.chapters", "doc", "chapters", crow_runtime::markdown::chapters_frame, (Str) -> Frame, never),
@@ -2228,14 +2357,194 @@ pub static ROWS: &[Row] = &[
     // `use bits`: an int's bits as two's complement of any width, and a
     // character's code (crow_runtime::bits); the width pass hands a number
     // past 64 bits, or a shift that may pass them, to the `__…_big` forms
-    row!("bits.bitand", "bits", "bitand", crow_runtime::bits::and, (Whole, Whole) -> Int, never),
-    row!("bits.bitor", "bits", "bitor", crow_runtime::bits::or, (Whole, Whole) -> Int, never),
-    row!("bits.bitxor", "bits", "bitxor", crow_runtime::bits::xor, (Whole, Whole) -> Int, never),
-    row!("bits.bitcount", "bits", "bitcount", crow_runtime::bits::count, (Whole) -> Int, never),
-    row!("bits.shift", "bits", "shift", crow_runtime::bits::shift, (Whole, Whole) -> Int, stops),
-    row!("bits.code", "bits", "code", crow_runtime::bits::code, (Str) -> Int, stops),
+    Row { range: IntRange::And, big: Some("core.__bitand_big"), ..row!("bits.bitand", "bits", "bitand", crow_runtime::bits::and, (Whole, Whole) -> Int, never) },
+    Row { range: IntRange::OrXor, big: Some("core.__bitor_big"), ..row!("bits.bitor", "bits", "bitor", crow_runtime::bits::or, (Whole, Whole) -> Int, never) },
+    Row { range: IntRange::OrXor, big: Some("core.__bitxor_big"), ..row!("bits.bitxor", "bits", "bitxor", crow_runtime::bits::xor, (Whole, Whole) -> Int, never) },
+    Row { range: IntRange::Count, big: Some("core.__bitcount_big"), ..row!("bits.bitcount", "bits", "bitcount", crow_runtime::bits::count, (Whole) -> Int, never) },
+    Row { range: IntRange::Shift, big: Some("core.__shift_big"), ..row!("bits.shift", "bits", "shift", crow_runtime::bits::shift, (Whole, Whole) -> Int, stops) },
+    Row { range: IntRange::Code, ..row!("bits.code", "bits", "code", crow_runtime::bits::code, (Str) -> Int, stops) },
     row!("bits.char", "bits", "char", crow_runtime::bits::char, (Whole) -> Str, stops),
 ];
+
+/// A form: a name a program calls that no runtime row answers — the
+/// lowering and the backends give it its meaning (`route`, `page`, `serve`,
+/// the ui controls, the db verbs, the test harness, the core's own forms).
+/// Listed with the rows for what the table says of every name a program
+/// can call: its counts of arguments and its options, and nothing else. A
+/// form's kinds are not its contract (`Shown` where any value is taken;
+/// docs/extending-crow.md gives each its kind in a later phase): no
+/// lookup by kind reads FORMS, and the self-check writes no case from them.
+pub const IN_FORM: &str = "form";
+
+fn a_form(name: &str) -> String {
+    format!("{name} is a form of its own, called through no row: a bug in Crow")
+}
+
+macro_rules! form {
+    ($id:literal, $module:literal, $name:literal, ($($k:ident),*)) => {
+        Row {
+            id: $id, name: $name, module: $module, path: IN_FORM,
+            params: &[$(Kind::$k),*], ret: Kind::Unit, fails: Fails::Never, options: &[], written: "", props: &[], taken: None, big: None, range: IntRange::I64, feature: None,
+            call: |_args: &[CrowValue], _trace: &str| Err(a_form($name)),
+            take: |_args: Vec<CrowValue>, _trace: &str| Err(a_form($name)),
+        }
+    };
+}
+
+pub static FORMS: &[Row] = &[
+    // the core's own forms
+    form!("core.type", "", "type", (Shown)),
+    form!("core.error", "", "error", (Str)),
+    form!("core.error_kind", "", "error", (Str, Str)),
+    form!("core.assert", "", "assert", (Shown, Shows)),
+    form!("core.captured", "", "captured", (Shown)),
+    form!("core.__known", "", "__known", (Shown)),
+    form!("core.cpu", "", "cpu", (Int)),
+    Row { feature: Some(("crow_runtime", "gpu")), ..form!("core.gpu", "", "gpu", ()) },
+    Row { feature: Some(("crow_runtime", "gpu")), ..form!("core.gpu_count", "", "gpu", (Int)) },
+    form!("core.grad", "", "grad", (Shown)),
+    form!("core.find_by", "", "find", (Shown, Shown)),
+    form!("core.any", "", "any", (Shown, Shown)),
+    form!("core.all", "", "all", (Shown, Shown)),
+    Row { props: &[Prop::Effect, Prop::Held, Prop::Session], ..form!("core.notice", "", "notice", (Str)) },
+    form!("core.__notice_text", "", "__notice_text", ()),
+    form!("core.__notice_at", "", "__notice_at", ()),
+    form!("core.running", "", "running", (Shows)),
+    // chart[frame, x = 'ts', candles = [], lines = [], bars_y = '', marker = 0, tz = 'UTC', height = 320, panes = [], levels = 0, points = 0, seek = 0]
+    Row {
+        options: &[
+            ("x", Preset::Str("ts")), ("candles", Preset::List), ("lines", Preset::List), ("bars_y", Preset::Str("")), ("marker", Preset::Int(0)),
+            ("tz", Preset::Str("UTC")), ("height", Preset::Int(320)), ("panes", Preset::List), ("levels", Preset::Int(0)), ("points", Preset::Int(0)), ("seek", Preset::Int(0)),
+        ],
+        ..form!("core.chart", "", "chart", (Frame, Str, Strs, Strs, Str, Int, Str, Int, Shown, Shown, Shown, Shown))
+    },
+    // web: routes, the server, the responses, pages, the signed-in reader
+    Row { props: &[Prop::Effect], ..form!("web.route", "web", "route", (Str, Shown)) },
+    Row { props: &[Prop::Effect], ..form!("web.route_method", "web", "route", (Str, Str, Shown)) },
+    Row { props: &[Prop::Effect], ..form!("web.route_limited", "web", "route", (Str, Str, Shown, Int)) },
+    // serve[port, refresh = 0, budget = 0, theme = '', density = '', accent = '', wide = false, keep = false, uploads = 10, cors = [], files = '']
+    Row {
+        props: &[Prop::Effect],
+        options: &[
+            ("refresh", Preset::Int(0)), ("budget", Preset::Int(0)), ("theme", Preset::Str("")), ("density", Preset::Str("")), ("accent", Preset::Str("")),
+            ("wide", Preset::Bool(false)), ("keep", Preset::Bool(false)), ("uploads", Preset::Int(10)), ("cors", Preset::List), ("files", Preset::Str("")),
+        ],
+        ..form!("web.serve", "web", "serve", (Int, Int, Int, Str, Str, Str, Bool, Bool, Int, Strs, Str))
+    },
+    form!("web.respond", "web", "respond", (Int, Shown)),
+    form!("web.redirect", "web", "redirect", (Str)),
+    form!("web.html", "web", "html", (Shown)),
+    form!("web.text", "web", "text", (Shown)),
+    Row { feature: Some(("crow_web", "arrow_ipc")), ..form!("web.arrow", "web", "arrow", (Frame)) },
+    form!("web.bytes", "web", "bytes", (Shown)),
+    form!("web.stream", "web", "stream", (Shown, Shows)),
+    Row { props: &[Prop::Effect], ..form!("web.page", "web", "page", (Str, Shown)) },
+    Row { props: &[Prop::Effect], ..form!("web.page_with", "web", "page", (Str, Shown, Shown)) },
+    Row { props: &[Prop::Effect, Prop::Held, Prop::Session], ..form!("web.sign_in", "web", "sign_in", (Shown)) },
+    Row { props: &[Prop::Effect, Prop::Session], ..form!("web.sign_out", "web", "sign_out", ()) },
+    Row { props: &[Prop::Effect, Prop::Held, Prop::Session], ..form!("web.download", "web", "download", (Str, Shown)) },
+    form!("web.__reader", "web", "__reader", ()),
+    // (the page's signed-in reader, written bare: the lowering's `__reader[]`)
+    form!("web.reader", "web", "reader", ()),
+    // the test harness: app[view, width = 1280, wide = false]
+    Row { props: &[Prop::TestOnly], options: &[("width", Preset::Int(1280)), ("wide", Preset::Bool(false))], ..form!("web.app", "web", "app", (Shown, Int, Bool)) },
+    // ui: a page's data sources and its controls
+    Row { props: &[Prop::Effect, Prop::Reads, Prop::Held, Prop::Source], ..form!("ui.fetch", "ui", "fetch", (Str)) },
+    Row { props: &[Prop::Effect, Prop::Source], ..form!("ui.poll", "ui", "poll", (Str, Float)) },
+    Row { props: &[Prop::Binds(1)], options: &[("type", Preset::Str("")), ("lines", Preset::Int(0))], ..form!("ui.field", "ui", "field", (Str, Shown, Str, Int)) },
+    Row { props: &[Prop::Binds(1)], options: &[("min", Preset::Int(0)), ("max", Preset::Int(100)), ("step", Preset::Int(1))], ..form!("ui.slider", "ui", "slider", (Str, Shown, Int, Int, Int)) },
+    Row { props: &[Prop::Binds(1)], ..form!("ui.checkbox", "ui", "checkbox", (Str, Shown)) },
+    Row { props: &[Prop::Binds(1)], ..form!("ui.toggle", "ui", "toggle", (Str, Shown)) },
+    Row { props: &[Prop::Binds(1)], ..form!("ui.radio", "ui", "radio", (Strs, Shown)) },
+    Row { props: &[Prop::Binds(1)], ..form!("ui.tabs", "ui", "tabs", (Strs, Shown)) },
+    Row { options: &[("max", Preset::Float(1.0))], ..form!("ui.progress", "ui", "progress", (Float, Float)) },
+    Row { options: &[("size", Preset::Str("m")), ("color", Preset::Str(""))], ..form!("ui.icon", "ui", "icon", (Str, Str, Str)) },
+    // db: its verbs that are forms of their own
+    Row { props: &[Prop::Effect], ..form!("db.connect", "db", "connect", (Str)) },
+    Row { props: &[Prop::Effect, Prop::Held], ..form!("db.exec", "db", "exec", (Shown, Str, Shows)) },
+    Row { props: &[Prop::Effect, Prop::Reads, Prop::Held], ..form!("db.query", "db", "query", (Shown, Str, Shows)) },
+    Row { props: &[Prop::Effect, Prop::Held], ..form!("db.insert", "db", "insert", (Shows)) },
+    Row { props: &[Prop::Effect, Prop::Held], ..form!("db.transact", "db", "transact", (Shows)) },
+    Row { props: &[Prop::Effect], ..form!("db.migrate", "db", "migrate", (Shows)) },
+    form!("db.describe", "db", "describe", (Shows)),
+    // (counted by nothing, as before: `later`, a control, the harness verbs)
+    Row { props: &[Prop::Effect, Prop::Held], ..form!("core.later", "", "later", (Shows)) },
+    Row { props: &[Prop::Binds(1), Prop::Unreserved], ..form!("ui.select", "ui", "select", (Shows)) },
+    Row { props: &[Prop::TestOnly], ..form!("web.click", "web", "click", (Shows)) },
+    Row { props: &[Prop::TestOnly], ..form!("web.elements", "web", "elements", (Shows)) },
+    Row { props: &[Prop::TestOnly], ..form!("web.change", "web", "change", (Shows)) },
+    Row { props: &[Prop::TestOnly], ..form!("web.box", "web", "box", (Shows)) },
+    Row { props: &[Prop::TestOnly], ..form!("web.fits", "web", "fits", (Shows)) },
+    Row { props: &[Prop::TestOnly], ..form!("web.style", "web", "style", (Shows)) },
+    Row { props: &[Prop::TestOnly], ..form!("web.downloads", "web", "downloads", (Shows)) },
+    Row { props: &[Prop::TestOnly], ..form!("web.mails", "web", "mails", (Shows)) },
+];
+
+/// Every row of a name, the forms included: what the table says of a name
+/// a program can call.
+pub fn rows_named(name: &str) -> impl Iterator<Item = &'static Row> {
+    ROWS.iter().chain(FORMS.iter()).filter(move |r| r.name == name || r.written == name)
+}
+
+/// A module's rows of a name, the forms included.
+pub fn rows_named_in(module: &str, name: &str) -> impl Iterator<Item = &'static Row> {
+    rows_named(name).filter(move |r| r.module == module)
+}
+
+/// Whether a row of the name has the property (`Prop`): what a builtin
+/// does is said of its name, as the lists it replaces were read.
+pub fn has(name: &str, prop: Prop) -> bool {
+    rows_named(name).any(|r| r.props.contains(&prop))
+}
+
+/// The names with the property, each once.
+pub fn with(prop: Prop) -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = Vec::new();
+    for r in ROWS.iter().chain(FORMS.iter()) {
+        if r.props.contains(&prop) && !names.contains(&r.name) {
+            names.push(r.name);
+        }
+    }
+    names
+}
+
+/// Whether a call of the name with this many arguments is a page's data
+/// source (`fetch[url]`, `poll[url, seconds]`).
+pub fn source(name: &str, argc: usize) -> bool {
+    rows_named(name).any(|r| r.props.contains(&Prop::Source) && r.params.len() == argc)
+}
+
+/// The argument a control of the name binds to a fact, where it is one.
+pub fn binds(name: &str) -> Option<usize> {
+    rows_named(name).flat_map(|r| r.props.iter()).find_map(|p| match p {
+        Prop::Binds(i) => Some(*i),
+        _ => None,
+    })
+}
+
+/// Whether any row of the name declares options.
+pub fn takes_options(name: &str) -> bool {
+    rows_named(name).any(|r| !r.options.is_empty())
+}
+
+/// Whether a form of the name takes this many arguments: all of its
+/// parameters, those before its options (a call not filled in yet), or at
+/// least those before a rest. A name no form has is counted by its rows
+/// (`has_core_rows`), or by nothing.
+pub fn arity_ok(name: &str, argc: usize) -> bool {
+    let mut forms = FORMS.iter().filter(|r| r.name == name).peekable();
+    if forms.peek().is_none() {
+        return true;
+    }
+    forms.any(|r| {
+        let all = r.params.len();
+        if r.params.last().is_some_and(|k| k.is_rest()) {
+            return argc + 1 >= all;
+        }
+        argc == all || argc == all - r.options.len()
+    })
+}
+
 
 /// The row of an id (the tests name rows so).
 #[cfg(test)]
@@ -2264,6 +2573,14 @@ pub fn core_row(name: &str, args: &[Arg]) -> Option<&'static Row> {
 }
 
 /// The names a module's rows answer, each once, in order.
+/// A module's forms by name (`db`'s verbs), each once.
+pub fn module_forms(module: &str) -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = FORMS.iter().filter(|r| r.module == module).map(|r| r.name).collect();
+    names.sort_unstable();
+    names.dedup();
+    names
+}
+
 pub fn module_names(module: &str) -> Vec<&'static str> {
     let mut names: Vec<&'static str> = ROWS.iter().filter(|r| r.module == module).map(|r| r.name).collect();
     names.sort_unstable();
@@ -2278,7 +2595,7 @@ pub fn module_names(module: &str) -> Vec<&'static str> {
 /// read as the mask it makes (`c eq true`). (Not every `Bools` parameter
 /// is a mask: `sort`'s are a key's descending flags.)
 pub fn takes_mask_at(name: &str, i: usize, argc: usize) -> bool {
-    matches!((name, i, argc), ("where", 0, 3))
+    rows_named(name).any(|r| r.params.len() == argc && r.props.contains(&Prop::Mask(i)))
 }
 
 pub fn has_rows(module: &str, name: &str) -> bool {
@@ -2800,11 +3117,6 @@ pub fn miscounted(module: &str, name: &str, argc: usize) -> Option<String> {
     Some(miscount(name, &counts, argc))
 }
 
-/// The name a refusal shows: an internal one is the builtin the program
-/// wrote (`__fmt_time` is `fmt` with a time style).
-fn shown(name: &str) -> &str {
-    if name == crate::lower::FMT_TIME { "fmt" } else { name }
-}
 
 /// A key of the other kind than the map's: the refusal, naming both.
 pub fn wrong_key(key: crate::ir::Key, given: &Ty) -> String {
@@ -2832,7 +3144,8 @@ pub fn form(name: &str) -> String {
         "__truncated" => "a number where an int is taken".to_string(),
         "__text_map" => "a map of text".to_string(),
         "__groups" => "a call's tensors (`anova[a, b]`)".to_string(),
-        _ => format!("{}[]", shown(name)),
+        // a hidden row reached by an option: as the program writes it
+        _ => format!("{}[]", ROWS.iter().find(|r| r.name == name && !r.written.is_empty()).map_or(name, |r| r.written)),
     }
 }
 
@@ -2855,9 +3168,6 @@ fn miscount(name: &str, counts: &str, argc: usize) -> String {
 /// `all`, `find`, `grad`); a resource (`cpu`, `gpu`, `nodes`); a test
 /// block; a chart's tree.
 #[cfg_attr(not(test), allow(dead_code))] // read by the drift test
-pub const OWN_FORM: &[&str] = &[
-    "type", "error", "assert", "captured", "later", "running", "notice", "any", "all", "find", "grad", "cpu", "gpu", "test", "chart",
-];
 
 /// The scalar names the core and math both answer — a number's row the
 /// core's, a tensor's math's. One list, read wherever a call is resolved
@@ -2875,7 +3185,6 @@ pub const TO_MOVE: &[&str] = &[];
 /// which the session layer performs (a connection, a transaction, a write
 /// held to the handler's commit).
 #[cfg_attr(not(test), allow(dead_code))] // read by the drift test
-pub const MODULE_OWN_FORM: &[(&str, &str)] = &[("db", "connect"), ("db", "query"), ("db", "exec"), ("db", "insert"), ("db", "migrate"), ("db", "transact"), ("db", "describe")];
 
 /// The module functions still written twice, each to become a row (docs/
 /// bug-classes.md §4); like TO_MOVE, it only shrinks.
@@ -2954,8 +3263,9 @@ mod tests {
     #[test]
     fn every_core_builtin_is_a_row_or_says_why_not() {
         for name in crate::lower_ir::CORE_RESERVED.iter() {
-            let places = [core(name).is_some(), OWN_FORM.contains(name), TO_MOVE.contains(name)];
-            assert_eq!(places.iter().filter(|p| **p).count(), 1, "'{}' is in {} of: the table, OWN_FORM, TO_MOVE", name, places.iter().filter(|p| **p).count());
+            let form = FORMS.iter().any(|f| f.module.is_empty() && f.name == *name);
+            let places = [core(name).is_some(), form, TO_MOVE.contains(name), *name == "test"];
+            assert_eq!(places.iter().filter(|p| **p).count(), 1, "'{}' is in {} of: the table, FORMS, TO_MOVE", name, places.iter().filter(|p| **p).count());
         }
         for r in ROWS.iter().filter(|r| r.module.is_empty()) {
             // (an internal name is a core builtin's form: `__fmt_time`)
@@ -2967,23 +3277,17 @@ mod tests {
     /// move, and exactly one of these.
     #[test]
     fn every_module_function_is_a_row_or_says_why_not() {
-        use crate::modules::{bits, chart, db, doc, frame, io, math, nn, stats};
-        let modules: [(&str, &[&str]); 9] = [
-            ("math", &math::MATH_FUNCTIONS[..]),
-            ("math.stats", &stats::STATS_FUNCTIONS[..]),
-            ("math.nn", &nn::NN_FUNCTIONS[..]),
-            ("frame", &frame::FRAME_FUNCTIONS[..]),
-            ("db", db::DB_FUNCTIONS),
-            ("io", &io::IO_FUNCTIONS[..]),
-            ("doc", &doc::DOC_FUNCTIONS[..]),
-            ("chart", &chart::CHART_FUNCTIONS[..]),
-            ("bits", &bits::BITS_FUNCTIONS[..]),
-        ];
+        // (every module the manifest gives a registry object)
+        let modules: Vec<(&str, Vec<String>)> = crate::modules::MODULES
+            .iter()
+            .filter_map(|m| m.module.map(|make| (m.path, make().functions().iter().map(|f| f.to_string()).collect())))
+            .collect();
         for (m, names) in modules {
-            for name in names {
-                let row = ROWS.iter().any(|r| r.module == m && r.name == *name);
-                let places = [row, MODULE_OWN_FORM.contains(&(m, name)), MODULE_TO_MOVE.contains(&(m, name))];
-                assert_eq!(places.iter().filter(|p| **p).count(), 1, "{}.{} is in {} of: the table, MODULE_OWN_FORM, MODULE_TO_MOVE", m, name, places.iter().filter(|p| **p).count());
+            for name in names.iter().map(String::as_str) {
+                let row = ROWS.iter().any(|r| r.module == m && r.name == name);
+                let form = FORMS.iter().any(|f| f.module == m && f.name == name);
+                let places = [row, form, MODULE_TO_MOVE.contains(&(m, name))];
+                assert_eq!(places.iter().filter(|p| **p).count(), 1, "{}.{} is in {} of: the table, FORMS, MODULE_TO_MOVE", m, name, places.iter().filter(|p| **p).count());
             }
         }
     }
@@ -3067,7 +3371,7 @@ mod tests {
         assert_eq!(crow_runtime::core::round(2.5), 3);
         assert_eq!(crow_runtime::core::round(-2.5), -3);
         assert!(crow_runtime::core::sleep_ms(-1).is_err());
-        assert!(!OWN_FORM.contains(&"log") && OWN_FORM.contains(&"assert"));
+        assert!(!FORMS.iter().any(|f| f.name == "log") && FORMS.iter().any(|f| f.name == "assert"));
     }
 
     /// A list of numbers that can fail is numbers where numbers are taken
@@ -3175,18 +3479,7 @@ mod tests {
 /// bridges change it (`texts`) — and a list cut, a tensor pushed onto, the
 /// same way. None for a row without one.
 pub fn taken_path(id: &str) -> Option<&'static str> {
-    match id {
-        "text.replace" => Some("crow_runtime::text::replace_taken"),
-        "text.upper" => Some("crow_runtime::text::upper_taken"),
-        "text.lower" => Some("crow_runtime::text::lower_taken"),
-        "core.reverse_text" => Some("crow_runtime::core::reverse_text_taken"),
-        "text.translate" => Some("crow_runtime::text::translate_taken"),
-        "core.slice" => Some("crow_runtime::core::slice_taken"),
-        "core.push_number" => Some("crow_runtime::core::push_number_taken"),
-        "core.__set_at" => Some("crow_runtime::core::set_at_taken"),
-        "core.__set_part" => Some("crow_runtime::core::set_part_taken"),
-        _ => None,
-    }
+    ROWS.iter().find(|r| r.id == id).and_then(|r| r.taken)
 }
 
 /// The row that keeps every digit in place of one that answers 64 bits
@@ -3194,25 +3487,7 @@ pub fn taken_path(id: &str) -> Option<&'static str> {
 /// a whole number of any size; `abs`, `min` and `max` keep one handed to
 /// them. None for a row with no such form.
 pub fn big_form(id: &str) -> Option<&'static Row> {
-    let big = match id {
-        "core.int_of" => "core.__int_big",
-        "core.int_of_float" => "core.__int_of_float_big",
-        "core.floor" => "core.__floor_big",
-        "core.ceil" => "core.__ceil_big",
-        "core.round" => "core.__round_big",
-        "core.abs_int" => "core.__abs_big",
-        "core.floor_int" | "core.ceil_int" | "core.round_int" => "core.__whole_big",
-        "core.min_ints" => "core.__min_big",
-        "core.max_ints" => "core.__max_big",
-        "core.sort_ints" => "core.__sort_big",
-        "core.float_of_int" => "core.__float_of_big",
-        "bits.bitand" => "core.__bitand_big",
-        "bits.bitor" => "core.__bitor_big",
-        "bits.bitxor" => "core.__bitxor_big",
-        "bits.bitcount" => "core.__bitcount_big",
-        "bits.shift" => "core.__shift_big",
-        _ => return None,
-    };
+    let big = ROWS.iter().find(|r| r.id == id)?.big?;
     ROWS.iter().find(|r| r.id == big)
 }
 
@@ -3232,7 +3507,7 @@ pub fn written_name(row: &'static Row) -> &'static str {
 /// changes where it lies): a value read for the last time there is moved
 /// into the call; anywhere else the row only reads it, and it is lent.
 pub fn keeps_storage(row: &Row, i: usize, argc: usize) -> bool {
-    if i == 0 && taken_path(row.id).is_some() {
+    if i == 0 && row.taken.is_some() {
         return true;
     }
     kinds_of(row.params, argc).and_then(|k| k.get(i).copied()).is_some_and(|k| k.owned())

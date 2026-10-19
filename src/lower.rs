@@ -122,49 +122,33 @@ pub(crate) fn chart_seek_handler<'a>(callee: &Expr, args: &'a [Expr]) -> Option<
     }
 }
 
-/// Builtins with named parameters: name → ordered named-parameter list.
-/// Position of a named parameter = (call arity without it) + its index here.
-fn builtin_named_params(name: &str) -> Option<&'static [&'static str]> {
-    match name {
-        "sum" | "mean" | "min" | "max" | "prod" | "stack" | "concat" => Some(&["axis"]),
-        "sort" => Some(&["desc"]),
-        // test harness: app[view, width = 1280, wide = true]
-        "app" => Some(&["width", "wide"]),
-        _ => None,
+/// A row's default as the lowering writes it into the call; none where the
+/// option is given or the row is not the call's.
+fn default_expr(d: crate::table::Preset) -> Option<Expr> {
+    use crate::table::Preset as D;
+    Some(match d {
+        D::Int(n) => Expr::Int(n),
+        D::Float(x) => Expr::Float(x),
+        D::Str(s) => Expr::Str(s.to_string()),
+        D::Bool(b) => Expr::Bool(b),
+        D::List => Expr::Array(vec![]),
+        D::Map => Expr::Map(vec![]),
+        D::Asked => return None,
+    })
+}
+
+/// A default as a message writes it.
+fn shown_default(d: crate::table::Preset) -> String {
+    use crate::table::Preset as D;
+    match d {
+        D::Int(n) => n.to_string(),
+        D::Float(x) => format!("{x:?}"),
+        D::Str(s) => format!("'{s}'"),
+        D::Bool(b) => b.to_string(),
+        D::List => "[]".to_string(),
+        D::Map => "map[]".to_string(),
+        D::Asked => "…".to_string(),
     }
-}
-
-/// What a reader of a URL is asked with — `read`, `lines`, `csv`, `load` —
-/// and the default of each, which the lowering fills in where a call that
-/// names one leaves another out (its row takes them all).
-fn reader_options() -> Vec<(&'static str, Expr)> {
-    vec![("headers", Expr::Map(vec![])), ("query", Expr::Map(vec![])), ("timeout", Expr::Float(0.0))]
-}
-
-/// What a window is computed over beyond its frame, column and kind —
-/// `n` rows (0: every row so far) within the partitions `by` names (none:
-/// the whole frame) — and the default of each.
-fn window_options() -> Vec<(&'static str, Expr)> {
-    vec![("n", Expr::Int(0)), ("by", Expr::Array(vec![])), ("span", Expr::Float(0.0)), ("on", Expr::Str(String::new()))]
-}
-
-/// What a request is sent with beyond its URL, method and body, and the
-/// default of each.
-fn request_options() -> Vec<(&'static str, Expr)> {
-    vec![
-        ("headers", Expr::Map(vec![])),
-        ("query", Expr::Map(vec![])),
-        ("form", Expr::Map(vec![])),
-        ("files", Expr::Map(vec![])),
-        ("save", Expr::Str(String::new())),
-        ("timeout", Expr::Float(0.0)),
-    ]
-}
-
-/// What a model is asked with beyond the connection and the conversation
-/// (`chat`, `follow`), and the default of each (spec, section 13: llm).
-pub(crate) fn llm_options() -> Vec<(&'static str, Expr)> {
-    vec![("system", Expr::Str(String::new())), ("tools", Expr::Array(vec![])), ("max", Expr::Int(1024)), ("temperature", Expr::Float(1.0))]
 }
 
 #[derive(Clone)]
@@ -593,9 +577,6 @@ impl<'a> Namer<'a> {
 /// typed as its payload (the IR's unwrap).
 pub const KNOWN: &str = "__known";
 
-/// `fmt[t, time = style, tz = zone]` once its named arguments are lowered:
-/// a moment's time style, a row of its own that can fail (crate::table).
-pub const FMT_TIME: &str = "__fmt_time";
 
 /// A guard narrows (spec, Errors in Conditions): after `if not x.ok` with
 /// no `else`, whose branch always leaves (`return`, `break`, `continue`),
@@ -834,15 +815,6 @@ impl Lowerer {
         Ok(out)
     }
 
-    /// Whether the file whose code this is imports a module, under any name.
-    /// Each file's imports are its own: in the entry's code a module only a
-    /// part imports is not imported (the entry's `frame.new[…]` had been
-    /// rewritten into its `with` chain on the part's import, and refused
-    /// as `with`); inside a part's function the part's own import serves.
-    fn imports_path(&self, module: &str) -> bool {
-        self.imports.iter().any(|(alias, path)| path == module && self.module_imported(alias))
-    }
-
     /// Whether a name the program calls through is an import of the file
     /// whose code this is: in the entry's code a module only a part imports
     /// is not imported; inside a part's function the part's own serves, and
@@ -1005,66 +977,6 @@ impl Lowerer {
 
                 match callee_name.as_deref() {
                     Some("map") => self.lower_map_call(args)?,
-                    // slider[label, var, min = 0, max = 100, step = 1]
-                    // field[label, var, type = '', lines = 0] — '' means "from
-                    // the variable's type"; lines > 0 is a textarea
-                    Some("field") if !self.fns.contains_key("field") => {
-                        let params: Vec<String> = ["label", "var", "type", "lines"].iter().map(|s| s.to_string()).collect();
-                        let defaults: Vec<Option<Expr>> = vec![None, None, Some(Expr::Str(String::new())), Some(Expr::Int(0))];
-                        let resolved = self.resolve_args("field", &params, &defaults, args)?;
-                        Expr::Call { callee: Box::new(callee), args: resolved }
-                    }
-                    // progress[value, max = 1.0]
-                    Some("progress") if !self.fns.contains_key("progress") => {
-                        let params: Vec<String> = ["value", "max"].iter().map(|s| s.to_string()).collect();
-                        let defaults: Vec<Option<Expr>> = vec![None, Some(Expr::Float(1.0))];
-                        let resolved = self.resolve_args("progress", &params, &defaults, args)?;
-                        Expr::Call { callee: Box::new(callee), args: resolved }
-                    }
-                    // icon[name, size = 'm', color = '']
-                    Some("icon") if !self.fns.contains_key("icon") => {
-                        let params: Vec<String> = ["name", "size", "color"].iter().map(|s| s.to_string()).collect();
-                        let defaults: Vec<Option<Expr>> = vec![None, Some(Expr::Str("m".to_string())), Some(Expr::Str(String::new()))];
-                        let resolved = self.resolve_args("icon", &params, &defaults, args)?;
-                        Expr::Call { callee: Box::new(callee), args: resolved }
-                    }
-                    Some("slider") if !self.fns.contains_key("slider") => {
-                        let params: Vec<String> = ["label", "var", "min", "max", "step"].iter().map(|s| s.to_string()).collect();
-                        let defaults: Vec<Option<Expr>> = vec![None, None, Some(Expr::Int(0)), Some(Expr::Int(100)), Some(Expr::Int(1))];
-                        let resolved = self.resolve_args("slider", &params, &defaults, args)?;
-                        Expr::Call { callee: Box::new(callee), args: resolved }
-                    }
-                    // fmt has a full named signature with sentinel defaults
-                    // (decimals < 0 / width 0 / align '' mean "unset"): both
-                    // modes receive the 7 of a number's or a text's options,
-                    // or the 3 of a moment's time style
-                    Some("fmt") if !self.fns.contains_key("fmt") => {
-                        let params: Vec<String> = ["value", "decimals", "commas", "width", "align", "fill", "percent", "style", "tz"]
-                            .iter().map(|s| s.to_string()).collect();
-                        let defaults: Vec<Option<Expr>> = vec![
-                            None,
-                            Some(Expr::Int(-1)),
-                            Some(Expr::Bool(false)),
-                            Some(Expr::Int(0)),
-                            Some(Expr::Str(String::new())),
-                            Some(Expr::Str(" ".to_string())),
-                            Some(Expr::Bool(false)),
-                            Some(Expr::Str(String::new())),
-                            Some(Expr::Str(String::new())),
-                        ];
-                        let resolved = self.resolve_args("fmt", &params, &defaults, args)?;
-                        // a moment's time style is a row of its own, which
-                        // can fail (kind 'time'); a number's and a text's
-                        // options are the other's (crate::table)
-                        // (an internal name: lowered again, as a derivation's
-                        // body is, the call is left as it is)
-                        let timed = !matches!(resolved.get(7), Some(Expr::Str(s)) if s.is_empty());
-                        if timed {
-                            Expr::Call { callee: Box::new(Expr::Ident(crate::lower::FMT_TIME.to_string())), args: vec![resolved[0].clone(), resolved[7].clone(), resolved[8].clone()] }
-                        } else {
-                            Expr::Call { callee: Box::new(callee), args: resolved[..7].to_vec() }
-                        }
-                    }
                     // decimal[x, digits = n]: x as a decimal, rounded to n
                     // significant digits that every answer it takes part in
                     // rounds to (a hidden row of two; spec, Numbers That Keep
@@ -1073,87 +985,6 @@ impl Lowerer {
                         let (positional, options) = self.options("decimal", args, &[("digits", Expr::Int(0))])?;
                         let made = Expr::Call { callee: Box::new(callee), args: positional };
                         Expr::Call { callee: Box::new(Expr::Ident("__decimal_digits".to_string())), args: vec![made, options[0].clone()] }
-                    }
-                    // moment[text], moment[t, tz = zone], and moment[year,
-                    // month, day, hour = 0, minute = 0, second = 0, tz = 'UTC']:
-                    // one name, three forms, told apart by their arguments
-                    Some("moment") if !self.fns.contains_key("moment") && args.iter().filter(|a| !matches!(a, Expr::Named { .. })).count() == 1 => {
-                        let (positional, options) = self.options("moment", args, &[("tz", Expr::Str(String::new()))])?;
-                        let mut args = positional;
-                        if !matches!(options.first(), Some(Expr::Str(s)) if s.is_empty()) {
-                            args.extend(options);
-                        }
-                        Expr::Call { callee: Box::new(callee), args }
-                    }
-                    // moment[t, zone] is the lowered form of moment[t, tz = zone]:
-                    // lowering it again changes nothing
-                    Some("moment") if !self.fns.contains_key("moment") && args.len() == 2 && !args.iter().any(|a| matches!(a, Expr::Named { .. })) => {
-                        Expr::Call { callee: Box::new(callee), args }
-                    }
-                    Some("moment") if !self.fns.contains_key("moment") => {
-                        let params: Vec<String> =
-                            ["year", "month", "day", "hour", "minute", "second", "tz"]
-                                .iter().map(|s| s.to_string()).collect();
-                        let defaults: Vec<Option<Expr>> = vec![
-                            None, None, None,
-                            Some(Expr::Int(0)),
-                            Some(Expr::Int(0)),
-                            Some(Expr::Int(0)),
-                            Some(Expr::Str("UTC".to_string())),
-                        ];
-                        let resolved = self.resolve_args("moment", &params, &defaults, args)?;
-                        Expr::Call { callee: Box::new(callee), args: resolved }
-                    }
-                    // chart[frame, x = 'ts', candles = [], lines = [],
-                    // bars_y = '', marker = 0, tz = 'UTC', height = 320,
-                    // panes = [], levels = 0, points = 0, seek = 0] —
-                    // a chart is a view over a frame (chart-module-design).
-                    // panes: lists of column names, each drawn in its own
-                    // strip; levels: map[col = [values]] of reference lines
-                    // for the pane that draws col; points: a frame of markers
-                    // (ts, y, label, kind); seek: a handler that receives the
-                    // clicked bucket's moment.
-                    Some("chart") if !self.fns.contains_key("chart") => {
-                        let params: Vec<String> = [
-                            "frame", "x", "candles", "lines", "bars_y",
-                            "marker", "tz", "height", "panes", "levels",
-                            "points", "seek",
-                        ]
-                        .iter()
-                        .map(|s| s.to_string())
-                        .collect();
-                        let defaults: Vec<Option<Expr>> = vec![
-                            None,
-                            Some(Expr::Str("ts".to_string())),
-                            Some(Expr::Array(vec![])),
-                            Some(Expr::Array(vec![])),
-                            Some(Expr::Str(String::new())),
-                            Some(Expr::Int(0)),
-                            Some(Expr::Str("UTC".to_string())),
-                            Some(Expr::Int(320)),
-                            Some(Expr::Array(vec![])),
-                            Some(Expr::Int(0)),
-                            Some(Expr::Int(0)),
-                            Some(Expr::Int(0)),
-                        ];
-                        let resolved = self.resolve_args("chart", &params, &defaults, args)?;
-                        Expr::Call { callee: Box::new(callee), args: resolved }
-                    }
-                    // serve[port, refresh = secs, budget = ms] — 0 means unset.
-                    // refresh: the runtime re-renders every session on this
-                    // interval; budget: handlers/renders over this many ms are
-                    // logged. Plus the look: theme ('' = system), density ('' =
-                    // comfortable), accent ('' = the theme's), wide (false);
-                    // keep, the uploads' megabytes, and the server's CORS
-                    // origins and files directory. Both modes receive all
-                    // eleven, positionally.
-                    Some("serve") if !self.fns.contains_key("serve") => {
-                        let params: Vec<String> =
-                            ["port", "refresh", "budget", "theme", "density", "accent", "wide", "keep", "uploads", "cors", "files"].iter().map(|s| s.to_string()).collect();
-                        let defaults: Vec<Option<Expr>> =
-                            vec![None, Some(Expr::Int(0)), Some(Expr::Int(0)), Some(Expr::Str(String::new())), Some(Expr::Str(String::new())), Some(Expr::Str(String::new())), Some(Expr::Bool(false)), Some(Expr::Bool(false)), Some(Expr::Int(10)), Some(Expr::Array(vec![])), Some(Expr::Str(String::new()))];
-                        let resolved = self.resolve_args("serve", &params, &defaults, args)?;
-                        Expr::Call { callee: Box::new(callee), args: resolved }
                     }
                     // route[path, handler, limit = n] (or with a method between):
                     // the method made GET where none is written, the limit last
@@ -1204,32 +1035,23 @@ impl Lowerer {
                     {
                         self.lower_ui_call(callee, args)
                     }
-                    // a reader of a URL, asked with options: read[url,
-                    // headers = map[…], query = map[…], timeout = s], the
-                    // ones it leaves out filled in
-                    Some(name @ ("read" | "lines" | "csv" | "load")) if !self.fns.contains_key(name) && has_named => {
-                        let (mut positional, options) = self.options(name, args, &reader_options())?;
-                        if positional.len() != 1 {
-                            return Err(self.err(format!("{}[] with options takes one path: {}[url, headers = map[…]]", name, name)));
-                        }
-                        positional.extend(options);
-                        Expr::Call { callee: Box::new(callee), args: positional }
-                    }
-                    Some(name) if builtin_named_params(name).is_some() && has_named => {
-                        let named_params = builtin_named_params(name).unwrap();
-                        let resolved = self.resolve_builtin_args(name, named_params, args)?;
-                        Expr::Call { callee: Box::new(callee), args: resolved }
-                    }
-                    // window[frame, col, how, n = rows, by = keys, span =
-                    // seconds, on = column]: the options it leaves out
-                    // filled in, so its rows take them all
-                    Some("window") if !self.fns.contains_key("window") => {
-                        let (mut positional, options) = self.options("window", args, &window_options())?;
-                        if positional.len() != 3 {
-                            return Err(self.err("window[] takes a frame, a column and what to compute, then n = rows and by = keys (or span = seconds and on = column): window[df, 'close', 'mean', n = 3, by = 'symbol']".to_string()));
-                        }
-                        positional.extend(options);
-                        Expr::Call { callee: Box::new(callee), args: positional }
+                    // a builtin's options, from its rows (crate::table): the
+                    // row that takes what the call gives — its positions in
+                    // order, its options by name — fills in the defaults it
+                    // declares, so both modes are handed every argument
+                    // (inside a view an element's name is the element's:
+                    // `stack[a, b]` lays children out, whatever math's `stack`
+                    // takes)
+                    Some(name) if !self.fns.contains_key(name) && !(self.in_view && UI_ELEMENTS.contains(&name)) && crate::table::takes_options(name) => {
+                        let rows: Vec<&'static crate::table::Row> = crate::table::rows_named(name).collect();
+                        let (row, args) = self.row_options(name, &rows, args)?;
+                        // (a row reached by an option may have a hidden name
+                        // of its own, which its lowered form is called by)
+                        let callee = match row {
+                            Some(r) if !r.written.is_empty() => Expr::Ident(r.name.to_string()),
+                            _ => callee,
+                        };
+                        Expr::Call { callee: Box::new(callee), args }
                     }
                     // fill[frame, col, value] or fill[frame, col, how =
                     // 'forward' | 'backward']: one row takes a value and a
@@ -1249,72 +1071,18 @@ impl Lowerer {
                         positional.extend(options);
                         Expr::Call { callee: Box::new(callee), args: positional }
                     }
-                    // request[url], request[url, method], request[url, method,
-                    // body], each with headers, query, form, files, save and
-                    // timeout by name: GET, an empty body and every option
-                    // left out filled in, so one row says every request
-                    Some("request") if !self.fns.contains_key("request") => {
-                        let (mut positional, options) = self.options("request", args, &request_options())?;
-                        if positional.is_empty() || positional.len() > 3 {
-                            return Err(self.err("request[] takes a URL, a method if not GET, and a body: request[url, 'POST', encode[order]]".to_string()));
-                        }
-                        if positional.len() < 2 {
-                            positional.push(Expr::Str("GET".to_string()));
-                        }
-                        if positional.len() < 3 {
-                            positional.push(Expr::Str(String::new()));
-                        }
-                        positional.extend(options);
-                        Expr::Call { callee: Box::new(callee), args: positional }
-                    }
-                    // chat[m, talk] and follow[m, talk], each with system, tools,
-                    // max and temperature by name, the ones left out filled in:
-                    // one row says every ask of a model (spec, section 13: llm)
-                    Some(name @ ("chat" | "follow")) if !self.fns.contains_key(name) && self.imports_path("llm") => {
-                        let (mut positional, options) = self.options(name, args, &llm_options())?;
-                        if positional.len() != 2 {
-                            return Err(self.err(format!("{0}[] takes a model and a conversation, then system, tools, max and temperature by name: {0}[m, talk, system = 'Answer briefly']", name)));
-                        }
-                        positional.extend(options);
-                        Expr::Call { callee: Box::new(callee), args: positional }
-                    }
-                    // llm.chat[…], llm.follow[…]: the same, qualified
-                    None if matches!(&callee, Expr::FieldAccess { object, field } if matches!(object.as_ref(), Expr::Ident(m) if self.imports.get(m).is_some_and(|p| p == "llm")) && matches!(field.as_str(), "chat" | "follow")) => {
-                        let name = match &callee {
-                            Expr::FieldAccess { field, .. } => field.clone(),
-                            _ => "chat".to_string(),
+                    // the same for a module's row called by its module —
+                    // llm.chat[…], frame.window[…], io.lines[url, headers = …] —
+                    // under the name the file imports it as
+                    None if matches!(&callee, Expr::FieldAccess { object, field } if matches!(object.as_ref(), Expr::Ident(m) if crate::table::rows_named_in(self.imports.get(m).map_or(m.as_str(), |p| p.as_str()), field).any(|r| !r.options.is_empty()))) => {
+                        let Expr::FieldAccess { object, field } = &callee else { unreachable!("matched a field access") };
+                        let module = match object.as_ref() {
+                            Expr::Ident(m) => self.imports.get(m).cloned().unwrap_or_else(|| m.clone()),
+                            _ => String::new(),
                         };
-                        let (mut positional, options) = self.options(&name, args, &llm_options())?;
-                        if positional.len() != 2 {
-                            return Err(self.err(format!("{0}[] takes a model and a conversation, then system, tools, max and temperature by name: {0}[m, talk, system = 'Answer briefly']", name)));
-                        }
-                        positional.extend(options);
-                        Expr::Call { callee: Box::new(callee), args: positional }
-                    }
-                    // frame.window[…], its options filled in as the bare call's
-                    None if matches!(&callee, Expr::FieldAccess { object, field } if matches!(object.as_ref(), Expr::Ident(m) if m == "frame") && field == "window") => {
-                        let (mut positional, options) = self.options("window", args, &window_options())?;
-                        if positional.len() != 3 {
-                            return Err(self.err("window[] takes a frame, a column and what to compute, then n = rows and by = keys: window[df, 'close', 'mean', n = 3, by = 'symbol']".to_string()));
-                        }
-                        positional.extend(options);
-                        Expr::Call { callee: Box::new(callee), args: positional }
-                    }
-                    // a module's reader named by its module: frame.load[url,
-                    // headers = map[…]], math.load, io.lines, io.csv
-                    None if has_named
-                        && matches!(&callee, Expr::FieldAccess { object, field } if matches!(object.as_ref(), Expr::Ident(m) if matches!(m.as_str(), "frame" | "math" | "io")) && matches!(field.as_str(), "read" | "lines" | "csv" | "load")) =>
-                    {
-                        let name = match &callee {
-                            Expr::FieldAccess { field, .. } => field.clone(),
-                            _ => "load".to_string(),
-                        };
-                        let (mut positional, options) = self.options(&name, args, &reader_options())?;
-                        if positional.len() != 1 {
-                            return Err(self.err(format!("{}[] with options takes one path: {}[url, headers = map[…]]", name, name)));
-                        }
-                        positional.extend(options);
-                        Expr::Call { callee: Box::new(callee), args: positional }
+                        let rows: Vec<&'static crate::table::Row> = crate::table::rows_named_in(&module, field).collect();
+                        let (_, args) = self.row_options(field, &rows, args)?;
+                        Expr::Call { callee: Box::new(callee), args }
                     }
                     _ => {
                         if has_named {
@@ -1454,6 +1222,124 @@ impl Lowerer {
         Ok(resolved)
     }
 
+    /// A builtin's call filled in from its rows (crate::table): the row
+    /// that takes what the call gives — its positions in order, its options
+    /// by name, an option given by position too — fills in the defaults it
+    /// declares, so both modes are handed every argument. Where several rows
+    /// take the call, the one filling in least is taken (`read[path]` is the
+    /// plain reader's, not the asked one's); where none does and the call
+    /// names an option, that is the refusal; where none does and it names
+    /// none, the call is left as written, for the checks.
+    fn row_options(&self, name: &str, rows: &[&'static crate::table::Row], args: Vec<Expr>) -> Result<(Option<&'static crate::table::Row>, Vec<Expr>), String> {
+        let mut positional: Vec<Expr> = Vec::new();
+        let mut named: Vec<(String, Expr)> = Vec::new();
+        for a in args {
+            match a {
+                Expr::Named { name, value, .. } => named.push((name, *value)),
+                other => positional.push(other),
+            }
+        }
+        let mut best: Option<(usize, &'static crate::table::Row, Vec<Expr>)> = None;
+        // whether some row takes this many positions at all: none does,
+        // and the count is the refusal, whatever the names
+        let mut counted = false;
+        'rows: for row in rows {
+            let all = row.params.len();
+            let fixed = all - row.options.len();
+            if row.params.last().is_some_and(|k| k.is_rest()) {
+                // (a row taking the rest of the arguments declares no
+                // option: the call is its own as written)
+                if positional.len() + 1 >= all {
+                    counted = true;
+                    if named.is_empty() && best.is_none() {
+                        best = Some((0, row, positional.clone()));
+                    }
+                }
+                continue;
+            }
+            if positional.len() < fixed || positional.len() > all {
+                continue;
+            }
+            counted = true;
+            let mut slots: Vec<Option<Expr>> = vec![None; row.options.len()];
+            for (i, a) in positional[fixed..].iter().enumerate() {
+                // (an option with no default picks its row only by name:
+                // `fmt[x, 2, true]` is the number's row, not the time style's
+                // with a style of 2; `sum[x, 0]` is left to the row choice by
+                // kinds, as it was)
+                if matches!(row.options[i].1, crate::table::Preset::Asked) {
+                    continue 'rows;
+                }
+                slots[i] = Some(a.clone());
+            }
+            for (n, v) in &named {
+                let Some(i) = row.options.iter().position(|(o, _)| o == n) else { continue 'rows };
+                if slots[i].is_some() {
+                    return Err(self.err(format!("argument '{}' given more than once in call to '{}'", n, name)));
+                }
+                slots[i] = Some(v.clone());
+            }
+            let mut resolved: Vec<Expr> = positional[..fixed].to_vec();
+            let mut defaults = 0;
+            for (slot, (_, d)) in slots.into_iter().zip(row.options) {
+                match slot {
+                    Some(e) => resolved.push(e),
+                    None => match default_expr(*d) {
+                        Some(e) => {
+                            resolved.push(e);
+                            defaults += 1;
+                        }
+                        None => continue 'rows,
+                    },
+                }
+            }
+            if best.as_ref().is_none_or(|(d, _, _)| defaults < *d) {
+                best = Some((defaults, row, resolved));
+            }
+        }
+        if let Some((_, row, resolved)) = best {
+            return Ok((Some(row), resolved));
+        }
+        if counted && named.is_empty() {
+            return Ok((None, positional));
+        }
+        let known: Vec<&str> = rows.iter().flat_map(|r| r.options.iter().map(|(o, _)| *o)).fold(Vec::new(), |mut v, o| {
+            if !v.contains(&o) {
+                v.push(o);
+            }
+            v
+        });
+        if let Some((bad, _)) = named.iter().find(|(n, _)| !known.contains(&n.as_str())) {
+            return Err(self.err(format!("{}[] has no option '{}' — its options are {}", name, bad, known.join(", "))));
+        }
+        let mut shapes: Vec<String> = Vec::new();
+        for r in rows {
+            let fixed = r.params.len() - r.options.len();
+            let count = if r.params.last().is_some_and(|k| k.is_rest()) {
+                format!("{} arguments or more", fixed.saturating_sub(1))
+            } else {
+                format!("{} argument{}", fixed, if fixed == 1 { "" } else { "s" })
+            };
+            let shape = if r.options.is_empty() {
+                count
+            } else {
+                let opts: Vec<String> = r
+                    .options
+                    .iter()
+                    .map(|(o, d)| match d {
+                        crate::table::Preset::Asked => o.to_string(),
+                        d => format!("{} = {}", o, shown_default(*d)),
+                    })
+                    .collect();
+                format!("{}, then {} by name", count, opts.join(", "))
+            };
+            if !shapes.contains(&shape) {
+                shapes.push(shape);
+            }
+        }
+        Err(self.err(format!("{}[] takes {}", name, shapes.join(", or "))))
+    }
+
     /// A builtin's options by name, each the call leaves out its default:
     /// the positional arguments, then every option in order (what a row
     /// that takes them all is handed — `request`, a reader of a URL).
@@ -1477,44 +1363,6 @@ impl Lowerer {
         }
         let filled = given.into_iter().zip(options).map(|(g, (_, default))| g.unwrap_or_else(|| default.clone())).collect();
         Ok((positional, filled))
-    }
-
-    /// Builtins: reorder named args after the positionals in declared order.
-    /// No default filling — arity is meaningful to the builtin itself.
-    fn resolve_builtin_args(
-        &self,
-        fn_name: &str,
-        named_params: &[&str],
-        args: Vec<Expr>,
-    ) -> Result<Vec<Expr>, String> {
-        let mut positional = Vec::new();
-        let mut named: Vec<(String, Expr)> = Vec::new();
-        for a in args {
-            match a {
-                Expr::Named { name, value, .. } => {
-                    if !named_params.contains(&name.as_str()) {
-                        return Err(self.err(format!(
-                            "'{}' has no named parameter '{}' (named parameters: {})",
-                            fn_name, name, named_params.join(", ")
-                        )));
-                    }
-                    if named.iter().any(|(n, _)| n == &name) {
-                        return Err(self.err(format!(
-                            "argument '{}' given more than once in call to '{}'",
-                            name, fn_name
-                        )));
-                    }
-                    named.push((name, *value));
-                }
-                other => positional.push(other),
-            }
-        }
-        for p in named_params {
-            if let Some(pos) = named.iter().position(|(n, _)| n == p) {
-                positional.push(named.remove(pos).1);
-            }
-        }
-        Ok(positional)
     }
 
     /// UI elements: named args become entries of the attribute map (first

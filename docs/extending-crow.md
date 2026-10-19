@@ -146,7 +146,7 @@ replaces:
 | `big: Option<&str>` (the growing-int form) | `table::big_form`, `written_name` |
 | `range: IntRange` (the answer's int range) | `int_width::row_iv`, `range_items` |
 | `features: &[(&str, &str)]` (crate and Cargo feature) | `runtime_features`, `web_features`, `db_features`, `note_sources`'s Parquet rule |
-| `options: &[(&str, Default)]` | `lower::builtin_named_params`, `request_options`, `window_options`, `reader_options`, `llm_options`, the `fmt`/`moment`/`decimal`/`serve`/`route`/`page`/`chart`/`fill` arms |
+| `options: &[(&str, Preset)]` and `written` (section 4.1) | `lower::builtin_named_params`, `request_options`, `window_options`, `reader_options`, `llm_options`, the `fmt`/`moment`/`chart`/`serve`/`field`/`slider`/`progress`/`icon`/readers arms |
 | `mask_at: Option<usize>` | `table::takes_mask_at` |
 | `form: Option<&str>` (how a message writes the call) | `table::form`, `shown`, `miscount` |
 | `differentiable: Option<Deriv>` (dual and traced paths) | `grad::DIFFERENTIABLE`, `builtins::HANDLED`, `DUAL_MATH`, the emitter's traced dispatch names, `autograd_bridge`'s name matches |
@@ -161,21 +161,65 @@ phase (the lowering, the backends); what moves is the fact that they
 exist, their arity and their options. `builtin_arity_ok` is deleted: a
 row's parameters say its arity.
 
-### The manifest
+### 4.1 Options on rows, as built
 
-`modules::MODULES: &[Module]`, one entry per module: `path` (`math.stats`),
-`parent`, `source` (the Crow file, where there is one), `crate_` (the
-runtime crate and features it needs), `loads` (modules it brings:
-`db` brings its drivers, `math.stats` brings `math`), `internal` (`sys`),
-`docs` (the sentence the stdlib page opens with). Consumers: `module_by_path`,
-`with_stdlib`, `every_module_function`, `CROW_MODULES`, `crow_source`, the
-`use` chain in `type_infer/classify.rs`, the allow-lists in `rules.rs`,
-`REGISTRY_MODULES` and `is_standard_module` in `checks.rs`, `load_module`
-and `read_uses` in `emit_rs/program.rs`, the pinned list in
-`emit_rs/exprs.rs`, the four tables of `crow test --docs`, the drift test,
-`driver.rs`'s backends. `crow test --modules` runs every module's own
-tests from the manifest, replacing the fourteen lines of the gate and CI
-that name them one by one.
+A row's options are its last parameters, each with a `Preset`: a literal
+default (`Int`, `Float`, `Str`, `Bool`, an empty `List` or `Map`), or
+`Asked`, no default, which makes the row apply only to a call that names
+the option (`sum[x, axis = 0]` reaches `sum_axis`; `sum[x, 0]` is left to
+the row choice by kinds, as it was). One filler in `lower.rs`
+(`row_options`) reads every row of the name, the forms included: the row
+that takes what the call gives — positions in order, options by name, a
+defaulted option by position too — fills in its defaults; of several, the
+one filling in least (`read[path]` is the plain reader's); a count no row
+takes, or an option none has, is the refusal, worded from the rows; a
+call that names no option and fits some row by count is left as written.
+The idempotence test (`lowering_twice_is_lowering_once`) found the one
+subtlety: the time style's `fmt`, lowered to three positions, reads as a
+number format given positionally when lowered again (a derivation's body
+is), so a row an option picks may keep a hidden name of its own
+(`written: "fmt"` on `__fmt_time`), which its lowered form is called by.
+
+Forms live in `table::FORMS`, beside `ROWS`, with `IN_FORM` as their path:
+their kinds are placeholders (`Shown`), read by no lookup by kind, and
+the self-check writes no case from them; `arity_ok` counts them where
+`builtin_arity_ok`'s table had. Left for later phases, each with its
+reason: `route`'s `GET` is a positional parameter in the middle, which no
+option says (phase 4 makes `route` a row taking a function and its two
+forms two rows); `page`'s `url` check is a kinds check (phase 5); `fill`'s
+value is a positional that `how` replaces (phase 6, frames); `decimal`'s
+`digits` nests a conversion (a runtime function of its own, in phase 2);
+the map and frame literals are language.
+
+### The manifest, as built
+
+`modules::MODULES: &[Module]`, one entry per module: `path` and `prefix`,
+`source` (the Crow file, where there is one), `loads` (what its import
+brings beside its parent: `db` its drivers), `needs` (the runtime crates
+and their features), `internal` (`sys`, a driver), `docs` (the sentence
+its book page opens with), `under` (the module whose section documents
+it: web's modules), `driver` (a backend's name, URL schemes and row
+prefix), `module` (its registry object: `Named`, every function a row by
+name; math's with its constants; db's with its own arms). Four flags
+transcribe lists the compiler had kept apart, each named for what its
+readers make of it, to be unified when their readers are understood:
+`registry` (a bare `use` makes its names), `known` (the tooling knows its
+functions without an import), `pinned` (a qualified call is its bare call
+in the emitter), `typed` (a qualified call is typed through the registry).
+What reads it: `crow_source`, `crow_modules`, `module_by_path`,
+`every_module_function`, `with_stdlib`, the inliner's parents and
+prefixes, the `use` chain of `type_infer/classify.rs` (one loop: the
+module, its parent, what it loads), the qualified-call rules of `rules.rs`,
+`is_standard_module`, the suggestions and `known_module` of `checks.rs`,
+`load_module` and `read_uses` of the emitter, its pinned modules, the
+tables and page intros of `crow test --docs` (`names_of`: a module's rows
+and forms and those documented under it), the table's drift test, the
+drivers' bridge. Gone with it: the ten per-module Rust files that were
+registration boilerplate (`bits.rs`, `chart.rs`, `doc.rs`, `frame.rs`,
+`io.rs`, `llm.rs`, `nn.rs`, `stats.rs`, `sys.rs`, `web.rs`), the hand lists
+`DB_FUNCTIONS`, `WEB_FUNCTIONS`, `WS_FUNCTIONS`, `MAIL_FUNCTIONS`,
+`AUTH_FUNCTIONS`, `CLICKHOUSE_FUNCTIONS`, `POSTGRES_FUNCTIONS`. `crow test
+--modules` runs every Crow-written module's own tests from the manifest.
 
 ### The ratchet
 
@@ -191,8 +235,22 @@ table itself is scanned outside its `ROWS` array.
 ### Held by
 
 The whole gate, unchanged in outcome: no program behaves differently.
-Each list's deletion is a commit of its own, so a regression names the
-list.
+
+### As built (2026-10-18)
+
+The ratchet went from 2,866 names to 2,069, and from 206 module-crate
+references to 205. Every list named in the row table above is gone, with
+`builtin_arity_ok`, `OWN_FORM`, `MODULE_OWN_FORM`, the hand-kept function
+lists of db and web's modules, and ten per-module Rust files. What stays
+in the compiler on purpose, each for a later phase: `route` (its `GET` is
+a positional parameter in the middle), `page` (a kinds check), `fill` (a
+positional that `how` replaces), `decimal` (a nested conversion), the
+core's five dual forms and the language's `type`, `assert` and `error` in
+the interpreter's own arms, the derivative implementations keyed by name
+(a derivative per row, phase 6), `RUNTIME_TABLE`, and `form()`'s names for
+the hidden rows the lowering writes. The manifest's four flags
+(`registry`, `known`, `pinned`, `typed`) transcribe lists that disagreed;
+their readers are to be understood and the flags unified.
 
 ## 5. Phase 2 — a Crow-written module's functions are its declaration
 

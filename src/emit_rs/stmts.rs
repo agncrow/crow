@@ -633,7 +633,7 @@ impl Emitter {
             return;
         }
         if call_name(e).as_deref() == Some("gpu") && super::program::call_args(e).len() <= 1 && matches!(e, Expr::Call { target: Target::Runtime(_), .. }) {
-            self.runtime_features.insert("gpu".to_string());
+            self.note_feature("gpu");
             self.needs_crow_runtime = true;
             self.line("crow_runtime::gpu::set_gpu_enabled(true);");
             return;

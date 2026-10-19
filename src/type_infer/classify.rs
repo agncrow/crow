@@ -109,84 +109,14 @@ impl TypeContext {
                             self.bare_modules.insert(path.clone());
                         }
                     }
-                    if path == "math" {
-                        if !self.registry.is_loaded("math") {
-                            self.registry.load(std::sync::Arc::new(crate::modules::math::MathModule));
+                    // the module, what its import brings (its parent, what
+                    // it loads: a driver, a module of web's), each once
+                    for p in crate::modules::brought_by(path).into_iter().chain(std::iter::once(path.as_str())) {
+                        if !self.registry.is_loaded(p)
+                            && let Some(m) = crate::modules::module_by_path(p)
+                        {
+                            self.registry.load(m);
                         }
-                    }
-                    if path == "math.stats" {
-                        if !self.registry.is_loaded("math") {
-                            self.registry.load(std::sync::Arc::new(crate::modules::math::MathModule));
-                        }
-                        if !self.registry.is_loaded("math.stats") {
-                            self.registry.load(std::sync::Arc::new(crate::modules::stats::StatsModule));
-                        }
-                    }
-                    if path == "math.nn" {
-                        if !self.registry.is_loaded("math") {
-                            self.registry.load(std::sync::Arc::new(crate::modules::math::MathModule));
-                        }
-                        if !self.registry.is_loaded("math.nn") {
-                            self.registry.load(std::sync::Arc::new(crate::modules::nn::NnModule));
-                        }
-                    }
-                    if path == "io" {
-                        if !self.registry.is_loaded("io") {
-                            self.registry.load(std::sync::Arc::new(crate::modules::io::IoModule));
-                        }
-                    }
-                    if path == "sys" {
-                        if !self.registry.is_loaded("sys") {
-                            self.registry.load(std::sync::Arc::new(crate::modules::sys::SysModule));
-                        }
-                    }
-                    if path == "frame" {
-                        if !self.registry.is_loaded("frame") {
-                            self.registry.load(std::sync::Arc::new(crate::modules::frame::FrameModule));
-                        }
-                    }
-                    if path == "doc" {
-                        if !self.registry.is_loaded("doc") {
-                            self.registry.load(std::sync::Arc::new(crate::modules::doc::DocModule));
-                        }
-                    }
-                    if path == "bits" {
-                        if !self.registry.is_loaded("bits") {
-                            self.registry.load(std::sync::Arc::new(crate::modules::bits::BitsModule));
-                        }
-                    }
-                    if path == "chart" {
-                        if !self.registry.is_loaded("chart") {
-                            self.registry.load(std::sync::Arc::new(crate::modules::chart::ChartModule));
-                        }
-                    }
-                    if path == "db" {
-                        if !self.registry.is_loaded("db") {
-                            self.registry.load(std::sync::Arc::new(crate::modules::db::DbModule));
-                        }
-                        // the drivers written in Crow, whose rows db's calls reach
-                        if !self.registry.is_loaded("db.clickhouse") {
-                            self.registry.load(std::sync::Arc::new(crate::modules::db::ClickhouseDriver));
-                        }
-                        if !self.registry.is_loaded("db.postgres") {
-                            self.registry.load(std::sync::Arc::new(crate::modules::db::PostgresDriver));
-                        }
-                    }
-                    // web and its modules answer the names written in Crow
-                    if (path == "web" || path.starts_with("web.")) && !self.registry.is_loaded("web") {
-                        self.registry.load(std::sync::Arc::new(crate::modules::web::WebModule));
-                    }
-                    if path == "web.auth" && !self.registry.is_loaded("web.auth") {
-                        self.registry.load(std::sync::Arc::new(crate::modules::web::AuthModule));
-                    }
-                    if path == "web.ws" && !self.registry.is_loaded("web.ws") {
-                        self.registry.load(std::sync::Arc::new(crate::modules::web::WsModule));
-                    }
-                    if path == "web.mail" && !self.registry.is_loaded("web.mail") {
-                        self.registry.load(std::sync::Arc::new(crate::modules::web::MailModule));
-                    }
-                    if path == "llm" && !self.registry.is_loaded("llm") {
-                        self.registry.load(std::sync::Arc::new(crate::modules::llm::LlmModule));
                     }
                 }
                 _ => {}
@@ -368,7 +298,7 @@ impl TypeContext {
             // is written as its return.
             fn assigns_any(stmts: &[Stmt], names: &std::collections::BTreeSet<String>) -> bool {
                 stmts.iter().any(|st| match st {
-                    Stmt::ExprStmt(Expr::Call { callee, .. }) | Stmt::Return(Some(Expr::Call { callee, .. })) if matches!(callee.as_ref(), Expr::Ident(n) if SESSION_EFFECTS.contains(&n.as_str())) => true,
+                    Stmt::ExprStmt(Expr::Call { callee, .. }) | Stmt::Return(Some(Expr::Call { callee, .. })) if matches!(callee.as_ref(), Expr::Ident(n) if crate::table::has(n, crate::table::Prop::Session)) => true,
                     Stmt::Assign { name, .. } => names.contains(name),
                     Stmt::MultiAssign { names: ns, .. } => ns.iter().any(|n| names.contains(n)),
                     Stmt::If { then_body, else_body, .. } => assigns_any(then_body, names) || else_body.as_ref().map_or(false, |eb| assigns_any(eb, names)),

@@ -287,7 +287,7 @@ the oracle.
   a module function with a row is its runtime function for the
   interpreter, the emitter and inference alike.
 - The drift test: every core builtin is a row, has a form of its own
-  (`OWN_FORM`), or is still to move (`TO_MOVE`, which only shrinks).
+  (`table::FORMS`), or is still to move (`TO_MOVE`, which only shrinks).
 
 **Batch 1**: `moment`, `calendar`, `parse_time`, `repeat`, `matches` and
 `sub`, with parity 105.
@@ -535,7 +535,7 @@ are still written twice.
 `lines` and `math.load` — and `doc`'s six functions, with parity 117. An
 effect's call is the IR's `Effect`, which the session layer performs (held
 to a handler's commit, recorded in a rehearsal); the call inside it is its
-row now, in both modes, and one list (`crate::table::READERS`) says what
+row now, in both modes, and one list (the row's `Prop::Reads`) says what
 reads the world and is stamped with the moment it was read.
 
 - `frame.save`'s failure stopped the compiled program and was an error

@@ -293,7 +293,7 @@ enum Ins {
     /// fields with it.
     Record { d: R, name: Box<str>, fields: Box<[(R, bool)]>, shape: Box<std::sync::OnceLock<super::Shape>> },
     /// `xs = push[move xs, v]` and the other builtins that make their
-    /// answer of the collection they take (`ast::IN_PLACE_BUILTINS`): the
+    /// answer of the collection they take (`Prop::InPlace`): the
     /// local taken into the row and its answer put back — the walker's
     /// in-place path, without resolving the row again at each call.
     InPlace { d: R, row: &'static crate::table::Row, rest: Box<[(R, bool)]>, propagates: bool },
@@ -737,7 +737,7 @@ impl Comp {
                 if moves_first(var, expr)
                     && let Expr::Call { target: Target::Row(row), args, propagates, .. } = expr
                     && row.module.is_empty()
-                    && crate::ast::IN_PLACE_BUILTINS.contains(&row.name)
+                    && row.props.contains(&crate::table::Prop::InPlace)
                     && row.params.first().is_some_and(|k| k.owned())
                     && let Some(d) = self.resolve(var)
                 {

@@ -151,12 +151,6 @@ pub enum Expr {
     },
 }
 
-/// The collection builtins that take their collection by value in the
-/// runtime (`crow_runtime::core`), so `x = f[x, …]` can move `x` in; and
-/// the text builtins whose taken form changes the text where it lies
-/// (`table::taken_path`, the interpreter's `take` bridges).
-pub const IN_PLACE_BUILTINS: &[&str] = &["push", "pop", "sort", "reverse", "concat", "set", "del", "replace", "upper", "lower", "__set_at", "__set_part"];
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BinOp {
     Add,

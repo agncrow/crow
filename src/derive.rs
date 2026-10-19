@@ -71,9 +71,6 @@ fn is_handle_or_source(e: &Expr) -> bool {
     false
 }
 
-/// The elements that bind a fact to an input: the reader's typing writes
-/// the second argument, per session, with no handler in between.
-const BOUND_INPUTS: &[&str] = &["field", "slider", "checkbox", "toggle", "radio", "tabs", "select"];
 
 /// The facts a session writes — assigned by a handler or a helper a
 /// handler calls, or bound to an input in a view. Every other fact is a
@@ -113,9 +110,11 @@ pub fn written_facts(fns: &BTreeMap<String, Vec<Stmt>>, facts: &BTreeSet<String>
     fn walk_e(e: &Expr, facts: &BTreeSet<String>, out: &mut BTreeSet<String>) {
         match e {
             Expr::Call { callee, args } => {
+                // (a control binds a fact to an input: the reader's typing
+                // writes it, per session, with no handler in between)
                 if let Expr::Ident(n) = callee.as_ref() {
-                    if BOUND_INPUTS.contains(&n.as_str()) {
-                        if let Some(Expr::Ident(v)) = args.get(1) { if facts.contains(v) { out.insert(v.clone()); } }
+                    if let Some(i) = crate::table::binds(n) {
+                        if let Some(Expr::Ident(v)) = args.get(i) { if facts.contains(v) { out.insert(v.clone()); } }
                     }
                 }
                 walk_e(callee, facts, out);
@@ -182,7 +181,7 @@ pub fn session_written(stmts: &[Stmt], facts: &BTreeSet<String>) -> BTreeMap<Str
 
 /// A data source's binding: `fetch[url]` or `poll[url, secs]`.
 fn is_source(e: &Expr) -> bool {
-    matches!(e, Expr::Call { callee, args } if matches!(callee.as_ref(), Expr::Ident(n) if (n == "fetch" && args.len() == 1) || (n == "poll" && args.len() == 2)))
+    matches!(e, Expr::Call { callee, args } if matches!(callee.as_ref(), Expr::Ident(n) if crate::table::source(n, args.len())))
 }
 
 /// The fact an address names — a part's by its path (`session.day`) or its

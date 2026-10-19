@@ -14,7 +14,7 @@ use crate::value::{CrowValue, Value};
 /// the draws from the random generator (crate::ir::DRAWS), and what reads
 /// the file system or the session's state without being an effect.
 fn impure_builtin(name: &str) -> bool {
-    crate::ir::is_effect(name) || crate::ir::DRAWS.contains(&name) || matches!(name, "exists" | "running" | "captured")
+    crate::ir::is_effect(name) || crate::table::has(name, crate::table::Prop::Draws) || matches!(name, "exists" | "running" | "captured")
 }
 
 
@@ -531,7 +531,6 @@ pub fn run_determinism_probe(
 /// of these freezes the whole app for everyone (the asyncio-event-loop bug
 /// class: slow work executed directly on the loop). Deliberately excludes
 /// `query`/`exec`: render-time database reads are the blessed derive idiom.
-const BLOCKING_BUILTINS: &[&str] = &["sleep", "input", "shell"];
 
 /// For each view and event handler, find a call path to a blocking builtin.
 pub fn find_blocking_in_views(
@@ -642,7 +641,7 @@ fn reach_blocking(
     }
     let callees = call_graph.get(fn_name)?;
     for c in callees {
-        if BLOCKING_BUILTINS.contains(&c.as_str()) {
+        if crate::table::has(c, crate::table::Prop::Blocks) {
             let mut chain = path.clone();
             chain.push(c.clone());
             return Some((c.clone(), chain));
@@ -976,8 +975,8 @@ pub fn find_unguarded_staleness(stmts: &[Stmt]) -> Vec<Issue> {
         match e {
             Expr::Call { callee, args } => {
                 let named = match callee.as_ref() {
-                    Expr::Ident(n) => crate::table::READERS.contains(&n.as_str()),
-                    Expr::FieldAccess { field, .. } => crate::table::READERS.contains(&field.as_str()),
+                    Expr::Ident(n) => crate::table::has(n, crate::table::Prop::Reads),
+                    Expr::FieldAccess { field, .. } => crate::table::has(field, crate::table::Prop::Reads),
                     _ => false,
                 };
                 named || args.iter().any(calls_reader)
