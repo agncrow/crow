@@ -204,13 +204,13 @@ impl<'c> Uses<'c> {
                     env.body = name.clone();
                     self.walk_block(body, &mut env);
                 }
-                S::TestBlock { .. } | S::StructDecl { .. } | S::Use { .. } | S::Resource { .. } => {}
+                S::TestBlock { .. } | S::StructDecl { .. } | S::Use { .. } => {}
                 _ => {}
             }
         }
         let mut env = Env::new(top.iter().map(|n| (n.clone(), (TOP.to_string(), n.clone()))).collect());
         env.body = TOP.to_string();
-        let main: Vec<S> = stmts.iter().filter(|s| !matches!(s, S::FnDecl { .. } | S::Derive { .. } | S::TestBlock { .. } | S::StructDecl { .. } | S::Use { .. } | S::Resource { .. })).cloned().collect();
+        let main: Vec<S> = stmts.iter().filter(|s| !matches!(s, S::FnDecl { .. } | S::Derive { .. } | S::TestBlock { .. } | S::StructDecl { .. } | S::Use { .. })).cloned().collect();
         self.walk_block(&main, &mut env);
     }
 
@@ -302,7 +302,7 @@ impl<'c> Uses<'c> {
                 self.walk_expr(object, env);
                 self.walk_expr(value, env);
             }
-            S::FnDecl { .. } | S::Derive { .. } | S::TestBlock { .. } | S::StructDecl { .. } | S::Use { .. } | S::Resource { .. } | S::Return(None) | S::Break | S::Continue => {}
+            S::FnDecl { .. } | S::Derive { .. } | S::TestBlock { .. } | S::StructDecl { .. } | S::Use { .. } | S::Return(None) | S::Break | S::Continue => {}
         }
     }
 

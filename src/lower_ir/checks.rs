@@ -38,10 +38,6 @@ pub(crate) const WEB_RESERVED: &[&str] = &[
     "reader", "sign_in", "sign_out", "download", "downloads",
 ];
 
-/// Web builtins the compiler implements but deliberately does NOT reserve
-/// (the response encoders are rarely-collided names). Listed so `crow test
-/// --docs` can hold the spec to them.
-pub(crate) const WEB_EXTRA_FUNCTIONS: &[&str] = &["arrow", "bytes", "stream"];
 
 /// The web module's modules, `use web.auth` and the rest: what web does
 /// beyond serving pages and routes (spec, web). A server's options are
@@ -70,7 +66,6 @@ pub(crate) static BUILTINS: std::sync::LazyLock<Vec<&'static str>> = std::sync::
     let mut names: Vec<&'static str> = CORE_RESERVED.iter().copied().collect();
     names.extend(crate::table::ROWS.iter().filter(|r| r.module.is_empty() && r.name.starts_with("__")).map(|r| r.name));
     names.extend(WEB_RESERVED.iter().copied());
-    names.extend(WEB_EXTRA_FUNCTIONS.iter().copied());
     names.extend(UI_RESERVED.iter().copied());
     names.extend(MODULE_BARE.iter().copied());
     names.extend(INTERNAL_FORMS.iter().copied());
@@ -299,13 +294,15 @@ impl<'a> Lowerer<'a> {
     /// reservation is file-scoped, so a variable assigned above the `use`
     /// line is still checked against it.
     pub(super) fn prescan(&mut self, stmts: &[S], known: &HashSet<String>) {
-        self.v.ui_mode = self.ctx.bare_modules.contains("ui");
+        // (a ui program imports `ui` or `web.ui`: the lowering reads both,
+        // and this check had read `ui` alone)
+        self.v.ui_mode = self.ctx.bare_modules.contains("ui") || self.ctx.bare_modules.contains("web.ui");
         let mut line = 0usize;
         for s in stmts {
             match s {
                 S::Line(n) => line = *n,
                 S::Use { path, alias } => {
-                    if path == "ui" {
+                    if path == "ui" || path == "web.ui" {
                         self.v.ui_mode = true;
                     }
                     // a module there is no file for and no standard module
@@ -1861,13 +1858,11 @@ pub(crate) fn moment_field_name(field: &str) -> bool {
 
 /// Whether a builtin takes this many arguments (after named arguments are
 /// lowered to positions); a builtin with rows is counted by them
-/// (crate::table).
+/// (crate::table), so no arm here names one (fifteen had, unreached).
 fn builtin_arity_ok(name: &str, argc: usize) -> bool {
     match name {
-        "log" | "assert" => argc >= 1,
+        "assert" => argc >= 1,
         "type" => argc == 1,
-        "abs" | "sqrt" | "floor" | "ceil" | "round" => argc == 1,
-        "now" => argc == 0,
         "captured" => argc == 1,
         "notice" => argc == 1,
         "__notice_text" | "__notice_at" => argc == 0,
@@ -1876,21 +1871,10 @@ fn builtin_arity_ok(name: &str, argc: usize) -> bool {
         "sign_out" | "__reader" => argc == 0,
         "__known" => argc == 1,
         "chart" => argc == 12,
-        "map" => argc == 0,
-        "args" => argc == 0,
-        "input" => argc <= 1,
-        "sleep" => argc == 1,
-        "env" => argc == 1 || argc == 2,
-        "exit" => argc <= 1,
         "error" => (1..=2).contains(&argc),
         "cpu" => argc == 1,
         "gpu" => argc <= 1,
         "grad" => argc == 1,
-        // Shell / Hash / Regex / Date
-        "shell" => argc == 1,
-        // url, method and body, then headers, query, form, files, save and
-        // timeout (the lowering fills in what a call leaves out)
-        "request" => argc == 9,
         "find" | "any" | "all" => argc == 2,
         // Web
         "route" => (2..=4).contains(&argc), // route[path, handler] / +method / path, method, handler, limit
@@ -1948,6 +1932,21 @@ mod tests {
         assert!(check_source(source).is_ok(), "{:?}", check_source(source));
         let picked = "use frame\nf = frame.new[a = [1], b = [2]]\nlog[select[f, ['a']]]\n";
         assert!(check_source(picked).is_ok(), "{:?}", check_source(picked));
+    }
+
+    /// `use web.ui` makes a ui program as `use ui` does: the lowering had
+    /// read both and this check `ui` alone, so an element outside a view
+    /// and a name ui reserves passed under the longer import.
+    #[test]
+    fn a_web_ui_import_is_a_ui_program() {
+        for import in ["ui", "web.ui"] {
+            let outside = format!("use web, {import}\n\nfn home[]\n    return div['x']\n\npage['/', home]\nserve[3000]\n");
+            let refused = check_source(&outside).expect_err("an element outside a view is refused");
+            assert!(refused.contains("can only be used inside a view block"), "{import}: {refused}");
+            let reserved = format!("use web, {import}\n\nfield = 3\nlog[field]\n");
+            let refused = check_source(&reserved).expect_err("a name ui reserves is refused");
+            assert!(refused.contains("is a ui builtin"), "{import}: {refused}");
+        }
     }
 
     #[test]

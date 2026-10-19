@@ -88,11 +88,6 @@ pub enum Stmt {
         /// alias (Python import-as semantics); None = default import
         alias: Option<String>,
     },
-    /// Resource control: cpu[n] or gpu[n]
-    Resource {
-        kind: String, // "cpu" or "gpu"
-        count: Expr,
-    },
     /// Break out of a loop
     Break,
     /// Continue to next loop iteration

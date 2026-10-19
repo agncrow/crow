@@ -1,6 +1,5 @@
 //! Expressions.
 
-use super::program::map_literal_pairs;
 use super::*;
 
 /// A string as a Rust literal: `"…".to_string()`.
@@ -2988,7 +2987,6 @@ impl Emitter {
             return format!("{{ {} let _r = {}({}); {} _r }}", bound.join(" "), Self::rust_fn_name(name), passed.join(", "), stop);
         }
         // a helper outside the handler class that a render calls with no state
-        let _ = map_literal_pairs;
         let call = format!("{}({})", Self::rust_fn_name(name), all.join(", "));
         self.at_call_line(name, call)
     }

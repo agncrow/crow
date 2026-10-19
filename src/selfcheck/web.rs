@@ -578,7 +578,7 @@ mod tests {
     /// says answers no route: a new one is classified before the check runs.
     #[test]
     fn every_name_web_reserves_is_classified() {
-        for name in crate::lower_ir::WEB_RESERVED.iter().chain(crate::lower_ir::WEB_EXTRA_FUNCTIONS) {
+        for name in crate::lower_ir::WEB_RESERVED {
             assert!(RESPONSES.contains(name) || NOT_RESPONSES.contains(name), "web reserves '{}': a response the routes family asks (RESPONSES), or one that answers no route (NOT_RESPONSES)", name);
         }
         for name in RESPONSES.iter().filter(|n| **n != "json") {

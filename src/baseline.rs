@@ -330,7 +330,7 @@ impl<'m, 'a> Walker<'m, 'a> {
             i += 1;
             let rest = &stmts[i..];
             match st {
-                Stmt::Line(_) | Stmt::Use { .. } | Stmt::StructDecl { .. } | Stmt::Resource { .. } | Stmt::TestBlock { .. } | Stmt::Derive { .. } | Stmt::FnDecl { .. } => {}
+                Stmt::Line(_) | Stmt::Use { .. } | Stmt::StructDecl { .. } | Stmt::TestBlock { .. } | Stmt::Derive { .. } | Stmt::FnDecl { .. } => {}
                 Stmt::Assign { name, value } => self.assign(name, value, &mut env, &mut path),
                 Stmt::MultiAssign { names, values } => {
                     // every right side reads the state before any left side moves

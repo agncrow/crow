@@ -469,7 +469,6 @@ impl<'a> Namer<'a> {
                 let value = self.expr(value)?;
                 Stmt::IndexAssign { object: self.expr(object)?, index, value }
             }
-            Stmt::Resource { kind, count } => Stmt::Resource { kind, count: self.expr(count)? },
             other => other,
         })
     }
@@ -687,7 +686,6 @@ fn narrow_stmt(s: Stmt, known: &BTreeSet<String>) -> Stmt {
         // the object of an assignment is a place, not a read
         Stmt::FieldAssign { object, field, value } => Stmt::FieldAssign { object, field, value: e(value) },
         Stmt::IndexAssign { object, index, value } => Stmt::IndexAssign { object, index: e(index), value: e(value) },
-        Stmt::Resource { kind, count } => Stmt::Resource { kind, count: e(count) },
         other => other,
     }
 }
@@ -836,17 +834,11 @@ impl Lowerer {
         Ok(out)
     }
 
-    /// Whether a name the program calls through is one of its imports, of
-    /// the standard module given (`frame`, or `f` for `use frame as f`).
+    /// Whether the file whose code this is imports a module, under any name.
     /// Each file's imports are its own: in the entry's code a module only a
     /// part imports is not imported (the entry's `frame.new[…]` had been
     /// rewritten into its `with` chain on the part's import, and refused
     /// as `with`); inside a part's function the part's own import serves.
-    fn imports_module(&self, name: &str, module: &str) -> bool {
-        self.imports.get(name).is_some_and(|p| p == module) && self.module_imported(name)
-    }
-
-    /// Whether the file whose code this is imports a module, under any name.
     fn imports_path(&self, module: &str) -> bool {
         self.imports.iter().any(|(alias, path)| path == module && self.module_imported(alias))
     }

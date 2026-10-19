@@ -22,7 +22,7 @@ mod frames;
 pub(crate) mod schema;
 mod shapes;
 pub(crate) mod uses;
-pub(crate) use checks::{is_standard_module, slips, BUILTINS, CORE_RESERVED, UI_RESERVED, WEB_EXTRA_FUNCTIONS, WEB_RESERVED};
+pub(crate) use checks::{is_standard_module, slips, BUILTINS, CORE_RESERVED, UI_RESERVED, WEB_RESERVED};
 
 /// Lower a whole (expanded, lowered, inferred) program.
 pub fn lower(stmts: &[S], ctx: &mut TypeContext, part_name: &str) -> Result<Program, String> {
@@ -1138,7 +1138,7 @@ impl<'a> Lowerer<'a> {
                     self.provisional(Pass::Scan, Some(HashSet::new()), body);
                     self.ctx.leave_derive_scan(scan);
                 }
-                S::TestBlock { .. } | S::StructDecl { .. } | S::Use { .. } | S::Resource { .. } => {}
+                S::TestBlock { .. } | S::StructDecl { .. } | S::Use { .. } => {}
                 other => {
                     self.at = Where::Top;
                     self.current_fn = "<main>".to_string();
@@ -1238,7 +1238,7 @@ impl<'a> Lowerer<'a> {
         self.ctx.registry.enter(&self.current_fn);
         for s in stmts {
             match s {
-                S::FnDecl { .. } | S::Derive { .. } | S::TestBlock { .. } | S::StructDecl { .. } | S::Use { .. } | S::Resource { .. } => {}
+                S::FnDecl { .. } | S::Derive { .. } | S::TestBlock { .. } | S::StructDecl { .. } | S::Use { .. } => {}
                 other => {
                     self.provisional(Pass::Settle, None, std::slice::from_ref(other));
                 }
@@ -1317,13 +1317,6 @@ impl<'a> Lowerer<'a> {
                         Some(a) => format!("{} as {}", path, a),
                         None => path.clone(),
                     });
-                }
-                S::Resource { kind, count } => {
-                    let n = if let A::Int(n) = count { *n } else { 0 };
-                    match kind.as_str() {
-                        "gpu" => part.gpu = Some(n),
-                        _ => part.cpu = Some(n),
-                    }
                 }
                 S::StructDecl { name, fields } => {
                     self.check_struct(name, fields);
@@ -2664,7 +2657,6 @@ impl<'a> Lowerer<'a> {
             S::Derive { name, .. } => return Err(format!("lowering: a derivation ('{}') inside a body", name)),
             S::TestBlock { .. } => return Err("lowering: a test block inside a body".into()),
             S::Use { path, .. } => return Err(format!("lowering: use '{}' inside a body", path)),
-            S::Resource { .. } => vec![],
         })
     }
 

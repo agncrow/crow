@@ -970,14 +970,14 @@ pub fn check_style_tokens(css_path: &str) -> Vec<(String, String)> {
 /// guard anywhere. This is the propagation the runtime deliberately does
 /// not carry: capture lives on the read, the checker traces the flow.
 pub fn find_unguarded_staleness(stmts: &[Stmt]) -> Vec<Issue> {
-    const READERS: &[&str] = &["query", "read", "fetch", "recv", "load", "csv", "lines", "input", "ls"];
-
+    // (the readers are the table's — a second list here had lacked env,
+    // shell and request)
     fn calls_reader(e: &Expr) -> bool {
         match e {
             Expr::Call { callee, args } => {
                 let named = match callee.as_ref() {
-                    Expr::Ident(n) => READERS.contains(&n.as_str()),
-                    Expr::FieldAccess { field, .. } => READERS.contains(&field.as_str()),
+                    Expr::Ident(n) => crate::table::READERS.contains(&n.as_str()),
+                    Expr::FieldAccess { field, .. } => crate::table::READERS.contains(&field.as_str()),
                     _ => false,
                 };
                 named || args.iter().any(calls_reader)

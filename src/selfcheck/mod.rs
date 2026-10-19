@@ -3018,10 +3018,6 @@ fn form_of_stmt(st: &crate::ast::Stmt, seen: &mut BTreeSet<String>) {
             "TestBlock"
         }
         S::Use { .. } => "Use",
-        S::Resource { count, .. } => {
-            form_of_expr(count, seen);
-            "Resource"
-        }
         S::Break => "Break",
         S::Continue => "Continue",
         S::Line(_) => "Line",

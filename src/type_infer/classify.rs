@@ -189,13 +189,6 @@ impl TypeContext {
                         self.registry.load(std::sync::Arc::new(crate::modules::llm::LlmModule));
                     }
                 }
-                Stmt::Resource { kind, count } => {
-                    if kind == "cpu" {
-                        if let Expr::Int(n) = count {
-                            self.cpu_count = Some(*n as usize);
-                        }
-                    }
-                }
                 _ => {}
             }
         }

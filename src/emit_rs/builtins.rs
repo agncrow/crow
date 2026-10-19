@@ -47,15 +47,6 @@ impl Emitter {
         }
     }
 
-    fn note_db_backend(&mut self, url: &str) {
-        // a URL the source does not spell — read from the environment, a
-        // file, a parameter — could name any backend, so the program is
-        // built with each (it had been built with sqlite alone, and
-        // `connect[env['DATABASE_URL']]` was refused at run time)
-        // (the ClickHouse and Postgres drivers are written in Crow: no
-        // feature of the crate names them; sqlite is the crate's)
-        let _ = url;
-    }
 
     /// SQL parameters: each element of a literal list binds as its own
     /// value; a fallible element reports itself before the statement runs.
@@ -220,11 +211,7 @@ impl Emitter {
     pub(crate) fn module_call(&mut self, m: &str, f: &str, args: &[Expr], arg_strs: &[String], whole: &Expr) -> String {
         if m == "db" && self.needs_crow_db {
             match f {
-                "connect" => {
-                    let url = arg_strs.first().cloned().unwrap_or_default();
-                    self.note_db_backend(&url);
-                    return self.db_connect(args, arg_strs);
-                }
+                "connect" => return self.db_connect(args, arg_strs),
                 "query" if arg_strs.len() >= 2 => return self.db_query(&arg_strs[0], &arg_strs[1], &args[2..]),
                 "describe" if arg_strs.len() == 2 => return self.db_describe(&arg_strs[0], &arg_strs[1]),
                 "exec" if arg_strs.len() >= 2 => return self.db_exec(&arg_strs[0], &arg_strs[1], &args[2..]),
@@ -711,10 +698,7 @@ impl Emitter {
             // program uses: a web program's URL built at run time
             // (`connect[env['DATABASE_URL']]`) had compiled to a call to
             // nothing, from when web's socket client was `connect` too
-            "connect" if db => {
-                self.note_db_backend(&a[0]);
-                self.db_connect(args, a)
-            }
+            "connect" if db => self.db_connect(args, a),
             "query" if db && n >= 2 => self.db_query(&a[0], &a[1], &args[2..]),
             "describe" if db && n == 2 => self.db_describe(&a[0], &a[1]),
             "exec" if db && n >= 2 => self.db_exec(&a[0], &a[1], &args[2..]),
@@ -776,10 +760,5 @@ impl Emitter {
         let mut found = self.reactive_vars.keys().filter(|k| k.ends_with(&suffix));
         let first = found.next()?.clone();
         found.next().is_none().then_some(first)
-    }
-
-    #[allow(dead_code)]
-    fn string_lit(s: &str) -> String {
-        rust_str_lit(s)
     }
 }

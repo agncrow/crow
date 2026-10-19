@@ -23,8 +23,8 @@ src/ir_verify.rs	10	0
 src/kernel.rs	16	0
 src/lexer.rs	1	0
 src/lower.rs	176	0
-src/lower_ir.rs	130	1
-src/lower_ir/checks.rs	239	5
+src/lower_ir.rs	129	1
+src/lower_ir/checks.rs	222	5
 src/lower_ir/frames.rs	77	0
 src/lower_ir/fuse.rs	5	0
 src/lower_ir/grad.rs	46	0
@@ -56,7 +56,7 @@ src/token.rs	1	0
 src/totality.rs	5	0
 src/type_infer.rs	27	11
 src/type_infer/calls.rs	11	0
-src/type_infer/classify.rs	49	0
+src/type_infer/classify.rs	48	0
 src/type_infer/frames.rs	10	5
 src/type_infer/rules.rs	111	0
 src/type_infer/settle.rs	0	0

@@ -493,7 +493,6 @@ pub struct TypeContext {
     /// fn name → [(signature, mangled clone name)] for specialized functions
     pub specializations: BTreeMap<String, Vec<(Vec<Ty>, String)>>,
     pub structs: BTreeMap<String, StructSig>,
-    pub cpu_count: Option<usize>,
     /// Module registry for generic type dispatch
     pub registry: crate::modules::ModuleRegistry,
     /// Connection variables bound to a literal URL (`pg = db.connect['...']`),
@@ -608,7 +607,6 @@ impl TypeContext {
             module_aliases: BTreeMap::new(),
             specializations: BTreeMap::new(),
             structs,
-            cpu_count: None,
             registry: crate::modules::ModuleRegistry::new(),
             conn_urls: Vec::new(),
             ddl: Vec::new(),

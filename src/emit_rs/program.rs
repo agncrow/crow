@@ -1759,20 +1759,6 @@ impl Emitter {
     }
 
     fn emit_synthetic_types(&mut self) {
-        if self.needs_time_result {
-            for l in [
-                "",
-                "#[allow(dead_code)]",
-                "fn __crow_time_result(r: Result<f64, String>) -> CrowResult<f64> {",
-                "    match r {",
-                "        Ok(t) => CrowResult { ok: true, value: t, reason: String::new(), kind: String::new(), trace: Vec::new(), captured: 0.0 },",
-                "        Err(e) => CrowResult { ok: false, value: 0.0, reason: e, kind: \"time\".to_string(), trace: Vec::new(), captured: 0.0 },",
-                "    }",
-                "}",
-            ] {
-                self.line(l);
-            }
-        }
         if self.needs_find_struct {
             self.needs_crow_runtime = true;
             self.line("");

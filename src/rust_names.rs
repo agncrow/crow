@@ -136,7 +136,6 @@ fn collect_stmt(s: &Stmt, declared: &mut BTreeSet<String>, seen: &mut BTreeSet<S
             collect_expr(index, declared, seen);
             collect_expr(value, declared, seen);
         }
-        Stmt::Resource { count, .. } => collect_expr(count, declared, seen),
         Stmt::StructDecl { name, .. } => {
             seen.insert(name.clone());
         }
@@ -336,7 +335,6 @@ fn rename_stmt(s: &mut Stmt, renames: &BTreeMap<String, String>, global: &BTreeS
             rename_expr(index, renames, &v);
             rename_expr(value, renames, &v);
         }
-        Stmt::Resource { count, .. } => rename_expr(count, renames, &v),
         _ => {}
     }
 }

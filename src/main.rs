@@ -844,7 +844,7 @@ fn cmd_test_docs() {
     });
     let mut tables: Vec<(&str, Vec<&str>)> = vec![
         ("core", lower_ir::CORE_RESERVED.to_vec()),
-        ("web", lower_ir::WEB_RESERVED.iter().chain(lower_ir::WEB_EXTRA_FUNCTIONS.iter()).copied().collect()),
+        ("web", lower_ir::WEB_RESERVED.to_vec()),
         ("ui", lower_ir::UI_RESERVED.to_vec()),
         ("element", lower::UI_ELEMENTS.to_vec()),
         ("control", lower::UI_CONTROLS.to_vec()),
@@ -2025,9 +2025,6 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     }
     if emitted.needs_regex {
         dep_list.push("regex = \"1\"".to_string());
-    }
-    if emitted.needs_chrono {
-        dep_list.push("chrono = \"0.4\"".to_string());
     }
     if emitted.needs_crow_web {
         let web_path = format!("{}/crow_web", rt_dir);
@@ -5227,7 +5224,6 @@ fn rename_locals(st: &mut ast::Stmt, map: &std::collections::BTreeMap<String, St
             rename_locals_expr(index, map);
             rename_locals_expr(value, map);
         }
-        ast::Stmt::Resource { count, .. } => rename_locals_expr(count, map),
         _ => {}
     }
 }
@@ -5324,7 +5320,6 @@ fn visit_exprs_mut(st: &mut ast::Stmt, f: &mut dyn FnMut(&mut ast::Expr)) {
             expr(index, f);
             expr(value, f);
         }
-        ast::Stmt::Resource { count, .. } => expr(count, f),
         _ => {}
     }
 }
@@ -5868,7 +5863,6 @@ pub(crate) fn rewrite_refs_stmt(
             rewrite_refs_expr(index, map, shadowed);
             rewrite_refs_expr(value, map, shadowed);
         }
-        ast::Stmt::Resource { count, .. } => rewrite_refs_expr(count, map, shadowed),
         _ => {}
     }
 }

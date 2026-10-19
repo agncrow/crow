@@ -1179,7 +1179,6 @@ impl Walk {
                 _ => None,
             },
             Expr::Index { base, .. } => self.read_place(base).map(|p| Place::Items(Box::new(p))),
-            Expr::Call { target: Target::Row(row), args, .. } if row.name == "get" => args.first().and_then(|m| self.read_place(m)).map(|p| Place::Items(Box::new(p))),
             _ => None,
         }
     }
@@ -1919,8 +1918,8 @@ fn bits_span(a: Iv, b: Iv) -> Iv {
 fn row_iv(id: &str, ivs: &[Iv]) -> Iv {
     let first = ivs.first().copied().unwrap_or(Iv::I64);
     match id {
-        "core.len" | "core.len_text" | "core.len_tensor" | "core.len_frame" | "core.len_map" | "core.len_column" | "core.len_bytes" | "core.count" => Iv::new(0, COUNT),
-        "text.find" | "core.index_of" | "sys.find" => Iv::new(-1, COUNT),
+        "core.len" | "core.len_text" | "core.len_tensor" | "core.len_frame" | "core.len_map" | "core.len_column" | "core.len_bytes" => Iv::new(0, COUNT),
+        "sys.find" => Iv::new(-1, COUNT),
         "text.occurs" => Iv::new(0, COUNT),
         "core.abs_int" | "core.__abs_big" => {
             if first.lo >= 0 { first } else { Iv::new(0, first.mag()) }

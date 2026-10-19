@@ -1,6 +1,6 @@
 //! Functions, derivations and statements.
 
-use super::program::{call_name, visit_block};
+use super::program::call_name;
 use super::*;
 
 impl Emitter {
