@@ -52,13 +52,7 @@ impl TypeContext {
             None => Vec::new(),
         };
         let candidates: Vec<(String, String)> = if own.is_empty() { self.conn_urls.clone() } else { own };
-        // `...` spans → NULL
-        let mut scrubbed = String::with_capacity(sql.len());
-        let mut in_span = false;
-        for c in sql.chars() {
-            if c == '`' { if !in_span { scrubbed.push_str("NULL"); } in_span = !in_span; continue; }
-            if !in_span { scrubbed.push(c); }
-        }
+        let scrubbed = scrubbed(sql);
         let mut reasons = Vec::new();
         let mut found: Option<BTreeMap<String, Ty>> = None;
         let names: Vec<String> = candidates.iter().map(|(v, _)| v.clone()).collect();
@@ -101,6 +95,26 @@ impl TypeContext {
         found
     }
 
+}
+
+/// A statement as a database can be asked about it: each interpolated
+/// span (`` `x` ``), known only as the program runs, stands in as NULL.
+pub(crate) fn scrubbed(sql: &str) -> String {
+    let mut out = String::with_capacity(sql.len());
+    let mut in_span = false;
+    for c in sql.chars() {
+        if c == '`' {
+            if !in_span {
+                out.push_str("NULL");
+            }
+            in_span = !in_span;
+            continue;
+        }
+        if !in_span {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// A described column's kind as the type of its cells: a column that can

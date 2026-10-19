@@ -21,11 +21,11 @@ log[rows]
 log[int[rows.id[2]] * 2]
 typed = query[conn, 'SELECT ?::int8 + 1 AS n, ?::text AS t, ? AS f, ? AS b, NULL::int8 AS gone', [41, 'hi', 2.5, true]]
 log[typed]
-made = exec[conn, 'CREATE TABLE IF NOT EXISTS wire (k TEXT, v INT, w FLOAT8)']
-log[made]
-log[exec[conn, 'DELETE FROM wire']]
-log[exec[conn, 'INSERT INTO wire (k, v) VALUES (?, ?), (?, ?)', ['a', 1, 'b', 2]]]
-log[exec[conn, 'UPDATE wire SET v = v + 1']]
+made = query[conn, 'CREATE TABLE IF NOT EXISTS wire (k TEXT, v INT, w FLOAT8)']
+log[len[made]]
+log[len[query[conn, 'DELETE FROM wire RETURNING k']]]
+log[len[query[conn, 'INSERT INTO wire (k, v) VALUES (?, ?), (?, ?) RETURNING k', ['a', 1, 'b', 2]]]]
+log[len[query[conn, 'UPDATE wire SET v = v + 1 RETURNING k']]]
 f = frame.new[]
 f = with[f, 'k', ['c', 'd,e']]
 f = with[f, 'v', [3, 4]]
@@ -38,10 +38,10 @@ bad = query[conn, 'SELECT nope FROM wire']
 log[bad.ok]
 log[bad.reason]
 fn double[tx]
-    exec[tx, 'UPDATE wire SET v = v * 2']
+    query[tx, 'UPDATE wire SET v = v * 2']
 transact[conn, double]
 fn fails[tx]
-    exec[tx, 'UPDATE wire SET v = 100']
+    query[tx, 'UPDATE wire SET v = 100']
     return error['no', 'db']
 r = transact[conn, fails]
 log[r.ok]
@@ -75,7 +75,7 @@ fn the_postgres_driver_written_in_crow_speaks_to_a_cluster_in_both_modes() {
             assert!(out.status.success(), "{} {:?} failed: {}\n{}", user, mode, stdout, stderr);
             assert!(stdout.contains("[3 rows x 5 cols]\n6\n"), "the rows, typed\n{} {:?}: {}", user, mode, stdout);
             assert!(stdout.contains("42  hi  2.5  true"), "typed parameters\n{} {:?}: {}", user, mode, stdout);
-            assert!(stdout.contains("[1 rows x 5 cols]\n0\n0\n2\n2\n2\n"), "the counts of a CREATE, a DELETE, an INSERT, an UPDATE and a COPY\n{} {:?}: {}", user, mode, stdout);
+            assert!(stdout.contains("[1 rows x 5 cols]\n0\n0\n2\n2\n2\n"), "a CREATE answers no rows; the rows a DELETE, an INSERT and an UPDATE read back; a COPY's count\n{} {:?}: {}", user, mode, stdout);
             assert!(stdout.contains("d,e"), "a copied cell with a comma\n{} {:?}: {}", user, mode, stdout);
             assert!(stdout.contains("[4 rows x 3 cols]\n"), "the rows copied in beside the rows inserted\n{} {:?}: {}", user, mode, stdout);
             assert!(stdout.contains("datetime"), "describe types the server's columns\n{} {:?}: {}", user, mode, stdout);

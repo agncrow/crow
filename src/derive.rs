@@ -501,9 +501,8 @@ pub fn called_fns(body: &[Stmt], fns: &BTreeMap<String, Vec<Stmt>>) -> BTreeSet<
     out
 }
 
-/// Every table the program writes: exec and insert literals anywhere, and
-/// a query whose statement writes — `INSERT … RETURNING id` reads back the
-/// row it wrote, and the table it wrote is written all the same.
+/// Every table the program writes: insert literals anywhere, and a query
+/// whose statement writes.
 pub fn owned_tables(stmts: &[Stmt], fns: &BTreeMap<String, Vec<Stmt>>) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     fn walk(stmts: &[Stmt], out: &mut BTreeSet<String>) {
@@ -523,7 +522,7 @@ pub fn owned_tables(stmts: &[Stmt], fns: &BTreeMap<String, Vec<Stmt>>) -> BTreeS
         match e {
             Expr::Call { callee, args } => {
                 if let Expr::Ident(n) = callee.as_ref() {
-                    if n == "exec" || n == "insert" || n == "query" {
+                    if n == "insert" || n == "query" {
                         if let Some(Expr::Str(sql)) = args.get(1) { for t in tables_of_sql(sql).1 { out.insert(t); } }
                         if n == "insert" { if let Some(Expr::Str(t)) = args.get(1) { out.insert(t.clone()); } }
                     }

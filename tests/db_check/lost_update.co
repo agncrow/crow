@@ -7,4 +7,4 @@ amount = 50
 
 row = query[conn, 'SELECT balance FROM accounts WHERE id = ?', [acct]]
 bal = row.balance[0] + amount
-exec[conn, 'UPDATE accounts SET balance = ? WHERE id = ?', [bal, acct]]
+query[conn, 'UPDATE accounts SET balance = ? WHERE id = ?', [bal, acct]]

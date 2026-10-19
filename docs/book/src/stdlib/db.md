@@ -37,28 +37,31 @@ A connection is not the program's lifetime. When the server closes it — a rest
 
 **A query nobody waits for is stopped.** A background recompute whose session has gone, or whose inputs moved while it ran, stops its query on the server (ClickHouse and Postgres); so does every query in flight when a served program is told to stop — `crow stop`, a rebuild, Ctrl-C. A program killed outright cannot stop anything; the next run that connects to a ClickHouse server on the same machine stops the queries the dead run left behind, and the log says so. Each ClickHouse statement carries a leading comment naming the machine, the process and a number, which is how it is found again.
 
-### Query & Execute
+### Statements
 
 | Function | Description | Example |
 |---|---|---|
-| `query[conn, sql]` | Execute a SELECT and return results as a frame | [Databases: `use db`](../by-example/db.md) · [The standard library's layer: `use sys`](../by-example/sys.md) · [Web: responses and submodules](../by-example/web-more.md) · [Working with Databases](../ch11-00-databases.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [Derivations](../ch12-08-derive.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
-| `exec[conn, sql]` | Execute DDL/DML (CREATE, INSERT, UPDATE, DELETE), return affected row count | [Databases: `use db`](../by-example/db.md) · [Working with Databases](../ch11-00-databases.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Derivations](../ch12-08-derive.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) |
-| `exec[conn, sql, params]` | Execute parameterized DDL/DML with an array of bind values | [Databases: `use db`](../by-example/db.md) · [Working with Databases](../ch11-00-databases.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Derivations](../ch12-08-derive.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) |
+| `query[conn, sql]` | Run a statement; the rows it answers, as a frame | [Databases: `use db`](../by-example/db.md) · [The standard library's layer: `use sys`](../by-example/sys.md) · [Web: responses and submodules](../by-example/web-more.md) · [Working with Databases](../ch11-00-databases.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [Derivations](../ch12-08-derive.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
+| `query[conn, sql, params]` | The same, with a list of bind values for its `?`s | [Databases: `use db`](../by-example/db.md) · [The standard library's layer: `use sys`](../by-example/sys.md) · [Web: responses and submodules](../by-example/web-more.md) · [Working with Databases](../ch11-00-databases.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [Derivations](../ch12-08-derive.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
+
+**One verb runs every statement.** `query` answers a frame: the rows a `SELECT` answers, the rows a `RETURNING` clause reads back, and an empty frame for a statement that answers none — a `CREATE`, an `UPDATE`, a `DELETE`. No count of rows affected is answered: a write that must say what it touched reads it back with `RETURNING`.
+
+**The statement says whether it reads or writes, not the name.** A literal statement is read by the compiler: a `SELECT` (without `INTO`), `VALUES`, `SHOW`, `EXPLAIN`, `DESCRIBE` and a `PRAGMA` asked are reads (`db.read`); anything else is a write (`db.write`), `RETURNING` included, so a derivation may hold a literal read and a handler's writes are held to its commit (Effects Have Kinds). A statement built as the program runs — a string joined from pieces, a parameter — writes for all the compiler can tell: a derivation that hands one is refused, naming the fix, which is the literal with `?` for its parameters.
 
 ```
 use db
 conn = connect['postgres://user:pass@host/mydb']
 
---- Query returns a frame
 users = query[conn, 'SELECT * FROM users']
 log[len[users]]
 filtered = users[users.age gt 25]
 
---- Execute returns affected row count
-exec[conn, 'CREATE TABLE users (id INT, name TEXT)']
-n = exec[conn, 'DELETE FROM users WHERE age < ?', [18]]
-log[n]
+query[conn, 'CREATE TABLE IF NOT EXISTS users (id INT, name TEXT)']
+gone = query[conn, 'DELETE FROM users WHERE age < ? RETURNING id', [18]]
+log[len[gone]]
 ```
+
+**Design Note: one statement verb.** Considered: `exec` beside `query`, two names carrying what the compiler needs before the program runs — the answer's kind (a count or a frame) and the effect's (a write or a read) — which every typed client has (Go's `Exec` and `Query`, sqlx, JDBC); a flag on the call. Rejected: the statement already says both, and the compiler reads literal statements anyway; the count was read in one program of the corpus; and a `SELECT` through `exec` failed on SQLite with the library's words while Postgres and ClickHouse ran it and threw the rows away. Decided (Vijay, 2026-10-19): one verb, `query`, a frame for every statement, the literal's first word deciding its kind, a computed statement a write.
 
 **List parameters.** An array bound as a parameter stands for a list: its `?` becomes `(?, ?, …)` with one placeholder per element, on every backend. Write `WHERE id IN ?` and pass `[[1, 3]]`; an empty list matches nothing. A list goes after `IN` and nowhere else: handed to another `?` — `x = ANY(?)` — it would be sent as a row where the database wants an array, so a literal statement that does so is refused, in both modes, before it runs. The compiler asks a database about `IN ?` as the list of one it is sent as, `IN (?)`.
 
@@ -95,30 +98,19 @@ use db
 conn = connect['postgres://user:pass@host/mydb']
 
 fn transfer[t]
-  exec[t, 'UPDATE accounts SET balance = balance - 100 WHERE id = 1']
-  exec[t, 'UPDATE accounts SET balance = balance + 100 WHERE id = 2']
+  query[t, 'UPDATE accounts SET balance = balance - 100 WHERE id = 1']
+  query[t, 'UPDATE accounts SET balance = balance + 100 WHERE id = 2']
 
 transact[conn, transfer]
 ```
 
 ### Migrations
 
-| Function | Description | Example |
-|---|---|---|
-| `migrate[conn, dir]` | Run forward-only SQL migrations from a directory | [Databases: `use db`](../by-example/db.md) |
-
-Reads `.sql` files sorted by filename, executes new ones in order, tracks applied migrations in `_crow_migrations` table. Returns count of newly applied migrations.
-
-```
-use db
-conn = connect['postgres://user:pass@host/mydb']
-n = migrate[conn, 'migrations/']
-log['`n` migrations applied']
-```
+Migrations are the tool's, not a program's: `crow db apply <dir> <url>` runs the `.sql` files of a directory not yet applied on the database, in name order, recording each in a `_crow_migrations` table, and says how many were new. It is the apply half of `crow db diff`, which drafts the statements a schema change needs (below).
 
 ### The schema a program declares
 
-**A program's tables are the ones its own statements make.** Every literal `CREATE TABLE` a program hands a connection — `exec[book, 'CREATE TABLE IF NOT EXISTS cards (…)']`, directly or through a function the connection is handed to (`setup[book]`) — declares that table, with its columns, on that connection. A table the program also drops there (`DROP TABLE IF EXISTS scratch`) is one it remakes each run, and declares nothing. A connection the program declares no table on is one it does not own: nothing below reads or changes it, and the tables and columns a database has beyond the declared ones are its own.
+**A program's tables are the ones its own statements make.** Every literal `CREATE TABLE` a program hands a connection — `query[book, 'CREATE TABLE IF NOT EXISTS cards (…)']`, directly or through a function the connection is handed to (`setup[book]`) — declares that table, with its columns, on that connection. A table the program also drops there (`DROP TABLE IF EXISTS scratch`) is one it remakes each run, and declares nothing. A connection the program declares no table on is one it does not own: nothing below reads or changes it, and the tables and columns a database has beyond the declared ones are its own.
 
 **Opening a connection checks that the tables the database has hold what the program declares**, in one of three modes, the same in both modes of running. A declared table the database does not have yet is not a difference: the program's own statement makes it as it runs, so a fresh database starts as it always has.
 
@@ -143,7 +135,7 @@ ALTER TABLE "cards" ADD COLUMN due TEXT;
 CREATE TABLE IF NOT EXISTS labels (card INTEGER, name TEXT);
 ```
 
-**Design Note: schema modes.** Considered: migrations alone (`migrate[conn, dir]`), which leave a table the program changed — a new column — to fail at the first query that reads it, in development and in production alike; making the schema everywhere (Prisma's `db push`, Django's old `syncdb`), which alters production databases the program's user has no right to alter and must not; and a check only in production. Decided (Vijay, July 2026; approved September 2026): a program's `CREATE` statements declare its tables; development makes what is missing under a lock, a built program checks it at connect, and `crow db diff` drafts the migration for what making would lose (as Terraform's `plan` drafts before an `apply`, and Prisma's `db push` in development meets `migrate deploy` in production). At connect a missing table is left to the program's own `CREATE`, which runs moments later: checking it there stopped every built program on its first run against a fresh database, and making it there broke a program whose own `CREATE TABLE` (without `IF NOT EXISTS`) then found it made — the drift worth stopping for is the table that exists with other columns, which `CREATE TABLE IF NOT EXISTS` silently keeps.
+**Design Note: schema modes.** Considered: migrations alone, applied by hand, which leave a table the program changed — a new column — to fail at the first query that reads it, in development and in production alike; making the schema everywhere (Prisma's `db push`, Django's old `syncdb`), which alters production databases the program's user has no right to alter and must not; and a check only in production. Decided (Vijay, July 2026; approved September 2026): a program's `CREATE` statements declare its tables; development makes what is missing under a lock, a built program checks it at connect, and `crow db diff` drafts the migration for what making would lose (as Terraform's `plan` drafts before an `apply`, and Prisma's `db push` in development meets `migrate deploy` in production). At connect a missing table is left to the program's own `CREATE`, which runs moments later: checking it there stopped every built program on its first run against a fresh database, and making it there broke a program whose own `CREATE TABLE` (without `IF NOT EXISTS`) then found it made — the drift worth stopping for is the table that exists with other columns, which `CREATE TABLE IF NOT EXISTS` silently keeps.
 
 ### Pool Defaults
 

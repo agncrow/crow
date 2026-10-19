@@ -5,12 +5,12 @@
 use db
 
 conn = connect['sqlite://:memory:']
-exec[conn, 'CREATE TABLE t (x INTEGER)']
+query[conn, 'CREATE TABLE t (x INTEGER)']
 seven = int['7']
-r = exec[conn, 'INSERT INTO t (x) VALUES (`seven`)']
+r = query[conn, 'INSERT INTO t (x) VALUES (`seven`)']
 log[r.ok]
 q = int['q']
-r2 = exec[conn, 'INSERT INTO t (x) VALUES (`q`)']
+r2 = query[conn, 'INSERT INTO t (x) VALUES (`q`)']
 log[r2.ok]
 log[r2.reason]
 zero = int['0']

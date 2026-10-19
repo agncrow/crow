@@ -144,3 +144,20 @@ impl Calls for InterpCalls {
         self.call("cancel", vec![Self::text(parts), CrowValue::ok(Value::Stream(s.clone()))]).map(|_| ())
     }
 }
+
+/// `crow db describe <url> <sql>`: the columns a statement answers on a
+/// live connection, each marked where it can hold NULL.
+pub fn describe_url(url: &str, sql: &str) -> Result<Vec<(String, String)>, String> {
+    tooling_ready()?;
+    crow_db::describe::of_url(url, sql)
+}
+
+/// `crow db apply <dir> <url>`: the `.sql` files of the directory not yet
+/// applied on the database, in name order, each recorded; the line to
+/// print says how many were new.
+pub fn apply_migrations(dir: &str, url: &str) -> Result<String, String> {
+    tooling_ready()?;
+    let db = crow_db::connect(url, Some(1))?;
+    let n = db.migrate(dir)?;
+    Ok(format!("applied {} migration{} from {} on {}", n, if n == 1 { "" } else { "s" }, dir, crow_db::schema::shown_url(url)))
+}

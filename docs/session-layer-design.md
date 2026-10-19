@@ -215,7 +215,7 @@ The rest of the rules:
   all after the change once they had caught up with Start and Play.
 - **Handlers read fresh.** A handler is already off the loop, so a
   stale derivation it reads is computed before the read: `r = trades`
-  after `exec[book, 'INSERT …']` sees the insert. The handler waits; the
+  after `query[book, 'INSERT …']` sees the insert. The handler waits; the
   page does not.
 - **Pure derivations stay in the render.** A derivation over facts and
   the clock alone (`head`, `clock_str`) costs microseconds and is

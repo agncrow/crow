@@ -39,7 +39,9 @@ fn fmt_piece(s: &str) -> String {
 /// The builtins whose own value is a result, whatever their arguments.
 const FALLIBLE_BUILTINS: &[&str] = &[
     "error", "hash", "shell", "request", "find", "input", "read", "write", "mkdir", "ls", "rm", "mv", "cp", "captured", "moment", "env", "json", "encode", "mail", "query",
-    "exec", "sign", "verify", "socket", "send", "recv",
+    "sign", "verify", "socket", "send", "recv",
+    // (`query`'s writing twin answers a result as `query` does)
+    "__query_write",
     // (db's `describe` answers its frame or why not: inside a function, where
     // the connection can fail, it had been wrapped twice and not built —
     // crow check --self's live cases)

@@ -841,7 +841,7 @@ fn collect_query_conns(body: &[Stmt], out: &mut BTreeSet<String>) {
                 }
                 _ => None,
             };
-            if matches!(name, Some("query") | Some("exec")) {
+            if matches!(name, Some("query")) {
                 if let Some(Expr::Ident(conn)) = args.first() {
                     out.insert(conn.clone());
                 }

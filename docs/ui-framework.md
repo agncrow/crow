@@ -338,7 +338,7 @@ For persistence across reconnects, store state in the database:
 
 ```
 fn save[]
-    exec[db, 'INSERT INTO saved_state ...']
+    query[db, 'INSERT INTO saved_state ...']
     saved = true
 ```
 
@@ -1013,7 +1013,7 @@ fn show_confirm[]
     modal = 'confirm'
 
 fn confirm_delete[]
-    exec[db, 'DELETE FROM items WHERE id = `selected_id`']
+    query[db, 'DELETE FROM items WHERE id = `selected_id`']
     modal = ''
 
 fn cancel[]
@@ -1071,7 +1071,7 @@ flash_msg = ''
 flash_type = 'success'
 
 fn save[]
-    exec[db, 'INSERT INTO items ...']
+    query[db, 'INSERT INTO items ...']
     flash['Item saved successfully', 3000]
 
 view render[]

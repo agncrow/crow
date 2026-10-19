@@ -1868,13 +1868,10 @@ fn cmd_new() {
         jobs_section.push(("train".to_string(), "jobs/train.co".to_string()));
     }
 
-    // --db: add db/schema.co and jobs/migrate.co
+    // --db: add db/schema.co (migrations are the tool's: `crow db apply`)
     if has_db {
         write_file(&project_dir.join("db/schema.co"),
             "use db\n\ntable users\n  name, str\n  email, str\n");
-        write_file(&project_dir.join("jobs/migrate.co"),
-            "use db\n\nlog['running migrations']\n");
-        jobs_section.push(("migrate".to_string(), "jobs/migrate.co".to_string()));
     }
 
     // Add [jobs] section to crowfile if needed
@@ -4415,7 +4412,7 @@ fn cmd_db(args: &[String]) {
         };
         // (the columns that can hold NULL marked as the lowering marks them:
         // the provider's own describe of a live connection)
-        let answered = driver::tooling_ready().and_then(|_| crow_db::describe::of_url(url, sql));
+        let answered = driver::describe_url(url, sql);
         match answered {
             Ok(cols) => println!("{}", serde_json::Value::Array(cols.into_iter().map(|(n, k)| serde_json::json!([n, k])).collect())),
             Err(e) => {
@@ -4425,8 +4422,25 @@ fn cmd_db(args: &[String]) {
         }
         return;
     }
+    // `crow db apply <dir> <url>`: the `.sql` files of a directory not yet
+    // applied on the database, in name order, each recorded in
+    // `_crow_migrations` (the apply half of `crow db diff`, which drafts)
+    if args.first().map(|s| s.as_str()) == Some("apply") {
+        let (Some(dir), Some(url)) = (args.get(1), args.get(2)) else {
+            eprintln!("usage: crow db apply <dir> <url>");
+            process::exit(1);
+        };
+        match driver::apply_migrations(dir, url) {
+            Ok(line) => println!("{}", line),
+            Err(e) => {
+                eprintln!("{}", e);
+                process::exit(1);
+            }
+        }
+        return;
+    }
     if args.first().map(|s| s.as_str()) != Some("diff") {
-        eprintln!("usage: crow db diff [file.co]");
+        eprintln!("usage: crow db diff [file.co] | crow db apply <dir> <url> | crow db describe <url> <sql>");
         process::exit(1);
     }
     if let Err(e) = driver::tooling_ready() {
@@ -6666,7 +6680,7 @@ mod module_parts_tests {
         )
         .unwrap();
         let src = format!(
-            "use web, ui, db\nbook = connect['sqlite://{}']\nch = connect['clickhouse://127.0.0.1:1/none']\nsaid = ''\nn = 0\nfn save[]\n    exec[book, 'INSERT INTO notes (text) VALUES (?)', ['hello']]\n    r = query[ch, '{}', ['x']]\n    n = len[r]\n    w = write['{}', 'a note']\n    said = 'saved `len[r]`'\nview v[]\n    return stack[p['`said`'], button['save', click = save]]\npage['/', v]\ntest saving_writes_a_note[]\n    a = app[v]\n    click[a, save]\n    assert[n eq 7, 'real data has seven']\n",
+            "use web, ui, db\nbook = connect['sqlite://{}']\nch = connect['clickhouse://127.0.0.1:1/none']\nsaid = ''\nn = 0\nfn save[]\n    query[book, 'INSERT INTO notes (text) VALUES (?)', ['hello']]\n    r = query[ch, '{}', ['x']]\n    n = len[r]\n    w = write['{}', 'a note']\n    said = 'saved `len[r]`'\nview v[]\n    return stack[p['`said`'], button['save', click = save]]\npage['/', v]\ntest saving_writes_a_note[]\n    a = app[v]\n    click[a, save]\n    assert[n eq 7, 'real data has seven']\n",
             db.display(),
             sql,
             dir.join("out.txt").display()

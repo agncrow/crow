@@ -51,7 +51,7 @@ census is the book's [Appendix A](book/src/appendix-a-language-at-a-glance.md).
 | `use math.nn` | `relu sigmoid softmax gelu mse crossentropy bce linear` … | spec §13 math → Neural Networks |
 | `use frame` | `load save select filter sort group join stack head tail fill unique rename stats bucket` …; masks via `df.col gt x`; `sort[df, 'col', desc = true]`; `join[a, b, 'key', 'left']` | spec §13 frame, `frame-module.md` |
 | `use io` | `csv[path]` → array of maps, `lines[path]` | spec §13 io |
-| `use db` | `connect query exec insert transact migrate` (SQLite, PostgreSQL, ClickHouse) | spec §13 db, `db-module.md`, `crow-check.md` |
+| `use db` | `connect query insert transact describe` (SQLite, PostgreSQL, ClickHouse) | spec §13 db, `db-module.md`, `crow-check.md` |
 | `use web` (+ `web.auth` `web.cors` …) | `serve page route respond redirect html text send recv close` … | spec §13 web, `web-framework.md` |
 | `use ui` | `fetch poll field` + the HTML element vocabulary inside `view` blocks; classes `card stats controls row primary up down stale` | spec §13 web → View Blocks, Styling |
 

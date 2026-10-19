@@ -99,7 +99,7 @@ view render[]
 
 1. a handler wrote a fact it reads;
 2. a derivation it reads recomputed and its value changed — an equal number, string or bool cuts the chain (frames always propagate);
-3. a statement in this program wrote a table it reads — an `exec`, an `insert`, or a `query` whose statement writes (`INSERT … RETURNING id` reads back the row it wrote, and the table is written all the same);
+3. a statement in this program wrote a table it reads — an `insert`, or a `query` whose statement writes (`INSERT … RETURNING id` reads back the row it wrote, and the table is written all the same);
 4. it reads `now[]` and a tick of `serve refresh` passed — a click's render is not a tick, so a click recomputes only what it moved;
 5. it reads a table this program never writes — an external source — and its freshness window elapsed. `fresh = N` is seconds; the default `fresh = 0` means *as fresh as the loop*: recomputed every tick, which is what a query inside a view did before. Declaring `fresh` is the relaxation.
 
@@ -131,7 +131,7 @@ fn cached_h[req]
 
 fn update_h[req]
     conn = connect['postgres://app@127.0.0.1/hello_world']
-    exec[conn, 'UPDATE world SET randomnumber = ? WHERE id = ?', [rand[1, 10000], rand[1, 10000]]]
+    query[conn, 'UPDATE world SET randomnumber = ? WHERE id = ?', [rand[1, 10000], rand[1, 10000]]]
     return text['ok']
 
 route['/cached-queries', cached_h]

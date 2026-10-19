@@ -121,7 +121,7 @@ f = with[f, 'n', [1, 2]]
 f = with[f, 'name', ['a', 'b']]
 log[insert[ch, 't', f]]
 log[describe[ch, 'SELECT n, x FROM t WHERE n = ?']]
-log[exec[ch, 'KILL QUERY WHERE query_id = \\'x\\'']]
+log[query[ch, 'KILL QUERY WHERE query_id = \\'x\\'']]
 log[ch]
 ";
 
@@ -157,7 +157,8 @@ fn the_clickhouse_driver_written_in_crow_speaks_to_a_server_in_both_modes() {
         assert!(stdout.contains("[3 rows x 2 cols]"), "{:?}: {}", mode, stdout);
         assert!(stdout.contains("\n6\nfalse\ntrue\nBasic YWxpY2U6c2VjcmV0\nfalse\nclickhouse query error: Code: 60. DB::Exception: Unknown table expression identifier 'nowhere' in scope SELECT nope FROM nowhere. (UNKNOWN_TABLE) (version 25.7.2.54 (official build))\n2\n"), "{:?}: {}", mode, stdout);
         assert!(stdout.contains("   n     int\n   x  float?"), "describe's frame\n{:?}: {}", mode, stdout);
-        assert!(stdout.ends_with("0\n<db:clickhouse>\n"), "{:?}: {}", mode, stdout);
+        // (a statement that answers no rows answers an empty frame)
+        assert!(stdout.ends_with("Frame(0 rows, 0 cols)\n<db:clickhouse>\n"), "{:?}: {}", mode, stdout);
         assert_eq!(*inserted.lock().unwrap(), expected_insert, "{:?}: the insert's RowBinary", mode);
         said.push(stdout);
     }

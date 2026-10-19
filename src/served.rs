@@ -430,7 +430,7 @@ mod tests {
     fn a_route_reads_the_apps_value_until_the_program_writes() {
         let url = format!("sqlite://file:served_app_{}?mode=memory&cache=shared", std::process::id());
         let src = format!(
-            "use web, db\n\nbook = db.connect['{u}']\nmade = exec[book, 'CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT)']\n\nderive notes\n    return query[book, 'SELECT id FROM notes']\n\nfn count_h[req]\n    return text['`len[notes]`']\n\nfn add_h[req]\n    conn = db.connect['{u}']\n    exec[conn, 'INSERT INTO notes (body) VALUES (?)', ['ours']]\n    return text['added']\n\nroute['/count', count_h]\nroute['/add', 'POST', add_h]\nserve[3998]\n",
+            "use web, db\n\nbook = db.connect['{u}']\nmade = query[book, 'CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT)']\n\nderive notes\n    return query[book, 'SELECT id FROM notes']\n\nfn count_h[req]\n    return text['`len[notes]`']\n\nfn add_h[req]\n    conn = db.connect['{u}']\n    query[conn, 'INSERT INTO notes (body) VALUES (?)', ['ours']]\n    return text['added']\n\nroute['/count', count_h]\nroute['/add', 'POST', add_h]\nserve[3998]\n",
             u = url
         );
         let (program, ctx) = crate::ir_interp::prepare(&crate::build(&src).unwrap(), "app").unwrap();

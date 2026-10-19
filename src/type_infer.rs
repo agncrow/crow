@@ -33,6 +33,7 @@ pub(crate) use rules::key_kind_of;
 pub(crate) mod settle;
 #[cfg(test)]
 use frames::*;
+pub(crate) use frames::scrubbed;
 
 
 /// What a type knows beyond its kind that an assignment can change
@@ -486,7 +487,7 @@ pub struct TypeContext {
     /// in declaration order — the compiler asks these databases what a
     /// query returns.
     pub conn_urls: Vec<(String, String)>,
-    /// The tables the program makes itself (`exec[conn, 'CREATE TABLE …']`):
+    /// The tables the program makes itself (`query[conn, 'CREATE TABLE …']`):
     /// a SQLite database that does not exist yet, or lacks one of them, is
     /// described from these
     pub ddl: Vec<String>,
@@ -1306,7 +1307,7 @@ mod tests {
         let path = dir.join("new.db");
         let _ = std::fs::remove_file(&path);
         let src = format!(
-            "use db\nbook = db.connect['sqlite://{}']\nexec[book, 'CREATE TABLE IF NOT EXISTS cards (id INTEGER PRIMARY KEY, title TEXT, stars INTEGER)']\nrows = query[book, 'SELECT id, title, stars FROM cards']\nlog[rows.stars[0]]\n",
+            "use db\nbook = db.connect['sqlite://{}']\nquery[book, 'CREATE TABLE IF NOT EXISTS cards (id INTEGER PRIMARY KEY, title TEXT, stars INTEGER)']\nrows = query[book, 'SELECT id, title, stars FROM cards']\nlog[rows.stars[0]]\n",
             path.display()
         );
         let stmts = crate::lower::lower_program(&crate::build(&src).unwrap()).unwrap();

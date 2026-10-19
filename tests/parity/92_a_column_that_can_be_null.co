@@ -7,11 +7,11 @@
 --- guess the program could not tell from a value.)
 use db
 book = db.connect['sqlite://:memory:']
-exec[book, 'CREATE TABLE trades (id INTEGER PRIMARY KEY, symbol TEXT NOT NULL, shares INTEGER NOT NULL, entry_px REAL NOT NULL, exit_px REAL)']
-exec[book, 'CREATE TABLE notes (symbol TEXT NOT NULL, note TEXT NOT NULL)']
-exec[book, 'INSERT INTO trades (symbol, shares, entry_px, exit_px) VALUES (?, ?, ?, ?)', ['AB', 100, 2.5, 3.0]]
-exec[book, 'INSERT INTO trades (symbol, shares, entry_px) VALUES (?, ?, ?)', ['CD', 50, 4.0]]
-exec[book, 'INSERT INTO notes VALUES (?, ?)', ['AB', 'faded']]
+query[book, 'CREATE TABLE trades (id INTEGER PRIMARY KEY, symbol TEXT NOT NULL, shares INTEGER NOT NULL, entry_px REAL NOT NULL, exit_px REAL)']
+query[book, 'CREATE TABLE notes (symbol TEXT NOT NULL, note TEXT NOT NULL)']
+query[book, 'INSERT INTO trades (symbol, shares, entry_px, exit_px) VALUES (?, ?, ?, ?)', ['AB', 100, 2.5, 3.0]]
+query[book, 'INSERT INTO trades (symbol, shares, entry_px) VALUES (?, ?, ?)', ['CD', 50, 4.0]]
+query[book, 'INSERT INTO notes VALUES (?, ?)', ['AB', 'faded']]
 rows = query[book, 'SELECT id, symbol, shares, exit_px, round((exit_px - entry_px) * shares, 2) AS pnl FROM trades ORDER BY id']
 total = 0.0
 for i in range[len[rows]]

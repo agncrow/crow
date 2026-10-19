@@ -2529,27 +2529,27 @@ mod tests {
     }
 
     #[test]
-    fn test_db_exec_create_table() {
+    fn test_db_query_create_table() {
         let val = get_var(
-            "use db\nconn = connect['sqlite://:memory:']\nn = exec[conn, 'CREATE TABLE t (id INTEGER, name TEXT)']\n",
+            "use db\nconn = connect['sqlite://:memory:']\nn = query[conn, 'CREATE TABLE t (id INTEGER, name TEXT)']\n",
             "n"
         );
-        assert!(matches!(val.value, Value::Int(0)), "CREATE TABLE should return 0 affected rows, got {:?}", val.value);
+        assert!(matches!(&val.value, Value::Frame(f) if f.nrows() == 0), "CREATE TABLE answers an empty frame, got {:?}", val.value);
     }
 
     #[test]
-    fn test_db_exec_insert() {
+    fn test_db_query_insert() {
         let val = get_var(
-            "use db\nconn = connect['sqlite://:memory:']\nexec[conn, 'CREATE TABLE t (id INTEGER, name TEXT)']\nn = exec[conn, 'INSERT INTO t VALUES (1, ?)', ['alice']]\n",
+            "use db\nconn = connect['sqlite://:memory:']\nquery[conn, 'CREATE TABLE t (id INTEGER, name TEXT)']\nn = query[conn, 'INSERT INTO t VALUES (1, ?) RETURNING id', ['alice']]\n",
             "n"
         );
-        assert!(matches!(val.value, Value::Int(1)), "INSERT should return 1 affected row, got {:?}", val.value);
+        assert!(matches!(&val.value, Value::Frame(f) if f.nrows() == 1), "INSERT … RETURNING answers the row it wrote, got {:?}", val.value);
     }
 
     #[test]
     fn test_db_query() {
         let val = get_var(
-            "use db\nconn = connect['sqlite://:memory:']\nexec[conn, 'CREATE TABLE t (id INTEGER, name TEXT)']\nexec[conn, 'INSERT INTO t VALUES (1, ?)', ['alice']]\nexec[conn, 'INSERT INTO t VALUES (2, ?)', ['bob']]\ndf = query[conn, 'SELECT * FROM t ORDER BY id']\n",
+            "use db\nconn = connect['sqlite://:memory:']\nquery[conn, 'CREATE TABLE t (id INTEGER, name TEXT)']\nquery[conn, 'INSERT INTO t VALUES (1, ?)', ['alice']]\nquery[conn, 'INSERT INTO t VALUES (2, ?)', ['bob']]\ndf = query[conn, 'SELECT * FROM t ORDER BY id']\n",
             "df"
         );
         match &val.value {
@@ -2564,7 +2564,7 @@ mod tests {
     #[test]
     fn test_db_query_with_params() {
         let val = get_var(
-            "use db\nconn = connect['sqlite://:memory:']\nexec[conn, 'CREATE TABLE t (id INTEGER, name TEXT)']\nexec[conn, 'INSERT INTO t VALUES (1, ?)', ['alice']]\nexec[conn, 'INSERT INTO t VALUES (2, ?)', ['bob']]\ndf = query[conn, 'SELECT * FROM t WHERE name = ?', ['alice']]\n",
+            "use db\nconn = connect['sqlite://:memory:']\nquery[conn, 'CREATE TABLE t (id INTEGER, name TEXT)']\nquery[conn, 'INSERT INTO t VALUES (1, ?)', ['alice']]\nquery[conn, 'INSERT INTO t VALUES (2, ?)', ['bob']]\ndf = query[conn, 'SELECT * FROM t WHERE name = ?', ['alice']]\n",
             "df"
         );
         match &val.value {
@@ -2579,7 +2579,7 @@ mod tests {
     fn test_db_transact() {
         // transact should commit on success
         run_program(
-            "use db\nconn = connect['sqlite://:memory:']\nexec[conn, 'CREATE TABLE t (id INTEGER)']\nfn do_inserts[tx]\n    exec[tx, 'INSERT INTO t VALUES (1)']\n    exec[tx, 'INSERT INTO t VALUES (2)']\ntransact[conn, do_inserts]\n"
+            "use db\nconn = connect['sqlite://:memory:']\nquery[conn, 'CREATE TABLE t (id INTEGER)']\nfn do_inserts[tx]\n    query[tx, 'INSERT INTO t VALUES (1)']\n    query[tx, 'INSERT INTO t VALUES (2)']\ntransact[conn, do_inserts]\n"
         );
     }
 
@@ -3200,7 +3200,7 @@ mod tests {
         assert!(issues.is_empty(), "{:?}", issues);
     }
 
-    const TWO_PEOPLE: &str = "use web, ui, db\nbook = db.connect['sqlite://:memory:']\nmin_qty = 0\nfn setup[]\n    exec[book, 'CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY, qty INTEGER)']\nderive orders\n    return query[book, 'SELECT qty FROM orders ORDER BY id']\nfn reset[]\n    min_qty = 0\nfn order[]\n    exec[book, 'INSERT INTO orders (qty) VALUES (?)', [min_qty]]\nview panel[]\n    return stack[p['min `min_qty`'], p['orders: `len[orders]`'], button['Reset', click = reset], button['Order', click = order]]\n";
+    const TWO_PEOPLE: &str = "use web, ui, db\nbook = db.connect['sqlite://:memory:']\nmin_qty = 0\nfn setup[]\n    query[book, 'CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY, qty INTEGER)']\nderive orders\n    return query[book, 'SELECT qty FROM orders ORDER BY id']\nfn reset[]\n    min_qty = 0\nfn order[]\n    query[book, 'INSERT INTO orders (qty) VALUES (?)', [min_qty]]\nview panel[]\n    return stack[p['min `min_qty`'], p['orders: `len[orders]`'], button['Reset', click = reset], button['Order', click = order]]\n";
 
     /// widget[name, props = …, on = map[event = handler]]: one element the
     /// program's module draws — its props as JSON, its events by handler;
@@ -3249,7 +3249,7 @@ mod tests {
     /// A page that knows who its reader is: people with stored password
     /// hashes, a sign-in that checks one, an admin-only action, a sign-out,
     /// and a derivation over the reader
-    const SIGN_IN: &str = "use web, ui, db\nbook = db.connect['sqlite://:memory:']\nname = ''\npassword = ''\nwiped = 0\nfn setup[]\n    exec[book, 'CREATE TABLE IF NOT EXISTS people (name TEXT, role TEXT, hash TEXT)']\n    exec[book, 'INSERT INTO people VALUES (?, ?, ?)', ['ada', 'admin', hash['lovelace', 'password']]]\n    exec[book, 'INSERT INTO people VALUES (?, ?, ?)', ['bob', 'member', hash['builder', 'password']]]\nfn log_in[]\n    found = query[book, 'SELECT role, hash FROM people WHERE name = ?', [name]]\n    if len[found] eq 0\n        notice['no one called `name`']\n        return\n    if hash[password, found.hash[0]] ne found.hash[0]\n        notice['wrong password']\n        return\n    sign_in[map[name = name, role = found.role[0]]]\nfn log_out[]\n    sign_out[]\nfn wipe[]\n    if reader.role ne 'admin'\n        notice['admins only']\n        return\n    wiped = wiped + 1\nderive greeting\n    if 'name' in reader\n        return 'hello `reader.name`'\n    return 'hello stranger'\nview panel[]\n    return stack[p[greeting], field['Name', name, type = 'text'], field['Password', password, type = 'password'], button['Log in', click = log_in], button['Log out', click = log_out], button['Wipe', click = wipe]]\n";
+    const SIGN_IN: &str = "use web, ui, db\nbook = db.connect['sqlite://:memory:']\nname = ''\npassword = ''\nwiped = 0\nfn setup[]\n    query[book, 'CREATE TABLE IF NOT EXISTS people (name TEXT, role TEXT, hash TEXT)']\n    query[book, 'INSERT INTO people VALUES (?, ?, ?)', ['ada', 'admin', hash['lovelace', 'password']]]\n    query[book, 'INSERT INTO people VALUES (?, ?, ?)', ['bob', 'member', hash['builder', 'password']]]\nfn log_in[]\n    found = query[book, 'SELECT role, hash FROM people WHERE name = ?', [name]]\n    if len[found] eq 0\n        notice['no one called `name`']\n        return\n    if hash[password, found.hash[0]] ne found.hash[0]\n        notice['wrong password']\n        return\n    sign_in[map[name = name, role = found.role[0]]]\nfn log_out[]\n    sign_out[]\nfn wipe[]\n    if reader.role ne 'admin'\n        notice['admins only']\n        return\n    wiped = wiped + 1\nderive greeting\n    if 'name' in reader\n        return 'hello `reader.name`'\n    return 'hello stranger'\nview panel[]\n    return stack[p[greeting], field['Name', name, type = 'text'], field['Password', password, type = 'password'], button['Log in', click = log_in], button['Log out', click = log_out], button['Wipe', click = wipe]]\n";
 
     #[test]
     fn a_reader_signs_in_with_a_password_and_out_again() {
@@ -3321,7 +3321,7 @@ mod tests {
     /// sees it: the same rows, filtered by each session's own fact
     #[test]
     fn a_session_reads_its_own_derivations() {
-        let src = "use web, ui, db\nbook = db.connect['sqlite://:memory:']\nmin_qty = 0\nfn setup[]\n    exec[book, 'CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY, qty INTEGER)']\n    exec[book, 'INSERT INTO orders (qty) VALUES (5), (50)']\nderive big\n    return query[book, 'SELECT qty FROM orders WHERE qty > ? ORDER BY id', [min_qty]]\nview panel[]\n    return stack[table[big], button['Setup', click = setup]]\ntest t[]\n    alice = app[panel]\n    click[alice, setup]\n    bob = app[panel]\n    change[bob, 'min_qty', 10]\n    assert[len[alice.big] eq 2]\n    assert[len[bob.big] eq 1]\n    assert[bob.big.qty[0] eq 50]\n    assert[alice.big.qty[0] eq 5]\n";
+        let src = "use web, ui, db\nbook = db.connect['sqlite://:memory:']\nmin_qty = 0\nfn setup[]\n    query[book, 'CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY, qty INTEGER)']\n    query[book, 'INSERT INTO orders (qty) VALUES (5), (50)']\nderive big\n    return query[book, 'SELECT qty FROM orders WHERE qty > ? ORDER BY id', [min_qty]]\nview panel[]\n    return stack[table[big], button['Setup', click = setup]]\ntest t[]\n    alice = app[panel]\n    click[alice, setup]\n    bob = app[panel]\n    change[bob, 'min_qty', 10]\n    assert[len[alice.big] eq 2]\n    assert[len[bob.big] eq 1]\n    assert[bob.big.qty[0] eq 50]\n    assert[alice.big.qty[0] eq 5]\n";
         let issues = harness_issues(src);
         assert!(issues.is_empty(), "harness issues: {:?}", issues);
     }
@@ -3412,7 +3412,7 @@ mod tests {
         assert!(issues.is_empty(), "harness issues: {:?}", issues);
     }
 
-    const ROLLBACK: &str = "use web, ui, db\nbook = db.connect['sqlite://:memory:']\nseen = 0\nfn setup[]\n    exec[book, 'CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY, v TEXT)']\nderive rows\n    return query[book, 'SELECT v FROM t ORDER BY id']\nfn add_then_stop[]\n    exec[book, 'INSERT INTO t (v) VALUES (?)', ['doomed']]\n    px = float['no quote']\n    if px gt 1.0\n        exec[book, 'INSERT INTO t (v) VALUES (?)', ['never']]\nfn add[]\n    exec[book, 'INSERT INTO t (v) VALUES (?)', ['kept']]\n    r = query[book, 'SELECT count(*) AS n FROM t']\n    seen = r.n[0]\nview v[]\n    return stack[p['rows: `len[rows]`'], button['s', click = setup], button['x', click = add_then_stop], button['a', click = add]]\n";
+    const ROLLBACK: &str = "use web, ui, db\nbook = db.connect['sqlite://:memory:']\nseen = 0\nfn setup[]\n    query[book, 'CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY, v TEXT)']\nderive rows\n    return query[book, 'SELECT v FROM t ORDER BY id']\nfn add_then_stop[]\n    query[book, 'INSERT INTO t (v) VALUES (?)', ['doomed']]\n    px = float['no quote']\n    if px gt 1.0\n        query[book, 'INSERT INTO t (v) VALUES (?)', ['never']]\nfn add[]\n    query[book, 'INSERT INTO t (v) VALUES (?)', ['kept']]\n    r = query[book, 'SELECT count(*) AS n FROM t']\n    seen = r.n[0]\nview v[]\n    return stack[p['rows: `len[rows]`'], button['s', click = setup], button['x', click = add_then_stop], button['a', click = add]]\n";
 
     #[test]
     fn a_handler_that_stops_rolls_its_database_writes_back() {
@@ -3420,7 +3420,7 @@ mod tests {
         assert!(issues.is_empty(), "harness issues: {:?}", issues);
     }
 
-    const REACHES: &str = "use web, ui, db\nbook = db.connect['sqlite://:memory:']\ncount = 0\nprice = 1.5\nfn setup[]\n    exec[book, 'CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY, v REAL)']\nderive rows\n    return query[book, 'SELECT v FROM t']\nfn bad_effect[]\n    count = count + 1\n    px = float['no price']\n    exec[book, 'INSERT INTO t (v) VALUES (?)', [px]]\nfn bad_fact[]\n    count = count + 1\n    price = float['no price']\nview v[]\n    return stack[p['rows: `len[rows]`'], p['`count` `price`'], button['s', click = setup], button['e', click = bad_effect], button['f', click = bad_fact]]\n";
+    const REACHES: &str = "use web, ui, db\nbook = db.connect['sqlite://:memory:']\ncount = 0\nprice = 1.5\nfn setup[]\n    query[book, 'CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY, v REAL)']\nderive rows\n    return query[book, 'SELECT v FROM t']\nfn bad_effect[]\n    count = count + 1\n    px = float['no price']\n    query[book, 'INSERT INTO t (v) VALUES (?)', [px]]\nfn bad_fact[]\n    count = count + 1\n    price = float['no price']\nview v[]\n    return stack[p['rows: `len[rows]`'], p['`count` `price`'], button['s', click = setup], button['e', click = bad_effect], button['f', click = bad_fact]]\n";
 
     #[test]
     fn an_error_reaching_an_effect_or_a_fact_stops_the_handler() {

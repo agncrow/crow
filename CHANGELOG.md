@@ -9,6 +9,22 @@ history says the rest.
 
 ### Breaking
 
+- One statement verb (spec, db, Statements): `query` runs every statement
+  and answers a frame — the rows a SELECT answers, the rows a RETURNING
+  clause reads back, an empty frame for a statement that answers none.
+  `exec` is gone: write `query`, and a write that must say what it
+  touched reads it back with `RETURNING`; the count of rows affected is
+  not answered. Whether a call reads or writes is the statement's to say:
+  a literal SELECT, VALUES, SHOW, EXPLAIN, DESCRIBE or PRAGMA asked is a
+  read, anything else a write (RETURNING included), and a statement
+  built as the program runs is a write — a derivation that hands one is
+  refused, the fix being the literal with `?` for its parameters.
+  `migrate[conn, dir]` is gone too: migrations are the tool's, `crow db
+  apply <dir> <url>`, beside `crow db diff`. The db module is `connect`,
+  `query`, `insert`, `transact` and `describe`. On the way: a ClickHouse
+  statement that answers no rows had failed through `query` ("the rows
+  end early"); it answers an empty frame now.
+
 - Effects have kinds (spec, Effects Have Kinds): each builtin's row says
   what it reaches — `console`, `files`, `files.write`, `network`,
   `db.read`, `db.write`, `mail`, `clock`, `random`, `input`, `process`,
@@ -201,7 +217,7 @@ spec's, and what it found is fixed. Breaking changes first.
 ### Breaking
 
 - A value that can fail, dropped by its line — `write[path, text]`,
-  `exec[conn, sql]` or `rm[path]` on a line of its own — is decided on as
+  `query[conn, sql]` or `rm[path]` on a line of its own — is decided on as
   a branch on it is: a function hands the failure to its caller, a
   handler stops, the top level halts with `cannot drop an error value —
   <reason>`. Its failure had gone by unseen in both modes. Assign the

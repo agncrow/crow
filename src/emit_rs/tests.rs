@@ -1841,7 +1841,7 @@ fn test_db_connect_prefixed() {
 /// declaring them (spec, db, The schema a program declares).
 #[test]
 fn test_db_connect_declared() {
-    let rust = transpile("use db\nconn = connect['sqlite://test.db']\nexec[conn, 'CREATE TABLE IF NOT EXISTS t (id INTEGER, name TEXT)']\n");
+    let rust = transpile("use db\nconn = connect['sqlite://test.db']\nquery[conn, 'CREATE TABLE IF NOT EXISTS t (id INTEGER, name TEXT)']\n");
     assert!(
         rust.contains("crow_db::schema::connect(&\"sqlite://test.db\".to_string(), Some(0_i64 as usize), &[\"CREATE TABLE IF NOT EXISTS t (id INTEGER, name TEXT)\"])"),
         "should open with the declared statements\n{}",
@@ -1850,12 +1850,12 @@ fn test_db_connect_declared() {
 }
 
 #[test]
-fn test_db_exec() {
-    let rust = transpile("use db\nconn = connect['sqlite://test.db']\nexec[conn, 'CREATE TABLE t [id INT]']\n");
-    assert!(rust.contains(".exec("), "should emit .exec()\n{}", rust);
+fn test_db_query_of_a_statement_that_writes() {
+    let rust = transpile("use db\nconn = connect['sqlite://test.db']\nquery[conn, 'CREATE TABLE t [id INT]']\n");
+    assert!(rust.contains(".query("), "every statement goes through .query()\n{}", rust);
     // a statement that fails answers its reason (the `.unwrap()` this had
     // looked for was the connection's, which now stops with its reason)
-    assert!(rust.contains("Err(_e) => CrowResult { ok: false, value: 0_i64, reason: _e"), "should answer the reason\n{}", rust);
+    assert!(rust.contains("Err(_e) => CrowResult { ok: false, value: crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![]), reason: _e"), "should answer the reason\n{}", rust);
 }
 
 #[test]
@@ -1864,10 +1864,13 @@ fn test_db_query() {
     assert!(rust.contains(".query("), "should emit .query()\n{}", rust);
 }
 
+/// A statement that can fail handed to `query` — a write, through the
+/// hidden twin — answers one result, as a read's does (parity 82 had not
+/// built when the twin came).
 #[test]
-fn test_db_migrate() {
-    let rust = transpile("use db\nconn = connect['sqlite://test.db']\nn = migrate[conn, 'migrations/']\n");
-    assert!(rust.contains(".migrate("), "should emit .migrate()\n{}", rust);
+fn a_failing_statement_through_the_writing_twin_answers_one_result() {
+    let rust = transpile("use db\nconn = connect['sqlite://:memory:']\nseven = int['7']\nr = query[conn, 'INSERT INTO t (x) VALUES (`seven`)']\nlog[r.ok]\n");
+    assert!(!rust.contains("CrowResult { ok: true, value: { match conn.query("), "wrapped twice\n{}", rust);
 }
 
 #[test]
@@ -2367,7 +2370,7 @@ fn test_frame_column_args_are_plain_strings() {
 /// record of them no longer grows with each request.
 #[test]
 fn a_route_reads_what_the_app_holds_and_lands_its_writes() {
-    let src = "use web, db\n\nbook = db.connect['sqlite://file:t?mode=memory&cache=shared']\nlimit = 5\n\nderive rows\n    return query[book, 'SELECT id FROM notes LIMIT ?', [limit]]\n\nfn count_h[req]\n    return text['`len[rows]` `len[rows]`']\n\nfn add_h[req]\n    conn = db.connect['sqlite://file:t?mode=memory&cache=shared']\n    exec[conn, 'INSERT INTO notes (id) VALUES (1)']\n    return text['ok']\n\nroute['/count', count_h]\nroute['/add', 'POST', add_h]\nserve[3998]\n";
+    let src = "use web, db\n\nbook = db.connect['sqlite://file:t?mode=memory&cache=shared']\nlimit = 5\n\nderive rows\n    return query[book, 'SELECT id FROM notes LIMIT ?', [limit]]\n\nfn count_h[req]\n    return text['`len[rows]` `len[rows]`']\n\nfn add_h[req]\n    conn = db.connect['sqlite://file:t?mode=memory&cache=shared']\n    query[conn, 'INSERT INTO notes (id) VALUES (1)']\n    return text['ok']\n\nroute['/count', count_h]\nroute['/add', 'POST', add_h]\nserve[3998]\n";
     let rust = transpile(src);
     assert!(rust.contains("struct CrowFacts {") && rust.contains("    limit: i64,"), "the facts a derivation reads, in the program's struct:\n{}", rust);
     let held = rust.find("crow_web::live::hold_app(&__crow_state);").expect("the app's state held");
@@ -2391,7 +2394,7 @@ fn a_route_reads_what_the_app_holds_and_lands_its_writes() {
 /// write, nothing taking it — and lands them nowhere.
 #[test]
 fn a_route_without_derivations_lets_its_writes_go() {
-    let src = "use web, db\n\nfn add_h[req]\n    conn = db.connect['sqlite://file:u?mode=memory&cache=shared']\n    exec[conn, 'INSERT INTO notes (id) VALUES (1)']\n    return text['ok']\n\nroute['/add', 'POST', add_h]\nserve[3999]\n";
+    let src = "use web, db\n\nfn add_h[req]\n    conn = db.connect['sqlite://file:u?mode=memory&cache=shared']\n    query[conn, 'INSERT INTO notes (id) VALUES (1)']\n    return text['ok']\n\nroute['/add', 'POST', add_h]\nserve[3999]\n";
     let rust = transpile(src);
     assert!(rust.contains("impl Drop for __CrowWrites {\n    fn drop(&mut self) { let _ = crow_db::take_write_keys(); }"), "{}", rust);
     assert!(!rust.contains("crow_web::live::"), "no live runtime for a program without derivations:\n{}", rust);

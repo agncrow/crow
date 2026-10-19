@@ -1271,7 +1271,7 @@ impl<'a> Lowerer<'a> {
         // db` of the file's own, neither mode has them (the interpreter had
         // stopped as it ran, "does not run 'connect' yet"; the drivers
         // written in Crow carry their own import)
-        if !own && matches!(name, "connect" | "query" | "exec") && !self.declared(name) && !crate::modules::is_crow_fn(&self.current_fn) {
+        if !own && matches!(name, "connect" | "query") && !self.declared(name) && !crate::modules::is_crow_fn(&self.current_fn) {
             let imported = (self.ctx.bare_modules.iter().any(|m| m == "db") && !self.only_a_part_imports("db")) || self.ctx.module_aliases.values().any(|m| m == "db");
             if !imported {
                 self.refuse_missing_use(name, "db", "");
@@ -1958,7 +1958,7 @@ mod tests {
         let err = check_source("x = ['a', 1, 0.0]\nlog[x]\n").unwrap_err();
         assert!(err.contains("a list holds one kind: this one has text and a number"), "{}", err);
         assert!(check_source("x = [1, 2.5]\nlog[x]\n").is_ok());
-        assert!(check_source("use db\nbook = db.connect['sqlite://:memory:']\nexec[book, 'CREATE TABLE t (k TEXT, v REAL)']\nexec[book, 'INSERT INTO t VALUES (?, ?)', ['a', 1.5]]\nlog[query[book, 'SELECT k FROM t WHERE v > ? AND k = ?', [1.0, 'a']]]\n").is_ok());
+        assert!(check_source("use db\nbook = db.connect['sqlite://:memory:']\nquery[book, 'CREATE TABLE t (k TEXT, v REAL)']\nquery[book, 'INSERT INTO t VALUES (?, ?)', ['a', 1.5]]\nlog[query[book, 'SELECT k FROM t WHERE v > ? AND k = ?', [1.0, 'a']]]\n").is_ok());
     }
 
     /// A frame is indexed by a mask alone, which picks its rows: `f['a']`

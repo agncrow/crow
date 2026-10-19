@@ -223,7 +223,7 @@ book = db.connect['sqlite://:memory:']
 min_qty = 0
 
 fn setup[]
-    exec[book, 'CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY, qty INTEGER)']
+    query[book, 'CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY, qty INTEGER)']
 
 derive orders
     return query[book, 'SELECT qty FROM orders ORDER BY id']
@@ -232,7 +232,7 @@ fn reset[]
     min_qty = 0
 
 fn order[]
-    exec[book, 'INSERT INTO orders (qty) VALUES (?)', [min_qty]]
+    query[book, 'INSERT INTO orders (qty) VALUES (?)', [min_qty]]
 
 view panel[]
     return stack[

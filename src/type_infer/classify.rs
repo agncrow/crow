@@ -12,12 +12,13 @@ impl TypeContext {
         {
             fn in_expr(e: &Expr, out: &mut Vec<String>) {
                 if let Expr::Call { callee, args } = e {
-                    let is_exec = match callee.as_ref() {
-                        Expr::Ident(n) => n == "exec",
-                        Expr::FieldAccess { field, .. } => field == "exec",
+                    // (a statement handed to the form that takes one)
+                    let is_statement = match callee.as_ref() {
+                        Expr::Ident(n) => crate::table::statement_form(None, n).is_some(),
+                        Expr::FieldAccess { object, field } => matches!(object.as_ref(), Expr::Ident(m) if crate::table::statement_form(Some(m), field).is_some()),
                         _ => false,
                     };
-                    if is_exec {
+                    if is_statement {
                         if let Some(Expr::Str(sql)) = args.get(1) {
                             if sql.trim_start().to_ascii_uppercase().starts_with("CREATE") && !out.contains(sql) {
                                 out.push(sql.clone());

@@ -29,7 +29,7 @@ Part II.
 | [Neural-network building blocks: `use math.nn`](nn.md) | `relu sigmoid softmax mse` |
 | [Structured files: `use io`](io.md) | `csv lines` |
 | [Frames: `use frame`](frames.md) | `frame.load`, masks (`f[mask]`), `sort select head group`, column reductions |
-| [Databases: `use db`](db.md) | `connect exec query transact` |
+| [Databases: `use db`](db.md) | `connect query transact` |
 | [Web: a JSON route](web.md) | `route serve`, a JSON response |
 | [Web: responses, auth, sessions, and sockets](web-more.md) | `text html redirect respond msgpack arrow bytes sign verify sessions cache limit templates render uploads send recv close smtp` |
 | [Views: the whole element vocabulary](views-elements.md) | all 32 elements, `fetch poll field` |

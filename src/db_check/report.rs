@@ -402,7 +402,7 @@ fn f[]
 \n\
 open_trades = query[conn, 'SELECT id FROM trades WHERE symbol = ? AND status = ?', [sym, 'active']]
 if len[open_trades] eq 0
-    exec[conn, 'INSERT INTO trades (symbol, qty, entry) VALUES (?, ?, ?)', [sym, qty, price]]
+    query[conn, 'INSERT INTO trades (symbol, qty, entry) VALUES (?, ?, ?)', [sym, qty, price]]
 ";
 
     #[test]
@@ -423,7 +423,7 @@ trading.co:13-15 — two programs can pass this check at the same time
 
    13 │ open_trades = query[conn, 'SELECT id FROM trades WHERE symbol = ? AND status = ?', [sym, 'active']]
    14 │ if len[open_trades] eq 0
-   15 │     exec[conn, 'INSERT INTO trades (symbol, qty, entry) VALUES (?, ?, ?)', [sym, qty, price]]
+   15 │     query[conn, 'INSERT INTO trades (symbol, qty, entry) VALUES (?, ?, ?)', [sym, qty, price]]
 
   what can happen:
     1. program A runs the query (line 13) — the check passes
@@ -453,7 +453,7 @@ trading.co:13-15 — two programs can pass this check at the same time
         let src = "\
 row = query[conn, 'SELECT balance FROM accounts WHERE id = ?', [acct]]
 bal = row.balance[0] + amount
-exec[conn, 'UPDATE accounts SET balance = ? WHERE id = ?', [bal, acct]]
+query[conn, 'UPDATE accounts SET balance = ? WHERE id = ?', [bal, acct]]
 ";
         let hz = Hazard {
             kind: HazardKind::LostUpdate {
@@ -470,7 +470,7 @@ bank.co:1-3 — concurrent updates to 'balance' can vanish here
 
     1 │ row = query[conn, 'SELECT balance FROM accounts WHERE id = ?', [acct]]
     2 │ bal = row.balance[0] + amount
-    3 │ exec[conn, 'UPDATE accounts SET balance = ? WHERE id = ?', [bal, acct]]
+    3 │ query[conn, 'UPDATE accounts SET balance = ? WHERE id = ?', [bal, acct]]
 
   what can happen:
     1. program A reads accounts.balance (line 1) — say it is 100
@@ -493,7 +493,7 @@ bank.co:1-3 — concurrent updates to 'balance' can vanish here
     #[test]
     fn one_way_latch_message() {
         let src = "\
-exec[conn, 'UPDATE rooms SET checked_out = 1 WHERE room = ?', [room_no]]
+query[conn, 'UPDATE rooms SET checked_out = 1 WHERE room = ?', [room_no]]
 ";
         let hz = Hazard {
             kind: HazardKind::OneWayLatch {
@@ -509,7 +509,7 @@ exec[conn, 'UPDATE rooms SET checked_out = 1 WHERE room = ?', [room_no]]
         let expected = "\
 hotel.co:1 — 'checked_out' only ever moves one way
 
-    1 │ exec[conn, 'UPDATE rooms SET checked_out = 1 WHERE room = ?', [room_no]]
+    1 │ query[conn, 'UPDATE rooms SET checked_out = 1 WHERE room = ?', [room_no]]
 
   'rooms.checked_out' is set to 1 (line 1) and never set back; work is gated on it (line 9).
   a flag that moves one way records that something happened once — not what is true now.
@@ -561,8 +561,8 @@ app.co:1-2 — this code assumes one matching row; the schema allows many
     #[test]
     fn unpaired_writes_message() {
         let src = "\
-exec[conn, 'UPDATE accounts SET balance = balance - ? WHERE id = ?', [amt, from_id]]
-exec[conn, 'UPDATE accounts SET balance = balance + ? WHERE id = ?', [amt, to_id]]
+query[conn, 'UPDATE accounts SET balance = balance - ? WHERE id = ?', [amt, from_id]]
+query[conn, 'UPDATE accounts SET balance = balance + ? WHERE id = ?', [amt, to_id]]
 ";
         let hz = Hazard {
             kind: HazardKind::UnpairedWrites {
@@ -575,8 +575,8 @@ exec[conn, 'UPDATE accounts SET balance = balance + ? WHERE id = ?', [amt, to_id
         let expected = "\
 transfer.co:1-2 — these writes succeed or fail separately
 
-    1 │ exec[conn, 'UPDATE accounts SET balance = balance - ? WHERE id = ?', [amt, from_id]]
-    2 │ exec[conn, 'UPDATE accounts SET balance = balance + ? WHERE id = ?', [amt, to_id]]
+    1 │ query[conn, 'UPDATE accounts SET balance = balance - ? WHERE id = ?', [amt, from_id]]
+    2 │ query[conn, 'UPDATE accounts SET balance = balance + ? WHERE id = ?', [amt, to_id]]
 
   a crash between line 1 and line 2 leaves accounts half-updated — the first write applied, the rest lost.
 

@@ -89,7 +89,7 @@ can fail: `r = float[s]`, then `if not r.ok`.
 ## A failure nothing reads
 
 A line made of one call is usually there for what the call does:
-`write[path, text]`, `exec[conn, sql]`, `rm[path]`. Each answers a value
+`write[path, text]`, `query[conn, sql]`, `rm[path]`. Each answers a value
 that can fail, and on a line of its own nothing reads it. If that failure
 simply went by, a program could lose its work without a word. So Crow
 treats the line as a decision, like a branch: a function hands the failure

@@ -8,4 +8,4 @@ price = 189.50
 
 open_trades = query[conn, 'SELECT id FROM trades WHERE symbol = ? AND status = ?', [sym, 'active']]
 if len[open_trades] eq 0
-    exec[conn, 'INSERT INTO trades (symbol, qty, entry, status) VALUES (?, ?, ?, ?)', [sym, qty, price, 'active']]
+    query[conn, 'INSERT INTO trades (symbol, qty, entry, status) VALUES (?, ?, ?, ?)', [sym, qty, price, 'active']]

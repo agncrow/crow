@@ -1138,7 +1138,7 @@ impl<'a> Lowerer<'a> {
     fn effect_kinds_in_context(&mut self, name: &str, kinds: Vec<crate::effects::Effect>) {
         if let Some(ctx) = self.context() {
             if let Some(e) = kinds.into_iter().find(|e| !ctx.allows(*e)) {
-                let bare = name.rsplit('.').next().unwrap_or(name);
+                let bare = crate::table::shown_effect(name);
                 self.refuse(ctx.refusal(bare, e, None));
             }
         }
@@ -4245,14 +4245,14 @@ impl<'a> Lowerer<'a> {
         Expr::Local(name.to_string(), ty)
     }
 
-    /// A call, with the parameter list of a query or an exec noted while
+    /// A call, with the parameter list of a statement form noted while
     /// its arguments are lowered: the one list of several kinds (a list
     /// of what each `?` takes, sent one by one), exempt from the rule
     /// that a list holds one kind, whichever path lowers the call
     fn call(&mut self, callee: &A, args: &[A]) -> Result<Expr, String> {
         let saved = self.params_items.take();
         if let (A::Ident(name), Some(A::Array(items))) = (callee, args.get(2)) {
-            if matches!(name.as_str(), "query" | "exec") {
+            if crate::table::statement_form(None, name).is_some() {
                 self.params_items = Some(format!("{:?}", items));
             }
         }
@@ -4984,7 +4984,7 @@ impl<'a> Lowerer<'a> {
         // a list handed to a `?` is sent as (?, ?, …), which only `IN` reads:
         // finch's `n.symbol = ANY(?)` handed its symbols failed at the
         // database every time (Postgres wants an array there, not a row)
-        if matches!(name.as_str(), "query" | "exec") && matches!(module.as_deref(), None | Some("db")) {
+        if crate::table::statement_form(module.as_deref(), &name).is_some() {
             let items = match lowered.get(2) {
                 Some(Expr::ListLit(items, _)) => Some(items),
                 Some(Expr::Convert { how: Convert::Unwrap, expr, .. }) => match expr.as_ref() {
@@ -5012,6 +5012,17 @@ impl<'a> Lowerer<'a> {
             self.check_chart_columns(&lowered);
         }
         let current = self.current_fn.clone();
+        // a form that takes a statement: its provider says whether the
+        // literal writes, and a write, or a statement built as the program
+        // runs, takes the form's writing twin (table::Provider)
+        let twin = self.statement_twin(module.as_deref(), &name, &lowered);
+        let refused_as_computed = twin.is_some_and(|(_, refused)| refused);
+        // (the module stays as the program wrote it: a bare call keeps its
+        // bare path through both backends, a qualified one its module's)
+        let name = match &twin {
+            Some((t, _)) => t.name.to_string(),
+            None => name,
+        };
         if let Some(m) = module {
             let m = self.ctx.module_aliases.get(&m).cloned().unwrap_or(m);
             self.refuse_module_call(&m, &name, &lowered);
@@ -5020,7 +5031,9 @@ impl<'a> Lowerer<'a> {
                 // (the module's own row says: ui's `input` is an element,
                 // the core's waits on the reader)
                 if self.pass == Pass::Final {
-                    self.effect_in_context_in(&m, &name);
+                    if !refused_as_computed {
+                        self.effect_in_context_in(&m, &name);
+                    }
                     self.direct_effects.entry(current).or_default().insert(name.clone());
                 }
                 let lowered = self.row_arguments(&m, &name, lowered);
@@ -5151,7 +5164,9 @@ impl<'a> Lowerer<'a> {
         }
         if is_effect(&name) {
             if self.pass == Pass::Final {
-                self.effect_in_context(&name);
+                if !refused_as_computed {
+                    self.effect_in_context(&name);
+                }
                 self.direct_effects.entry(current).or_default().insert(name.clone());
             }
             // (an effect with a row is handed its arguments as any row's
@@ -5308,6 +5323,53 @@ impl<'a> Lowerer<'a> {
     /// of the name answering a column or a frame, `[]` saying neither — had
     /// been typed as nothing known, and the compiled program had not built
     /// (crow check --self).
+    /// A statement form's writing twin, where the call takes it: the form's
+    /// provider says whether the literal statement writes, and a statement
+    /// built as the program runs writes for all the compiler can tell — in
+    /// a context that may read but not write, refused with that said, the
+    /// fix being the literal.
+    fn statement_twin(&mut self, module: Option<&str>, name: &str, lowered: &[Expr]) -> Option<(&'static crate::table::Row, bool)> {
+        if self.ctx.functions.contains_key(name) && !crate::modules::is_crow_fn(&self.current_fn) {
+            return None;
+        }
+        let m = match module {
+            Some(m) => Some(self.ctx.module_aliases.get(m).cloned().unwrap_or_else(|| m.to_string())),
+            None => self.module_for(name, lowered),
+        };
+        let row = crate::table::statement_form(m.as_deref(), name)?;
+        let provider = row.provider?;
+        let twin = crate::table::writing_twin(row)?;
+        fn plain(e: &Expr) -> &Expr {
+            match e {
+                Expr::Convert { expr, .. } => plain(expr),
+                other => other,
+            }
+        }
+        let literal = lowered.get(provider.statement).map(plain).and_then(|x| match x {
+            Expr::Const(Const::Str(s), _) => Some(crate::type_infer::scrubbed(s)),
+            _ => None,
+        });
+        if !(provider.writes)(literal.as_deref()) {
+            return None;
+        }
+        let mut refused = false;
+        if literal.is_none() && self.pass == Pass::Final {
+            if let Some(ctx) = self.context() {
+                let reads = crate::table::effects_of_in(row.module, row.name).into_iter().all(|e| ctx.allows(e));
+                let writes = crate::table::effects_of_in(twin.module, twin.name).into_iter().any(|e| !ctx.allows(e));
+                if reads && writes {
+                    self.refuse(format!(
+                        "{}[]'s statement is built as the program runs, so whether it reads or writes is known only then — {} reads: write the statement as a literal, with ? for its parameters",
+                        name,
+                        ctx.word()
+                    ));
+                    refused = true;
+                }
+            }
+        }
+        Some((twin, refused))
+    }
+
     /// A builtin's tensor has the shape its row declares (`table::Shape`),
     /// read from what the program states in the call: the rank every
     /// answer has, and the sizes that follow.
@@ -7728,7 +7790,7 @@ if r.ok
     /// none declares nothing, and its `connect` is as written.
     #[test]
     fn a_program_declares_the_tables_it_creates_on_each_connection() {
-        let src = "use db\nbook = db.connect['sqlite://app.db']\nother = db.connect['sqlite://:memory:']\nfn setup[c]\n    exec[c, 'CREATE TABLE IF NOT EXISTS people (name TEXT PRIMARY KEY)']\n    exec[c, 'INSERT INTO people VALUES (?)', ['ada']]\nfn more[c]\n    setup[c]\n    exec[c, 'create table if not exists boards (id INTEGER PRIMARY KEY)']\n    exec[c, 'DROP TABLE IF EXISTS scratch']\n    exec[c, 'CREATE TABLE scratch (n INTEGER)']\nmore[book]\nlog[query[other, 'SELECT 1 AS one']]\n";
+        let src = "use db\nbook = db.connect['sqlite://app.db']\nother = db.connect['sqlite://:memory:']\nfn setup[c]\n    query[c, 'CREATE TABLE IF NOT EXISTS people (name TEXT PRIMARY KEY)']\n    query[c, 'INSERT INTO people VALUES (?)', ['ada']]\nfn more[c]\n    setup[c]\n    query[c, 'create table if not exists boards (id INTEGER PRIMARY KEY)']\n    query[c, 'DROP TABLE IF EXISTS scratch']\n    query[c, 'CREATE TABLE scratch (n INTEGER)']\nmore[book]\nlog[query[other, 'SELECT 1 AS one']]\n";
         let stmts = crate::lower::lower_program(&crate::build(src).expect("parses")).expect("lowers to the tree");
         let mut ctx = TypeContext::new();
         ctx.describe_queries = false;

@@ -237,6 +237,10 @@ fn ch_query[parts, s, sql, params]
     if a.status ne 200
         said = _server_error[text[a.body, '?']]
         return error['clickhouse query error: `said`', 'db']
+    --- a statement that answers no rows — a CREATE, an INSERT — answers
+    --- an empty frame, as every statement answers one
+    if len[a.body] eq 0
+        return frame.new[]
     f = frame_of_rowbinary[a.body]
     if not f.ok
         return error['clickhouse query error: `f.reason`', 'db']

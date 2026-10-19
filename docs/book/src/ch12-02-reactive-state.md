@@ -351,8 +351,8 @@ name = ''
 password = ''
 
 fn setup[]
-    exec[book, 'CREATE TABLE IF NOT EXISTS people (name TEXT, role TEXT, hash TEXT)']
-    exec[book, 'INSERT INTO people VALUES (?, ?, ?)', ['ada', 'admin', hash['lovelace', 'password']]]
+    query[book, 'CREATE TABLE IF NOT EXISTS people (name TEXT, role TEXT, hash TEXT)']
+    query[book, 'INSERT INTO people VALUES (?, ?, ?)', ['ada', 'admin', hash['lovelace', 'password']]]
 
 fn log_in[]
     found = query[book, 'SELECT role, hash FROM people WHERE name = ?', [name]]

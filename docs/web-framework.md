@@ -1022,7 +1022,7 @@ All server-side web modules have transpiler codegen (Crow → Rust), validator r
 |--------|------------|------------|-------------|
 | `web` (core) | `serve[]`, `route[]`, `page[]` | ✅ | ✅ |
 | `web.client` | `get[]`, `post[]`, `put[]`, `del[]` | ✅ | ✅ |
-| `web.db` | `sqlite[]`, `exec[]`, `query[]` | ✅ | ✅ |
+| `web.db` | `sqlite[]`, `query[]`, `query[]` | ✅ | ✅ |
 | `web.auth` | `sign[]`, `verify[]` | ✅ | ✅ |
 | `web.cors` | `cors[app]`, `cors[app, origins]` | ✅ | ✅ |
 | `web.session` | `sessions[]` | ✅ | ✅ |

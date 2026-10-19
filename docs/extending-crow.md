@@ -451,7 +451,7 @@ into these:
 |---|---|
 | `files` | read, write, mkdir, ls, rm, mv, cp, csv, lines, load, save |
 | `network` | request, fetch, poll, send, recv, socket, the readers of URLs |
-| `db.read`, `db.write` | query / exec, insert, migrate, transact |
+| `db.read`, `db.write` | query (its statement decides), insert, transact |
 | `mail` | mail |
 | `clock` | now |
 | `random` | rand, seed, randn, normal, …, shuffle, choice, permutation |

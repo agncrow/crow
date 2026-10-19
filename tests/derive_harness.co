@@ -29,10 +29,10 @@ fn same[]
   qty = qty
 
 fn setup[]
-  exec[conn, 'CREATE TABLE IF NOT EXISTS trades (id INTEGER PRIMARY KEY, symbol TEXT, px REAL)']
+  query[conn, 'CREATE TABLE IF NOT EXISTS trades (id INTEGER PRIMARY KEY, symbol TEXT, px REAL)']
 
 fn buy[]
-  exec[conn, 'INSERT INTO trades (symbol, px) VALUES (?, ?)', [sym, 1.79]]
+  query[conn, 'INSERT INTO trades (symbol, px) VALUES (?, ?)', [sym, 1.79]]
 
 --- the handlers are wired here: a function that writes a fact is a
 --- handler, pressed by the tests below

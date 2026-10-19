@@ -3,7 +3,7 @@
 use web, ui, db
 
 book = db.connect['sqlite://:memory:']
-exec[book, 'CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT)']
+query[book, 'CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT)']
 
 draft = 'first'
 
@@ -11,10 +11,10 @@ derive notes
     return query[book, 'SELECT id, body FROM notes ORDER BY id']
 
 fn add[]
-    exec[book, 'INSERT INTO notes (body) VALUES (?)', [draft]]
+    query[book, 'INSERT INTO notes (body) VALUES (?)', [draft]]
 
 fn add_then_stop[]
-    exec[book, 'INSERT INTO notes (body) VALUES (?)', ['doomed']]
+    query[book, 'INSERT INTO notes (body) VALUES (?)', ['doomed']]
     px = float['no']
     if px gt 1.0
         draft = 'never'

@@ -7,10 +7,10 @@ chapter 10 — run against the seeded file, straight into frames:
 use db, frame, math
 
 conn = connect['sqlite://ch12demo.db']
-exec[conn, 'CREATE TABLE trades (id INTEGER PRIMARY KEY, symbol TEXT, qty INTEGER, price REAL, pnl REAL)']
-exec[conn, 'INSERT INTO trades VALUES (1, ?, ?, ?, ?)', ['AAPL', 100, 191.5, 250.0]]
-exec[conn, 'INSERT INTO trades VALUES (2, ?, ?, ?, ?)', ['MSFT', 50, 415.2, -120.5]]
-exec[conn, 'INSERT INTO trades VALUES (3, ?, ?, ?, ?)', ['NVDA', 20, 875.0, 890.2]]
+query[conn, 'CREATE TABLE trades (id INTEGER PRIMARY KEY, symbol TEXT, qty INTEGER, price REAL, pnl REAL)']
+query[conn, 'INSERT INTO trades VALUES (1, ?, ?, ?, ?)', ['AAPL', 100, 191.5, 250.0]]
+query[conn, 'INSERT INTO trades VALUES (2, ?, ?, ?, ?)', ['MSFT', 50, 415.2, -120.5]]
+query[conn, 'INSERT INTO trades VALUES (3, ?, ?, ?, ?)', ['NVDA', 20, 875.0, 890.2]]
 
 trades = query[conn, 'SELECT symbol, qty, price, pnl FROM trades ORDER BY id']
 total_pnl = sum[trades.pnl]

@@ -1,0 +1,3 @@
+j61_a_computed_statement_in_a_derivation.co:8:12: query[]'s statement is built as the program runs, so whether it reads or writes is known only then — a derivation reads: write the statement as a literal, with ? for its parameters
+  8 │     return query[book, 'SELECT count(*) AS n FROM `table`']
+    │            ^^^^^

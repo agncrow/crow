@@ -138,7 +138,7 @@ Expr ::= Const(value, ty)
        | Local(var) | Move(var)                     -- read; read for the last time (moves)
        | Load(fact) | Derived(name)
        | Call    { target: Row(row) | Runtime(name) | User(name) | Module(mod, name), args, ty }
-       | Effect  { kind, row, args, ty, answered: bool }  -- query exec insert read write fetch shell mail later notice now
+       | Effect  { kind, row, args, ty, answered: bool }  -- query insert read write fetch shell mail later notice now
        | Convert { how: IntToFloat | Unwrap | ..., expr }
        | Binary  { op, l, r, ty } | Unary { op, expr }
        | Index { base, index } | Field { base, name } | Slice {..}

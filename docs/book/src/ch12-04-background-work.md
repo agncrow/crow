@@ -26,7 +26,7 @@ derive trades
     return query[book, 'SELECT id, px FROM trades WHERE symbol = ?', [sym]]
 
 fn buy[]
-    exec[book, 'INSERT INTO trades (symbol, px) VALUES (?, ?)', [sym, 1.79]]
+    query[book, 'INSERT INTO trades (symbol, px) VALUES (?, ?)', [sym, 1.79]]
 
 view render[]
     return stack[table[trades], button['Buy', click = buy]]

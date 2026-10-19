@@ -58,7 +58,7 @@ conn = db.connect['sqlite://:memory:']
 sym = 'IMRN'
 
 fn setup[]
-    exec[conn, 'CREATE TABLE IF NOT EXISTS trades (id INTEGER PRIMARY KEY, symbol TEXT, px REAL)']
+    query[conn, 'CREATE TABLE IF NOT EXISTS trades (id INTEGER PRIMARY KEY, symbol TEXT, px REAL)']
 
 derive trades
     return query[conn, 'SELECT id, symbol, px FROM trades WHERE symbol = ?', [sym]]
@@ -67,7 +67,7 @@ derive summary
     return '`sym`: `len[trades]` trades'
 
 fn buy[]
-    exec[conn, 'INSERT INTO trades (symbol, px) VALUES (?, ?)', [sym, 1.79]]
+    query[conn, 'INSERT INTO trades (symbol, px) VALUES (?, ?)', [sym, 1.79]]
 
 view render[]
     return stack[p[summary], button['Buy', click = buy]]
@@ -170,7 +170,7 @@ database for on every request:
 use web, db
 
 book = db.connect['sqlite://notes.db']
-made = exec[book, 'CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT)']
+made = query[book, 'CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT)']
 
 derive notes
     return query[book, 'SELECT id, body FROM notes ORDER BY id']
@@ -180,7 +180,7 @@ fn list_h[req]
 
 fn add_h[req]
     conn = db.connect['sqlite://notes.db']
-    exec[conn, 'INSERT INTO notes (body) VALUES (?)', [req.body]]
+    query[conn, 'INSERT INTO notes (body) VALUES (?)', [req.body]]
     return text['added']
 
 route['/notes', list_h]

@@ -7,7 +7,7 @@ q = query[conn, 'SELECT nope FROM missing_table']
 log['query ok: `q.ok`']
 log['query kind: `q.kind`']
 log['query reason: `q.reason`']
-x = exec[conn, 'THIS IS NOT SQL']
+x = query[conn, 'THIS IS NOT SQL']
 log['exec ok: `x.ok`']
 log['exec kind: `x.kind`']
 
@@ -27,7 +27,7 @@ log['read ok: `f.ok`']
 log['read kind: `f.kind`']
 
 --- errors propagate through arithmetic and keep their kind
-y = x + 1
+y = len[x] + 1
 log['propagated kind: `y.kind`']
 
 --- successful reads carry a capture moment; computed values do not

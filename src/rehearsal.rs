@@ -327,7 +327,7 @@ struct RehearsalTx<'a> {
 
 impl crow_db::DbTx for RehearsalTx<'_> {
     fn query(&self, sql: &str, params: &[serde_json::Value]) -> Result<CrowFrame, String> {
-        Ok(self.db.r.answer(&self.db.url, sql, params))
+        rehearsed_query(&self.db.r, &self.db.url, sql, params)
     }
     fn exec(&self, sql: &str, params: &[serde_json::Value]) -> Result<i64, String> {
         self.db.r.record(&self.db.url, sql, params);
@@ -335,9 +335,26 @@ impl crow_db::DbTx for RehearsalTx<'_> {
     }
 }
 
+/// Every statement comes through `query`: one that writes is recorded as
+/// the write it is and answers no rows (the rows a `RETURNING` clause
+/// reads back are generated, as a read's are); a read is answered with
+/// generated rows.
+fn rehearsed_query(r: &Rehearsal, url: &str, sql: &str, params: &[serde_json::Value]) -> Result<CrowFrame, String> {
+    match crow_db::describe::classify(sql) {
+        crow_db::describe::Does::Writes { reads_back } => {
+            r.record(url, sql, params);
+            if reads_back {
+                return Ok(r.answer(url, sql, params));
+            }
+            Ok(CrowFrame::new(vec![], vec![], vec![]))
+        }
+        _ => Ok(r.answer(url, sql, params)),
+    }
+}
+
 impl crow_db::CrowDb for RehearsalDb {
     fn query(&self, sql: &str, params: &[serde_json::Value]) -> Result<CrowFrame, String> {
-        Ok(self.r.answer(&self.url, sql, params))
+        rehearsed_query(&self.r, &self.url, sql, params)
     }
     fn exec(&self, sql: &str, params: &[serde_json::Value]) -> Result<i64, String> {
         self.r.record(&self.url, sql, params);

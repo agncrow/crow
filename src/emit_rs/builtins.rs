@@ -162,16 +162,6 @@ impl Emitter {
         )
     }
 
-    fn db_exec(&mut self, conn: &str, sql: &str, params: &[Expr]) -> String {
-        self.needs_serde_json = true;
-        let (p, fallible) = self.db_params(params);
-        let body = format!(
-            "{{ match {}.exec(&{}, &[{}]) {{ Ok(_n) => CrowResult {{ ok: true, value: _n, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_e) => CrowResult {{ ok: false, value: 0_i64, reason: _e, kind: \"db\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
-            conn, sql, p
-        );
-        self.db_guard(&fallible, "0_i64", body)
-    }
-
     /// A module function by the registry: `math.zeros`, `frame.load`.
     /// An argument a collection keeps (a pushed value, a map's key or
     /// value): a variable read is cloned, so the variable stays usable and a
@@ -212,11 +202,9 @@ impl Emitter {
         if m == "db" && self.needs_crow_db {
             match f {
                 "connect" => return self.db_connect(args, arg_strs),
-                "query" if arg_strs.len() >= 2 => return self.db_query(&arg_strs[0], &arg_strs[1], &args[2..]),
+                "query" | "__query_write" if arg_strs.len() >= 2 => return self.db_query(&arg_strs[0], &arg_strs[1], &args[2..]),
                 "describe" if arg_strs.len() == 2 => return self.db_describe(&arg_strs[0], &arg_strs[1]),
-                "exec" if arg_strs.len() >= 2 => return self.db_exec(&arg_strs[0], &arg_strs[1], &args[2..]),
                 "insert" if arg_strs.len() == 3 => return format!("{}.insert(&{}, &{}).unwrap()", arg_strs[0], arg_strs[1], arg_strs[2]),
-                "migrate" if arg_strs.len() == 2 => return format!("{}.migrate(&{}).unwrap()", arg_strs[0], arg_strs[1]),
                 "transact" if arg_strs.len() == 2 => return self.db_transact(&arg_strs[0], &arg_strs[1]),
                 _ => {}
             }
@@ -703,11 +691,9 @@ impl Emitter {
             // (`connect[env['DATABASE_URL']]`) had compiled to a call to
             // nothing, from when web's socket client was `connect` too
             "connect" if db => self.db_connect(args, a),
-            "query" if db && n >= 2 => self.db_query(&a[0], &a[1], &args[2..]),
+            "query" | "__query_write" if db && n >= 2 => self.db_query(&a[0], &a[1], &args[2..]),
             "describe" if db && n == 2 => self.db_describe(&a[0], &a[1]),
-            "exec" if db && n >= 2 => self.db_exec(&a[0], &a[1], &args[2..]),
             "insert" if db && n == 3 => format!("{}.insert(&{}, &{}).unwrap()", a[0], a[1], a[2]),
-            "migrate" if db && n == 2 => format!("{}.migrate(&{}).unwrap()", a[0], a[1]),
             "transact" if db && n == 2 => self.db_transact(&a[0], &a[1]),
             "page" if web && (n == 2 || n == 3) => self.page_route(args, a),
             "fetch" if n == 1 => format!("{{ __crow_state.register_fetch(\"_anon\", &{}, Vec::new()); serde_json::Value::Null }}", a[0]),

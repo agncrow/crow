@@ -149,7 +149,7 @@ myapp/
   views/                web views: use views.home → page['/', home.render]
   lib/                  your code, any layout: use lib/accounts → accounts.open[...]
   db/schema.co        table definitions
-  migrations/           .sql files applied by migrate[] and written by crow fix
+  migrations/           .sql files drafted by crow db diff and applied by crow db apply
   css/app.css           optional stylesheet overrides (inlined after the defaults)
   tests/                integration tests
   crow.lock             the commit each dependency checked out (commit it)

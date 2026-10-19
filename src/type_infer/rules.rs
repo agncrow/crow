@@ -411,7 +411,6 @@ impl TypeContext {
             // `json[map]` (use web): `json[text]` is its row
             "json" | "text" => Ty::Handle(&crate::table::RESPONSE),
             // db builtins
-            "exec" => Ty::Unit,
             "query" => Ty::List(Box::new(Ty::Json)),
             // Web.auth builtins: a token, or why not; a token's claims, or why
             // not (expired, a signature that does not match, not a token)

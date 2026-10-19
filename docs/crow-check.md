@@ -66,14 +66,14 @@ stays right — and the file says so.
 
 Each file's `reach` is what it can touch outside its values: every
 effect its functions, derivations and top level reach, through
-whatever they call, by capability — `database` (a query, an exec, a
+whatever they call, by capability — `database` (a query, a
 connection), `files`, `network`, `serving` (a page, a route), `shell`,
 `mail`, `clock`, `process` (an argument, the environment, an exit) and
 `session` (a notice, a sign-in, a download, work held for later):
 
 ```
 reach board/cards.co
-  database: connect, exec, query
+  database: connect, query
   files: cp, mkdir
   session: download, notice
 ```
@@ -111,7 +111,7 @@ read of it is answered from that, as the rehearsals after will be. The
 same fixtures run the tests where the servers are not: `crow test
 --fixtures` answers each Postgres and ClickHouse read from them, in both
 modes (spec, `crow test --fixtures`). A write
-is recorded as in any rehearsal, so a recording never changes a database. A write — `exec`, `insert`, a
+is recorded as in any rehearsal, so a recording never changes a database. A write — a `query` whose statement writes, `insert`, a
 migration, a statement through `query` that changes rows — is recorded
 with its payload and the program sees success; a shell command and a file
 written, moved or removed are recorded instead of run; an HTTP `request`

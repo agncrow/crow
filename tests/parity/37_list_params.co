@@ -2,10 +2,10 @@
 use db
 
 conn = db.connect['sqlite://:memory:']
-exec[conn, 'CREATE TABLE t (id INTEGER, name TEXT)']
-exec[conn, 'INSERT INTO t VALUES (1, ?)', ['ann']]
-exec[conn, 'INSERT INTO t VALUES (2, ?)', ['bob']]
-exec[conn, 'INSERT INTO t VALUES (3, ?)', ['cat']]
+query[conn, 'CREATE TABLE t (id INTEGER, name TEXT)']
+query[conn, 'INSERT INTO t VALUES (1, ?)', ['ann']]
+query[conn, 'INSERT INTO t VALUES (2, ?)', ['bob']]
+query[conn, 'INSERT INTO t VALUES (3, ?)', ['cat']]
 picked = query[conn, 'SELECT name FROM t WHERE id IN ? ORDER BY id', [[1, 3]]]
 log[picked.name]
 none = query[conn, 'SELECT name FROM t WHERE id IN ? ORDER BY id', [[]]]

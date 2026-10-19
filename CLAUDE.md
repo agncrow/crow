@@ -1047,6 +1047,17 @@ steps on every push and must be green.
   name in the compiler. The patterns read the argument as it was written
   (`seen`): a list converted to a tensor where it is handed
   (`tensor(move xs)`) keeps the rank it had as a list.
+- `query` is the one statement verb (2026-10-19): every statement, a frame
+  answered. Its row's provider decides read or write from the LITERAL
+  statement (`Provider.writes`, crow_db's `describe::writes` over
+  sqlparser); a write, or a statement built as the program runs, takes
+  the hidden writing twin `db.__query_write` (`table::writing_twin`, a
+  form `written` as `query`), so every by-name reader of effect kinds
+  (held, stamps, the context check, the rehearsal) is right without a
+  per-call kind in the IR; `statement_twin` in lower_ir.rs is the one
+  place that chooses, and words the derivation's refusal of a computed
+  statement. Both backends dispatch `__query_write` as `query`. `exec`
+  and `migrate` are unknown names now; `crow db apply` applies migrations.
 - A row that answers a frame declares its columns (`columns`, where the
   kernel fixes them) or its provider (`provider: &Provider { connection,
   statement, columns }`, a function of its runtime crate handed the

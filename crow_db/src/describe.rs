@@ -77,6 +77,71 @@ pub fn in_lists_as_one(sql: &str) -> String {
     out
 }
 
+/// What a statement does, read from its text in any dialect sqlparser
+/// reads (its `IN ?` as the `IN (?)` it is sent as): a read — a `SELECT`
+/// without `INTO`, `VALUES`, `SHOW`, `EXPLAIN`, `DESCRIBE`, a `PRAGMA`
+/// asked — a write, reading rows back where a `RETURNING` clause says, or
+/// not known, where the text parses in no dialect.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Does {
+    Reads,
+    Writes { reads_back: bool },
+    Unknown,
+}
+
+pub fn classify(statement: &str) -> Does {
+    use sqlparser::ast::{SetExpr, Statement};
+    use sqlparser::dialect::{ClickHouseDialect, Dialect, GenericDialect, PostgreSqlDialect, SQLiteDialect};
+    use sqlparser::parser::Parser;
+    let listed = in_lists_as_one(statement);
+    let dialects: [&dyn Dialect; 4] = [&GenericDialect {}, &PostgreSqlDialect {}, &SQLiteDialect {}, &ClickHouseDialect {}];
+    let Some(statements) = dialects.iter().find_map(|d| Parser::parse_sql(*d, &listed).ok()) else { return Does::Unknown };
+    let mut writes = false;
+    let mut reads_back = false;
+    for s in &statements {
+        match s {
+            Statement::Query(q) => {
+                if let SetExpr::Select(select) = q.body.as_ref() {
+                    writes |= select.into.is_some();
+                }
+            }
+            Statement::Explain { .. } | Statement::ExplainTable { .. } | Statement::ShowTables { .. } | Statement::ShowColumns { .. } | Statement::ShowVariable { .. } | Statement::ShowDatabases { .. } | Statement::ShowSchemas { .. } | Statement::ShowFunctions { .. } | Statement::ShowViews { .. } => {}
+            Statement::Pragma { value, .. } => writes |= value.is_some(),
+            Statement::Insert(insert) => {
+                writes = true;
+                reads_back |= insert.returning.is_some();
+            }
+            Statement::Update(update) => {
+                writes = true;
+                reads_back |= update.returning.is_some();
+            }
+            Statement::Delete(delete) => {
+                writes = true;
+                reads_back |= delete.returning.is_some();
+            }
+            _ => writes = true,
+        }
+    }
+    if writes { Does::Writes { reads_back } } else { Does::Reads }
+}
+
+/// Whether a statement writes, for the compiler's effect kinds: handed
+/// the literal, or nothing where the statement is built as the program
+/// runs, which writes for all it can tell. A statement no dialect reads
+/// is judged by its first word (a `SELECT` with no `INTO` reads).
+pub fn writes(statement: Option<&str>) -> bool {
+    let Some(text) = statement else { return true };
+    match classify(text) {
+        Does::Reads => false,
+        Does::Writes { .. } => true,
+        Does::Unknown => {
+            let upper = text.to_ascii_uppercase();
+            let first = upper.split(|c: char| !c.is_ascii_alphabetic()).find(|w| !w.is_empty()).unwrap_or("");
+            !(matches!(first, "SELECT" | "WITH" | "VALUES" | "SHOW" | "EXPLAIN" | "DESCRIBE" | "DESC" | "PRAGMA") && !upper.contains(" INTO "))
+        }
+    }
+}
+
 /// The columns a statement answers on a live connection to `url`, each
 /// marked where it can hold NULL: what `crow db describe <url> <sql>`
 /// prints, which `describe_by_process` reads for a driver written in Crow.
@@ -88,6 +153,11 @@ pub fn of_url(url: &str, sql: &str) -> Result<Vec<(String, String)>, String> {
 }
 
 pub fn columns(url: &str, sql: &str, ddl: &[String]) -> Result<Vec<(String, String)>, String> {
+    // (a statement that writes and reads nothing back answers an empty
+    // frame: no database is asked about a CREATE)
+    if classify(sql) == (Does::Writes { reads_back: false }) {
+        return Ok(Vec::new());
+    }
     let listed = in_lists_as_one(sql);
     let sql = listed.as_str();
     let sqlite_path = url.strip_prefix("sqlite://");

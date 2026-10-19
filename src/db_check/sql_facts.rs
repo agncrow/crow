@@ -159,7 +159,7 @@ fn walk_expr(
     match expr {
         Expr::Call { callee, args } => {
             if let Some(name) = call_name(callee) {
-                if name == "query" || name == "exec" {
+                if name == "query" {
                     if let Some(Expr::Str(sql_text)) = args.get(1) {
                         let mut call = analyze_call(
                             sql_text,

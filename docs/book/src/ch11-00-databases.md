@@ -12,10 +12,10 @@ meeting a database.
 use db
 
 conn = connect['sqlite://:memory:']
-exec[conn, 'CREATE TABLE trades (id INTEGER PRIMARY KEY, symbol TEXT, qty INTEGER, price REAL)']
-exec[conn, 'INSERT INTO trades VALUES (1, ?, ?, ?)', ['AAPL', 100, 191.5]]
-exec[conn, 'INSERT INTO trades VALUES (2, ?, ?, ?)', ['MSFT', 50, 415.2]]
-exec[conn, 'INSERT INTO trades VALUES (3, ?, ?, ?)', ['AAPL', 40, 193.1]]
+query[conn, 'CREATE TABLE trades (id INTEGER PRIMARY KEY, symbol TEXT, qty INTEGER, price REAL)']
+query[conn, 'INSERT INTO trades VALUES (1, ?, ?, ?)', ['AAPL', 100, 191.5]]
+query[conn, 'INSERT INTO trades VALUES (2, ?, ?, ?)', ['MSFT', 50, 415.2]]
+query[conn, 'INSERT INTO trades VALUES (3, ?, ?, ?)', ['AAPL', 40, 193.1]]
 
 rows = query[conn, 'SELECT symbol, qty FROM trades WHERE qty >= 50 ORDER BY id']
 log[rows]
@@ -44,19 +44,21 @@ Three things to notice:
   the database speaks its own language.
 
 `query` returns a frame — everything from chapter 10 (masks, sort,
-columns, `sum`) applies to results directly. `exec` returns the affected
-row count:
+columns, `sum`) applies to results directly. It is the one verb for every
+statement: a `CREATE` or an `UPDATE` answers an empty frame, and a write
+that must say what it touched reads it back with `RETURNING`. Whether a
+call reads or writes is the statement's to say, not the name's:
 
 ```crow
 use db
 
 conn = connect['sqlite://:memory:']
-exec[conn, 'CREATE TABLE trades (id INTEGER PRIMARY KEY, symbol TEXT, qty INTEGER)']
-exec[conn, 'INSERT INTO trades VALUES (1, ?, ?)', ['AAPL', 100]]
-exec[conn, 'INSERT INTO trades VALUES (2, ?, ?)', ['MSFT', 50]]
+query[conn, 'CREATE TABLE trades (id INTEGER PRIMARY KEY, symbol TEXT, qty INTEGER)']
+query[conn, 'INSERT INTO trades VALUES (1, ?, ?)', ['AAPL', 100]]
+query[conn, 'INSERT INTO trades VALUES (2, ?, ?)', ['MSFT', 50]]
 
-n = exec[conn, 'UPDATE trades SET qty = qty + 10 WHERE symbol = ?', ['AAPL']]
-log[n]
+touched = query[conn, 'UPDATE trades SET qty = qty + 10 WHERE symbol = ? RETURNING id', ['AAPL']]
+log[len[touched]]
 ```
 
 ```text
@@ -97,13 +99,13 @@ transfers, the classic:
 use db
 
 conn = connect['sqlite://:memory:']
-exec[conn, 'CREATE TABLE accounts (name TEXT PRIMARY KEY, balance INTEGER)']
-exec[conn, 'INSERT INTO accounts VALUES (?, ?)', ['alice', 100]]
-exec[conn, 'INSERT INTO accounts VALUES (?, ?)', ['bob', 50]]
+query[conn, 'CREATE TABLE accounts (name TEXT PRIMARY KEY, balance INTEGER)']
+query[conn, 'INSERT INTO accounts VALUES (?, ?)', ['alice', 100]]
+query[conn, 'INSERT INTO accounts VALUES (?, ?)', ['bob', 50]]
 
 fn transfer[tx]
-    exec[tx, 'UPDATE accounts SET balance = balance - 30 WHERE name = ?', ['alice']]
-    exec[tx, 'UPDATE accounts SET balance = balance + 30 WHERE name = ?', ['bob']]
+    query[tx, 'UPDATE accounts SET balance = balance - 30 WHERE name = ?', ['alice']]
+    query[tx, 'UPDATE accounts SET balance = balance + 30 WHERE name = ?', ['bob']]
 
 transact[conn, transfer]
 log[query[conn, 'SELECT * FROM accounts ORDER BY name']]
@@ -119,11 +121,12 @@ alice       70
 [2 rows x 2 cols]
 ```
 
-The function receives a transaction handle `tx` and uses the same `exec`
+The function receives a transaction handle `tx` and uses the same `query`
 on it — passed by name, like every callback in Crow.
 
-That's the whole database API: `connect`, `query`, `exec`, `insert`,
-`transact`, `migrate`.
+That's the whole database API: `connect`, `query`, `insert`, `transact`
+and `describe`. Migrations are the tool's: `crow db apply <dir> <url>`
+runs the `.sql` files a directory holds that the database has not seen.
 
 ## Letting the Checker Read Your Schema
 
@@ -136,12 +139,12 @@ with an `if`:
 use db
 
 conn = connect['sqlite://:memory:']
-exec[conn, 'CREATE TABLE trades (symbol TEXT, qty INT, status TEXT)']
+query[conn, 'CREATE TABLE trades (symbol TEXT, qty INT, status TEXT)']
 
 sym = 'AAPL'
 open_trades = query[conn, 'SELECT symbol FROM trades WHERE symbol = ? AND status = ?', [sym, 'active']]
 if len[open_trades] eq 0
-    exec[conn, 'INSERT INTO trades (symbol, qty, status) VALUES (?, ?, ?)', [sym, 100, 'active']]
+    query[conn, 'INSERT INTO trades (symbol, qty, status) VALUES (?, ?, ?)', [sym, 100, 'active']]
 
 after = query[conn, 'SELECT symbol FROM trades']
 log[len[after]]
@@ -203,10 +206,10 @@ takes `[[1, 3]]` and never needs the ids pasted into the query text:
 use db
 
 conn = db.connect['sqlite://:memory:']
-exec[conn, 'CREATE TABLE t (id INTEGER, name TEXT)']
-exec[conn, 'INSERT INTO t VALUES (1, ?)', ['ann']]
-exec[conn, 'INSERT INTO t VALUES (2, ?)', ['bob']]
-exec[conn, 'INSERT INTO t VALUES (3, ?)', ['cat']]
+query[conn, 'CREATE TABLE t (id INTEGER, name TEXT)']
+query[conn, 'INSERT INTO t VALUES (1, ?)', ['ann']]
+query[conn, 'INSERT INTO t VALUES (2, ?)', ['bob']]
+query[conn, 'INSERT INTO t VALUES (3, ?)', ['cat']]
 picked = query[conn, 'SELECT name FROM t WHERE id IN ? ORDER BY id', [[1, 3]]]
 log[picked.name]
 ```
@@ -225,7 +228,7 @@ connection checks the tables the database already has against them:
 use db
 
 book = connect['sqlite://board.db']
-exec[book, 'CREATE TABLE IF NOT EXISTS cards (id INTEGER PRIMARY KEY, title TEXT, due TEXT)']
+query[book, 'CREATE TABLE IF NOT EXISTS cards (id INTEGER PRIMARY KEY, title TEXT, due TEXT)']
 ```
 
 Add `due` to that statement after `board.db` was made without it, and

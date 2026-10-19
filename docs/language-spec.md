@@ -716,7 +716,7 @@ Because module variables were never visible, a local reusing a module name shado
 
 **Exception — a route's handler reads what the app holds:** a function a top-level `route[…]` answers with reads, by name, a derivation the app holds — one over tables, the clock and facts no session moves (Derivations, A route reads what the app holds). It still sees no module variable, and a function it calls sees no derivation: what a helper needs, the handler hands it.
 
-**A fact gets one value at the top level.** Its top-level assignment declares it, and that value is the one every session starts from; a test runs the declarations and nothing else of the top level, and each declaration's value is computed before the top level's other statements run, in the order written, so a declaration may read a fact or use a connection declared above it (`tripled = base * 3`, `made = exec[book, 'CREATE TABLE …']`; compiled, the first had not built and the second had stopped the program as it started, the connection not yet set). A fact holds no error: a declaration whose value can fail — a file loaded, a query, a document parsed — is refused where the facts are set, so the program stops before anything is served, `runtime error: line 8: cannot assign an error value to 'trades' — load: No such file or directory (os error 2)`, and the fact holds the value itself: `trades = load['trades.csv']` is a frame, which a page reads as one. (The interpreter had held the error in the fact, and a compiled program with such a fact had not built: a session's state could not keep it.) So a statement of the top level that changes a fact after its declaration — a second assignment, a loop that pushes into it, `cfg['a'] = 2` — would reach only the rest of the top level under `crow run`, and no session, no test, and no declaration after it (`n = len[xs]` after such a loop would be the declared `xs`'s length). It is refused: `'xs' is state, declared on line 2: it gets one value at the top level, which every session starts from, and handlers move it after that — give it its whole value where it is declared (a function can build it), or derive it`. A loop of the top level may bind names of its own, which are not facts (the book's site generator writes its pages in one). A `use web` program that declares a derivation holds state the same way, for its routes (Derivations): its top-level names are facts, each given one value, which its derivations read — `'xs' is state, declared on line 2: a program with derivations gives each top-level name one value, which its derivations read — …`.
+**A fact gets one value at the top level.** Its top-level assignment declares it, and that value is the one every session starts from; a test runs the declarations and nothing else of the top level, and each declaration's value is computed before the top level's other statements run, in the order written, so a declaration may read a fact or use a connection declared above it (`tripled = base * 3`, `made = query[book, 'CREATE TABLE …']`; compiled, the first had not built and the second had stopped the program as it started, the connection not yet set). A fact holds no error: a declaration whose value can fail — a file loaded, a query, a document parsed — is refused where the facts are set, so the program stops before anything is served, `runtime error: line 8: cannot assign an error value to 'trades' — load: No such file or directory (os error 2)`, and the fact holds the value itself: `trades = load['trades.csv']` is a frame, which a page reads as one. (The interpreter had held the error in the fact, and a compiled program with such a fact had not built: a session's state could not keep it.) So a statement of the top level that changes a fact after its declaration — a second assignment, a loop that pushes into it, `cfg['a'] = 2` — would reach only the rest of the top level under `crow run`, and no session, no test, and no declaration after it (`n = len[xs]` after such a loop would be the declared `xs`'s length). It is refused: `'xs' is state, declared on line 2: it gets one value at the top level, which every session starts from, and handlers move it after that — give it its whole value where it is declared (a function can build it), or derive it`. A loop of the top level may bind names of its own, which are not facts (the book's site generator writes its pages in one). A `use web` program that declares a derivation holds state the same way, for its routes (Derivations): its top-level names are facts, each given one value, which its derivations read — `'xs' is state, declared on line 2: a program with derivations gives each top-level name one value, which its derivations read — …`.
 
 The state is the file's that imports ui, or that imports web and declares a derivation: **an entry file that does neither keeps its top-level variables plain**, whatever its parts import, so a script that imports a part — to call its functions over real data — runs its top level in order, as any program does.
 
@@ -1122,11 +1122,9 @@ These builtins can fail and return an error-value:
 | `json[string]` | String is not valid JSON, or value is `null` |
 | `load[path]` (frame, math) | File, URL or S3 object missing or unparsable |
 | `csv[path]` / `lines[path]` (io) | File, URL or S3 object missing or unreadable |
-| `query[conn, sql]` | SQL syntax error or query execution fails |
-| `exec[conn, sql]` | SQL syntax error or execution fails |
+| `query[conn, sql]` | SQL syntax error, or the database refuses the statement |
 | `insert[conn, table, frame]` | Bulk insert fails (schema mismatch, connection error) |
 | `transact[conn, fn]` | The function failed (its error, the transaction rolled back), or the commit was refused |
-| `migrate[conn, dir]` | Migration fails (bad SQL, directory not found) |
 
 Non-fallible conversions (e.g. `int[3.14]`, `int[true]`) return raw values with `ok: true`.
 
@@ -1187,7 +1185,7 @@ else
 
 A variable whose first value could not fail refuses an error the same way where it is assigned (see Reassignment): `cannot assign an error value to 'x'`.
 
-**A value that can fail, dropped by its line, is decided on the same way.** A call made for what it does — `write[path, text]`, `exec[conn, sql]`, `rm[path]` — or any value that can fail, on a line of its own, answers a value nothing reads: when it failed, a function hands the failure to its caller, a handler stops, and the top level halts: `runtime error: line N: cannot drop an error value — cannot write '/x/a.txt': No such file or directory`. Assigned, the failure is a value like any other — `kept = rm[tmp]`, never read, ignores one on purpose — and what a line hands on is not dropped: a collecting loop's last line, a console cell's, a test's truth. Nor is a `mail` nothing reads: in a handler it is held for the commit and sent then (Mail), so its failure is the commit's, not its line's; nor a handler's call, or a helper's that writes facts, whose stop is its handler's (Handlers).
+**A value that can fail, dropped by its line, is decided on the same way.** A call made for what it does — `write[path, text]`, `query[conn, sql]`, `rm[path]` — or any value that can fail, on a line of its own, answers a value nothing reads: when it failed, a function hands the failure to its caller, a handler stops, and the top level halts: `runtime error: line N: cannot drop an error value — cannot write '/x/a.txt': No such file or directory`. Assigned, the failure is a value like any other — `kept = rm[tmp]`, never read, ignores one on purpose — and what a line hands on is not dropped: a collecting loop's last line, a console cell's, a test's truth. Nor is a `mail` nothing reads: in a handler it is held for the commit and sent then (Mail), so its failure is the commit's, not its line's; nor a handler's call, or a helper's that writes facts, whose stop is its handler's (Handlers).
 
 **Design Note: a failure a line drops.** Considered: refusing such a line before the program runs, until its value is assigned (rejected: the happy path needs nothing — every `write` would carry a name); leaving it silent (rejected: it had been, in both modes, and a site generator lost all but two of its pages to a write into a folder that did not exist, every check passing). Decided (2026-10-16): the line is a decision, as a branch on the value is — the failure stops where it was dropped, and the program that means to go on keeps the value.
 
@@ -1280,7 +1278,7 @@ The kinds the language itself produces — branch on `.kind` when a category mat
 |--------|-------------|
 | `'parse'` | `int[]`, `float[]`, `json[]` |
 | `'io'` | `read`, `write`, `mkdir`, `ls`, `rm`, `mv`, `cp`, `input`, `csv`, `lines` |
-| `'db'` | `connect`, `query`, `exec`, `insert`, `transact`, `migrate` |
+| `'db'` | `connect`, `query`, `insert`, `transact` |
 | `'frame'` | `load`, `save`, and `with` given values of another length than the frame's rows |
 | `'load'` | `math.load` |
 | `'env'` | `env[name]` when the variable is not set |
@@ -2868,7 +2866,7 @@ view render[]
 
 1. a handler wrote a fact it reads;
 2. a derivation it reads recomputed and its value changed — an equal number, string or bool cuts the chain (frames always propagate);
-3. a statement in this program wrote a table it reads — an `exec`, an `insert`, or a `query` whose statement writes (`INSERT … RETURNING id` reads back the row it wrote, and the table is written all the same);
+3. a statement in this program wrote a table it reads — an `insert`, or a `query` whose statement writes (`INSERT … RETURNING id` reads back the row it wrote, and the table is written all the same);
 4. it reads `now[]` and a tick of `serve refresh` passed — a click's render is not a tick, so a click recomputes only what it moved;
 5. it reads a table this program never writes — an external source — and its freshness window elapsed. `fresh = N` is seconds; the default `fresh = 0` means *as fresh as the loop*: recomputed every tick, which is what a query inside a view did before. Declaring `fresh` is the relaxation.
 
@@ -2900,7 +2898,7 @@ fn cached_h[req]
 
 fn update_h[req]
     conn = connect['postgres://app@127.0.0.1/hello_world']
-    exec[conn, 'UPDATE world SET randomnumber = ? WHERE id = ?', [rand[1, 10000], rand[1, 10000]]]
+    query[conn, 'UPDATE world SET randomnumber = ? WHERE id = ?', [rand[1, 10000], rand[1, 10000]]]
     return text['ok']
 
 route['/cached-queries', cached_h]
@@ -3266,28 +3264,31 @@ A connection is not the program's lifetime. When the server closes it — a rest
 
 **A query nobody waits for is stopped.** A background recompute whose session has gone, or whose inputs moved while it ran, stops its query on the server (ClickHouse and Postgres); so does every query in flight when a served program is told to stop — `crow stop`, a rebuild, Ctrl-C. A program killed outright cannot stop anything; the next run that connects to a ClickHouse server on the same machine stops the queries the dead run left behind, and the log says so. Each ClickHouse statement carries a leading comment naming the machine, the process and a number, which is how it is found again.
 
-#### Query & Execute
+#### Statements
 
 | Function | Description |
 |---|---|
-| `query[conn, sql]` | Execute a SELECT and return results as a frame |
-| `exec[conn, sql]` | Execute DDL/DML (CREATE, INSERT, UPDATE, DELETE), return affected row count |
-| `exec[conn, sql, params]` | Execute parameterized DDL/DML with an array of bind values |
+| `query[conn, sql]` | Run a statement; the rows it answers, as a frame |
+| `query[conn, sql, params]` | The same, with a list of bind values for its `?`s |
+
+**One verb runs every statement.** `query` answers a frame: the rows a `SELECT` answers, the rows a `RETURNING` clause reads back, and an empty frame for a statement that answers none — a `CREATE`, an `UPDATE`, a `DELETE`. No count of rows affected is answered: a write that must say what it touched reads it back with `RETURNING`.
+
+**The statement says whether it reads or writes, not the name.** A literal statement is read by the compiler: a `SELECT` (without `INTO`), `VALUES`, `SHOW`, `EXPLAIN`, `DESCRIBE` and a `PRAGMA` asked are reads (`db.read`); anything else is a write (`db.write`), `RETURNING` included, so a derivation may hold a literal read and a handler's writes are held to its commit (Effects Have Kinds). A statement built as the program runs — a string joined from pieces, a parameter — writes for all the compiler can tell: a derivation that hands one is refused, naming the fix, which is the literal with `?` for its parameters.
 
 ```
 use db
 conn = connect['postgres://user:pass@host/mydb']
 
---- Query returns a frame
 users = query[conn, 'SELECT * FROM users']
 log[len[users]]
 filtered = users[users.age gt 25]
 
---- Execute returns affected row count
-exec[conn, 'CREATE TABLE users (id INT, name TEXT)']
-n = exec[conn, 'DELETE FROM users WHERE age < ?', [18]]
-log[n]
+query[conn, 'CREATE TABLE IF NOT EXISTS users (id INT, name TEXT)']
+gone = query[conn, 'DELETE FROM users WHERE age < ? RETURNING id', [18]]
+log[len[gone]]
 ```
+
+**Design Note: one statement verb.** Considered: `exec` beside `query`, two names carrying what the compiler needs before the program runs — the answer's kind (a count or a frame) and the effect's (a write or a read) — which every typed client has (Go's `Exec` and `Query`, sqlx, JDBC); a flag on the call. Rejected: the statement already says both, and the compiler reads literal statements anyway; the count was read in one program of the corpus; and a `SELECT` through `exec` failed on SQLite with the library's words while Postgres and ClickHouse ran it and threw the rows away. Decided (Vijay, 2026-10-19): one verb, `query`, a frame for every statement, the literal's first word deciding its kind, a computed statement a write.
 
 **List parameters.** An array bound as a parameter stands for a list: its `?` becomes `(?, ?, …)` with one placeholder per element, on every backend. Write `WHERE id IN ?` and pass `[[1, 3]]`; an empty list matches nothing. A list goes after `IN` and nowhere else: handed to another `?` — `x = ANY(?)` — it would be sent as a row where the database wants an array, so a literal statement that does so is refused, in both modes, before it runs. The compiler asks a database about `IN ?` as the list of one it is sent as, `IN (?)`.
 
@@ -3324,30 +3325,19 @@ use db
 conn = connect['postgres://user:pass@host/mydb']
 
 fn transfer[t]
-  exec[t, 'UPDATE accounts SET balance = balance - 100 WHERE id = 1']
-  exec[t, 'UPDATE accounts SET balance = balance + 100 WHERE id = 2']
+  query[t, 'UPDATE accounts SET balance = balance - 100 WHERE id = 1']
+  query[t, 'UPDATE accounts SET balance = balance + 100 WHERE id = 2']
 
 transact[conn, transfer]
 ```
 
 #### Migrations
 
-| Function | Description |
-|---|---|
-| `migrate[conn, dir]` | Run forward-only SQL migrations from a directory |
-
-Reads `.sql` files sorted by filename, executes new ones in order, tracks applied migrations in `_crow_migrations` table. Returns count of newly applied migrations.
-
-```
-use db
-conn = connect['postgres://user:pass@host/mydb']
-n = migrate[conn, 'migrations/']
-log['`n` migrations applied']
-```
+Migrations are the tool's, not a program's: `crow db apply <dir> <url>` runs the `.sql` files of a directory not yet applied on the database, in name order, recording each in a `_crow_migrations` table, and says how many were new. It is the apply half of `crow db diff`, which drafts the statements a schema change needs (below).
 
 #### The schema a program declares
 
-**A program's tables are the ones its own statements make.** Every literal `CREATE TABLE` a program hands a connection — `exec[book, 'CREATE TABLE IF NOT EXISTS cards (…)']`, directly or through a function the connection is handed to (`setup[book]`) — declares that table, with its columns, on that connection. A table the program also drops there (`DROP TABLE IF EXISTS scratch`) is one it remakes each run, and declares nothing. A connection the program declares no table on is one it does not own: nothing below reads or changes it, and the tables and columns a database has beyond the declared ones are its own.
+**A program's tables are the ones its own statements make.** Every literal `CREATE TABLE` a program hands a connection — `query[book, 'CREATE TABLE IF NOT EXISTS cards (…)']`, directly or through a function the connection is handed to (`setup[book]`) — declares that table, with its columns, on that connection. A table the program also drops there (`DROP TABLE IF EXISTS scratch`) is one it remakes each run, and declares nothing. A connection the program declares no table on is one it does not own: nothing below reads or changes it, and the tables and columns a database has beyond the declared ones are its own.
 
 **Opening a connection checks that the tables the database has hold what the program declares**, in one of three modes, the same in both modes of running. A declared table the database does not have yet is not a difference: the program's own statement makes it as it runs, so a fresh database starts as it always has.
 
@@ -3372,7 +3362,7 @@ ALTER TABLE "cards" ADD COLUMN due TEXT;
 CREATE TABLE IF NOT EXISTS labels (card INTEGER, name TEXT);
 ```
 
-**Design Note: schema modes.** Considered: migrations alone (`migrate[conn, dir]`), which leave a table the program changed — a new column — to fail at the first query that reads it, in development and in production alike; making the schema everywhere (Prisma's `db push`, Django's old `syncdb`), which alters production databases the program's user has no right to alter and must not; and a check only in production. Decided (Vijay, July 2026; approved September 2026): a program's `CREATE` statements declare its tables; development makes what is missing under a lock, a built program checks it at connect, and `crow db diff` drafts the migration for what making would lose (as Terraform's `plan` drafts before an `apply`, and Prisma's `db push` in development meets `migrate deploy` in production). At connect a missing table is left to the program's own `CREATE`, which runs moments later: checking it there stopped every built program on its first run against a fresh database, and making it there broke a program whose own `CREATE TABLE` (without `IF NOT EXISTS`) then found it made — the drift worth stopping for is the table that exists with other columns, which `CREATE TABLE IF NOT EXISTS` silently keeps.
+**Design Note: schema modes.** Considered: migrations alone, applied by hand, which leave a table the program changed — a new column — to fail at the first query that reads it, in development and in production alike; making the schema everywhere (Prisma's `db push`, Django's old `syncdb`), which alters production databases the program's user has no right to alter and must not; and a check only in production. Decided (Vijay, July 2026; approved September 2026): a program's `CREATE` statements declare its tables; development makes what is missing under a lock, a built program checks it at connect, and `crow db diff` drafts the migration for what making would lose (as Terraform's `plan` drafts before an `apply`, and Prisma's `db push` in development meets `migrate deploy` in production). At connect a missing table is left to the program's own `CREATE`, which runs moments later: checking it there stopped every built program on its first run against a fresh database, and making it there broke a program whose own `CREATE TABLE` (without `IF NOT EXISTS`) then found it made — the drift worth stopping for is the table that exists with other columns, which `CREATE TABLE IF NOT EXISTS` silently keeps.
 
 #### Pool Defaults
 
@@ -3702,7 +3692,7 @@ program. The kinds:
 | `files.write` | writes, makes, moves or removes a file | `write`, `mkdir`, `rm`, `mv`, `cp`, `save` |
 | `network` | sends or receives over the network | `request`, `send`, `recv`, `fetch`, `poll`, a socket's |
 | `db.read` | reads a database, or opens a connection to one | `connect`, `query` |
-| `db.write` | writes a database | `exec`, `insert`, `transact`, `migrate` |
+| `db.write` | writes a database | `query` of a statement that writes, `insert`, `transact` |
 | `mail` | sends mail | `mail` |
 | `clock` | reads the clock | `now` |
 | `random` | draws from the seeded generator | `rand`, `seed`, `randn`, `normal`, `shuffle`, `choice`, the other draws |

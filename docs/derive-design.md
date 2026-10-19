@@ -104,7 +104,7 @@ A derivation is **dirty** when, since it was last computed:
 1. a handler wrote a fact in its read set;
 2. a derivation in its read set was recomputed and its value changed
    (early cutoff: an equal value marks nothing downstream);
-3. an `exec` in this app wrote a table in its read set;
+3. a statement in this app wrote a table in its read set;
 4. it reads `now[]` and a tick of `serve refresh` has passed;
 5. its freshness window elapsed (3.4).
 

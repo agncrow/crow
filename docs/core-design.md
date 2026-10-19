@@ -40,7 +40,7 @@ wrote so far".
 ### 1.2 Effects: answered or deferred
 
 An effect is a call that reaches outside the session's facts: `query`,
-`exec`, `insert`, `transact`, `read`, `write`, `fetch`, `shell`,
+`query` of a statement that writes, `insert`, `transact`, `read`, `write`, `fetch`, `shell`,
 `mail`, `later`, `notice`. One rule decides when each runs:
 
 > **An effect whose answer the handler uses runs when asked. An effect
@@ -51,9 +51,9 @@ An effect is a call that reaches outside the session's facts: `query`,
 passed, interpolated or returned. The checker already computes this for
 the baseline, and the same computation drives the runtime.
 
-So `r = query[...]`, `n = shell['wc -l x']` and `row = exec[book,
+So `r = query[...]`, `n = shell['wc -l x']` and `row = query[book,
 'INSERT ... RETURNING id']` answer at once, because the handler needs
-them to continue. `exec[book, 'UPDATE ...']` with no use, `insert[book,
+them to continue. `query[book, 'UPDATE ...']` with no use, `insert[book,
 'trades', f]`, `mail[...]`, `notice['saved']` and `later[reload]` are
 held and performed at commit, and a stop discards them.
 

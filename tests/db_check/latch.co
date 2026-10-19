@@ -4,7 +4,7 @@ use db
 conn = connect['sqlite://fixture.db']
 room_no = 101
 
-exec[conn, 'UPDATE rooms SET checked_out = 1 WHERE room = ?', [room_no]]
+query[conn, 'UPDATE rooms SET checked_out = 1 WHERE room = ?', [room_no]]
 
 todo = query[conn, 'SELECT room FROM rooms WHERE checked_out = 0']
 log['rooms to clean: `len[todo]`']

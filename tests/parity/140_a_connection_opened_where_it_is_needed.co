@@ -8,8 +8,8 @@ use web, db
 
 fn tally[scheme]
     conn = connect['`scheme`://:memory:']
-    made = exec[conn, 'CREATE TABLE t (n INT)']
-    w = exec[conn, 'INSERT INTO t VALUES (3), (4), (5)']
+    made = query[conn, 'CREATE TABLE t (n INT)']
+    w = query[conn, 'INSERT INTO t VALUES (3), (4), (5)']
     return query[conn, 'SELECT count(*) AS c, sum(n) AS s FROM t']
 
 q = tally['sqlite']

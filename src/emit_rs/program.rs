@@ -1492,7 +1492,7 @@ impl Emitter {
             // source, or a value the sessions start from — so a declaration
             // can read one declared before it: a value (`tripled = base * 3`,
             // which had read a name nothing bound) or a connection (`made =
-            // exec[book, …]`, which had read the connection before it was
+            // query[book, …]`, which had read the connection before it was
             // set, and the program stopped as it started)
             let mut read_later = BTreeSet::new();
             for f in &self.part.facts {

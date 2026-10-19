@@ -10,7 +10,7 @@ use web, db
 --- (one database in memory that every connection shares: a route's
 --- handler opens its own, and `sqlite://:memory:` is a database for each)
 book = db.connect['sqlite://file:served26?mode=memory&cache=shared']
-made = exec[book, 'CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT)']
+made = query[book, 'CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT)']
 
 derive notes
     return query[book, 'SELECT id, body FROM notes ORDER BY id']
@@ -23,7 +23,7 @@ fn count_h[req]
 
 fn add_h[req]
     conn = db.connect['sqlite://file:served26?mode=memory&cache=shared']
-    exec[conn, 'INSERT INTO notes (body) VALUES (?)', [req.body]]
+    query[conn, 'INSERT INTO notes (body) VALUES (?)', [req.body]]
     return text['added']
 
 fn last_h[req]

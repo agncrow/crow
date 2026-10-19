@@ -1,0 +1,21 @@
+--- One verb runs every statement (spec, db, Statements): `query` answers a
+--- frame — the rows a SELECT answers, the rows a RETURNING clause reads
+--- back, an empty frame for a statement that answers none — and the
+--- statement says whether it reads or writes, not the name. Both modes.
+use db
+
+book = connect['sqlite://:memory:']
+made = query[book, 'CREATE TABLE cards (id INTEGER PRIMARY KEY, title TEXT, stars INTEGER)']
+log[type[made]]
+log[len[made]]
+put = query[book, 'INSERT INTO cards (title, stars) VALUES (?, ?)', ['one', 3]]
+log[len[put]]
+back = query[book, 'INSERT INTO cards (title, stars) VALUES (?, ?) RETURNING id', ['two', 5]]
+log[back.id]
+changed = query[book, 'UPDATE cards SET stars = stars + 1']
+log[len[changed]]
+rows = query[book, 'SELECT title, stars FROM cards ORDER BY id']
+log[rows.stars]
+gone = query[book, 'DELETE FROM cards WHERE stars > 5 RETURNING id']
+log[len[gone]]
+log[len[query[book, 'SELECT id FROM cards']]]

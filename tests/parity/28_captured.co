@@ -4,8 +4,8 @@
 use db
 
 conn = connect['sqlite://:memory:']
-exec[conn, 'CREATE TABLE ticks (px REAL)']
-exec[conn, 'INSERT INTO ticks VALUES (191.5)']
+query[conn, 'CREATE TABLE ticks (px REAL)']
+query[conn, 'INSERT INTO ticks VALUES (191.5)']
 
 px = query[conn, 'SELECT px FROM ticks']
 c = captured[px]

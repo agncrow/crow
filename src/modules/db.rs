@@ -97,8 +97,9 @@ fn call_db(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
             let handle = crow_db::schema::connect(url, pool_size, &declared)?;
             Ok(CrowValue::ok(Value::DbConn(handle)))
         }
-        "query" => {
-            // query[conn, sql] or query[conn, sql, params]
+        "query" | "__query_write" => {
+            // query[conn, sql] or query[conn, sql, params]: every statement,
+            // its rows as a frame (an empty one where it answers none)
             if args.len() < 2 || args.len() > 3 {
                 return Err("query[] takes 2 or 3 arguments".into());
             }
@@ -111,23 +112,6 @@ fn call_db(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
             };
             match conn.query(sql, &params) {
                 Ok(frame) => Ok(CrowValue::ok(Value::Frame(Box::new(frame)))),
-                Err(e) => Ok(CrowValue::error_with_kind(&e, "db", "")),
-            }
-        }
-        "exec" => {
-            // exec[conn, sql] or exec[conn, sql, params]
-            if args.len() < 2 || args.len() > 3 {
-                return Err("exec[] takes 2 or 3 arguments".into());
-            }
-            let conn = to_db(&args[0], "exec")?;
-            let sql = to_str(&args[1], "exec")?;
-            let params = if args.len() == 3 {
-                crow_value_to_json_params(&args[2])?
-            } else {
-                vec![]
-            };
-            match conn.exec(sql, &params) {
-                Ok(count) => Ok(CrowValue::ok(Value::Int(count))),
                 Err(e) => Ok(CrowValue::error_with_kind(&e, "db", "")),
             }
         }
@@ -157,16 +141,6 @@ fn call_db(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
                 Ok(cols) => Ok(CrowValue::ok(Value::Frame(Box::new(crow_db::driven::describe_frame(&cols))))),
                 Err(e) => Ok(CrowValue::error_with_kind(&e, "db", "")),
             }
-        }
-        "migrate" => {
-            // migrate[conn, dir]
-            if args.len() != 2 {
-                return Err("migrate[] takes 2 arguments".into());
-            }
-            let conn = to_db(&args[0], "migrate")?;
-            let dir = to_str(&args[1], "migrate")?;
-            let count = conn.migrate(dir)?;
-            Ok(CrowValue::ok(Value::Int(count)))
         }
         "transact" => {
             // transact[conn, fn] — handled specially in interpreter
@@ -224,11 +198,9 @@ fn emit_db_rust(_name: &str, _arg_strs: &[String], _arg_types: &[Ty]) -> Result<
 fn db_type_of(name: &str) -> Ty {
     match name {
         "connect" => Ty::Handle(&crate::table::DB),
-        "query" => Ty::Result(Box::new(Ty::Frame(None))),
-        "exec" => Ty::Result(Box::new(Ty::Int)),
+        "query" | "__query_write" => Ty::Result(Box::new(Ty::Frame(None))),
         "describe" => Ty::Result(Box::new(Ty::Frame(None))),
         "insert" => Ty::Int,
-        "migrate" => Ty::Int,
         "transact" => Ty::Unknown,
         _ => Ty::Unknown,
     }

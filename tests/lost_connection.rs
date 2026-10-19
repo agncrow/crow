@@ -16,9 +16,9 @@ const PROGRAM: &str = "use db
 
 port = args[][0]
 conn = connect['postgres://crow@127.0.0.1:`port`/postgres']
-made = exec[conn, 'CREATE TABLE IF NOT EXISTS ticks (n INT)']
+made = query[conn, 'CREATE TABLE IF NOT EXISTS ticks (n INT)']
 for i in range[120]
-    w = exec[conn, 'INSERT INTO ticks VALUES (?)', [i]]
+    w = query[conn, 'INSERT INTO ticks VALUES (?)', [i]]
     q = query[conn, 'SELECT count(*) AS c FROM ticks']
     if w.ok and q.ok
         log['`i` ok']

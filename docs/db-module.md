@@ -38,7 +38,7 @@ Both modes open every connection through one function, `crow_db::schema::connect
 
 Executes a SELECT statement and returns results as a **frame**. Same data type as `load['file.csv']` — all frame operations (`filter`, `sort`, `group`, `join`, etc.) work on query results.
 
-### `exec[conn, sql]` / `exec[conn, sql, params]`
+### `query[conn, sql]` / `query[conn, sql, params]`
 
 Executes DDL/DML (CREATE, INSERT, UPDATE, DELETE). Returns affected row count as an integer. Optional third argument is an array of bind values for parameterized queries.
 
@@ -64,15 +64,15 @@ Executes a named function inside a transaction:
 
 No `begin`/`commit`/`rollback` builtins — one way to do transactions (Rule 1).
 
-### `migrate[conn, dir]`
+### Migrations: `crow db apply <dir> <url>`
 
-Runs forward-only SQL migrations:
+Migrations are the tool's, not a program's (2026-10-19; `migrate[conn, dir]` was the builtin). The command runs forward-only SQL migrations:
 
 1. Reads `.sql` files from `dir`, sorted by filename
 2. Creates `_crow_migrations` table if it doesn't exist
 3. Skips already-applied migrations
 4. Executes new migrations in order
-5. Returns count of newly applied migrations
+5. Says how many were newly applied
 
 No rollback files — rollbacks are a new migration that undoes the change.
 
@@ -111,7 +111,7 @@ SQL parameters are passed as `serde_json::Value` arrays — the Crow interpreter
 
 | Backend | Status | Notes |
 |---|---|---|
-| SQLite | ✅ Done | Full support: query, exec, insert, transact, migrate |
+| SQLite | ✅ Done | Full support: query, insert, transact, describe |
 | PostgreSQL | ✅ Done | Written in Crow over the wire protocol (docs/db-in-crow-design.md): trust, password, md5 and SCRAM-SHA-256; the extended protocol with typed parameters; `frame_of_postgres` for the rows; COPY for inserts; Parse and Describe for describe; CancelRequest; a kept connection per statement at a time; the advisory lock and the handler's transaction in `crow_db::driven`. |
 | ClickHouse | ✅ Done | Written in Crow over the HTTP interface (port 8123; docs/db-in-crow-design.md): statements by id, rows as RowBinary decoded by a kernel, inserts as RowBinary encoded by the table's types, `DESCRIBE` for describe, a kept connection per statement at a time, cancel by id, a dead run's statements swept at connect. Transactions correctly refused (OLAP engine). |
 
@@ -126,7 +126,7 @@ All 6 builtins work in `crow run -i` mode. Transactions use manual `BEGIN`/`COMM
 ### Tests
 
 - 9 unit tests in `crow_db` crate (SQLite backend)
-- 8 interpreter tests (connect, exec, query, params, transact, bad URL)
+- 8 interpreter tests (connect, query, params, transact, bad URL)
 - 8 transpiler codegen tests
 - Integration example: `examples/db_demo.co`
 
@@ -138,9 +138,9 @@ use db
 conn = connect['sqlite://:memory:']
 
 --- Create and populate
-exec[conn, 'CREATE TABLE users (id INTEGER, name TEXT, age INTEGER)']
-exec[conn, 'INSERT INTO users VALUES (1, ?, ?)', ['alice', 30]]
-exec[conn, 'INSERT INTO users VALUES (2, ?, ?)', ['bob', 25]]
+query[conn, 'CREATE TABLE users (id INTEGER, name TEXT, age INTEGER)']
+query[conn, 'INSERT INTO users VALUES (1, ?, ?)', ['alice', 30]]
+query[conn, 'INSERT INTO users VALUES (2, ?, ?)', ['bob', 25]]
 
 --- Query returns a frame
 users = query[conn, 'SELECT * FROM users']
@@ -155,15 +155,12 @@ insert[conn, 'users', new_users]
 
 --- Transaction
 fn transfer[t]
-  exec[t, 'UPDATE accounts SET balance = balance - 100 WHERE id = ?', [1]]
-  exec[t, 'UPDATE accounts SET balance = balance + 100 WHERE id = ?', [2]]
+  query[t, 'UPDATE accounts SET balance = balance - 100 WHERE id = ?', [1]]
+  query[t, 'UPDATE accounts SET balance = balance + 100 WHERE id = ?', [2]]
 
 transact[conn, transfer]
 
---- Migrations
-migrate[conn, 'migrations/']
-
 --- Module-prefixed (when web.ws is also imported)
 db_conn = db.connect['sqlite://data.db']
-db.exec[db_conn, 'SELECT 1']
+db.query[db_conn, 'SELECT 1']
 ```

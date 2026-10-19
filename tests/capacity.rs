@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 const PROGRAM: &str = "use web, ui, db
 
 book = connect['sqlite://capacity.db']
-made = exec[book, 'CREATE TABLE IF NOT EXISTS ticks (n INTEGER NOT NULL)']
+made = query[book, 'CREATE TABLE IF NOT EXISTS ticks (n INTEGER NOT NULL)']
 
 fn count[req]
     conn = connect['sqlite://capacity.db']

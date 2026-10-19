@@ -490,7 +490,7 @@ mod tests {
     #[test]
     fn a_handlers_writes_land_together() {
         let url = accounts_db("handler");
-        let src = "use db\nconn = connect['sqlite://x.db']\nfn transfer[]\n    exec[conn, 'UPDATE accounts SET balance = balance - 1 WHERE id = 1']\n    exec[conn, 'UPDATE accounts SET balance = balance + 1 WHERE id = 2']\n";
+        let src = "use db\nconn = connect['sqlite://x.db']\nfn transfer[]\n    query[conn, 'UPDATE accounts SET balance = balance - 1 WHERE id = 1']\n    query[conn, 'UPDATE accounts SET balance = balance + 1 WHERE id = 2']\n";
         let plain = run_in("p.co", src, Some(&url), &Program::default()).unwrap();
         assert!(plain.hazards.iter().any(|h| matches!(h.kind, HazardKind::UnpairedWrites { .. })), "{:?}", kinds_of(&plain.hazards));
         let program = Program { handlers: ["transfer".to_string()].into_iter().collect(), ..Default::default() };
@@ -505,7 +505,7 @@ mod tests {
     #[test]
     fn a_parts_queries_are_checked_on_the_connection_they_use() {
         let url = accounts_db("parts");
-        let src = "use db\nuse board.store\nfn close[]\n    exec[store.book, 'DELETE FROM acounts WHERE id = 1']\nfn config[conn]\n    return query[conn, 'SELECT x FROM elsewhere']\n";
+        let src = "use db\nuse board.store\nfn close[]\n    query[store.book, 'DELETE FROM acounts WHERE id = 1']\nfn config[conn]\n    return query[conn, 'SELECT x FROM elsewhere']\n";
         let program = Program { conns: vec![("store.book".to_string(), url.clone()), ("pg".to_string(), "postgres://elsewhere".to_string())], databases: 2, ..Default::default() };
         let r = run_in("board/cards.co", src, Some(&url), &program).unwrap();
         let kinds = kinds_of(&r.hazards);

@@ -511,6 +511,12 @@ pub struct Provider {
     /// The argument that is the statement.
     pub statement: usize,
     pub columns: fn(&str, &str, &[String]) -> Result<Vec<(String, String)>, String>,
+    /// Whether the statement writes: handed the literal statement, or
+    /// nothing where the statement is built as the program runs, which
+    /// writes for all the compiler can tell. A write takes the row's
+    /// writing twin (`writing_twin`): the hidden form written as the same
+    /// name, whose effect is the write's.
+    pub writes: fn(Option<&str>) -> bool,
 }
 
 /// One dimension of a declared shape.
@@ -2667,11 +2673,13 @@ pub static FORMS: &[Row] = &[
     Row { options: &[("size", Preset::Str("m")), ("color", Preset::Str(""))], ..form!("ui.icon", "ui", "icon", (Str, Str, Str)) },
     // db: its verbs that are forms of their own
     Row { props: &[Prop::Does(crate::effects::Effect::DbRead), Prop::Connects], ..form!("db.connect", "db", "connect", (Str)) },
-    Row { props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.exec", "db", "exec", (Shown, Str, Shows)) },
-    Row { provider: Some(&Provider { connection: 0, statement: 1, columns: crow_db::describe::columns }), props: &[Prop::Does(crate::effects::Effect::DbRead)], ..form!("db.query", "db", "query", (Shown, Str, Shows)) },
+    // `query` runs every statement and answers a frame: a read, or — by what
+    // its provider says of the literal, a write for a statement built as
+    // the program runs — its writing twin, hidden, written as `query`
+    Row { provider: Some(&Provider { connection: 0, statement: 1, columns: crow_db::describe::columns, writes: crow_db::describe::writes }), props: &[Prop::Does(crate::effects::Effect::DbRead)], ..form!("db.query", "db", "query", (Shown, Str, Shows)) },
+    Row { written: "query", provider: Some(&Provider { connection: 0, statement: 1, columns: crow_db::describe::columns, writes: crow_db::describe::writes }), props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.__query_write", "db", "__query_write", (Shown, Str, Shows)) },
     Row { props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.insert", "db", "insert", (Shows)) },
     Row { params: &[Kind::Db, Kind::FnOf(&TX_BODY)], props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.transact", "db", "transact", ()) },
-    Row { props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.migrate", "db", "migrate", (Shows)) },
     form!("db.describe", "db", "describe", (Shows)),
     // (counted by nothing, as before: `later`, a control, the harness verbs)
     Row { params: &[Kind::FnOf(&DEFERRED), Kind::Shows], props: &[Prop::Does(crate::effects::Effect::Session), Prop::Answers], ..form!("core.later", "", "later", ()) },
@@ -2708,7 +2716,10 @@ pub fn has(name: &str, prop: Prop) -> bool {
 /// read by its last part, as the rows are named. Empty for a pure builtin.
 pub fn effects_of(name: &str) -> Vec<crate::effects::Effect> {
     let bare = name.rsplit('.').next().unwrap_or(name);
+    // (a hidden form written as the name — `query`'s writing twin — has
+    // kinds of its own, read by its own name)
     let mut out: Vec<crate::effects::Effect> = rows_named(bare)
+        .filter(|r| r.name == bare)
         .flat_map(|r| r.props.iter())
         .filter_map(|p| match p {
             Prop::Does(e) => Some(*e),
@@ -2733,6 +2744,7 @@ pub fn is_effect(name: &str) -> bool {
 /// ui's is an element).
 pub fn effects_of_in(module: &str, name: &str) -> Vec<crate::effects::Effect> {
     let mut out: Vec<crate::effects::Effect> = rows_named_in(module, name)
+        .filter(|r| r.name == name)
         .flat_map(|r| r.props.iter())
         .filter_map(|p| match p {
             Prop::Does(e) => Some(*e),
@@ -2849,6 +2861,24 @@ pub fn by_id(id: &str) -> Option<&'static Row> {
 /// provider of them, in the module or in any.
 pub fn frame_declared(module: Option<&str>, name: &str) -> Option<&'static Row> {
     ROWS.iter().chain(FORMS).find(|r| r.name == name && module.is_none_or(|m| r.module == m) && (!r.columns.is_empty() || r.provider.is_some()))
+}
+
+/// The form of a name that takes a statement — one with a provider — in
+/// the module or in any; the hidden writing twin is never found by name.
+pub fn statement_form(module: Option<&str>, name: &str) -> Option<&'static Row> {
+    FORMS.iter().find(|r| r.name == name && r.written.is_empty() && module.is_none_or(|m| r.module == m) && r.provider.is_some())
+}
+
+/// The hidden form written as this row's name, in its module: a statement
+/// form's writing twin.
+pub fn writing_twin(row: &'static Row) -> Option<&'static Row> {
+    FORMS.iter().find(|r| r.module == row.module && r.written == row.name && r.id != row.id)
+}
+
+/// Whether an effect's name (bare, or with its module) is a statement
+/// form's: `query`, or its writing twin.
+pub fn is_statement_effect(name: &str) -> bool {
+    FORMS.iter().any(|f| f.provider.is_some() && (name == f.name || name == f.id))
 }
 
 /// Whether a name is the form that opens a connection (`Prop::Connects`).
@@ -3881,7 +3911,17 @@ pub fn big_form(id: &str) -> Option<&'static Row> {
 /// dual reaches (the interpreter did not run it, the compiled program cast
 /// the dual to a float).
 pub fn written_name(row: &'static Row) -> &'static str {
+    if !row.written.is_empty() {
+        return row.written;
+    }
     ROWS.iter().find(|r| big_form(r.id).is_some_and(|b| std::ptr::eq(b, row))).map_or(row.name, |r| r.name)
+}
+
+/// The name a program writes for an effect's name (bare, or with its
+/// module): a hidden form's `written`, else the bare name.
+pub fn shown_effect(name: &str) -> &str {
+    let bare = name.rsplit('.').next().unwrap_or(name);
+    FORMS.iter().chain(ROWS.iter()).find(|r| r.name == bare && !r.written.is_empty()).map_or(bare, |r| r.written)
 }
 
 /// Whether a row's take path makes its answer of the value handed at

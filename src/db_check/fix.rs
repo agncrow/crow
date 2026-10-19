@@ -175,7 +175,7 @@ fn reverify(
 /// Canonical lost-update fusion:
 ///   x = query[.. 'SELECT col FROM t WHERE k = ?' ..]
 ///   d = x.col[0] + delta
-///   exec[.. 'UPDATE t SET col = ?' .., [d, ..]]
+///   query[.. 'UPDATE t SET col = ?' .., [d, ..]]
 /// becomes an in-database increment; the derived assign is removed when it
 /// has no other use.
 fn fuse_lost_update(source: &str, hazard: &Hazard) -> Result<String, String> {
@@ -374,7 +374,7 @@ mod tests {
         let src = std::fs::read_to_string("tests/db_check/unpaired.co").unwrap();
         let wrapped = wrap_in_transact(&src, &[9, 10]).unwrap();
         assert!(wrapped.contains("fn run_together[t]"));
-        assert!(wrapped.contains("exec[t, 'UPDATE accounts SET balance = balance - ?"));
+        assert!(wrapped.contains("query[t, 'UPDATE accounts SET balance = balance - ?"));
         assert!(wrapped.contains("transact[conn, run_together]"));
         crate::build(&wrapped).expect("wrapped source must still parse");
     }

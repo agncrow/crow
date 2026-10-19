@@ -1,0 +1,14 @@
+--- a statement built as the program runs writes for all the compiler can tell: a derivation, which reads, may not hand one — the fix is the literal, with ? for its parameters
+use web, ui, db
+
+book = connect['sqlite://cards.db']
+table = 'cards'
+
+derive count
+    return query[book, 'SELECT count(*) AS n FROM `table`']
+
+view render[]
+    return p['`count`']
+
+page['/', render]
+serve[3100]

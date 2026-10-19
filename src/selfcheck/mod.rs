@@ -837,12 +837,12 @@ fn form_cases(all: &[Val]) -> Vec<Case> {
     // a database: SQLite in memory, its statements and their failures, and a
     // server's connection, answered by the empty replay every run is given
     let databases: &[(&str, &str)] = &[
-        ("sqlite-round-trip", "c = connect['sqlite://:memory:']\nmade = exec[c, 'CREATE TABLE t (k TEXT, v REAL, n INTEGER)']\nput = exec[c, 'INSERT INTO t VALUES (?, ?, ?)', ['a', 1.5, 3]]\nrows = query[c, 'SELECT k, v, n FROM t']\nlog[rows]\nlog[rows.v[0] + 1.0]"),
-        ("sqlite-null", "c = connect['sqlite://:memory:']\nmade = exec[c, 'CREATE TABLE t (k TEXT, v REAL)']\nput = exec[c, 'INSERT INTO t VALUES (?, NULL)', ['a']]\nrows = query[c, 'SELECT k, v FROM t']\nlog[rows]\nlog[rows.v.ok]"),
+        ("sqlite-round-trip", "c = connect['sqlite://:memory:']\nmade = query[c, 'CREATE TABLE t (k TEXT, v REAL, n INTEGER)']\nput = query[c, 'INSERT INTO t VALUES (?, ?, ?)', ['a', 1.5, 3]]\nrows = query[c, 'SELECT k, v, n FROM t']\nlog[rows]\nlog[rows.v[0] + 1.0]"),
+        ("sqlite-null", "c = connect['sqlite://:memory:']\nmade = query[c, 'CREATE TABLE t (k TEXT, v REAL)']\nput = query[c, 'INSERT INTO t VALUES (?, NULL)', ['a']]\nrows = query[c, 'SELECT k, v FROM t']\nlog[rows]\nlog[rows.v.ok]"),
         ("sqlite-bad-sql", "c = connect['sqlite://:memory:']\nbad = query[c, 'SELECT nope FROM missing']\nlog[bad.ok]\nlog[bad.reason]"),
-        ("sqlite-params-list", "c = connect['sqlite://:memory:']\nmade = exec[c, 'CREATE TABLE t (n INTEGER)']\nfor i in range[5]\n    put = exec[c, 'INSERT INTO t VALUES (?)', [i]]\nlog[query[c, 'SELECT n FROM t WHERE n IN ?', [push[push[[], 1], 3]]]]"),
-        ("sqlite-insert-frame", "c = connect['sqlite://:memory:']\nmade = exec[c, 'CREATE TABLE t (a INTEGER, b TEXT)']\nf = frame.new[a = [1, 2], b = ['x', 'y']]\nput = insert[c, 't', f]\nlog[query[c, 'SELECT a, b FROM t']]"),
-        ("sqlite-count", "c = connect['sqlite://:memory:']\nmade = exec[c, 'CREATE TABLE t (a INTEGER)']\nput = exec[c, 'INSERT INTO t VALUES (1), (2)']\nlog[put]\nlog[len[query[c, 'SELECT a FROM t']]]"),
+        ("sqlite-params-list", "c = connect['sqlite://:memory:']\nmade = query[c, 'CREATE TABLE t (n INTEGER)']\nfor i in range[5]\n    put = query[c, 'INSERT INTO t VALUES (?)', [i]]\nlog[query[c, 'SELECT n FROM t WHERE n IN ?', [push[push[[], 1], 3]]]]"),
+        ("sqlite-insert-frame", "c = connect['sqlite://:memory:']\nmade = query[c, 'CREATE TABLE t (a INTEGER, b TEXT)']\nf = frame.new[a = [1, 2], b = ['x', 'y']]\nput = insert[c, 't', f]\nlog[query[c, 'SELECT a, b FROM t']]"),
+        ("sqlite-count", "c = connect['sqlite://:memory:']\nmade = query[c, 'CREATE TABLE t (a INTEGER)']\nput = query[c, 'INSERT INTO t VALUES (1), (2)']\nlog[put]\nlog[len[query[c, 'SELECT a FROM t']]]"),
         ("postgres-unreached", "c = connect['postgres://u@127.0.0.1:9/x']\nlog[c.ok]"),
         ("clickhouse-unreached", "c = connect['clickhouse://127.0.0.1:9/x']\nlog[c.ok]"),
     ];
@@ -863,11 +863,11 @@ fn form_cases(all: &[Val]) -> Vec<Case> {
     let live: &[(&str, &str, &str)] = &[
         ("postgres-kinds", pg, "log[query[pg, 'SELECT 1 AS n, 2.5::float8 AS x, \\'a\\' AS t, true AS b, NULL::int AS m']]"),
         ("postgres-params", pg, "rows = query[pg, 'SELECT ?::int + 1 AS n, ? AS t, ?::float8 * 2 AS x', [41, 'b', 1.25]]\nlog[rows]\nlog[rows.n[0]]"),
-        ("postgres-write", pg, "made = exec[pg, 'CREATE TEMP TABLE self_t (n int, name text)']\nput = insert[pg, 'self_t', frame.new[n = [1, 2], name = ['a', 'b']]]\nlog[put]\nlog[exec[pg, 'UPDATE self_t SET n = n + 10']]\nlog[query[pg, 'SELECT n, name FROM self_t ORDER BY n']]"),
+        ("postgres-write", pg, "made = query[pg, 'CREATE TEMP TABLE self_t (n int, name text)']\nput = insert[pg, 'self_t', frame.new[n = [1, 2], name = ['a', 'b']]]\nlog[put]\nlog[query[pg, 'UPDATE self_t SET n = n + 10']]\nlog[query[pg, 'SELECT n, name FROM self_t ORDER BY n']]"),
         ("postgres-describe", pg, "log[describe[pg, 'SELECT 1 AS n, ?::text AS t, 2.5::float8 AS x']]"),
         ("postgres-bad-sql", pg, "bad = query[pg, 'SELECT nope FROM nowhere']\nlog[bad.ok]\nlog[bad.reason]"),
         ("clickhouse-query", ch, "rows = query[ch, 'SELECT number AS n, number/7 AS x FROM numbers(3)']\nlog[rows]\nlog[int[rows.n[2]] * 2]\nlog[rows.x[1].ok]"),
-        ("clickhouse-write", ch, "f = frame.new[n = [1, 2], name = ['a', 'b']]\nlog[insert[ch, 't', f]]\nlog[exec[ch, 'CREATE TABLE u (n UInt64) ENGINE = Memory']]"),
+        ("clickhouse-write", ch, "f = frame.new[n = [1, 2], name = ['a', 'b']]\nlog[insert[ch, 't', f]]\nlog[query[ch, 'CREATE TABLE u (n UInt64) ENGINE = Memory']]"),
         ("clickhouse-describe", ch, "log[describe[ch, 'SELECT n, x FROM t WHERE n = ?']]"),
         ("clickhouse-bad-sql", ch, "bad = query[ch, 'SELECT nope FROM nowhere']\nlog[bad.ok]\nlog[bad.reason]"),
     ];

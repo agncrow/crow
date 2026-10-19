@@ -5,9 +5,9 @@
 use db
 
 old = connect['sqlite:///tmp/crow_parity_125.db']
-exec[old, 'DROP TABLE IF EXISTS cards']
-exec[old, 'CREATE TABLE cards (id INTEGER PRIMARY KEY, points TEXT)']
+query[old, 'DROP TABLE IF EXISTS cards']
+query[old, 'CREATE TABLE cards (id INTEGER PRIMARY KEY, points TEXT)']
 
 book = connect['sqlite:///tmp/crow_parity_125.db']
-exec[book, 'CREATE TABLE IF NOT EXISTS cards (id INTEGER PRIMARY KEY, points INTEGER)']
+query[book, 'CREATE TABLE IF NOT EXISTS cards (id INTEGER PRIMARY KEY, points INTEGER)']
 log['not reached']

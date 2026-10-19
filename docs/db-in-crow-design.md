@@ -40,7 +40,7 @@ calls (`crow_db::driven::Calls`):
 |---|---|---|
 | `open[parts]` | a connection to the HTTP port, kept alive | a connection started, authenticated (trust, md5, SCRAM-SHA-256) |
 | `query[parts, stream, sql, params]` | POST, `RowBinaryWithNamesAndTypes`, the frame | the extended protocol with typed parameters, the frame |
-| `exec[parts, stream, sql, params]` | POST; 0 (ClickHouse reports no counts) | the command's count |
+| `query[parts, stream, sql, params]` | POST; 0 (ClickHouse reports no counts) | the command's count |
 | `insert[parts, stream, table, frame]` | `INSERT … FORMAT RowBinary`, the frame encoded by the table's types | `COPY … FROM STDIN` |
 | `describe[parts, stream, sql]` | `DESCRIBE TABLE (sql)` | Parse and Describe, no Execute |
 | `cancel[parts, stream]` | `KILL QUERY WHERE query_id = …` | a CancelRequest on a new connection |

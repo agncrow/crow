@@ -301,7 +301,11 @@ impl<'r> Case<'r> {
                 5 => format!("relu[{}]", self.expr(Kind::Mat, d)),
                 6 => format!("transpose[transpose[{}]]", self.expr(Kind::Mat, d)),
                 7 => format!("reshape[flatten[{}], 2, 3]", self.expr(Kind::Mat, d)),
-                8 => format!("math.stack[[{}, {}]]", self.expr(Kind::Vec, d), self.expr(Kind::Vec, d)),
+                // (a stack literal holds what cannot fail: `relu` of a vector
+                // answers a value that can, since the module is written in
+                // Crow, and a list of such items is refused where it is
+                // written — a generator slip the seeds found one day)
+                8 => format!("math.stack[[{}, {}]]", self.leaf(Kind::Vec), self.leaf(Kind::Vec)),
                 _ => format!("({} + {})", self.expr(Kind::Mat, d), self.expr(Kind::Vec, d)),
             },
             // a frame keeps its columns: filtered, sorted, cut, stacked on itself
@@ -493,9 +497,9 @@ impl<'r> Case<'r> {
                 let (c, vol) = (self.leaf(Kind::Float), 1 + self.rng.below(200));
                 let name = *self.rng.pick(&["'a'", "'crow'", "'x y'"]);
                 self.lines.push(format!("{}{} = db.connect['sqlite://:memory:']", pad, b));
-                self.lines.push(format!("{}exec[{}, 'CREATE TABLE {} (id INTEGER PRIMARY KEY, c REAL, vol INTEGER NOT NULL, name TEXT)']", pad, b, t));
-                self.lines.push(format!("{}exec[{}, 'INSERT INTO {} (c, vol, name) VALUES (?, ?, ?)', [{}, {}, {}]]", pad, b, t, c, vol, name));
-                self.lines.push(format!("{}exec[{}, 'INSERT INTO {} (vol) VALUES (?)', [{}]]", pad, b, t, 1 + self.rng.below(9)));
+                self.lines.push(format!("{}query[{}, 'CREATE TABLE {} (id INTEGER PRIMARY KEY, c REAL, vol INTEGER NOT NULL, name TEXT)']", pad, b, t));
+                self.lines.push(format!("{}query[{}, 'INSERT INTO {} (c, vol, name) VALUES (?, ?, ?)', [{}, {}, {}]]", pad, b, t, c, vol, name));
+                self.lines.push(format!("{}query[{}, 'INSERT INTO {} (vol) VALUES (?)', [{}]]", pad, b, t, 1 + self.rng.below(9)));
                 self.lines.push(format!("{}{} = query[{}, 'SELECT c, vol, name FROM {} ORDER BY id']", pad, r, b, t));
                 self.lines.push(format!("{}log[len[{}]]", pad, r));
                 self.lines.push(format!("{}log[{}.vol]", pad, r));

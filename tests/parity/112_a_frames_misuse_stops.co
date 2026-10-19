@@ -7,10 +7,10 @@
 use frame
 use db
 book = db.connect['sqlite://:memory:']
-exec[book, 'CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT NOT NULL, score REAL)']
-exec[book, 'INSERT INTO t (name, score) VALUES (?, ?)', ['a', 1.5]]
-exec[book, 'INSERT INTO t (name) VALUES (?)', ['b']]
-exec[book, 'INSERT INTO t (name, score) VALUES (?, ?)', ['c', 3.5]]
+query[book, 'CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT NOT NULL, score REAL)']
+query[book, 'INSERT INTO t (name, score) VALUES (?, ?)', ['a', 1.5]]
+query[book, 'INSERT INTO t (name) VALUES (?)', ['b']]
+query[book, 'INSERT INTO t (name, score) VALUES (?, ?)', ['c', 3.5]]
 df = query[book, 'SELECT name, score FROM t ORDER BY id']
 copied = with[df, 'again', df.score]
 log[copied.again.ok]

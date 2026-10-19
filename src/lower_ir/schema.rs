@@ -166,7 +166,7 @@ fn declared_with(program: &Program, conns: &BTreeMap<String, Option<String>>) ->
                     calls.entry(crate::ir::copy_base(f).to_string()).or_default().push((body.name.to_string(), args.clone()));
                 }
             }
-            Expr::Effect { name, args, .. } if name == "exec" || name == "db.exec" => {
+            Expr::Effect { name, args, .. } if crate::table::is_statement_effect(name) => {
                 if let (Some(conn), Some(Expr::Const(Const::Str(sql), _))) = (args.first(), args.get(1).map(bare)) {
                     if crow_db::schema::parse_table(sql).is_some() {
                         ddl.push((body.name.to_string(), conn.clone(), sql.clone()));
