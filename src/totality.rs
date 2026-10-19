@@ -19,8 +19,8 @@ fn every_ty() -> Vec<Ty> {
         Ty::List(Box::new(Ty::Int)), Ty::Map(crate::ir::Key::Text, Box::new(Ty::Str)), Ty::Tensor(Box::new(Ty::Float), None),
         Ty::Frame(None), Ty::Frame(Some(cols)), Ty::Column(Box::new(Ty::Int)), Ty::Json,
         Ty::Record("P".to_string()), Ty::OptRecord("P".to_string()), Ty::Result(Box::new(Ty::Int)),
-        Ty::Fn(vec![Ty::Int], Box::new(Ty::Bool)), Ty::Fns(vec!["a".to_string()]), Ty::Db, Ty::Tx, Ty::Sparse, Ty::WebApp, Ty::WebRequest,
-        Ty::WebResponse, Ty::Mailer, Ty::Socket, Ty::Stream, Ty::App, Ty::Node, Ty::Unknown,
+        Ty::Fn(vec![Ty::Int], Box::new(Ty::Bool)), Ty::Fns(vec!["a".to_string()]), Ty::Handle(&crate::table::DB), Ty::Handle(&crate::table::TX), Ty::Sparse, Ty::Handle(&crate::table::WEBAPP), Ty::WebRequest,
+        Ty::Handle(&crate::table::RESPONSE), Ty::Handle(&crate::table::MAILER), Ty::Handle(&crate::table::SOCKET), Ty::Handle(&crate::table::STREAM), Ty::Handle(&crate::table::APP), Ty::Node, Ty::Unknown,
     ]
 }
 
@@ -32,16 +32,15 @@ fn variant_of(t: &Ty) -> &'static str {
         Ty::Bytes => "Bytes", Ty::Unit => "Unit", Ty::Markup => "Markup", Ty::List(_) => "List", Ty::Map(..) => "Map",
         Ty::Tensor(..) => "Tensor", Ty::Frame(_) => "Frame", Ty::Column(_) => "Column", Ty::Json => "Json",
         Ty::Record(_) => "Record", Ty::OptRecord(_) => "OptRecord", Ty::Result(_) => "Result", Ty::Fn(..) => "Fn", Ty::Fns(_) => "Fns",
-        Ty::Db => "Db", Ty::Tx => "Tx", Ty::Sparse => "Sparse", Ty::WebApp => "WebApp", Ty::WebRequest => "WebRequest",
-        Ty::WebResponse => "WebResponse", Ty::Mailer => "Mailer", Ty::Socket => "Socket", Ty::Stream => "Stream",
-        Ty::App => "App", Ty::Node => "Node", Ty::Unknown => "Unknown",
+        Ty::Handle(_) => "Handle", Ty::Sparse => "Sparse", Ty::WebRequest => "WebRequest",
+        Ty::Node => "Node", Ty::Unknown => "Unknown",
     }
 }
 
 /// One of every class of argument a row's kind is asked about.
 pub(crate) fn every_arg() -> Vec<Arg> {
     vec![
-        Arg::Int, Arg::Float, Arg::Decimal, Arg::Fraction, Arg::Moment, Arg::Moments, Arg::Bytes, Arg::Stream, Arg::Socket, Arg::Mailer, Arg::Db, Arg::Response, Arg::Chunks,
+        Arg::Int, Arg::Float, Arg::Decimal, Arg::Fraction, Arg::Moment, Arg::Moments, Arg::Bytes, Arg::Handle(&crate::table::STREAM), Arg::Handle(&crate::table::SOCKET), Arg::Handle(&crate::table::MAILER), Arg::Handle(&crate::table::DB), Arg::Handle(&crate::table::RESPONSE), Arg::Chunks,
         Arg::Json, Arg::Tensor, Arg::Ints, Arg::Floats, Arg::Tensors, Arg::Rows, Arg::Text, Arg::Texts, Arg::Truth, Arg::Truths,
         Arg::Records, Arg::Maps, Arg::Items, Arg::FallibleNumbers, Arg::Fallible, Arg::Column, Arg::Map, Arg::Record,
         Arg::Sparse, Arg::Frame, Arg::Fn, Arg::Fns, Arg::AnyList, Arg::Unknown,
@@ -53,7 +52,7 @@ pub(crate) fn every_arg() -> Vec<Arg> {
 fn arg_variant(a: Arg) -> &'static str {
     match a {
         Arg::Int => "Int", Arg::Float => "Float", Arg::Decimal => "Decimal", Arg::Fraction => "Fraction", Arg::Moment => "Moment", Arg::Moments => "Moments", Arg::Bytes => "Bytes",
-        Arg::Stream => "Stream", Arg::Socket => "Socket", Arg::Mailer => "Mailer", Arg::Db => "Db", Arg::Response => "Response", Arg::Chunks => "Chunks", Arg::Json => "Json",
+        Arg::Handle(h) => h.name, Arg::Chunks => "Chunks", Arg::Json => "Json",
         Arg::Tensor => "Tensor", Arg::Ints => "Ints", Arg::Floats => "Floats", Arg::Tensors => "Tensors", Arg::Rows => "Rows", Arg::Text => "Text",
         Arg::Texts => "Texts", Arg::Truth => "Truth", Arg::Truths => "Truths", Arg::Records => "Records", Arg::Maps => "Maps",
         Arg::Items => "Items", Arg::FallibleNumbers => "FallibleNumbers", Arg::Fallible => "Fallible", Arg::Column => "Column",
@@ -123,14 +122,14 @@ fn every_type_joins_with_itself_and_with_nothing() {
 }
 
 /// Every type is a dispatch class of the row table, by name: a value a row
-/// takes has its class, a handle no row takes is read as the program runs.
+/// takes has its class, and every handle is its own (a value shows it, and
+/// the kinds check refuses it anywhere else, in its word); a request, a
+/// node and nothing are read as the program runs.
 #[test]
 fn every_type_has_a_dispatch_class() {
     for t in every_ty() {
         let class = Arg::of_type(&t);
-        // (a connection and a response are classes of their own: a value
-        // shows them, and the kinds check refuses them anywhere else)
-        let takes_none = matches!(t, Ty::WebApp | Ty::WebRequest | Ty::App | Ty::Node | Ty::Unit | Ty::Unknown);
+        let takes_none = matches!(t, Ty::WebRequest | Ty::Node | Ty::Unit | Ty::Unknown);
         assert_eq!(class == Arg::Unknown, takes_none, "{} is {:?}", variant_of(&t), class);
     }
 }
@@ -163,7 +162,7 @@ fn every_value_is_equal_to_itself_and_has_a_name() {
     }
 }
 
-/// Every class of argument is named once.
+/// Every class of argument is named once (a handle's class by the handle).
 #[test]
 fn every_class_of_argument_is_named() {
     let all = every_arg();

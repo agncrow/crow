@@ -760,12 +760,12 @@ fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
             Kind::Words => matches!(t, Ty::Tensor(..) | Ty::Column(_)) || items(t, &|e| matches!(e.payload(), Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Moment)),
             Kind::Bool => *t == Ty::Bool,
             Kind::Bytes => *t == Ty::Bytes,
-            Kind::Stream => matches!(t, Ty::Stream),
+            Kind::Stream => matches!(t, Ty::Handle(h) if h.name == crate::table::STREAM.name),
             // a function handed where a row takes one, a walked collection,
             // a connection; a request and a match are answered, never taken
             Kind::FnOf(_) => matches!(t, Ty::Fn(..)),
             Kind::Walked => matches!(t, Ty::List(_) | Ty::Tensor(..) | Ty::Column(_)),
-            Kind::Db | Kind::Tx => matches!(t, Ty::Db | Ty::Tx),
+            Kind::Db | Kind::Tx => matches!(t, Ty::Handle(h) if h.name == crate::table::DB.name || h.name == crate::table::TX.name),
             Kind::Request | Kind::Found => false,
             Kind::Str => matches!(t, Ty::Str | Ty::Markup),
             // a map's key: text or an int, by its map
@@ -792,8 +792,8 @@ fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
             Kind::Column => matches!(t, Ty::Column(_)),
             Kind::Operand => matches!(t, Ty::Tensor(..) | Ty::Int | Ty::Float),
             Kind::Scalar => matches!(t, Ty::Int | Ty::Float | Ty::Str | Ty::Markup | Ty::Bool),
-            Kind::Socket => matches!(t, Ty::Socket),
-            Kind::Response => matches!(t, Ty::WebResponse),
+            Kind::Socket => matches!(t, Ty::Handle(h) if h.name == crate::table::SOCKET.name),
+            Kind::Response => matches!(t, Ty::Handle(h) if h.name == crate::table::RESPONSE.name),
             Kind::Markup => matches!(t, Ty::Markup | Ty::Str),
             // (what a row gives, never takes; a map of text or a record read
             // by its fields; what a row shows or encodes, which is any

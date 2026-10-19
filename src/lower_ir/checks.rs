@@ -801,11 +801,10 @@ impl<'a> Lowerer<'a> {
             // a handle is its own: two connections, responses, sockets or
             // mailers are never equal, and none orders (the interpreter had
             // answered false, and the compiled program had not built)
-            let handle = |t: &Ty| matches!(t, Ty::Db | Ty::Tx | Ty::WebResponse | Ty::Socket | Ty::Mailer | Ty::Stream);
+            let handle = |t: &Ty| matches!(t, Ty::Handle(_));
             if let Some(h) = [&lt, &rt].into_iter().find(|t| handle(t)) {
                 let words = match h {
-                    Ty::Db | Ty::Tx => "a database connection",
-                    Ty::WebResponse => "a response",
+                    Ty::Handle(h) => h.word,
                     t => crate::table::Arg::of_type(t).words(),
                 };
                 self.refuse(format!("{} is not compared: a handle is its own, equal to no other — compare what it holds", words));
@@ -1065,8 +1064,8 @@ impl<'a> Lowerer<'a> {
         // nothing: a function the module's tests never call)
         let fieldless = matches!(
             obj_type,
-            Ty::Int | Ty::Big | Ty::Float | Ty::Bool | Ty::Str | Ty::Decimal | Ty::Fraction | Ty::Bytes | Ty::Fn(..) | Ty::Socket | Ty::Mailer | Ty::Stream | Ty::Db | Ty::Tx | Ty::Sparse
-        );
+            Ty::Int | Ty::Big | Ty::Float | Ty::Bool | Ty::Str | Ty::Decimal | Ty::Fraction | Ty::Bytes | Ty::Fn(..) | Ty::Sparse
+        ) || matches!(obj_type, Ty::Handle(h) if !h.fields);
         // (each kind's fields are the runtime's to name: the compiler reads
         // them there)
         // (a frame's column answers a moment's fields over its cells —
@@ -1306,7 +1305,7 @@ impl<'a> Lowerer<'a> {
             if let Some(i) = text_at.filter(|i| *i < argc) {
                 let t = arg_type(self, i);
                 // (`html` of a test's app session is the harness's)
-                if known(&t) && !matches!(t.payload(), Ty::Str | Ty::Markup) && !(name == "html" && matches!(t.payload(), Ty::App)) {
+                if known(&t) && !matches!(t.payload(), Ty::Str | Ty::Markup) && !(name == "html" && matches!(t.payload(), Ty::Handle(h) if h.name == crate::table::APP.name)) {
                     self.refuse(crow_web::core::response::takes_text(name, what(&t)));
                 }
             }

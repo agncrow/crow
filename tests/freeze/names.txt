@@ -9,7 +9,7 @@ src/emit_rs/builders.rs	3	0
 src/emit_rs/builtins.rs	72	16
 src/emit_rs/exprs.rs	131	1
 src/emit_rs/mod.rs	0	4
-src/emit_rs/program.rs	34	30
+src/emit_rs/program.rs	34	29
 src/emit_rs/stmts.rs	15	5
 src/emit_rs/tests.rs	19	35
 src/emit_rs/texts.rs	5	0
@@ -43,10 +43,10 @@ src/parser.rs	5	0
 src/rust_names.rs	4	0
 src/served.rs	2	26
 src/sql_types.rs	71	2
-src/table.rs	53	3
+src/table.rs	53	2
 src/token.rs	1	0
 src/totality.rs	6	0
-src/type_infer.rs	16	8
+src/type_infer.rs	12	2
 src/type_infer/calls.rs	3	0
 src/type_infer/classify.rs	12	0
 src/type_infer/frames.rs	10	5

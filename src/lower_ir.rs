@@ -2695,7 +2695,7 @@ impl<'a> Lowerer<'a> {
                 // what is refused)
                 if self.pass == Pass::Final && self.v.route_handlers.contains(&self.current_fn) && self.web_program() {
                     let t = x.ty();
-                    if !matches!(t.payload(), Ty::Unknown | Ty::WebResponse) {
+                    if !matches!(t.payload(), Ty::Unknown | Ty::Handle(_)) {
                         let what = crate::table::Arg::of_type(t.payload()).words();
                         self.refuse(crow_web::core::response::not_a_response(&self.current_fn, what));
                     }
@@ -4320,14 +4320,9 @@ impl<'a> Lowerer<'a> {
                         | Ty::Moment
                         | Ty::Record(_)
                         | Ty::OptRecord(_)
-                        | Ty::WebResponse
-                        | Ty::Db
-                        | Ty::Tx
-                        | Ty::Socket
-                        | Ty::Mailer
+                        | Ty::Handle(_)
                         | Ty::Sparse
                         | Ty::Bytes
-                        | Ty::Stream
                 )
                 && !self.contested(&base)
                 && !of_unknown_rank(&base)
@@ -4335,8 +4330,7 @@ impl<'a> Lowerer<'a> {
                 let words = match base.ty().payload() {
                     Ty::Record(_) | Ty::OptRecord(_) => "a record, read by its fields' names (p.x)",
                     Ty::Moment => "a moment, read by its fields' names (t.year)",
-                    Ty::WebResponse => "a response",
-                    Ty::Db | Ty::Tx => "a database connection",
+                    Ty::Handle(h) => h.word,
                     Ty::Sparse => "a sparse matrix, read whole",
                     // (the layer's bytes are read by `byte[b, i]` and
                     // `slice[b, i, j]`; indexed, the interpreter had stopped,
@@ -4780,7 +4774,7 @@ impl<'a> Lowerer<'a> {
                 // a response is what a route returns, not something a page
                 // shows (the interpreter showed `text[s]` as its text; the
                 // compiled page did not build)
-                if matches!(child.ty().payload(), Ty::WebResponse) {
+                if matches!(child.ty().payload(), Ty::Handle(h) if h.name == crate::table::RESPONSE.name) {
                     let what = match a {
                         A::Call { callee, .. } => match callee.as_ref() {
                             A::Ident(f) => format!("{}[…]", f),
@@ -7186,7 +7180,7 @@ impl<'a> Lowerer<'a> {
 /// A value worth moving: anything that owns memory. A scalar copies.
 fn movable(ty: &Ty) -> bool {
     match ty {
-        Ty::Int | Ty::Float | Ty::Bool | Ty::Unit | Ty::Fn(_, _) | Ty::Db | Ty::Tx | Ty::Sparse | Ty::WebApp | Ty::WebRequest | Ty::WebResponse | Ty::Mailer | Ty::Socket | Ty::Stream | Ty::App => false,
+        Ty::Int | Ty::Float | Ty::Bool | Ty::Unit | Ty::Fn(_, _) | Ty::Handle(_) | Ty::Sparse | Ty::WebRequest => false,
         Ty::Result(inner) => movable(inner),
         _ => true,
     }
@@ -7766,7 +7760,7 @@ if r.ok
     #[test]
     fn a_routes_handler_is_handed_the_request() {
         let ir = ir_of("use web\nfn hello[req]\n    return text['hello `req.params.name` `req.body`']\nroute['/hello/:name', hello]\nroute['/made', 'POST', hello]\nserve[3999]\n");
-        assert!(ir.contains("pure hello(req: Handle(web.request)) -> Handle(web.response)"), "{}", ir);
+        assert!(ir.contains("pure hello(req: Handle(web.request)) -> Handle(response)"), "{}", ir);
     }
 
     /// stream[feed, a, …] calls feed[put, a, …]: put is a function of text
@@ -7781,8 +7775,8 @@ if r.ok
         assert!(ir.contains("pure lines(put: Fn(Str) -> Bool, n: Int) -> Unit"), "{}", ir);
         assert!(ir.contains("for i in core.range_to(n)\n"), "{}", ir);
         assert!(!ir.contains("parallel"), "{}", ir);
-        assert!(ir.contains("pure flow(req: Handle(web.request)) -> Handle(web.response)"), "{}", ir);
-        assert!(ir.contains("pure packed(req: Handle(web.request)) -> Handle(web.response)"), "{}", ir);
+        assert!(ir.contains("pure flow(req: Handle(web.request)) -> Handle(response)"), "{}", ir);
+        assert!(ir.contains("pure packed(req: Handle(web.request)) -> Handle(response)"), "{}", ir);
     }
 
     /// What stream is handed is checked before either mode runs: a function
@@ -7986,7 +7980,7 @@ if r.ok
     #[test]
     fn a_fallible_routes_handler_keeps_its_result() {
         let ir = ir_of("use web, frame\nfn table[req]\n    return arrow[frame.load['data.csv']]\nroute['/table', table]\nserve[3999]\n");
-        assert!(ir.contains("pure table(req: Handle(web.request)) -> Result(Handle(web.response))"), "{}", ir);
+        assert!(ir.contains("pure table(req: Handle(web.request)) -> Result(Handle(response))"), "{}", ir);
     }
 
     /// A frame a handler stores into a fact joins the fact's columns: the

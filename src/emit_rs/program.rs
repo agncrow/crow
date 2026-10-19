@@ -240,7 +240,7 @@ impl Emitter {
                 }
                 // a handler whose value can fail keeps its Result, and its
                 // route answers the failure (route_handler)
-                let response = Ty::WebResponse;
+                let response = Ty::Handle(&crate::table::RESPONSE);
                 f.ret = if f.ret.is_result() { Ty::Result(Box::new(response)) } else { response };
             }
         }
@@ -599,7 +599,7 @@ impl Emitter {
             }
             // a connection is infrastructure: a process-wide static, as a
             // mailer is
-            if matches!(fact.ty, Ty::Db | Ty::Mailer) || matches!(self.tt(&fact.default), Ty::Db | Ty::Mailer) {
+            if matches!(fact.ty, Ty::Handle(h) if !h.session) || matches!(self.tt(&fact.default), Ty::Handle(h) if !h.session) {
                 self.static_handle_vars.insert(fact.name.clone());
                 continue;
             }
@@ -1151,7 +1151,7 @@ impl Emitter {
             // them, and an item nothing typed is held as text: a record of
             // one had had no display, and `log[b]` had not built — crow check
             // --self)
-            Ty::Moment | Ty::Bytes | Ty::Stream | Ty::Socket | Ty::Mailer | Ty::Db | Ty::WebResponse | Ty::Unknown => true,
+            Ty::Moment | Ty::Bytes | Ty::Handle(_) | Ty::Unknown => true,
             Ty::List(i) | Ty::Map(_, i) | Ty::Result(i) => self.ty_shows(i, seen),
             Ty::Record(n) | Ty::OptRecord(n) => self.record_is(n, &|e, t, seen| e.ty_shows(t, seen), seen),
             _ => false,
@@ -1187,7 +1187,7 @@ impl Emitter {
         // (and the layer's bytes, a stream, a socket, a mailer: a list of
         // bytes interpolated had shown in Rust's debug form, `Bytes([97,
         // 98])`, where the interpreter shows `<2 bytes>` — crow check --self)
-        matches!(t, Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) | Ty::Frame(_) | Ty::Column(_) | Ty::Sparse | Ty::Bytes | Ty::Stream | Ty::Socket | Ty::Mailer | Ty::Moment)
+        matches!(t, Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) | Ty::Frame(_) | Ty::Column(_) | Ty::Sparse | Ty::Bytes | Ty::Handle(_) | Ty::Moment)
             || self.kernel_displayable(t)
     }
 
@@ -1395,8 +1395,13 @@ impl Emitter {
         }
         if !self.static_handle_vars.is_empty() {
             for n in self.static_handle_vars.clone() {
-                let mailer = self.part.facts.iter().any(|f| f.name == n && (matches!(f.ty, Ty::Mailer) || matches!(self.tt(&f.default), Ty::Mailer)));
-                let ty = if mailer { "crow_runtime::sys::Mailer" } else { "crow_db::DbHandle" };
+                // (the handle's own Rust type, as its declaration says)
+                let held = self.part.facts.iter().find(|f| f.name == n).map(|f| match (&f.ty, self.tt(&f.default)) {
+                    (Ty::Handle(h), _) => h.rust,
+                    (_, Ty::Handle(h)) => h.rust,
+                    _ => crate::table::DB.rust,
+                });
+                let ty = held.unwrap_or(crate::table::DB.rust);
                 self.line("#[allow(non_upper_case_globals)]");
                 self.line(&format!("static __crow_handle_{}: std::sync::OnceLock<{}> = std::sync::OnceLock::new();", n, ty));
             }

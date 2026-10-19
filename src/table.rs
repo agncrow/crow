@@ -50,6 +50,43 @@ pub struct Sig {
     pub deferred: bool,
 }
 
+/// A handle: a value a module's native rows make and take, opaque to the
+/// language — not indexable, not walkable, not JSON, not in a mask, moved
+/// not copied, equal to no other, shown as its word (design rule 24,
+/// phase 5; docs/extending-crow.md, section 8). Declared once, beside its
+/// module's rows: its name (the type's word), how it shows, the Rust type
+/// the compiled program holds it as, that type's default, and whether a
+/// session may hold it (a fact of it is the session's; else it is the
+/// process's, a static). One type, `Ty::Handle`, and one class,
+/// `Arg::Handle`, cover every handle; a row's kind (`Kind::Mailer`, …) is
+/// the row's bridge to the runtime's own type, reading this declaration.
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct Handle {
+    pub name: &'static str,
+    /// The type's name in a message (`type[x]` answers it compiled as the
+    /// interpreter's value does).
+    pub crow: &'static str,
+    pub word: &'static str,
+    pub rust: &'static str,
+    pub default: &'static str,
+    pub session: bool,
+    /// Read by its fields: a test's app session, whose fields are the
+    /// page's facts (`a.count`); every other handle has none.
+    pub fields: bool,
+}
+
+/// A database connection, and one inside a transaction (db).
+pub const DB: Handle = Handle { name: "db", crow: "db.conn", word: "a database connection", rust: "crow_db::DbHandle", default: "panic!(\"no default db connection\")", session: false, fields: false };
+pub const TX: Handle = Handle { name: "tx", crow: "db.tx", word: "a transaction's connection", rust: "&dyn crow_db::DbTx", default: "panic!(\"no default db transaction\")", session: false, fields: false };
+/// The layer's socket, byte stream and mailer (sys).
+pub const SOCKET: Handle = Handle { name: "socket", crow: "socket", word: "a socket", rust: "crow_runtime::sys::Socket", default: "crow_runtime::sys::Socket::closed()", session: true, fields: false };
+pub const STREAM: Handle = Handle { name: "stream", crow: "stream", word: "a stream", rust: "crow_runtime::sys::CrowStream", default: "crow_runtime::sys::CrowStream::closed()", session: true, fields: false };
+pub const MAILER: Handle = Handle { name: "mailer", crow: "mailer", word: "a mailer", rust: "crow_runtime::sys::Mailer", default: "crow_runtime::sys::Mailer::default()", session: false, fields: false };
+/// A route's response, the server's app, and a test's app session (web).
+pub const RESPONSE: Handle = Handle { name: "response", crow: "web.response", word: "a response", rust: "crow_web::core::CrowResponse", default: "crow_web::core::CrowResponse::default()", session: true, fields: false };
+pub const WEBAPP: Handle = Handle { name: "web.app", crow: "web.app", word: "the server's app", rust: "crow_web::server::CrowApp", default: "crow_web::server::CrowApp::new()", session: true, fields: false };
+pub const APP: Handle = Handle { name: "app", crow: "app", word: "an app session", rust: "()", default: "()", session: true, fields: true };
+
 /// A predicate over a walked collection's items: `any`, `all`, `find`.
 pub const PRED: Sig = Sig { params: &[Kind::Item], ret: Kind::Bool, rest: false, deferred: false };
 /// Work scheduled off the loop, handed the row's remaining arguments:
@@ -63,7 +100,7 @@ pub const FEED: Sig = Sig { params: &[Kind::FnOf(&PUT)], ret: Kind::Unit, rest: 
 /// A route's handler: the request to a response, called by the server.
 pub const HANDLER: Sig = Sig { params: &[Kind::Request], ret: Kind::Response, rest: false, deferred: false };
 /// A transaction's body: the connection, inside the transaction, to its value.
-pub const TX: Sig = Sig { params: &[Kind::Tx], ret: Kind::Shown, rest: false, deferred: false };
+pub const TX_BODY: Sig = Sig { params: &[Kind::Tx], ret: Kind::Shown, rest: false, deferred: false };
 /// A chart's seek: handed the clicked bucket's moment, as a number.
 pub const SEEK: Sig = Sig { params: &[Kind::Float], ret: Kind::Unit, rest: false, deferred: false };
 
@@ -520,21 +557,21 @@ impl Kind {
             Kind::Json => Ty::Json,
             Kind::Column => Ty::Column(Box::new(Ty::Unknown)),
             Kind::Bytes => Ty::Bytes,
-            Kind::Stream => Ty::Stream,
+            Kind::Stream => Ty::Handle(&STREAM),
             Kind::Markup => Ty::Markup,
             Kind::TextRows => Ty::List(Box::new(Ty::Map(crate::ir::Key::Text, Box::new(Ty::Str)))),
             Kind::Shell => Ty::Record("CrowShell".to_string()),
             Kind::Reply => Ty::Record("CrowReply".to_string()),
             Kind::Answer => Ty::Record("CrowAnswer".to_string()),
-            Kind::Response => Ty::WebResponse,
+            Kind::Response => Ty::Handle(&RESPONSE),
             Kind::FnOf(sig) => Ty::Fn(sig.params.iter().map(|k| k.ty()).collect(), Box::new(sig.ret.ty())),
             Kind::Walked => Ty::Unknown,
             Kind::Request => Ty::WebRequest,
-            Kind::Db => Ty::Db,
-            Kind::Tx => Ty::Tx,
+            Kind::Db => Ty::Handle(&DB),
+            Kind::Tx => Ty::Handle(&TX),
             Kind::Found => Ty::Record("CrowFindResult".to_string()),
-            Kind::Socket => Ty::Socket,
-            Kind::Mailer => Ty::Mailer,
+            Kind::Socket => Ty::Handle(&SOCKET),
+            Kind::Mailer => Ty::Handle(&MAILER),
             Kind::TextMap => Ty::Map(crate::ir::Key::Text, Box::new(Ty::Str)),
             Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn | Kind::Operands | Kind::Operand | Kind::Scalars | Kind::Scalar => Ty::Unknown,
             Kind::JsonList => Ty::List(Box::new(Ty::Json)),
@@ -673,7 +710,7 @@ impl Kind {
             Kind::Floats => "Vec::<f64>::new()",
             Kind::Json => "serde_json::Value::Null",
             Kind::Bytes => "crow_runtime::sys::Bytes::default()",
-            Kind::Stream => "crow_runtime::sys::CrowStream::closed()",
+            Kind::Stream => STREAM.default,
             // taken, never given
             Kind::Column => "unreachable!()",
             Kind::Markup => "String::new()",
@@ -681,9 +718,9 @@ impl Kind {
             Kind::Shell => "crow_runtime::core::Shell { status: -1, stdout: String::new(), stderr: String::new() }",
             Kind::Reply => "crow_runtime::sources::Reply::default()",
             Kind::Answer => "crow_runtime::sys::Answer::default()",
-            Kind::Response => "crow_web::core::CrowResponse::default()",
-            Kind::Socket => "crow_runtime::sys::Socket::closed()",
-            Kind::Mailer => "crow_runtime::sys::Mailer::default()",
+            Kind::Response => RESPONSE.default,
+            Kind::Socket => SOCKET.default,
+            Kind::Mailer => MAILER.default,
             // taken, never given; or answered by the backends' own arms
             Kind::FnOf(_) | Kind::Walked | Kind::Request | Kind::Db | Kind::Tx | Kind::Found => "unreachable!()",
             Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn | Kind::Operands | Kind::Operand | Kind::Scalars | Kind::Scalar => "unreachable!()",
@@ -2542,7 +2579,7 @@ pub static FORMS: &[Row] = &[
     Row { props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.exec", "db", "exec", (Shown, Str, Shows)) },
     Row { props: &[Prop::Does(crate::effects::Effect::DbRead)], ..form!("db.query", "db", "query", (Shown, Str, Shows)) },
     Row { props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.insert", "db", "insert", (Shows)) },
-    Row { params: &[Kind::Db, Kind::FnOf(&TX)], props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.transact", "db", "transact", ()) },
+    Row { params: &[Kind::Db, Kind::FnOf(&TX_BODY)], props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.transact", "db", "transact", ()) },
     Row { props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.migrate", "db", "migrate", (Shows)) },
     form!("db.describe", "db", "describe", (Shows)),
     // (counted by nothing, as before: `later`, a control, the harness verbs)
@@ -2892,15 +2929,6 @@ pub enum Arg {
     Moment,
     Moments,
     Bytes,
-    Stream,
-    Socket,
-    Mailer,
-    /// A database connection (or a transaction's), and a web response: a
-    /// value shows them and a list holds them, and nothing else takes one
-    /// (classed as not known, `len` and `encode` of one had stopped as the
-    /// program ran and not built compiled — crow check --self).
-    Db,
-    Response,
     /// A list of bytes (a connection's chunks).
     Chunks,
     /// A parsed JSON value, whose kind shows only as it runs.
@@ -2942,6 +2970,9 @@ pub enum Arg {
     Record,
     Sparse,
     Frame,
+    /// A handle a module's rows make and take (`table::Handle`): a
+    /// connection, a socket, a stream, a mailer, a response, an app.
+    Handle(&'static Handle),
     /// A function.
     Fn,
     /// A function of a list literal's, called by name (`Ty::Fns`).
@@ -3015,11 +3046,7 @@ impl Arg {
             Arg::Record => "a record",
             Arg::Sparse => "a sparse matrix",
             Arg::Bytes => "bytes",
-            Arg::Stream => "a stream",
-            Arg::Socket => "a socket",
-            Arg::Mailer => "a mailer",
-            Arg::Db => "a database connection",
-            Arg::Response => "a response",
+            Arg::Handle(h) => h.word,
             Arg::Frame => "a frame",
             Arg::Fn => "a function",
             Arg::Fns => "a function called by name",
@@ -3057,18 +3084,14 @@ impl Arg {
             Ty::Record(_) | Ty::OptRecord(_) => Arg::Record,
             Ty::Sparse => Arg::Sparse,
             Ty::Bytes => Arg::Bytes,
-            Ty::Stream => Arg::Stream,
-            Ty::Socket => Arg::Socket,
-            Ty::Mailer => Arg::Mailer,
-            Ty::Db | Ty::Tx => Arg::Db,
-            Ty::WebResponse => Arg::Response,
+            Ty::Handle(h) => Arg::Handle(h),
             Ty::Frame(_) => Arg::Frame,
             Ty::Fn(..) => Arg::Fn,
             Ty::Fns(_) => Arg::Fns,
             // (no row takes a handle a program cannot hand on, a view's
             // node, nothing, or what is not known: each is read by the
             // value as the program runs)
-            Ty::WebApp | Ty::WebRequest | Ty::App | Ty::Node | Ty::Unit | Ty::Unknown => Arg::Unknown,
+            Ty::WebRequest | Ty::Node | Ty::Unit | Ty::Unknown => Arg::Unknown,
         }
     }
 
@@ -3112,11 +3135,11 @@ impl Arg {
             Value::StructInstance(_) => Arg::Record,
             Value::Sparse(_) => Arg::Sparse,
             Value::Bytes(_) => Arg::Bytes,
-            Value::Stream(_) => Arg::Stream,
-            Value::Socket(_) => Arg::Socket,
-            Value::Mailer(_) => Arg::Mailer,
-            Value::DbConn(_) => Arg::Db,
-            Value::Response(_) => Arg::Response,
+            Value::Stream(_) => Arg::Handle(&STREAM),
+            Value::Socket(_) => Arg::Handle(&SOCKET),
+            Value::Mailer(_) => Arg::Handle(&MAILER),
+            Value::DbConn(_) => Arg::Handle(&DB),
+            Value::Response(_) => Arg::Handle(&RESPONSE),
             Value::Frame(_) => Arg::Frame,
             Value::Fn(_) | Value::GradFn(_) => Arg::Fn,
             Value::Json(_) => Arg::Json,
@@ -3141,7 +3164,7 @@ impl Kind {
             Kind::Tensor => "numbers",
             Kind::Tensors => "a list of tensors",
             Kind::Bytes => "bytes",
-            Kind::Stream => "a stream",
+            Kind::Stream => STREAM.word,
             Kind::Strs => "a list of text",
             Kind::Chunks => "a list of bytes",
             Kind::Bools => "a list of bools",
@@ -3167,15 +3190,15 @@ impl Kind {
             Kind::Shell => "a command's answer",
             Kind::Reply => "a request's answer",
             Kind::Answer => "a connection's answer",
-            Kind::Response => "a response",
+            Kind::Response => RESPONSE.word,
             Kind::FnOf(_) => "a function",
             Kind::Walked => "a list",
             Kind::Request => "a request",
-            Kind::Db => "a connection",
-            Kind::Tx => "a transaction's connection",
+            Kind::Db => DB.word,
+            Kind::Tx => TX.word,
             Kind::Found => "a match",
-            Kind::Socket => "a socket",
-            Kind::Mailer => "a mailer",
+            Kind::Socket => SOCKET.word,
+            Kind::Mailer => MAILER.word,
             Kind::Shown | Kind::Shows | Kind::ShownDyn => "a value",
             Kind::Encoded => "a value JSON can hold",
             Kind::JsonList => "a list of JSON values",
@@ -3211,13 +3234,14 @@ impl Kind {
                 Kind::Bools => a == Arg::Truths,
                 Kind::Sparse => a == Arg::Sparse,
                 Kind::Bytes => a == Arg::Bytes,
-                Kind::Stream => a == Arg::Stream,
-                Kind::Socket => a == Arg::Socket,
-                Kind::Mailer => a == Arg::Mailer,
-                Kind::Response => a == Arg::Response,
+                Kind::Stream => matches!(a, Arg::Handle(h) if h.name == STREAM.name),
+                Kind::Socket => matches!(a, Arg::Handle(h) if h.name == SOCKET.name),
+                Kind::Mailer => matches!(a, Arg::Handle(h) if h.name == MAILER.name),
+                Kind::Response => matches!(a, Arg::Handle(h) if h.name == RESPONSE.name),
                 Kind::FnOf(_) => a == Arg::Fn,
                 Kind::Walked => matches!(a, Arg::Tensor | Arg::Column | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Tensors | Arg::Rows | Arg::Records | Arg::Maps | Arg::Items | Arg::Chunks | Arg::Fallible | Arg::FallibleNumbers | Arg::Moments | Arg::AnyList),
-                Kind::Db | Kind::Tx => a == Arg::Db,
+                // (a transaction's connection is a connection)
+                Kind::Db | Kind::Tx => matches!(a, Arg::Handle(h) if h.name == DB.name || h.name == TX.name),
                 Kind::Request | Kind::Found => false,
                 Kind::Frame => a == Arg::Frame,
                 Kind::Cell => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Json | Arg::Moment),
@@ -3237,7 +3261,7 @@ impl Kind {
                 // (nor a connection, a response, a socket, a mailer, a stream,
                 // or bytes — which `encode` had written as JSON's null, and
                 // the compiled program had not built: base64[b] is text)
-                Kind::Encoded => !matches!(a, Arg::Fn | Arg::Fns | Arg::Frame | Arg::Sparse | Arg::Column | Arg::Db | Arg::Response | Arg::Socket | Arg::Mailer | Arg::Stream | Arg::Bytes | Arg::Chunks),
+                Kind::Encoded => !matches!(a, Arg::Fn | Arg::Fns | Arg::Frame | Arg::Sparse | Arg::Column | Arg::Handle(_) | Arg::Bytes | Arg::Chunks),
                 Kind::Operand => matches!(a, Arg::Tensor | Arg::Int | Arg::Float),
                 Kind::Scalar => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth),
                 _ => true,

@@ -96,20 +96,17 @@ pub enum Ty {
     /// function's name as text; the dispatch at each site is written by
     /// the lowering over the names (docs/extending-crow.md, section 7).
     Fns(Vec<String>),
-    /// A database connection (`db.connect`), and a transaction within one.
-    Db,
-    Tx,
+    /// A handle a module's native rows make and take (crate::table::Handle):
+    /// a database connection and a transaction's, the layer's socket,
+    /// stream and mailer, a route's response, the server's app, a test's
+    /// app session — one type for every handle, each declared beside its
+    /// module's rows (design rule 24, phase 5).
+    Handle(&'static crate::table::Handle),
     /// A sparse matrix (crow_runtime::sparse).
     Sparse,
-    /// A web application, a request a route reads, a response it answers.
-    WebApp,
+    /// A request a route reads (a record declared in Crow, in a later
+    /// phase).
     WebRequest,
-    WebResponse,
-    /// A mailer, a socket, a byte stream `sys` opened, a test's app session.
-    Mailer,
-    Socket,
-    Stream,
-    App,
     /// A view tree.
     Node,
     /// The checker did not know; the backends treat it as a plain value.
@@ -247,16 +244,9 @@ impl std::fmt::Display for Ty {
                 write!(f, ") -> {}", r)
             }
             Ty::Fns(names) => write!(f, "Fns({})", names.join(", ")),
-            Ty::Db => write!(f, "Handle(db)"),
-            Ty::Tx => write!(f, "Handle(tx)"),
+            Ty::Handle(h) => write!(f, "Handle({})", h.name),
             Ty::Sparse => write!(f, "Handle(sparse)"),
-            Ty::WebApp => write!(f, "Handle(web.app)"),
             Ty::WebRequest => write!(f, "Handle(web.request)"),
-            Ty::WebResponse => write!(f, "Handle(web.response)"),
-            Ty::Mailer => write!(f, "Handle(mailer)"),
-            Ty::Socket => write!(f, "Handle(socket)"),
-            Ty::Stream => write!(f, "Handle(stream)"),
-            Ty::App => write!(f, "Handle(app)"),
             Ty::Node => write!(f, "Node"),
             Ty::Unknown => write!(f, "?"),
         }

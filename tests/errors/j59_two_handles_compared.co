@@ -1,0 +1,6 @@
+--- a handle is its own, equal to no other: two mailers compared is refused where it is written, whatever the handle
+use web.mail
+
+a = smtp['smtp.example.com', 587, 'ops@example.com', 'secret']
+b = smtp['smtp.example.com', 587, 'ops@example.com', 'secret']
+log[a eq b]

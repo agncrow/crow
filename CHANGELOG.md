@@ -65,6 +65,17 @@ history says the rest.
 
 ### Changed
 
+- A handle — a database connection and a transaction's, a socket, a
+  stream, a mailer, a response, the server's app, a test's app session —
+  is one kind to the language (spec, Type System: Handles), declared
+  once beside its module's rows with its name, its word, the type the
+  compiled program holds it as and whether a session may hold it; every
+  rule about handles (moved not copied, not indexed, not JSON, equal to
+  no other, shown as its word, a fact of one the process's) reads the
+  one declaration where it had listed the kinds (docs/extending-crow.md,
+  phase 5). What a program sees: `type[x]` and the words of a refusal are
+  as before.
+
 - A builtin that takes a function declares it on its row, with its
   signature (`any`, `all`, `find`, `later`, `running`, `stream`, `route`,
   `transact`, a chart's `seek`): inference hands the function its

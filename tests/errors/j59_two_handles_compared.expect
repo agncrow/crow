@@ -1,0 +1,3 @@
+j59_two_handles_compared.co:6:1: a mailer is not compared: a handle is its own, equal to no other — compare what it holds
+  6 │ log[a eq b]
+    │ ^^^^^^^^^^^

@@ -223,7 +223,7 @@ fn emit_db_rust(_name: &str, _arg_strs: &[String], _arg_types: &[Ty]) -> Result<
 
 fn db_type_of(name: &str) -> Ty {
     match name {
-        "connect" => Ty::Db,
+        "connect" => Ty::Handle(&crate::table::DB),
         "query" => Ty::Result(Box::new(Ty::Frame(None))),
         "exec" => Ty::Result(Box::new(Ty::Int)),
         "describe" => Ty::Result(Box::new(Ty::Frame(None))),

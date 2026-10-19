@@ -4147,6 +4147,12 @@ structs and frames.
 
 Crow is **statically typed with inference**. No type annotations are needed — the compiler infers concrete types from how values are used.
 
+### Handles
+
+A **handle** is a value a module's native functions make and take, and the language holds opaque: a database connection and a transaction's (`db.connect`, `transact`'s body), the layer's socket, stream and mailer (`sys`, `web.mail`'s `smtp`), a route's response (`respond`, `text`, `json`, …), the server's app, a test's app session (`app[…]`). Every handle is one kind to the language, by one rule: it is not indexed, not walked, not JSON (`encode` refuses it), not in a mask, moved where a value would be copied, equal to no other (`a eq b` of two handles is refused where it is written: `a mailer is not compared: a handle is its own, equal to no other — compare what it holds`), and shown as its word (`<mailer>`, as bytes show). A handle is declared once, beside its module's native rows, with its name, the word a message uses for it, the type the compiled program holds it as and that type's default, and whether a session may hold it: a fact of a connection or a mailer is the process's, one value for every session (`db.connect` at the top level), while a response or a socket is the session's. The types the language defines — tensors, frames and columns, moments, parsed values, bytes, sparse matrices — are not handles: each has operators or readers of its own.
+
+**Design Note: one handle category.** Considered: a type variant per handle in the compiler (the rule before 2026-10-19: eight variants, and every rule about handles a list of them — the clone rule, the display rule, the comparison, the fields a value has — which drifted); sparse matrices as a handle (rejected: `+` and `*` over them are the language's operators, so it stays a type); handles comparable by identity (rejected: no program needs it, and a connection re-made is the same database). Decided: one type and one class for every handle, each declared beside its rows; the interpreter keeps a value per runtime type, read through the declaration.
+
 
 ### Rules
 

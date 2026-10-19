@@ -127,7 +127,9 @@ mod tests {
     }
 
     /// The rows table is the registry: its `ROWS` and `FORMS` arrays name
-    /// every builtin by right, so table.rs is read without them.
+    /// every builtin by right, and a handle's declaration (`pub const DB:
+    /// Handle = …`, one line each) names its module and the runtime type
+    /// it is held as, so table.rs is read without them.
     fn without_rows(source: &str) -> String {
         let mut out = String::new();
         let mut inside = false;
@@ -135,7 +137,8 @@ mod tests {
             if line.starts_with("pub static ROWS") || line.starts_with("pub static FORMS") {
                 inside = true;
             }
-            if !inside {
+            let declares_handle = line.starts_with("pub const ") && line.contains(": Handle = Handle {");
+            if !inside && !declares_handle {
                 out.push_str(line);
                 out.push('\n');
             }
@@ -277,7 +280,7 @@ mod tests {
 
     #[test]
     fn the_rows_array_is_left_out_of_the_table() {
-        let src = "fn a() {}\npub static ROWS: &[Row] = &[\n    row!(\"core.len\"),\n];\nfn b() { \"len\" }\n";
+        let src = "fn a() {}\npub static ROWS: &[Row] = &[\n    row!(\"core.len\"),\n];\npub const DB: Handle = Handle { name: \"db\", rust: \"crow_db::DbHandle\" };\nfn b() { \"len\" }\n";
         assert_eq!(literals(&without_rows(src)), vec!["len"]);
     }
 }

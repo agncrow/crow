@@ -461,11 +461,7 @@ impl Emitter {
                     | Ty::Sparse
                     | Ty::Json
                     | Ty::Bytes
-                    | Ty::Stream
-                    | Ty::Socket
-                    | Ty::Mailer
-                    | Ty::Db
-                    | Ty::WebResponse
+                    | Ty::Handle(_)
                     | Ty::Result(_)
                     | Ty::Big
                     | Ty::Decimal
@@ -487,7 +483,7 @@ impl Emitter {
                 return s;
             }
             let t = self.local_ty(name).unwrap_or_else(|| as_inferred(ty));
-            if matches!(t.text(), Ty::Str | Ty::List(_) | Ty::Tensor(..) | Ty::Map(..) | Ty::Record(_) | Ty::Frame(_) | Ty::Json | Ty::Bytes | Ty::Stream | Ty::Result(_) | Ty::Big | Ty::Decimal | Ty::Fraction) {
+            if matches!(t.text(), Ty::Str | Ty::List(_) | Ty::Tensor(..) | Ty::Map(..) | Ty::Record(_) | Ty::Frame(_) | Ty::Json | Ty::Bytes | Ty::Handle(_) | Ty::Result(_) | Ty::Big | Ty::Decimal | Ty::Fraction) {
                 return format!("{}.clone()", s);
             }
         }
@@ -1573,7 +1569,7 @@ impl Emitter {
                         // bare (it had shown with JSON's quotes: `"x"`); and
                         // the layer's handles and bytes, which have no text of
                         // Rust's own (a stream interpolated had not built)
-                        Ty::Json | Ty::Bytes | Ty::Stream | Ty::Socket | Ty::Mailer => {
+                        Ty::Json | Ty::Bytes | Ty::Handle(_) => {
                             self.needs_crow_runtime = true;
                             fmt.push_str("{}");
                             args.push(format!("{{ use crow_runtime::display::CrowDisplay as _; ({}).crow_fmt() }}", rust));
@@ -2252,17 +2248,13 @@ impl Emitter {
                             | Ty::Frame(_)
                             | Ty::Record(_)
                             | Ty::Bytes
-                            | Ty::Stream
-                            | Ty::Socket
-                            | Ty::Mailer
-                            | Ty::Db
+                            | Ty::Handle(_)
                             | Ty::Big
                             | Ty::Decimal
                             | Ty::Fraction
                             | Ty::Json
                             | Ty::Column(_)
                             | Ty::Sparse
-                            | Ty::WebResponse
                     );
                 let s = self.expr(a);
                 let moved = self.moved_local(a);

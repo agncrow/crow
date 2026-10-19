@@ -701,6 +701,41 @@ records.
 **Held by.** `totality.rs` reduced to one arm, the self-check's handle
 cases, parity.
 
+### As built (2026-10-19)
+
+The questions, decided by recommendation: (1) sparse matrices stay a
+language type (their operators are the language's); (2) every handle is
+non-comparable (`a eq b` of two handles is refused, in the one wording,
+whatever the handle); (3) a handle in a view shows as its word. Built:
+`table::Handle` (name, crow name, word, Rust type, default, session,
+and whether it is read by its fields — a test's app session is, its
+fields the page's facts; no other handle has any) and the eight
+declarations `DB`, `TX`, `SOCKET`, `STREAM`, `MAILER`,
+`RESPONSE`, `WEBAPP`, `APP` beside the rows; `Ty::Handle(&Handle)` for
+the eight variants `Db`, `Tx`, `WebApp`, `WebResponse`, `Mailer`,
+`Socket`, `Stream`, `App`; `Arg::Handle(&Handle)` for the five classes;
+the row kinds (`Kind::Mailer`, …) stay as the rows' bridges to the
+runtime's own types, reading the declaration for their type, word and
+default; every list of handle variants in the compiler (the clone rules,
+the display rules, the comparison, the fields a value lacks, the static
+facts, the type words) is `Ty::Handle(_)` or reads the declaration;
+the ratchet (src/freeze.rs) reads the table without the declarations, as
+it reads it without the rows — a declaration names its module and the
+runtime type by right.
+Deferred, each a design of its own: `WebRequest` as a record declared in
+web.co and the synthetic records (`CrowShell`, `CrowReply`, `CrowAnswer`,
+`CrowFindResult`) declared in Crow — the emitter's generated structs and
+the server's `CrowRequest` must agree, so a declared record would need
+the record's layout to be the runtime's; a page's node stays the
+reactive model's (language), as the note's language paragraph says; one
+interpreter value for every handle — the `Value` variants are the
+runtime's own types, which the bridges read by the declaration, and a
+single boxed value would make each row's bridge a downcast.
+
+Held by: parity 270 (a handle shown, held, moved, in a list, both
+modes), errors j59 (two handles compared), totality (the eight handles
+as samples of the one variant), and the gate.
+
 ## 9. Phase 6 — answer typing: frames by evaluation, shapes by pattern, providers
 
 **Frames, by evaluation.** A frame's type is an empty frame: columns with

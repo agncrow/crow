@@ -87,8 +87,7 @@ impl Ty {
             Ty::Fn(params, ret) => params.iter().any(Ty::has_unknown) || ret.has_unknown(),
             Ty::Fns(_) => false,
             Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Float | Ty::Bool | Ty::Str | Ty::Moment | Ty::Bytes | Ty::Unit | Ty::Markup | Ty::Json
-            | Ty::Record(_) | Ty::OptRecord(_) | Ty::Db | Ty::Tx | Ty::Sparse | Ty::WebApp | Ty::WebRequest
-            | Ty::WebResponse | Ty::Mailer | Ty::Socket | Ty::Stream | Ty::App | Ty::Node => false,
+            | Ty::Record(_) | Ty::OptRecord(_) | Ty::Handle(_) | Ty::Sparse | Ty::WebRequest | Ty::Node => false,
         }
     }
 
@@ -102,8 +101,7 @@ impl Ty {
             Ty::Fn(params, ret) => params.iter().all(Ty::is_concrete) && ret.is_concrete(),
             Ty::Fns(_) => true,
             Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Float | Ty::Bool | Ty::Str | Ty::Moment | Ty::Bytes | Ty::Unit | Ty::Markup | Ty::Json
-            | Ty::Record(_) | Ty::OptRecord(_) | Ty::Db | Ty::Tx | Ty::Sparse | Ty::WebApp | Ty::WebRequest
-            | Ty::WebResponse | Ty::Mailer | Ty::Socket | Ty::Stream | Ty::App | Ty::Node => true,
+            | Ty::Record(_) | Ty::OptRecord(_) | Ty::Handle(_) | Ty::Sparse | Ty::WebRequest | Ty::Node => true,
         }
     }
 
@@ -132,18 +130,11 @@ impl Ty {
             Ty::Sparse => "crow_runtime::sparse::CrowSparse".into(),
             Ty::Frame(_) => "crow_runtime::frame::CrowFrame".into(),
             Ty::Column(_) => "crow_runtime::frame::CrowColumn".into(),
-            Ty::WebApp => "crow_web::server::CrowApp".into(),
-            Ty::WebResponse => "crow_web::core::CrowResponse".into(),
+            Ty::Handle(h) => h.rust.into(),
             Ty::WebRequest => "crow_web::core::CrowRequest".into(),
             Ty::Fns(_) => "String".into(),
-            Ty::Db => "crow_db::DbHandle".into(),
-            Ty::Tx => "&dyn crow_db::DbTx".into(),
-            Ty::Mailer => "crow_runtime::sys::Mailer".into(),
-            Ty::Socket => "crow_runtime::sys::Socket".into(),
             Ty::Bytes => "crow_runtime::sys::Bytes".into(),
-            Ty::Stream => "crow_runtime::sys::CrowStream".into(),
             // (a test's session: a test block runs interpreted)
-            Ty::App => "()".into(),
             Ty::Unit => "()".into(),
             Ty::Unknown => "String".into(),
         }
@@ -183,17 +174,10 @@ impl Ty {
             }
             Ty::Frame(_) => "crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![])".into(),
             Ty::Column(_) => "crow_runtime::frame::CrowColumn { data: std::sync::Arc::new(crow_runtime::frame::Column::Int(vec![])), valid: std::sync::Arc::new(crow_runtime::frame::Validity::none(0)) }".into(),
-            Ty::WebApp => "crow_web::server::CrowApp::new()".into(),
-            Ty::WebResponse => "crow_web::core::CrowResponse::default()".into(),
+            Ty::Handle(h) => h.default.into(),
             Ty::WebRequest => "crow_web::core::CrowRequest::new()".into(),
             Ty::Fns(_) => "String::new()".into(),
-            Ty::Db => "panic!(\"no default db connection\")".into(),
-            Ty::Tx => "panic!(\"no default db transaction\")".into(),
-            Ty::Mailer => "crow_runtime::sys::Mailer::default()".into(),
-            Ty::Socket => "crow_runtime::sys::Socket::closed()".into(),
             Ty::Bytes => "crow_runtime::sys::Bytes::default()".into(),
-            Ty::Stream => "crow_runtime::sys::CrowStream::closed()".into(),
-            Ty::App => "()".into(),
             Ty::Unit => "()".into(),
             Ty::Unknown => "String::new()".into(),
         }
@@ -261,16 +245,9 @@ impl Ty {
             }
             Ty::Result(inner) => format!("result[{}]", inner.crow_name()),
             Ty::Json => "json".into(),
-            Ty::WebApp => "web.app".into(),
-            Ty::WebResponse => "web.response".into(),
+            Ty::Handle(h) => h.crow.into(),
             Ty::WebRequest => "web.request".into(),
-            Ty::Db => "db.conn".into(),
-            Ty::Tx => "db.tx".into(),
-            Ty::Mailer => "mailer".into(),
-            Ty::Socket => "socket".into(),
             Ty::Bytes => "bytes".into(),
-            Ty::Stream => "stream".into(),
-            Ty::App => "app".into(),
             Ty::Unit => "void".into(),
             Ty::Unknown => "unknown".into(),
         }
@@ -1533,7 +1510,7 @@ mod tests {
         ctx.infer_program(&stmts);
         assert!(ctx.view_handlers.contains("notify") && ctx.view_handlers.contains("between"), "{:?}", ctx.view_handlers);
         assert!(!ctx.view_handlers.contains("alone"));
-        assert_eq!(ctx.functions["notify"].params[0].1, Ty::Mailer);
+        assert_eq!(ctx.functions["notify"].params[0].1, Ty::Handle(&crate::table::MAILER));
     }
 
     /// The program's own evidence types a handler before a test's click

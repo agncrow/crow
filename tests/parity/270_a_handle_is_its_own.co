@@ -1,0 +1,15 @@
+--- A handle — a mailer, a socket, a stream, a connection, a response — is
+--- one kind to the language (spec, Type System: Handles): shown as its
+--- word, moved not copied, held by a name and read again, equal to no
+--- other. (Each had been a type of its own in the compiler, with a list
+--- of the kinds at every rule; docs/extending-crow.md, section 8.)
+use web.mail
+
+m = smtp['smtp.example.com', 587, 'ops@example.com', 'secret']
+log[type[m]]
+log[str[m]]
+log[m]
+kept = m
+log[type[kept]]
+mailers = push[[], m]
+log[len[mailers]]

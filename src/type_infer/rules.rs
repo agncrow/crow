@@ -389,29 +389,27 @@ impl TypeContext {
             "env" => Ty::Result(Box::new(Ty::Str)),
             "exit" => Ty::Int,
             // Web builtins (available when `use web` is active)
-            "route" => Ty::WebApp,
+            "route" => Ty::Handle(&crate::table::WEBAPP),
             "serve" => Ty::Unit,
-            "respond" => Ty::WebResponse,
-            "redirect" => Ty::WebResponse,
+            "respond" | "redirect" => Ty::Handle(&crate::table::RESPONSE),
             // the other responses: a value packed, a frame as Arrow, bytes,
             // and a body its feed puts as it goes
-            "arrow" | "bytes" => Ty::WebResponse,
+            "arrow" | "bytes" => Ty::Handle(&crate::table::RESPONSE),
             // a test's page as its html, from its app session; in a web app,
             // the response
             "html" => match arg_types.first() {
-                Some(Ty::App) => Ty::Str,
-                _ => Ty::WebResponse,
+                Some(Ty::Handle(h)) if h.name == crate::table::APP.name => Ty::Str,
+                _ => Ty::Handle(&crate::table::RESPONSE),
             },
             // a test's app session, and the elements a selector picks from
             // its page: records of text (tag, text, class, each attribute)
-            "app" => Ty::App,
+            "app" => Ty::Handle(&crate::table::APP),
             "elements" => Ty::List(Box::new(Ty::Map(crate::ir::Key::Text, Box::new(Ty::Str)))),
             // the layout engine's boxes a selector picks: a list, each box
             // read by its field as the program runs
             "box" => Ty::List(Box::new(Ty::Unknown)),
             // `json[map]` (use web): `json[text]` is its row
-            "json" => Ty::WebResponse,
-            "text" => Ty::WebResponse,
+            "json" | "text" => Ty::Handle(&crate::table::RESPONSE),
             // db builtins
             "exec" => Ty::Unit,
             "query" => Ty::List(Box::new(Ty::Json)),
@@ -737,7 +735,7 @@ impl TypeContext {
     pub(crate) fn module_call_type(&self, module: &str, field: &str, arg_types: &[Ty]) -> Option<Ty> {
         // web.new[] → WebApp
         if module == "web" && field == "new" {
-            return Some(Ty::WebApp);
+            return Some(Ty::Handle(&crate::table::WEBAPP));
         }
         // Registry-module prefixed call (math.zeros[...],
         // or via alias: m.zeros after `use math as m`)
@@ -846,7 +844,7 @@ impl TypeContext {
         }
         // a test's app session reads its own reactive state: a derivation
         // or a fact of that name, as the harness reads it
-        if matches!(&obj_type, Ty::App) && !matches!(field, "ok" | "reason" | "kind" | "trace") {
+        if matches!(&obj_type, Ty::Handle(h) if h.name == crate::table::APP.name) && !matches!(field, "ok" | "reason" | "kind" | "trace") {
             return if self.derives.contains(field) || self.facts.contains(field) { self.vars.get(field).cloned().unwrap_or(Ty::Unknown) } else { Ty::Unknown };
         }
         // Error-value metadata fields

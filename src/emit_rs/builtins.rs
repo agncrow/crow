@@ -519,16 +519,13 @@ impl Emitter {
                         Ty::List(_) | Ty::Tensor(..) | Ty::Column(_) => "\"array\"".to_string(),
                         Ty::Sparse => "\"sparse\"".to_string(),
                         Ty::Bytes => "\"bytes\"".to_string(),
-                        Ty::Stream => "\"stream\"".to_string(),
+
                         Ty::Map(..) => "\"map\"".to_string(),
                         Ty::Fn(_, _) => "\"fn\"".to_string(),
                         Ty::Unit => "\"none\"".to_string(),
                         Ty::Frame(_) => "\"frame\"".to_string(),
-                        Ty::Db => "\"db\"".to_string(),
-                        // the web runtime's handles, as the interpreter names them
-                        Ty::WebResponse => "\"response\"".to_string(),
-                        Ty::Socket => "\"socket\"".to_string(),
-                        Ty::Mailer => "\"mailer\"".to_string(),
+                        // a handle, as the interpreter's value names it
+                        Ty::Handle(h) => format!("\"{}\"", h.name),
                         // the runtime's records are the interpreter's maps
                         Ty::Record(nm) if matches!(nm.as_str(), "CrowShell" | "CrowFindResult" | "CrowReply" | "CrowAnswer") => "\"map\"".to_string(),
                         Ty::Record(nm) => format!("\"{}\"", shown.get(nm).unwrap_or(nm)),

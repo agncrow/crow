@@ -140,7 +140,12 @@ steps on every push and must be green.
   never a name. A list literal of functions is a group (`Ty::Fns`), each
   value its name compiled; `describe`/`apply` and a positional call
   through a member lower to a dispatch (`dispatch` in lower_ir.rs) over
-  `__same_fn`. A module is declared once, in `modules::MODULES` (its path and
+  `__same_fn`. A handle (a connection, a socket, a stream, a mailer, a
+  response, an app) is `Ty::Handle(&table::Handle)` / `Arg::Handle`: one
+  type, declared beside its module's rows (name, word, Rust type,
+  default, session) — a rule about handles matches `Ty::Handle(_)` or
+  reads the declaration, never a list of kinds; the row kinds
+  (`Kind::Mailer`) remain the rows' bridges. A module is declared once, in `modules::MODULES` (its path and
   prefix, its source, what its import brings, the crates it needs, its
   flags, the sentence its book page opens with), which the registry, the
   type checker, the checks, the emitter, the inliner, the docs check and
