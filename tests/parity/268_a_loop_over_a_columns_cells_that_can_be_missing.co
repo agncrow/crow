@@ -1,0 +1,29 @@
+--- A loop over a frame's column walks its cells, and where the column can
+--- have missing cells each item is a value that can fail — a missing one
+--- an error of reason `missing`, as an index reads it. Inside a function,
+--- the item written into text is decided where it is written: the
+--- function hands the failure back. (The width pass had typed such an item
+--- as nothing known, and a function writing it into text did not build
+--- compiled — found by crow check --self handing a column with missing
+--- cells where sys's `exchange` takes its head lines.)
+use frame
+
+fn counted[xs]
+    n = 0
+    for line in xs
+        n = n + 1
+    return n
+
+fn joined[xs]
+    head = ''
+    for line in xs
+        head = '`head``line`;'
+    return head
+
+sj = join[frame.new[k = [1, 2, 3]], frame.new[k = [1, 3], n = [5, 7]], 'k', 'left']
+log[counted[sj.n]]
+log[joined[sj.k]]
+got = joined[sj.n]
+log[got.ok]
+log[got.reason]
+log[joined[sj.n]]

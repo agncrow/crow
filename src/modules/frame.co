@@ -9,18 +9,18 @@
 use sys, frame
 
 --- bytes read as text, or the reason they are none
-fn as_text[path, data]
+fn _as_text[path, data]
     t = text[data]
     if not t.ok
         return error['cannot read \'`path`\': it is not text (UTF-8)', 'frame']
     return t
 
 --- a table's bytes as a frame, in the format named
-fn framed[path, format, data]
+fn _framed[path, format, data]
     if format eq 'parquet'
         return frame_of_parquet[data]
     if format eq 'json'
-        t = as_text[path, data]
+        t = _as_text[path, data]
         if not t.ok
             return error[t.reason, 'frame']
         return frame_of_json[t]
@@ -46,7 +46,7 @@ fn load_asked[path, headers, query, timeout]
         data = file[path]
         if not data.ok
             return error[data.reason, 'frame']
-        return framed[path, named, data]
+        return _framed[path, named, data]
     got = fetch[path, headers, query, timeout]
     if not got.ok
         return error[got.reason, 'frame']
@@ -56,7 +56,7 @@ fn load_asked[path, headers, query, timeout]
         if 'content-type' in got.headers
             media = got.headers['content-type']
         format = format_sniffed[media, got.body]
-    return framed[path, format, got.body]
+    return _framed[path, format, got.body]
 
 --- `save[frame, path]`: a frame as a file or an S3 object, in the format
 --- its extension names (CSV otherwise)

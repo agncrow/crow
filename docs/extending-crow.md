@@ -315,6 +315,130 @@ the modules. Native rows keep their options in the row (phase 1).
 per module; the errors corpus for the renamed options and the underscore
 rule.
 
+### As built (2026-10-18)
+
+**What moved.** 45 of the 81 `crow!` rows are gone: every row that was a
+pure contract — stats (12), nn (8), sys (11), auth (2), the socket's
+`socket` and `close`, and llm (10). A program's call of one is
+the inlined function's call, typed by its use, a copy per signature, its
+answer its body's. The inliner (`modules::inline_crow_modules`) is the
+one place that knows a module's exports (`modules::exports`: the
+source's top-level functions with no leading underscore, less those a
+row still names): it rewrites the program's calls — bare, by the
+module's path, by its alias, handed as a value, inside an interpolation
+— to the inlined names, and each module's calls of what it imports the
+same way; the stages below it see a program function. The `Encoded`
+hand-off and the `json[…]` doors are gone from the migrated modules: a
+function takes the value the program holds and reads it as its JSON where
+it needs to (`encode[claims]`). A refusal inside such a function names it
+and the program's line (`in relu: clip[] takes numbers, got an int`),
+and every message names the function as the program writes it
+(`modules::unprefixed`, `written_as`). Options are the functions'
+defaults, `[]` and `map[]` allowed (the parser's one change); the
+language gained nothing else.
+
+**What stayed, and why — each a later phase's.** The 36 rows left are
+of four kinds. The session-effect rows keep the properties the session
+layer, the rehearsal, the checker's staleness analysis and the loaded
+frame's columns read at the call's name — `Effect`, `Reads`, `Held`,
+`Outside`, `Session`, `Source`, `Table` — which a function has only once
+effects are declared on the layer's own rows and inferred through the
+call graph (phase 3): `read`, `write`, `request`, `mail`, `fetch`, `send`,
+`recv`, `csv`, `lines`, `load`, `save` (18 rows, the `_asked` pairs among
+them). The variadic rows take a rest parameter no function of the
+language can (phase 4): `randn`, `normal`, `anova`. `msgpack` takes a value
+of any kind and must keep it — an int beside a float would be one function
+of floats under the number rule, and `msgpack[3]` packed `3.0` (the
+self-check's route family) — a parameter of no kind the language can
+declare yet (phase 4): 1. The drivers' rows are a contract crow_db calls
+from Rust, not a program (phase 6): 14. With
+them stay `crow_call_args`, `crow_target`, the hidden conversion rows
+and the row-typed contract in inference, each serving only those rows.
+
+**Decisions taken** (open for Vijay's veto, each a module's change). A
+helper begins with one underscore (`_talk_of`), as designed; a record a
+module declares is its own until phase 5. `chat`'s and `follow`'s `max`
+is `tokens` (a parameter may not be named like a builtin). The one kind
+overload among the rows, `ask[text]` beside `ask[talk, text]`, became
+`ask[text]` and `asked[talk, text]` — the verb family `asked`, `said`,
+`told` adds a turn — since a function has one signature per name; a
+program that bound `asked` as a variable under `use llm` is refused as
+any clash with an import is (the rag example's was renamed). The
+functions behind the rows that stayed keep their names (`read_asked`,
+`recv_for`), excluded from the exports.
+
+**Open question 1, answered.** `crow check --self` writes a case family
+from signatures (`Sig`): a row's from the table, an export's read off the
+module lowered with its own tests (`export_sigs`); a parameter the tests
+leave untyped, or that takes a function, is listed as not called with
+why. The reference's keys are unchanged (`math.stats.median`); the
+agreement-only list's ids follow the module path (`stats.median` is
+`math.stats.median`), blessed once. Open question 2 holds as stated;
+question 3 is the specialization the IR shows (`_math_nn_relu__2` for a
+matrix beside the vector's).
+
+**The ratchet** no longer counts the tests of a compiler file (a test
+names what it holds the compiler to); the baseline was blessed on that
+rule, and parser.rs rose by the one literal `map` the default needs.
+
+**Six compiler bugs the phase met, fixed as bug fixes.** A function
+called from a copy of its caller, with an argument whose kind settles
+only once another copy answers (`inner[may[m, false]]` in `outer__2`), was
+never copied for that kind: the clones' calls are now read again after
+their bodies settle (`specialize`, parity 259). A double underscore
+inside a name read as a copy's mark (`_llm__model_of`, a helper behind
+its prefix), so such a function was never copied at all: one predicate,
+`ir::copy_base`, names a copy (`name__N`) everywhere. A loop's variable
+whose item kind was not known yet kept a binding of the same name from
+outside the loop — a module's `for t in tools` read the program's
+top-level `t` — so a loop variable is now its own binding whatever is
+known of its item (`scan_loop_var`, `bind_loop_var`). And a module's
+local named like a fact of a page (`turns`) had made the module's
+function a handler, compiled to answer nothing: the handler class is
+read from the program's functions alone (classify.rs), as the lowering
+already read it. And, in the emitter, a failed value's payload converted
+where a copy's parameter takes another form (a failed tensor's numbers
+as the list of floats a copy of `ask` takes) was handed by value to a
+parameter the callee borrows, and the program did not build: the
+conversion is lent as a value a name holds is (`&(…)`, exprs.rs's
+propagating path; the self-check's `fail:vector` cases, which build
+alone and failed only in their batch's company — a no-build finding now
+carries the compiler's own detail and the generated line). And the last,
+found by the export cases handing a frame's column with missing cells
+where sys's `exchange` takes its head lines: a loop's item from such a
+column was typed as nothing known by the width pass, because
+`TypeContext::loop_item` — the rule every pass reads for a loop's item —
+knew no column, while the lowering and the emitter each had a column arm
+of their own; a function writing the item into text declared the text's
+temporary plain and assigned it a value that can fail, and did not build
+compiled, where the interpreter stopped on the missing cell. The rule
+answers a column's cells now, and the lowering reads it (parity 268).
+
+**Four more the self-check found once the rows were gone, each older
+than the phase and fixed in the lowering (the compiled program had not
+built where the interpreter ran or stopped).** Three are rules both modes
+now refuse before the program runs: a list whose items no type says,
+compared with text (`m eq 'GET'` with `m: List(?)`, from a call handing
+`[]`) — two kinds are not compared, and bytes compare with bytes alone; a
+function returning two kinds (`return 'a'` beside `return x` of an int) —
+a function answers one kind, refused naming both where it had been the
+verifier's internal error; a field read of a value with no fields (text,
+a number, bytes, a handle) or a field a tensor or a moment lacks (`c.id`
+with `c` a tensor, guarded by `type[c]` at run time) — refused naming the
+kind's own fields, which the runtime names (`tensor::FIELDS`,
+`Moment::FIELDS`); a map's field is its key, read as the program runs.
+The fourth is typed by use: a parameter handed `[]`, read where a row
+takes a tensor (`tensor[pred]` in `mse`), is a list of numbers
+(`retype_unknown_lists`, settled in the scan), so the call's `[]` is an
+empty tensor where the formula computes with it, as the row had read it
+(a first version refused it, and refused `argsort[xs]` over a list the
+values type in three packages with it: a list a body makes stays the
+values' to type). **One found and left:** a function called only with
+`[]` hands items of no kind to a function it calls, which is then not
+emitted (`fn k[s] return json[s]` reached only through `for x in xs: k[x]`
+with `xs = []`); `chat` shows each tool's schema as text (`'`t`'`) so its
+`tools = []` has a kind. The language's (typed by use), not a module's.
+
 ## 6. Phase 3 — effects declared on native rows, inferred elsewhere, contexts enforced
 
 **Language change.** An effect is a property with a kind, not a name in a

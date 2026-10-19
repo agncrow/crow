@@ -1,0 +1,5 @@
+--- a list whose items no type says is a list all the same: compared with text in a copy of a function made for a call handing [], it is refused before the program runs
+fn method_of[m]
+    return m eq 'GET'
+
+log[method_of[[]]]

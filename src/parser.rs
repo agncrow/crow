@@ -1147,8 +1147,9 @@ impl Parser {
     }
 
     /// Default parameter values are restricted to literals (int, float, str,
-    /// bool, optionally negated numbers) so evaluation order and scope never
-    /// come into question.
+    /// bool, optionally negated numbers) and the empty collections (`[]`,
+    /// `map[]`) so evaluation order and scope never come into question
+    /// (spec, Named Arguments with Defaults).
     fn parse_default_literal(&mut self) -> Result<Expr, String> {
         let line = self.current_line();
         let expr = self.parse_expr()?;
@@ -1156,11 +1157,13 @@ impl Parser {
         let ok = match &expr {
             e if is_literal(e) => true,
             Expr::UnaryOp { expr: inner, .. } => matches!(inner.as_ref(), Expr::Int(_) | Expr::Float(_)),
+            Expr::Array(items) => items.is_empty(),
+            Expr::Call { callee, args } => args.is_empty() && matches!(callee.as_ref(), Expr::Ident(n) if n == "map"),
             _ => false,
         };
         if !ok {
             return Err(format!(
-                "default values must be literals (int, float, str, bool) at line {}",
+                "default values must be literals (int, float, str, bool), an empty list [] or an empty map map[] at line {}",
                 line
             ));
         }

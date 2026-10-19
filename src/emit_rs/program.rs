@@ -407,7 +407,7 @@ impl Emitter {
             let mut refs = HashSet::new();
             let mut lent = HashSet::new();
             let plain = !(as_values.contains(&n)
-                || rows_of.contains(n.split("__").next().unwrap_or(&n))
+                || rows_of.contains(crate::ir::copy_base(&n))
                 || self.reactive_render_fns.contains(&n)
                 || self.live_render_fns.contains(&n)
                 || self.views.contains(&n)

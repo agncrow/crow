@@ -870,6 +870,10 @@ struct Lowerer<'a> {
     /// the program's functions it makes, with its arguments' types
     /// (`type_clicks`).
     tested: Option<Vec<(String, Vec<Ty>)>>,
+    /// The kinds a function's returns answered so far in its final
+    /// lowering, by function: a return of another kind is refused against
+    /// them (`a function answers one kind`).
+    returns_seen: HashMap<String, Vec<crate::table::Arg>>,
     /// The names a guard knows have failed where the lowering is (`if not
     /// x.ok`'s body, `if x.ok`'s else): a return of one hands back its
     /// failure, never its value's type.
@@ -1017,6 +1021,7 @@ impl<'a> Lowerer<'a> {
             held: Vec::new(),
             clicks: None,
             tested: None,
+            returns_seen: HashMap::new(),
             failed: Vec::new(),
         }
     }
@@ -1203,7 +1208,12 @@ impl<'a> Lowerer<'a> {
     /// The F2 monomorphization pass (F5): each clone's calls read with its
     /// parameters bound, then its body typed; every clone's body typed
     /// again after, so return types settle whatever the order clones were
-    /// made in.
+    /// made in; then every clone's calls read once more, since what a copy
+    /// answers types the function it is handed to — `inner[may[m, false]]`
+    /// in a copy of `outer`, where `may`'s copy had no answer yet when the
+    /// copy was first read, so `inner` was never copied for it and the
+    /// compiled program did not build (parity 259) — and a signature that
+    /// only now shows is copied in the next round.
     fn specialize(&mut self) {
         for _round in 0..5 {
             let new_clones = self.ctx.new_clones();
@@ -1211,24 +1221,34 @@ impl<'a> Lowerer<'a> {
                 break;
             }
             for mangled in &new_clones {
+                self.scan_clone(mangled);
                 let body = self.ctx.functions.get(mangled).map(|sig| sig.body.clone()).unwrap_or_default();
-                let params: HashSet<String> = self.ctx.functions.get(mangled).map(|sig| sig.params.iter().map(|(p, _)| p.clone()).collect()).unwrap_or_default();
-                let saved = self.ctx.bind_params(mangled);
-                self.at = Where::In(self.kind_of(mangled, &body, false));
-                self.current_fn = mangled.clone();
-                self.ctx.registry.enter(&self.current_fn);
-                self.provisional(Pass::Scan, Some(params), &body);
-                self.ctx.vars = saved;
                 self.infer_body(mangled, &body);
             }
-        }
-        for _ in 0..2 {
-            for mangled in self.ctx.clone_names() {
-                if let Some(body) = self.ctx.reset_clone(&mangled) {
-                    self.infer_body(&mangled, &body);
+            for _ in 0..2 {
+                for mangled in self.ctx.clone_names() {
+                    if let Some(body) = self.ctx.reset_clone(&mangled) {
+                        self.infer_body(&mangled, &body);
+                    }
                 }
             }
+            for mangled in self.ctx.clone_names() {
+                self.scan_clone(&mangled);
+            }
         }
+    }
+
+    /// A clone's calls read with its parameters bound (the scan pass, which
+    /// notes each call's signature for its callee).
+    fn scan_clone(&mut self, mangled: &str) {
+        let body = self.ctx.functions.get(mangled).map(|sig| sig.body.clone()).unwrap_or_default();
+        let params: HashSet<String> = self.ctx.functions.get(mangled).map(|sig| sig.params.iter().map(|(p, _)| p.clone()).collect()).unwrap_or_default();
+        let saved = self.ctx.bind_params(mangled);
+        self.at = Where::In(self.kind_of(mangled, &body, false));
+        self.current_fn = mangled.to_string();
+        self.ctx.registry.enter(&self.current_fn);
+        self.provisional(Pass::Scan, Some(params), &body);
+        self.ctx.vars = saved;
     }
 
     /// The top level's variables (F5): its statements lowered as they run,
@@ -1329,9 +1349,16 @@ impl<'a> Lowerer<'a> {
                     part.structs.push(StructDef { name: name.clone(), shown: crate::declared_record_name(name), fields });
                 }
                 S::FnDecl { name, params, body, is_view, .. } => {
-                    self.check_reserved(name, if *is_view { "view" } else { "function" });
-                    for p in params {
-                        self.check_reserved(p, "parameter");
+                    // (a standard module's function, inlined behind its
+                    // prefix, was checked as a program of its own under its
+                    // own imports: the program's imports and aliases reserve
+                    // nothing in it — `use math.stats as s` beside a module
+                    // whose parameter is `s`)
+                    if !crate::modules::is_crow_fn(name) {
+                        self.check_reserved(name, if *is_view { "view" } else { "function" });
+                        for p in params {
+                            self.check_reserved(p, "parameter");
+                        }
                     }
                     // (a function copied per signature is called only through
                     // its copies: its own lowering, at every call's types
@@ -1825,7 +1852,7 @@ impl<'a> Lowerer<'a> {
             let mut seen: Option<Ty> = None;
             crate::ir::visit_block(block, &mut |e| {
                 if let (None, Expr::Call { target: Target::User(g), args, .. }) = (&seen, e) {
-                    if g.split("__").next() == Some(base) {
+                    if crate::ir::copy_base(g) == base {
                         if let Some(a) = args.get(i).filter(|a| !is_param(a)) {
                             let t = as_inferred(&read_through(a).ty());
                             if !matches!(t, Ty::Unknown) {
@@ -1844,7 +1871,7 @@ impl<'a> Lowerer<'a> {
             }
             match e {
                 Expr::Call { target: Target::User(f), args, .. } => {
-                    let base = f.split("__").next().unwrap_or(f);
+                    let base = crate::ir::copy_base(f);
                     for (i, a) in args.iter().enumerate() {
                         if is_param(a) {
                             let sig = self.ctx.functions.get(f.as_str()).or_else(|| self.ctx.functions.get(base));
@@ -2497,6 +2524,37 @@ impl<'a> Lowerer<'a> {
                 if let (Some(seen), 0) = (&mut self.seen, self.collecting) {
                     // (a column with its cells' kind, as a variable keeps it)
                     seen.returns.push(if failure_only { Ty::Result(Box::new(Ty::Unknown)) } else { kept(&x) });
+                }
+                // a function answers one kind: a return of another kind than
+                // the returns before it answered is refused, naming both
+                // (`return 'a'` beside `return x` of an int had been the
+                // verifier's internal error, in both modes — crow check
+                // --self); judged against the returns as this lowering types
+                // them, not inference's first guess of the answer (a frame's
+                // cell read before the frame's columns were known had been
+                // guessed a parsed value, and kept); numbers meet as the
+                // number rule says (an int returned where floats are is a
+                // float, below), a list where a tensor is answered is that
+                // tensor (below), and a record beside none is one that may
+                // be none
+                if self.pass == Pass::Final && !failure_only && self.v.mute == 0 {
+                    use crate::table::Arg;
+                    let given = Arg::of_type(x.ty().payload());
+                    let number = |a: &Arg| matches!(a, Arg::Int | Arg::Float | Arg::Decimal | Arg::Fraction);
+                    let listed = |a: &Arg| matches!(a, Arg::Ints | Arg::Floats | Arg::AnyList | Arg::Rows | Arg::Tensor | Arg::Tensors | Arg::FallibleNumbers | Arg::Fallible);
+                    let linked = |a: &Arg| matches!(a, Arg::Records | Arg::Int);
+                    let unsettled = |a: &Arg| matches!(a, Arg::Unknown | Arg::AnyList | Arg::Fallible | Arg::FallibleNumbers);
+                    if !unsettled(&given) {
+                        let seen = self.returns_seen.entry(self.current_fn.clone()).or_default();
+                        let other = seen.iter().find(|answer| {
+                            !(**answer == given || (number(answer) && number(&given)) || (listed(answer) && listed(&given)) || (linked(answer) && linked(&given)))
+                        });
+                        if let Some(answer) = other.cloned() {
+                            self.refuse(format!("returns {} where the function answers {} — a function answers one kind", given.words(), answer.words()));
+                        } else {
+                            seen.push(given);
+                        }
+                    }
                 }
                 // an int returned by a function whose value is a float is a
                 // float (spec §1), as one assigned to a float variable is: the
@@ -3277,19 +3335,20 @@ impl<'a> Lowerer<'a> {
 
     /// While a loop's body is lowered, its variable has the element type
     /// of what it iterates (inference typed the body in a copy of its
-    /// context, so the lowering's context has not seen the variable).
+    /// context, so the lowering's context has not seen the variable) — a
+    /// binding of its own even where that element is not known, hiding a
+    /// name bound outside the loop (`scan_loop_var` says why).
     fn bind_loop_var(&mut self, var: &str, iter_ty: &Ty) -> Option<Ty> {
         let saved = self.ctx.vars.get(var).cloned();
         let elem = match iter_ty.payload() {
             // a frame's column walks its cells, as its type says them (the
             // variable had been unknown here and a float cell in the IR, so
-            // `n = n + cell` kept `n` an int that a float was given)
-            Ty::Column(cell) => as_inferred(cell),
+            // `n = n + cell` kept `n` an int that a float was given): the
+            // cells read before the column's are forgotten (as_inferred)
+            t @ Ty::Column(_) => as_inferred(&crate::type_infer::TypeContext::loop_item(t.clone())),
             t => crate::type_infer::TypeContext::loop_item(as_inferred(t)),
         };
-        if !matches!(elem, Ty::Unknown) {
-            self.ctx.vars.insert(var.to_string(), elem);
-        }
+        self.ctx.vars.insert(var.to_string(), elem);
         saved
     }
 
@@ -4115,21 +4174,17 @@ impl<'a> Lowerer<'a> {
     }
 
     /// A call of llm's `chat` or `follow` whose `tools` (the fourth
-    /// argument, filled in by crate::lower::llm_options) is a list written
+    /// argument, filled in from the function's defaults) is a list written
     /// in the call: the arguments with each function replaced by its
     /// schema as text — its name, its parameters by name with the kinds
     /// inference found, and the comment above it as its description (spec,
     /// section 13: Tools are the functions). A list that is not the
     /// functions written, and a parameter typed by nothing, are refused.
+    /// (The call names the module's function inlined, however the program
+    /// spelled it: crate::modules::inline_crow_modules. The schema is
+    /// phase 4's `describe`, docs/extending-crow.md.)
     fn llm_tools(&mut self, callee: &A, args: &[A]) -> Option<Vec<A>> {
-        let llm_fn = |l: &Self, n: &str| matches!(n, "chat" | "follow") && !l.calls_fn(n);
-        let asked = match callee {
-            A::Ident(n) => llm_fn(self, n) && self.ctx.bare_modules.contains("llm"),
-            A::FieldAccess { object, field } => {
-                llm_fn(self, field) && matches!(object.as_ref(), A::Ident(m) if m == "llm" || self.ctx.module_aliases.get(m).is_some_and(|p| p == "llm"))
-            }
-            _ => false,
-        };
+        let asked = matches!(callee, A::Ident(n) if n == "_llm_chat" || n == "_llm_follow");
         if !asked || args.len() != 6 {
             return None;
         }
@@ -4997,11 +5052,13 @@ impl<'a> Lowerer<'a> {
                 }
                 let lowered = self.row_arguments(&m, &name, lowered);
                 let row = self.builtin_row(Some(&m), &name, &lowered);
+            self.retype_unknown_lists(row, &lowered);
                 let lowered = Self::crow_call_args(row, lowered);
                 return Ok(Expr::Effect { name: format!("{}.{}", m, name), row, args: lowered, ty, answered: true, propagates });
             }
             let lowered = self.row_arguments(&m, &name, lowered);
             let row = self.builtin_row(Some(&m), &name, &lowered);
+            self.retype_unknown_lists(row, &lowered);
             let ty = Self::typed_by_row(ty, row);
             let lowered = Self::crow_call_args(row, lowered);
             let target = match row {
@@ -5135,6 +5192,7 @@ impl<'a> Lowerer<'a> {
                 None => self.core_row_arguments(&name, lowered),
             };
             let row = self.builtin_row(None, &name, &lowered);
+        self.retype_unknown_lists(row, &lowered);
             let lowered = Self::concrete_empties(&name, row, lowered);
             let lowered = Self::crow_call_args(row, lowered);
             return Ok(Expr::Effect { name, row, args: lowered, ty, answered: true, propagates });
@@ -5193,6 +5251,7 @@ impl<'a> Lowerer<'a> {
             // the variable's declaration then disagreed with)
             let ty = in_holders_form(&name, &lowered, ty);
             let row = self.builtin_row(None, &name, &lowered);
+        self.retype_unknown_lists(row, &lowered);
             // (a row answering a tensor answers one, whatever the call's rule
             // read from a list given it: `concat[xs, ys, 0]` of lists joins
             // their tensors — typed a list, the compiled program had not
@@ -5243,6 +5302,7 @@ impl<'a> Lowerer<'a> {
             None => self.core_row_arguments(&name, lowered),
         };
         let row = self.builtin_row(None, &name, &lowered);
+        self.retype_unknown_lists(row, &lowered);
         let ty = Self::typed_by_row(ty, row);
         let lowered = Self::concrete_empties(&name, row, lowered);
         let ty = Self::answered_as_empties(ty, row, &lowered);
@@ -5350,6 +5410,36 @@ impl<'a> Lowerer<'a> {
             Some(t) if ty.is_result() => Ty::Result(Box::new(t)),
             Some(t) => t,
             None => ty,
+        }
+    }
+
+    /// A parameter whose items no type says — a call handed it `[]` — read
+    /// where a row takes a tensor is a list of numbers from then on, as a
+    /// parameter is typed by its use: `tensor[pred]` in `mse` for a call
+    /// handing `[]` reads an empty list of floats, converted where it meets
+    /// the row (the row's `[]` had been an empty tensor; typed by nothing,
+    /// the compiled program had held the list as text and not built — crow
+    /// check --self). Settled in the scan, which the rounds read again; a
+    /// list a body makes stays what the values say.
+    fn retype_unknown_lists(&mut self, row: Option<&'static crate::table::Row>, lowered: &[Expr]) {
+        let Some(row) = row else { return };
+        if self.pass != Pass::Scan {
+            return;
+        }
+        let Some(kinds) = crate::table::kinds_of(row.params, lowered.len()) else { return };
+        for (k, x) in kinds.iter().zip(lowered) {
+            let name = match x {
+                Expr::Local(n, _) | Expr::Move(n, _) => n.clone(),
+                _ => continue,
+            };
+            if *k != crate::table::Kind::Tensor || !matches!(read(x).payload(), Ty::List(e) if **e == Ty::Unknown) {
+                continue;
+            }
+            let numbers = Ty::List(Box::new(Ty::Float));
+            if let Some(p) = self.ctx.functions.get_mut(&self.current_fn).and_then(|sig| sig.params.iter_mut().find(|(p, _)| *p == name)) {
+                p.1 = numbers.clone();
+                self.ctx.vars.insert(name, numbers);
+            }
         }
     }
 
@@ -8245,23 +8335,23 @@ if r.ok
         assert!(!loop_line(&ir, "for x in").ends_with("parallel"), "{}", ir);
     }
 
-    /// A builtin written in Crow (math.nn, src/modules/nn.co) is its row's
-    /// call: the arguments read as the row takes them, the call the
-    /// module's function, the answer the row's; a misuse is refused before
-    /// the program runs with the row's words, naming the builtin the
-    /// program called and not the formula's innards.
+    /// A standard module's function written in Crow (math.nn,
+    /// src/modules/nn.co) is the program's call of the function inlined:
+    /// typed by its use, a copy per signature (a vector and a matrix are
+    /// two), the answer its body's; a misuse is refused before the program
+    /// runs where the body first cannot take the kind, the refusal naming
+    /// the function the program called and the program's line.
     #[test]
-    fn a_builtin_written_in_crow_is_its_rows_call() {
+    fn a_modules_function_written_in_crow_is_the_programs_call() {
         let ir = ir_of("use math, math.nn\nlog[relu[[-1.0, 2.0]]]\nlog[mse[[1.0, 2.0], [1.0, 4.0]]]\nlog[sum[relu[[[1.0, -2.0], [3.0, 0.5]]]]]\n");
-        assert!(ir.contains("pure _math_nn_relu(x: Tensor(Float)) -> Tensor(Float)"), "{}", ir);
-        assert!(ir.contains("call _math_nn_mse([1.0, 2.0], [1.0, 4.0])"), "{}", ir);
-        // (the row's rank rule: an element-wise formula keeps its argument's)
-        assert!(ir.contains("math.sum(call _math_nn_relu([[1.0, (neg 2.0)], [3.0, 0.5]]))"), "{}", ir);
-        assert!(!ir.contains("_math_nn_through_all"), "a function only the module's tests use is not inlined: {}", ir);
+        assert!(ir.contains("pure _math_nn_relu"), "{}", ir);
+        assert!(ir.contains("call _math_nn_mse"), "{}", ir);
+        assert!(ir.contains("math.sum(call _math_nn_relu"), "{}", ir);
+        assert!(!ir.contains("_math_nn__through_all"), "a function only the module's tests use is not inlined: {}", ir);
         let r = refusal_of("use math, math.nn\nlog[relu[5]]\n");
-        assert!(r.contains("relu[] takes numbers, got an int"), "{}", r);
+        assert!(r.contains("in relu:") && r.contains("got an int") && !r.contains("_math_nn"), "{}", r);
         let r = refusal_of("use math, math.nn\nlog[mse[[1.0], 'x']]\n");
-        assert!(r.contains("mse[] takes numbers and numbers, got numbers and text"), "{}", r);
+        assert!(r.contains("in mse:") && !r.contains("_math_nn"), "{}", r);
     }
 
     /// A call indexed (`f[x][0]`) types its callee as any call does; a

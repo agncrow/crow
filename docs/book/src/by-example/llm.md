@@ -39,7 +39,7 @@ use llm
 talk = ask['What is the capital of Mongolia?']
 log[len[talk]]
 log[talk[0].role]
-talk = ask[talk, 'And its population?']
+talk = asked[talk, 'And its population?']
 log[len[talk]]
 r = json['{"text": "Let me check.", "calls": [{"id": "c1", "name": "lookup", "args": {"city": "Ulaanbaatar"}}], "usage": {"input": 12, "output": 7}, "stop": "tool"}']
 talk = said[talk, r]
@@ -71,7 +71,7 @@ use llm
 
 m = reach['openai://127.0.0.1:1/llama3.2']
 talk = ask['Hello?']
-r = chat[m, talk, system = 'Answer in one word.', max = 16]
+r = chat[m, talk, system = 'Answer in one word.', tokens = 16]
 log[r.ok]
 log[r.kind]
 s = follow[m, talk]

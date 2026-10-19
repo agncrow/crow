@@ -326,7 +326,16 @@ impl TypeContext {
             fn effects_any(stmts: &[Stmt]) -> bool {
                 assigns_any(stmts, &std::collections::BTreeSet::new())
             }
-            let mut reaches: std::collections::BTreeSet<String> = self.functions.iter().filter(|(n, f)| effects_any(&f.body) || assigns_any(&f.body, &own_state(n, &module_vars))).map(|(n, _)| n.clone()).collect();
+            // (a standard module's function, inlined, has locals of its own:
+            // one named like a fact of the program is still its local —
+            // llm's `turns` beside a page's `turns` had made `chat` a
+            // handler, compiled to answer nothing)
+            let mut reaches: std::collections::BTreeSet<String> = self
+                .functions
+                .iter()
+                .filter(|(n, f)| effects_any(&f.body) || (!crate::modules::is_crow_fn(n) && assigns_any(&f.body, &own_state(n, &module_vars))))
+                .map(|(n, _)| n.clone())
+                .collect();
             loop {
                 let before = reaches.len();
                 for (n, f) in &self.functions {

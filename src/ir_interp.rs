@@ -2965,7 +2965,7 @@ impl IrInterp {
         match self.fns.get(name) {
             Some(f) => Ok(f.clone()),
             None => {
-                let base = name.split("__").next().unwrap_or(name);
+                let base = crate::ir::copy_base(name);
                 self.fns.get(base).cloned().ok_or_else(|| format!("unknown function '{}'", name))
             }
         }
@@ -3182,7 +3182,7 @@ impl IrInterp {
         // or not the arguments it takes — stops, as a handler that stops
         // does, in a test's click as on a served page (a click failed the
         // test; the compiled page dropped the event without a word)
-        let fits = match self.fns.get(name).or_else(|| self.fns.get(name.split("__").next().unwrap_or(name))) {
+        let fits = match self.fns.get(name).or_else(|| self.fns.get(crate::ir::copy_base(name))) {
             None => Err(format!("unknown function '{}'", name)),
             Some(f) if f.params.len() != args.len() => Err(format!("{}[] expects {} arguments, got {}", name, f.params.len(), args.len())),
             Some(_) => Ok(()),

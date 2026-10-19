@@ -438,7 +438,7 @@ impl<'a> Lowerer<'a> {
         if !is_param {
             return None;
         }
-        let base = self.current_fn.split("__").next().unwrap_or(&self.current_fn);
+        let base = crate::ir::copy_base(&self.current_fn);
         Some((crate::lower::shown(base), crate::lower::shown(p)))
     }
 

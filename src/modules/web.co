@@ -1,14 +1,17 @@
 --- `use web`: `msgpack`, written in Crow on the sys layer (design rule 20)
 --- — a value packed as MessagePack holds it: its JSON walked, each piece
---- written in its smallest form (the format's spec, "Formats"). Its row in
---- the builtin table (src/table.rs) is its contract; the value reaches it
---- as the JSON text it encodes to, and the response is `sys.binary`'s. The
---- tests are the module's own: `crow test src/modules/web.co`.
+--- written in its smallest form (the format's spec, "Formats"). Its row
+--- in the builtin table (src/table.rs) is its contract — the value reaches
+--- it as the JSON text it encodes to, since a value of any kind is kept as
+--- it is only that way: an int beside a float would be one function of
+--- floats (docs/extending-crow.md, phase 4) — and the response is
+--- `sys.binary`'s. The tests are the module's own: `crow test
+--- src/modules/web.co`.
 use sys
 
 --- a count's header: the fixed form up to 15, else the byte `small` with
 --- the count in 2 bytes, or `big` with 4 (a list's, a map's)
-fn counted[fixed, n, small, big]
+fn _counted[fixed, n, small, big]
     if n lte 15
         return pack[fixed + n, 1]
     if n lt 65536
@@ -17,7 +20,7 @@ fn counted[fixed, n, small, big]
 
 --- a whole number in its smallest form: a fixint, else unsigned or signed
 --- in 1, 2, 4 or 8 bytes after its tag
-fn packed_int[n]
+fn _packed_int[n]
     if n gte 0
         if n lt 128
             return pack[n, 1]
@@ -39,7 +42,7 @@ fn packed_int[n]
     return concat[pack[211, 1], pack[n, 8]]
 
 --- text: its UTF-8 after its length, in the smallest form
-fn packed_text[s]
+fn _packed_text[s]
     b = bytes[s]
     n = len[b]
     if n lte 31
@@ -52,7 +55,7 @@ fn packed_text[s]
 
 --- a JSON value packed: nil for null, a bool, a number, text, a list of
 --- values, a map of them by name
-fn packed[j]
+fn _packed[j]
     kind = type[j]
     if kind eq 'error'
         return pack[192, 1]
@@ -67,7 +70,7 @@ fn packed[j]
         n = int[j]
         if not n.ok
             return pack[192, 1]
-        return packed_int[n]
+        return _packed_int[n]
     if kind eq 'float'
         x = float[j]
         if not x.ok
@@ -77,21 +80,21 @@ fn packed[j]
         s = str[j]
         if not s.ok
             return pack[192, 1]
-        return packed_text[s]
+        return _packed_text[s]
     if kind eq 'array'
         n = 0
         for item in j
             n = n + 1
-        pieces = [counted[144, n, 220, 221]]
+        pieces = [_counted[144, n, 220, 221]]
         for item in j
-            pieces = push[pieces, packed[item]]
+            pieces = push[pieces, _packed[item]]
         return concat[pieces]
     names = keys[j]
     vals = values[j]
-    pieces = [counted[128, len[names], 222, 223]]
+    pieces = [_counted[128, len[names], 222, 223]]
     for i in range[len[names]]
-        pieces = push[pieces, packed_text[names[i]]]
-        pieces = push[pieces, packed[vals[i]]]
+        pieces = push[pieces, _packed_text[names[i]]]
+        pieces = push[pieces, _packed[vals[i]]]
     return concat[pieces]
 
 --- `msgpack[value]`: the value packed, as a response (`application/msgpack`)
@@ -100,16 +103,16 @@ fn msgpack[value]
     if not j.ok
         --- (a value's own JSON always parses: the row never fails)
         return binary[bytes[''], 'application/msgpack']
-    return binary[packed[j], 'application/msgpack']
+    return binary[_packed[j], 'application/msgpack']
 
 --- each kind of value packs as the format's examples say
 test a_value_packs_as_the_format_says[]
-    assert[hex[packed[json['{"name":"crow"}']]] eq '81a46e616d65a463726f77']
-    assert[hex[packed[json['{"a":null,"b":[null]}']]] eq '82a161c0a16291c0']
-    assert[hex[packed[json['[1, -1, 200, 70000, 3.5, true, null, "é"]']]] eq '9801ffccc8ce00011170cb400c000000000000c3c0a2c3a9']
-    assert[hex[packed[json['[-33, -200, -70000, 5000000000]']]] eq '94d0dfd1ff38d2fffeee90cf000000012a05f200']
+    assert[hex[_packed[json['{"name":"crow"}']]] eq '81a46e616d65a463726f77']
+    assert[hex[_packed[json['{"a":null,"b":[null]}']]] eq '82a161c0a16291c0']
+    assert[hex[_packed[json['[1, -1, 200, 70000, 3.5, true, null, "é"]']]] eq '9801ffccc8ce00011170cb400c000000000000c3c0a2c3a9']
+    assert[hex[_packed[json['[-33, -200, -70000, 5000000000]']]] eq '94d0dfd1ff38d2fffeee90cf000000012a05f200']
     forty = '"abcdefghijabcdefghijabcdefghijabcdefghij"'
-    assert[slice[hex[packed[json[forty]]], 0, 4] eq 'd928']
+    assert[slice[hex[_packed[json[forty]]], 0, 4] eq 'd928']
     sixteen = '[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]'
-    assert[slice[hex[packed[json[sixteen]]], 0, 6] eq 'dc0010']
+    assert[slice[hex[_packed[json[sixteen]]], 0, 6] eq 'dc0010']
     assert[type[msgpack['{"a":1}']] eq 'response']

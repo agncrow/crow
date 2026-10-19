@@ -380,6 +380,23 @@ pub struct Fn {
     pub recursive: bool,
 }
 
+/// A function copied per signature is named `name__N` (crate::type_infer,
+/// `new_clones`): the name it was copied from, or the name itself where it
+/// is no copy. A double underscore elsewhere in a name is the name's own
+/// (a standard module's helper `_talk_of` inlined behind its prefix is
+/// `_llm__talk_of`), not a copy's mark.
+pub fn copy_base(name: &str) -> &str {
+    match name.rsplit_once("__") {
+        Some((base, n)) if !base.is_empty() && !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) => base,
+        _ => name,
+    }
+}
+
+/// Whether the name is a copy's (`copy_base`).
+pub fn is_copy(name: &str) -> bool {
+    copy_base(name) != name
+}
+
 /// A body's first source line: where a recursion past the limit stops,
 /// the same line in both modes.
 pub fn first_line(b: &[Stmt]) -> usize {

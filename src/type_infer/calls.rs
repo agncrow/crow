@@ -476,12 +476,15 @@ impl TypeContext {
     }
 
     /// A loop's variable while its calls are read: an item of what it
-    /// walks, a list that can fail refused first; left bound after.
+    /// walks, a list that can fail refused first; left bound after. A
+    /// binding of its own even where the item is not known yet: it hides a
+    /// name bound outside the loop (a module's `for t in tools`, inlined
+    /// into a program whose top level holds a `t` that can fail, had read
+    /// the program's `t`, and the interpolation of each tool was typed as
+    /// one that can fail).
     pub(crate) fn scan_loop_var(&mut self, var: &str, iter_type: Ty) {
         let item = Self::loop_item(Self::walked(iter_type));
-        if item != Ty::Unknown {
-            self.vars.insert(var.to_string(), item);
-        }
+        self.vars.insert(var.to_string(), item);
     }
 
     /// An assignment while calls are read, once its value's calls are:

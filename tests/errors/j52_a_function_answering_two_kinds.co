@@ -1,0 +1,7 @@
+--- a function answers one kind: a return of another kind than its other returns settled is refused, naming both (it had been an internal error)
+fn label[x]
+    if x eq 1
+        return 'one'
+    return x
+
+log[label[1]]

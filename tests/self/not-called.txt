@@ -3,3 +3,12 @@
 # listed one the cases reach fails it until it is struck (--bless rewrites the list).
 db.clickhouse.ch_cancel	a driver's own row, reached through use db (the db family): a stop abandoning a statement in flight calls it, which tests/query_cancel.rs holds in both modes
 db.postgres.pg_cancel	a driver's own row, reached through use db (the db family): a stop abandoning a statement in flight calls it, which tests/query_cancel.rs holds in both modes
+llm.chat	its parameter 'm' is typed by nothing the module's tests hand it (?), or takes what no kind names
+llm.embed	its parameter 'm' is typed by nothing the module's tests hand it (?), or takes what no kind names
+llm.follow	its parameter 'm' is typed by nothing the module's tests hand it (?), or takes what no kind names
+llm.next	its parameter 's' is typed by nothing the module's tests hand it (?), or takes what no kind names
+llm.reply	its parameter 's' is typed by nothing the module's tests hand it (?), or takes what no kind names
+sys.put	its parameter 'path' is typed by nothing the module's tests hand it (?), or takes what no kind names
+sys.upgrade	its parameter 'url' is typed by nothing the module's tests hand it (?), or takes what no kind names
+web.ws.close	its parameter 's' is typed by nothing the module's tests hand it (?), or takes what no kind names
+web.ws.socket	its parameter 'url' is typed by nothing the module's tests hand it (?), or takes what no kind names

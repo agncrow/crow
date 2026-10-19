@@ -296,10 +296,13 @@ pub fn written(name: &str) -> &str {
     }
 }
 
-/// A name as the program wrote it: `x__s2` is `x`, in every message.
+/// A name as the program wrote it: `x__s2` is `x`, and a standard module's
+/// function inlined behind its prefix is its own name (`_llm_chat` is
+/// `chat`: crate::modules::unprefixed), in every message.
 pub fn shown(msg: &str) -> String {
+    let msg = &crate::modules::unprefixed(msg);
     let mut out = String::with_capacity(msg.len());
-    let mut rest = msg;
+    let mut rest: &str = msg;
     while let Some(i) = rest.find(SCOPED) {
         let after = &rest[i + SCOPED.len()..];
         let digits = after.chars().take_while(|c| c.is_ascii_digit()).count();
@@ -789,7 +792,10 @@ impl Lowerer {
         }
     }
 
+    /// A refusal, at the line it is written on; a standard module's
+    /// function is named as the program writes it (`shown`).
     fn err(&self, msg: String) -> String {
+        let msg = crate::modules::unprefixed(&msg);
         if self.current_line > 0 {
             format!("line {}: {}", self.current_line, msg)
         } else {
@@ -1538,6 +1544,27 @@ mod tests {
             }
             other => panic!("expected call, got {:?}", other),
         }
+    }
+
+    /// A default may be an empty collection (spec, Named Arguments with
+    /// Defaults): the call that leaves it out gets `[]` or `map[]`.
+    #[test]
+    fn test_empty_collection_defaults_filled() {
+        let stmts = lower_src("fn f[a, xs = [], m = map[]]\n    a\nr = f[1]\n").unwrap();
+        let assign = stmts.iter().find_map(|s| match s {
+            Stmt::Assign { name, value } if name == "r" => Some(value.clone()),
+            _ => None,
+        }).unwrap();
+        match assign {
+            Expr::Call { args, .. } => {
+                assert_eq!(args.len(), 3);
+                assert!(matches!(&args[1], Expr::Array(items) if items.is_empty()), "{:?}", args[1]);
+                assert!(matches!(&args[2], Expr::Call { callee, args } if args.is_empty() && matches!(callee.as_ref(), Expr::Ident(n) if n == "map")), "{:?}", args[2]);
+            }
+            other => panic!("expected call, got {:?}", other),
+        }
+        let err = crate::build("fn f[a, xs = [1]]\n    a\n").err().unwrap_or_default();
+        assert!(err.contains("an empty list [] or an empty map map[]"), "{}", err);
     }
 
     #[test]

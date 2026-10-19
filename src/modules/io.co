@@ -11,14 +11,14 @@ use sys
 --- pass or two over the whole text, no loop over its lines (a line at a
 --- time, each copied, checked and pushed, had cost the interpreter twice
 --- the read), and the text copied without its `\r`s only where it has one
-fn lines_of[whole]
+fn _lines_of[whole]
     if '\r' in whole
-        return lines_split[split[replace[whole, '\r\n', '\n'], '\n']]
-    return lines_split[split[whole, '\n']]
+        return _lines_split[split[replace[whole, '\r\n', '\n'], '\n']]
+    return _lines_split[split[whole, '\n']]
 
 --- the pieces between line breaks as lines: the empty piece after the last
 --- break is no line, and a last line with no break after it drops a `\r`
-fn lines_split[pieces]
+fn _lines_split[pieces]
     n = len[pieces]
     last = pieces[n - 1]
     if len[last] eq 0
@@ -34,7 +34,7 @@ fn lines[path]
         t = read[path]
         if not t.ok
             return error[t.reason, 'io']
-        return lines_of[t]
+        return _lines_of[t]
     got = file_lines[path]
     if not got.ok
         return error[got.reason, 'io']
@@ -45,7 +45,7 @@ fn lines_asked[path, headers, query, timeout]
     t = read[path, headers, query, timeout]
     if not t.ok
         return error[t.reason, 'io']
-    return lines_of[t]
+    return _lines_of[t]
 
 --- `csv[path]`: each row a map from its column's name to its text
 fn csv[path]
@@ -63,16 +63,16 @@ fn csv_asked[path, headers, query, timeout]
 
 --- the lines of a text are a file's lines
 test the_lines_of_a_text[]
-    assert[lines_of['a\nb\n'] eq ['a', 'b']]
-    assert[lines_of['a\r\nb'] eq ['a', 'b']]
-    assert[lines_of[''] eq []]
-    assert[lines_of['one'] eq ['one']]
-    assert[lines_of['\n\n'] eq ['', '']]
+    assert[_lines_of['a\nb\n'] eq ['a', 'b']]
+    assert[_lines_of['a\r\nb'] eq ['a', 'b']]
+    assert[_lines_of[''] eq []]
+    assert[_lines_of['one'] eq ['one']]
+    assert[_lines_of['\n\n'] eq ['', '']]
     --- one `\r` before a break goes, and a last line's without one; any other stays
-    assert[lines_of['a\r'] eq ['a']]
-    assert[lines_of['\n\r'] eq ['', '']]
-    assert[lines_of['x\r\r\ny'] eq ['x\r', 'y']]
-    assert[lines_of['a\rb\n'] eq ['a\rb']]
+    assert[_lines_of['a\r'] eq ['a']]
+    assert[_lines_of['\n\r'] eq ['', '']]
+    assert[_lines_of['x\r\r\ny'] eq ['x\r', 'y']]
+    assert[_lines_of['a\rb\n'] eq ['a\rb']]
     kept = write['io-note.csv', 'a,b\n1,2\n3,4\n']
     assert[kept.ok]
     assert[lines['io-note.csv'] eq ['a,b', '1,2', '3,4']]
@@ -86,6 +86,6 @@ test a_files_lines_are_its_texts[]
     for t in texts
         kept = write['io-lines.txt', t]
         assert[kept.ok]
-        assert[lines['io-lines.txt'] eq lines_of[t]]
+        assert[lines['io-lines.txt'] eq _lines_of[t]]
     gone = rm['io-lines.txt']
     assert[gone.ok]

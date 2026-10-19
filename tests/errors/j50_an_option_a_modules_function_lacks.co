@@ -1,0 +1,5 @@
+--- an option a module's function lacks is refused with the parameters it has (chat's max is tokens)
+use llm
+
+m = reach['openai://127.0.0.1:9/x']
+log[chat[m, ask['hi'], max = 5]]

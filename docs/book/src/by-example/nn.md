@@ -24,9 +24,9 @@ log[linear[[[1.0, 2.0]], [[1.0], [1.0]], [0.5]]]
 [[3.5]]
 ```
 
-`math.nn` is written in Crow over the math builtins (`src/modules/nn.co`): each function's row in the builtin table is its contract, and under `grad` the formulas differentiate as any function does. A misuse stops the program with the reason, on the line of the call (this block builds but is not run):
+`math.nn` is written in Crow over the math builtins (`src/modules/nn.co`): each function is its own declaration, typed by its use, and under `grad` the formulas differentiate as any function does. A misuse is refused where the formula first cannot take it, naming the function and the line of the call — before the program runs where the shapes are written, as here, and as a stop with the same reason where they are only known as it runs:
 
-```crow,norun
+```crow,error
 use math, math.nn
 
 w = [[1.0, 0.0, 0.0], [0.0, 1.0, 1.0]]
@@ -34,7 +34,7 @@ log[linear[[[1.0, 2.0, 3.0]], w, [1.0, 1.0, 1.0]]]
 ```
 
 ```text
-runtime error: line 4: linear: x has 3 columns and w 2 rows — x * w needs them equal
+nn.co:4:1: in linear: matmul: incompatible shapes [1, 3] × [2, 3] — the first's columns (3) must be the second's rows (2)
 ```
 
 Reference: spec section 13 (math → Neural Networks).

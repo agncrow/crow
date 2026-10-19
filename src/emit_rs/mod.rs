@@ -362,12 +362,7 @@ impl Emitter {
 
     /// The function being printed, named as the program wrote it.
     pub(crate) fn shown_fn_name(&self) -> String {
-        let base = self.cur_fn.split("__").next().unwrap_or(&self.cur_fn).to_string();
-        let name = if self.fns.get(&self.cur_fn).is_some() && self.cur_fn.contains("__") && self.cur_fn.rsplit_once("__").map_or(false, |(_, s)| s.chars().all(|c| c.is_ascii_digit())) {
-            base
-        } else {
-            self.cur_fn.clone()
-        };
+        let name = if self.fns.get(&self.cur_fn).is_some() { crate::ir::copy_base(&self.cur_fn).to_string() } else { self.cur_fn.clone() };
         self.shown_names.get(&name).cloned().unwrap_or(name)
     }
 

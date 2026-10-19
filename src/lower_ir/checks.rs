@@ -20,7 +20,8 @@ pub(crate) static CORE_RESERVED: std::sync::LazyLock<Vec<&'static str>> = std::s
 
 /// The names a module's bare import reserves: its rows' and forms', the
 /// hidden ones apart, and those its control shares with another module
-/// (`Prop::Unreserved`).
+/// (`Prop::Unreserved`); and the functions its source exports where it is
+/// written in Crow (`crate::modules::exports`).
 fn reserved_by(module: impl std::ops::Fn(&str) -> bool, more: &[&'static str]) -> Vec<&'static str> {
     let mut names: Vec<&'static str> = crate::table::ROWS
         .iter()
@@ -28,6 +29,9 @@ fn reserved_by(module: impl std::ops::Fn(&str) -> bool, more: &[&'static str]) -
         .filter(|r| module(r.module) && !r.name.starts_with("__") && !r.props.contains(&crate::table::Prop::Unreserved))
         .map(|r| r.name)
         .collect();
+    for m in crate::modules::MODULES.iter().filter(|m| module(m.path)) {
+        names.extend(crate::modules::exports(m.path).iter().copied());
+    }
     names.extend(more.iter().copied());
     names.sort_unstable();
     names.dedup();
@@ -49,7 +53,8 @@ pub(crate) static WEB_RESERVED: std::sync::LazyLock<Vec<&'static str>> = std::sy
 pub(crate) const WEB_MODULES: &[&str] = &["auth", "mail", "ws"];
 
 /// The names a module's section of the spec documents: its rows and
-/// forms, and those of the modules documented under it (web's modules).
+/// forms, the functions its source exports where it is written in Crow,
+/// and those of the modules documented under it (web's modules).
 pub(crate) fn names_of(path: &str) -> Vec<&'static str> {
     reserved_by(|m| m == path || crate::modules::by_path(m).is_some_and(|e| e.under == Some(path)), &[])
 }
@@ -265,11 +270,16 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// An error at the line being lowered, owned by the declaration it is in.
+    /// An error at the line being lowered, owned by the declaration it is
+    /// in. Inside a standard module's function written in Crow, inlined
+    /// behind its prefix, the refusal names the function the program
+    /// called (`in relu: clip[] takes numbers, got an int`): the line is
+    /// the program's, and the formula's innards are not what it wrote.
     pub(super) fn refuse(&mut self, msg: String) {
         if self.v.mute > 0 {
             return;
         }
+        let msg = if crate::modules::is_crow_fn(&self.current_fn) { format!("in {}: {}", crate::modules::written_as(&self.current_fn), msg) } else { msg };
         self.v.errors.push((format!("line {}: {}", self.v.line, msg), self.v.decl.clone()));
     }
 
@@ -563,12 +573,11 @@ impl<'a> Lowerer<'a> {
             return;
         }
         // (the standard library's own source — the one kind of file that
-        // imports `sys` — defines the functions its Crow rows name:
-        // `fn request` in src/modules/core.co, tested on its own)
-        let own_row = what == "function"
-            && self.ctx.bare_modules.contains("sys")
-            && crate::table::ROWS.iter().any(|r| r.module.is_empty() && r.is_crow() && crate::table::crow_fn_base(r) == name);
-        if CORE_RESERVED.contains(&name) && !own_row {
+        // imports `sys` — defines the functions the builtins written in
+        // Crow are: `fn request` in src/modules/core.co, `fn close` in
+        // ws.co beside sys's; each is tested on its own)
+        let own_source = what == "function" && self.ctx.bare_modules.contains("sys");
+        if CORE_RESERVED.contains(&name) && !own_source {
             self.refuse(format!("'{}' is a core builtin — pick another name for this {}", name, what));
             return;
         }
@@ -584,13 +593,7 @@ impl<'a> Lowerer<'a> {
         // in the part alone
         let entry_line = |module: &str| self.v.bare_import_lines.get(module).copied().filter(|l| *l > 0);
         if let Some(module) = self.ctx.registry.module_name_of(name) {
-            // (the standard library's own source — the one kind of file that
-            // imports `sys` — defines the functions its module's Crow rows
-            // name: `fn fetch` in src/modules/sys.co, tested on its own)
-            let own_row = what == "function"
-                && self.ctx.bare_modules.contains("sys")
-                && crate::table::ROWS.iter().any(|r| r.module == module && r.is_crow() && crate::table::crow_fn_base(r) == name);
-            if own_row {
+            if own_source {
                 return;
             }
             if let Some(line) = self.ctx.bare_modules.contains(module).then(|| entry_line(module)).flatten() {
@@ -1042,12 +1045,35 @@ impl<'a> Lowerer<'a> {
             self.refuse(format!("a list has no field '{}': `.{}` is {} — index an item for its own", field, field, owner));
             return;
         }
-        // a number or a bool has no fields (`x.name` of an int had stopped
-        // the interpreter as it ran and the compiled program had not built)
-        if matches!(obj_type, Ty::Int | Ty::Float | Ty::Bool) {
+        // a number, a bool, text, bytes, a function or a handle has no
+        // fields (`x.name` of an int had stopped the interpreter as it ran
+        // and the compiled program had not built; `call.id` of text or of a
+        // tensor, guarded by `type[call]` at run time, had not built either
+        // — crow check --self); a map's field is its key, read as the
+        // program runs; a tensor's are its shape, dtype and device, a
+        // moment's its calendar fields
+        // (a parameter nothing typed reads as the unit type here, and says
+        // nothing: a function the module's tests never call)
+        let fieldless = matches!(
+            obj_type,
+            Ty::Int | Ty::Big | Ty::Float | Ty::Bool | Ty::Str | Ty::Decimal | Ty::Fraction | Ty::Bytes | Ty::Fn(..) | Ty::Socket | Ty::Mailer | Ty::Stream | Ty::Db | Ty::Tx | Ty::Sparse
+        );
+        // (each kind's fields are the runtime's to name: the compiler reads
+        // them there)
+        // (a frame's column answers a moment's fields over its cells —
+        // `df.at.hour` — and nothing else: `call.id` of a column had not
+        // built — crow check --self)
+        let own_fields: Option<&[&str]> = match obj_type {
+            Ty::Tensor(..) => Some(crow_runtime::tensor::FIELDS),
+            Ty::Moment | Ty::Column(_) => Some(crow_runtime::moments::Moment::FIELDS),
+            _ => None,
+        };
+        if fieldless || own_fields.is_some_and(|fs| !fs.contains(&field)) {
             let words = crate::table::Arg::of_type(obj_type).words();
             if BUILTINS.contains(&field) {
                 self.refuse(format!("{} has no field '{}' — a function takes its value first: {}[…]", words, field, field));
+            } else if let Some(fs) = own_fields {
+                self.refuse(format!("{} has no field '{}' — its fields are {}", words, field, fs.join(", ")));
             } else {
                 self.refuse(format!("{} has no field '{}'", words, field));
             }
@@ -1528,10 +1554,8 @@ impl<'a> Lowerer<'a> {
                 // calls the function it defines for a row of that name —
                 // math.co's `load` beside frame's — and the program's own
                 // function is the call, as it is with one provider)
-                let own_row = self.ctx.bare_modules.contains("sys")
-                    && self.ctx.functions.contains_key(name)
-                    && crate::table::ROWS.iter().any(|r| r.is_crow() && crate::table::crow_fn_base(r) == name);
-                if own_row {
+                let own_source = self.ctx.bare_modules.contains("sys") && self.ctx.functions.contains_key(name);
+                if own_source {
                     return;
                 }
                 // (two modules' rows of one name that the arguments' kinds
@@ -2578,10 +2602,19 @@ fn order_side(t: &Ty) -> Option<OrderSide> {
         Ty::Moment => OrderSide::One("a moment"),
         Ty::Result(x) => return order_side(x),
         Ty::Tensor(..) => OrderSide::Many("a number"),
-        Ty::List(item) | Ty::Column(item) => match order_side(item)? {
+        // (a list whose items no type says is a list all the same, and no
+        // text, number or bool: compared with one, it had passed here and
+        // the compiled program had not built — crow check --self)
+        Ty::List(item) => match order_side(item) {
+            Some(OrderSide::One(k)) => OrderSide::Many(k),
+            Some(OrderSide::Many(_)) | None => OrderSide::Many("a list"),
+        },
+        Ty::Column(item) => match order_side(item)? {
             OrderSide::One(k) => OrderSide::Many(k),
             OrderSide::Many(_) => OrderSide::Many("a list"),
         },
+        // (the layer's bytes compare with bytes, and order nothing)
+        Ty::Bytes => OrderSide::One(crate::table::Arg::Bytes.words()),
         Ty::Map(..) => OrderSide::One("a map"),
         Ty::Record(_) | Ty::OptRecord(_) => OrderSide::One("a record"),
         Ty::Frame(_) => OrderSide::One("a frame"),

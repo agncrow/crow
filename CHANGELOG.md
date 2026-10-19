@@ -9,6 +9,13 @@ history says the rest.
 
 ### Breaking
 
+- `chat`'s and `follow`'s `max` option is `tokens` (`chat[m, talk, tokens
+  = 200]`): the module's options are its functions' defaults now, and a
+  parameter may not be named like a builtin. A conversation's next user
+  turn is `asked[talk, text]`, beside `said[talk, reply]` and `told[talk,
+  call, text]`; `ask[text]` still begins one. A program that bound `asked`
+  as a name of its own under `use llm` is refused, as any clash with an
+  import is: rename it.
 - A tensor compared with a number is a mask of its shape: a matrix's is
   its rows of bools (`[[1.0, 2.0], [3.0, 4.0]] gt 2.0` is `[[false,
   false], [true, true]]`), as numpy's is. `where` over it keeps the matrix
@@ -50,6 +57,20 @@ history says the rest.
   program to every check, as it was to the lowering.
 - `crow test --modules` runs every standard module written in Crow
   against its own test blocks, from the manifest.
+- A standard module written in Crow declares its functions by writing
+  them (phase 2 of docs/extending-crow.md): a top-level function with no
+  leading underscore is what a program calls, typed by its use as any
+  function is, its options its defaults — which may now be `[]` or
+  `map[]` — and a helper begins with an underscore. The statistics, the
+  neural-network formulas, the token functions, a socket's `socket` and
+  `close`, the model functions and the protocol's own are such functions
+  now; 45 rows of the builtin table are gone with the JSON text the
+  values had crossed them as. A misuse inside one is refused
+  naming it and the program's line (`in relu: clip[] takes numbers, got
+  an int`). The effects (`read`, `write`, `request`, `mail`, the readers,
+  a socket's `send` and `recv`), the variadics (`randn`, `normal`,
+  `anova`), `msgpack` (a value of any kind, kept as it is) and the
+  database drivers keep their rows until their phases.
 
 - The VS Code extension depends on no npm package: it speaks LSP to `crow
   lsp` itself, in one file of plain JavaScript over VS Code's own API, and
@@ -61,6 +82,38 @@ history says the rest.
 - `rsi`'s warm-up is the spec's: from the second row, the mean gain and
   loss of the deltas there are until `n` have come, then Wilder's
   smoothing — as it was, now written down and held to a reference.
+
+### Fixed
+
+- A function called from a copy of its caller, with an argument whose
+  kind settles only once another copy answers (`inner[may[m, false]]`
+  inside a function called with text and with a parsed value), was never
+  copied for that kind, and the compiled program did not build; a loop's
+  variable whose item kind was not yet known kept a binding of the same
+  name from outside the loop; a standard module's local named like a
+  page's fact made the module's function a handler; a value that can
+  fail, converted where a function's parameter takes another form and
+  lent to it, was handed by value, so the compiled program did not
+  build; and a loop's item from a frame's column whose cells can be
+  missing was typed as nothing known by the width pass (the rule for a
+  loop's item knew no column), so a function writing the item into text
+  did not build compiled, where the interpreter stopped on the missing
+  cell (parity 268). Each fixed.
+- Three misuses the lowering had let through to a backend that could not
+  build them are refused before the program runs, in both modes, each
+  naming what it found: a list whose items no type says compared with
+  text (two kinds are not compared; bytes compare with bytes alone), a
+  function returning two kinds (`return 'a'` beside `return x` of an int:
+  `returns an int where the function answers text — a function answers
+  one kind`, where it had been an internal error), and a field read of a
+  value that has none or that a tensor or a moment lacks (`text has no
+  field 'provider'`, `numbers has no field 'id' — its fields are shape,
+  dtype, device`; a map's field is its key, read as the program runs).
+  And a parameter handed `[]` that the body reads where a builtin takes
+  numbers is a list of numbers (`mse[[], m]` stops as the row had: `pred
+  and target must be one length`), where the compiled program had held
+  the list as text and not built. Found by crow check --self once the
+  modules' rows were gone.
 
 ## v0.7.0 — 2026-10-18
 

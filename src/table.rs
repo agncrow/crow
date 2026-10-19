@@ -2098,32 +2098,12 @@ pub static ROWS: &[Row] = &[
     // no test knows: the reason, where they were answered NaN, 0.5 or an
     // empty map; anova of one group was NaN compiled and refused
     // interpreted)
-    // math.stats, written in Crow (src/modules/stats.co): each row the
-    // contract, the statistic a formula over math's builtins
-    crow!("stats.median", "math.stats", "median", (Tensor) -> Float, never),
-    crow!("stats.std", "math.stats", "std", (Tensor) -> Float, never),
-    crow!("stats.var", "math.stats", "var", (Tensor) -> Float, never),
-    crow!("stats.percentile", "math.stats", "percentile", (Tensor, Float) -> Float, stops),
-    crow!("stats.zscore", "math.stats", "zscore", (Tensor) -> Tensor, never),
-    crow!("stats.corr", "math.stats", "corr", (Tensor, Tensor) -> Float, stops),
-    crow!("stats.cov", "math.stats", "cov", (Tensor, Tensor) -> Float, stops),
-    crow!("stats.ttest", "math.stats", "ttest", (Tensor, Tensor) -> FloatMap, never),
-    crow!("stats.linreg", "math.stats", "linreg", (Tensor, Tensor) -> FloatMap, stops),
-    crow!("stats.chisq", "math.stats", "chisq", (Tensor, Tensor) -> FloatMap, stops),
+    // math.stats and math.nn are written in Crow (src/modules/stats.co,
+    // nn.co): their functions are their declaration, typed by their use
+    // (docs/extending-crow.md, phase 2); the one row left is the variadic
+    // `anova[a, b, …]`, whose rest parameter no function of the language
+    // takes yet (phase 4)
     crow!("stats.anova", "math.stats", "anova", (Groups) -> FloatMap, stops),
-    crow!("stats.kstest", "math.stats", "kstest", (Tensor, Str) -> FloatMap, stops),
-    crow!("stats.fit", "math.stats", "fit", (Tensor, Str) -> FloatMap, stops),
-    // math.nn, written in Crow (src/modules/nn.co): the rows are its contract
-    // (shapes that do not meet, a target that is no class: the
-    // reason, where a kernel panicked or a loss read a logit of 0)
-    crow!("nn.relu", "math.nn", "relu", (Tensor) -> Tensor, never),
-    crow!("nn.sigmoid", "math.nn", "sigmoid", (Tensor) -> Tensor, never),
-    crow!("nn.softmax", "math.nn", "softmax", (Tensor) -> Tensor, never),
-    crow!("nn.gelu", "math.nn", "gelu", (Tensor) -> Tensor, never),
-    crow!("nn.mse", "math.nn", "mse", (Tensor, Tensor) -> Float, stops),
-    crow!("nn.crossentropy", "math.nn", "crossentropy", (Tensor, Tensor) -> Float, stops),
-    crow!("nn.bce", "math.nn", "bce", (Tensor, Tensor) -> Float, stops),
-    crow!("nn.linear", "math.nn", "linear", (Tensor, Tensor, Tensor) -> Tensor, stops),
     // chart (a window of no rows, series of two lengths: the reason, where
     // a negative window was a huge one compiled and one row interpreted,
     // and a shorter series cut the others)
@@ -2231,53 +2211,28 @@ pub static ROWS: &[Row] = &[
     row!("sys.frame_json", "sys", "frame_json", crow_runtime::sys::frame_json, (Frame) -> Str, never),
     Row { feature: Some(("crow_runtime", "parquet")), ..row!("sys.frame_parquet", "sys", "frame_parquet", crow_runtime::sys::frame_parquet, (Frame) -> Bytes, value "frame") },
     row!("sys.tensor_of_frame", "sys", "tensor_of_frame", crow_runtime::sys::tensor_of_frame, (Frame) -> Tensor, value "load"),
-    // the protocol, written in Crow (src/modules/sys.co): one request sent
-    // and answered; a remote source read with a reader's options, or an S3
-    // object; bytes written to an S3 object
-    crow!("sys.exchange", "sys", "exchange", (Str, Str, Strs, Bytes, Float) -> Answer, value "sys"),
-    crow!("sys.exchange_on", "sys", "exchange_on", (Stream, Str, Str, Str, Strs, Bytes, Moment, Bool) -> Answer, value "sys"),
+    // the protocol, written in Crow (src/modules/sys.co): its functions
+    // are its declaration (`exchange`, `put`, `upgrade`, the formats; phase
+    // 2 of docs/extending-crow.md), but a remote source read with a
+    // reader's options is an effect the session layer holds and a page's
+    // source, and keeps its row until effects are declared on the layer's
+    // own rows (phase 3)
     Row { props: &[Prop::Effect, Prop::Reads, Prop::Held, Prop::Source], ..crow!("sys.fetch", "sys", "fetch", (Str, TextMap, TextMap, Float) -> Answer, value "sys") },
-    crow!("sys.put", "sys", "put", (Str, Bytes) -> Str, value "sys"),
-    crow!("sys.format_of", "sys", "format_of", (Str) -> Str, never),
-    crow!("sys.remote", "sys", "remote", (Str) -> Bool, never),
-    crow!("sys.with_query", "sys", "with_query", (Str, TextMap) -> Str, never),
-    crow!("sys.redirected", "sys", "redirected", (Str, Str) -> Str, never),
-    crow!("sys.format_sniffed", "sys", "format_sniffed", (Str, Bytes) -> Str, never),
-    crow!("sys.read_head", "sys", "read_head", (Stream, Moment) -> Answer, value "sys"),
-    crow!("sys.upgrade", "sys", "upgrade", (Str, Float) -> Socket, value "sys"),
-    crow!("sys.civil", "sys", "civil", (Int) -> Ints, never),
-    // web's rows written in Crow: a token signed and read (src/modules/auth.co),
-    // a value packed as MessagePack (src/modules/web.co)
-    Row { props: &[Prop::Differentiable, Prop::Dual], ..crow!("web.auth.sign", "web.auth", "sign", (Encoded, Str) -> Str, value "auth") },
-    crow!("web.auth.verify", "web.auth", "verify", (Str, Str) -> Json, value "auth"),
+    // a value packed as MessagePack (src/modules/web.co): a value of any
+    // kind, kept as it is — an int beside a float, which the number rule
+    // would join into one function of floats — a parameter of no kind the
+    // language can declare yet (docs/extending-crow.md, phase 4), so the
+    // row stays, handing the function the value's JSON text
     crow!("web.msgpack", "web", "msgpack", (Encoded) -> Response, never),
-    // the WebSocket client written in Crow (src/modules/ws.co): a socket's
-    // row is named as the program calls it, its function by the row's id
-    crow!("web.ws.socket", "web.ws", "socket", (Str) -> Socket, value "socket"),
+    // the WebSocket client written in Crow (src/modules/ws.co): `socket`
+    // and `close` are its functions; a message sent or received is an
+    // effect, and keeps its row (phase 3), named as the program calls it,
+    // its function by the row's id
     Row { props: &[Prop::Effect], ..crow!("web.ws.send_text", "web.ws", "send", (Socket, Str) -> Str, value "socket") },
     Row { props: &[Prop::Effect, Prop::Reads], ..crow!("web.ws.recv_text", "web.ws", "recv", (Socket) -> Str, value "socket") },
     Row { props: &[Prop::Effect, Prop::Reads], ..crow!("web.ws.recv_for", "web.ws", "recv", (Socket, Float) -> Str, value "socket") },
-    crow!("web.ws.close_socket", "web.ws", "close", (Socket) -> Str, never),
     // mail written in Crow (src/modules/mail.co): SMTP over the sys layer
     Row { props: &[Prop::Effect, Prop::Held, Prop::Session], ..crow!("web.mail.mail", "web.mail", "mail", (Mailer, Str, Str, Str) -> Bool, value "mail") },
-    // a language model as a connection, written in Crow (src/modules/llm.co):
-    // the model's description, a conversation and a reply are parsed values
-    // in one shape; `chat`'s and `follow`'s options (system, tools, max,
-    // temperature) are filled in by name (crate::lower::llm_options), and a
-    // `tools` list of functions becomes their schemas (crate::lower_ir)
-    crow!("llm.reach", "llm", "reach", (Str) -> Json, value "llm"),
-    crow!("llm.ask", "llm", "ask", (Str) -> Json, value "llm"),
-    // (a model's description, a conversation, a reply and a call reach the
-    // Crow body as their JSON text — `Encoded`, as sign's claims do — and
-    // are read back with json[…] at the row's door)
-    crow!("llm.ask_more", "llm", "ask", (Encoded, Str) -> Json, value "llm"),
-    crow!("llm.said", "llm", "said", (Encoded, Encoded) -> Json, value "llm"),
-    crow!("llm.told", "llm", "told", (Encoded, Encoded, Str) -> Json, value "llm"),
-    Row { options: &[("system", Preset::Str("")), ("tools", Preset::List), ("max", Preset::Int(1024)), ("temperature", Preset::Float(1.0))], ..crow!("llm.chat", "llm", "chat", (Encoded, Encoded, Str, Strs, Int, Float) -> Json, value "llm") },
-    Row { options: &[("system", Preset::Str("")), ("tools", Preset::List), ("max", Preset::Int(1024)), ("temperature", Preset::Float(1.0))], ..crow!("llm.follow", "llm", "follow", (Encoded, Encoded, Str, Strs, Int, Float) -> Socket, value "llm") },
-    crow!("llm.next_piece", "llm", "next", (Socket) -> Str, value "llm"),
-    crow!("llm.whole", "llm", "reply", (Socket) -> Json, value "llm"),
-    crow!("llm.embed", "llm", "embed", (Encoded, Strs) -> Tensor, value "llm"),
     // frame (a column the frame lacks, an aggregation or a join it does not
     // know, a mask or a count that does not fit: the reason the program
     // stops with, as df.col of a missing column is — the interpreter had
@@ -2581,8 +2536,11 @@ pub fn module_forms(module: &str) -> Vec<&'static str> {
     names
 }
 
+/// The names a module answers: its rows', and the functions its source
+/// exports where it is written in Crow (`crate::modules::exports`).
 pub fn module_names(module: &str) -> Vec<&'static str> {
     let mut names: Vec<&'static str> = ROWS.iter().filter(|r| r.module == module).map(|r| r.name).collect();
+    names.extend(crate::modules::exports(module).iter().copied());
     names.sort_unstable();
     names.dedup();
     names
@@ -3273,8 +3231,9 @@ mod tests {
         }
     }
 
-    /// A module function is a row, has a form of its own, or is still to
-    /// move, and exactly one of these.
+    /// A module function is a row, has a form of its own, is a function its
+    /// source exports (a module written in Crow), or is still to move, and
+    /// exactly one of these.
     #[test]
     fn every_module_function_is_a_row_or_says_why_not() {
         // (every module the manifest gives a registry object)
@@ -3286,8 +3245,9 @@ mod tests {
             for name in names.iter().map(String::as_str) {
                 let row = ROWS.iter().any(|r| r.module == m && r.name == name);
                 let form = FORMS.iter().any(|f| f.module == m && f.name == name);
-                let places = [row, form, MODULE_TO_MOVE.contains(&(m, name))];
-                assert_eq!(places.iter().filter(|p| **p).count(), 1, "{}.{} is in {} of: the table, FORMS, MODULE_TO_MOVE", m, name, places.iter().filter(|p| **p).count());
+                let export = crate::modules::exports(m).contains(&name);
+                let places = [row, form, export, MODULE_TO_MOVE.contains(&(m, name))];
+                assert_eq!(places.iter().filter(|p| **p).count(), 1, "{}.{} is in {} of: the table, FORMS, its source's exports, MODULE_TO_MOVE", m, name, places.iter().filter(|p| **p).count());
             }
         }
     }
@@ -3303,7 +3263,7 @@ mod tests {
         assert_eq!(miscounted("chart", "rsi", 3), Some("rsi[] takes 2 or 4 arguments, got 3".to_string()));
         assert_eq!(miscounted("chart", "rsi", 4), None);
         assert_eq!(miscounted("math", "zeros", 0), None);
-        assert_eq!(miscounted("math.stats", "median", 2), Some("median[] takes 1 argument, got 2".to_string()));
+        assert_eq!(miscounted("web.ws", "recv", 3), Some("recv[] takes 1 or 2 arguments, got 3".to_string()));
         let zeros = by_id("math.zeros").expect("the row");
         let printed = print(zeros, &["a".to_string(), "b".to_string()], "7", None).expect("prints");
         assert!(printed.starts_with("crow_runtime::math::zeros(&[") && printed.contains("(a)") && printed.contains("(b)"), "{printed}");

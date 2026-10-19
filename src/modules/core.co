@@ -11,11 +11,11 @@
 use sys
 
 --- what a request may be sent with
-fn methods[]
+fn _methods[]
     return ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
 
 --- a file's media type by its extension, as a multipart part names it
-fn media_of[path]
+fn _media_of[path]
     pieces = split[path, '.']
     ext = lower[pieces[len[pieces] - 1]]
     types = map[csv = 'text/csv', json = 'application/json', txt = 'text/plain', md = 'text/plain', html = 'text/html', png = 'image/png', jpg = 'image/jpeg', jpeg = 'image/jpeg', gif = 'image/gif', pdf = 'application/pdf', parquet = 'application/vnd.apache.parquet']
@@ -25,12 +25,12 @@ fn media_of[path]
 
 --- a name in a multipart part, its quote and line breaks escaped as a
 --- browser escapes them
-fn quoted[s]
+fn _quoted[s]
     return replace[replace[replace[s, '"', '%22'], '\r', '%0D'], '\n', '%0A']
 
 --- what a request sends, as its fixture names it (the spec, Requests): the
 --- body as written, a form as its encoded pairs, files by field and path
-fn sent_as[body, fields, files]
+fn _sent_as[body, fields, files]
     if len[files] gt 0
         named = []
         for name in keys[fields]
@@ -54,8 +54,8 @@ fn request[url, method, body, headers, queried, fields, files, save, timeout]
     if not (starts[url, 'http://'] or starts[url, 'https://'])
         return error['cannot request \'`url`\': a request goes to an http:// or https:// URL', 'http']
     method = upper[method]
-    if method not in methods[]
-        listed = join[methods[], ', ']
+    if method not in _methods[]
+        listed = join[_methods[], ', ']
         return error['\'`method`\' is not an HTTP method — `listed`', 'http']
     if not (timeout gte 0.0)
         return error['a timeout is a number of seconds, 0 or more — not `timeout`', 'http']
@@ -75,12 +75,12 @@ fn request[url, method, body, headers, queried, fields, files, save, timeout]
         if lower[k] eq 'content-type'
             typed = true
     body_bytes = bytes['']
-    written = sent_as[body, fields, files]
+    written = _sent_as[body, fields, files]
     if len[files] gt 0
         boundary = 'crow-`hex[random[6]]`'
         pieces = []
         for name in keys[fields]
-            field = quoted[name]
+            field = _quoted[name]
             value = fields[name]
             pieces = push[pieces, bytes['--`boundary`\r\nContent-Disposition: form-data; name="`field`"\r\n\r\n`value`\r\n']]
         for name in keys[files]
@@ -89,9 +89,9 @@ fn request[url, method, body, headers, queried, fields, files, save, timeout]
             if not data.ok
                 return error['cannot request \'`url`\': cannot read the file \'`path`\': `data.reason`', 'http']
             segments = split[path, '/']
-            file_name = quoted[segments[len[segments] - 1]]
-            field = quoted[name]
-            media = media_of[path]
+            file_name = _quoted[segments[len[segments] - 1]]
+            field = _quoted[name]
+            media = _media_of[path]
             pieces = push[pieces, bytes['--`boundary`\r\nContent-Disposition: form-data; name="`field`"; filename="`file_name`"\r\nContent-Type: `media`\r\n\r\n']]
             pieces = push[pieces, data]
             pieces = push[pieces, bytes['\r\n']]
@@ -164,7 +164,7 @@ fn request[url, method, body, headers, queried, fields, files, save, timeout]
     return replied
 
 --- bytes read as text, or the reason they are none
-fn as_text[path, data]
+fn _as_text[path, data]
     t = text[data]
     if not t.ok
         return error['cannot read \'`path`\': it is not text (UTF-8)', 'io']
@@ -176,11 +176,11 @@ fn read[path]
         got = fetch[path, map[], map[], 0.0]
         if not got.ok
             return error[got.reason, 'io']
-        return as_text[path, got.body]
+        return _as_text[path, got.body]
     data = file[path]
     if not data.ok
         return error[data.reason, 'io']
-    return as_text[path, data]
+    return _as_text[path, data]
 
 --- `read[url, headers = map[…], query = map[…], timeout = s]`: a URL's
 --- text, asked with the options
@@ -188,7 +188,7 @@ fn read_asked[path, headers, query, timeout]
     got = fetch[path, headers, query, timeout]
     if not got.ok
         return error[got.reason, 'io']
-    return as_text[path, got.body]
+    return _as_text[path, got.body]
 
 --- `write[path, text]`: a file, or an S3 object
 fn write[path, content]
@@ -204,9 +204,9 @@ fn write[path, content]
 
 --- the client's own pieces, at known values; a file written and read
 test the_helpers_spell_what_the_wire_needs[]
-    assert[media_of['report.csv'] eq 'text/csv' and media_of['x.PNG'] eq 'image/png' and media_of['noext'] eq 'application/octet-stream']
-    assert[quoted['a"b\r\nc'] eq 'a%22b%0D%0Ac']
-    assert['PATCH' in methods[] and len[methods[]] eq 7]
+    assert[_media_of['report.csv'] eq 'text/csv' and _media_of['x.PNG'] eq 'image/png' and _media_of['noext'] eq 'application/octet-stream']
+    assert[_quoted['a"b\r\nc'] eq 'a%22b%0D%0Ac']
+    assert['PATCH' in _methods[] and len[_methods[]] eq 7]
     kept = write['core-note.txt', 'one\ntwo']
     assert[kept.ok and read['core-note.txt'] eq 'one\ntwo']
     assert[not read['no-such-file-here'].ok and read['no-such-file-here'].kind eq 'io']

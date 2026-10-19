@@ -143,6 +143,11 @@ impl<'de> serde::Deserialize<'de> for CrowTensor {
     }
 }
 
+/// The fields a program reads of a tensor (`t.shape`, `.dtype`, `.device`,
+/// `.grad`), which the compiler holds a field read to; each backend answers
+/// them.
+pub const FIELDS: &[&str] = &["shape", "dtype", "device", "grad"];
+
 impl CrowTensor {
     // ── Helpers ──────────────────────────────────────────────────────
 

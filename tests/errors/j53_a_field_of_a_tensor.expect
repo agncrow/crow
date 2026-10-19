@@ -1,0 +1,3 @@
+j53_a_field_of_a_tensor.co:5:34: numbers has no field 'id' — its fields are shape, dtype, device, grad
+  5 │     if type[c] ne 'map' or not c.id.ok
+    │                                  ^^

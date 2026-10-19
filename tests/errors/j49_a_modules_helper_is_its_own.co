@@ -1,0 +1,4 @@
+--- a module's helper is its own: a program calling it by its name finds no such function
+use llm
+
+log[_talk_of[ask['x']]]

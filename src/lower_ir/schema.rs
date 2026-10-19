@@ -155,8 +155,8 @@ fn declared_with(program: &Program, conns: &BTreeMap<String, Option<String>>) ->
             Expr::Call { target: Target::User(f), args, .. } => {
                 calls.entry(f.clone()).or_default().push((body.name.to_string(), args.clone()));
                 // a specialized copy is called under the name it was made from too
-                if let Some((base, _)) = f.split_once("__") {
-                    calls.entry(base.to_string()).or_default().push((body.name.to_string(), args.clone()));
+                if crate::ir::is_copy(f) {
+                    calls.entry(crate::ir::copy_base(f).to_string()).or_default().push((body.name.to_string(), args.clone()));
                 }
             }
             Expr::Effect { name, args, .. } if name == "exec" || name == "db.exec" => {

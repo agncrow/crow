@@ -8,28 +8,33 @@ use math
 
 --- relu[x]: max(0, x), element-wise.
 fn relu[x]
-    return clip[x, 0.0, inf]
+    x_t = tensor[x]
+    return clip[x_t, 0.0, inf]
 
 --- sigmoid[x]: 1 / (1 + exp(-x)), element-wise.
 fn sigmoid[x]
-    return 1.0 / (1.0 + exp[-x])
+    x_t = tensor[x]
+    return 1.0 / (1.0 + exp[-x_t])
 
 --- softmax[x]: exp(x) / sum(exp(x)) over the whole tensor, the largest
 --- element taken out of the exponentials first so a large score does not
 --- overflow.
 fn softmax[x]
-    ex = exp[x - max[x]]
+    x_t = tensor[x]
+    ex = exp[x_t - max[x_t]]
     return ex / sum[ex]
 
 --- gelu[x]: x · Φ(x), with Φ the normal distribution's cumulative,
 --- 0.5 · (1 + erf(x / √2)), element-wise.
 fn gelu[x]
-    return x .* (0.5 * (1.0 + erf[x / sqrt[2.0]]))
+    x_t = tensor[x]
+    return x_t .* (0.5 * (1.0 + erf[x_t / sqrt[2.0]]))
 
 --- mse[pred, target]: the mean of the squared differences, the shapes
 --- broadcasting as `-` does.
 fn mse[pred, target]
-    d = pred - target
+    pred_t = tensor[pred]
+    d = pred_t - target
     return mean[d .* d]
 
 --- bce[pred, target]: the binary cross-entropy of probabilities against
@@ -37,7 +42,8 @@ fn mse[pred, target]
 --- [0.000000000001, 1 - 0.000000000001], so a sure wrong answer is a large loss, never an
 --- infinite one.
 fn bce[pred, target]
-    p = flatten[pred]
+    pred_t = tensor[pred]
+    p = flatten[pred_t]
     t = flatten[target]
     n = len[p]
     m = len[t]
@@ -51,7 +57,9 @@ fn bce[pred, target]
 --- the exponentials first. Logits `[classes]` with one target, or
 --- `[batch, classes]` with a target per row, each a class 0 to classes − 1.
 fn crossentropy[logits, targets]
-    shape = logits.shape
+    logits_t = tensor[logits]
+    targets_t = tensor[targets]
+    shape = logits_t.shape
     rank = len[shape]
     if rank gt 2 or rank eq 0
         halt['crossentropy: logits are [classes] or [batch, classes], got `rank` dimensions']
@@ -62,20 +70,20 @@ fn crossentropy[logits, targets]
         classes = shape[1]
     if classes eq 0
         halt['crossentropy: the logits have no classes']
-    given = len[targets]
+    given = len[targets_t]
     if given ne batch
         halt['crossentropy: needs one target per row of logits (`batch`), got `given`']
-    least = min[targets]
-    most = max[targets]
+    least = min[targets_t]
+    most = max[targets_t]
     last = classes - 1
     if least lt 0.0
         halt['crossentropy: target `least` is not a class of `classes` (0 to `last`)']
     if most gte float[classes]
         halt['crossentropy: target `most` is not a class of `classes` (0 to `last`)']
-    if max[abs[targets - round[targets]]] gt 0.0
+    if max[abs[targets_t - round[targets_t]]] gt 0.0
         halt['crossentropy: a target is not a whole number — each is a class of `classes` (0 to `last`)']
-    scores = reshape[logits, batch, classes]
-    hot = onehot[targets, classes]
+    scores = reshape[logits_t, batch, classes]
+    hot = onehot[targets_t, classes]
     top = reshape[max[scores, 1], batch, 1]
     lse = ln[sum[exp[scores - top], 1]] + flatten[top]
     picked = sum[scores .* hot, 1]
@@ -83,15 +91,17 @@ fn crossentropy[logits, targets]
 
 --- linear[x, w, b]: x * w + b, matrices x and w, the bias broadcasting.
 fn linear[x, w, b]
-    xs = x.shape
-    ws = w.shape
+    x_t = tensor[x]
+    w_t = tensor[w]
+    xs = x_t.shape
+    ws = w_t.shape
     if len[xs] ne 2 or len[ws] ne 2
         halt['linear: x and w are matrices, got shapes `xs` and `ws`']
     cols = xs[1]
     rows = ws[0]
     if cols ne rows
         halt['linear: x has `cols` columns and w `rows` rows — x * w needs them equal']
-    return x * w + b
+    return x_t * w_t + b
 
 --- the formulas, at the values the book shows (docs/book/src/by-example/nn.md)
 test the_formulas_at_known_values[]
@@ -131,7 +141,7 @@ test the_formulas_keep_their_laws[]
 
 --- a gradient through each formula agrees with central differences: the
 --- formulas are differentiated as any function is, with no rule of their own
-fn through_all[w, x, y, c]
+fn _through_all[w, x, y, c]
     h = reshape[gelu[relu[x * w] + 0.5], 4, 3]
     s = sigmoid[flatten[h * [[1.0], [-1.0], [0.5]]]]
     return bce[s, y] + mse[softmax[flatten[h]], 0.1] + crossentropy[h, c] + sum[linear[x, w, [0.1, 0.2, 0.3]]]
@@ -141,12 +151,12 @@ test a_gradient_through_the_formulas_is_the_slope[]
     y = [1.0, 0.0, 1.0, 0.0]
     c = [0.0, 2.0, 1.0, 2.0]
     w = [[0.5, -0.3, 0.8], [0.1, 0.9, -0.4]]
-    g = reshape[grad[through_all][w, x, y, c][0], 2, 3]
+    g = reshape[grad[_through_all][w, x, y, c][0], 2, 3]
     for i in range[2]
         for j in range[3]
             up = tensor[w]
             down = tensor[w]
             up[i][j] = w[i][j] + 0.00001
             down[i][j] = w[i][j] - 0.00001
-            slope = (through_all[up, x, y, c] - through_all[down, x, y, c]) / 0.00002
+            slope = (_through_all[up, x, y, c] - _through_all[down, x, y, c]) / 0.00002
             assert[abs[g[i][j] - slope] lt 0.00001]

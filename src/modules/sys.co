@@ -18,7 +18,7 @@ fn remote[path]
     return starts[path, 'http://'] or starts[path, 'https://'] or starts[path, 's3://']
 
 --- the value of a decimal number's digits, or -1 where a character is none
-fn whole_of[s]
+fn _whole_of[s]
     digits = '0123456789'
     t = trim[s]
     if len[t] eq 0
@@ -36,7 +36,7 @@ fn whole_of[s]
     return value
 
 --- the value of a hex number's digits, or -1 where a character is none
-fn hex_value[s]
+fn _hex_value[s]
     digits = '0123456789abcdef'
     t = lower[trim[s]]
     if len[t] eq 0
@@ -54,7 +54,7 @@ fn hex_value[s]
     return value
 
 --- a URL taken apart, or the reason it is not an http(s) one
-fn parse_url[url]
+fn _parse_url[url]
     tls = starts[url, 'https://']
     plain = starts[url, 'http://']
     if not tls and not plain
@@ -76,7 +76,7 @@ fn parse_url[url]
     named = split[hostport, ':']
     if len[named] eq 2
         host = named[0]
-        port = whole_of[named[1]]
+        port = _whole_of[named[1]]
         if port lt 0
             return error['\'`hostport`\' is no host and port', 'sys']
     if len[host] eq 0
@@ -85,35 +85,35 @@ fn parse_url[url]
 
 --- the host as a request's `host` header names it: with its port, where
 --- the port is not the scheme's own
-fn host_line[parts]
+fn _host_line[parts]
     if (parts.tls and parts.port ne 443) or (not parts.tls and parts.port ne 80)
         return '`parts.host`:`parts.port`'
     return parts.host
 
 --- how long the next read may wait: what is left of the deadline
-fn left[deadline]
+fn _left[deadline]
     return max[deadline - now[], 0.001]
 
 --- whether a connection's failure was the wait running out (the sys
 --- primitives' words for it)
-fn timed_out[reason]
+fn _timed_out[reason]
     waited = starts[reason, 'no data from']
     connecting = starts[reason, 'cannot connect'] and (len[split[reason, 'timed out']] gt 1)
     return waited or connecting
 
 --- the reason a request got no answer, in the client's words
-fn unanswered[reason, timeout]
-    if timed_out[reason]
+fn _unanswered[reason, timeout]
+    if _timed_out[reason]
         if timeout gt 0.0
             return 'no answer in `timeout` s'
         return 'no answer in time'
     return reason
 
 --- the bytes read from a connection until it closes, the deadline kept
-fn read_rest[s, deadline, first]
+fn _read_rest[s, deadline, first]
     chunks = [first]
     while true
-        got = recv[s, 65536, left[deadline]]
+        got = recv[s, 65536, _left[deadline]]
         if not got.ok
             return error[got.reason, 'sys']
         if len[got] eq 0
@@ -122,11 +122,11 @@ fn read_rest[s, deadline, first]
     return concat[chunks]
 
 --- the bytes read until the buffer holds `n`, the deadline kept
-fn read_until[s, deadline, buffer, n]
+fn _read_until[s, deadline, buffer, n]
     chunks = [buffer]
     have = len[buffer]
     while have lt n
-        got = recv[s, 65536, left[deadline]]
+        got = recv[s, 65536, _left[deadline]]
         if not got.ok
             return error[got.reason, 'sys']
         if len[got] eq 0
@@ -137,13 +137,13 @@ fn read_until[s, deadline, buffer, n]
 
 --- a chunked body decoded: each chunk's size in hex on its own line, the
 --- chunk, a line break, and a last chunk of size 0
-fn dechunked[s, deadline, buffer]
+fn _dechunked[s, deadline, buffer]
     parts = []
     rest = buffer
     while true
         line_end = find[rest, bytes['\r\n']]
         while line_end lt 0
-            more = recv[s, 65536, left[deadline]]
+            more = recv[s, 65536, _left[deadline]]
             if not more.ok
                 return error[more.reason, 'sys']
             if len[more] eq 0
@@ -151,13 +151,13 @@ fn dechunked[s, deadline, buffer]
             rest = concat[rest, more]
             line_end = find[rest, bytes['\r\n']]
         size_line = text[slice[rest, 0, line_end], '�']
-        size = hex_value[split[size_line, ';'][0]]
+        size = _hex_value[split[size_line, ';'][0]]
         if size lt 0
             return error['the server sent a chunk size that is none: \'`size_line`\'', 'sys']
         rest = slice[rest, line_end + 2, len[rest]]
         if size eq 0
             break
-        filled = read_until[s, deadline, rest, size + 2]
+        filled = _read_until[s, deadline, rest, size + 2]
         if not filled.ok
             return error[filled.reason, 'sys']
         rest = filled
@@ -175,7 +175,7 @@ fn read_head[s, deadline]
     buffer = bytes['']
     cut = find[buffer, bytes['\r\n\r\n']]
     while cut lt 0
-        got = recv[s, 65536, left[deadline]]
+        got = recv[s, 65536, _left[deadline]]
         if not got.ok
             return error[got.reason, 'sys']
         if len[got] eq 0
@@ -190,7 +190,7 @@ fn read_head[s, deadline]
     status = -1
     phrase = ''
     if len[words] gte 2
-        status = whole_of[words[1]]
+        status = _whole_of[words[1]]
         phrase = join[slice[words, 2, len[words]], ' ']
     if status lt 0
         return error['the server\'s status line is none: \'`status_line`\'', 'sys']
@@ -209,7 +209,7 @@ fn read_head[s, deadline]
 
 --- a connection's answer read whole: the head, then the body as the
 --- headers say it comes
-fn read_answer[s, deadline, method]
+fn _read_answer[s, deadline, method]
     got = read_head[s, deadline]
     if not got.ok
         return error[got.reason, 'sys']
@@ -224,22 +224,22 @@ fn read_answer[s, deadline, method]
         if 'transfer-encoding' in headers
             chunked = len[split[lower[headers['transfer-encoding']], 'chunked']] gt 1
         if chunked
-            decoded = dechunked[s, deadline, rest]
+            decoded = _dechunked[s, deadline, rest]
             if not decoded.ok
                 return error[decoded.reason, 'sys']
             body = decoded
         else
             if 'content-length' in headers
-                length = whole_of[headers['content-length']]
+                length = _whole_of[headers['content-length']]
                 if length lt 0
                     said = headers['content-length']
                     return error['the server\'s content-length is none: \'`said`\'', 'sys']
-                filled = read_until[s, deadline, rest, length]
+                filled = _read_until[s, deadline, rest, length]
                 if not filled.ok
                     return error[filled.reason, 'sys']
                 body = slice[filled, 0, length]
             else
-                whole = read_rest[s, deadline, rest]
+                whole = _read_rest[s, deadline, rest]
                 if not whole.ok
                     return error[whole.reason, 'sys']
                 body = whole
@@ -252,7 +252,7 @@ fn read_answer[s, deadline, method]
 --- minutes in all. The reason where no answer came: `no answer in 5 s`,
 --- `no answer in time`, or the connection's own.
 fn exchange[url, method, head_lines, body_bytes, timeout]
-    parts = parse_url[url]
+    parts = _parse_url[url]
     if not parts.ok
         return error[parts.reason, 'sys']
     connect = timeout
@@ -263,11 +263,11 @@ fn exchange[url, method, head_lines, body_bytes, timeout]
     deadline = now[] + total
     s = open[parts.host, parts.port, parts.tls, connect]
     if not s.ok
-        return error[unanswered[s.reason, timeout], 'sys']
-    got = exchange_on[s, host_line[parts], method, parts.path, head_lines, body_bytes, deadline, false]
+        return error[_unanswered[s.reason, timeout], 'sys']
+    got = exchange_on[s, _host_line[parts], method, parts.path, head_lines, body_bytes, deadline, false]
     close[s]
     if not got.ok
-        return error[unanswered[got.reason, timeout], 'sys']
+        return error[_unanswered[got.reason, timeout], 'sys']
     return got
 
 --- `exchange_on[stream, hostline, method, path, lines, body, deadline, keep]`:
@@ -287,7 +287,7 @@ fn exchange_on[s, hostline, method, path, head_lines, body_bytes, deadline, keep
     sent = send[s, concat[bytes['`head`\r\n'], body_bytes]]
     if not sent.ok
         return error[sent.reason, 'sys']
-    return read_answer[s, deadline, method]
+    return _read_answer[s, deadline, method]
 
 --- `upgrade[url, timeout]`: a connection to a `ws://` or `wss://` URL's
 --- host, upgraded to a WebSocket as RFC 6455 says — the handshake's key
@@ -302,7 +302,7 @@ fn upgrade[url, timeout]
     else
         tail = slice[url, 5, len[url]]
         http = 'http://`tail`'
-    parts = parse_url[http]
+    parts = _parse_url[http]
     if not parts.ok
         return error['cannot open a socket to `url`: `parts.reason`', 'sys']
     s = open[parts.host, parts.port, parts.tls, timeout]
@@ -312,7 +312,7 @@ fn upgrade[url, timeout]
     if timeout eq 0.0
         patience = 30.0
     key = base64[random[16]]
-    hostline = host_line[parts]
+    hostline = _host_line[parts]
     head = 'GET `parts.path` HTTP/1.1\r\nhost: `hostline`\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-key: `key`\r\nsec-websocket-version: 13\r\n\r\n'
     sent = send[s, bytes[head]]
     if not sent.ok
@@ -338,13 +338,13 @@ fn upgrade[url, timeout]
 fn redirected[from, location]
     if starts[location, 'http://'] or starts[location, 'https://']
         return location
-    parts = parse_url[from]
+    parts = _parse_url[from]
     if not parts.ok
         return from
     scheme = 'http://'
     if parts.tls
         scheme = 'https://'
-    hostport = host_line[parts]
+    hostport = _host_line[parts]
     if starts[location, '/']
         return '`scheme``hostport``location`'
     return '`scheme``hostport`/`location`'
@@ -370,7 +370,7 @@ fn with_query[url, pairs_asked]
     return '`base``joiner``joined``fragment`'
 
 --- what a server said in an XML body's <Message>, as S3 says why
-fn xml_message[body]
+fn _xml_message[body]
     t = text[body, '�']
     pieces = split[t, '<Message>']
     if len[pieces] lt 2
@@ -379,8 +379,8 @@ fn xml_message[body]
 
 --- the reason a server's answer was not a success: its status and
 --- phrase, and the message an XML body carries
-fn refused[verb, path, got]
-    why = xml_message[got.body]
+fn _refused[verb, path, got]
+    why = _xml_message[got.body]
     said = '`got.status`'
     if len[got.phrase] gt 0
         said = '`got.status` `got.phrase`'
@@ -390,7 +390,7 @@ fn refused[verb, path, got]
 
 --- a GET answered, redirects followed as a browser follows them, up to
 --- ten; the answer whatever its status
-fn get[url, lines, timeout]
+fn _get[url, lines, timeout]
     full = url
     got = exchange[full, 'GET', lines, bytes[''], timeout]
     hops = 0
@@ -409,7 +409,7 @@ fn get[url, lines, timeout]
 --- ── S3: an object read or written, signed with the environment's credentials ──
 
 --- a variable of the environment, or empty where it is not set or empty
-fn setting[name]
+fn _setting[name]
     v = env[name, '']
     if not v.ok
         return ''
@@ -417,7 +417,7 @@ fn setting[name]
 
 --- a key as SigV4 reads it in a URI: letters, digits, `-_.~` and `/`
 --- kept, every other byte percent-encoded in upper case
-fn uri_encode[key]
+fn _uri_encode[key]
     b = bytes[key]
     out = ''
     for i in range[len[b]]
@@ -431,7 +431,7 @@ fn uri_encode[key]
     return out
 
 --- a number as two digits, or four
-fn padded[n, width]
+fn _padded[n, width]
     s = '`n`'
     while len[s] lt width
         s = '0`s`'
@@ -467,14 +467,14 @@ fn civil[secs]
 
 --- the civil date and time of a moment, as SigV4's `x-amz-date` spells
 --- it (`20130524T000000Z`)
-fn amz_date[secs]
+fn _amz_date[secs]
     parts = civil[secs]
-    year = padded[parts[0], 4]
-    month = padded[parts[1], 2]
-    day = padded[parts[2], 2]
-    hour = padded[parts[3], 2]
-    minute = padded[parts[4], 2]
-    second = padded[parts[5], 2]
+    year = _padded[parts[0], 4]
+    month = _padded[parts[1], 2]
+    day = _padded[parts[2], 2]
+    hour = _padded[parts[3], 2]
+    minute = _padded[parts[4], 2]
+    second = _padded[parts[5], 2]
     return '`year``month``day`T`hour``minute``second`Z'
 
 --- a request's SigV4 headers for S3 (AWS's Signature Version 4): `host`,
@@ -482,7 +482,7 @@ fn amz_date[secs]
 --- token's among them) signed with a key derived from the secret, the
 --- day, the region and the service. The header lines to send,
 --- `authorization` last (`host` is the request's own).
-fn sign_s3[method, host, uri, extra, payload_hash, date, region, key_id, secret]
+fn _sign_s3[method, host, uri, extra, payload_hash, date, region, key_id, secret]
     names = ['host', 'x-amz-content-sha256', 'x-amz-date']
     given = map[host = host]
     given = set[given, 'x-amz-content-sha256', payload_hash]
@@ -519,7 +519,7 @@ fn sign_s3[method, host, uri, extra, payload_hash, date, region, key_id, secret]
 --- environment names for an S3-compatible store (`AWS_ENDPOINT_URL`:
 --- MinIO, R2, …); signed with the environment's credentials, unsigned
 --- without them. The answer whatever its status.
-fn s3[path, method, payload]
+fn _s3[path, method, payload]
     verb = 'read'
     if method eq 'PUT'
         verb = 'write'
@@ -528,14 +528,14 @@ fn s3[path, method, payload]
     key = slice[rest, len[bucket_name] + 1, len[rest]]
     if len[bucket_name] eq 0 or len[key] eq 0 or len[split[rest, '/']] lt 2
         return error['cannot `verb` \'`path`\': an S3 path is s3://bucket/key', 'sys']
-    region = setting['AWS_REGION']
+    region = _setting['AWS_REGION']
     if len[region] eq 0
-        region = setting['AWS_DEFAULT_REGION']
+        region = _setting['AWS_DEFAULT_REGION']
     if len[region] eq 0
         region = 'us-east-1'
-    endpoint = setting['AWS_ENDPOINT_URL_S3']
+    endpoint = _setting['AWS_ENDPOINT_URL_S3']
     if len[endpoint] eq 0
-        endpoint = setting['AWS_ENDPOINT_URL']
+        endpoint = _setting['AWS_ENDPOINT_URL']
     host = ''
     uri = ''
     url = ''
@@ -544,25 +544,25 @@ fn s3[path, method, payload]
             endpoint = slice[endpoint, 0, len[endpoint] - 1]
         after = split[endpoint, '://']
         host = split[after[len[after] - 1], '/'][0]
-        eb = uri_encode[bucket_name]
-        ek = uri_encode[key]
+        eb = _uri_encode[bucket_name]
+        ek = _uri_encode[key]
         uri = '/`eb`/`ek`'
         url = '`endpoint``uri`'
     else
         host = '`bucket_name`.s3.`region`.amazonaws.com'
-        ek = uri_encode[key]
+        ek = _uri_encode[key]
         uri = '/`ek`'
         url = 'https://`host``uri`'
     payload_hash = hash[payload, 'sha256']
-    key_id = setting['AWS_ACCESS_KEY_ID']
-    secret = setting['AWS_SECRET_ACCESS_KEY']
+    key_id = _setting['AWS_ACCESS_KEY_ID']
+    secret = _setting['AWS_SECRET_ACCESS_KEY']
     lines = []
     if len[key_id] gt 0 and len[secret] gt 0
         extra = []
-        token = setting['AWS_SESSION_TOKEN']
+        token = _setting['AWS_SESSION_TOKEN']
         if len[token] gt 0
             extra = push[extra, 'x-amz-security-token: `token`']
-        lines = sign_s3[method, host, uri, extra, payload_hash, amz_date[int[now[]]], region, key_id, secret]
+        lines = _sign_s3[method, host, uri, extra, payload_hash, _amz_date[int[now[]]], region, key_id, secret]
     got = exchange[url, method, lines, payload, 0.0]
     if not got.ok
         return error['cannot `verb` \'`path`\': `got.reason`', 'sys']
@@ -581,11 +581,11 @@ fn fetch[path, headers, query, timeout]
     if not (timeout gte 0.0)
         return error['a timeout is a number of seconds, 0 or more — not `timeout`', 'sys']
     if starts[path, 's3://']
-        stored = s3[path, 'GET', bytes['']]
+        stored = _s3[path, 'GET', bytes['']]
         if not stored.ok
             return error[stored.reason, 'sys']
         if stored.status lt 200 or stored.status gte 300
-            return error[refused['read', path, stored], 'sys']
+            return error[_refused['read', path, stored], 'sys']
         return stored
     if not (starts[path, 'http://'] or starts[path, 'https://'])
         return error['cannot read \'`path`\': it is not a URL or an S3 object', 'sys']
@@ -594,11 +594,11 @@ fn fetch[path, headers, query, timeout]
         v = headers[k]
         lines = push[lines, '`k`: `v`']
     full = with_query[path, query]
-    got = get[full, lines, timeout]
+    got = _get[full, lines, timeout]
     if not got.ok
         return error['cannot read \'`full`\': `got.reason`', 'sys']
     if got.status lt 200 or got.status gte 300
-        return error[refused['read', path, got], 'sys']
+        return error[_refused['read', path, got], 'sys']
     return got
 
 --- `put[path, bytes]`: the bytes written to an S3 object; a URL is read,
@@ -606,11 +606,11 @@ fn fetch[path, headers, query, timeout]
 fn put[path, data]
     if not starts[path, 's3://']
         return error['cannot write \'`path`\': a URL is read, not written — write a file, or an s3:// object', 'sys']
-    got = s3[path, 'PUT', data]
+    got = _s3[path, 'PUT', data]
     if not got.ok
         return error[got.reason, 'sys']
     if got.status lt 200 or got.status gte 300
-        return error[refused['write', path, got], 'sys']
+        return error[_refused['write', path, got], 'sys']
     return ''
 
 --- `format_of[path]`: a table's format by its path's extension (a URL's
@@ -658,13 +658,13 @@ fn format_sniffed[media, data]
 
 --- the protocol's pieces, at known values
 test a_url_is_taken_apart[]
-    u = parse_url['https://example.com/a/b?x=1#frag']
+    u = _parse_url['https://example.com/a/b?x=1#frag']
     assert[u.tls and u.host eq 'example.com' and u.port eq 443 and u.path eq '/a/b?x=1']
-    v = parse_url['http://127.0.0.1:8080']
+    v = _parse_url['http://127.0.0.1:8080']
     assert[not v.tls and v.host eq '127.0.0.1' and v.port eq 8080 and v.path eq '/']
-    assert[not parse_url['ftp://x'].ok]
-    assert[not parse_url['http://host:port/'].ok]
-    assert[host_line[u] eq 'example.com' and host_line[v] eq '127.0.0.1:8080']
+    assert[not _parse_url['ftp://x'].ok]
+    assert[not _parse_url['http://host:port/'].ok]
+    assert[_host_line[u] eq 'example.com' and _host_line[v] eq '127.0.0.1:8080']
     assert[with_query['http://h/p', map[q = 'a b', page = '2']] eq 'http://h/p?page=2&q=a%20b']
     assert[with_query['http://h/p?x=1', map[q = 'y']] eq 'http://h/p?x=1&q=y']
     assert[with_query['http://h/p?', map[q = 'y']] eq 'http://h/p?q=y']
@@ -673,11 +673,11 @@ test a_url_is_taken_apart[]
     assert[redirected['http://h:81/a/b', '/c'] eq 'http://h:81/c']
     assert[redirected['https://h/a/b', 'c'] eq 'https://h/c']
     assert[redirected['http://h/a', 'https://other/x'] eq 'https://other/x']
-    assert[hex_value['1A'] eq 26 and hex_value['0'] eq 0 and hex_value['zz'] eq -1 and hex_value[''] eq -1]
-    assert[whole_of['204'] eq 204 and whole_of[' 7 '] eq 7 and whole_of['x'] eq -1 and whole_of[''] eq -1]
-    assert[unanswered['no data from h:80 in 0.5 s', 0.5] eq 'no answer in 0.5 s']
-    assert[unanswered['no data from h:80 in 600 s', 0.0] eq 'no answer in time']
-    assert[unanswered['connection refused', 0.5] eq 'connection refused']
+    assert[_hex_value['1A'] eq 26 and _hex_value['0'] eq 0 and _hex_value['zz'] eq -1 and _hex_value[''] eq -1]
+    assert[_whole_of['204'] eq 204 and _whole_of[' 7 '] eq 7 and _whole_of['x'] eq -1 and _whole_of[''] eq -1]
+    assert[_unanswered['no data from h:80 in 0.5 s', 0.5] eq 'no answer in 0.5 s']
+    assert[_unanswered['no data from h:80 in 600 s', 0.0] eq 'no answer in time']
+    assert[_unanswered['connection refused', 0.5] eq 'connection refused']
     assert[remote['http://x'] and remote['s3://b/k'] and not remote['data/x.csv']]
 
 --- a format is its extension, or what the server says, or what the bytes say
@@ -700,15 +700,15 @@ test a_format_is_its_extension_or_what_the_server_says[]
 test a_request_signs_as_aws_documents[]
     empty = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
     assert[hash[bytes[''], 'sha256'] eq empty]
-    lines = sign_s3['GET', 'examplebucket.s3.amazonaws.com', '/test.txt', ['Range: bytes=0-9'], empty, '20130524T000000Z', 'us-east-1', 'AKIAIOSFODNN7EXAMPLE', 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY']
+    lines = _sign_s3['GET', 'examplebucket.s3.amazonaws.com', '/test.txt', ['Range: bytes=0-9'], empty, '20130524T000000Z', 'us-east-1', 'AKIAIOSFODNN7EXAMPLE', 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY']
     auth = lines[len[lines] - 1]
     assert[auth eq 'authorization: AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;range;x-amz-content-sha256;x-amz-date, Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41']
-    assert[amz_date[1369353600] eq '20130524T000000Z']
-    assert[amz_date[951782400] eq '20000229T000000Z']
-    assert[amz_date[0] eq '19700101T000000Z']
+    assert[_amz_date[1369353600] eq '20130524T000000Z']
+    assert[_amz_date[951782400] eq '20000229T000000Z']
+    assert[_amz_date[0] eq '19700101T000000Z']
     may = civil[1369353600]
     assert[may[0] eq 2013 and may[1] eq 5 and may[2] eq 24 and may[6] eq 5]
     epoch = civil[0]
     assert[epoch[0] eq 1970 and epoch[1] eq 1 and epoch[2] eq 1 and epoch[3] eq 0 and epoch[6] eq 4]
-    assert[uri_encode['2026/07/trades one.csv'] eq '2026/07/trades%20one.csv']
-    assert[uri_encode['a+b&c'] eq 'a%2Bb%26c']
+    assert[_uri_encode['2026/07/trades one.csv'] eq '2026/07/trades%20one.csv']
+    assert[_uri_encode['a+b&c'] eq 'a%2Bb%26c']

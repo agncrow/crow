@@ -278,12 +278,12 @@ pub(super) fn llm_cases() -> Vec<Case> {
     let called = r#"json['{"text": "", "calls": [{"id": "c1", "name": "f", "args": {"x": 1}}], "usage": {"input": 1, "output": 1}, "stop": "tool"}']"#;
     let pure: Vec<(&str, String)> = vec![
         ("ask", "log[ask['hi there']]".into()),
-        ("ask-more", "t = ask['hi']\nlog[ask[t, 'and you']]".into()),
+        ("asked", "t = ask['hi']\nlog[asked[t, 'and you']]".into()),
         ("said", format!("t = ask['hi']\nlog[said[t, {}]]", reply)),
         ("told", format!("t = ask['hi']\nr = {}\nt2 = said[t, r]\nlog[told[t2, r.calls[0], 'done']]\nlog[len[t2]]", called)),
         ("said-no-reply", "r = said[ask['hi'], json['{\"a\": 1}']]\nlog[r.ok]\nlog[r.reason]".into()),
         ("told-no-call", "r = told[ask['hi'], json['{\"a\": 1}'], 'x']\nlog[r.ok]\nlog[r.reason]".into()),
-        ("no-talk", "r = ask[json['{\"a\": 1}'], 'x']\nlog[r.ok]\nlog[r.reason]".into()),
+        ("no-talk", "r = asked[json['{\"a\": 1}'], 'x']\nlog[r.ok]\nlog[r.reason]".into()),
         ("reach", "m = reach['openai://localhost:11434/llama3.2']\nlog[m.provider]\nlog[m.model]\nlog[m.base]\nlog[m.path]\nlog[m.key]".into()),
         ("reach-options", "m = reach['openai://127.0.0.1:8000/org/model?path=/api/v1&key=SELF_KEY']\nlog[m.model]\nlog[m.base]\nlog[m.path]\nlog[m.key]".into()),
         ("reach-no-key", "log[reach['openai://api.example.com/gpt'].reason]".into()),
@@ -303,7 +303,7 @@ pub(super) fn llm_cases() -> Vec<Case> {
     };
     let live: Vec<(&str, String)> = vec![
         ("chat", format!("{}\nr = chat[m, ask['hi there']]\nlog[r.text]\nlog[r.stop]\nlog[r.usage.input]\nlog[r.usage.output]\nlog[len[r.calls]]", open)),
-        ("chat-options", format!("{}\nr = chat[m, ask['hi'], system = 'be brief', max = 16, temperature = 0.5]\nlog[r.text]\nlog[r.usage.input]", open)),
+        ("chat-options", format!("{}\nr = chat[m, ask['hi'], system = 'be brief', tokens = 16, temperature = 0.5]\nlog[r.text]\nlog[r.usage.input]", open)),
         ("tool", format!("{}\n{}", open, tool_flow("m"))),
         ("follow", format!("{}\ns = follow[m, ask['one two']]\n{}\nlog[whole.text]\nlog[whole.stop]\nlog[whole.usage.input]\nlog[whole.usage.output]", open, follow("s"))),
         ("follow-tool", format!("{}\ns = follow[m, ask['hi'], tools = [self_tool_@N]]\n{}\nlog[whole.stop]\nlog[starts[whole.calls[0].name, 'self_tool_']]\nlog[whole.calls[0].args.x]", open, follow("s"))),

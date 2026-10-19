@@ -52,7 +52,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use crate::table::{Kind, Row, ROWS};
+use crate::table::{Kind, ROWS};
 
 // ── values ──────────────────────────────────────────────────────────
 
@@ -965,11 +965,136 @@ fn import_of(module: &'static str) -> Option<&'static str> {
     (!module.is_empty() && crate::modules::module_by_path(module).is_some()).then_some(module)
 }
 
-/// A call of a row with the given arguments, as a case.
-fn row_case(id: String, row: &Row, args: &[&Val]) -> Case {
+/// What the check writes cases of: a row of the table, or a function a
+/// module written in Crow exports (crate::modules::exports), its
+/// signature as the module's own tests type it — by one id (a row's its
+/// own, an export's `math.stats.median`), its module, the name it is
+/// called by, and the kinds its parameters take.
+struct Sig {
+    id: String,
+    module: &'static str,
+    name: String,
+    params: Vec<Kind>,
+}
+
+/// Every row's signature, then every export's; and the exports no case
+/// can be written for, with why.
+fn sigs() -> (Vec<Sig>, Vec<NotCalled>) {
+    let mut out: Vec<Sig> = ROWS.iter().map(|r| Sig { id: r.id.to_string(), module: r.module, name: r.name.to_string(), params: r.params.to_vec() }).collect();
+    let (exported, unexercised) = export_sigs();
+    out.extend(exported);
+    (out, unexercised)
+}
+
+/// The functions the modules written in Crow export, each with the kinds
+/// its parameters take as the module's own tests type them: the module
+/// lowered as `crow test src/modules/<m>.co` lowers it (its tests typing
+/// its functions), each function read off the program. A parameter the
+/// tests leave untyped, or one no kind names (a function), makes no case:
+/// listed as not called, with why.
+fn export_sigs() -> (Vec<Sig>, Vec<NotCalled>) {
+    let mut sigs = Vec::new();
+    let mut unexercised = Vec::new();
+    for m in crate::modules::MODULES.iter().filter(|m| m.source.is_some()) {
+        let exports = crate::modules::exports(m.path);
+        if exports.is_empty() {
+            continue;
+        }
+        let source = m.source.unwrap_or_default();
+        let file = format!("src/modules/{}.co", m.path.rsplit('.').next().unwrap_or(m.path));
+        let lowered = std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(move || crate::program_of_source(source, &file, false))
+            .ok()
+            .and_then(|h| h.join().ok());
+        let program = match lowered {
+            Some(Ok(p)) => p,
+            other => {
+                let why = match other {
+                    Some(Err(e)) => format!("its module does not lower as a program of its own: {}", e.lines().next().unwrap_or("")),
+                    _ => "its module does not lower as a program of its own".to_string(),
+                };
+                for e in exports {
+                    unexercised.push(NotCalled::new(format!("{}.{}", m.path, e), why.clone()));
+                }
+                continue;
+            }
+        };
+        let fns: Vec<&crate::ir::Fn> = program.parts.iter().flat_map(|p| p.fns.iter()).collect();
+        for e in exports {
+            let id = format!("{}.{}", m.path, e);
+            match export_params(&fns, e) {
+                Ok(params) => sigs.push(Sig { id, module: m.path, name: e.to_string(), params }),
+                Err(why) => unexercised.push(NotCalled::new(id, why)),
+            }
+        }
+    }
+    (sigs, unexercised)
+}
+
+/// The kinds an exported function's parameters take: the function's own
+/// types where settled, else a copy's (a function called at several
+/// signatures is lowered once per signature, `name__N`).
+fn export_params(fns: &[&crate::ir::Fn], name: &str) -> Result<Vec<Kind>, String> {
+    let is_copy = |f: &str| f.strip_prefix(name).and_then(|rest| rest.strip_prefix("__")).is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+    let copies: Vec<&&crate::ir::Fn> = fns.iter().filter(|f| f.name == name || is_copy(&f.name)).collect();
+    let base = copies.iter().find(|f| f.name == name).ok_or_else(|| "its module lowers no function of the name".to_string())?;
+    let mut kinds = Vec::with_capacity(base.params.len());
+    for (i, (p, ty)) in base.params.iter().enumerate() {
+        let settled = std::iter::once(ty).chain(copies.iter().filter_map(|f| f.params.get(i).map(|(_, t)| t))).find(|t| !t.has_unknown());
+        match settled.and_then(kind_of_ty) {
+            Some(k) => kinds.push(k),
+            None => return Err(format!("its parameter '{}' is typed by nothing the module's tests hand it ({}), or takes what no kind names", p, ty)),
+        }
+    }
+    Ok(kinds)
+}
+
+/// The kind a parameter's type answers to, for the values the check tries
+/// it with: none for a function, a record or a handle no value is.
+fn kind_of_ty(ty: &crate::ir::Ty) -> Option<Kind> {
+    use crate::ir::Ty;
+    Some(match ty {
+        Ty::Int => Kind::Int,
+        Ty::Big => Kind::Big,
+        Ty::Float => Kind::Float,
+        Ty::Bool => Kind::Bool,
+        Ty::Str => Kind::Str,
+        Ty::Moment => Kind::Moment,
+        Ty::Decimal => Kind::Decimal,
+        Ty::Fraction => Kind::Fraction,
+        Ty::Bytes => Kind::Bytes,
+        Ty::Json => Kind::Json,
+        Ty::Socket => Kind::Socket,
+        Ty::Mailer => Kind::Mailer,
+        Ty::Stream => Kind::Stream,
+        Ty::Frame(_) => Kind::Frame,
+        Ty::Column(_) => Kind::Column,
+        Ty::Sparse => Kind::Sparse,
+        Ty::Tensor(..) => Kind::Tensor,
+        Ty::List(item) => match item.as_ref() {
+            Ty::Str => Kind::Strs,
+            Ty::Float => Kind::Floats,
+            Ty::Int => Kind::Ints,
+            Ty::Bool => Kind::Bools,
+            Ty::Tensor(..) => Kind::Tensors,
+            _ => Kind::List,
+        },
+        Ty::Map(_, v) => match v.as_ref() {
+            Ty::Str => Kind::TextMap,
+            _ => Kind::MapOf,
+        },
+        Ty::Result(inner) => return kind_of_ty(inner),
+        _ => return None,
+    })
+}
+
+/// A call of a row or an exported function with the given arguments, as a
+/// case.
+fn sig_case(id: String, row: &Sig, args: &[&Val]) -> Case {
     let call = format!("{}[{}]", row.name, args.iter().map(|a| a.expr.as_str()).collect::<Vec<_>>().join(", "));
     // (the reference answers a row by the name it is called by)
-    let what = if row.module.is_empty() { row.name.to_string() } else { format!("{}.{}", row.module, row.name) };
+    let what = if row.module.is_empty() { row.name.clone() } else { format!("{}.{}", row.module, row.name) };
     let names: Vec<&str> = args.iter().map(|a| a.name.as_str()).collect();
     let mut case = Case::new(id, args, vec![format!("log[{}]", call)]).referring(what, &names);
     if let Some(m) = import_of(row.module) {
@@ -1049,13 +1174,13 @@ fn lower_all(sources: Vec<String>) -> Vec<Lowered> {
 /// value. A row no call of which lowers is listed, with the first refusal.
 fn row_cases(all: &[Val], only: &Option<String>) -> (Vec<Case>, Vec<NotCalled>) {
     let mut found: Vec<Case> = Vec::new();
-    let mut unexercised: Vec<NotCalled> = Vec::new();
+    let (sigs, mut unexercised) = sigs();
     // the rows to try, each with its candidate calls
     // (each row's candidate calls, those another row's trials made already
     // last, and how many come first)
     let mut trials: Vec<(usize, Vec<Vec<&Val>>, usize)> = Vec::new();
     let mut seen_calls: HashSet<String> = HashSet::new();
-    for (r, row) in ROWS.iter().enumerate() {
+    for (r, row) in sigs.iter().enumerate() {
         if row.name.starts_with("__") {
             continue;
         }
@@ -1066,21 +1191,21 @@ fn row_cases(all: &[Val], only: &Option<String>) -> (Vec<Case>, Vec<NotCalled>) 
             // which a stop abandoning a statement in flight calls)
             let reached = if row.module == "db.postgres" { crate::home::on_path("initdb") } else { true };
             if row.name.ends_with("_cancel") {
-                unexercised.push(NotCalled::new(row.id, format!("{}: a stop abandoning a statement in flight calls it, which tests/query_cancel.rs holds in both modes", why)));
+                unexercised.push(NotCalled::new(row.id.as_str(), format!("{}: a stop abandoning a statement in flight calls it, which tests/query_cancel.rs holds in both modes", why)));
             } else if !reached {
-                unexercised.push(NotCalled { environment: true, ..NotCalled::new(row.id, format!("{}: no initdb on the PATH for a scratch cluster", why)) });
+                unexercised.push(NotCalled { environment: true, ..NotCalled::new(row.id.as_str(), format!("{}: no initdb on the PATH for a scratch cluster", why)) });
             }
             continue;
         }
         // (every effect runs in a directory of its own, the network answered
         // by an empty replay, the clock and the draws fixed: `sandbox`; what
         // never returns is the served suites')
-        if matches!(row.name, "serve" | "listen") {
-            unexercised.push(NotCalled::new(row.id, "runs until it is stopped (crow test --served holds it)"));
+        if matches!(row.name.as_str(), "serve" | "listen") {
+            unexercised.push(NotCalled::new(row.id.as_str(), "runs until it is stopped (crow test --served holds it)"));
             continue;
         }
         if import_of(row.module).is_none() && !row.module.is_empty() {
-            unexercised.push(NotCalled::new(row.id, format!("module '{}' is no module the registry knows", row.module)));
+            unexercised.push(NotCalled::new(row.id.as_str(), format!("module '{}' is no module the registry knows", row.module)));
             continue;
         }
         if let Some(w) = only
@@ -1089,11 +1214,11 @@ fn row_cases(all: &[Val], only: &Option<String>) -> (Vec<Case>, Vec<NotCalled>) 
             continue;
         }
         // (a name the parser rewrites: the row is reached through the form)
-        if matches!(row.name, "contains" | "has") {
+        if matches!(row.name.as_str(), "contains" | "has") {
             continue;
         }
         // (a call whose arguments no kind says: written out)
-        if let Some((_, call)) = WRITTEN.iter().find(|(id, _)| *id == row.id) {
+        if let Some((_, call)) = WRITTEN.iter().find(|(id, _)| *id == row.id.as_str()) {
             let mut case = Case::new(format!("row/{}/written", row.id), &[], vec![format!("log[{}]", call)]);
             if call.contains("sf") {
                 case = Case::new(format!("row/{}/written", row.id), &[val(all, "frame")], vec![format!("log[{}]", call)]);
@@ -1107,7 +1232,7 @@ fn row_cases(all: &[Val], only: &Option<String>) -> (Vec<Case>, Vec<NotCalled>) 
         let pools: Vec<Vec<&Val>> = row.params.iter().map(|k| tried_first(*k).iter().map(|n| val(all, n)).collect()).collect();
         if pools.iter().any(|p| p.is_empty()) {
             let k = row.params.iter().find(|k| tried_first(**k).is_empty()).map(|k| format!("{:?}", k)).unwrap_or_default();
-            unexercised.push(NotCalled::new(row.id, format!("takes a {} no program value is", k)));
+            unexercised.push(NotCalled::new(row.id.as_str(), format!("takes a {} no program value is", k)));
             continue;
         }
         // the first few combinations, the first value of each kind first
@@ -1141,7 +1266,7 @@ fn row_cases(all: &[Val], only: &Option<String>) -> (Vec<Case>, Vec<NotCalled>) 
     let mut owners = Vec::new();
     for (t, (r, combos, _)) in trials.iter().enumerate() {
         for (c, args) in combos.iter().enumerate() {
-            let case = row_case(String::new(), &ROWS[*r], args);
+            let case = sig_case(String::new(), &sigs[*r], args);
             sources.push(program(&[&case]).0);
             owners.push((t, c));
         }
@@ -1161,9 +1286,9 @@ fn row_cases(all: &[Val], only: &Option<String>) -> (Vec<Case>, Vec<NotCalled>) 
     }
     let mut ids: HashSet<String> = HashSet::new();
     for (t, (r, combos, first)) in trials.iter().enumerate() {
-        let row = &ROWS[*r];
+        let row = &sigs[*r];
         let Some(c) = base.get(&t) else {
-            unexercised.push(NotCalled::new(row.id, format!("no call of it lowers: {}", first_refusal.get(&t).cloned().unwrap_or_default())));
+            unexercised.push(NotCalled::new(row.id.as_str(), format!("no call of it lowers: {}", first_refusal.get(&t).cloned().unwrap_or_default())));
             continue;
         };
         // (its call another row's cases make, with their variations)
@@ -1173,7 +1298,7 @@ fn row_cases(all: &[Val], only: &Option<String>) -> (Vec<Case>, Vec<NotCalled>) 
         let args = &combos[*c];
         let id = format!("row/{}/base", row.id);
         if ids.insert(id.clone()) {
-            found.push(row_case(id, row, args));
+            found.push(sig_case(id, row, args));
         }
         for p in 0..args.len() {
             for name in VARIED {
@@ -1185,7 +1310,7 @@ fn row_cases(all: &[Val], only: &Option<String>) -> (Vec<Case>, Vec<NotCalled>) 
                 a[p] = x;
                 let id = format!("row/{}/{}={}", row.id, p, name);
                 if ids.insert(id.clone()) {
-                    found.push(row_case(id, row, &a));
+                    found.push(sig_case(id, row, &a));
                 }
             }
         }
@@ -1203,7 +1328,7 @@ fn row_cases(all: &[Val], only: &Option<String>) -> (Vec<Case>, Vec<NotCalled>) 
                         a[q] = yv;
                         let id = format!("pair/{}/{}={},{}={}", row.id, p, x, q, y);
                         if ids.insert(id.clone()) {
-                            found.push(row_case(id, row, &a));
+                            found.push(sig_case(id, row, &a));
                         }
                     }
                 }
@@ -2084,7 +2209,13 @@ fn build(exe: &Path, dir: &Path, stem: &str, cases: Vec<(usize, Case)>, jobs: &s
             let Some(at) = at else { continue };
             let Some(row) = at.split(':').next().and_then(|r| r.parse::<usize>().ok()) else { continue };
             if let Some(Some(k)) = owner.get(row.saturating_sub(1)) {
-                placed.entry(*k).or_insert_with(|| line.to_string());
+                // (the compiler's own detail — what it expected and found,
+                // and the generated line — travels with the finding: the
+                // batch's build is let go, and a case that builds alone had
+                // failed only in its batch's company)
+                let detail: Vec<String> = lines.iter().skip(n + 1).take(12).filter(|l| l.contains("expected") || l.contains("found") || l.trim_start().starts_with(|c: char| c.is_ascii_digit())).map(|l| l.trim().to_string()).collect();
+                let generated_line = generated.lines().nth(row.saturating_sub(1)).map(|l| l.trim().chars().take(400).collect::<String>()).unwrap_or_default();
+                placed.entry(*k).or_insert_with(|| format!("{} [{}] generated: {}", line, detail.join(" | "), generated_line));
             }
         }
         if placed.is_empty() {

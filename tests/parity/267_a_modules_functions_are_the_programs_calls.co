@@ -1,0 +1,56 @@
+--- A standard module written in Crow declares its functions by writing
+--- them (docs/extending-crow.md, phase 2): a program's call of one — bare,
+--- by the module's path, by an alias, handed as a value, inside an
+--- interpolation — is the inlined function's call, typed by its use, a
+--- copy per signature; its options are its defaults, and a value a
+--- program holds crosses as itself (no JSON text at the door).
+use math, math.stats, math.nn
+use web, web.auth
+use llm
+use math.stats as s
+
+xs = [3.0, 1.0, 2.0, 10.0]
+log[median[xs]]
+log[s.std[xs]]
+log[math.stats.percentile[xs, 50.0]]
+log[zscore[xs]]
+log[corr[[1.0, 2.0, 3.0], [2.0, 4.0, 6.0]]]
+log[relu[[-1.0, 2.0]]]
+log[relu[[[1.0, -2.0], [3.0, 0.5]]]]
+f = sigmoid
+log[f[[0.0]]]
+log['`gelu[[1.0]]`']
+log[mse[[1.0, 2.0], [1.0, 4.0]]]
+ys = push[push[push[[], 3.0], 1.0], 2.0]
+log[median[ys]]
+log[relu[ys]]
+log[mse[ys, ys]]
+
+secret = 'a-secret-of-at-least-thirty-two-chars'
+t = sign[map[user = 'ada', role = 'admin'], secret]
+log[len[split[t, '.']]]
+claims = verify[t, secret]
+log[str[claims.user]]
+log[int[claims.exp] - int[claims.iat]]
+log[sign[[1, 2], secret].reason]
+log[sign[json['{"user": "bob"}'], 'short'].reason]
+log[verify['not.a.token', secret].reason]
+
+talk = ask['What is the capital of Mongolia?']
+talk = asked[talk, 'And its population?']
+log[len[talk]]
+log[str[talk[1].text]]
+r = json['{"text": "let me check", "calls": [{"id": "c1", "name": "weather", "args": {"city": "Lisbon"}}], "usage": {"input": 3, "output": 4}, "stop": "tool"}']
+talk = said[talk, r]
+talk = told[talk, r.calls[0], '21°C']
+log[len[talk]]
+log[str[talk[2].role]]
+log[str[talk[3].id]]
+log[asked[r, 'x'].reason]
+log[said[talk, json['{"a": 1}']].reason]
+m = reach['openai://127.0.0.1:9/self-model']
+log[str[m.provider]]
+log[reach['ftp://x'].reason]
+got = chat[m, talk, tokens = 5, system = 'brief']
+log[got.ok]
+log[got.kind]

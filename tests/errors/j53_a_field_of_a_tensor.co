@@ -1,0 +1,9 @@
+--- a field read of a tensor is refused before the program runs, its own fields named, even where a run-time guard would skip the read (it had not built compiled)
+use math
+
+fn id_of[c]
+    if type[c] ne 'map' or not c.id.ok
+        return 'none'
+    return 'some'
+
+log[id_of[[1.0, 2.0]]]

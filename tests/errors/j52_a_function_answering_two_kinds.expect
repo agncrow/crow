@@ -1,0 +1,3 @@
+j52_a_function_answering_two_kinds.co:5:5: returns an int where the function answers text — a function answers one kind
+  5 │     return x
+    │     ^^^^^^^^

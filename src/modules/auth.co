@@ -1,9 +1,10 @@
 --- `use web.auth`: `sign` and `verify`, written in Crow on the sys layer
 --- (design rule 20) — a JSON Web Token signed with HS256: its header and
 --- its claims as base64url, the signature an HMAC-SHA256 of the two
---- (RFC 7519). Each one's row in the builtin table (src/table.rs) is its
---- contract; the claims reach `sign` as the JSON text the value encodes
---- to. The tests are the module's own: `crow test src/modules/auth.co`.
+--- (RFC 7519). The two functions are its declaration, typed by their use
+--- (docs/extending-crow.md); the claims reach `sign` as the value the
+--- program holds — a map, a record or a parsed value — and are read as
+--- their JSON. The tests are the module's own: `crow test src/modules/auth.co`.
 use sys
 
 --- `sign[claims, secret]`: a token carrying the claims, issued now (`iat`)
@@ -13,7 +14,8 @@ fn sign[claims, secret]
     given = len[secret]
     if given lt 32
         return error['a token\'s secret is 32 characters or more (got `given`)', 'auth']
-    j = json[claims]
+    written = encode[claims]
+    j = json[written]
     if not j.ok
         return error['a token\'s claims are a map or a record of them', 'auth']
     if type[j] ne 'map'
@@ -27,9 +29,9 @@ fn sign[claims, secret]
         if len[added] gt 0
             added = '`added`,'
         added = '`added`"exp":`expires`'
-    payload = claims
+    payload = written
     if len[added] gt 0
-        inner = trim[slice[claims, 1, len[claims] - 1]]
+        inner = trim[slice[written, 1, len[written] - 1]]
         if len[inner] gt 0
             payload = '{`inner`,`added`}'
         else
@@ -40,7 +42,7 @@ fn sign[claims, secret]
     return '`head`.`body`.`signature`'
 
 --- a token's part as the JSON value it carries, or nothing a token has
-fn part_of[piece]
+fn _part_of[piece]
     raw = unbase64[piece]
     if not raw.ok
         return error['not a token', 'auth']
@@ -61,7 +63,7 @@ fn verify[token, secret]
     parts = split[token, '.']
     if len[parts] ne 3
         return error['not a token', 'auth']
-    header = part_of[parts[0]]
+    header = _part_of[parts[0]]
     if not header.ok
         return error[header.reason, 'auth']
     if 'alg' not in header
@@ -74,7 +76,7 @@ fn verify[token, secret]
         return error['not a token', 'auth']
     if not same[expected, given]
         return error['the token\'s signature does not match', 'auth']
-    claims = part_of[parts[1]]
+    claims = _part_of[parts[1]]
     if not claims.ok
         return error[claims.reason, 'auth']
     if 'exp' in claims
@@ -86,7 +88,7 @@ fn verify[token, secret]
 --- another library signed is read (jwt.io's example, secret and all)
 test a_token_is_signed_and_read[]
     secret = 'a-secret-of-at-least-thirty-two-chars'
-    token = sign['{"user":"alice","role":"admin"}', secret]
+    token = sign[json['{"user":"alice","role":"admin"}'], secret]
     assert[len[split[token, '.']] eq 3]
     claims = verify[token, secret]
     assert[str[claims.user] eq 'alice']
@@ -94,11 +96,11 @@ test a_token_is_signed_and_read[]
     assert[verify[token, 'another-secret-of-thirty-two-chars!!'].reason eq 'the token\'s signature does not match']
     assert[verify['not.a.token', secret].reason eq 'not a token']
     assert[verify['nothing', secret].reason eq 'not a token']
-    old = sign['{"user":"bob","exp":1000}', secret]
+    old = sign[json['{"user":"bob","exp":1000}'], secret]
     assert[verify[old, secret].reason eq 'the token has expired']
-    assert[sign['{"x":1}', 'short'].reason eq 'a token\'s secret is 32 characters or more (got 5)']
-    assert[sign['[1, 2]', secret].reason eq 'a token\'s claims are a map or a record of them']
-    bare = sign['{}', secret]
+    assert[sign[map[x = 1], 'short'].reason eq 'a token\'s secret is 32 characters or more (got 5)']
+    assert[sign[[1, 2], secret].reason eq 'a token\'s claims are a map or a record of them']
+    bare = sign[map[], secret]
     assert['iat' in verify[bare, secret]]
     known = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c'
     got = verify[known, 'your-256-bit-secret']

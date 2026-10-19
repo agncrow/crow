@@ -156,6 +156,16 @@ steps on every push and must be green.
   never been truths — they are now, by syntax before the lowering and by
   their bool type after it); a parity program that prints nothing in
   either mode fails.
+- A loop's item type is `TypeContext::loop_item` — the one rule the
+  lowering (`bind_loop_var`), the width pass (int_width.rs, both its
+  `Stmt::For` arms) and inference's scan read; the emitter's `loop_items`
+  prints by it. A column's item is its cell (a cell that can be missing
+  is a value that can fail): the lowering and the emitter had each kept
+  a column arm of their own while the rule knew no column, so the width
+  pass retyped the loop's variable to nothing known, and a function
+  writing it into text did not build compiled (parity 268, found by the
+  self-check handing a column with missing cells to sys's `exchange`).
+  A new kind a loop can walk gets its arm there, nowhere else.
 - A loaded frame's columns come from the program's reads
   (`lower_ir/uses.rs`): the shapes are read off the declarations before
   any pass types anything (a parameter once typed as a parsed value stays
@@ -342,36 +352,49 @@ steps on every push and must be green.
   fails only in programs that reach that row: `time[]` in auth.co and
   mail.co broke two parity programs, two book blocks, a harness and six
   unit tests while every module test passed.
-- A `sys` row a standard module may call is listed in `SYS_FUNCTIONS`
-  (`src/modules/sys.rs`) beside its row in the table; without the entry the
-  module's call is "undefined function" in both modes.
+- A standard module written in Crow declares its functions by writing
+  them (docs/extending-crow.md, phase 2): a top-level function with no
+  leading underscore is exported — a program calls it bare, by the
+  module's path or by an alias, and the inliner rewrites the call to the
+  inlined name (`_llm_chat`), typed by its use like any function; a
+  helper begins with one underscore (`_talk_of`) and is the module's own.
+  Options are defaults (`fn chat[m, talk, system = '', tools = [],
+  tokens = 1024, temperature = 1.0]`; `[]` and `map[]` are allowed). The
+  rows left in the table for a Crow-written function are the effects the
+  session layer holds (`read`, `write`, `request`, `mail`, `fetch`, `send`,
+  `recv`, the readers — phase 3), the variadics (`randn`, `normal`,
+  `anova` — phase 4) and the drivers' (phase 6); their functions keep the
+  names the rows' ids say (`read_asked`), and are not exports.
 - `push[xs, v]` answers a new list: as a bare statement it does nothing.
   Write `xs = push[xs, v]` (a check's list of results stayed empty, and
   every test passed).
 - Crow has no `pass` or `lambda` (the parser names each), `continue` and
   `break` only inside a `while`, and no `chars[]`: characters are `split[text, '']`
-  (no empty piece at either end since 2026-10-18). A module written in Crow sees another module's ROWS, never its
-  helpers (`exchange_on` had to become a sys row for the driver to call it).
-  A driver's rows are named `ch_*` so they collide with no program name
-  (`db`'s `query` beside a driver's `query` was "ambiguous" in every
-  program). A row called from Crow converts its arguments by its
+  (no empty piece at either end since 2026-10-18). A module written in Crow sees another module's EXPORTS and
+  ROWS, never its helpers (sys's `exchange_on` is exported for the driver
+  to call it). A driver's rows are named `ch_*` so they collide with no
+  program name (`db`'s `query` beside a driver's `query` was "ambiguous"
+  in every program). A row called from Crow converts its arguments by its
   signature: JSON text handed to an `Encoded` parameter arrives as a JSON
-  string (`'[]'` as `"[]"`), so a module's rows call helpers, never each
-  other (`pg_check` pinging through `pg_query` failed every connect).
+  string (`'[]'` as `"[]"`), so a driver's rows call helpers, never each
+  other (`pg_check` pinging through `pg_query` failed every connect). A
+  module's own function named like a row of what it imports shadows the
+  row inside the module: ws.co's `close` of a socket calls the stream's
+  as `sys.close[…]`.
 - Per-cell work written in Crow pays the language's price per operation
   (a copy, an allocation, a Result) where a kernel pays per byte: a parser
   of a million rows was 20–45× slower than `frame_of_csv`. The rows a
   database answers are decoded by a kernel (`frame_of_rowbinary`,
   `frame_of_postgres`); the protocol around them is Crow's.
-- A Crow-written row's parameter that is a parsed value, a map or a
-  record is `Encoded` in the table: the lowering writes the argument as its
-  JSON text (`crow_call_args`) and the Crow body reads it back with
-  `json[…]` at its door (`llm.co`'s `talk_of`, `model_of`). A `Json` kind
-  on a `crow!` row is "a bug in Crow" as the program runs. Such a row is
-  NOT listed in `ir::EFFECTS`: the effect path re-encodes the argument
-  through the by-name bridge, and the text arrived quoted (`"{\"base\"…`);
-  a Crow row's effects are its body's (`request`, `send`, `recv`), which
-  the call graph carries. Inside a module, an interpolation holds no quote
+- A Crow-written function takes the value the program holds (a parsed
+  value, a map, a record) and reads it as its JSON where it needs to
+  (`json[encode[claims]]` in auth.co's `sign`); a copy per signature where
+  programs hand different kinds. Only a driver's row still takes
+  `Encoded` (JSON text, read back with `json[…]` at its door), since crow_db
+  calls it from Rust. A Crow function's effects are its body's
+  (`request`, `send`, `recv`), which the call graph carries; the refusal of
+  a misuse inside one names it and the program's line (`in relu: clip[]
+  takes numbers, got an int`). Inside a module, an interpolation holds no quote
   and no backslash (`` `join[xs, ', ']` `` and `` `join[xs, '\n']` `` are
   hoisted into a variable first), a variable set in a branch is not in
   scope after it, `text`, `input`, `args` and (with `use math`) `max` are
@@ -396,9 +419,9 @@ steps on every push and must be green.
   reads them from there; a second copy is the bug class. The key is the
   method, the URL with its query and what is sent: a multipart boundary is
   random, so files are keyed by field and path (`sent_as`). The miss is
-  noted as the whole sentence the run prints. A `crow!` row's body may
-  `return held` of a fallible local, and a local may not be named like a
-  sys row (`answer`).
+  noted as the whole sentence the run prints. A Crow-written function's
+  body may `return held` of a fallible local, and a local may not be named
+  like a sys row (`answer`) or like a function of its own file.
 - Where the runtime crates come from is `home::runtime()` (src/home.rs),
   in order: a checkout named by `~/.crow/dev` (`install.sh --dev`), the
   checkout the binary was built from where it still exists (the gate's
@@ -517,8 +540,8 @@ steps on every push and must be green.
   callee and back (`CallArgs`/`FromRegs`), its moves compiled as reads
   (`ir::reading_lent`). A new way to call a user function from generated
   code must pass `by_ref_params` by reference, or exclude the function
-  (a Crow-written row's function is excluded: its row calls it with
-  values; so is one handed as a value — its signature is the function type
+  (the function behind a row still written in Crow is excluded: its row
+  calls it with values; so is one handed as a value — its signature is the function type
   that holds it, records included — and `apply_fn_value` hands its
   arguments as owned values). A register named twice in one call is lent
   once, never twice. A call through a function value is lowered on the
@@ -878,15 +901,17 @@ steps on every push and must be green.
   one copy's answer — had typed the parameter of a function handed
   another copy's answer, and stayed. A function taking a function as a
   value is not copied (v1), so it never awaits.
-- A row written in Crow takes its arguments as its function's parameters
-  are typed, with none of the printing a Rust row's kind does
-  (`Kind::print`): `crow_call_args`' `read_as` converts each — an int to
-  a float, a float to its whole part (`__truncated`), any map to a map of
-  text (`__text_map`) — and gathers the rest of the arguments into a list
-  where one can fail through a row (`__sizes`, `__groups`), so the call
-  hands that failure on as any call does. A new kind on a `crow!` row's
-  parameter needs its conversion there, or the compiled call does not build
-  where the interpreter converted (table.rs's own conversion by kind).
+- A row still written in Crow (an effect's, a variadic's, a driver's)
+  takes its arguments as its function's parameters are typed, with none
+  of the printing a Rust row's kind does (`Kind::print`):
+  `crow_call_args`' `read_as` converts each — an int to a float, a float
+  to its whole part (`__truncated`), any map to a map of text
+  (`__text_map`) — and gathers the rest of the arguments into a list where
+  one can fail through a row (`__sizes`, `__groups`), so the call hands
+  that failure on as any call does. A new kind on such a row's parameter
+  needs its conversion there, or the compiled call does not build where
+  the interpreter converted (table.rs's own conversion by kind). An
+  exported function needs none of this: it is typed by its use.
 - A function copied per signature is lowered muted at its own joined
   types (every call reaches a copy, which is checked), and a vector and a
   matrix are two signatures (`same_signature`'s ranks). A database
@@ -905,7 +930,7 @@ steps on every push and must be green.
   in checks.rs; words in `crow_web::core::response`); a handler answering
   no response (an empty 200 compiled) and a function that can end without
   its value (`done` interpreted, no build compiled) are refused
-  (`check_answered`); a `crow!` row's `Encoded` argument that can fail
+  (`check_answered`); a driver row's `Encoded` argument that can fail
   moves its unwrap mark onto the encode's answer (`crow_call_args`), or
   the mark is read by no one; `stream[feed, a]` and `later[f, a]` call
   their function BY NAME — the width pass flows their arguments into its

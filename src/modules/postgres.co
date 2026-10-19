@@ -17,7 +17,7 @@ use sys, frame
 
 --- a part of the URL, as the handle hands them: JSON of host, port,
 --- user, pass, database and tls
-fn part[parts, name]
+fn _part[parts, name]
     j = json[parts]
     if not j.ok or name not in j
         return ''
@@ -26,7 +26,7 @@ fn part[parts, name]
         return encode[j[name]]
     return v
 
-fn port_of[parts]
+fn _port_of[parts]
     j = json[parts]
     if not j.ok or 'port' not in j
         return 5432
@@ -35,17 +35,17 @@ fn port_of[parts]
         return 5432
     return p
 
-fn cstr[s]
+fn _cstr[s]
     return concat[bytes[s], pack[0, 1]]
 
-fn u32_at[b, i]
+fn _u32_at[b, i]
     return byte[b, i] * 16777216 + byte[b, i + 1] * 65536 + byte[b, i + 2] * 256 + byte[b, i + 3]
 
 --- a message: its kind letter, then its payload with its length
-fn message[kind, payload]
+fn _message[kind, payload]
     return concat[bytes[kind], concat[pack[len[payload] + 4, 4], payload]]
 
-fn read_exactly[s, n]
+fn _read_exactly[s, n]
     got = bytes['']
     while len[got] lt n
         chunk = recv[s, n - len[got], 0]
@@ -57,18 +57,18 @@ fn read_exactly[s, n]
     return got
 
 --- one message read: its kind byte followed by its payload
-fn read_message[s]
-    head = read_exactly[s, 5]
+fn _read_message[s]
+    head = _read_exactly[s, 5]
     if not head.ok
         return error[head.reason, 'sys']
-    n = u32_at[head, 1]
-    body = read_exactly[s, n - 4]
+    n = _u32_at[head, 1]
+    body = _read_exactly[s, n - 4]
     if not body.ok
         return error[body.reason, 'sys']
     return concat[slice[head, 0, 1], body]
 
 --- the server's words, from an error message's fields (M, the message)
-fn error_words[payload]
+fn _error_words[payload]
     rest = payload
     said = 'the server answered an error'
     reading = true
@@ -88,7 +88,7 @@ fn error_words[payload]
 
 --- SCRAM-SHA-256's salted password: Hi(password, salt, rounds), PBKDF2
 --- over HMAC-SHA-256
-fn salted_password[password, salt, rounds]
+fn _salted_password[password, salt, rounds]
     u = hmac[bytes[password], concat[salt, pack[1, 4]], 'sha256']
     salted = u
     turn = 1
@@ -101,7 +101,7 @@ fn salted_password[password, salt, rounds]
 --- the client's final message — the channel binding, the server's
 --- nonce, the proof — for the server's first; and the signature the
 --- server must answer with (`scram_signature`)
-fn scram_final[user, password, nonce, server_first]
+fn _scram_final[user, password, nonce, server_first]
     first_bare = 'n=`user`,r=`nonce`'
     server_nonce = ''
     salt = bytes['']
@@ -117,7 +117,7 @@ fn scram_final[user, password, nonce, server_first]
                 rounds = n
     if not starts[server_nonce, nonce] or rounds lt 1
         return error['the server\'s SCRAM nonce does not carry the client\'s', 'db']
-    salted = salted_password[password, salt, rounds]
+    salted = _salted_password[password, salt, rounds]
     client_key = hmac[salted, bytes['Client Key'], 'sha256']
     stored_key = digest[client_key, 'sha256']
     final_bare = 'c=biws,r=`server_nonce`'
@@ -126,7 +126,7 @@ fn scram_final[user, password, nonce, server_first]
     proof = base64[xor[client_key, client_signature]]
     return '`final_bare`,p=`proof`'
 
-fn scram_signature[user, password, nonce, server_first]
+fn _scram_signature[user, password, nonce, server_first]
     first_bare = 'n=`user`,r=`nonce`'
     server_nonce = ''
     salt = bytes['']
@@ -140,7 +140,7 @@ fn scram_signature[user, password, nonce, server_first]
             n = int[slice[field, 2, len[field]]]
             if n.ok
                 rounds = n
-    salted = salted_password[password, salt, rounds]
+    salted = _salted_password[password, salt, rounds]
     server_key = hmac[salted, bytes['Server Key'], 'sha256']
     final_bare = 'c=biws,r=`server_nonce`'
     auth_message = bytes['`first_bare`,`server_first`,`final_bare`']
@@ -148,35 +148,35 @@ fn scram_signature[user, password, nonce, server_first]
 
 --- SCRAM-SHA-256 on the connection: the client's first message sent, the
 --- server's first read, the proof sent, the server's signature checked
-fn scram[s, user, password]
+fn _scram[s, user, password]
     nonce = base64[random[18]]
     first_bare = 'n=`user`,r=`nonce`'
-    initial = concat[cstr['SCRAM-SHA-256'], concat[pack[len[first_bare] + 3, 4], bytes['n,,`first_bare`']]]
-    sent = send[s, message['p', initial]]
+    initial = concat[_cstr['SCRAM-SHA-256'], concat[pack[len[first_bare] + 3, 4], bytes['n,,`first_bare`']]]
+    sent = send[s, _message['p', initial]]
     if not sent.ok
         return error[sent.reason, 'sys']
-    m = read_message[s]
+    m = _read_message[s]
     if not m.ok
         return m
     if byte[m, 0] eq 69
-        return error[error_words[slice[m, 1, len[m]]], 'db']
-    if byte[m, 0] ne 82 or u32_at[m, 1] ne 11
+        return error[_error_words[slice[m, 1, len[m]]], 'db']
+    if byte[m, 0] ne 82 or _u32_at[m, 1] ne 11
         return error['the server did not continue the SCRAM exchange', 'db']
     server_first = text[slice[m, 5, len[m]], '?']
-    final = scram_final[user, password, nonce, server_first]
+    final = _scram_final[user, password, nonce, server_first]
     if not final.ok
         return final
-    sent = send[s, message['p', bytes[final]]]
+    sent = send[s, _message['p', bytes[final]]]
     if not sent.ok
         return error[sent.reason, 'sys']
-    m = read_message[s]
+    m = _read_message[s]
     if not m.ok
         return m
     if byte[m, 0] eq 69
-        return error[error_words[slice[m, 1, len[m]]], 'db']
-    if byte[m, 0] ne 82 or u32_at[m, 1] ne 12
+        return error[_error_words[slice[m, 1, len[m]]], 'db']
+    if byte[m, 0] ne 82 or _u32_at[m, 1] ne 12
         return error['the server did not finish the SCRAM exchange', 'db']
-    if text[slice[m, 5, len[m]], '?'] ne scram_signature[user, password, nonce, server_first]
+    if text[slice[m, 5, len[m]], '?'] ne _scram_signature[user, password, nonce, server_first]
         return error['the server\'s SCRAM signature does not match: not the server the password was for', 'db']
     return 0
 
@@ -184,45 +184,45 @@ fn scram[s, user, password]
 --- process and key noted for a cancel; an error value of kind `'sys'`
 --- where none can be made, `'db'` where the server refuses
 fn pg_open[parts]
-    host = part[parts, 'host']
-    port = port_of[parts]
-    user = part[parts, 'user']
-    password = part[parts, 'pass']
-    database = part[parts, 'database']
+    host = _part[parts, 'host']
+    port = _port_of[parts]
+    user = _part[parts, 'user']
+    password = _part[parts, 'pass']
+    database = _part[parts, 'database']
     s = open[host, port, false, 30.0]
     if not s.ok
         return error['postgres connection failed: `s.reason`', 'sys']
-    payload = concat[pack[196608, 4], concat[cstr['user'], concat[cstr[user], concat[cstr['database'], concat[cstr[database], concat[cstr['client_encoding'], concat[cstr['UTF8'], pack[0, 1]]]]]]]]
+    payload = concat[pack[196608, 4], concat[_cstr['user'], concat[_cstr[user], concat[_cstr['database'], concat[_cstr[database], concat[_cstr['client_encoding'], concat[_cstr['UTF8'], pack[0, 1]]]]]]]]
     sent = send[s, concat[pack[len[payload] + 4, 4], payload]]
     if not sent.ok
         return error['postgres connection failed: `sent.reason`', 'sys']
     ready = false
     while not ready
-        m = read_message[s]
+        m = _read_message[s]
         if not m.ok
             return error['postgres connection failed: `m.reason`', 'sys']
         k = byte[m, 0]
         if k eq 69
-            why = error_words[slice[m, 1, len[m]]]
+            why = _error_words[slice[m, 1, len[m]]]
             return error['postgres connection failed: `why`', 'db']
         if k eq 82
-            code = u32_at[m, 1]
+            code = _u32_at[m, 1]
             if code eq 3
-                sent = send[s, message['p', cstr[password]]]
+                sent = send[s, _message['p', _cstr[password]]]
             if code eq 5
                 salt = slice[m, 5, 9]
                 inner = hex[digest[bytes['`password``user`'], 'md5']]
                 outer = hex[digest[concat[bytes[inner], salt], 'md5']]
-                sent = send[s, message['p', cstr['md5`outer`']]]
+                sent = send[s, _message['p', _cstr['md5`outer`']]]
             if code eq 10
-                done = scram[s, user, password]
+                done = _scram[s, user, password]
                 if not done.ok
                     return error['postgres connection failed: `done.reason`', done.kind]
             if code ne 0 and code ne 3 and code ne 5 and code ne 10
                 return error['postgres connection failed: authentication `code` is not spoken here (trust, password, md5 and SCRAM-SHA-256 are)', 'db']
         if k eq 75
-            pid = u32_at[m, 1]
-            key = u32_at[m, 5]
+            pid = _u32_at[m, 1]
+            key = _u32_at[m, 5]
             note[s, 'cancel', '`pid` `key`']
         if k eq 90
             ready = true
@@ -231,7 +231,7 @@ fn pg_open[parts]
 --- the answer read in large pieces until the server is ready again — a
 --- piece that happens to end like a ready-for-query is told apart by the
 --- kernel's "ends early" — as bytes
-fn read_answer[s]
+fn _read_answer[s]
     chunks = []
     done = false
     whole = bytes['']
@@ -253,7 +253,7 @@ fn read_answer[s]
 --- the answer read as `read_answer` reads it, and its rows: the check that
 --- the answer is whole is its decoding, so a query's rows are decoded once
 --- (they had been decoded twice, the second time to answer them)
-fn read_rows[s]
+fn _read_rows[s]
     chunks = []
     while true
         chunk = recv[s, 4194304, 0]
@@ -272,7 +272,7 @@ fn read_rows[s]
 
 --- `?` outside quotes as $1, $2, … — a statement with no quote in it by its
 --- pieces between `?`s (every query had been rebuilt a character at a time)
-fn numbered[sql]
+fn _numbered[sql]
     if '\'' not in sql
         pieces = split[sql, '?']
         whole = pieces[0]
@@ -299,7 +299,7 @@ fn numbered[sql]
 
 --- a parameter's type id, by its kind: int8, float8, bool, or text (a
 --- cast like `?::date` is a cast from text)
-fn oid_of[p]
+fn _oid_of[p]
     if not p.ok
         return 25
     kind = type[p]
@@ -315,7 +315,7 @@ fn oid_of[p]
 --- (each parameter typed by its kind) when `prepare` — under `name`, or
 --- unnamed — then Bind the statement of that name (each parameter as text,
 --- NULL as none), Describe the portal, Execute, Sync
-fn extended[sql, params, name, prepare]
+fn _extended[sql, params, name, prepare]
     given = json[params]
     if not given.ok or type[given] ne 'array'
         return error['SQL params must be an array', 'db']
@@ -323,7 +323,7 @@ fn extended[sql, params, name, prepare]
     types = pack[count, 2]
     bound = pack[count, 2]
     for p in given
-        types = concat[types, pack[oid_of[p], 4]]
+        types = concat[types, pack[_oid_of[p], 4]]
         if p.ok
             shown = encode[p]
             if type[p] eq 'str'
@@ -335,20 +335,20 @@ fn extended[sql, params, name, prepare]
             bound = concat[bound, pack[-1, 4]]
     parse = bytes['']
     if prepare
-        parse = message['P', concat[cstr[name], concat[cstr[numbered[sql]], types]]]
-    bind = concat[cstr[''], concat[cstr[name], concat[pack[0, 2], concat[bound, pack[0, 2]]]]]
-    describe = concat[bytes['P'], cstr['']]
-    execute = concat[cstr[''], pack[0, 4]]
-    return concat[parse, concat[message['B', bind], concat[message['D', describe], concat[message['E', execute], message['S', bytes['']]]]]]
+        parse = _message['P', concat[_cstr[name], concat[_cstr[_numbered[sql]], types]]]
+    bind = concat[_cstr[''], concat[_cstr[name], concat[pack[0, 2], concat[bound, pack[0, 2]]]]]
+    describe = concat[bytes['P'], _cstr['']]
+    execute = concat[_cstr[''], pack[0, 4]]
+    return concat[parse, concat[_message['B', bind], concat[_message['D', describe], concat[_message['E', execute], _message['S', bytes['']]]]]]
 
 --- what a statement is prepared under on a connection: its parameters'
 --- kinds and its text
-fn statement_key[sql, params]
+fn _statement_key[sql, params]
     given = json[params]
     kinds = ''
     if given.ok and type[given] eq 'array'
         for p in given
-            kinds = '`kinds``oid_of[p]`,'
+            kinds = '`kinds``_oid_of[p]`,'
     return 'statement `kinds` `sql`'
 
 --- a statement sent — a simple query when it has no parameters, the
@@ -359,13 +359,13 @@ fn statement_key[sql, params]
 --- that, unnamed and parsed each time); it is noted once its answer comes
 --- back whole (`remember`), and a name is never used twice, so one whose
 --- statement failed is let go
-fn statement_sent[s, sql, params]
+fn _statement_sent[s, sql, params]
     if params eq '[]'
-        sent = send[s, message['Q', cstr[sql]]]
+        sent = send[s, _message['Q', _cstr[sql]]]
         if not sent.ok
             return error[sent.reason, sent.kind]
         return ''
-    key = statement_key[sql, params]
+    key = _statement_key[sql, params]
     name = noted[s, key]
     prepare = name eq ''
     fresh = ''
@@ -378,7 +378,7 @@ fn statement_sent[s, sql, params]
             name = 's`n`'
             note[s, 'statements', '`n + 1`']
             fresh = '`name` `key`'
-    messages = extended[sql, params, name, prepare]
+    messages = _extended[sql, params, name, prepare]
     if not messages.ok
         return error[messages.reason, messages.kind]
     sent = send[s, messages]
@@ -388,7 +388,7 @@ fn statement_sent[s, sql, params]
 
 --- a statement prepared now and answered whole: its name noted under its
 --- key, so the connection's next run of it binds it by name
-fn remember[s, fresh]
+fn _remember[s, fresh]
     if fresh ne ''
         name = split[fresh, ' '][0]
         note[s, slice[fresh, len[name] + 1, len[fresh]], name]
@@ -397,28 +397,28 @@ fn remember[s, fresh]
 --- `pg_query[parts, stream, sql, params]`: the statement run, its rows as
 --- a frame typed as the server names each column
 fn pg_query[parts, s, sql, params]
-    return answered[s, sql, params]
+    return _answered[s, sql, params]
 
 --- a statement run on the connection, its rows as a frame (a helper, not
 --- the row: a row called from Crow converts its arguments by its
 --- signature, and `'[]'` handed to an Encoded parameter would arrive as
 --- the JSON string `"[]"`)
-fn answered[s, sql, params]
-    sent = statement_sent[s, sql, params]
+fn _answered[s, sql, params]
+    sent = _statement_sent[s, sql, params]
     if not sent.ok
         return error['postgres query error: `sent.reason`', sent.kind]
-    rows = read_rows[s]
+    rows = _read_rows[s]
     if not rows.ok
         return error['postgres query error: `rows.reason`', rows.kind]
-    kept = remember[s, sent]
+    kept = _remember[s, sent]
     return rows
 
 --- the count a command's completion carries (`INSERT 0 3`, `UPDATE 2`)
-fn command_count[whole]
+fn _command_count[whole]
     i = 0
     while i + 5 lte len[whole]
         kind = byte[whole, i]
-        n = u32_at[whole, i + 1]
+        n = _u32_at[whole, i + 1]
         if kind eq 67
             tag = text[slice[whole, i + 5, i + n], '?']
             words = split[trim[tag], ' ']
@@ -432,17 +432,17 @@ fn command_count[whole]
 --- `pg_exec[parts, stream, sql, params]`: the statement run; the rows it
 --- touched, as its completion says
 fn pg_exec[parts, s, sql, params]
-    sent = statement_sent[s, sql, params]
+    sent = _statement_sent[s, sql, params]
     if not sent.ok
         return error['postgres exec error: `sent.reason`', sent.kind]
-    whole = read_answer[s]
+    whole = _read_answer[s]
     if not whole.ok
         return error['postgres exec error: `whole.reason`', 'sys']
     f = frame_of_postgres[whole]
     if not f.ok
         return error['postgres exec error: `f.reason`', 'db']
-    kept = remember[s, sent]
-    return command_count[whole]
+    kept = _remember[s, sent]
+    return _command_count[whole]
 
 --- `pg_insert[parts, stream, table, frame]`: the frame's rows copied in
 --- (`COPY … FROM STDIN`, the text format: `copy_of_frame`); the count
@@ -450,40 +450,40 @@ fn pg_insert[parts, s, table, f]
     if len[f] eq 0
         return 0
     names = join[f.columns, ', ']
-    sent = send[s, message['Q', cstr['COPY `table` (`names`) FROM STDIN']]]
+    sent = send[s, _message['Q', _cstr['COPY `table` (`names`) FROM STDIN']]]
     if not sent.ok
         return error['postgres insert error: `sent.reason`', 'sys']
-    m = read_message[s]
+    m = _read_message[s]
     if not m.ok
         return error['postgres insert error: `m.reason`', 'sys']
     if byte[m, 0] eq 69
-        why = error_words[slice[m, 1, len[m]]]
-        rest = read_answer[s]
+        why = _error_words[slice[m, 1, len[m]]]
+        rest = _read_answer[s]
         return error['postgres insert error: `why`', 'db']
     if byte[m, 0] ne 71
         return error['postgres insert error: the server did not ask for the rows', 'db']
     data = copy_of_frame[f]
-    sent = send[s, concat[message['d', data], message['c', bytes['']]]]
+    sent = send[s, concat[_message['d', data], _message['c', bytes['']]]]
     if not sent.ok
         return error['postgres insert error: `sent.reason`', 'sys']
-    whole = read_answer[s]
+    whole = _read_answer[s]
     if not whole.ok
         return error['postgres insert error: `whole.reason`', 'sys']
     done = frame_of_postgres[whole]
     if not done.ok
         return error['postgres insert error: `done.reason`', 'db']
-    return command_count[whole]
+    return _command_count[whole]
 
 --- `pg_describe[parts, stream, sql]`: the columns the statement answers,
 --- without running it — Parse, Describe the statement, Sync — as a frame
 --- of `name` and `kind`
 fn pg_describe[parts, s, sql]
-    parse = concat[cstr[''], concat[cstr[numbered[sql]], pack[0, 2]]]
-    describe = concat[bytes['S'], cstr['']]
-    sent = send[s, concat[message['P', parse], concat[message['D', describe], message['S', bytes['']]]]]
+    parse = concat[_cstr[''], concat[_cstr[_numbered[sql]], pack[0, 2]]]
+    describe = concat[bytes['S'], _cstr['']]
+    sent = send[s, concat[_message['P', parse], concat[_message['D', describe], _message['S', bytes['']]]]]
     if not sent.ok
         return error['postgres describe error: `sent.reason`', 'sys']
-    whole = read_answer[s]
+    whole = _read_answer[s]
     if not whole.ok
         return error['postgres describe error: `whole.reason`', 'sys']
     f = frame_of_postgres[whole]
@@ -505,7 +505,7 @@ fn pg_cancel[parts, s]
     key = int[words[1]]
     if not pid.ok or not key.ok
         return 0
-    other = open[part[parts, 'host'], port_of[parts], false, 10.0]
+    other = open[_part[parts, 'host'], _port_of[parts], false, 10.0]
     if not other.ok
         return error['postgres cancel error: `other.reason`', 'sys']
     --- (a cancel is asked, not awaited: the send is kept, not decided on)
@@ -515,7 +515,7 @@ fn pg_cancel[parts, s]
 
 --- `pg_check[parts, stream]`: the server answers (`SELECT 1`)
 fn pg_check[parts, s]
-    f = answered[s, 'SELECT 1', '[]']
+    f = _answered[s, 'SELECT 1', '[]']
     if not f.ok
         return error['postgres ping failed: `f.reason`', f.kind]
     return 0
@@ -526,18 +526,18 @@ fn pg_check[parts, s]
 test scram_answers_rfc_7677s_example[]
     nonce = 'rOprNGfwEbeRWgbNEkqO'
     server_first = 'r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,s=W22ZaJ0SNY7soEsUEjb6gQ==,i=4096'
-    assert[scram_final['user', 'pencil', nonce, server_first] eq 'c=biws,r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,p=dHzbZapWIk4jUhN+Ute9ytag9zjfMHgsqmmiz7AndVQ=']
-    assert[scram_signature['user', 'pencil', nonce, server_first] eq 'v=6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4=']
-    assert[not scram_final['user', 'pencil', 'other', server_first].ok]
+    assert[_scram_final['user', 'pencil', nonce, server_first] eq 'c=biws,r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,p=dHzbZapWIk4jUhN+Ute9ytag9zjfMHgsqmmiz7AndVQ=']
+    assert[_scram_signature['user', 'pencil', nonce, server_first] eq 'v=6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4=']
+    assert[not _scram_final['user', 'pencil', 'other', server_first].ok]
 
 test the_statements_messages_are_as_the_protocol_says[]
-    assert[numbered['SELECT ? FROM t WHERE a = ? AND b = \'?\''] eq 'SELECT $1 FROM t WHERE a = $2 AND b = \'?\'']
-    assert[hex[message['Q', cstr['x']]] eq '51000000067800']
-    assert[hex[cstr['']] eq '00']
-    assert[error_words[concat[bytes['SERROR'], concat[pack[0, 1], concat[bytes['Mno such thing'], concat[pack[0, 1], pack[0, 1]]]]]] eq 'no such thing']
-    assert[command_count[concat[message['C', cstr['INSERT 0 3']], message['Z', bytes['I']]]] eq 3]
-    assert[command_count[message['Z', bytes['I']]] eq 0]
+    assert[_numbered['SELECT ? FROM t WHERE a = ? AND b = \'?\''] eq 'SELECT $1 FROM t WHERE a = $2 AND b = \'?\'']
+    assert[hex[_message['Q', _cstr['x']]] eq '51000000067800']
+    assert[hex[_cstr['']] eq '00']
+    assert[_error_words[concat[bytes['SERROR'], concat[pack[0, 1], concat[bytes['Mno such thing'], concat[pack[0, 1], pack[0, 1]]]]]] eq 'no such thing']
+    assert[_command_count[concat[_message['C', _cstr['INSERT 0 3']], _message['Z', bytes['I']]]] eq 3]
+    assert[_command_count[_message['Z', bytes['I']]] eq 0]
     parts = '{"host":"localhost","port":5433,"user":"u","pass":"","database":"d","tls":false}'
-    assert[part[parts, 'user'] eq 'u' and port_of[parts] eq 5433]
-    assert[not extended['SELECT ?', 'nope', '', true].ok]
-    assert[len[extended['SELECT ?', '[1]', '', true]] gt 0]
+    assert[_part[parts, 'user'] eq 'u' and _port_of[parts] eq 5433]
+    assert[not _extended['SELECT ?', 'nope', '', true].ok]
+    assert[len[_extended['SELECT ?', '[1]', '', true]] gt 0]

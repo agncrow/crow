@@ -1,0 +1,3 @@
+j49_a_modules_helper_is_its_own.co:4:5: undefined function '_talk_of'
+  4 │ log[_talk_of[ask['x']]]
+    │     ^^^^^^^^

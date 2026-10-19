@@ -948,7 +948,7 @@ impl TypeContext {
         let Some(sigs) = self.call_signatures.get(name) else { return false };
         sigs.len() >= 2
             && !self.specializations.contains_key(name)
-            && !name.contains("__")
+            && !crate::ir::is_copy(name)
             && self.functions.contains_key(name)
             && !sigs.iter().any(|sig| sig.iter().any(|t| matches!(t, Ty::Fn(_, _))))
     }
@@ -1220,6 +1220,13 @@ impl TypeContext {
         match iter_type {
             Ty::List(inner) => *inner,
             Ty::Tensor(inner, dims) => Self::tensor_item(&inner, &dims),
+            // a frame's column walks its cells, as its type says them: a
+            // cell that can be missing is a value that can fail (the
+            // lowering and the emitter had each said so by a rule of their
+            // own, and the width pass, reading this one, had typed the item
+            // as nothing known — the compiled program did not build where a
+            // function wrote the item into text: crow check --self)
+            Ty::Column(cell) => *cell,
             // a parsed value's items are parsed values, read as one type
             // where the body computes with them
             Ty::Json => Ty::Json,

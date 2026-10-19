@@ -320,7 +320,7 @@ impl Moment {
         i64::from(self.offset)
     }
 
-    /// A field by name, where the name is one.
+    /// A field by name, where the name is one (`FIELDS`).
     pub fn field(&self, name: &str) -> Option<i64> {
         Some(match name {
             "year" => self.year(),
@@ -334,6 +334,10 @@ impl Moment {
             _ => return None,
         })
     }
+
+    /// The names `field` answers: a moment's fields, as a program reads
+    /// them (`t.year`), which the compiler holds a field read to.
+    pub const FIELDS: &'static [&'static str] = &["year", "month", "day", "hour", "minute", "second", "weekday", "offset"];
 
     pub fn plus_seconds(&self, s: f64) -> Moment {
         Moment { ms: self.ms.saturating_add((s * 1000.0).round() as i64), offset: self.offset }

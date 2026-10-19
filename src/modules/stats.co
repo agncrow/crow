@@ -10,34 +10,38 @@ use math, sys
 
 --- `median[x]`: the middle value, or the mean of the two middle ones
 fn median[x]
-    n = len[x]
+    x_t = tensor[x]
+    n = len[x_t]
     if n eq 0
         return nan
-    s = flatten[sort[x]]
+    s = flatten[sort[x_t]]
     if n % 2 eq 1
         return s[n / 2]
     return (s[n / 2 - 1] + s[n / 2]) / 2.0
 
 --- `var[x]`: the population variance
 fn var[x]
-    if len[x] eq 0
+    x_t = tensor[x]
+    if len[x_t] eq 0
         return nan
-    d = x - mean[x]
+    d = x_t - mean[x_t]
     return mean[d .* d]
 
 --- `std[x]`: the population standard deviation
 fn std[x]
-    return sqrt[var[x]]
+    x_t = tensor[x]
+    return sqrt[var[x_t]]
 
 --- `percentile[x, p]`: the p-th percentile, 0 to 100, interpolated
 --- between the two values it falls between
 fn percentile[x, p]
+    x_t = tensor[x]
     if p lt 0.0 or p gt 100.0
         halt['percentile: p is a percent, from 0 to 100 (got `p`)']
-    n = len[x]
+    n = len[x_t]
     if n eq 0
         return nan
-    s = flatten[sort[x]]
+    s = flatten[sort[x_t]]
     if p eq 0.0
         return s[0]
     if p eq 100.0
@@ -53,31 +57,36 @@ fn percentile[x, p]
 --- `zscore[x]`: each value as its distance from the mean in standard
 --- deviations; zeros where every value is the same
 fn zscore[x]
-    s = std[x]
+    x_t = tensor[x]
+    s = std[x_t]
     if s eq 0.0
-        return x * 0.0
-    return (x - mean[x]) / s
+        return x_t * 0.0
+    return (x_t - mean[x_t]) / s
 
 --- `cov[x, y]`: the population covariance of two series of one length
 fn cov[x, y]
-    a = len[x]
-    b = len[y]
+    x_t = tensor[x]
+    y_t = tensor[y]
+    a = len[x_t]
+    b = len[y_t]
     if a ne b
         halt['cov: x and y must be one length, got `a` and `b`']
     if a eq 0
         return nan
-    return mean[(x - mean[x]) .* (y - mean[y])]
+    return mean[(x_t - mean[x_t]) .* (y_t - mean[y_t])]
 
 --- `corr[x, y]`: Pearson's correlation of two series of one length; NaN
 --- where either does not vary
 fn corr[x, y]
-    a = len[x]
-    b = len[y]
+    x_t = tensor[x]
+    y_t = tensor[y]
+    a = len[x_t]
+    b = len[y_t]
     if a ne b
         halt['corr: x and y must be one length, got `a` and `b`']
-    c = cov[x, y]
-    sx = std[x]
-    sy = std[y]
+    c = cov[x_t, y_t]
+    sx = std[x_t]
+    sy = std[y_t]
     if sx eq 0.0 or sy eq 0.0
         return nan
     return c / (sx * sy)
@@ -85,23 +94,25 @@ fn corr[x, y]
 --- `linreg[x, y]`: the line y = slope · x + intercept through two series
 --- of one length, with its r²; NaN of fewer than two points
 fn linreg[x, y]
-    a = len[x]
-    b = len[y]
+    x_t = tensor[x]
+    y_t = tensor[y]
+    a = len[x_t]
+    b = len[y_t]
     if a ne b
         halt['linreg: x and y must be one length, got `a` and `b`']
     if a lt 2
         return map[slope = nan, intercept = nan, r2 = nan]
-    mx = mean[x]
-    my = mean[y]
-    dx = x - mx
-    dy = y - my
+    mx = mean[x_t]
+    my = mean[y_t]
+    dx = x_t - mx
+    dy = y_t - my
     ss_xy = sum[dx .* dy]
     ss_xx = sum[dx .* dx]
     if ss_xx eq 0.0
         return map[slope = nan, intercept = my, r2 = nan]
     slope = ss_xy / ss_xx
     intercept = my - slope * mx
-    residual = y - (x * slope + intercept)
+    residual = y_t - (x_t * slope + intercept)
     ss_res = sum[residual .* residual]
     ss_tot = sum[dy .* dy]
     r2 = 1.0
@@ -113,14 +124,16 @@ fn linreg[x, y]
 --- two-tailed `p` from the t-distribution with Welch–Satterthwaite's
 --- degrees of freedom; NaN of fewer than two values on a side
 fn ttest[x, y]
-    n1 = float[len[x]]
-    n2 = float[len[y]]
+    x_t = tensor[x]
+    y_t = tensor[y]
+    n1 = float[len[x_t]]
+    n2 = float[len[y_t]]
     if n1 lt 2.0 or n2 lt 2.0
         return map[t = nan, p = nan]
-    m1 = mean[x]
-    m2 = mean[y]
-    d1 = x - m1
-    d2 = y - m2
+    m1 = mean[x_t]
+    m2 = mean[y_t]
+    d1 = x_t - m1
+    d2 = y_t - m2
     s1 = sum[d1 .* d1] / (n1 - 1.0)
     s2 = sum[d2 .* d2] / (n2 - 1.0)
     se = sqrt[s1 / n1 + s2 / n2]
@@ -136,14 +149,16 @@ fn ttest[x, y]
 --- `chisq[observed, expected]`: the chi-square goodness of fit of two
 --- series of one length — `chi2` and its `p` with n − 1 degrees of freedom
 fn chisq[observed, expected]
-    a = len[observed]
-    b = len[expected]
+    observed_t = tensor[observed]
+    expected_t = tensor[expected]
+    a = len[observed_t]
+    b = len[expected_t]
     if a ne b
         halt['chisq: observed and expected must be one length, got `a` and `b`']
     if a eq 0
         return map[chi2 = nan, p = nan]
-    o = flatten[observed]
-    e = flatten[expected]
+    o = flatten[observed_t]
+    e = flatten[expected_t]
     chi2 = 0.0
     for i in range[a]
         if e[i] ne 0.0
@@ -184,7 +199,7 @@ fn anova[groups]
     return map[f = f, p = p]
 
 --- Kolmogorov's distribution: the asymptotic p of a scaled distance
-fn ks_p[lam]
+fn _ks_p[lam]
     if lam lte 0.0
         return 1.0
     --- the series, summed in order until a term no longer counts
@@ -210,12 +225,13 @@ fn ks_p[lam]
 --- `'normal'` (its own mean and spread) or `'uniform'` (0 to 1) — the
 --- distance `d` and its `p`
 fn kstest[data, dist]
+    data_t = tensor[data]
     if dist ne 'normal' and dist ne 'uniform'
         halt['kstest: no distribution \'`dist`\' — write \'normal\' or \'uniform\'']
-    n = len[data]
+    n = len[data_t]
     if n eq 0
         return map[d = nan, p = nan]
-    s = flatten[sort[data]]
+    s = flatten[sort[data_t]]
     cdf = s * 0.0
     if dist eq 'normal'
         m = mean[s]
@@ -235,20 +251,21 @@ fn kstest[data, dist]
         d = d2
     root = sqrt[nf]
     lam = (root + 0.12 + 0.11 / root) * d
-    return map[d = d, p = ks_p[lam]]
+    return map[d = d, p = _ks_p[lam]]
 
 --- `fit[data, dist]`: a distribution's parameters fitted to the data —
 --- `'normal'` (mu, sigma), `'exponential'` (lambda), `'uniform'` (a, b),
 --- `'poisson'` (lambda); NaN of no data
 fn fit[data, dist]
-    n = len[data]
+    data_t = tensor[data]
+    n = len[data_t]
     m = nan
     if n gt 0
-        m = mean[data]
+        m = mean[data_t]
     if dist eq 'normal'
         sigma = nan
         if n gt 0
-            sigma = std[data]
+            sigma = std[data_t]
         return map[mu = m, sigma = sigma]
     if dist eq 'exponential'
         lam = nan
@@ -258,7 +275,7 @@ fn fit[data, dist]
     if dist eq 'uniform'
         if n eq 0
             return map[a = nan, b = nan]
-        return map[a = min[data], b = max[data]]
+        return map[a = min[data_t], b = max[data_t]]
     if dist eq 'poisson'
         return map[lambda = m]
     halt['fit: no distribution \'`dist`\' — write \'normal\', \'exponential\', \'uniform\' or \'poisson\'']

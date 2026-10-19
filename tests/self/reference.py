@@ -2315,7 +2315,7 @@ def llm_answers():
         "told": "[[role = 'user', text = 'hi'], [calls = [[args = [x = 1], id = 'c1', name = 'f']], role = 'assistant', text = ''], [id = 'c1', role = 'tool', text = 'done']]\n2",
         "said-no-reply": "false\na reply is what chat[…] and reply[…] answer",
         "told-no-call": "false\na call is one of a reply's calls",
-        "no-talk": "false\na conversation is what ask[…] answers, with its turns added by ask, said and told",
+        "no-talk": "false\na conversation is what ask[…] answers, with its turns added by asked, said and told",
         "reach": "openai\nllama3.2\nhttp://localhost:11434\n/v1\nOPENAI_API_KEY",
         "reach-options": "org/model\nhttp://127.0.0.1:8000\n/api/v1\nSELF_KEY",
         "reach-no-key": "cannot reach 'openai://api.example.com/gpt': the key's variable OPENAI_API_KEY is not set",

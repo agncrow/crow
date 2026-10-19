@@ -70,6 +70,12 @@ mod tests {
                 names.insert(n.to_string());
             }
         }
+        // (a module written in Crow: the functions its source exports)
+        for m in crate::modules::MODULES {
+            for e in crate::modules::exports(m.path) {
+                names.insert(e.to_string());
+            }
+        }
         // (ui has no rows and no manifest entry yet)
         names.insert("ui".to_string());
         names
@@ -158,9 +164,33 @@ mod tests {
         }
     }
 
+    /// A file without its test module (`#[cfg(test)] mod tests { … }`, closed
+    /// at the column it opened): a test names what it holds the compiler to,
+    /// which is not the compiler learning it.
+    fn without_tests(source: &str) -> String {
+        let lines: Vec<&str> = source.lines().collect();
+        let mut out = String::new();
+        let mut i = 0;
+        while i < lines.len() {
+            let opens_tests = lines[i].trim() == "#[cfg(test)]" && lines.get(i + 1).is_some_and(|l| l.starts_with("mod ") || l.starts_with("pub mod ") || l.starts_with("pub(crate) mod "));
+            if opens_tests {
+                i += 2;
+                while i < lines.len() && lines[i] != "}" {
+                    i += 1;
+                }
+                i += 1;
+                continue;
+            }
+            out.push_str(lines[i]);
+            out.push('\n');
+            i += 1;
+        }
+        out
+    }
+
     /// (names, crate references) of one compiler file.
     fn counts(path: &Path, names: &BTreeSet<String>) -> (usize, usize) {
-        let mut source = std::fs::read_to_string(path).expect("a source file is readable");
+        let mut source = without_tests(&std::fs::read_to_string(path).expect("a source file is readable"));
         if path.file_name().is_some_and(|f| f == "table.rs") {
             source = without_rows(&source);
         }

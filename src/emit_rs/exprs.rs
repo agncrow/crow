@@ -2324,7 +2324,13 @@ impl Emitter {
                 for &i in &result_idx {
                     // a value that has none (an `error[…]`) never reaches the call
                     unwrapped[i] = if let Some((node, _)) = &through[i] {
-                        self.printed_over(&raw_args[i], *node, format!("_prop_{}.value.clone()", i))
+                        // (a conversion of the payload is a value of its own:
+                        // lent to a parameter the callee borrows — a failed
+                        // tensor's numbers as the list a copy of `ask` takes
+                        // had been handed by value to `&Vec<f64>`, and the
+                        // program did not build — crow check --self)
+                        let printed = self.printed_over(&raw_args[i], *node, format!("_prop_{}.value.clone()", i));
+                        if ref_flags.get(i).copied().unwrap_or(false) { format!("&({})", printed) } else { printed }
                     } else if matches!(Self::inner(&self.tt(&raw_args[i])), Ty::Unit) {
                         "unreachable!()".to_string()
                     } else if ref_flags.get(i).copied().unwrap_or(false) {

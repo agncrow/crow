@@ -49,19 +49,19 @@ fn prompt_of[found]
 
 --- the question asked: its chunks found, the model's answer kept as a turn
 fn ask_model[]
-    asked = trim[question]
-    if len[asked] eq 0
+    wanted = trim[question]
+    if len[wanted] eq 0
         notice['ask something']
         return
-    found = retrieve.hybrid[chunks, embedded, lexical, asked, 3]
+    found = retrieve.hybrid[chunks, embedded, lexical, wanted, 3]
     if not found.ok
         notice['the embedder did not answer: `found.reason`']
         return
-    r = chat[model[], ask[asked], system = prompt_of[found], max = 300]
+    r = chat[model[], ask[wanted], system = prompt_of[found], tokens = 300]
     if not r.ok
         notice['the model did not answer: `r.reason`']
         return
-    turns = push[turns, Turn[asked, str[r.text], found]]
+    turns = push[turns, Turn[wanted, str[r.text], found]]
     question = ''
 
 --- one note the model was given, numbered as its citation names it

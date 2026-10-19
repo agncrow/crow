@@ -35,15 +35,21 @@ log[r.usage.input]                           --- 21
 | `user[text]`, `user[chat, text]` | A conversation of one user turn; a conversation with another user turn added |
 | `said[chat, reply]` | The conversation with the model's reply added, its text and its tool calls, as the next request needs it |
 | `result[chat, call, text]` | The conversation with a tool's result added: what the program computed for the call the model made |
-| `chat[m, chat]` | The model's reply to the conversation: a parsed value with `text`, `calls` (each `id`, `name`, `args` — the arguments as the model wrote them, a parsed value read as the program's use implies), `usage` (`input`, `output` tokens) and `stop` (`end`, `tool`, `length` or `other`). Options by name: `system = text`, `tools = [f, g]`, `max = tokens` (1024), `temperature = t` (1.0). An error value of kind `'llm'` when no answer came, when the server's status is no success (its message quoted: `the model's server answered 401: invalid x-api-key`), or when its answer is no JSON |
+| `chat[m, chat]` | The model's reply to the conversation: a parsed value with `text`, `calls` (each `id`, `name`, `args` — the arguments as the model wrote them, a parsed value read as the program's use implies), `usage` (`input`, `output` tokens) and `stop` (`end`, `tool`, `length` or `other`). Options by name: `system = text`, `tools = [f, g]`, `tokens = n` (1024), `temperature = t` (1.0). An error value of kind `'llm'` when no answer came, when the server's status is no success (its message quoted: `the model's server answered 401: invalid x-api-key`), or when its answer is no JSON |
 | `stream[m, chat]` | The same request, its reply streamed: a socket the pieces are read from, the same options. An error value of kind `'llm'` as `chat`'s |
 | `next[s]` | The next piece of the reply's text as the model writes it; empty text once the stream has ended. A tool call's arguments are gathered, not shown: they are in `reply`. An error value of kind `'llm'` when the connection breaks |
 | `reply[s]` | The whole reply the stream carried so far — `chat`'s shape — complete once `next` has answered empty text |
 | `embed[m, texts]` | The texts' embeddings, a matrix with a row per text, from an OpenAI-compatible embeddings endpoint (`openai://host/<embedding model>`); an Anthropic connection is refused, since it serves none |
 
-Every function works identically in both modes, and `chat`, `stream`,
-`next` and `embed` are effects (their rows' `Prop::Effect`): a route's handler calling
-one runs off the server's threads, and `crow check` sees the call.
+Every function works identically in both modes. The module's functions
+are its declaration (docs/extending-crow.md, phase 2): a program calls
+`reach`, `ask`, `asked`, `said`, `told`, `chat`, `follow`, `next`, `reply`
+and `embed`, each typed by its use, with `chat`'s and `follow`'s options
+as their defaults (`system = ''`, `tools = []`, `tokens = 1024`,
+`temperature = 1.0`); a helper begins with an underscore. Their effects
+are their bodies' (`request` and the socket's reads), which the call
+graph carries: a route's handler calling one runs off the server's
+threads.
 
 ### Tools are the functions
 
@@ -222,15 +228,10 @@ Anthropic-side providers (Voyage) once one speaks a second format.
   entry in the manifest (`MODULES`: the path, the prefix `_llm`, the
   source, what the import needs), which the registry, the type checker,
   the emitter and the docs check read (design rule 24).
-- `src/table.rs` — the `crow!` rows: `llm.connect (Str) -> Json`,
-  `llm.user (Str) -> Json`, `llm.user_more (Json, Str) -> Json`, `llm.said
-  (Json, Json) -> Json`, `llm.result (Json, Json, Str) -> Json`, `llm.chat
-  (Json, Json, Str, Strs, Int, Float) -> Json`, `llm.stream (Json, Json,
-  Str, Strs, Int, Float) -> Socket`, `llm.next (Socket) -> Str`, `llm.reply
-  (Socket) -> Json`, `llm.embed (Json, Strs) -> Tensor`; each `value
-  "llm"`.
-- `src/lower.rs` — `llm_options()`: `system`, `tools`, `max`,
-  `temperature` by name, filled in as `request`'s are.
+- `src/table.rs` — no row of llm's: the functions are the declaration,
+  found by the inliner (`crate::modules::exports`), which rewrites the
+  program's calls of them to the inlined names (`_llm_chat`); messages
+  name them as the program writes them (`crate::modules::unprefixed`).
 - `src/lower_ir.rs` — the `tools` argument: a literal list of functions
   becomes a list of their schemas (`tool_schemas`), each from the
   function's signature in `ctx.functions` and its doc comment; the

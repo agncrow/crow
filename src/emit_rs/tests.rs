@@ -1784,7 +1784,7 @@ fn test_web_socket() {
     assert!(rust.contains("_web_ws_socket("), "the socket written in Crow\n{}", rust);
     assert!(rust.contains("_web_ws_send_text("), "a send is the module's\n{}", rust);
     assert!(rust.contains("_web_ws_recv_for("), "a recv with its wait is the module's\n{}", rust);
-    assert!(rust.contains("_web_ws_close_socket("), "a close is the module's\n{}", rust);
+    assert!(rust.contains("_web_ws_close("), "a close is the module's\n{}", rust);
 }
 
 // --- DB module codegen tests ---
@@ -1887,12 +1887,11 @@ fn test_db_insert() {
 #[test]
 fn test_web_msgpack_response() {
     let rust = transpile("use web\nfn handler[req]\n    m = map[]\n    return msgpack[m]\n\nroute['/', handler]\n");
-    // packed by the row written in Crow (src/modules/web.co), handed the
-    // value's JSON, as the interpreter's is
-    // (a function a builtin written in Crow is takes its values: its row
-    // calls it with them, and is never lent them)
-    assert!(rust.contains("_web_msgpack(crow_runtime::json::encode("), "the packer written in Crow, handed the value's JSON\n{}", rust);
-    assert!(rust.contains("fn _web_msgpack(value: String) -> crow_web::core::CrowResponse"), "{}", rust);
+    // packed by the function written in Crow (src/modules/web.co), handed
+    // the value as the program holds it — typed by that use — and reading
+    // it as its JSON inside, as the interpreter's does
+    assert!(rust.contains("_web_msgpack("), "the packer written in Crow\n{}", rust);
+    assert!(rust.contains("fn _web_msgpack(value: ") && rust.contains(") -> crow_web::core::CrowResponse"), "{}", rust);
 }
 
 #[test]
@@ -2532,4 +2531,20 @@ fn a_vector_parameter_only_read_is_read_through_a_view() {
     let body = &rust[start..start + rust[start..].find("\n}\n").unwrap()];
     assert!(body.contains("let a__v = a.numbers();"), "{}", body);
     assert!(body.contains("a__v[") && !body.contains("number_at(&a"), "{}", body);
+}
+
+/// A loop's item from a frame's column whose cells can be missing is a
+/// value that can fail wherever the item's type is read: the width pass had
+/// typed it as nothing known (`TypeContext::loop_item` knew no column), so a
+/// function writing the item into text declared the text's temporary as
+/// plain text and assigned it a result — the compiled program did not
+/// build (crow check --self, a column with missing cells handed where sys's
+/// `exchange` takes its head lines; parity 268).
+#[test]
+fn a_loop_item_from_a_column_with_missing_cells_can_fail_in_the_width_pass() {
+    let out = transpile(
+        "use frame\nfn joined[xs]\n    head = ''\n    for line in xs\n        head = '`head``line`;'\n    return head\nsj = join[frame.new[k = [1, 2, 3]], frame.new[k = [1, 3], n = [5, 7]], 'k', 'left']\nlog[joined[sj.n]]\n",
+    );
+    assert!(out.contains("let _t1: CrowResult<String> ="), "{}", out);
+    assert!(out.contains("let _c = &_t1; if !_c.ok"), "{}", out);
 }

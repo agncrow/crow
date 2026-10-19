@@ -6399,7 +6399,7 @@ mod module_parts_tests {
     /// rag example's handler)
     #[test]
     fn a_modules_stack_in_a_ui_program_is_maths() {
-        let src = "use web, ui, llm\n\nquestion = ''\ncount = 0\n\nfn asked[]\n    e = embed[reach['openai://127.0.0.1:1/x'], [question]]\n    if e.ok\n        count = len[e]\n\nview home[]\n    return stack[field['Question', question], button['Ask', click = asked]]\n\npage['/', home]\nserve[3000]\n";
+        let src = "use web, ui, llm\n\nquestion = ''\ncount = 0\n\nfn wanted[]\n    e = embed[reach['openai://127.0.0.1:1/x'], [question]]\n    if e.ok\n        count = len[e]\n\nview home[]\n    return stack[field['Question', question], button['Ask', click = wanted]]\n\npage['/', home]\nserve[3000]\n";
         let stmts = build(src).unwrap();
         let lowered = lower::lower_program(&stmts).unwrap();
         let checked = infer_and_validate(&lowered, false);
@@ -6412,7 +6412,7 @@ mod module_parts_tests {
     /// int ("push[] takes a list and a value … got an int and numbers")
     #[test]
     fn a_modules_local_named_like_a_fact_is_its_own() {
-        let src = "use web, ui, llm\n\nquestion = ''\nrows = 0\n\nfn asked[]\n    e = embed[reach['openai://127.0.0.1:1/x'], [question]]\n    if e.ok\n        rows = len[e]\n\nview home[]\n    return stack[field['Question', question], button['Ask', click = asked]]\n\npage['/', home]\nserve[3000]\n";
+        let src = "use web, ui, llm\n\nquestion = ''\nrows = 0\n\nfn wanted[]\n    e = embed[reach['openai://127.0.0.1:1/x'], [question]]\n    if e.ok\n        rows = len[e]\n\nview home[]\n    return stack[field['Question', question], button['Ask', click = wanted]]\n\npage['/', home]\nserve[3000]\n";
         let stmts = build(src).unwrap();
         let lowered = lower::lower_program(&stmts).unwrap();
         let checked = infer_and_validate(&lowered, false);

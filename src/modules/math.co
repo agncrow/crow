@@ -32,7 +32,7 @@ test a_table_of_numbers_is_a_matrix[]
 --- draws a value — z = sqrt(−2 ln(1 − u1)) · cos(2π u2), u1 and u2 in
 --- [0, 1) (1 − u1 keeps the log finite). A seeded program draws the same
 --- values in both modes; a negative size stops it as the sizes say.
-fn draws[sizes]
+fn _draws[sizes]
     n = 1
     for d in sizes
         if d lt 0
@@ -49,7 +49,7 @@ fn draws[sizes]
 
 --- `randn[d1, d2, …]`: standard normal draws (mean 0, spread 1)
 fn randn[sizes]
-    return draws[sizes]
+    return _draws[sizes]
 
 --- `normal[mean, std, d1, d2, …]`: mean + std · randn; one value when no
 --- size is given, as every sample is
@@ -59,14 +59,14 @@ fn normal[centre, spread, sizes]
     dims = sizes
     if len[sizes] eq 0
         dims = push[[], 1]
-    return draws[dims] * spread + centre
+    return _draws[dims] * spread + centre
 
 --- (a row that takes the rest of its arguments is handed them as one
 --- list, which is how its own tests call it)
-fn one[n]
+fn _one[n]
     return push[[], n]
 
-fn two[a, b]
+fn _two[a, b]
     return push[push[[], a], b]
 
 --- the normal draws keep their laws: a mean of 0 and a spread of 1 over
@@ -74,16 +74,16 @@ fn two[a, b]
 --- under the same seed
 test the_normal_draws_keep_their_laws[]
     seed[3]
-    z = randn[one[100000]]
+    z = randn[_one[100000]]
     assert[abs[mean[z]] lt 0.02]
     assert[abs[mean[z .* z] - 1.0] lt 0.02]
-    assert[randn[two[2, 3]].shape eq [2, 3] and randn[one[0]].shape eq [0]]
+    assert[randn[_two[2, 3]].shape eq [2, 3] and randn[_one[0]].shape eq [0]]
     seed[5]
-    a = randn[one[4]]
+    a = randn[_one[4]]
     seed[5]
-    b = normal[0.0, 1.0, one[4]]
+    b = normal[0.0, 1.0, _one[4]]
     assert[sum[abs[a - b]] eq 0.0]
     seed[5]
-    c = normal[10.0, 2.0, one[4]]
+    c = normal[10.0, 2.0, _one[4]]
     assert[sum[abs[c - (a * 2.0 + 10.0)]] lt 0.000000001]
-    assert[sum[normal[3.0, 0.0, one[3]]] eq 9.0 and normal[3.0, 0.0, two[2, 2]].shape eq [2, 2]]
+    assert[sum[normal[3.0, 0.0, _one[3]]] eq 9.0 and normal[3.0, 0.0, _two[2, 2]].shape eq [2, 2]]

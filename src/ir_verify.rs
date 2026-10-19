@@ -962,24 +962,23 @@ mod tests {
         assert!(found.iter().any(|f| f.contains("calls 'half' with 0 arguments; it takes 1")), "{:?}", found);
     }
 
-    /// A row written in Crow answers what its row states: a packer typed as
-    /// fallible where its row never fails, or answering another kind, is
-    /// the lowering's finding, not the program's
+    /// A standard module's function written in Crow is verified as the
+    /// program's own: its answer is what its body says (a value that can
+    /// fail, where a branch answers an error), and a signature that says
+    /// otherwise is the lowering's finding, not the program's
     #[test]
-    fn a_row_written_in_crow_answers_its_rows_type() {
+    fn a_modules_function_written_in_crow_answers_what_its_body_says() {
         let src = "use web, web.auth\nsecret = 'a-secret-of-at-least-thirty-two-chars'\nt = sign[map[user = 'ada'], secret]\nlog[t.ok]\n";
-        let stmts = crate::lower::lower_program(&crate::build(src).expect("parses")).expect("lowers");
-        let mut ctx = crate::type_infer::TypeContext::new();
-        ctx.infer_program(&stmts);
-        let mut program = crate::lower_ir::lower(&stmts, &mut ctx, "main").expect("lowers to the IR");
+        let mut program = lowered(src);
         assert!(verify(&program).is_empty(), "{:?}", verify(&program));
-        let f = program.parts[0].fns.iter_mut().find(|f| f.name == "_web_auth_sign").expect("the row's function is inlined");
+        let f = program.parts[0].fns.iter_mut().find(|f| f.name == "_web_auth_sign").expect("the module's function is inlined");
+        assert!(matches!(f.ret, Ty::Result(_)), "a token or the reason: {:?}", f.ret);
         f.ret = Ty::Str;
         let found = verify(&program);
-        assert!(found.iter().any(|l| l.contains("_web_auth_sign") && l.contains("can fail")), "{:?}", found);
+        assert!(found.iter().any(|l| l.contains("_web_auth_sign")), "{:?}", found);
         let f = program.parts[0].fns.iter_mut().find(|f| f.name == "_web_auth_sign").expect("inlined");
         f.ret = Ty::Result(Box::new(Ty::Int));
         let found = verify(&program);
-        assert!(found.iter().any(|l| l.contains("answers Result(Int)") && l.contains("web.auth.sign")), "{:?}", found);
+        assert!(found.iter().any(|l| l.contains("_web_auth_sign")), "{:?}", found);
     }
 }
