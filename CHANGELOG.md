@@ -9,6 +9,29 @@ history says the rest.
 
 ### Breaking
 
+- Effects have kinds (spec, Effects Have Kinds): each builtin's row says
+  what it reaches — `console`, `files`, `files.write`, `network`,
+  `db.read`, `db.write`, `mail`, `clock`, `random`, `input`, `process`,
+  `exit`, `shell`, `session`, `waits`, `serving` — and every rule about effects
+  is stated by kind, once. What changes for a program: a view may reach
+  nothing but the console, the clock (one moment per event) and a draw,
+  and a derivation only reads (`files`, `network`, `db.read`, `clock`,
+  `process`) —
+  a view reading a file or querying a table (the book had taught "query
+  at render time"; a derivation is where a page reads a table), a
+  derivation sending a notice, had passed and were performed at every
+  render; a call the context cannot hold is refused in one wording
+  whatever the builtin, naming the function it is reached through
+  (`mail`'s own wording goes). In a handler, a failed argument stops the
+  handler only for an effect held to its commit (`session`, `db.write`,
+  `mail`); a read, a request, a query or a command with a failed argument
+  answers the failure, as any call does. `exists` is an effect (`files`),
+  so a loop over it keeps its order and a derivation may read it; `args`
+  and `env` are stamped with their capture moment, as reads of the world
+  are. `crow check`'s reach names a file's effects by kind (`db.read`,
+  `db.write`, `files.write`, `shell`, `input`, `waits` where it said
+  `database`, `files`, `shell`, `process`).
+
 - `chat`'s and `follow`'s `max` option is `tokens` (`chat[m, talk, tokens
   = 200]`): the module's options are its functions' defaults now, and a
   parameter may not be named like a builtin. A conversation's next user
@@ -85,6 +108,12 @@ history says the rest.
 
 ### Fixed
 
+- A derivation indexed (`trades[trades.qty gte min_qty]`, a mask over a
+  derived frame) read as a call of the derivation, "'trades' expects 0
+  arguments, got 1": a derivation is read like a fact and indexed like
+  one. And a call written with its module was read for its effects by
+  its bare name, so `ui.input[…]`, the element, counted as the core's
+  `input`, which waits on the reader: the module's own row says.
 - A function called from a copy of its caller, with an argument whose
   kind settles only once another copy answers (`inner[may[m, false]]`
   inside a function called with text and with a parsed value), was never

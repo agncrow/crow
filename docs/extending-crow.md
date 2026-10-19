@@ -499,6 +499,63 @@ checks.
 `crow check`'s fixtures, the self-check's purity cases, parity for held
 effects.
 
+### As built (2026-10-19)
+
+The questions, decided by recommendation (Vijay: "go with your
+recommendation"): (1) `log` is an effect of its own kind, `console` —
+not no effect, since output has an order and the spec's loop rule keeps
+it (a loop that logs runs in order in both modes); a view and a derivation
+may write it. (2) Effects through function values: the call graph already
+counts a function handed to a call as called (`handed` in lower_ir.rs),
+so a view calling `any[xs, pred]` where `pred` mails is refused naming
+`pred`; confirmed by errors j55. (3) `later` is `session`: it acts for
+the session as a notice does, held to the commit. Two more the code
+asked: a view may read the clock, since the spec gives a live program
+one moment per event, the render's included (`now[]` in a view is the
+event's moment), and a view or a derivation may draw — a draw is no
+effect on the world (the seeded generator is the program's own: lowered
+as a call, not an `Expr::Effect`; it orders a loop and makes a function
+impure to `crow check`). And a query in a view, which the book taught as
+"query at render time", is refused: a derivation is where a page reads a
+table (recomputed off the render when the table is written or a tick
+passes), and the book's dashboard and chart examples derive theirs now —
+which found a derivation indexed (`trades[mask]`) read as a call of it,
+fixed in the lowering's index path. A call written with its module reads
+its effects from the module's own row (`table::effects_of_in`): the bare
+name had made `ui.input[…]`, the element, the core's `input`.
+
+Three kinds the table of section 6 lacked, and two flags: `exit` beside
+`process` (a derivation may read the environment — the rag example's
+derivation embeds through llm, which reads its key from `env` — and may
+not end the process), `files.write`
+beside `files` (a derivation reads a file and may not write one; a
+rehearsal records a write and runs a read), `shell` beside `process` (a
+rehearsal records a command and answers a quiet run, and the reach names
+it), `serving` for `route`, `page` and `serve` (effects today, declared
+at the top level); and `Prop::Ordered` (`assert`, `running`: no effect,
+but a loop over it keeps its order) with `Prop::Varies` (`running`,
+`captured`: answers by the run, so a function `crow check` probes as pure
+cannot call it) — the three names the loop rule and the checker's purity
+had kept as names. `Prop::Effect`, `Draws`, `Reads`, `Held`, `Session`,
+`Blocks` and `Outside` are gone: one `Prop::Does(Effect)`, and the kind
+answers `held` (session, db.write, mail), `stamps` (files, network,
+db.read, input, process, shell), `recorded` (files.write, shell),
+`acts_for_session` (session, mail), `waits`. The rules live in
+`src/effects.rs` (`Effect`, `Context::allows`, one `refusal` wording) and
+the table's helpers (`effects_of`, `is_effect`, `held`, `stamps`,
+`waits`, `ordered`, `impure`); the baseline's `EFFECTS` and
+`capability_of` and the checks' `MAIL_IN_A_RENDER` are gone, the
+capabilities are the kinds' words.
+
+Behavior that changed with the rules: a view reaching any effect but the
+console, and a derivation reaching a write, a session effect or mail, are
+refused (they had been performed at every render); a handler's failed
+argument stops it only for a held effect (`read`, `request`, `query`,
+`shell`, `fetch` had stopped it too — a read with a failed argument now
+answers the failure, as any call does); `exists` is a `files` effect;
+`args` and `env` are stamped. Held by errors j54–j56, the suites, and
+the self-check.
+
 ## 7. Phase 4 — functions as values for native rows; description and call by name
 
 **Language changes.**

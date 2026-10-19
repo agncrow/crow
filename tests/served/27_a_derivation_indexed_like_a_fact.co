@@ -1,0 +1,27 @@
+--- A derivation is read like a fact and indexed like one: a mask over a
+--- derived frame picks its rows in a view (`trades[trades.qty gte n]`
+--- had read as a call of the derivation, "expects 0 arguments, got 1").
+use web, ui, frame
+
+least = 2
+
+derive trades
+    t = frame.new[]
+    t = with[t, 'symbol', ['AAPL', 'MSFT', 'NVDA']]
+    t = with[t, 'qty', [1, 2, 3]]
+    return t
+
+fn more[]
+    least = least + 1
+
+view render[]
+    shown = trades[trades.qty gte least]
+    return stack[
+        p['least `least`'],
+        p['shown `len[shown]`'],
+        table[shown],
+        button['More', click = more]
+    ]
+
+serve[3430]
+page['/', render]

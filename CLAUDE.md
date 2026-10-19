@@ -122,7 +122,16 @@ steps on every push and must be green.
   forms (`taken`, `big`), the range of the int it answers (`IntRange`),
   the crate feature it needs. `CORE_RESERVED`, `WEB_RESERVED`,
   `UI_RESERVED`, `BUILTINS` and every table of the docs check are derived
-  from it. A module is declared once, in `modules::MODULES` (its path and
+  from it. What a builtin reaches outside the program is its row's effect
+  KINDS (`Prop::Does(Effect)`, src/effects.rs: console, files,
+  files.write, network, db.read, db.write, mail, clock, random, input,
+  process, shell, session, waits, serving), and every rule about effects
+  reads the kind — held to a commit, stamped, recorded by a rehearsal,
+  allowed in a view or a derivation (`Context::allows`, one `refusal`
+  wording), a loop's order (`table::ordered`), the checker's purity
+  (`table::impure`), the baseline's capabilities — never a name; a new
+  effect is a kind on its row, or a new kind in effects.rs with its rule
+  in each predicate there. A module is declared once, in `modules::MODULES` (its path and
   prefix, its source, what its import brings, the crates it needs, its
   flags, the sentence its book page opens with), which the registry, the
   type checker, the checks, the emitter, the inliner, the docs check and

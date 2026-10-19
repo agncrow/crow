@@ -10,11 +10,10 @@ use crate::type_infer::{Ty, FnSig, TypeContext};
 use crate::value::{CrowValue, Value};
 
 // --- Impure builtins ---
-/// The builtins a pure function cannot call: the effects (crate::ir::EFFECTS),
-/// the draws from the random generator (crate::ir::DRAWS), and what reads
-/// the file system or the session's state without being an effect.
+/// The builtins a pure function cannot call: an effect of any kind, or a
+/// builtin answering by the run (the table's `impure`: each row says).
 fn impure_builtin(name: &str) -> bool {
-    crate::ir::is_effect(name) || crate::table::has(name, crate::table::Prop::Draws) || matches!(name, "exists" | "running" | "captured")
+    crate::table::impure(name)
 }
 
 
@@ -641,7 +640,7 @@ fn reach_blocking(
     }
     let callees = call_graph.get(fn_name)?;
     for c in callees {
-        if crate::table::has(c, crate::table::Prop::Blocks) {
+        if crate::table::waits(c) {
             let mut chain = path.clone();
             chain.push(c.clone());
             return Some((c.clone(), chain));
@@ -975,8 +974,8 @@ pub fn find_unguarded_staleness(stmts: &[Stmt]) -> Vec<Issue> {
         match e {
             Expr::Call { callee, args } => {
                 let named = match callee.as_ref() {
-                    Expr::Ident(n) => crate::table::has(n, crate::table::Prop::Reads),
-                    Expr::FieldAccess { field, .. } => crate::table::has(field, crate::table::Prop::Reads),
+                    Expr::Ident(n) => crate::table::stamps(n),
+                    Expr::FieldAccess { field, .. } => crate::table::stamps(field),
                     _ => false,
                 };
                 named || args.iter().any(calls_reader)

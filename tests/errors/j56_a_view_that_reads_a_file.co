@@ -1,0 +1,8 @@
+--- a view may read the clock (one moment per event) and write to the console, and nothing else: a file read at every render is refused where it is written
+use web, ui
+
+view render[]
+    return p[read['banner.txt']]
+
+page['/', render]
+serve[3100]

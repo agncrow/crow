@@ -123,7 +123,12 @@ pub fn unheld(what: String) -> bool {
 /// sent in a recording, its answer kept (`crow_runtime::fixtures`).
 pub fn outside(name: &str, vals: &[crate::value::CrowValue]) -> Option<crate::value::CrowValue> {
     use crate::value::{CrowValue, Value};
-    if !crate::table::has(name, crate::table::Prop::Outside) {
+    // (recorded: what its kind says — a file written, a command run; a
+    // request is noted here and runs through its own fixtures)
+    let kinds = crate::table::effects_of(name);
+    let recorded = kinds.iter().any(|e| e.recorded());
+    let noted = kinds.contains(&crate::effects::Effect::Network);
+    if !recorded && !noted {
         return None;
     }
     let r = active()?;
@@ -155,19 +160,19 @@ pub fn outside(name: &str, vals: &[crate::value::CrowValue]) -> Option<crate::va
     if let Ok(mut e) = r.effects.lock() {
         e.push(format!("{}[{}]", name, args.join(", ")));
     }
-    if name == "request" {
+    if !recorded {
         return None;
     }
-    Some(match name {
-        "shell" => {
-            let mut m = std::collections::BTreeMap::new();
-            m.insert("status".to_string(), CrowValue::ok(Value::Int(0)));
-            m.insert("stdout".to_string(), CrowValue::ok(Value::Str(String::new())));
-            m.insert("stderr".to_string(), CrowValue::ok(Value::Str(String::new())));
-            CrowValue::ok(Value::map(m))
-        }
+    Some(if kinds.contains(&crate::effects::Effect::Shell) {
+        // a command that ran and said nothing
+        let mut m = std::collections::BTreeMap::new();
+        m.insert("status".to_string(), CrowValue::ok(Value::Int(0)));
+        m.insert("stdout".to_string(), CrowValue::ok(Value::Str(String::new())));
+        m.insert("stderr".to_string(), CrowValue::ok(Value::Str(String::new())));
+        CrowValue::ok(Value::map(m))
+    } else {
         // a file operation answers empty text, as a real one does
-        _ => CrowValue::ok(Value::Str(String::new())),
+        CrowValue::ok(Value::Str(String::new()))
     })
 }
 

@@ -46,6 +46,7 @@ mod sql_types;
 #[cfg(test)]
 mod totality;
 mod table;
+mod effects;
 mod token;
 mod type_infer;
 mod wireframe;

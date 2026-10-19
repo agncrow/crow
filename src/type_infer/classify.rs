@@ -298,7 +298,7 @@ impl TypeContext {
             // is written as its return.
             fn assigns_any(stmts: &[Stmt], names: &std::collections::BTreeSet<String>) -> bool {
                 stmts.iter().any(|st| match st {
-                    Stmt::ExprStmt(Expr::Call { callee, .. }) | Stmt::Return(Some(Expr::Call { callee, .. })) if matches!(callee.as_ref(), Expr::Ident(n) if crate::table::has(n, crate::table::Prop::Session)) => true,
+                    Stmt::ExprStmt(Expr::Call { callee, .. }) | Stmt::Return(Some(Expr::Call { callee, .. })) if matches!(callee.as_ref(), Expr::Ident(n) if crate::table::effect_is(n, crate::effects::Effect::acts_for_session)) => true,
                     Stmt::Assign { name, .. } => names.contains(name),
                     Stmt::MultiAssign { names: ns, .. } => ns.iter().any(|n| names.contains(n)),
                     Stmt::If { then_body, else_body, .. } => assigns_any(then_body, names) || else_body.as_ref().map_or(false, |eb| assigns_any(eb, names)),

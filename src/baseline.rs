@@ -12,11 +12,13 @@ use crate::ast::{BinOp, Expr, Stmt, UnaryOp};
 use crate::type_infer::TypeContext;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Builtins whose call is an effect on the world outside the program.
-const EFFECTS: &[&str] = &[
-    "exec", "insert", "transact", "later", "fetch", "shell", "write", "save", "mail", "send", "post", "put", "delete", "remove",
-    "notice", "sign_in", "sign_out", "download",
-];
+/// Whether a call of the name is an effect a scenario records: one that
+/// changes something — a write, a command, a message, the session's — as
+/// its row's kinds say (crate::effects); a read is not.
+fn is_recorded_effect(name: &str) -> bool {
+    use crate::effects::Effect;
+    crate::table::effects_of(name).into_iter().any(|e| matches!(e, Effect::FilesWrite | Effect::Network | Effect::DbWrite | Effect::Mail | Effect::Shell | Effect::Session))
+}
 /// Events a control declares in a view.
 const EVENTS: &[&str] = &["click", "input", "submit", "change", "seek"];
 /// Elements whose second argument is the fact they bind.
@@ -316,7 +318,7 @@ impl<'m, 'a> Walker<'m, 'a> {
     }
 
     fn effect_of(&self, name: &str, args: &[Expr], env: &Env) -> Option<String> {
-        if !EFFECTS.contains(&name) { return None; }
+        if !is_recorded_effect(name) { return None; }
         let a: Vec<String> = args.iter().map(|x| canon(x, env)).collect();
         Some(format!("effect {} {}", name, a.join(" ")))
     }
@@ -451,7 +453,7 @@ impl<'m, 'a> Walker<'m, 'a> {
     fn inline_call(&mut self, e: &Expr, env: &Env, path: &Path) -> Option<Vec<(Path, Env)>> {
         let Expr::Call { callee, args } = e else { return None };
         let name = callee_name(callee)?;
-        if EFFECTS.contains(&name.as_str()) || self.m.is_view(&name) || !self.m.writes_state(&name) { return None; }
+        if is_recorded_effect(&name) || self.m.is_view(&name) || !self.m.writes_state(&name) { return None; }
         if self.inlined.len() >= INLINE_DEPTH || self.inlined.contains(&name) { return None; }
         let (params, body) = self.m.fns.get(&name).cloned()?;
         // the helper reads the facts as this path left them; its parameters
@@ -1400,24 +1402,17 @@ fn collect_clicks(stmts: &[Stmt], out: &mut BTreeSet<String>) {
 // ---------------------------------------------------------------- reach
 
 /// The capability an effect is one of: what it lets a part touch
-/// (second-half-design.md §1). `log` touches nothing outside the program.
+/// (second-half-design.md §1) — the kind its row declares (crate::effects),
+/// the first where it has several (`input` before `waits`). Console output
+/// touches nothing outside the program.
 pub fn capability_of(effect: &str) -> Option<&'static str> {
-    Some(match effect {
-        "query" | "exec" | "insert" | "transact" | "migrate" | "connect" => "database",
-        "read" | "write" | "mkdir" | "ls" | "rm" | "mv" | "cp" | "csv" | "lines" | "load" | "save" => "files",
-        "fetch" | "poll" | "send" | "recv" | "request" => "network",
-        "serve" | "page" | "route" | "listen" => "serving",
-        "shell" => "shell",
-        "mail" => "mail",
-        "now" | "time" | "sleep" => "clock",
-        "input" | "args" | "env" | "exit" => "process",
-        "later" | "notice" | "sign_in" | "sign_out" | "download" => "session",
-        _ => return None,
-    })
+    crate::table::effects_of(effect).into_iter().find(|e| *e != crate::effects::Effect::Console).map(|e| e.word())
 }
 
-/// The capabilities, in the order a reach names them.
-const CAPABILITIES: &[&str] = &["database", "files", "network", "serving", "shell", "mail", "clock", "process", "session"];
+/// The capabilities, in the order a reach names them: the kinds.
+fn capabilities() -> Vec<&'static str> {
+    crate::effects::Effect::ALL.iter().filter(|e| **e != crate::effects::Effect::Console).map(|e| e.word()).collect()
+}
 
 /// Each file's reach, from the lowered program: every effect its
 /// functions, derivations and top level reach, transitively, by the
@@ -1462,8 +1457,8 @@ pub fn reach_entries(program: &crate::ir::Program, parts: &BTreeMap<String, Stri
         .map(|(file, effects)| {
             let key = format!("reach {}", file);
             let mut text = format!("{}\n", key);
-            for cap in CAPABILITIES {
-                let mine: Vec<&str> = effects.iter().filter(|e| capability_of(e) == Some(*cap)).map(|e| e.as_str()).collect();
+            for cap in capabilities() {
+                let mine: Vec<&str> = effects.iter().filter(|e| capability_of(e) == Some(cap)).map(|e| e.as_str()).collect();
                 if !mine.is_empty() {
                     text.push_str(&format!("  {}: {}\n", cap, mine.join(", ")));
                 }
@@ -1680,7 +1675,7 @@ mod tests {
         ctx.infer_program(&stmts);
         let program = crate::lower_ir::lower(&stmts, &mut ctx, "main").expect("lowers to the IR");
         let reach = reach_entries(&program, &BTreeMap::new(), "main.co");
-        assert_eq!(reach["reach main.co"].1, "reach main.co\n  files: write\n  clock: now\n");
+        assert_eq!(reach["reach main.co"].1, "reach main.co\n  files.write: write\n  clock: now\n");
         let quiet = "fn pure[x]\n    return x + 1\nlog[pure[1]]\n";
         let stmts = crate::lower::lower_program(&crate::build(quiet).expect("parses")).expect("lowers");
         let mut ctx = TypeContext::new();

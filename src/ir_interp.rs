@@ -2149,7 +2149,7 @@ impl IrInterp {
     }
 
     fn stamp(name: &str, v: CrowValue) -> CrowValue {
-        if crate::table::has(name, crate::table::Prop::Reads) && v.is_ok() {
+        if crate::table::stamps(name) && v.is_ok() {
             v.stamp_captured()
         } else {
             v
@@ -3152,7 +3152,7 @@ impl IrInterp {
     /// parameter list included — stops the handler: an error never reaches
     /// the world outside the session (core-design.md §2.1).
     fn effect_refused(&mut self, name: &str, vals: &[CrowValue]) -> Option<Result<CrowValue, String>> {
-        if self.held.is_none() || !crate::table::has(name, crate::table::Prop::Held) {
+        if self.held.is_none() || !crate::table::held(name) {
             return None;
         }
         let err = vals.iter().find_map(|v| {

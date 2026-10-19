@@ -772,11 +772,11 @@ pub fn runtime_name(builtin: &str) -> String {
     builtin.to_string()
 }
 
-/// Whether a builtin reaches outside the program's values (its row says:
-/// `Prop::Effect`): its call lowers to `Expr::Effect`, which the session
-/// layer performs.
+/// Whether a builtin reaches outside the program's values (its row says
+/// its kinds: `Prop::Does`, crate::effects): its call lowers to
+/// `Expr::Effect`, which the session layer performs.
 pub fn is_effect(name: &str) -> bool {
-    crate::table::has(name, crate::table::Prop::Effect)
+    crate::table::is_effect(name)
 }
 
 /// The functions that answer without waiting on anything or looping: no

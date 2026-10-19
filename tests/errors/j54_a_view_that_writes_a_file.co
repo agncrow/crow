@@ -1,0 +1,11 @@
+--- a view shows the page's state and does nothing else: an effect other than console output is refused where it is written, by its kind
+use web, ui
+
+count = 0
+
+view render[]
+    write['count.txt', str[count]]
+    return p['count `count`']
+
+page['/', render]
+serve[3100]

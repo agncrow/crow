@@ -1,0 +1,17 @@
+--- a derivation reads and changes nothing: an effect it reaches through a function it calls is refused, naming the function
+use web, ui
+
+count = 0
+
+fn record[n]
+    write['count.txt', str[n]]
+    return n
+
+derive doubled
+    return record[count * 2]
+
+view render[]
+    return p['doubled `doubled`']
+
+page['/', render]
+serve[3100]

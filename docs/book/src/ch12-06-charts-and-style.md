@@ -14,8 +14,10 @@ use web, ui, db, frame
 
 conn = db.connect['sqlite://bars.db']
 
+derive bars
+    return query[conn, 'SELECT ts, o, hi, lo, c, vol FROM bars ORDER BY ts']
+
 view render[]
-    bars = query[conn, 'SELECT ts, o, hi, lo, c, vol FROM bars ORDER BY ts']
     return div[
         h1['AAPL — 1 minute'],
         chart[bars, candles = ['o', 'hi', 'lo', 'c'], bars_y = 'vol',
@@ -45,9 +47,10 @@ The named arguments are the whole vocabulary:
 
 Three properties follow from "a chart is a view over a frame":
 
-- **It re-renders like everything else.** Query at render time, or read
-  a reactive variable, and the chart tracks the data — `serve[3000,
-  refresh = 5]` from the live-loop section keeps it moving.
+- **It re-renders like everything else.** Derive the frame, or read a
+  reactive variable, and the chart tracks the data — the derivation
+  recomputes when its table is written or a refresh tick passes, so
+  `serve[3000, refresh = 5]` from the live-loop section keeps it moving.
 - **Empty is not an error.** A frame with no rows renders a placeholder,
   so a chart before the first tick doesn't blank the page.
 - **Too much is an error.** A frame over 1000 points refuses with an
@@ -107,7 +110,8 @@ buckets of `secs` seconds (a 14-period RSI on 3-minute candles, drawn
 over 1-second bars, whose history never changes as the tape advances),
 and `vwap[ts, price, vol, secs]` is the trailing-window VWAP.
 
-In the view, each indicator column names a pane, a level, or a line:
+Derived once per change, each indicator column names a pane, a level,
+or a line in the view:
 
 ```crow,norun
 use web, ui, db, frame, chart
@@ -118,11 +122,15 @@ clock = 0.0
 fn jump[t]
     clock = t
 
+derive bars
+    raw = query[conn, 'SELECT ts, o, hi, lo, c, vol FROM bars ORDER BY ts']
+    raw = with[raw, 'rsi', rsi[raw.c, 14]]
+    return with[raw, 'cvd', cvd[raw.c, raw.vol]]
+
+derive fills
+    return query[conn, 'SELECT ts, px AS y, side AS kind FROM fills']
+
 view render[]
-    bars = query[conn, 'SELECT ts, o, hi, lo, c, vol FROM bars ORDER BY ts']
-    bars = with[bars, 'rsi', rsi[bars.c, 14]]
-    bars = with[bars, 'cvd', cvd[bars.c, bars.vol]]
-    fills = query[conn, 'SELECT ts, px AS y, side AS kind FROM fills']
     return chart[bars, candles = ['o', 'hi', 'lo', 'c'], bars_y = 'vol',
                  panes = [['rsi'], ['cvd']],
                  levels = map[rsi = [30, 70], cvd = [0]],

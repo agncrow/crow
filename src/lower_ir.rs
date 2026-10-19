@@ -633,15 +633,16 @@ fn plain_read(e: &Expr) -> bool {
     }
 }
 
-/// A node whose order shows by itself: an effect, a draw from the seeded
-/// generator, an assertion, a look at background work, or a paged table
-/// (the render numbers them in order).
+/// A node whose order shows by itself: an effect of any kind (a draw from
+/// the seeded generator among them), a builtin whose order shows (the
+/// table's `ordered`: an assertion, a look at background work), or a paged
+/// table (the render numbers them in order).
 fn shows_order(e: &Expr) -> bool {
     match e {
         Expr::Effect { .. } => true,
         Expr::Call { target: Target::Runtime(_) | Target::Row(_) | Target::Module(..), .. } => {
             let n = call_name(e).unwrap_or_default();
-            is_effect(&n) || crate::table::has(&n, crate::table::Prop::Draws) || matches!(n.as_str(), "assert" | "running")
+            crate::table::ordered(&n)
         }
         Expr::Tree { element, attrs, .. } => element == "table" && attrs.iter().any(|(k, _)| k == "page" || k == "sort"),
         _ => false,
@@ -838,6 +839,9 @@ struct Lowerer<'a> {
     route_derived: Option<BTreeMap<String, Ty>>,
     /// Names every function in the program reaches, for `Fn.effects`.
     calls: BTreeMap<String, BTreeSet<String>>,
+    /// The line each function first calls each callee on, for a refusal
+    /// of what the caller reaches through it.
+    call_lines: BTreeMap<(String, String), usize>,
     direct_effects: BTreeMap<String, BTreeSet<String>>,
     current_fn: String,
     /// What the checks keep (`checks.rs`).
@@ -1009,6 +1013,7 @@ impl<'a> Lowerer<'a> {
             in_fact_default: false,
             params_items: None,
             calls: BTreeMap::new(),
+            call_lines: BTreeMap::new(),
             direct_effects: BTreeMap::new(),
             current_fn: String::new(),
             v: checks::Checks::default(),
@@ -1104,6 +1109,41 @@ impl<'a> Lowerer<'a> {
     }
 
     /// The kind of function a declaration is, as the lowering writes it.
+    /// The context the lowering stands in, where the language tells it
+    /// apart for effects (crate::effects::Context): a view, a derivation.
+    fn context(&self) -> Option<crate::effects::Context> {
+        match self.at {
+            Where::In(FnKind::View) => Some(crate::effects::Context::View),
+            Where::Derive => Some(crate::effects::Context::Derive),
+            _ => None,
+        }
+    }
+
+    /// An effect called where the context cannot hold it — a view reaches
+    /// nothing but the console, a derivation only reads — is refused where
+    /// it is written, by its kind, in the one wording (crate::effects);
+    /// one reached through a function the context calls is refused once
+    /// every function's reach is known (lower_program).
+    fn effect_in_context(&mut self, name: &str) {
+        let kinds = crate::table::effects_of(name);
+        self.effect_kinds_in_context(name, kinds);
+    }
+
+    /// The same, for a call written with its module: the module's row's kinds.
+    fn effect_in_context_in(&mut self, module: &str, name: &str) {
+        let kinds = crate::table::effects_of_in(module, name);
+        self.effect_kinds_in_context(name, kinds);
+    }
+
+    fn effect_kinds_in_context(&mut self, name: &str, kinds: Vec<crate::effects::Effect>) {
+        if let Some(ctx) = self.context() {
+            if let Some(e) = kinds.into_iter().find(|e| !ctx.allows(*e)) {
+                let bare = name.rsplit('.').next().unwrap_or(name);
+                self.refuse(ctx.refusal(bare, e, None));
+            }
+        }
+    }
+
     fn kind_of(&self, name: &str, body: &[S], is_view: bool) -> FnKind {
         if is_view || self.ctx.views.contains(name) {
             FnKind::View
@@ -1510,15 +1550,40 @@ impl<'a> Lowerer<'a> {
             f.effects = effects.into_iter().collect();
             f.recursive = recursive;
         }
-        // a view or a derivation that reaches mail through a function it
-        // calls would send it at every render (a call of its own is refused
-        // where it is written)
-        let renders: Vec<String> = part.fns.iter().filter(|f| f.kind == FnKind::View).map(|f| f.name.clone()).chain(part.derives.iter().map(|d| d.name.clone())).collect();
-        for r in renders {
-            let own = self.direct_effects.get(&r).map_or(false, |e| e.contains("mail"));
-            let through = self.calls.get(&r).into_iter().flatten().find(|c| part.fns.iter().any(|f| &f.name == *c && f.effects.iter().any(|e| e == "mail")));
-            if let (false, Some(via)) = (own, through) {
-                let msg = format!("in {}: calls {}, which sends mail — {}", r, via, checks::MAIL_IN_A_RENDER);
+        // a view or a derivation that reaches, through a function it calls,
+        // an effect its context cannot hold (crate::effects::Context: a view
+        // reaches nothing but the console, a derivation only reads) would
+        // perform it at every render: refused by the kind, in the one
+        // wording (a call of its own is refused where it is written)
+        let renders: Vec<(String, crate::effects::Context)> = part
+            .fns
+            .iter()
+            .filter(|f| f.kind == FnKind::View)
+            .map(|f| (f.name.clone(), crate::effects::Context::View))
+            .chain(part.derives.iter().map(|d| (d.name.clone(), crate::effects::Context::Derive)))
+            .collect();
+        for (r, ctx) in renders {
+            let own: BTreeSet<String> = self.direct_effects.get(&r).cloned().unwrap_or_default();
+            let mut found: Option<(String, String, crate::effects::Effect)> = None;
+            for c in self.calls.get(&r).into_iter().flatten() {
+                let Some(f) = part.fns.iter().find(|f| &f.name == c) else { continue };
+                for e in &f.effects {
+                    if own.contains(e) {
+                        continue;
+                    }
+                    if let Some(k) = crate::table::effects_of(e).into_iter().find(|k| !ctx.allows(*k)) {
+                        found = Some((c.clone(), e.clone(), k));
+                        break;
+                    }
+                }
+                if found.is_some() {
+                    break;
+                }
+            }
+            if let Some((via, e, k)) = found {
+                let bare = e.rsplit('.').next().unwrap_or(&e).to_string();
+                let line = self.call_lines.get(&(r.clone(), via.clone())).copied().unwrap_or(0);
+                let msg = format!("line {}: {}", line, ctx.refusal(&bare, k, Some(&via)));
                 self.v.errors.push((msg, Some(r.clone())));
             }
         }
@@ -2646,7 +2711,7 @@ impl<'a> Lowerer<'a> {
                     && let Expr::Call { target: Target::Row(row), .. } = &x
                 {
                     let answers_anew = row.params.first() == Some(&row.ret) && !matches!(row.ret, crate::table::Kind::Unit);
-                    if answers_anew && !crate::ir::is_effect(row.name) && !crate::table::has(row.name, crate::table::Prop::Draws) {
+                    if answers_anew && !crate::ir::is_effect(row.name) {
                         let first = match e {
                             A::Call { args, .. } => match args.first() {
                                 Some(A::Ident(v)) => Some(v.clone()),
@@ -4320,7 +4385,9 @@ impl<'a> Lowerer<'a> {
         // the view's anchors into lookups
         let element_in_view = |n: &str| self.in_ui && self.at == Where::In(FnKind::View) && crate::lower::UI_ELEMENTS.contains(&n);
         let indexes_value = match callee {
-            A::Ident(n) => (self.declared(n) || self.is_fact(n) || self.ctx.derives.contains(n)) && !self.calls_fn(n) && !element_in_view(n),
+            // (a derivation is read like a fact, and indexed like one: the
+            // book's dashboard picks rows of a derived frame, `trades[mask]`)
+            A::Ident(n) => (self.declared(n) || self.is_fact(n) || self.ctx.derives.contains(n)) && (!self.calls_fn(n) || self.ctx.derives.contains(n)) && !element_in_view(n),
             A::FieldAccess { object, .. } => match object.as_ref() {
                 A::Ident(m) => !self.is_module(m) || self.declared(m),
                 _ => true,
@@ -5045,9 +5112,12 @@ impl<'a> Lowerer<'a> {
         if let Some(m) = module {
             let m = self.ctx.module_aliases.get(&m).cloned().unwrap_or(m);
             self.refuse_module_call(&m, &name, &lowered);
-            if is_effect(&name) {
+            if crate::table::is_effect_in(&m, &name) {
                 // a qualified effect keeps its module: frame.load, db.query
+                // (the module's own row says: ui's `input` is an element,
+                // the core's waits on the reader)
                 if self.pass == Pass::Final {
+                    self.effect_in_context_in(&m, &name);
                     self.direct_effects.entry(current).or_default().insert(name.clone());
                 }
                 let lowered = self.row_arguments(&m, &name, lowered);
@@ -5159,6 +5229,7 @@ impl<'a> Lowerer<'a> {
                 lowered = handed;
             }
             if self.pass == Pass::Final {
+                self.call_lines.entry((current.clone(), resolved.clone())).or_insert(self.v.line);
                 self.calls.entry(current).or_default().insert(resolved.clone());
             }
             return Ok(Expr::Call { target: Target::User(resolved), args: lowered, ty, propagates });
@@ -5175,6 +5246,7 @@ impl<'a> Lowerer<'a> {
         }
         if is_effect(&name) {
             if self.pass == Pass::Final {
+                self.effect_in_context(&name);
                 self.direct_effects.entry(current).or_default().insert(name.clone());
             }
             // (an effect with a row is handed its arguments as any row's

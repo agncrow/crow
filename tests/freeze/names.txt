@@ -4,6 +4,7 @@ src/ast.rs	0	0
 src/autograd_bridge.rs	37	0
 src/builtins.rs	55	0
 src/derive.rs	14	0
+src/effects.rs	6	0
 src/emit_rs/builders.rs	3	0
 src/emit_rs/builtins.rs	71	16
 src/emit_rs/exprs.rs	131	1
@@ -23,8 +24,8 @@ src/ir_verify.rs	5	0
 src/kernel.rs	14	0
 src/lexer.rs	0	0
 src/lower.rs	90	0
-src/lower_ir.rs	109	1
-src/lower_ir/checks.rs	107	5
+src/lower_ir.rs	105	1
+src/lower_ir/checks.rs	106	5
 src/lower_ir/frames.rs	77	0
 src/lower_ir/fuse.rs	5	0
 src/lower_ir/grad.rs	5	0

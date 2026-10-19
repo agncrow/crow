@@ -264,22 +264,21 @@ pub enum IntRange {
 /// by name — any row of the name has the property.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Prop {
-    /// Reaches outside the program's values: its call lowers to
-    /// `Expr::Effect`, which the session layer performs.
-    Effect,
-    /// Draws from the random generator: a loop over it keeps its order.
-    Draws,
-    /// Reads the world: its answer is stamped with its capture moment.
-    Reads,
-    /// Held to the handler's commit; an error among its arguments stops
-    /// the handler.
-    Held,
-    /// Acts for the session: a function calling it is a handler.
-    Session,
-    /// Blocks: a view or a handler reaching it freezes the live loop.
-    Blocks,
-    /// A rehearsal records it instead of running it.
-    Outside,
+    /// Reaches outside the program's values, in this kind (crate::effects):
+    /// its call lowers to `Expr::Effect`, which the session layer performs;
+    /// what the kind implies — held to a handler's commit, its answer
+    /// stamped with its capture moment, recorded by a rehearsal, waiting,
+    /// acting for the session, allowed in a view or a derivation — is the
+    /// kind's rule, stated once there.
+    Does(crate::effects::Effect),
+    /// Its order shows (an assertion's stop names its round, a look at
+    /// background work changes as the work does): a loop over it keeps its
+    /// order, as a loop over an effect does.
+    Ordered,
+    /// Answers by the run, not by its arguments alone (a value's capture
+    /// moment, whether background work runs): a function `crow check`
+    /// probes as pure cannot call it.
+    Varies,
     /// A page's data source, which the session loads.
     Source,
     /// Binds the fact in this argument to an input.
@@ -779,7 +778,7 @@ pub fn print(row: &Row, args: &[String], line: &str, trace: Option<&str>) -> Res
         return Err(format!("a bug in Crow: `{}` is written in Crow, and its call was left to the runtime (an argument's kind not known before the program runs)", row.name));
     }
     let call = format!("{}({})", row.rust_path(), printed.join(", "));
-    let captured = if has(row.name, Prop::Reads) { "crow_runtime::moments::now()" } else { "0.0" };
+    let captured = if stamps(row.name) { "crow_runtime::moments::now()" } else { "0.0" };
     Ok(match row.fails {
         Fails::Never => call,
         Fails::Stops => format!("{}.unwrap_or_else(|e| crow_stop({}, e))", call, line),
@@ -1772,7 +1771,7 @@ pub static ROWS: &[Row] = &[
     row!("text.decode", "", "decode", crow_runtime::text::decode_as, (Str, Str) -> Str, value "parse"),
     // log: the values as they show, one display for both modes (compiled,
     // an error without a value among several did not build)
-    Row { props: &[Prop::Differentiable, Prop::Effect], ..row!("display.log", "", "log", crow_runtime::display::log, (Shows) -> Unit, never) },
+    Row { props: &[Prop::Differentiable, Prop::Does(crate::effects::Effect::Console)], ..row!("display.log", "", "log", crow_runtime::display::log, (Shows) -> Unit, never) },
     maprow!("core.map_new", "map", crow_runtime::core::map_new, () -> MapOf, never, maps::new, maps::new_taken),
     // a plain number's math (on the dual numbers a function grad
     // differentiates, each keeps the derivative's own form)
@@ -1789,16 +1788,16 @@ pub static ROWS: &[Row] = &[
     // performs, and whose call inside is the row (compiled, env's default
     // had been text of any value, and a negative sleep panicked or slept
     // forever in both modes)
-    Row { props: &[Prop::Effect], ..row!("core.args", "", "args", crow_runtime::core::args, () -> Strs, never) },
-    Row { props: &[Prop::Effect, Prop::Reads], ..row!("core.env", "", "env", crow_runtime::core::env, (Str) -> Str, value "env") },
-    Row { props: &[Prop::Effect, Prop::Reads], ..row!("core.env_or", "", "env", crow_runtime::core::env_or, (Str, Cell) -> Str, value "env") },
-    Row { props: &[Prop::Effect, Prop::Reads, Prop::Blocks], ..row!("core.input", "", "input", crow_runtime::core::input, () -> Str, value "io") },
-    Row { props: &[Prop::Effect, Prop::Reads, Prop::Blocks], ..row!("core.input_prompt", "", "input", crow_runtime::core::input_prompt, (Str) -> Str, value "io") },
-    Row { props: &[Prop::Effect], ..row!("core.exit", "", "exit", crow_runtime::core::exit, () -> Unit, never) },
-    Row { props: &[Prop::Effect], ..row!("core.exit_code", "", "exit", crow_runtime::core::exit_code, (Whole) -> Unit, never) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Process)], ..row!("core.args", "", "args", crow_runtime::core::args, () -> Strs, never) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Process)], ..row!("core.env", "", "env", crow_runtime::core::env, (Str) -> Str, value "env") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Process)], ..row!("core.env_or", "", "env", crow_runtime::core::env_or, (Str, Cell) -> Str, value "env") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Input), Prop::Does(crate::effects::Effect::Waits)], ..row!("core.input", "", "input", crow_runtime::core::input, () -> Str, value "io") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Input), Prop::Does(crate::effects::Effect::Waits)], ..row!("core.input_prompt", "", "input", crow_runtime::core::input_prompt, (Str) -> Str, value "io") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Exit)], ..row!("core.exit", "", "exit", crow_runtime::core::exit, () -> Unit, never) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Exit)], ..row!("core.exit_code", "", "exit", crow_runtime::core::exit_code, (Whole) -> Unit, never) },
     row!("core.halt", "", "halt", crow_runtime::core::halt, (Str) -> Unit, stops),
-    Row { props: &[Prop::Effect, Prop::Blocks], ..row!("core.sleep_ms", "", "sleep", crow_runtime::core::sleep_ms, (Whole) -> Unit, stops) },
-    Row { props: &[Prop::Effect, Prop::Blocks], ..row!("core.sleep", "", "sleep", crow_runtime::core::sleep_secs, (Float) -> Unit, stops) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Waits)], ..row!("core.sleep_ms", "", "sleep", crow_runtime::core::sleep_ms, (Whole) -> Unit, stops) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Waits)], ..row!("core.sleep", "", "sleep", crow_runtime::core::sleep_secs, (Float) -> Unit, stops) },
     // (the lowering's: a loaded frame held to the columns the program's
     // reads say it has, where it is bound — lower_ir/uses.rs)
     row!("core.__expect_frame", "", "__expect_frame", crow_runtime::frames::expect, (Frame, Strs, Strs, Strs) -> Frame, stops),
@@ -1809,30 +1808,30 @@ pub static ROWS: &[Row] = &[
     row!("core.__read_str", "", "__read_str", crow_runtime::json::read_str, (Json, Str) -> Str, stops),
     row!("core.__read_bool", "", "__read_bool", crow_runtime::json::read_bool, (Json, Str) -> Bool, stops),
     row!("core.__read_moment", "", "__read_moment", crow_runtime::json::read_moment, (Json, Str) -> Moment, stops),
-    Row { props: &[Prop::Effect], ..row!("moments.now", "", "now", crow_runtime::moments::now_moment, () -> Moment, never) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Clock)], ..row!("moments.now", "", "now", crow_runtime::moments::now_moment, () -> Moment, never) },
     // the file system: an effect, which the session layer performs (held to
     // a handler's commit, recorded in a rehearsal) and whose call inside is
     // the row; a failure is an error value of kind 'io', a success of a
     // write empty text, as its type says (it had been `done` interpreted)
-    Row { props: &[Prop::Effect, Prop::Reads, Prop::Held], ..crow!("io.read", "", "read", (Str) -> Str, value "io") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..crow!("io.read", "", "read", (Str) -> Str, value "io") },
     // a URL read with options: `read[url, headers = map[…], query = map[…],
     // timeout = s]` (the lowering fills in what the call leaves out)
-    Row { props: &[Prop::Effect, Prop::Reads, Prop::Held], options: &[("headers", Preset::Map), ("query", Preset::Map), ("timeout", Preset::Float(0.0))], ..crow!("io.read_asked", "", "read", (Str, TextMap, TextMap, Float) -> Str, value "io") },
-    Row { props: &[Prop::Effect, Prop::Held, Prop::Outside], ..crow!("io.write", "", "write", (Str, Str) -> Str, value "io") },
-    row!("io.exists", "", "exists", crow_runtime::io::exists, (Str) -> Bool, never),
-    Row { props: &[Prop::Effect, Prop::Outside], ..row!("io.mkdir", "", "mkdir", crow_runtime::io::mkdir, (Str) -> Str, value "io") },
-    Row { props: &[Prop::Effect, Prop::Reads], ..row!("io.ls", "", "ls", crow_runtime::io::ls, (Str) -> Strs, value "io") },
-    Row { props: &[Prop::Effect, Prop::Outside], ..row!("io.rm", "", "rm", crow_runtime::io::rm, (Str) -> Str, value "io") },
-    Row { props: &[Prop::Effect, Prop::Outside], ..row!("io.mv", "", "mv", crow_runtime::io::mv, (Str, Str) -> Str, value "io") },
-    Row { props: &[Prop::Effect, Prop::Outside], ..row!("io.cp", "", "cp", crow_runtime::io::cp, (Str, Str) -> Str, value "io") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Files)], options: &[("headers", Preset::Map), ("query", Preset::Map), ("timeout", Preset::Float(0.0))], ..crow!("io.read_asked", "", "read", (Str, TextMap, TextMap, Float) -> Str, value "io") },
+    Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..crow!("io.write", "", "write", (Str, Str) -> Str, value "io") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("io.exists", "", "exists", crow_runtime::io::exists, (Str) -> Bool, never) },
+    Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("io.mkdir", "", "mkdir", crow_runtime::io::mkdir, (Str) -> Str, value "io") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("io.ls", "", "ls", crow_runtime::io::ls, (Str) -> Strs, value "io") },
+    Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("io.rm", "", "rm", crow_runtime::io::rm, (Str) -> Str, value "io") },
+    Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("io.mv", "", "mv", crow_runtime::io::mv, (Str, Str) -> Str, value "io") },
+    Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("io.cp", "", "cp", crow_runtime::io::cp, (Str, Str) -> Str, value "io") },
     // a command that cannot start is an error value of kind 'shell'; a
     // non-zero exit is an answer, read from `.status`
-    Row { props: &[Prop::Effect, Prop::Reads, Prop::Held, Prop::Blocks, Prop::Outside], ..row!("core.shell", "", "shell", crow_runtime::core::shell, (Str) -> Shell, value "shell") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Shell), Prop::Does(crate::effects::Effect::Waits)], ..row!("core.shell", "", "shell", crow_runtime::core::shell, (Str) -> Shell, value "shell") },
     // an HTTP request, answered whatever its status: its URL, method and
     // body, then its headers, query, form, files, save and timeout (the
     // lowering fills in what the call leaves out: `request[url]` is a GET)
     // written in Crow (src/modules/core.co) on the sys layer
-    Row { props: &[Prop::Effect, Prop::Reads, Prop::Held, Prop::Outside], options: &[("method", Preset::Str("GET")), ("body", Preset::Str("")), ("headers", Preset::Map), ("query", Preset::Map), ("form", Preset::Map), ("files", Preset::Map), ("save", Preset::Str("")), ("timeout", Preset::Float(0.0))], ..crow!("core.request", "", "request", (Str, Str, Str, TextMap, TextMap, TextMap, TextMap, Str, Float) -> Reply, value "http") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Network)], options: &[("method", Preset::Str("GET")), ("body", Preset::Str("")), ("headers", Preset::Map), ("query", Preset::Map), ("form", Preset::Map), ("files", Preset::Map), ("save", Preset::Str("")), ("timeout", Preset::Float(0.0))], ..crow!("core.request", "", "request", (Str, Str, Str, TextMap, TextMap, TextMap, TextMap, Str, Float) -> Reply, value "http") },
     // min and max of numbers (text was compared compiled and refused
     // interpreted: min['a', 'b'] is refused before the program runs)
     Row { props: &[Prop::Differentiable], range: IntRange::Min, big: Some("core.__min_big"), ..row!("core.min_ints", "", "min", crow_runtime::core::min_ints, (Whole, Whole) -> Int, never) },
@@ -1916,9 +1915,9 @@ pub static ROWS: &[Row] = &[
     Row { props: &[Prop::Differentiable], ..row!("core.float_of_moment", "", "float", crow_runtime::cell::float_of_moment, (Moment) -> Float, never) },
     Row { props: &[Prop::Differentiable], ..row!("core.float_of", "", "float", crow_runtime::cell::float_of, (Cell) -> Float, value "parse") },
     // draws from the program's generator
-    Row { props: &[Prop::Draws], ..row!("core.rand", "", "rand", crow_runtime::core::rand_float, () -> Float, never) },
-    Row { props: &[Prop::Draws], ..row!("core.rand_int", "", "rand", crow_runtime::core::rand_int, (Int) -> Int, stops) },
-    Row { props: &[Prop::Draws], ..row!("core.rand_between", "", "rand", crow_runtime::core::rand_between, (Int, Int) -> Int, stops) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("core.rand", "", "rand", crow_runtime::core::rand_float, () -> Float, never) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("core.rand_int", "", "rand", crow_runtime::core::rand_int, (Int) -> Int, stops) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("core.rand_between", "", "rand", crow_runtime::core::rand_between, (Int, Int) -> Int, stops) },
     row!("moments.moment_text", "", "moment", crow_runtime::moments::moment_text, (Str) -> Moment, value "time"),
     Row { options: &[("tz", Preset::Asked)], ..row!("moments.moment_in", "", "moment", crow_runtime::moments::moment_in, (Moment, Str) -> Moment, value "time") },
     Row { options: &[("tz", Preset::Asked)], ..row!("moments.moment_text_in", "", "moment", crow_runtime::moments::moment_text_in, (Str, Str) -> Moment, value "time") },
@@ -1940,20 +1939,20 @@ pub static ROWS: &[Row] = &[
     // panicked on is one check)
     Row { props: &[Prop::Constructs], ..row!("math.zeros", "math", "zeros", crow_runtime::math::zeros, (Sizes) -> Tensor, stops) },
     Row { props: &[Prop::Constructs], ..row!("math.ones", "math", "ones", crow_runtime::math::ones, (Sizes) -> Tensor, stops) },
-    Row { props: &[Prop::Constructs, Prop::Draws], ..crow!("math.randn", "math", "randn", (Sizes) -> Tensor, stops) },
+    Row { props: &[Prop::Constructs, Prop::Does(crate::effects::Effect::Random)], ..crow!("math.randn", "math", "randn", (Sizes) -> Tensor, stops) },
     Row { props: &[Prop::Constructs], ..row!("math.full", "math", "full", crow_runtime::math::full, (Sizes, Float) -> Tensor, stops) },
     Row { props: &[Prop::Constructs], ..row!("math.eye", "math", "eye", crow_runtime::math::eye, (Int) -> Tensor, stops) },
     Row { props: &[Prop::Differentiable], ..row!("math.onehot", "math", "onehot", crow_runtime::math::onehot, (Tensor, Int) -> Tensor, stops) },
     Row { props: &[Prop::Constructs], ..row!("math.linspace", "math", "linspace", crow_runtime::math::linspace, (Float, Float, Int) -> Tensor, stops) },
     row!("math.arange", "math", "arange", crow_runtime::math::arange, (Float, Float, Float) -> Tensor, stops),
     row!("math.diag", "math", "diag", crow_runtime::math::diag, (Tensor) -> Tensor, stops),
-    Row { props: &[Prop::Draws], ..crow!("math.normal", "math", "normal", (Float, Float, Sizes) -> Tensor, stops) },
-    Row { props: &[Prop::Draws], ..row!("math.uniform", "math", "uniform", crow_runtime::math::uniform, (Float, Float, Sizes) -> Tensor, stops) },
-    Row { props: &[Prop::Draws], ..row!("math.poisson", "math", "poisson", crow_runtime::math::poisson, (Float, Sizes) -> Tensor, stops) },
-    Row { props: &[Prop::Draws], ..row!("math.bernoulli", "math", "bernoulli", crow_runtime::math::bernoulli, (Float, Sizes) -> Tensor, stops) },
-    Row { props: &[Prop::Draws], ..row!("math.gamma_dist", "math", "gamma_dist", crow_runtime::math::gamma_dist, (Float, Float, Sizes) -> Tensor, stops) },
-    Row { props: &[Prop::Draws], ..row!("math.beta_dist", "math", "beta_dist", crow_runtime::math::beta_dist, (Float, Float, Sizes) -> Tensor, stops) },
-    Row { props: &[Prop::Draws], ..row!("math.exponential", "math", "exponential", crow_runtime::math::exponential, (Float, Sizes) -> Tensor, stops) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Random)], ..crow!("math.normal", "math", "normal", (Float, Float, Sizes) -> Tensor, stops) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.uniform", "math", "uniform", crow_runtime::math::uniform, (Float, Float, Sizes) -> Tensor, stops) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.poisson", "math", "poisson", crow_runtime::math::poisson, (Float, Sizes) -> Tensor, stops) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.bernoulli", "math", "bernoulli", crow_runtime::math::bernoulli, (Float, Sizes) -> Tensor, stops) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.gamma_dist", "math", "gamma_dist", crow_runtime::math::gamma_dist, (Float, Float, Sizes) -> Tensor, stops) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.beta_dist", "math", "beta_dist", crow_runtime::math::beta_dist, (Float, Float, Sizes) -> Tensor, stops) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.exponential", "math", "exponential", crow_runtime::math::exponential, (Float, Sizes) -> Tensor, stops) },
     // math: linear algebra (a vector, a rank-3 tensor or a rectangle where a
     // square is needed, a matrix that is not positive definite: the reason,
     // where a kernel panicked)
@@ -2069,10 +2068,10 @@ pub static ROWS: &[Row] = &[
     row!("math.magnitude", "math", "magnitude", crow_runtime::math::magnitude, (Tensors) -> Tensor, stops),
     row!("math.phase", "math", "phase", crow_runtime::math::phase, (Tensors) -> Tensor, stops),
     row!("math.conjugate", "math", "conjugate", crow_runtime::math::conjugate, (Tensors) -> Tensors, stops),
-    Row { props: &[Prop::Draws], ..row!("math.seed", "math", "seed", crow_runtime::math::seed, (Int) -> Unit, never) },
-    Row { props: &[Prop::Draws], ..row!("math.shuffle", "math", "shuffle", crow_runtime::math::shuffle, (Tensor) -> Tensor, never) },
-    Row { props: &[Prop::Draws], ..row!("math.choice", "math", "choice", crow_runtime::math::choice, (Tensor, Int) -> Tensor, stops) },
-    Row { props: &[Prop::Draws], ..row!("math.permutation", "math", "permutation", crow_runtime::math::permutation, (Int) -> Tensor, stops) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.seed", "math", "seed", crow_runtime::math::seed, (Int) -> Unit, never) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.shuffle", "math", "shuffle", crow_runtime::math::shuffle, (Tensor) -> Tensor, never) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.choice", "math", "choice", crow_runtime::math::choice, (Tensor, Int) -> Tensor, stops) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.permutation", "math", "permutation", crow_runtime::math::permutation, (Int) -> Tensor, stops) },
     row!("math.mod", "math", "mod", crow_runtime::math::modulo, (Tensor, Tensor) -> Tensor, stops),
     row!("math.mod_by", "math", "mod", crow_runtime::math::modulo_by, (Tensor, Float) -> Tensor, never),
     // math: sparse matrices, solving, stacking, conversion (an entry outside
@@ -2119,8 +2118,8 @@ pub static ROWS: &[Row] = &[
     // `use sys`: the standard library's own layer (crow_runtime::sys) — a
     // program may not import it (spec, The standard library's layer)
     row!("sys.open", "sys", "open", crow_runtime::sys::open, (Str, Int, Bool, Float) -> Stream, value "sys"),
-    Row { props: &[Prop::Effect], ..row!("sys.send", "sys", "send", crow_runtime::sys::send, (Stream, Bytes) -> Int, value "sys") },
-    Row { props: &[Prop::Effect, Prop::Reads], ..row!("sys.recv", "sys", "recv", crow_runtime::sys::recv, (Stream, Int, Float) -> Bytes, value "sys") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Network)], ..row!("sys.send", "sys", "send", crow_runtime::sys::send, (Stream, Bytes) -> Int, value "sys") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Network), Prop::Does(crate::effects::Effect::Waits)], ..row!("sys.recv", "sys", "recv", crow_runtime::sys::recv, (Stream, Int, Float) -> Bytes, value "sys") },
     row!("sys.close", "sys", "close", crow_runtime::sys::close, (Stream) -> Unit, never),
     row!("sys.bytes", "sys", "bytes", crow_runtime::sys::bytes_of_text, (Str) -> Bytes, never),
     row!("sys.text", "sys", "text", crow_runtime::sys::text_of_bytes, (Bytes) -> Str, value "parse"),
@@ -2217,7 +2216,7 @@ pub static ROWS: &[Row] = &[
     // reader's options is an effect the session layer holds and a page's
     // source, and keeps its row until effects are declared on the layer's
     // own rows (phase 3)
-    Row { props: &[Prop::Effect, Prop::Reads, Prop::Held, Prop::Source], ..crow!("sys.fetch", "sys", "fetch", (Str, TextMap, TextMap, Float) -> Answer, value "sys") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Network), Prop::Source], ..crow!("sys.fetch", "sys", "fetch", (Str, TextMap, TextMap, Float) -> Answer, value "sys") },
     // a value packed as MessagePack (src/modules/web.co): a value of any
     // kind, kept as it is — an int beside a float, which the number rule
     // would join into one function of floats — a parameter of no kind the
@@ -2228,11 +2227,11 @@ pub static ROWS: &[Row] = &[
     // and `close` are its functions; a message sent or received is an
     // effect, and keeps its row (phase 3), named as the program calls it,
     // its function by the row's id
-    Row { props: &[Prop::Effect], ..crow!("web.ws.send_text", "web.ws", "send", (Socket, Str) -> Str, value "socket") },
-    Row { props: &[Prop::Effect, Prop::Reads], ..crow!("web.ws.recv_text", "web.ws", "recv", (Socket) -> Str, value "socket") },
-    Row { props: &[Prop::Effect, Prop::Reads], ..crow!("web.ws.recv_for", "web.ws", "recv", (Socket, Float) -> Str, value "socket") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Network)], ..crow!("web.ws.send_text", "web.ws", "send", (Socket, Str) -> Str, value "socket") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Network), Prop::Does(crate::effects::Effect::Waits)], ..crow!("web.ws.recv_text", "web.ws", "recv", (Socket) -> Str, value "socket") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Network), Prop::Does(crate::effects::Effect::Waits)], ..crow!("web.ws.recv_for", "web.ws", "recv", (Socket, Float) -> Str, value "socket") },
     // mail written in Crow (src/modules/mail.co): SMTP over the sys layer
-    Row { props: &[Prop::Effect, Prop::Held, Prop::Session], ..crow!("web.mail.mail", "web.mail", "mail", (Mailer, Str, Str, Str) -> Bool, value "mail") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Mail)], ..crow!("web.mail.mail", "web.mail", "mail", (Mailer, Str, Str, Str) -> Bool, value "mail") },
     // frame (a column the frame lacks, an aggregation or a join it does not
     // know, a mask or a count that does not fit: the reason the program
     // stops with, as df.col of a missing column is — the interpreter had
@@ -2293,15 +2292,15 @@ pub static ROWS: &[Row] = &[
     // it stopped the program)
     // the readers, written in Crow on the sys layer (src/modules/frame.co,
     // io.co, math.co): a file, a URL or an S3 object
-    Row { props: &[Prop::Table(0), Prop::Effect, Prop::Reads], ..crow!("frame.load", "frame", "load", (Str) -> Frame, value "frame") },
-    Row { props: &[Prop::Table(0), Prop::Effect, Prop::Reads], options: &[("headers", Preset::Map), ("query", Preset::Map), ("timeout", Preset::Float(0.0))], ..crow!("frame.load_asked", "frame", "load", (Str, TextMap, TextMap, Float) -> Frame, value "frame") },
-    Row { props: &[Prop::Table(1), Prop::Effect], ..crow!("frame.save", "frame", "save", (Frame, Str) -> Str, value "frame") },
-    Row { props: &[Prop::Effect, Prop::Reads], ..crow!("io.csv", "io", "csv", (Str) -> TextRows, value "io") },
-    Row { props: &[Prop::Effect, Prop::Reads], options: &[("headers", Preset::Map), ("query", Preset::Map), ("timeout", Preset::Float(0.0))], ..crow!("io.csv_asked", "io", "csv", (Str, TextMap, TextMap, Float) -> TextRows, value "io") },
-    Row { props: &[Prop::Effect, Prop::Reads], ..crow!("io.lines", "io", "lines", (Str) -> Strs, value "io") },
-    Row { props: &[Prop::Effect, Prop::Reads], options: &[("headers", Preset::Map), ("query", Preset::Map), ("timeout", Preset::Float(0.0))], ..crow!("io.lines_asked", "io", "lines", (Str, TextMap, TextMap, Float) -> Strs, value "io") },
-    Row { props: &[Prop::Table(0), Prop::Effect, Prop::Reads], ..crow!("math.load", "math", "load", (Str) -> Tensor, value "load") },
-    Row { props: &[Prop::Table(0), Prop::Effect, Prop::Reads], options: &[("headers", Preset::Map), ("query", Preset::Map), ("timeout", Preset::Float(0.0))], ..crow!("math.load_asked", "math", "load", (Str, TextMap, TextMap, Float) -> Tensor, value "load") },
+    Row { props: &[Prop::Table(0), Prop::Does(crate::effects::Effect::Files)], ..crow!("frame.load", "frame", "load", (Str) -> Frame, value "frame") },
+    Row { props: &[Prop::Table(0), Prop::Does(crate::effects::Effect::Files)], options: &[("headers", Preset::Map), ("query", Preset::Map), ("timeout", Preset::Float(0.0))], ..crow!("frame.load_asked", "frame", "load", (Str, TextMap, TextMap, Float) -> Frame, value "frame") },
+    Row { props: &[Prop::Table(1), Prop::Does(crate::effects::Effect::FilesWrite)], ..crow!("frame.save", "frame", "save", (Frame, Str) -> Str, value "frame") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..crow!("io.csv", "io", "csv", (Str) -> TextRows, value "io") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Files)], options: &[("headers", Preset::Map), ("query", Preset::Map), ("timeout", Preset::Float(0.0))], ..crow!("io.csv_asked", "io", "csv", (Str, TextMap, TextMap, Float) -> TextRows, value "io") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..crow!("io.lines", "io", "lines", (Str) -> Strs, value "io") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Files)], options: &[("headers", Preset::Map), ("query", Preset::Map), ("timeout", Preset::Float(0.0))], ..crow!("io.lines_asked", "io", "lines", (Str, TextMap, TextMap, Float) -> Strs, value "io") },
+    Row { props: &[Prop::Table(0), Prop::Does(crate::effects::Effect::Files)], ..crow!("math.load", "math", "load", (Str) -> Tensor, value "load") },
+    Row { props: &[Prop::Table(0), Prop::Does(crate::effects::Effect::Files)], options: &[("headers", Preset::Map), ("query", Preset::Map), ("timeout", Preset::Float(0.0))], ..crow!("math.load_asked", "math", "load", (Str, TextMap, TextMap, Float) -> Tensor, value "load") },
     // doc: markdown rendered by the kernel
     row!("doc.markdown", "doc", "markdown", crow_runtime::markdown::to_html, (Str) -> Markup, never),
     row!("doc.chapters", "doc", "chapters", crow_runtime::markdown::chapters_frame, (Str) -> Frame, never),
@@ -2351,8 +2350,8 @@ pub static FORMS: &[Row] = &[
     form!("core.type", "", "type", (Shown)),
     form!("core.error", "", "error", (Str)),
     form!("core.error_kind", "", "error", (Str, Str)),
-    form!("core.assert", "", "assert", (Shown, Shows)),
-    form!("core.captured", "", "captured", (Shown)),
+    Row { props: &[Prop::Ordered], ..form!("core.assert", "", "assert", (Shown, Shows)) },
+    Row { props: &[Prop::Varies], ..form!("core.captured", "", "captured", (Shown)) },
     form!("core.__known", "", "__known", (Shown)),
     form!("core.cpu", "", "cpu", (Int)),
     Row { feature: Some(("crow_runtime", "gpu")), ..form!("core.gpu", "", "gpu", ()) },
@@ -2361,10 +2360,10 @@ pub static FORMS: &[Row] = &[
     form!("core.find_by", "", "find", (Shown, Shown)),
     form!("core.any", "", "any", (Shown, Shown)),
     form!("core.all", "", "all", (Shown, Shown)),
-    Row { props: &[Prop::Effect, Prop::Held, Prop::Session], ..form!("core.notice", "", "notice", (Str)) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Session)], ..form!("core.notice", "", "notice", (Str)) },
     form!("core.__notice_text", "", "__notice_text", ()),
     form!("core.__notice_at", "", "__notice_at", ()),
-    form!("core.running", "", "running", (Shows)),
+    Row { props: &[Prop::Ordered, Prop::Varies], ..form!("core.running", "", "running", (Shows)) },
     // chart[frame, x = 'ts', candles = [], lines = [], bars_y = '', marker = 0, tz = 'UTC', height = 320, panes = [], levels = 0, points = 0, seek = 0]
     Row {
         options: &[
@@ -2374,12 +2373,12 @@ pub static FORMS: &[Row] = &[
         ..form!("core.chart", "", "chart", (Frame, Str, Strs, Strs, Str, Int, Str, Int, Shown, Shown, Shown, Shown))
     },
     // web: routes, the server, the responses, pages, the signed-in reader
-    Row { props: &[Prop::Effect], ..form!("web.route", "web", "route", (Str, Shown)) },
-    Row { props: &[Prop::Effect], ..form!("web.route_method", "web", "route", (Str, Str, Shown)) },
-    Row { props: &[Prop::Effect], ..form!("web.route_limited", "web", "route", (Str, Str, Shown, Int)) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Serving)], ..form!("web.route", "web", "route", (Str, Shown)) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Serving)], ..form!("web.route_method", "web", "route", (Str, Str, Shown)) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Serving)], ..form!("web.route_limited", "web", "route", (Str, Str, Shown, Int)) },
     // serve[port, refresh = 0, budget = 0, theme = '', density = '', accent = '', wide = false, keep = false, uploads = 10, cors = [], files = '']
     Row {
-        props: &[Prop::Effect],
+        props: &[Prop::Does(crate::effects::Effect::Serving)],
         options: &[
             ("refresh", Preset::Int(0)), ("budget", Preset::Int(0)), ("theme", Preset::Str("")), ("density", Preset::Str("")), ("accent", Preset::Str("")),
             ("wide", Preset::Bool(false)), ("keep", Preset::Bool(false)), ("uploads", Preset::Int(10)), ("cors", Preset::List), ("files", Preset::Str("")),
@@ -2393,19 +2392,19 @@ pub static FORMS: &[Row] = &[
     Row { feature: Some(("crow_web", "arrow_ipc")), ..form!("web.arrow", "web", "arrow", (Frame)) },
     form!("web.bytes", "web", "bytes", (Shown)),
     form!("web.stream", "web", "stream", (Shown, Shows)),
-    Row { props: &[Prop::Effect], ..form!("web.page", "web", "page", (Str, Shown)) },
-    Row { props: &[Prop::Effect], ..form!("web.page_with", "web", "page", (Str, Shown, Shown)) },
-    Row { props: &[Prop::Effect, Prop::Held, Prop::Session], ..form!("web.sign_in", "web", "sign_in", (Shown)) },
-    Row { props: &[Prop::Effect, Prop::Session], ..form!("web.sign_out", "web", "sign_out", ()) },
-    Row { props: &[Prop::Effect, Prop::Held, Prop::Session], ..form!("web.download", "web", "download", (Str, Shown)) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Serving)], ..form!("web.page", "web", "page", (Str, Shown)) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Serving)], ..form!("web.page_with", "web", "page", (Str, Shown, Shown)) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Session)], ..form!("web.sign_in", "web", "sign_in", (Shown)) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Session)], ..form!("web.sign_out", "web", "sign_out", ()) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Session)], ..form!("web.download", "web", "download", (Str, Shown)) },
     form!("web.__reader", "web", "__reader", ()),
     // (the page's signed-in reader, written bare: the lowering's `__reader[]`)
     form!("web.reader", "web", "reader", ()),
     // the test harness: app[view, width = 1280, wide = false]
     Row { props: &[Prop::TestOnly], options: &[("width", Preset::Int(1280)), ("wide", Preset::Bool(false))], ..form!("web.app", "web", "app", (Shown, Int, Bool)) },
     // ui: a page's data sources and its controls
-    Row { props: &[Prop::Effect, Prop::Reads, Prop::Held, Prop::Source], ..form!("ui.fetch", "ui", "fetch", (Str)) },
-    Row { props: &[Prop::Effect, Prop::Source], ..form!("ui.poll", "ui", "poll", (Str, Float)) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Network), Prop::Source], ..form!("ui.fetch", "ui", "fetch", (Str)) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Network), Prop::Source], ..form!("ui.poll", "ui", "poll", (Str, Float)) },
     Row { props: &[Prop::Binds(1)], options: &[("type", Preset::Str("")), ("lines", Preset::Int(0))], ..form!("ui.field", "ui", "field", (Str, Shown, Str, Int)) },
     Row { props: &[Prop::Binds(1)], options: &[("min", Preset::Int(0)), ("max", Preset::Int(100)), ("step", Preset::Int(1))], ..form!("ui.slider", "ui", "slider", (Str, Shown, Int, Int, Int)) },
     Row { props: &[Prop::Binds(1)], ..form!("ui.checkbox", "ui", "checkbox", (Str, Shown)) },
@@ -2415,15 +2414,15 @@ pub static FORMS: &[Row] = &[
     Row { options: &[("max", Preset::Float(1.0))], ..form!("ui.progress", "ui", "progress", (Float, Float)) },
     Row { options: &[("size", Preset::Str("m")), ("color", Preset::Str(""))], ..form!("ui.icon", "ui", "icon", (Str, Str, Str)) },
     // db: its verbs that are forms of their own
-    Row { props: &[Prop::Effect], ..form!("db.connect", "db", "connect", (Str)) },
-    Row { props: &[Prop::Effect, Prop::Held], ..form!("db.exec", "db", "exec", (Shown, Str, Shows)) },
-    Row { props: &[Prop::Effect, Prop::Reads, Prop::Held], ..form!("db.query", "db", "query", (Shown, Str, Shows)) },
-    Row { props: &[Prop::Effect, Prop::Held], ..form!("db.insert", "db", "insert", (Shows)) },
-    Row { props: &[Prop::Effect, Prop::Held], ..form!("db.transact", "db", "transact", (Shows)) },
-    Row { props: &[Prop::Effect], ..form!("db.migrate", "db", "migrate", (Shows)) },
+    Row { props: &[Prop::Does(crate::effects::Effect::DbRead)], ..form!("db.connect", "db", "connect", (Str)) },
+    Row { props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.exec", "db", "exec", (Shown, Str, Shows)) },
+    Row { props: &[Prop::Does(crate::effects::Effect::DbRead)], ..form!("db.query", "db", "query", (Shown, Str, Shows)) },
+    Row { props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.insert", "db", "insert", (Shows)) },
+    Row { props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.transact", "db", "transact", (Shows)) },
+    Row { props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.migrate", "db", "migrate", (Shows)) },
     form!("db.describe", "db", "describe", (Shows)),
     // (counted by nothing, as before: `later`, a control, the harness verbs)
-    Row { props: &[Prop::Effect, Prop::Held], ..form!("core.later", "", "later", (Shows)) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Session)], ..form!("core.later", "", "later", (Shows)) },
     Row { props: &[Prop::Binds(1), Prop::Unreserved], ..form!("ui.select", "ui", "select", (Shows)) },
     Row { props: &[Prop::TestOnly], ..form!("web.click", "web", "click", (Shows)) },
     Row { props: &[Prop::TestOnly], ..form!("web.elements", "web", "elements", (Shows)) },
@@ -2450,6 +2449,93 @@ pub fn rows_named_in(module: &str, name: &str) -> impl Iterator<Item = &'static 
 /// does is said of its name, as the lists it replaces were read.
 pub fn has(name: &str, prop: Prop) -> bool {
     rows_named(name).any(|r| r.props.contains(&prop))
+}
+
+/// The kinds of effect a builtin of the name has, over every row of the
+/// name (`Prop::Does`); a name written with its module (`frame.load`) is
+/// read by its last part, as the rows are named. Empty for a pure builtin.
+pub fn effects_of(name: &str) -> Vec<crate::effects::Effect> {
+    let bare = name.rsplit('.').next().unwrap_or(name);
+    let mut out: Vec<crate::effects::Effect> = rows_named(bare)
+        .flat_map(|r| r.props.iter())
+        .filter_map(|p| match p {
+            Prop::Does(e) => Some(*e),
+            _ => None,
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Whether a builtin of the name reaches outside the program's values
+/// (`Effect::outside`: any kind but a draw): its call lowers to
+/// `Expr::Effect`, which the session layer performs.
+pub fn is_effect(name: &str) -> bool {
+    effect_is(name, crate::effects::Effect::outside)
+}
+
+/// The kinds of effect the module's own rows of the name have: a call
+/// written with its module (`ui.input`, `db.query`) is the module's row,
+/// never a namesake's elsewhere (the core's `input` waits on the reader;
+/// ui's is an element).
+pub fn effects_of_in(module: &str, name: &str) -> Vec<crate::effects::Effect> {
+    let mut out: Vec<crate::effects::Effect> = rows_named_in(module, name)
+        .flat_map(|r| r.props.iter())
+        .filter_map(|p| match p {
+            Prop::Does(e) => Some(*e),
+            _ => None,
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Whether the module's own row of the name reaches outside the program's
+/// values (`is_effect`, for a call written with its module).
+pub fn is_effect_in(module: &str, name: &str) -> bool {
+    effects_of_in(module, name).into_iter().any(crate::effects::Effect::outside)
+}
+
+/// Whether the name's kinds include one the predicate holds: `held`,
+/// `stamps`, `recorded`, `acts_for_session` (crate::effects::Effect).
+pub fn effect_is(name: &str, which: fn(crate::effects::Effect) -> bool) -> bool {
+    effects_of(name).into_iter().any(which)
+}
+
+/// Held to the handler's commit (its kind says: a session's, a database
+/// write, mail).
+pub fn held(name: &str) -> bool {
+    effect_is(name, crate::effects::Effect::held)
+}
+
+/// Its answer carries the moment it was read.
+pub fn stamps(name: &str) -> bool {
+    effect_is(name, crate::effects::Effect::stamps)
+}
+
+/// Waits: a view or a handler reaching it freezes the live loop.
+pub fn waits(name: &str) -> bool {
+    effects_of(name).contains(&crate::effects::Effect::Waits)
+}
+
+/// Whether a loop over a call of the name keeps its order: an effect of
+/// any kind (a draw from the generator among them), or a builtin whose
+/// order shows (`Prop::Ordered`).
+pub fn ordered(name: &str) -> bool {
+    !effects_of(name).is_empty() || has(name, Prop::Ordered)
+}
+
+/// Whether a function `crow check` probes as pure may not call the name:
+/// an effect of any kind, or a builtin answering by the run (`Prop::Varies`).
+pub fn impure(name: &str) -> bool {
+    !effects_of(name).is_empty() || has(name, Prop::Varies)
+}
+
+/// The names with the kind, each once.
+pub fn with_effect(e: crate::effects::Effect) -> Vec<&'static str> {
+    with(Prop::Does(e))
 }
 
 /// The names with the property, each once.

@@ -178,7 +178,7 @@ A collection builtin takes the kinds its forms above say — a list, a map, text
 | `input[]` | Read a line from stdin (error-value on failure) | [Views: the whole element vocabulary](../by-example/views-elements.md) · [Programming a Guessing Game](../ch02-00-guessing-game.md) |
 | `input[prompt]` | Print prompt, then read a line (error-value on failure) | [Views: the whole element vocabulary](../by-example/views-elements.md) · [Programming a Guessing Game](../ch02-00-guessing-game.md) |
 
-A file operation that answers nothing — `write`, `mkdir`, `rm`, `mv`, `cp`, and `use frame`'s `save` — answers empty text when it succeeds, as its type says, in both modes. (The interpreter had answered `done`, and the compiled program `''`.) What reads the world outside the program — `read`, `ls`, `shell`, and the modules' `load`, `csv` and `lines` — is stamped with the moment it was read (`captured[x]`), in both modes, and nothing else is: the compiled program had stamped `rm`'s answer.
+A file operation that answers nothing — `write`, `mkdir`, `rm`, `mv`, `cp`, and `use frame`'s `save` — answers empty text when it succeeds, as its type says, in both modes. (The interpreter had answered `done`, and the compiled program `''`.) What reads the world outside the program — an effect of the kinds `files`, `network`, `db.read`, `input`, `process` and `shell` (Effects Have Kinds): `read`, `ls`, `exists`, `shell`, `env`, `args`, `request`, a query's answer, the modules' `load`, `csv` and `lines` — is stamped with the moment it was read (`captured[x]`), in both modes, and nothing else is: the compiled program had stamped `rm`'s answer.
 
 ### Files, URLs and S3
 

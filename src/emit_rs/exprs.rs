@@ -2373,7 +2373,7 @@ impl Emitter {
                     o => o,
                 };
                 let already = self.base_is_result(&name, &target, &raw_args);
-                let stop_as = (self.reactive_epilogue.is_some() && crate::table::has(&name, crate::table::Prop::Held)).then(|| self.shown_fn_name());
+                let stop_as = (self.reactive_epilogue.is_some() && crate::table::held(&name)).then(|| self.shown_fn_name());
                 self.pinned_module = saved_pin;
                 // a value a name holds is borrowed to be checked and read; any
                 // other (a call's answer) is bound as it is
@@ -2609,7 +2609,7 @@ impl Emitter {
             Target::Row(row) if row.is_crow() && row.id == "web.mail.mail" => self.builtin("mail", args, arg_strs, whole).unwrap_or_default(),
             Target::Row(row) if row.is_crow() => {
                 let call = self.user_call(&crate::table::crow_fn_name(row), args, arg_strs.to_vec());
-                if crate::table::has(row.name, crate::table::Prop::Reads) && matches!(row.fails, crate::table::Fails::Value(_)) {
+                if crate::table::stamps(row.name) && matches!(row.fails, crate::table::Fails::Value(_)) {
                     self.needs_crow_runtime = true;
                     format!("{{ let mut _r = {}; if _r.ok {{ _r.captured = crow_runtime::moments::now(); }} _r }}", call)
                 } else {

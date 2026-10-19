@@ -24,8 +24,10 @@ view stat_card[label, value]
         class = 'card'
     ]
 
+derive trades
+    return query[conn, 'SELECT symbol, qty, price, pnl FROM trades ORDER BY id']
+
 view render[]
-    trades = query[conn, 'SELECT symbol, qty, price, pnl FROM trades ORDER BY id']
     total_pnl = sum[trades.pnl]
 
     shown = trades
@@ -68,8 +70,12 @@ Walk it top to bottom and count the chapters:
 - **`stat_card`** — a parameterized component, used at two types
   (string and int values). Chapter 4's monomorphization quietly makes
   both work.
-- **`render`** — queries at render time, so every re-render shows the
-  database as it is *now*. Frames flow from `query` through masks,
+- **`trades`** — a derivation, chapter 12's other half: the query runs
+  off the render, and runs again when a handler writes the table or a
+  refresh tick passes, so every page shows the database as it is *now*
+  without a query per render. A view reads it like a fact; a view that
+  queried itself would be refused, since a view is a function of the
+  state it is given. Frames flow from the derivation through masks,
   `sort` and `group` into `table[...]` untouched.
 - **A failed query renders its reason** — a view renders what it's
   given, and what it's given is chapter 7's error value. Stop the

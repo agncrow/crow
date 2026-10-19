@@ -1570,7 +1570,7 @@ A collection builtin takes the kinds its forms above say — a list, a map, text
 | `input[]` | Read a line from stdin (error-value on failure) |
 | `input[prompt]` | Print prompt, then read a line (error-value on failure) |
 
-A file operation that answers nothing — `write`, `mkdir`, `rm`, `mv`, `cp`, and `use frame`'s `save` — answers empty text when it succeeds, as its type says, in both modes. (The interpreter had answered `done`, and the compiled program `''`.) What reads the world outside the program — `read`, `ls`, `shell`, and the modules' `load`, `csv` and `lines` — is stamped with the moment it was read (`captured[x]`), in both modes, and nothing else is: the compiled program had stamped `rm`'s answer.
+A file operation that answers nothing — `write`, `mkdir`, `rm`, `mv`, `cp`, and `use frame`'s `save` — answers empty text when it succeeds, as its type says, in both modes. (The interpreter had answered `done`, and the compiled program `''`.) What reads the world outside the program — an effect of the kinds `files`, `network`, `db.read`, `input`, `process` and `shell` (Effects Have Kinds): `read`, `ls`, `exists`, `shell`, `env`, `args`, `request`, a query's answer, the modules' `load`, `csv` and `lines` — is stamped with the moment it was read (`captured[x]`), in both modes, and nothing else is: the compiled program had stamped `rm`'s answer.
 
 #### Files, URLs and S3
 
@@ -3487,8 +3487,8 @@ A `for` loop runs its iterations in parallel when nothing its body does can show
 A loop runs **in order** when its body:
 
 - writes a variable from outside the loop, or a fact;
-- reaches an effect: output, files, the database, the network, the clock, `later`, `notice`, `download`, a sign-in;
-- draws from the random generator (`rand`, and `randn`, `shuffle` and the other draws of `math`), so a seeded program draws the same numbers on every run;
+- reaches an effect of any kind (Effects Have Kinds): output, files, the database, the network, the clock, `later`, `notice`, `download`, a sign-in;
+- draws from the random generator (`rand`, and `randn`, `shuffle` and the other draws of `math` — the kind `random`), so a seeded program draws the same numbers on every run;
 - renders a view or a paged table, which a page numbers in the order it draws them;
 - asserts, or asks whether background work is `running`;
 - can leave the function: a `return`, or an error handed back from a condition, where the first failure in input order decides;
@@ -3681,6 +3681,86 @@ New GPU vendors, new CUDA versions, or new backends are **toolchain updates** (`
 
 The language specifies *intent*. The toolchain handles *implementation*.
 
+
+### Effects Have Kinds
+
+An effect is what a call does beyond answering its value: it reaches
+outside the program's values. Each builtin's row declares its kinds, and a
+function written in Crow — a program's, or a standard module's — has the
+union of what its body reaches, through every call, a function it hands
+over as a value included (`any[xs, check]`); nothing is written in a
+program. The kinds:
+
+| Kind | What a call of it does | Among the builtins |
+|---|---|---|
+| `console` | writes output | `log` |
+| `files` | reads a file, a directory or a table from a path | `read`, `ls`, `exists`, `csv`, `lines`, `load` |
+| `files.write` | writes, makes, moves or removes a file | `write`, `mkdir`, `rm`, `mv`, `cp`, `save` |
+| `network` | sends or receives over the network | `request`, `send`, `recv`, `fetch`, `poll`, a socket's |
+| `db.read` | reads a database, or opens a connection to one | `connect`, `query` |
+| `db.write` | writes a database | `exec`, `insert`, `transact`, `migrate` |
+| `mail` | sends mail | `mail` |
+| `clock` | reads the clock | `now` |
+| `random` | draws from the seeded generator | `rand`, `seed`, `randn`, `normal`, `shuffle`, `choice`, the other draws |
+| `input` | reads what the reader types | `input` |
+| `process` | reads the process's arguments or environment | `args`, `env` |
+| `exit` | ends the process | `exit` |
+| `shell` | runs a command | `shell` |
+| `session` | acts for the session | `notice`, `sign_in`, `sign_out`, `download`, `later` |
+| `waits` | waits: on the reader, a socket, the clock, a command | `input`, `sleep`, `shell`, `recv` |
+| `serving` | declares what the server serves | `route`, `page`, `serve` |
+
+A builtin may have several: `shell` runs a command and waits, `input`
+reads and waits. Every rule the language states about effects is stated
+by kind, once:
+
+| Where a call stands | What it may reach |
+|---|---|
+| a view | `console`, `clock` (One moment per event: a render's `now[]` is the event's moment) and `random`, and nothing else: a view shows the page's state, and runs whenever the page needs it |
+| a derivation | `console`, `files`, `network`, `db.read`, `clock`, `random`, `process`: it reads, and changes nothing, since it runs whenever the page needs it |
+| a handler, or a function a handler calls | anything; `session`, `db.write` and `mail` are held to its commit (A handler is a transaction), and a failed argument of a held effect stops the handler, so an error never reaches past the session |
+| a function, the top level | anything |
+| a test block | anything; `files`, `network`, `shell`, `mail` and the databases answer from fixtures where a recording kept them (Verification) |
+| a route's handler | anything; one that reaches no effect is answered on the server's own thread (Routes) |
+
+A call a context cannot hold is refused where it is written, in one
+wording whatever the builtin — `write[] writes a file — a view shows the
+page's state and does nothing else, since it runs whenever the page needs
+it (it may write to the console, and read the clock): call it from a
+handler, or a function a handler calls` — and one the context reaches
+through a function it calls
+is refused naming that function. The other rules, by kind: a loop whose
+body reaches an effect of any kind keeps its order (For Loops); a value
+read by an effect of the kinds `files`, `network`, `db.read`, `input`,
+`process` or `shell` carries the moment it was read (`captured`); a
+rehearsal records a `files.write` or a `shell` with its arguments instead
+of running it, and a `network` request runs through its own fixtures
+(Verification); a function calling a `session` or a `mail` effect acts for
+the session, and is a handler; `crow check`'s reach names what each file
+reaches by kind.
+
+**Design Note: effect kinds, not names.** Before 2026-10-19 each rule was
+a list of builtin names in the compiler, and the lists disagreed with each
+other (one held names that no longer existed; the readers were listed
+twice with different contents). Considered: console output as no effect at
+all (rejected: output has an order, and a loop that logs keeps it — For
+Loops — so both modes decide alike); `later` as a kind of its own
+(rejected: it acts for the session as a notice does, held to the commit);
+every effect held in a handler, a failed argument stopping it (the rule
+until then; rejected: a read with a failed argument answers the failure as
+any call does, and only what acts past the session — its state, a
+database, a mailbox — must never see one); files as one kind (rejected: a
+derivation may read a file and may not write one, and a rehearsal records
+writes and runs reads); a query in a view (the rule until then, which the
+book taught as "query at render time"; rejected: a derivation is the
+place a page reads a table — recomputed when the table is written or a
+tick passes, off the render — and a view is a function of the state it is
+given). Decided: the sixteen kinds above, declared on each builtin's row,
+each context's rule stated once in the compiler's one table; a draw is
+no effect on the world (the generator is the program's own), so it orders
+a loop and makes a function impure to `crow check`, and a view may draw; `assert` and `running` are no effects, but their order shows, so a
+loop over them keeps its order; `running` and `captured` answer by the
+run, so a function `crow check` probes as pure cannot call them.
 
 ## 15. Background Work: later
 

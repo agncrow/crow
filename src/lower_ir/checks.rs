@@ -38,10 +38,6 @@ fn reserved_by(module: impl std::ops::Fn(&str) -> bool, more: &[&'static str]) -
     names
 }
 
-/// Why `mail` is refused in a view or a derivation, directly or through a
-/// function it calls.
-pub(super) const MAIL_IN_A_RENDER: &str = "mail[] sends a message, and a view or a derivation runs whenever the page needs it: send it from a handler, or a function a handler calls";
-
 /// Reserved only in files that import web (use web / use web.*): web's
 /// rows and forms, and its modules' (auth, ws, mail).
 pub(crate) static WEB_RESERVED: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| reserved_by(|m| m == "web" || m.starts_with("web."), &[]));
@@ -1236,12 +1232,6 @@ impl<'a> Lowerer<'a> {
 
     pub(super) fn check_call(&mut self, name: &str, args: &[A], types: &[Ty]) {
         let arg_type = |_: &Self, i: usize| -> Ty { types.get(i).cloned().unwrap_or(Ty::Unknown) };
-        // a message is sent once, and a render or a derivation runs
-        // whenever the page needs it (mail's row is web.mail's, written in
-        // Crow; the rule is the session's, wherever the name resolves)
-        if name == "mail" && !self.declared(name) && matches!(self.at, Where::In(FnKind::View) | Where::Derive) {
-            self.refuse(MAIL_IN_A_RENDER.to_string());
-        }
         // a scheme encode and decode do not know, written in the call, is
         // refused before either mode runs (computed, encode stops on it)
         if matches!(name, "encode" | "decode") && args.len() == 2 {
@@ -2508,11 +2498,11 @@ mod tests {
         // sends nothing, itself or through a function it calls
         let ui = "use web, ui\nuse web.mail\nmailer = smtp['h', 587, 'u', 'p']\nn = 0\n";
         let err = check_source(&format!("{}view v[]\n    mail[mailer, 'a@b.c', 'x', 'y']\n    return p['`n`']\n", ui)).unwrap_err();
-        assert!(err.contains("line 6: mail[] sends a message, and a view or a derivation"), "{}", err);
+        assert!(err.contains("line 6: mail[] sends a message — a view shows the page's state"), "{}", err);
         let err = check_source(&format!("{}derive d\n    r = mail[mailer, 'a@b.c', 'x', 'y']\n    return r.ok\nview v[]\n    return p['`d`']\n", ui)).unwrap_err();
-        assert!(err.contains("line 6: mail[] sends a message"), "{}", err);
+        assert!(err.contains("line 6: mail[] sends a message — a derivation reads"), "{}", err);
         let err = check_source(&format!("{}fn tell[m]\n    mail[m, 'a@b.c', 'x', 'y']\n    return 1\nview v[]\n    k = tell[mailer]\n    return p['`k`']\n", ui)).unwrap_err();
-        assert!(err.contains("in v: calls tell, which sends mail"), "{}", err);
+        assert!(err.contains("line 9: calls tell[], which reaches mail[]: it sends a message — a view shows"), "{}", err);
     }
 
     /// A cell of a column no database described is text only as a guess:

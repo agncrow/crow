@@ -1,10 +1,15 @@
-use ui, db, frame, math
+use ui, frame, math
 
+--- (the rows are the view's own: a view reaches no database, and a
+--- test's facts are its literal defaults)
 view render[]
-    conn = db.connect['sqlite://:memory:']
-    exec[conn, 'CREATE TABLE bars (ts REAL, o REAL, hi REAL, lo REAL, c REAL, vol REAL)']
-    exec[conn, 'INSERT INTO bars VALUES (1753702200, 3.1, 3.4, 3.0, 3.3, 1200), (1753702260, 3.3, 3.5, 3.2, 3.2, 900), (1753702320, 3.2, 3.6, 3.2, 3.6, 2100)']
-    bars = query[conn, 'SELECT ts, o, hi, lo, c, vol FROM bars ORDER BY ts']
+    bars = frame.new[]
+    bars = with[bars, 'ts', [1753702200.0, 1753702260.0, 1753702320.0]]
+    bars = with[bars, 'o', [3.1, 3.3, 3.2]]
+    bars = with[bars, 'hi', [3.4, 3.5, 3.6]]
+    bars = with[bars, 'lo', [3.0, 3.2, 3.2]]
+    bars = with[bars, 'c', [3.3, 3.2, 3.6]]
+    bars = with[bars, 'vol', [1200.0, 900.0, 2100.0]]
     return div[
         chart[bars, candles = ['o', 'hi', 'lo', 'c'], bars_y = 'vol', marker = 1753702260.0, tz = 'America/New_York', height = 200]
     ]
