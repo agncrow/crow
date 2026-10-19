@@ -81,3 +81,4 @@ editors/vscode/node_modules/
 !tests/self/not-called.txt
 !tests/self/agreement-only.txt
 !tests/self/forms.txt
+!tests/freeze/names.txt

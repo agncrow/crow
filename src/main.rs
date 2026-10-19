@@ -50,6 +50,7 @@ mod token;
 mod type_infer;
 mod wireframe;
 mod formatter;
+mod freeze;
 mod modules;
 mod value;
 

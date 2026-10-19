@@ -130,6 +130,24 @@ repository root points assistants here.
     operator is covered by the tables the check reads: a `Kind` names the
     values it is tried with (the match has no wildcard). The findings known
     are listed in `tests/self/known.txt`, which only shrinks.
+24. **The compiler holds the language.** The compiler — the parser, the
+    lowering, inference, the IR and its passes, both backends, and the
+    builtin registry's logic — knows syntax, the types the spec defines
+    and analyses over the program, and names no module and no builtin.
+    What a builtin is (its kinds, effects, options, failure, its in-place
+    and growing forms, its crate) is declared once, in its row; what a
+    module is (its path, source, crate, parent, docs) once, in its
+    manifest; a module written in Crow carries no declaration at all —
+    its functions are its contract. Modules are built with the language,
+    never inside it (Vijay, 2026-10-18), and a Crow file never names a
+    Rust type, function or attribute. The compiler is frozen: a change to
+    it is a language feature, an optimization or a bug fix, named as such
+    in the commit and asked for before it is made, with a strong reason;
+    a feature a module needs is built in the module or, where the
+    language cannot express it, proposed as a general capability any
+    module could use. `src/freeze.rs` counts the module and builtin names
+    the compiler's sources hold against `tests/freeze/names.txt`, which
+    only shrinks. The removal and its phases: docs/extending-crow.md.
 
 ## Workflow
 

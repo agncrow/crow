@@ -16,6 +16,12 @@ them by number. The short version:
   indentation, and shift-key syntax needs a recorded tradeoff.
 - **Every bug fix ships with the test that reproduces it.** No stubs: a
   feature isn't done until every planned backend works and is documented.
+- **The compiler is frozen** (design rule 24, docs/extending-crow.md): it
+  holds the language and names no module and no builtin. A change to it
+  is a language feature, an optimization or a bug fix — ask Vijay before
+  making one, with a strong reason. A feature a module needs is built in
+  the module, in Crow; `src/freeze.rs` fails when a compiler file gains a
+  module or builtin name (`tests/freeze/names.txt` only shrinks).
 
 ## Before calling anything done
 
