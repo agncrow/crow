@@ -1,0 +1,89 @@
+--- The shape of the tensor a builtin answers is declared on its row
+--- (table::Shape; docs/extending-crow.md, section 9), from a fixed
+--- vocabulary, and read where the call is typed: the rank every answer
+--- has, and the sizes the program states. One call of each pattern,
+--- walked or indexed as its rank says, in both modes.
+use math
+
+--- sizes written: a dimension per size
+z = zeros[2, 3]
+for row in z
+    log[len[row]]
+--- each dimension declared: a square, a vector of a literal length
+sq = eye[2]
+log[sq[1][1]]
+h = hamming[4]
+log[round[h[0] * 100.0]]
+lin = linspace[0.0, 1.0, 3]
+log[lin[2]]
+oh = onehot[[0, 1], 2]
+log[oh[1][1]]
+tk = topk[linspace[0.0, 1.0, 5], 2]
+log[tk[0]]
+--- an element-wise map keeps its argument's shape
+s = sqrt[zeros[2, 2] + 4.0]
+for r in s
+    log[r[0]]
+--- broadcasting
+w = where[zeros[2, 2] gt -1.0, ones[2, 2], zeros[2, 2]]
+log[w[0][1]]
+md = mod[ones[2, 2] * 3.0, ones[2, 2] * 2.0]
+log[md[0][0]]
+--- a reduction drops its axis
+m = ones[2, 3]
+cs = sum[m, 0]
+log[len[cs]]
+log[cs[0]]
+--- one row fewer, a slice of rows, one row more
+p = pop[ones[3, 2]]
+log[len[p]]
+sl = slice[ones[3, 2], 0, 2]
+for r in sl
+    log[r[1]]
+pr = push[zeros[1, 2], ones[2]]
+log[pr[1][1]]
+--- a join along an axis
+c = concat[zeros[1, 2], ones[1, 2]]
+log[c[1][0]]
+c2 = concat[zeros[1, 2], ones[1, 2], 1]
+log[c2[0][2]]
+--- a vector of all the numbers, reshaped back
+f = flatten[ones[2, 2]]
+log[f[3]]
+rs = reshape[flatten[ones[2, 3]], 3, 2]
+log[len[rs]]
+log[rs[2][1]]
+--- the last two axes swapped
+t = transpose[zeros[2, 3]]
+log[len[t[0]]]
+--- rows stacked, and restacked along an axis
+rows = push[push[[], ones[2]], zeros[2]]
+st = stack[rows]
+log[st[1][0]]
+st2 = stack[rows, 1]
+for r in st2
+    log[len[r]]
+--- a diagonal: a vector's square, a matrix's vector
+d = diag[ones[3]]
+log[d[1][1]]
+dv = diag[eye[2]]
+log[dv[0]]
+--- a system's solution is shaped like its right-hand side
+x = solve[eye[2], ones[2]]
+log[x[1]]
+x2 = lstsq[eye[2], ones[2]]
+log[x2[0]]
+--- the parts of a transform, and the pieces of a decomposition
+parts = fft[linspace[0.0, 1.0, 4]]
+re = real[parts]
+log[len[re]]
+u = svd[eye[2]]
+log[len[u[1]]]
+log[u[0][0][0]]
+--- a draw's sizes
+n = normal[0.0, 1.0, 2, 2]
+log[len[n[0]]]
+--- numbers as a tensor
+xs = push[push[[], 1.5], 2.5]
+v = tensor[xs]
+log[v[1]]

@@ -1,0 +1,6 @@
+--- the shapes two rows declare — a square of a literal, a dimension per size — are read where the product is written, and refused before the program runs
+use math
+
+a = eye[3]
+b = zeros[2, 2]
+log[a * b]

@@ -16,8 +16,15 @@ fn bare(e: &Expr) -> &Expr {
     }
 }
 
+/// Whether a value is a connection opened here: the effect of the form
+/// that opens one (`Prop::Connects`), by its row, or by the handle it
+/// answers where the form carries no row.
 fn is_connect(e: &Expr) -> bool {
-    matches!(bare(e), Expr::Effect { name, .. } if name == "db.connect" || name == "connect")
+    match bare(e) {
+        Expr::Effect { row: Some(r), .. } => r.props.contains(&crate::table::Prop::Connects),
+        Expr::Effect { ty: Ty::Handle(h), .. } => h.name == crate::table::DB.name,
+        _ => false,
+    }
 }
 
 /// A function body's statements and the name it goes by.

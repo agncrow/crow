@@ -98,7 +98,7 @@ impl Scope {
             Some(t) => self.tables.get(&t.to_lowercase())?.iter().filter(|(n, _)| *n == name).map(|(_, t)| t).collect(),
             None => self.all.iter().filter(|(n, _)| *n == name).map(|(_, t)| t).collect(),
         };
-        let kinds: Vec<Option<String>> = declared.iter().map(|t| crow_db::sqlite::kind_of_decl(t)).collect();
+        let kinds: Vec<Option<String>> = declared.iter().map(|t| crate::sqlite::kind_of_decl(t)).collect();
         let first = kinds.first()?.clone();
         if kinds.iter().all(|k| *k == first) { first } else { None }
     }
@@ -137,7 +137,7 @@ impl Scope {
                     _ => None,
                 }
             }
-            E::Cast { data_type, .. } => crow_db::sqlite::kind_of_decl(&data_type.to_string()),
+            E::Cast { data_type, .. } => crate::sqlite::kind_of_decl(&data_type.to_string()),
             E::Case { conditions, else_result, .. } => {
                 let mut k = None;
                 for c in conditions {

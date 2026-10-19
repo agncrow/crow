@@ -31,6 +31,14 @@ pub mod driven;
 pub mod schema;
 /// What a recording kept, and the replay that answers from it.
 pub mod fixtures;
+/// What a database says a statement answers: `query`'s provider (the
+/// compiler's; a generated program builds without SQLite and needs none).
+#[cfg(feature = "sqlite")]
+pub mod describe;
+/// The kinds SQLite gives a SELECT's computed columns, and which columns
+/// a statement can hold NULL in, read from the statement itself.
+#[cfg(feature = "sqlite")]
+pub mod sql_types;
 
 /// Operations available inside a transaction — exec and query only.
 /// No Send + Sync requirement (transaction handles are single-threaded).

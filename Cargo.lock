@@ -764,6 +764,7 @@ dependencies = [
  "crow_runtime",
  "rusqlite",
  "serde_json",
+ "sqlparser",
 ]
 
 [[package]]

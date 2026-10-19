@@ -607,12 +607,16 @@ pub(crate) fn meta_decided(t: &Ty) -> bool {
 
 /// Whether reading an expression only reads: a constant, a local, a fact, a
 /// derivation, a function, or a record's field of one.
-/// The pieces' shapes where `e` is a decomposition's call (`svd[m]`).
+/// The pieces' shapes where `e` is a decomposition's call (`svd[m]`), as
+/// its row declares them.
 fn pieces_of_call(e: &Expr) -> Option<Vec<Option<Dims>>> {
-    let Expr::Call { args, .. } = e else { return None };
-    let name = crate::ir::call_name(e)?;
-    let dims = args.first().and_then(|a| a.ty().tensor_dims().cloned());
-    shapes::piece_dims(&name, dims.as_ref())
+    let Expr::Call { target, args, .. } = e else { return None };
+    let row = match target {
+        Target::Row(row) => Some(*row),
+        Target::Runtime(path) => crate::table::row(path),
+        _ => None,
+    };
+    row.and_then(|r| shapes::declared_pieces(r, args))
 }
 
 fn gradient_of_call(e: &Expr) -> Option<String> {
@@ -5004,12 +5008,6 @@ impl<'a> Lowerer<'a> {
         let ty = self.call_type(callee, args, &arg_types, &full_types, None);
         let ty = self.frame_typed(callee, args, &arg_types, &lowered, ty);
         let ty = self.column_typed(callee, args, &arg_types, &lowered, ty);
-        // a builtin's tensor has the shape the program states for it, and
-        // the rank every builtin's answer has
-        let ty = match shapes::call_dims(&name, &lowered).or_else(|| shapes::row_dims(&name, &lowered)) {
-            Some(dims) if !self.ctx.functions.contains_key(&name) => shapes::shaped(ty, Some(dims)),
-            _ => ty,
-        };
         if name == "chart" && matches!(module.as_deref(), None | Some("chart")) {
             self.check_chart_columns(&lowered);
         }
@@ -5027,7 +5025,8 @@ impl<'a> Lowerer<'a> {
                 }
                 let lowered = self.row_arguments(&m, &name, lowered);
                 let row = self.builtin_row(Some(&m), &name, &lowered);
-            self.retype_unknown_lists(row, &lowered);
+                self.retype_unknown_lists(row, &lowered);
+                let ty = Self::shaped_by_row(Some(&m), row, &lowered, ty, &name);
                 let lowered = Self::crow_call_args(row, lowered);
                 return Ok(Expr::Effect { name: format!("{}.{}", m, name), row, args: lowered, ty, answered: true, propagates });
             }
@@ -5035,6 +5034,7 @@ impl<'a> Lowerer<'a> {
             let row = self.builtin_row(Some(&m), &name, &lowered);
             self.retype_unknown_lists(row, &lowered);
             let ty = Self::typed_by_row(ty, row);
+            let ty = Self::shaped_by_row(Some(&m), row, &lowered, ty, &name);
             let lowered = Self::crow_call_args(row, lowered);
             let target = match row {
                 Some(row) if row.is_crow() => self.crow_target(row),
@@ -5169,8 +5169,9 @@ impl<'a> Lowerer<'a> {
                 None => self.core_row_arguments(&name, lowered),
             };
             let row = self.builtin_row(None, &name, &lowered);
-        self.retype_unknown_lists(row, &lowered);
+            self.retype_unknown_lists(row, &lowered);
             let lowered = Self::concrete_empties(&name, row, lowered);
+            let ty = Self::shaped_by_row(None, row, &lowered, ty, &name);
             let lowered = Self::crow_call_args(row, lowered);
             return Ok(Expr::Effect { name, row, args: lowered, ty, answered: true, propagates });
         }
@@ -5246,6 +5247,7 @@ impl<'a> Lowerer<'a> {
                 Some(row) => Self::widen_items(row, lowered, ty),
                 None => (lowered, ty),
             };
+            let ty = Self::shaped_by_row(None, row, &lowered, ty, &name);
             let target = match row {
                 Some(row) => {
                     self.check_item(row, &lowered);
@@ -5287,6 +5289,7 @@ impl<'a> Lowerer<'a> {
             Some(row) => Self::widen_items(row, lowered, ty),
             None => (lowered, ty),
         };
+        let ty = Self::shaped_by_row(None, row, &lowered, ty, &name);
         let lowered = Self::crow_call_args(row, lowered);
         let target = match row {
             Some(row) if row.is_crow() => self.crow_target(row),
@@ -5305,6 +5308,20 @@ impl<'a> Lowerer<'a> {
     /// of the name answering a column or a frame, `[]` saying neither — had
     /// been typed as nothing known, and the compiled program had not built
     /// (crow check --self).
+    /// A builtin's tensor has the shape its row declares (`table::Shape`),
+    /// read from what the program states in the call: the rank every
+    /// answer has, and the sizes that follow.
+    fn shaped_by_row(module: Option<&str>, row: Option<&'static crate::table::Row>, args: &[Expr], ty: Ty, name: &str) -> Ty {
+        let dims = match row {
+            Some(r) => shapes::declared(r, args),
+            None => shapes::agreed(module, name, args),
+        };
+        match dims {
+            Some(d) => shapes::shaped(ty, Some(d)),
+            None => ty,
+        }
+    }
+
     fn typed_by_row(ty: Ty, row: Option<&'static crate::table::Row>) -> Ty {
         match row {
             Some(r) if matches!(ty.payload(), Ty::Unknown) && !r.ret.generic() && !matches!(r.ret.ty(), Ty::Unknown) => {

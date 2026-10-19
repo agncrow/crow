@@ -439,6 +439,89 @@ pub enum Prop {
     /// Its name is not reserved by its module's import: a frame's `select`
     /// shares the control's.
     Unreserved,
+    /// Opens a connection: the literal URL it is given names the database
+    /// a provider asks about the program's statements, and the tables the
+    /// program declares on the connection are declared there.
+    Connects,
+}
+
+/// The shape of the tensor a row answers, declared on the row from a fixed
+/// vocabulary and read where the call is typed (lower_ir/shapes.rs): the
+/// rank every answer has (spec, Arrays, Design Note "rank is in the type")
+/// and the sizes that follow from what the program states — a literal
+/// size, an argument's own shape. A dimension the program computes stays
+/// open. Each had been an arm of a match over the builtins' names in the
+/// compiler (design rule 24).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shape {
+    /// Not stated: the rank shows as the program runs (and a row that
+    /// answers no tensor says nothing).
+    Open,
+    /// Argument i's own shape: an element-wise map, a sort, a system's
+    /// solution shaped like its right-hand side.
+    Same(usize),
+    /// The element-wise shape of these arguments, by broadcasting.
+    Broadcast(&'static [usize]),
+    /// A dimension per size argument from position i on, the last `k`
+    /// arguments being no size (`full`'s value): `zeros[2, 3]`.
+    Sizes(usize, usize),
+    /// Each dimension declared (`Dim`): a square of a literal (`eye[n]`),
+    /// a row per target and a column per class (`onehot`), a vector or a
+    /// matrix of unknown sizes.
+    Dims(&'static [Dim]),
+    /// Argument i's shape without the axis argument j names: a reduction
+    /// along an axis.
+    Reduce(usize, usize),
+    /// Argument i's shape, its first dimension this instead: one row more
+    /// or fewer (`push`, `pop`, `slice`: open), a least-squares solution
+    /// with the matrix's columns as its rows.
+    Like(usize, Dim),
+    /// Argument i's shape with the dimension open that the axis argument
+    /// j names, the first where no argument does: a join along an axis.
+    Along(usize, Option<usize>),
+    /// A vector of all argument i's numbers.
+    Flat(usize),
+    /// Argument i's last two axes swapped.
+    Transposed(usize),
+    /// One dimension more than argument i's items have (a list of rows
+    /// stacked), a tensor's own restacked.
+    Stacked(usize),
+    /// `Stacked`, every size open: stacked along a chosen axis.
+    Restacked(usize),
+    /// A vector's square matrix, a matrix's diagonal vector.
+    Diag(usize),
+    /// The shape of argument i's items, a list of tensors shaped alike (a
+    /// complex tensor's parts).
+    Items(usize),
+    /// The pieces a decomposition answers, by position, each its dimensions
+    /// (`svd`'s U, singular values and Vt; `eigen`'s values and vectors).
+    Pieces(&'static [&'static [Dim]]),
+}
+
+/// How a row's frame gets its columns before the program runs: a function
+/// of the row's runtime crate (`query`'s in crow_db), handed the literal
+/// URL the connection argument was opened with, the literal statement and
+/// the `CREATE TABLE`s the program declares on that connection, answering
+/// each column's name and kind as the runtime writes it (`int`, `float?`,
+/// …; `cell_type_of_kind` reads one into a type). A statement that is not
+/// a literal gives an open frame.
+pub struct Provider {
+    /// The argument that is the connection.
+    pub connection: usize,
+    /// The argument that is the statement.
+    pub statement: usize,
+    pub columns: fn(&str, &str, &[String]) -> Result<Vec<(String, String)>, String>,
+}
+
+/// One dimension of a declared shape.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Dim {
+    /// Not stated.
+    Open,
+    /// The literal int written at argument i.
+    Size(usize),
+    /// Argument i's dimension j.
+    Of(usize, usize),
 }
 
 pub struct Row {
@@ -468,6 +551,14 @@ pub struct Row {
     pub big: Option<&'static str>,
     /// The range of the int it answers (`IntRange`).
     pub range: IntRange,
+    /// The shape of the tensor it answers (`Shape`).
+    pub shape: Shape,
+    /// The columns of the frame it answers, where its kernel fixes them
+    /// (doc's chapters, chart's macd); empty where they follow from the
+    /// arguments or a provider.
+    pub columns: &'static [(&'static str, Kind)],
+    /// Who says the columns of the frame it answers (`Provider`).
+    pub provider: Option<&'static Provider>,
     /// The crate feature its call needs built in, by crate: a response as
     /// Arrow, the GPU, the Parquet kernels.
     pub feature: Option<(&'static str, &'static str)>,
@@ -1738,7 +1829,7 @@ macro_rules! crow {
     ($id:literal, $module:literal, $name:literal, ($($k:ident),*) -> $r:ident, $($fails:tt)+) => {
         Row {
             id: $id, name: $name, module: $module, path: IN_CROW,
-            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($($fails)+), options: &[], written: "", props: &[], taken: None, big: None, range: IntRange::I64, feature: None,
+            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($($fails)+), options: &[], written: "", props: &[], taken: None, big: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None,
             call: |_args: &[CrowValue], _trace: &str| Err(written_in_crow($name)),
             take: |_args: Vec<CrowValue>, _trace: &str| Err(written_in_crow($name)),
         }
@@ -1753,7 +1844,7 @@ macro_rules! maprow {
     ($id:literal, $name:literal, $f:path, ($($k:ident),*) -> $r:ident, $fails:tt, $call:path, $take:path) => {
         Row {
             id: $id, name: $name, module: "", path: stringify!($f),
-            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($fails), options: &[], written: "", props: &[], taken: None, big: None, range: IntRange::I64, feature: None,
+            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($fails), options: &[], written: "", props: &[], taken: None, big: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None,
             call: $call,
             take: $take,
         }
@@ -1764,7 +1855,7 @@ macro_rules! row {
     ($id:literal, $module:literal, $name:literal, $f:path, ($($k:ident),*) -> $r:ident, $($fails:tt)+) => {
         Row {
             id: $id, name: $name, module: $module, path: stringify!($f),
-            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($($fails)+), options: &[], written: "", props: &[], taken: None, big: None, range: IntRange::I64, feature: None,
+            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($($fails)+), options: &[], written: "", props: &[], taken: None, big: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None,
             call: |args: &[CrowValue], trace: &str| {
                 let _ = trace;
                 let groups = groups_in_place(&[$(Kind::$k),*], args, $name)?;
@@ -1842,11 +1933,11 @@ pub static ROWS: &[Row] = &[
     maprow!("core.__map_of", "__map_of", crow_runtime::core::map_of, (Keys, Seq) -> MapOf, stops, maps::map_of, maps::map_of_taken),
     Row { taken: Some("crow_runtime::core::slice_taken"), take: lists::slice_taken, ..row!("core.slice", "", "slice", crow_runtime::core::slice, (Seq, Int, Int) -> List, never) },
     row!("core.slice_str", "", "slice", crow_runtime::core::slice_str, (Str, Int, Int) -> Str, never),
-    row!("core.slice_tensor", "", "slice", crow_runtime::core::slice_tensor, (Tensor, Int, Int) -> Tensor, never),
+    Row { shape: Shape::Like(0, Dim::Open), ..row!("core.slice_tensor", "", "slice", crow_runtime::core::slice_tensor, (Tensor, Int, Int) -> Tensor, never) },
     Row { props: &[Prop::InPlace], ..row!("core.push", "", "push", crow_runtime::core::push, (List, Item) -> List, never) },
-    Row { props: &[Prop::InPlace], ..row!("core.push_row", "", "push", crow_runtime::core::push_row, (Tensor, Tensor) -> Tensor, stops) },
+    Row { shape: Shape::Like(0, Dim::Open), props: &[Prop::InPlace], ..row!("core.push_row", "", "push", crow_runtime::core::push_row, (Tensor, Tensor) -> Tensor, stops) },
     // (given the tensor — `x = push[move x, n]` — it grows where it lies)
-    Row { taken: Some("crow_runtime::core::push_number_taken"), props: &[Prop::InPlace], take: tensors::push_number_taken, ..row!("core.push_number", "", "push", crow_runtime::core::push_number, (Tensor, Float) -> Tensor, stops) },
+    Row { shape: Shape::Dims(&[Dim::Open]), taken: Some("crow_runtime::core::push_number_taken"), props: &[Prop::InPlace], take: tensors::push_number_taken, ..row!("core.push_number", "", "push", crow_runtime::core::push_number, (Tensor, Float) -> Tensor, stops) },
     // `m[i][j] = x`, as the lowering writes it (`m = __set_at[m, [i, j], x]`):
     // a number of a tensor at one position per axis, written in place
     Row { taken: Some("crow_runtime::core::set_at_taken"), props: &[Prop::InPlace], take: tensors::set_at_taken, ..row!("core.__set_at", "", "__set_at", crow_runtime::core::set_at, (Tensor, Ints, Float) -> Tensor, stops) },
@@ -1854,21 +1945,21 @@ pub static ROWS: &[Row] = &[
     // matrix's row — replaced by one of its own shape, in place
     Row { taken: Some("crow_runtime::core::set_part_taken"), props: &[Prop::InPlace], take: tensors::set_part_taken, ..row!("core.__set_part", "", "__set_part", crow_runtime::core::set_part, (Tensor, Ints, Tensor) -> Tensor, stops) },
     Row { props: &[Prop::InPlace], ..row!("core.pop", "", "pop", crow_runtime::core::pop, (List) -> List, never) },
-    Row { props: &[Prop::InPlace], ..row!("core.pop_tensor", "", "pop", crow_runtime::core::pop_tensor, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Like(0, Dim::Open), props: &[Prop::InPlace], ..row!("core.pop_tensor", "", "pop", crow_runtime::core::pop_tensor, (Tensor) -> Tensor, never) },
     // numbers ascending with NaN last, text by its characters; a list of
     // anything else has no order (a record's was the interpreter's
     // unchanged list, and the compiled program's missing Ord)
     Row { big: Some("core.__sort_big"), props: &[Prop::InPlace], ..row!("core.sort_ints", "", "sort", crow_runtime::core::sort_ints, (Ints) -> Ints, never) },
     Row { props: &[Prop::InPlace], ..row!("core.sort_floats", "", "sort", crow_runtime::core::sort_floats, (Floats) -> Floats, never) },
     Row { props: &[Prop::InPlace], ..row!("core.sort_strs", "", "sort", crow_runtime::core::sort_strs, (Texts) -> Texts, never) },
-    Row { props: &[Prop::InPlace], ..row!("core.sort_tensor", "", "sort", crow_runtime::core::sort_tensor, (Tensor) -> Tensor, stops) },
+    Row { shape: Shape::Same(0), props: &[Prop::InPlace], ..row!("core.sort_tensor", "", "sort", crow_runtime::core::sort_tensor, (Tensor) -> Tensor, stops) },
     Row { props: &[Prop::InPlace], ..row!("core.reverse", "", "reverse", crow_runtime::core::reverse, (List) -> List, never) },
     Row { taken: Some("crow_runtime::core::reverse_text_taken"), props: &[Prop::InPlace], take: texts::reverse_taken, ..row!("core.reverse_text", "", "reverse", crow_runtime::core::reverse_text, (Str) -> Str, never) },
-    Row { props: &[Prop::InPlace], ..row!("core.reverse_tensor", "", "reverse", crow_runtime::core::reverse_tensor, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Same(0), props: &[Prop::InPlace], ..row!("core.reverse_tensor", "", "reverse", crow_runtime::core::reverse_tensor, (Tensor) -> Tensor, never) },
     Row { props: &[Prop::InPlace], ..row!("core.concat", "", "concat", crow_runtime::core::concat, (List, Seq) -> List, never) },
     Row { props: &[Prop::InPlace], ..row!("core.concat_text", "", "concat", crow_runtime::core::concat_text, (Str, Str) -> Str, never) },
-    Row { props: &[Prop::InPlace], ..row!("core.concat_tensors", "", "concat", crow_runtime::core::concat_tensors, (Tensor, Tensor) -> Tensor, stops) },
-    Row { props: &[Prop::InPlace], options: &[("axis", Preset::Asked)], ..row!("core.concat_axis", "", "concat", crow_runtime::core::concat_axis, (Tensor, Tensor, Int) -> Tensor, stops) },
+    Row { shape: Shape::Along(0, None), props: &[Prop::InPlace], ..row!("core.concat_tensors", "", "concat", crow_runtime::core::concat_tensors, (Tensor, Tensor) -> Tensor, stops) },
+    Row { shape: Shape::Along(0, Some(2)), props: &[Prop::InPlace], options: &[("axis", Preset::Asked)], ..row!("core.concat_axis", "", "concat", crow_runtime::core::concat_axis, (Tensor, Tensor, Int) -> Tensor, stops) },
     // ints only (compiled, a float was cut to an int where the interpreter
     // refused it)
     Row { props: &[Prop::Constructs, Prop::Range], ..row!("core.range_to", "", "range", crow_runtime::core::range_to, (Whole) -> Ints, stops) },
@@ -2086,66 +2177,66 @@ pub static ROWS: &[Row] = &[
     // math: the constructors and the distributions (a size, a parameter, a
     // rank the interpreter refused and the compiled program cast or
     // panicked on is one check)
-    Row { props: &[Prop::Constructs], ..row!("math.zeros", "math", "zeros", crow_runtime::math::zeros, (Sizes) -> Tensor, stops) },
-    Row { props: &[Prop::Constructs], ..row!("math.ones", "math", "ones", crow_runtime::math::ones, (Sizes) -> Tensor, stops) },
-    Row { props: &[Prop::Constructs, Prop::Does(crate::effects::Effect::Random)], ..crow!("math.randn", "math", "randn", (Sizes) -> Tensor, stops) },
-    Row { props: &[Prop::Constructs], ..row!("math.full", "math", "full", crow_runtime::math::full, (Sizes, Float) -> Tensor, stops) },
-    Row { props: &[Prop::Constructs], ..row!("math.eye", "math", "eye", crow_runtime::math::eye, (Int) -> Tensor, stops) },
-    Row { props: &[Prop::Differentiable], ..row!("math.onehot", "math", "onehot", crow_runtime::math::onehot, (Tensor, Int) -> Tensor, stops) },
-    Row { props: &[Prop::Constructs], ..row!("math.linspace", "math", "linspace", crow_runtime::math::linspace, (Float, Float, Int) -> Tensor, stops) },
-    row!("math.arange", "math", "arange", crow_runtime::math::arange, (Float, Float, Float) -> Tensor, stops),
-    row!("math.diag", "math", "diag", crow_runtime::math::diag, (Tensor) -> Tensor, stops),
-    Row { props: &[Prop::Does(crate::effects::Effect::Random)], ..crow!("math.normal", "math", "normal", (Float, Float, Sizes) -> Tensor, stops) },
-    Row { props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.uniform", "math", "uniform", crow_runtime::math::uniform, (Float, Float, Sizes) -> Tensor, stops) },
-    Row { props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.poisson", "math", "poisson", crow_runtime::math::poisson, (Float, Sizes) -> Tensor, stops) },
-    Row { props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.bernoulli", "math", "bernoulli", crow_runtime::math::bernoulli, (Float, Sizes) -> Tensor, stops) },
-    Row { props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.gamma_dist", "math", "gamma_dist", crow_runtime::math::gamma_dist, (Float, Float, Sizes) -> Tensor, stops) },
-    Row { props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.beta_dist", "math", "beta_dist", crow_runtime::math::beta_dist, (Float, Float, Sizes) -> Tensor, stops) },
-    Row { props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.exponential", "math", "exponential", crow_runtime::math::exponential, (Float, Sizes) -> Tensor, stops) },
+    Row { shape: Shape::Sizes(0, 0), props: &[Prop::Constructs], ..row!("math.zeros", "math", "zeros", crow_runtime::math::zeros, (Sizes) -> Tensor, stops) },
+    Row { shape: Shape::Sizes(0, 0), props: &[Prop::Constructs], ..row!("math.ones", "math", "ones", crow_runtime::math::ones, (Sizes) -> Tensor, stops) },
+    Row { shape: Shape::Sizes(0, 0), props: &[Prop::Constructs, Prop::Does(crate::effects::Effect::Random)], ..crow!("math.randn", "math", "randn", (Sizes) -> Tensor, stops) },
+    Row { shape: Shape::Sizes(0, 1), props: &[Prop::Constructs], ..row!("math.full", "math", "full", crow_runtime::math::full, (Sizes, Float) -> Tensor, stops) },
+    Row { shape: Shape::Dims(&[Dim::Size(0), Dim::Size(0)]), props: &[Prop::Constructs], ..row!("math.eye", "math", "eye", crow_runtime::math::eye, (Int) -> Tensor, stops) },
+    Row { shape: Shape::Dims(&[Dim::Open, Dim::Size(1)]), props: &[Prop::Differentiable], ..row!("math.onehot", "math", "onehot", crow_runtime::math::onehot, (Tensor, Int) -> Tensor, stops) },
+    Row { shape: Shape::Dims(&[Dim::Size(2)]), props: &[Prop::Constructs], ..row!("math.linspace", "math", "linspace", crow_runtime::math::linspace, (Float, Float, Int) -> Tensor, stops) },
+    Row { shape: Shape::Dims(&[Dim::Open]), ..row!("math.arange", "math", "arange", crow_runtime::math::arange, (Float, Float, Float) -> Tensor, stops) },
+    Row { shape: Shape::Diag(0), ..row!("math.diag", "math", "diag", crow_runtime::math::diag, (Tensor) -> Tensor, stops) },
+    Row { shape: Shape::Sizes(2, 0), props: &[Prop::Does(crate::effects::Effect::Random)], ..crow!("math.normal", "math", "normal", (Float, Float, Sizes) -> Tensor, stops) },
+    Row { shape: Shape::Sizes(2, 0), props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.uniform", "math", "uniform", crow_runtime::math::uniform, (Float, Float, Sizes) -> Tensor, stops) },
+    Row { shape: Shape::Sizes(1, 0), props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.poisson", "math", "poisson", crow_runtime::math::poisson, (Float, Sizes) -> Tensor, stops) },
+    Row { shape: Shape::Sizes(1, 0), props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.bernoulli", "math", "bernoulli", crow_runtime::math::bernoulli, (Float, Sizes) -> Tensor, stops) },
+    Row { shape: Shape::Sizes(2, 0), props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.gamma_dist", "math", "gamma_dist", crow_runtime::math::gamma_dist, (Float, Float, Sizes) -> Tensor, stops) },
+    Row { shape: Shape::Sizes(2, 0), props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.beta_dist", "math", "beta_dist", crow_runtime::math::beta_dist, (Float, Float, Sizes) -> Tensor, stops) },
+    Row { shape: Shape::Sizes(1, 0), props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.exponential", "math", "exponential", crow_runtime::math::exponential, (Float, Sizes) -> Tensor, stops) },
     // math: linear algebra (a vector, a rank-3 tensor or a rectangle where a
     // square is needed, a matrix that is not positive definite: the reason,
     // where a kernel panicked)
     row!("math.det", "math", "det", crow_runtime::math::det, (Tensor) -> Float, stops),
-    row!("math.inv", "math", "inv", crow_runtime::math::inv, (Tensor) -> Tensor, stops),
-    row!("math.svd", "math", "svd", crow_runtime::math::svd, (Tensor) -> Tensors, stops),
-    row!("math.qr", "math", "qr", crow_runtime::math::qr, (Tensor) -> Tensors, stops),
-    row!("math.cholesky", "math", "cholesky", crow_runtime::math::cholesky, (Tensor) -> Tensor, stops),
-    row!("math.eigen", "math", "eigen", crow_runtime::math::eigen, (Tensor) -> Tensors, stops),
+    Row { shape: Shape::Same(0), ..row!("math.inv", "math", "inv", crow_runtime::math::inv, (Tensor) -> Tensor, stops) },
+    Row { shape: Shape::Pieces(&[&[Dim::Of(0, 0), Dim::Open], &[Dim::Open], &[Dim::Open, Dim::Of(0, 1)]]), ..row!("math.svd", "math", "svd", crow_runtime::math::svd, (Tensor) -> Tensors, stops) },
+    Row { shape: Shape::Dims(&[Dim::Open, Dim::Open]), ..row!("math.qr", "math", "qr", crow_runtime::math::qr, (Tensor) -> Tensors, stops) },
+    Row { shape: Shape::Same(0), ..row!("math.cholesky", "math", "cholesky", crow_runtime::math::cholesky, (Tensor) -> Tensor, stops) },
+    Row { shape: Shape::Pieces(&[&[Dim::Of(0, 0)], &[Dim::Of(0, 0), Dim::Of(0, 0)]]), ..row!("math.eigen", "math", "eigen", crow_runtime::math::eigen, (Tensor) -> Tensors, stops) },
     row!("math.norm", "math", "norm", crow_runtime::math::norm, (Tensor) -> Float, never),
     row!("math.norm_p", "math", "norm", crow_runtime::math::norm_p, (Tensor, Float) -> Float, never),
     row!("math.dot", "math", "dot", crow_runtime::math::dot, (Tensor, Tensor) -> Float, stops),
-    row!("math.pinv", "math", "pinv", crow_runtime::math::pinv, (Tensor) -> Tensor, stops),
-    row!("math.lstsq", "math", "lstsq", crow_runtime::math::lstsq, (Tensor, Tensor) -> Tensor, stops),
-    row!("math.triu", "math", "triu", crow_runtime::math::triu, (Tensor) -> Tensor, stops),
-    row!("math.tril", "math", "tril", crow_runtime::math::tril, (Tensor) -> Tensor, stops),
+    Row { shape: Shape::Same(0), ..row!("math.pinv", "math", "pinv", crow_runtime::math::pinv, (Tensor) -> Tensor, stops) },
+    Row { shape: Shape::Like(1, Dim::Of(0, 1)), ..row!("math.lstsq", "math", "lstsq", crow_runtime::math::lstsq, (Tensor, Tensor) -> Tensor, stops) },
+    Row { shape: Shape::Same(0), ..row!("math.triu", "math", "triu", crow_runtime::math::triu, (Tensor) -> Tensor, stops) },
+    Row { shape: Shape::Same(0), ..row!("math.tril", "math", "tril", crow_runtime::math::tril, (Tensor) -> Tensor, stops) },
     row!("math.rank", "math", "rank", crow_runtime::math::rank, (Tensor) -> Int, stops),
     row!("math.cond", "math", "cond", crow_runtime::math::cond, (Tensor) -> Float, stops),
     // math: reductions (an axis out of range is the reason), sorting and
     // selection, shapes (a reshape that does not fill, a transpose of a
     // vector: the reason, where a kernel asserted)
     Row { props: &[Prop::Differentiable], ..row!("math.sum", "math", "sum", crow_runtime::math::sum, (Tensor) -> Float, never) },
-    Row { props: &[Prop::Differentiable], options: &[("axis", Preset::Asked)], ..row!("math.sum_axis", "math", "sum", crow_runtime::math::sum_axis, (Tensor, Int) -> Tensor, stops) },
+    Row { shape: Shape::Reduce(0, 1), props: &[Prop::Differentiable], options: &[("axis", Preset::Asked)], ..row!("math.sum_axis", "math", "sum", crow_runtime::math::sum_axis, (Tensor, Int) -> Tensor, stops) },
     Row { props: &[Prop::Differentiable], ..row!("math.mean", "math", "mean", crow_runtime::math::mean, (Tensor) -> Float, never) },
-    Row { props: &[Prop::Differentiable], options: &[("axis", Preset::Asked)], ..row!("math.mean_axis", "math", "mean", crow_runtime::math::mean_axis, (Tensor, Int) -> Tensor, stops) },
+    Row { shape: Shape::Reduce(0, 1), props: &[Prop::Differentiable], options: &[("axis", Preset::Asked)], ..row!("math.mean_axis", "math", "mean", crow_runtime::math::mean_axis, (Tensor, Int) -> Tensor, stops) },
     Row { props: &[Prop::Differentiable], ..row!("math.min", "math", "min", crow_runtime::math::min, (Tensor) -> Float, stops) },
-    Row { props: &[Prop::Differentiable], options: &[("axis", Preset::Asked)], ..row!("math.min_axis", "math", "min", crow_runtime::math::min_axis, (Tensor, Int) -> Tensor, stops) },
+    Row { shape: Shape::Reduce(0, 1), props: &[Prop::Differentiable], options: &[("axis", Preset::Asked)], ..row!("math.min_axis", "math", "min", crow_runtime::math::min_axis, (Tensor, Int) -> Tensor, stops) },
     Row { props: &[Prop::Differentiable], ..row!("math.max", "math", "max", crow_runtime::math::max, (Tensor) -> Float, stops) },
-    Row { props: &[Prop::Differentiable], options: &[("axis", Preset::Asked)], ..row!("math.max_axis", "math", "max", crow_runtime::math::max_axis, (Tensor, Int) -> Tensor, stops) },
+    Row { shape: Shape::Reduce(0, 1), props: &[Prop::Differentiable], options: &[("axis", Preset::Asked)], ..row!("math.max_axis", "math", "max", crow_runtime::math::max_axis, (Tensor, Int) -> Tensor, stops) },
     row!("math.prod", "math", "prod", crow_runtime::math::prod, (Tensor) -> Float, never),
-    Row { options: &[("axis", Preset::Asked)], ..row!("math.prod_axis", "math", "prod", crow_runtime::math::prod_axis, (Tensor, Int) -> Tensor, stops) },
+    Row { shape: Shape::Reduce(0, 1), options: &[("axis", Preset::Asked)], ..row!("math.prod_axis", "math", "prod", crow_runtime::math::prod_axis, (Tensor, Int) -> Tensor, stops) },
     row!("math.argmax", "math", "argmax", crow_runtime::math::argmax, (Tensor) -> Int, never),
     row!("math.argmin", "math", "argmin", crow_runtime::math::argmin, (Tensor) -> Int, never),
-    row!("math.cumsum", "math", "cumsum", crow_runtime::math::cumsum, (Tensor) -> Tensor, never),
-    row!("math.cumprod", "math", "cumprod", crow_runtime::math::cumprod, (Tensor) -> Tensor, never),
+    Row { shape: Shape::Same(0), ..row!("math.cumsum", "math", "cumsum", crow_runtime::math::cumsum, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Same(0), ..row!("math.cumprod", "math", "cumprod", crow_runtime::math::cumprod, (Tensor) -> Tensor, never) },
     row!("math.argsort", "math", "argsort", crow_runtime::math::argsort, (Tensor) -> Ints, never),
-    row!("math.topk", "math", "topk", crow_runtime::math::topk, (Tensor, Int) -> Tensor, stops),
-    row!("math.unique", "math", "unique", crow_runtime::math::unique, (Tensor) -> Tensor, never),
-    Row { props: &[Prop::Mask(0)], ..row!("math.where", "math", "where", crow_runtime::math::where_, (Tensor, Tensor, Tensor) -> Tensor, stops) },
-    Row { props: &[Prop::Differentiable], ..row!("math.reshape", "math", "reshape", crow_runtime::math::reshape, (Tensor, Sizes) -> Tensor, stops) },
-    Row { props: &[Prop::Differentiable], ..row!("math.flatten", "math", "flatten", crow_runtime::math::flatten, (Tensor) -> Tensor, never) },
-    Row { props: &[Prop::Differentiable], ..row!("math.transpose", "math", "transpose", crow_runtime::math::transpose, (Tensor) -> Tensor, stops) },
-    Row { props: &[Prop::Differentiable], ..row!("math.clip", "math", "clip", crow_runtime::math::clip, (Tensor, Float, Float) -> Tensor, never) },
-    row!("math.atan2", "math", "atan2", crow_runtime::math::atan2, (Tensor, Tensor) -> Tensor, stops),
+    Row { shape: Shape::Dims(&[Dim::Size(1)]), ..row!("math.topk", "math", "topk", crow_runtime::math::topk, (Tensor, Int) -> Tensor, stops) },
+    Row { shape: Shape::Dims(&[Dim::Open]), ..row!("math.unique", "math", "unique", crow_runtime::math::unique, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Broadcast(&[0, 1, 2]), props: &[Prop::Mask(0)], ..row!("math.where", "math", "where", crow_runtime::math::where_, (Tensor, Tensor, Tensor) -> Tensor, stops) },
+    Row { shape: Shape::Sizes(1, 0), props: &[Prop::Differentiable], ..row!("math.reshape", "math", "reshape", crow_runtime::math::reshape, (Tensor, Sizes) -> Tensor, stops) },
+    Row { shape: Shape::Flat(0), props: &[Prop::Differentiable], ..row!("math.flatten", "math", "flatten", crow_runtime::math::flatten, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Transposed(0), props: &[Prop::Differentiable], ..row!("math.transpose", "math", "transpose", crow_runtime::math::transpose, (Tensor) -> Tensor, stops) },
+    Row { shape: Shape::Same(0), props: &[Prop::Differentiable], ..row!("math.clip", "math", "clip", crow_runtime::math::clip, (Tensor, Float, Float) -> Tensor, never) },
+    Row { shape: Shape::Broadcast(&[0, 1]), ..row!("math.atan2", "math", "atan2", crow_runtime::math::atan2, (Tensor, Tensor) -> Tensor, stops) },
     // element-wise: a number and a tensor share one rule (the number's row
     // first, so a number never reaches the tensor's)
     Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.exp_decimal", "math", "exp", crow_runtime::decimal::exp, (Decimal) -> Decimal, value "math") },
@@ -2155,93 +2246,93 @@ pub static ROWS: &[Row] = &[
     Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.tan_decimal", "math", "tan", crow_runtime::decimal::tan, (Decimal) -> Decimal, value "math") },
     Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.atan_decimal", "math", "atan", crow_runtime::decimal::atan, (Decimal) -> Decimal, value "math") },
     Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.exp_n", "math", "exp", crow_runtime::math::exp_n, (Float) -> Float, never) },
-    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.exp_t", "math", "exp", crow_runtime::math::exp_t, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Same(0), props: &[Prop::Differentiable, Prop::Dual], ..row!("math.exp_t", "math", "exp", crow_runtime::math::exp_t, (Tensor) -> Tensor, never) },
     Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.ln_n", "math", "ln", crow_runtime::math::ln_n, (Float) -> Float, never) },
-    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.ln_t", "math", "ln", crow_runtime::math::ln_t, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Same(0), props: &[Prop::Differentiable, Prop::Dual], ..row!("math.ln_t", "math", "ln", crow_runtime::math::ln_t, (Tensor) -> Tensor, never) },
     // (a × b + c rounded once: what a compiled loop accumulates with, and
     // a sum held to one must too — scikit-learn's row norms and scipy's
     // sparse products differed in the last digit from a plain sum)
     row!("math.fma", "math", "fma", crow_runtime::math::fma, (Float, Float, Float) -> Float, never),
     Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.log2_n", "math", "log2", crow_runtime::math::log2_n, (Float) -> Float, never) },
-    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.log2_t", "math", "log2", crow_runtime::math::log2_t, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Same(0), props: &[Prop::Differentiable, Prop::Dual], ..row!("math.log2_t", "math", "log2", crow_runtime::math::log2_t, (Tensor) -> Tensor, never) },
     Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.log10_n", "math", "log10", crow_runtime::math::log10_n, (Float) -> Float, never) },
-    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.log10_t", "math", "log10", crow_runtime::math::log10_t, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Same(0), props: &[Prop::Differentiable, Prop::Dual], ..row!("math.log10_t", "math", "log10", crow_runtime::math::log10_t, (Tensor) -> Tensor, never) },
     Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.sin_n", "math", "sin", crow_runtime::math::sin_n, (Float) -> Float, never) },
-    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.sin_t", "math", "sin", crow_runtime::math::sin_t, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Same(0), props: &[Prop::Differentiable, Prop::Dual], ..row!("math.sin_t", "math", "sin", crow_runtime::math::sin_t, (Tensor) -> Tensor, never) },
     Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.cos_n", "math", "cos", crow_runtime::math::cos_n, (Float) -> Float, never) },
-    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.cos_t", "math", "cos", crow_runtime::math::cos_t, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Same(0), props: &[Prop::Differentiable, Prop::Dual], ..row!("math.cos_t", "math", "cos", crow_runtime::math::cos_t, (Tensor) -> Tensor, never) },
     Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.tan_n", "math", "tan", crow_runtime::math::tan_n, (Float) -> Float, never) },
-    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.tan_t", "math", "tan", crow_runtime::math::tan_t, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Same(0), props: &[Prop::Differentiable, Prop::Dual], ..row!("math.tan_t", "math", "tan", crow_runtime::math::tan_t, (Tensor) -> Tensor, never) },
     Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.asin_n", "math", "asin", crow_runtime::math::asin_n, (Float) -> Float, never) },
-    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.asin_t", "math", "asin", crow_runtime::math::asin_t, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Same(0), props: &[Prop::Differentiable, Prop::Dual], ..row!("math.asin_t", "math", "asin", crow_runtime::math::asin_t, (Tensor) -> Tensor, never) },
     Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.acos_n", "math", "acos", crow_runtime::math::acos_n, (Float) -> Float, never) },
-    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.acos_t", "math", "acos", crow_runtime::math::acos_t, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Same(0), props: &[Prop::Differentiable, Prop::Dual], ..row!("math.acos_t", "math", "acos", crow_runtime::math::acos_t, (Tensor) -> Tensor, never) },
     Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.atan_n", "math", "atan", crow_runtime::math::atan_n, (Float) -> Float, never) },
-    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.atan_t", "math", "atan", crow_runtime::math::atan_t, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Same(0), props: &[Prop::Differentiable, Prop::Dual], ..row!("math.atan_t", "math", "atan", crow_runtime::math::atan_t, (Tensor) -> Tensor, never) },
     Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.sinh_n", "math", "sinh", crow_runtime::math::sinh_n, (Float) -> Float, never) },
-    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.sinh_t", "math", "sinh", crow_runtime::math::sinh_t, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Same(0), props: &[Prop::Differentiable, Prop::Dual], ..row!("math.sinh_t", "math", "sinh", crow_runtime::math::sinh_t, (Tensor) -> Tensor, never) },
     Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.cosh_n", "math", "cosh", crow_runtime::math::cosh_n, (Float) -> Float, never) },
-    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.cosh_t", "math", "cosh", crow_runtime::math::cosh_t, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Same(0), props: &[Prop::Differentiable, Prop::Dual], ..row!("math.cosh_t", "math", "cosh", crow_runtime::math::cosh_t, (Tensor) -> Tensor, never) },
     Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.tanh_n", "math", "tanh", crow_runtime::math::tanh_n, (Float) -> Float, never) },
-    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.tanh_t", "math", "tanh", crow_runtime::math::tanh_t, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Same(0), props: &[Prop::Differentiable, Prop::Dual], ..row!("math.tanh_t", "math", "tanh", crow_runtime::math::tanh_t, (Tensor) -> Tensor, never) },
     Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.sign_n", "math", "sign", crow_runtime::math::sign_n, (Float) -> Float, never) },
-    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.sign_t", "math", "sign", crow_runtime::math::sign_t, (Tensor) -> Tensor, never) },
-    Row { props: &[Prop::Differentiable], ..row!("math.abs_t", "math", "abs", crow_runtime::math::abs_t, (Tensor) -> Tensor, never) },
-    Row { props: &[Prop::Differentiable], ..row!("math.sqrt_t", "math", "sqrt", crow_runtime::math::sqrt_t, (Tensor) -> Tensor, never) },
-    Row { props: &[Prop::Differentiable], ..row!("math.floor_t", "math", "floor", crow_runtime::math::floor_t, (Tensor) -> Tensor, never) },
-    Row { props: &[Prop::Differentiable], ..row!("math.ceil_t", "math", "ceil", crow_runtime::math::ceil_t, (Tensor) -> Tensor, never) },
-    Row { props: &[Prop::Differentiable], ..row!("math.round_t", "math", "round", crow_runtime::math::round_t, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Same(0), props: &[Prop::Differentiable, Prop::Dual], ..row!("math.sign_t", "math", "sign", crow_runtime::math::sign_t, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Same(0), props: &[Prop::Differentiable], ..row!("math.abs_t", "math", "abs", crow_runtime::math::abs_t, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Same(0), props: &[Prop::Differentiable], ..row!("math.sqrt_t", "math", "sqrt", crow_runtime::math::sqrt_t, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Same(0), props: &[Prop::Differentiable], ..row!("math.floor_t", "math", "floor", crow_runtime::math::floor_t, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Same(0), props: &[Prop::Differentiable], ..row!("math.ceil_t", "math", "ceil", crow_runtime::math::ceil_t, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Same(0), props: &[Prop::Differentiable], ..row!("math.round_t", "math", "round", crow_runtime::math::round_t, (Tensor) -> Tensor, never) },
     // math: signal, special functions, complex numbers, draws (a rank, a
     // window or a count the kernels asserted is the reason)
-    row!("math.fft", "math", "fft", crow_runtime::math::fft, (Tensor) -> Tensors, stops),
-    row!("math.ifft", "math", "ifft", crow_runtime::math::ifft, (Tensor, Tensor) -> Tensor, stops),
-    row!("math.fft2", "math", "fft2", crow_runtime::math::fft2, (Tensor) -> Tensors, stops),
-    row!("math.conv", "math", "conv", crow_runtime::math::conv, (Tensor, Tensor) -> Tensor, stops),
-    row!("math.conv2d", "math", "conv2d", crow_runtime::math::conv2d, (Tensor, Tensor) -> Tensor, stops),
-    row!("math.hamming", "math", "hamming", crow_runtime::math::hamming, (Int) -> Tensor, stops),
-    row!("math.hanning", "math", "hanning", crow_runtime::math::hanning, (Int) -> Tensor, stops),
-    row!("math.stft", "math", "stft", crow_runtime::math::stft, (Tensor, Int, Int) -> Tensors, stops),
-    row!("math.spectrogram", "math", "spectrogram", crow_runtime::math::spectrogram, (Tensor, Int, Int) -> Tensor, stops),
-    row!("math.lowpass", "math", "lowpass", crow_runtime::math::lowpass, (Tensor, Float, Float) -> Tensor, stops),
-    row!("math.highpass", "math", "highpass", crow_runtime::math::highpass, (Tensor, Float, Float) -> Tensor, stops),
-    row!("math.bandpass", "math", "bandpass", crow_runtime::math::bandpass, (Tensor, Float, Float, Float) -> Tensor, stops),
-    row!("math.gamma", "math", "gamma", crow_runtime::math::gamma, (Tensor) -> Tensor, never),
+    Row { shape: Shape::Same(0), ..row!("math.fft", "math", "fft", crow_runtime::math::fft, (Tensor) -> Tensors, stops) },
+    Row { shape: Shape::Same(0), ..row!("math.ifft", "math", "ifft", crow_runtime::math::ifft, (Tensor, Tensor) -> Tensor, stops) },
+    Row { shape: Shape::Dims(&[Dim::Open, Dim::Open]), ..row!("math.fft2", "math", "fft2", crow_runtime::math::fft2, (Tensor) -> Tensors, stops) },
+    Row { shape: Shape::Dims(&[Dim::Open]), ..row!("math.conv", "math", "conv", crow_runtime::math::conv, (Tensor, Tensor) -> Tensor, stops) },
+    Row { shape: Shape::Dims(&[Dim::Open, Dim::Open]), ..row!("math.conv2d", "math", "conv2d", crow_runtime::math::conv2d, (Tensor, Tensor) -> Tensor, stops) },
+    Row { shape: Shape::Dims(&[Dim::Size(0)]), ..row!("math.hamming", "math", "hamming", crow_runtime::math::hamming, (Int) -> Tensor, stops) },
+    Row { shape: Shape::Dims(&[Dim::Size(0)]), ..row!("math.hanning", "math", "hanning", crow_runtime::math::hanning, (Int) -> Tensor, stops) },
+    Row { shape: Shape::Dims(&[Dim::Open, Dim::Open]), ..row!("math.stft", "math", "stft", crow_runtime::math::stft, (Tensor, Int, Int) -> Tensors, stops) },
+    Row { shape: Shape::Dims(&[Dim::Open, Dim::Open]), ..row!("math.spectrogram", "math", "spectrogram", crow_runtime::math::spectrogram, (Tensor, Int, Int) -> Tensor, stops) },
+    Row { shape: Shape::Same(0), ..row!("math.lowpass", "math", "lowpass", crow_runtime::math::lowpass, (Tensor, Float, Float) -> Tensor, stops) },
+    Row { shape: Shape::Same(0), ..row!("math.highpass", "math", "highpass", crow_runtime::math::highpass, (Tensor, Float, Float) -> Tensor, stops) },
+    Row { shape: Shape::Same(0), ..row!("math.bandpass", "math", "bandpass", crow_runtime::math::bandpass, (Tensor, Float, Float, Float) -> Tensor, stops) },
+    Row { shape: Shape::Same(0), ..row!("math.gamma", "math", "gamma", crow_runtime::math::gamma, (Tensor) -> Tensor, never) },
     Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.erf_n", "math", "erf", crow_runtime::math::erf_n, (Float) -> Float, never) },
-    Row { props: &[Prop::Differentiable, Prop::Dual], ..row!("math.erf", "math", "erf", crow_runtime::math::erf, (Tensor) -> Tensor, never) },
-    row!("math.factorial", "math", "factorial", crow_runtime::math::factorial, (Tensor) -> Tensor, never),
-    row!("math.bessel", "math", "bessel", crow_runtime::math::bessel, (Tensor, Int) -> Tensor, never),
-    row!("math.choose", "math", "choose", crow_runtime::math::choose, (Tensor, Tensor) -> Tensor, stops),
-    row!("math.complex", "math", "complex", crow_runtime::math::complex, (Float, Float) -> Tensors, never),
-    row!("math.real", "math", "real", crow_runtime::math::real, (Tensors) -> Tensor, stops),
-    row!("math.imag", "math", "imag", crow_runtime::math::imag, (Tensors) -> Tensor, stops),
-    row!("math.magnitude", "math", "magnitude", crow_runtime::math::magnitude, (Tensors) -> Tensor, stops),
-    row!("math.phase", "math", "phase", crow_runtime::math::phase, (Tensors) -> Tensor, stops),
-    row!("math.conjugate", "math", "conjugate", crow_runtime::math::conjugate, (Tensors) -> Tensors, stops),
+    Row { shape: Shape::Same(0), props: &[Prop::Differentiable, Prop::Dual], ..row!("math.erf", "math", "erf", crow_runtime::math::erf, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Same(0), ..row!("math.factorial", "math", "factorial", crow_runtime::math::factorial, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Same(0), ..row!("math.bessel", "math", "bessel", crow_runtime::math::bessel, (Tensor, Int) -> Tensor, never) },
+    Row { shape: Shape::Broadcast(&[0, 1]), ..row!("math.choose", "math", "choose", crow_runtime::math::choose, (Tensor, Tensor) -> Tensor, stops) },
+    Row { shape: Shape::Dims(&[Dim::Open]), ..row!("math.complex", "math", "complex", crow_runtime::math::complex, (Float, Float) -> Tensors, never) },
+    Row { shape: Shape::Items(0), ..row!("math.real", "math", "real", crow_runtime::math::real, (Tensors) -> Tensor, stops) },
+    Row { shape: Shape::Items(0), ..row!("math.imag", "math", "imag", crow_runtime::math::imag, (Tensors) -> Tensor, stops) },
+    Row { shape: Shape::Items(0), ..row!("math.magnitude", "math", "magnitude", crow_runtime::math::magnitude, (Tensors) -> Tensor, stops) },
+    Row { shape: Shape::Items(0), ..row!("math.phase", "math", "phase", crow_runtime::math::phase, (Tensors) -> Tensor, stops) },
+    Row { shape: Shape::Items(0), ..row!("math.conjugate", "math", "conjugate", crow_runtime::math::conjugate, (Tensors) -> Tensors, stops) },
     Row { props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.seed", "math", "seed", crow_runtime::math::seed, (Int) -> Unit, never) },
-    Row { props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.shuffle", "math", "shuffle", crow_runtime::math::shuffle, (Tensor) -> Tensor, never) },
-    Row { props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.choice", "math", "choice", crow_runtime::math::choice, (Tensor, Int) -> Tensor, stops) },
-    Row { props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.permutation", "math", "permutation", crow_runtime::math::permutation, (Int) -> Tensor, stops) },
-    row!("math.mod", "math", "mod", crow_runtime::math::modulo, (Tensor, Tensor) -> Tensor, stops),
-    row!("math.mod_by", "math", "mod", crow_runtime::math::modulo_by, (Tensor, Float) -> Tensor, never),
+    Row { shape: Shape::Same(0), props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.shuffle", "math", "shuffle", crow_runtime::math::shuffle, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Dims(&[Dim::Size(1)]), props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.choice", "math", "choice", crow_runtime::math::choice, (Tensor, Int) -> Tensor, stops) },
+    Row { shape: Shape::Dims(&[Dim::Size(0)]), props: &[Prop::Does(crate::effects::Effect::Random)], ..row!("math.permutation", "math", "permutation", crow_runtime::math::permutation, (Int) -> Tensor, stops) },
+    Row { shape: Shape::Broadcast(&[0, 1]), ..row!("math.mod", "math", "mod", crow_runtime::math::modulo, (Tensor, Tensor) -> Tensor, stops) },
+    Row { shape: Shape::Same(0), ..row!("math.mod_by", "math", "mod", crow_runtime::math::modulo_by, (Tensor, Float) -> Tensor, never) },
     // math: sparse matrices, solving, stacking, conversion (an entry outside
     // its matrix, a system that does not meet, tensors of two shapes: the
     // reason; a frame that does not convert stopped the interpreter and
     // unwrapped into a panic compiled)
     row!("math.sparse", "math", "sparse", crow_runtime::math::sparse, (Tensor) -> Sparse, stops),
     row!("math.sparse_coo", "math", "sparse", crow_runtime::math::sparse_coo, (Tensor, Tensor, Tensor, Tensor) -> Sparse, stops),
-    row!("math.dense", "math", "dense", crow_runtime::math::dense, (Sparse) -> Tensor, never),
-    row!("math.dense_of", "math", "dense", crow_runtime::math::dense_of, (Tensor) -> Tensor, never),
+    Row { shape: Shape::Dims(&[Dim::Open, Dim::Open]), ..row!("math.dense", "math", "dense", crow_runtime::math::dense, (Sparse) -> Tensor, never) },
+    Row { shape: Shape::Same(0), ..row!("math.dense_of", "math", "dense", crow_runtime::math::dense_of, (Tensor) -> Tensor, never) },
     row!("math.nnz", "math", "nnz", crow_runtime::math::nnz, (Sparse) -> Int, never),
-    row!("math.spmv", "math", "spmv", crow_runtime::math::spmv, (Sparse, Tensor) -> Tensor, stops),
-    row!("math.solve_sparse", "math", "solve", crow_runtime::math::solve_sparse, (Sparse, Tensor) -> Tensor, stops),
-    row!("math.solve", "math", "solve", crow_runtime::math::solve, (Tensor, Tensor) -> Tensor, stops),
-    row!("math.stack", "math", "stack", crow_runtime::math::stack, (Tensors) -> Tensor, stops),
-    Row { options: &[("axis", Preset::Asked)], ..row!("math.stack_axis", "math", "stack", crow_runtime::math::stack_axis, (Tensors, Int) -> Tensor, stops) },
-    row!("math.stack_rows", "math", "stack", crow_runtime::math::stack_rows, (Tensor) -> Tensor, stops),
-    row!("math.stack_rows_axis", "math", "stack", crow_runtime::math::stack_rows_axis, (Tensor, Int) -> Tensor, stops),
-    Row { props: &[Prop::Constructs], ..row!("math.tensor_of_frame", "math", "tensor", crow_runtime::math::tensor_of_frame, (Frame) -> Tensor, stops) },
-    Row { props: &[Prop::Constructs], ..row!("math.tensor_of_columns", "math", "tensor", crow_runtime::math::tensor_of_columns, (Frame, Strs) -> Tensor, stops) },
-    Row { props: &[Prop::Constructs], ..row!("math.tensor", "math", "tensor", crow_runtime::math::tensor, (Tensor) -> Tensor, never) },
+    Row { shape: Shape::Dims(&[Dim::Open]), ..row!("math.spmv", "math", "spmv", crow_runtime::math::spmv, (Sparse, Tensor) -> Tensor, stops) },
+    Row { shape: Shape::Same(1), ..row!("math.solve_sparse", "math", "solve", crow_runtime::math::solve_sparse, (Sparse, Tensor) -> Tensor, stops) },
+    Row { shape: Shape::Same(1), ..row!("math.solve", "math", "solve", crow_runtime::math::solve, (Tensor, Tensor) -> Tensor, stops) },
+    Row { shape: Shape::Stacked(0), ..row!("math.stack", "math", "stack", crow_runtime::math::stack, (Tensors) -> Tensor, stops) },
+    Row { shape: Shape::Restacked(0), options: &[("axis", Preset::Asked)], ..row!("math.stack_axis", "math", "stack", crow_runtime::math::stack_axis, (Tensors, Int) -> Tensor, stops) },
+    Row { shape: Shape::Stacked(0), ..row!("math.stack_rows", "math", "stack", crow_runtime::math::stack_rows, (Tensor) -> Tensor, stops) },
+    Row { shape: Shape::Restacked(0), ..row!("math.stack_rows_axis", "math", "stack", crow_runtime::math::stack_rows_axis, (Tensor, Int) -> Tensor, stops) },
+    Row { shape: Shape::Dims(&[Dim::Open, Dim::Open]), props: &[Prop::Constructs], ..row!("math.tensor_of_frame", "math", "tensor", crow_runtime::math::tensor_of_frame, (Frame) -> Tensor, stops) },
+    Row { shape: Shape::Dims(&[Dim::Open, Dim::Open]), props: &[Prop::Constructs], ..row!("math.tensor_of_columns", "math", "tensor", crow_runtime::math::tensor_of_columns, (Frame, Strs) -> Tensor, stops) },
+    Row { shape: Shape::Same(0), props: &[Prop::Constructs], ..row!("math.tensor", "math", "tensor", crow_runtime::math::tensor, (Tensor) -> Tensor, never) },
     // math.stats (series of two lengths, a percent past 100, a distribution
     // no test knows: the reason, where they were answered NaN, 0.5 or an
     // empty map; anova of one group was NaN compiled and refused
@@ -2255,15 +2346,15 @@ pub static ROWS: &[Row] = &[
     // chart (a window of no rows, series of two lengths: the reason, where
     // a negative window was a huge one compiled and one row interpreted,
     // and a shorter series cut the others)
-    row!("chart.sma", "chart", "sma", crow_runtime::indicators::sma, (Tensor, Int) -> Tensor, stops),
-    row!("chart.ema", "chart", "ema", crow_runtime::indicators::ema, (Tensor, Int) -> Tensor, stops),
-    row!("chart.rsi", "chart", "rsi", crow_runtime::indicators::rsi, (Tensor, Int) -> Tensor, stops),
-    row!("chart.rsi_buckets", "chart", "rsi", crow_runtime::indicators::rsi_buckets, (Tensor, Tensor, Int, Float) -> Tensor, stops),
-    row!("chart.macd", "chart", "macd", crow_runtime::indicators::macd, (Tensor, Int, Int, Int) -> Frame, stops),
-    row!("chart.vwap", "chart", "vwap", crow_runtime::indicators::vwap, (Tensor, Tensor) -> Tensor, stops),
-    row!("chart.vwap_trailing", "chart", "vwap", crow_runtime::indicators::vwap_trailing, (Tensor, Tensor, Tensor, Float) -> Tensor, stops),
-    row!("chart.rolling_sum", "chart", "rolling_sum", crow_runtime::indicators::rolling_sum, (Tensor, Tensor, Float) -> Tensor, stops),
-    row!("chart.cvd", "chart", "cvd", crow_runtime::indicators::cvd, (Tensor, Tensor) -> Tensor, stops),
+    Row { shape: Shape::Dims(&[Dim::Open]), ..row!("chart.sma", "chart", "sma", crow_runtime::indicators::sma, (Tensor, Int) -> Tensor, stops) },
+    Row { shape: Shape::Dims(&[Dim::Open]), ..row!("chart.ema", "chart", "ema", crow_runtime::indicators::ema, (Tensor, Int) -> Tensor, stops) },
+    Row { shape: Shape::Dims(&[Dim::Open]), ..row!("chart.rsi", "chart", "rsi", crow_runtime::indicators::rsi, (Tensor, Int) -> Tensor, stops) },
+    Row { shape: Shape::Dims(&[Dim::Open]), ..row!("chart.rsi_buckets", "chart", "rsi", crow_runtime::indicators::rsi_buckets, (Tensor, Tensor, Int, Float) -> Tensor, stops) },
+    Row { columns: &[("line", Kind::Float), ("signal", Kind::Float), ("hist", Kind::Float)], ..row!("chart.macd", "chart", "macd", crow_runtime::indicators::macd, (Tensor, Int, Int, Int) -> Frame, stops) },
+    Row { shape: Shape::Dims(&[Dim::Open]), ..row!("chart.vwap", "chart", "vwap", crow_runtime::indicators::vwap, (Tensor, Tensor) -> Tensor, stops) },
+    Row { shape: Shape::Dims(&[Dim::Open]), ..row!("chart.vwap_trailing", "chart", "vwap", crow_runtime::indicators::vwap_trailing, (Tensor, Tensor, Tensor, Float) -> Tensor, stops) },
+    Row { shape: Shape::Dims(&[Dim::Open]), ..row!("chart.rolling_sum", "chart", "rolling_sum", crow_runtime::indicators::rolling_sum, (Tensor, Tensor, Float) -> Tensor, stops) },
+    Row { shape: Shape::Dims(&[Dim::Open]), ..row!("chart.cvd", "chart", "cvd", crow_runtime::indicators::cvd, (Tensor, Tensor) -> Tensor, stops) },
     // `use sys`: the standard library's own layer (crow_runtime::sys) — a
     // program may not import it (spec, The standard library's layer)
     row!("sys.open", "sys", "open", crow_runtime::sys::open, (Str, Int, Bool, Float) -> Stream, value "sys"),
@@ -2358,7 +2449,7 @@ pub static ROWS: &[Row] = &[
     row!("sys.frame_csv", "sys", "frame_csv", crow_runtime::sys::frame_csv, (Frame) -> Str, value "frame"),
     row!("sys.frame_json", "sys", "frame_json", crow_runtime::sys::frame_json, (Frame) -> Str, never),
     Row { feature: Some(("crow_runtime", "parquet")), ..row!("sys.frame_parquet", "sys", "frame_parquet", crow_runtime::sys::frame_parquet, (Frame) -> Bytes, value "frame") },
-    row!("sys.tensor_of_frame", "sys", "tensor_of_frame", crow_runtime::sys::tensor_of_frame, (Frame) -> Tensor, value "load"),
+    Row { shape: Shape::Dims(&[Dim::Open, Dim::Open]), ..row!("sys.tensor_of_frame", "sys", "tensor_of_frame", crow_runtime::sys::tensor_of_frame, (Frame) -> Tensor, value "load") },
     // the protocol, written in Crow (src/modules/sys.co): its functions
     // are its declaration (`exchange`, `put`, `upgrade`, the formats; phase
     // 2 of docs/extending-crow.md), but a remote source read with a
@@ -2448,11 +2539,11 @@ pub static ROWS: &[Row] = &[
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], options: &[("headers", Preset::Map), ("query", Preset::Map), ("timeout", Preset::Float(0.0))], ..crow!("io.csv_asked", "io", "csv", (Str, TextMap, TextMap, Float) -> TextRows, value "io") },
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..crow!("io.lines", "io", "lines", (Str) -> Strs, value "io") },
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], options: &[("headers", Preset::Map), ("query", Preset::Map), ("timeout", Preset::Float(0.0))], ..crow!("io.lines_asked", "io", "lines", (Str, TextMap, TextMap, Float) -> Strs, value "io") },
-    Row { props: &[Prop::Table(0), Prop::Does(crate::effects::Effect::Files)], ..crow!("math.load", "math", "load", (Str) -> Tensor, value "load") },
-    Row { props: &[Prop::Table(0), Prop::Does(crate::effects::Effect::Files)], options: &[("headers", Preset::Map), ("query", Preset::Map), ("timeout", Preset::Float(0.0))], ..crow!("math.load_asked", "math", "load", (Str, TextMap, TextMap, Float) -> Tensor, value "load") },
+    Row { shape: Shape::Dims(&[Dim::Open, Dim::Open]), props: &[Prop::Table(0), Prop::Does(crate::effects::Effect::Files)], ..crow!("math.load", "math", "load", (Str) -> Tensor, value "load") },
+    Row { shape: Shape::Dims(&[Dim::Open, Dim::Open]), props: &[Prop::Table(0), Prop::Does(crate::effects::Effect::Files)], options: &[("headers", Preset::Map), ("query", Preset::Map), ("timeout", Preset::Float(0.0))], ..crow!("math.load_asked", "math", "load", (Str, TextMap, TextMap, Float) -> Tensor, value "load") },
     // doc: markdown rendered by the kernel
     row!("doc.markdown", "doc", "markdown", crow_runtime::markdown::to_html, (Str) -> Markup, never),
-    row!("doc.chapters", "doc", "chapters", crow_runtime::markdown::chapters_frame, (Str) -> Frame, never),
+    Row { columns: &[("title", Kind::Str), ("path", Kind::Str), ("depth", Kind::Int), ("part", Kind::Str)], ..row!("doc.chapters", "doc", "chapters", crow_runtime::markdown::chapters_frame, (Str) -> Frame, never) },
     row!("doc.menu", "doc", "menu", crow_runtime::markdown::menu_from_frame, (Frame, Str) -> Markup, never),
     row!("doc.pager", "doc", "pager", crow_runtime::markdown::pager_from_frame, (Frame, Str) -> Markup, never),
     row!("doc.plain", "doc", "plain", crow_runtime::markdown::plain_text, (Str) -> Str, never),
@@ -2487,7 +2578,7 @@ macro_rules! form {
     ($id:literal, $module:literal, $name:literal, ($($k:ident),*)) => {
         Row {
             id: $id, name: $name, module: $module, path: IN_FORM,
-            params: &[$(Kind::$k),*], ret: Kind::Unit, fails: Fails::Never, options: &[], written: "", props: &[], taken: None, big: None, range: IntRange::I64, feature: None,
+            params: &[$(Kind::$k),*], ret: Kind::Unit, fails: Fails::Never, options: &[], written: "", props: &[], taken: None, big: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None,
             call: |_args: &[CrowValue], _trace: &str| Err(a_form($name)),
             take: |_args: Vec<CrowValue>, _trace: &str| Err(a_form($name)),
         }
@@ -2575,9 +2666,9 @@ pub static FORMS: &[Row] = &[
     Row { options: &[("max", Preset::Float(1.0))], ..form!("ui.progress", "ui", "progress", (Float, Float)) },
     Row { options: &[("size", Preset::Str("m")), ("color", Preset::Str(""))], ..form!("ui.icon", "ui", "icon", (Str, Str, Str)) },
     // db: its verbs that are forms of their own
-    Row { props: &[Prop::Does(crate::effects::Effect::DbRead)], ..form!("db.connect", "db", "connect", (Str)) },
+    Row { props: &[Prop::Does(crate::effects::Effect::DbRead), Prop::Connects], ..form!("db.connect", "db", "connect", (Str)) },
     Row { props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.exec", "db", "exec", (Shown, Str, Shows)) },
-    Row { props: &[Prop::Does(crate::effects::Effect::DbRead)], ..form!("db.query", "db", "query", (Shown, Str, Shows)) },
+    Row { provider: Some(&Provider { connection: 0, statement: 1, columns: crow_db::describe::columns }), props: &[Prop::Does(crate::effects::Effect::DbRead)], ..form!("db.query", "db", "query", (Shown, Str, Shows)) },
     Row { props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.insert", "db", "insert", (Shows)) },
     Row { params: &[Kind::Db, Kind::FnOf(&TX_BODY)], props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.transact", "db", "transact", ()) },
     Row { props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.migrate", "db", "migrate", (Shows)) },
@@ -2752,6 +2843,17 @@ pub fn arity_ok(name: &str, argc: usize) -> bool {
 #[cfg(test)]
 pub fn by_id(id: &str) -> Option<&'static Row> {
     ROWS.iter().find(|r| r.id == id)
+}
+
+/// The row or form of a name that declares its frame's columns or a
+/// provider of them, in the module or in any.
+pub fn frame_declared(module: Option<&str>, name: &str) -> Option<&'static Row> {
+    ROWS.iter().chain(FORMS).find(|r| r.name == name && module.is_none_or(|m| r.module == m) && (!r.columns.is_empty() || r.provider.is_some()))
+}
+
+/// Whether a name is the form that opens a connection (`Prop::Connects`).
+pub fn opens_connection(module: Option<&str>, name: &str) -> bool {
+    ROWS.iter().chain(FORMS).any(|r| r.name == name && module.is_none_or(|m| r.module == m) && r.props.contains(&Prop::Connects))
 }
 
 /// The row of an id: what a pass of the lowering writes itself (a fused
@@ -3465,6 +3567,22 @@ mod tests {
     }
 
     use super::*;
+
+    /// A row declares the columns of its frame or a provider of them, and
+    /// the form that opens a connection says so: the compiler asks the
+    /// table and names nothing.
+    #[test]
+    fn frames_and_connections_are_declared_on_rows() {
+        let query = frame_declared(Some("db"), "query").expect("db.query declares a provider");
+        let p = query.provider.expect("a provider");
+        assert_eq!((p.connection, p.statement), (0, 1));
+        assert!(frame_declared(None, "query").is_some());
+        assert_eq!(frame_declared(Some("chart"), "macd").map(|r| r.columns.len()), Some(3));
+        assert_eq!(frame_declared(None, "chapters").map(|r| r.columns.iter().map(|(n, _)| *n).collect::<Vec<_>>()), Some(vec!["title", "path", "depth", "part"]));
+        assert!(frame_declared(Some("frame"), "sort").is_none());
+        assert!(opens_connection(None, "connect") && opens_connection(Some("db"), "connect"));
+        assert!(!opens_connection(Some("web"), "connect") && !opens_connection(None, "query"));
+    }
 
     fn int(n: i64) -> CrowValue {
         CrowValue::ok(Value::Int(n))

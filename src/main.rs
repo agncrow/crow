@@ -42,7 +42,6 @@ mod served;
 mod compiled_harness;
 mod served_parity;
 mod selfcheck;
-mod sql_types;
 #[cfg(test)]
 mod totality;
 mod table;
@@ -4414,13 +4413,9 @@ fn cmd_db(args: &[String]) {
             eprintln!("usage: crow db describe <url> <sql>");
             process::exit(1);
         };
-        // (the columns that can hold NULL marked as the lowering marks them)
-        let answered = driver::tooling_ready().and_then(|_| crow_db::connect(url, Some(1))).and_then(|db| {
-            db.describe(sql).map(|mut cols| {
-                type_infer::mark_nullable(&db, url, sql, &mut cols);
-                cols
-            })
-        });
+        // (the columns that can hold NULL marked as the lowering marks them:
+        // the provider's own describe of a live connection)
+        let answered = driver::tooling_ready().and_then(|_| crow_db::describe::of_url(url, sql));
         match answered {
             Ok(cols) => println!("{}", serde_json::Value::Array(cols.into_iter().map(|(n, k)| serde_json::json!([n, k])).collect())),
             Err(e) => {

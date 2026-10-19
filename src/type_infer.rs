@@ -28,13 +28,11 @@ pub use crate::ir::Ty;
 mod calls;
 mod classify;
 mod frames;
-pub(crate) use frames::mark_nullable;
 mod rules;
 pub(crate) use rules::key_kind_of;
 pub(crate) mod settle;
 #[cfg(test)]
 use frames::*;
-pub use frames::describe_with_tables;
 
 
 /// What a type knows beyond its kind that an assignment can change
@@ -1296,72 +1294,6 @@ fn reaching(t: &Ty) -> Ty {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A SQLite computed column is typed from the statement when no row
-    /// answers the describe probe — finch's blotter P&L read as text in the
-    /// compiled program while the interpreter read a number
-    #[test]
-    fn a_sqlite_computed_column_is_typed_without_a_row() {
-        let dir = std::env::temp_dir().join(format!("crow_describe_{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("book.db");
-        let _ = std::fs::remove_file(&path);
-        let url = format!("sqlite://{}", path.display());
-        crow_db::connect(&url, Some(1)).unwrap().exec("CREATE TABLE trades (session_id INTEGER, shares INTEGER, entry_px REAL, exit_px REAL)", &[]).unwrap();
-        let cols = describe_with_tables(&url, "SELECT shares, round((exit_px - entry_px) * shares, 2) AS pnl FROM trades WHERE session_id = ?", &[]).unwrap();
-        // (no column is declared NOT NULL: each can hold NULL)
-        assert_eq!(cols, vec![("shares".to_string(), "int?".to_string()), ("pnl".to_string(), "float?".to_string())]);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// A statement with a list parameter (`IN ?`) is asked about as the list
-    /// of one it is sent as: no database prepares `IN ?`
-    #[test]
-    fn a_list_parameter_is_described_as_a_list_of_one() {
-        assert_eq!(in_lists_as_one("SELECT a FROM t WHERE b IN ? AND c NOT IN  ? AND d = '? IN ?' AND e = ? AND MIN(f) > ?"), "SELECT a FROM t WHERE b IN (?) AND c NOT IN  (?) AND d = '? IN ?' AND e = ? AND MIN(f) > ?");
-        let dir = std::env::temp_dir().join(format!("crow_describe_in_{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("in.db");
-        let _ = std::fs::remove_file(&path);
-        let url = format!("sqlite://{}", path.display());
-        crow_db::connect(&url, Some(1)).unwrap().exec("CREATE TABLE news (sym TEXT NOT NULL, at REAL NOT NULL)", &[]).unwrap();
-        let cols = describe_with_tables(&url, "SELECT sym, at FROM news WHERE sym IN ?", &[]).unwrap();
-        assert_eq!(cols, vec![("sym".to_string(), "str".to_string()), ("at".to_string(), "float".to_string())]);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// A statement described twice within the minute is asked once: the
-    /// second program lowered in a process (each test block's) takes the
-    /// first's answer
-    #[test]
-    fn a_statement_is_described_once_a_minute() {
-        let dir = std::env::temp_dir().join(format!("crow_describe_kept_{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("kept.db");
-        let _ = std::fs::remove_file(&path);
-        let url = format!("sqlite://{}", path.display());
-        crow_db::connect(&url, Some(1)).unwrap().exec("CREATE TABLE bars (sym TEXT NOT NULL, px REAL)", &[]).unwrap();
-        let before = DESCRIBES_ASKED.with(|n| n.get());
-        let first = describe_with_tables(&url, "SELECT sym, px FROM bars WHERE sym = ?", &[]).unwrap();
-        let second = describe_with_tables(&url, "SELECT sym, px FROM bars WHERE sym = ?", &[]).unwrap();
-        assert_eq!(first, second);
-        assert_eq!(first, vec![("sym".to_string(), "str".to_string()), ("px".to_string(), "float?".to_string())]);
-        assert_eq!(DESCRIBES_ASKED.with(|n| n.get()) - before, 1, "the second describe asked again");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// Two programs in one process, each making its own in-memory tables of
-    /// one name, are described from their own tables (the second had been
-    /// described from the first's, and its cells went untyped: a clean
-    /// clone's test suite refused parity 92)
-    #[test]
-    fn each_program_is_described_from_its_own_tables() {
-        let url = "sqlite://:memory:";
-        let a = describe_with_tables(url, "SELECT v FROM t_own_tables", &["CREATE TABLE t_own_tables (v INTEGER NOT NULL)".to_string()]).unwrap();
-        let b = describe_with_tables(url, "SELECT v, w FROM t_own_tables", &["CREATE TABLE t_own_tables (v TEXT NOT NULL, w REAL NOT NULL)".to_string()]).unwrap();
-        assert_eq!(a, vec![("v".to_string(), "int".to_string())]);
-        assert_eq!(b, vec![("v".to_string(), "str".to_string()), ("w".to_string(), "float".to_string())]);
-    }
 
     /// A new app makes its own SQLite tables when it starts: before its
     /// database exists, its first build types the columns from its own

@@ -65,6 +65,23 @@ history says the rest.
 
 ### Changed
 
+- The shape of the tensor a builtin answers is declared on its row
+  (`table::Shape`, a fixed vocabulary: an argument's own shape, a
+  broadcast, a dimension per size, each dimension stated, a reduction, a
+  join along an axis, a transpose, rows stacked, a decomposition's
+  pieces), read where the call is typed; the compiler's rule by name is
+  gone (docs/extending-crow.md, phase 6). What a program sees: the rank
+  of every builtin's answer as before, and a list handed where a tensor
+  is taken keeps the rank it had as a list. A row that answers a frame
+  declares its columns where its kernel fixes them (doc's `chapters`,
+  chart's `macd`), and `query`'s row names its provider: what a database
+  says a literal statement answers — asked, kept, typed from the
+  statement where SQLite does not say, marked where it can hold NULL —
+  is crow_db's (`crow_db::describe`), handed the connection's literal
+  URL, the statement and the tables the program declares; the form that
+  opens a connection says so on its row (`Prop::Connects`). What a
+  program sees is as before.
+
 - A handle — a database connection and a transaction's, a socket, a
   stream, a mailer, a response, the server's app, a test's app session —
   is one kind to the language (spec, Type System: Handles), declared

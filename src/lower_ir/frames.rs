@@ -505,24 +505,27 @@ impl<'a> Lowerer<'a> {
     /// operation, `Some(None)` when nothing is known of the columns.
     fn frame_columns(&mut self, module: Option<&str>, name: &str, args: &[A], arg_types: &[Ty]) -> Option<Option<Arc<Cols>>> {
         let fixed = |cols: &[(&str, Ty)]| Some(Some(Cols::closed(cols.iter().map(|(n, t)| (n.to_string(), t.clone())).collect())));
-        match (module, name) {
-            // the frames the standard modules build have fixed columns:
-            // doc.chapters as crow_runtime::markdown::chapters_frame builds
-            // it, chart.macd as crow_runtime::ta::macd_frame does
-            (Some("doc"), "chapters") => fixed(&[("title", Ty::Str), ("path", Ty::Str), ("depth", Ty::Int), ("part", Ty::Str)]),
-            (Some("chart"), "macd") => fixed(&[("line", Ty::Float), ("signal", Ty::Float), ("hist", Ty::Float)]),
-            // a literal query's columns, as its database describes them
-            (None | Some("db"), "query") => {
-                let Some(A::Str(sql)) = args.get(1) else {
+        // a row that declares its frame's columns (a kernel that fixes them:
+        // doc's chapters, chart's macd), or a provider of them — its
+        // database's description of a literal statement
+        if let Some(row) = crate::table::frame_declared(module, name) {
+            if !row.columns.is_empty() {
+                let cols: Vec<(&str, Ty)> = row.columns.iter().map(|(n, k)| (*n, k.ty())).collect();
+                return fixed(&cols);
+            }
+            if let Some(provider) = row.provider {
+                let Some(A::Str(sql)) = args.get(provider.statement) else {
                     return Some(Some(Cols::dynamic()));
                 };
-                let handle = match args.first() {
+                let handle = match args.get(provider.connection) {
                     Some(A::Ident(v)) => Some(v.clone()),
                     _ => None,
                 };
                 // (no database answered: its cells show as it runs)
-                Some(Some(self.ctx.describe_sql(sql, handle.as_deref()).map(Cols::closed).unwrap_or_else(Cols::dynamic)))
+                return Some(Some(self.ctx.describe_sql(provider, sql, handle.as_deref()).map(Cols::closed).unwrap_or_else(Cols::dynamic)));
             }
+        }
+        match (module, name) {
             (None | Some("frame"), _) => {
                 self.check_columns(name, args, arg_types);
                 self.frame_rule(name, args, arg_types)

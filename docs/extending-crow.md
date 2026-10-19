@@ -788,6 +788,72 @@ by evaluation equals today's `frame_rule` answer across the corpus, before
 the table is deleted; the pandas-held frame tests unchanged; the errors
 corpus; the `crow db` tests.
 
+### As built (2026-10-19)
+
+**Tensors, by pattern: built.** `table::Shape` is the vocabulary — `Open`,
+`Same(i)`, `Broadcast(is)`, `Sizes(from, but)`, `Dims([Dim])` (a dimension
+`Open`, `Size(i)` the literal at an argument, `Of(i, j)` an argument's
+dimension), `Reduce(i, axis)`, `Like(i, first)`, `Along(i, axis)`,
+`Flat(i)`, `Transposed(i)`, `Stacked(i)`, `Restacked(i)`, `Diag(i)`,
+`Items(i)`, `Pieces([[Dim]])` — and 118 rows declare theirs; the one
+reader is `lower_ir/shapes.rs`'s `declared` (`declared_pieces` for a
+decomposition's parts), applied where the call's row is chosen, with
+the filled arguments. Where the lowering picks no row (one its values
+pick as the program runs), the shape is what the rows of the name that
+answer a tensor agree on (`agreed`). The declarations were held to the
+rule by name over the whole corpus — parity, errors, book, packages,
+layout, pandas, modules, fuzz, rag, served, and every case the
+self-check lowers — with `CROW_SHAPE_DIFF` writing each difference, until
+the differences were only the ones chosen: a list handed where a tensor
+is taken is read as the list it was (`seen`, through the conversion the
+row's arguments insert), a frame handed to `tensor[]` is a matrix where
+the rule by name had said nothing, and a sparse system's solution and a
+least-squares solution are vectors. `row_dims`, `call_dims` and
+`piece_dims` are gone: 117 names off `shapes.rs`. Not a pattern: the six
+functions of the standard modules written in Crow the rule by name had
+shaped (`relu`, `sigmoid`, `softmax`, `gelu`, `zscore`, `linear`) — their
+bodies' inference shapes their answers, as any Crow function's does.
+
+**Providers: built.** `table::Provider` (the connection argument, the
+statement argument, a function of the row's runtime crate handed the
+connection's literal URL, the literal statement and the `CREATE TABLE`s
+the program declares on that connection, answering name and kind pairs)
+is declared on `db.query`'s form; `crow_db::describe` is `query`'s
+provider — asking with one connection per URL for the build and one
+answer per statement for a minute, the scratch database a program's own
+statements build, `crow db describe` for a driver written in Crow,
+`sql_types` for what SQLite does not type and for which columns can hold
+NULL — moved whole from the compiler with its tests (`sqlparser` is
+crow_db's too; both behind the `sqlite` feature, which a generated
+program does not enable). The compiler keeps the hook (`describe_sql`:
+which connections the program opened, scrubbing spans to NULL, the
+`.crow/schema` record read when no database answers, the notes), the
+kind-to-type reading (`cell_type_of_kind`) and the schema the program
+declares (`lower_ir/schema.rs`, which knows a connection by the form
+that opens it, `Prop::Connects`, or by the handle it answers). A row
+whose kernel fixes its frame's columns declares them (`columns`: doc's
+`chapters`, chart's `macd`). `sql_types.rs` leaves the compiler (71
+names), `type_infer/frames.rs` keeps 4 of 10.
+
+**Frames, by evaluation: not built.** The rule per verb stays in
+`lower_ir/frames.rs` (`frame_rule`, `column_typed`, `check_columns`: 77
+names, 786 lines). What the design needs, found in reading it against
+the code: a frame verb's rule today is more than a kernel's answer on an
+empty frame — `unpivot`'s value column is the kinds of the named columns
+joined by a rule (ints, else floats, else one kind, else a parsed
+value), `complete` turns the named columns' fallible cells certain,
+`with`'s column takes its expression's type, and each verb's refusal of
+a column the frame lacks names the verb and the frame's columns in the
+errors corpus's words; most frame verbs are written in Crow now (phase
+2), so evaluating one at compile time means running the interpreter on
+the module's function inside the lowering. Recommended: a vocabulary of
+column patterns declared on the rows, as the shapes are (`Same(i)`,
+`Named(i)`, `Without(i)`, `Renamed(i)`, `With(i, expression)`,
+`Joined(i, j, keys)`, `Grouped(by, aggregates)`, `Open`), with the
+refusal of a missing column one rule over the arguments that name
+columns — a phase of its own, after the chart module moves (its 12
+options, its seek handler) so that `check_chart_columns` goes with it.
+
 ## 10. Phase 7 — optimizations on properties, analyzers in crates, the session runtime
 
 - Optimizations stay in the compiler (design rule 24 allows them) and key

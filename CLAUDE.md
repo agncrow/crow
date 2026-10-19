@@ -1039,6 +1039,24 @@ steps on every push and must be green.
   function 'nodes'". The runtime's ring (`crow_runtime::distributed`) has no
   builtin yet.
 
+- The shape of a builtin's tensor is declared on its row (`Shape`, `Dim`
+  in table.rs; `shapes::declared` the one reader, `declared_pieces` for a
+  decomposition): a new tensor-answering row declares its pattern, or its
+  answer's rank is unknown and a loop or an index over it is refused. A
+  shape no pattern states is a new variant of the vocabulary, never a
+  name in the compiler. The patterns read the argument as it was written
+  (`seen`): a list converted to a tensor where it is handed
+  (`tensor(move xs)`) keeps the rank it had as a list.
+- A row that answers a frame declares its columns (`columns`, where the
+  kernel fixes them) or its provider (`provider: &Provider { connection,
+  statement, columns }`, a function of its runtime crate handed the
+  connection's literal URL, the literal statement and the program's
+  `CREATE TABLE`s, answering name and kind pairs); `table::frame_declared`
+  is the one lookup and `describe_sql` the one hook. `query`'s provider is
+  `crow_db::describe` (with `sql_types`, both behind crow_db's `sqlite`
+  feature: a generated program builds crow_db without it). The form that
+  opens a connection carries `Prop::Connects` (`table::opens_connection`;
+  schema.rs reads the handle's type where a form carries no row).
 - `crow check --self` holds its cases to the right answer, not only to
   each other: a case's `refer` names what it computes, the agreed outputs
   go to `target/crow_self/answers.jsonl`, and `tests/self/reference.py`
