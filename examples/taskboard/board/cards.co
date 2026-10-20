@@ -33,7 +33,7 @@ fn make_board[]
         return
     if new_board eq ''
         return
-    exec[book, 'INSERT INTO boards (name) VALUES (?)', [new_board]]
+    query[book, 'INSERT INTO boards (name) VALUES (?)', [new_board]]
     store.note[book, reader.name, 'made the board `new_board`']
     new_board = ''
 
@@ -44,7 +44,7 @@ fn open_board[id]
 fn add_card[]
     if new_card eq ''
         return
-    exec[book, 'INSERT INTO cards (board, title, status, owner, stars) VALUES (?, ?, ?, ?, 0)', [board_id, new_card, 'todo', reader.name]]
+    query[book, 'INSERT INTO cards (board, title, status, owner, stars) VALUES (?, ?, ?, ?, 0)', [board_id, new_card, 'todo', reader.name]]
     store.note[book, reader.name, 'added `new_card`']
     new_card = ''
 
@@ -55,7 +55,7 @@ fn advance[id]
     step = 'done'
     if found.status[0] eq 'todo'
         step = 'doing'
-    exec[book, 'UPDATE cards SET status = ? WHERE id = ?', [step, id]]
+    query[book, 'UPDATE cards SET status = ? WHERE id = ?', [step, id]]
     store.note[book, reader.name, 'moved `found.title[0]` to `step`']
 
 fn open_card[id]
@@ -63,13 +63,13 @@ fn open_card[id]
 
 fn set_stars[n]
     stars = int[n]
-    exec[book, 'UPDATE cards SET stars = ? WHERE id = ?', [stars, card_id]]
+    query[book, 'UPDATE cards SET stars = ? WHERE id = ?', [stars, card_id]]
     store.note[book, reader.name, 'gave card `card_id` `stars` stars']
 
 fn post[]
     if comment eq ''
         return
-    exec[book, 'INSERT INTO comments (card, author, body) VALUES (?, ?, ?)', [card_id, reader.name, comment]]
+    query[book, 'INSERT INTO comments (card, author, body) VALUES (?, ?, ?)', [card_id, reader.name, comment]]
     store.note[book, reader.name, 'commented on card `card_id`']
     comment = ''
 
@@ -83,7 +83,7 @@ fn attach[]
     kept = 'files/attachment-`row.id[0]`'
     mkdir['files']
     cp[upload.path, kept]
-    exec[book, 'UPDATE attachments SET path = ? WHERE id = ?', [kept, row.id[0]]]
+    query[book, 'UPDATE attachments SET path = ? WHERE id = ?', [kept, row.id[0]]]
     store.note[book, reader.name, 'attached `upload.name` to card `card_id`']
     upload = map[]
 

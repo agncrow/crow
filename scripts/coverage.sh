@@ -37,7 +37,9 @@ floor_of() {
   esac
 }
 export CROW_IR_VERIFY=strict
-cargo llvm-cov clean --workspace > /dev/null 2>&1
+# (only the profiles go: the instrumented build is kept between runs, its
+# flags never change, so a run after the first rebuilds what changed)
+cargo llvm-cov clean --workspace --profraw-only > /dev/null 2>&1
 cargo llvm-cov --workspace --release --no-report 2>&1 | grep -E '^test result|^error' || true
 if [ $quick = 0 ]; then
   # the instrumented binary, run as the gate runs it; the programs it

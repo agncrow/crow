@@ -1047,6 +1047,17 @@ steps on every push and must be green.
   name in the compiler. The patterns read the argument as it was written
   (`seen`): a list converted to a tensor where it is handed
   (`tensor(move xs)`) keeps the rank it had as a list.
+- `crow.lock` holds a content hash per dependency (`packages::tree_hash`,
+  every file but `.git` and the marker, by path and bytes), checked once
+  per process by `packages::verified` at the top of
+  `expand_module_imports_checked` — a package edited under
+  `crow_modules/` is refused by every command until `crow install`
+  restores it (the fast path rehashes and refetches on a mismatch). Two
+  requirements of one package at tags of one major take the higher
+  (`higher`, `version`; the install says so); a `#sha256:…` after the
+  version is an attestation `split_attested` strips and `install` holds
+  the bytes to. The tests build a bare repo with three tags
+  (`tagged_repo`).
 - `query` is the one statement verb (2026-10-19): every statement, a frame
   answered. Its row's provider decides read or write from the LITERAL
   statement (`Provider.writes`, crow_db's `describe::writes` over

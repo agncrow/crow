@@ -8,13 +8,13 @@ conn = connect['sqlite://:memory:']
 log['connected to SQLite']
 
 --- Create table
-exec[conn, 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)']
+query[conn, 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)']
 log['table created']
 
 --- Insert rows
-exec[conn, 'INSERT INTO users VALUES (1, ?, ?)', ['alice', 30]]
-exec[conn, 'INSERT INTO users VALUES (2, ?, ?)', ['bob', 25]]
-exec[conn, 'INSERT INTO users VALUES (3, ?, ?)', ['carol', 35]]
+query[conn, 'INSERT INTO users VALUES (1, ?, ?)', ['alice', 30]]
+query[conn, 'INSERT INTO users VALUES (2, ?, ?)', ['bob', 25]]
+query[conn, 'INSERT INTO users VALUES (3, ?, ?)', ['carol', 35]]
 log['3 rows inserted']
 
 --- Query all
@@ -28,7 +28,7 @@ log['young users (age < 30):']
 log[young]
 
 --- Exec returns affected row count
-n = exec[conn, 'UPDATE users SET age = age + 1 WHERE name = ?', ['alice']]
+n = len[query[conn, 'UPDATE users SET age = age + 1 WHERE name = ? RETURNING id', ['alice']]]
 log['updated `n` row(s)']
 assert[n eq 1, 'should update 1 row']
 
@@ -39,8 +39,8 @@ log[alice]
 
 --- Transaction: all-or-nothing
 fn transfer[tx]
-  exec[tx, 'UPDATE users SET age = age - 5 WHERE name = ?', ['bob']]
-  exec[tx, 'UPDATE users SET age = age + 5 WHERE name = ?', ['carol']]
+  query[tx, 'UPDATE users SET age = age - 5 WHERE name = ?', ['bob']]
+  query[tx, 'UPDATE users SET age = age + 5 WHERE name = ?', ['carol']]
 
 transact[conn, transfer]
 log['transaction committed']
@@ -52,8 +52,8 @@ log[after_tx]
 
 --- Module-prefixed syntax
 conn2 = db.connect['sqlite://:memory:']
-db.exec[conn2, 'CREATE TABLE t (x INTEGER)']
-db.exec[conn2, 'INSERT INTO t VALUES (42)']
+db.query[conn2, 'CREATE TABLE t (x INTEGER)']
+db.query[conn2, 'INSERT INTO t VALUES (42)']
 result = db.query[conn2, 'SELECT * FROM t']
 log['db.prefixed result:']
 log[result]

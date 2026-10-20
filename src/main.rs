@@ -4916,6 +4916,10 @@ pub(crate) fn expand_module_imports_checked(
     source_dir: &std::path::Path,
     visited: &mut std::collections::HashSet<String>,
 ) -> Result<Vec<ast::Stmt>, String> {
+    // the installed packages as the lock recorded them: one changed under
+    // the lock is refused before a program reads anything of it (once per
+    // process; packages.rs)
+    packages::verified(&project_root(source_dir))?;
     // the entry's own imports and their lines: a part's, hoisted ahead of
     // the entry, carries no line of the entry's
     let use_key = |path: &str, alias: &Option<String>| format!("{}|{}", path, alias.clone().unwrap_or_default());

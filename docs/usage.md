@@ -152,7 +152,7 @@ myapp/
   migrations/           .sql files drafted by crow db diff and applied by crow db apply
   css/app.css           optional stylesheet overrides (inlined after the defaults)
   tests/                integration tests
-  crow.lock             the commit each dependency checked out (commit it)
+  crow.lock             the commit and the hash of each dependency as installed (commit it)
   crow_modules/         installed dependencies (crow install; not committed)
   .crow_build/          the generated Rust project — safe to delete
 ```
@@ -181,13 +181,17 @@ Dependencies (`deps`) take two forms:
 
 | Form | Example | How it is installed |
 |------|---------|---------------------|
-| Repository and version | `models = 'github.com/agncrow/crow-models@v0.1.0'` | Checked out at the tag (or branch, or commit), the commit pinned in `crow.lock` |
+| Repository and version | `models = 'github.com/agncrow/crow-models@v0.1.0'` | Checked out at the tag (or branch, or commit), the commit and the content hash pinned in `crow.lock`; `…@v0.1.0#sha256:…` holds the install to a hash you verified |
 | Local path | `utils = './libs/utils'` | Linked into `crow_modules/` |
 
 A package is a git repository and a version is its tag: there is no
 registry. The first `crow install` of a dependency records the commit its
-version names in `crow.lock`; every install after that checks out that
-commit, so every machine runs the same code. On a forge the repository is
+version names in `crow.lock`, with the hash of what was installed; every
+install after that checks out that commit, so every machine runs the same
+code, and every command refuses a package changed by hand under
+`crow_modules/` until `crow install` restores it. A project holds one
+version of a package: two requirements at tags of one major take the
+higher, saying so. On a forge the repository is
 the first two path segments and the rest is a directory inside it
 (`github.com/agncrow/crow/packages/models@v0.6.0`). Installed modules are
 imported like any user module — qualified: `use models.line` then

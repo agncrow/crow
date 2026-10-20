@@ -79,6 +79,20 @@ history says the rest.
   meanwhile; it had been skipped, and a page could keep the earlier run's
   answer where the interpreter, running each inline, showed the latest.
 
+### Added
+
+- The package lock holds the bytes (spec, Package Manager): `crow.lock`
+  records the hash of each dependency as installed beside its commit,
+  every command that reads a program refuses a package changed by hand
+  under `crow_modules/` until `crow install` restores it, and an install
+  refuses a fetch of a locked commit that hashes otherwise. A requirer
+  may attest the hash it verified after the version
+  (`…@v0.1.2#sha256:…`), in a program's crowfile or a package's, and the
+  install holds the bytes to every attestation it meets. Two requirements
+  of one package at tags of one major take the higher, saying so, where
+  any two sources had been refused; tags of two majors, branches and
+  commits that differ still are.
+
 ### Changed
 
 - The shape of the tensor a builtin answers is declared on its row
