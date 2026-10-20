@@ -2061,6 +2061,55 @@ impl<'a> Lowerer<'a> {
         ]
     }
 
+    /// The frame a path holds — a variable's (`xs`), or a record's field's
+    /// (`b.f`), each through its item where `item` says — made open: its
+    /// columns stay known, and one it cannot name may be there (a column
+    /// written through the path, read as the program runs).
+    fn open_held_frame(&mut self, holder: &A, field: Option<&String>, item: bool) {
+        fn open(t: &mut Ty, item: bool) {
+            match t {
+                Ty::Result(inner) => open(inner, item),
+                Ty::List(inner) | Ty::Map(_, inner) if item => open(inner, false),
+                Ty::Frame(Some(cols)) if !item && !cols.open => {
+                    *t = Ty::Frame(Some(std::sync::Arc::new(crate::type_infer::Cols { cols: cols.cols.clone(), open: true })));
+                }
+                _ => {}
+            }
+        }
+        match (holder, field) {
+            (A::Ident(v), None) => {
+                if let Some(mut t) = self.ctx.vars.get(v).cloned() {
+                    open(&mut t, item);
+                    self.ctx.vars.insert(v.clone(), t);
+                }
+            }
+            (o, Some(f)) => {
+                if let Ty::Record(rec) = self.target_type(o).payload().clone() {
+                    if let Some(sig) = self.ctx.structs.get_mut(&rec) {
+                        for (name, ty) in sig.fields.iter_mut() {
+                            if name == f {
+                                open(ty, item);
+                            }
+                        }
+                    }
+                }
+            }
+            // (a collection held in a record's field: the field's items)
+            (A::FieldAccess { object: o, field: f }, None) => {
+                if let Ty::Record(rec) = self.target_type(o).payload().clone() {
+                    if let Some(sig) = self.ctx.structs.get_mut(&rec) {
+                        for (name, ty) in sig.fields.iter_mut() {
+                            if name == f {
+                                open(ty, item);
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn is_fact(&self, name: &str) -> bool {
         // (a standard module's function, inlined, has locals of its own:
         // one named like a fact of the program is still its local)
@@ -2161,6 +2210,63 @@ impl<'a> Lowerer<'a> {
                 out
             }
             S::FieldAssign { object, field, value } => {
+                // a frame's column written where the frame lies — `df.name =
+                // values`, `df.`name` = values` — is the frame assigned anew
+                // with the column, through the column write's row (found by
+                // its property, never by name): the statement is rewritten as
+                // the assignment of what holds the frame — a variable, a
+                // field, an item — and lowered as one, so the frame's type
+                // gains the column at this line as a reassignment's does, a
+                // fact's write is a store, and the value's own checks are the
+                // assignment's (spec, Frames). A computed name is a frame's
+                // alone: a record's fields are fixed before the program runs.
+                let computed = field.contains('`');
+                let held = self.target_type(object);
+                if computed && self.pass == Pass::Final && !matches!(held.payload(), Ty::Frame(_) | Ty::Unknown) {
+                    self.refuse(format!(
+                        "`.{}` names a frame's column by a computed name, and this is {}: a record's fields are fixed before the program runs, and a map's key is written as `m[key] = …`",
+                        field,
+                        crate::table::Arg::of_type(held.payload()).words()
+                    ));
+                    return Ok(Vec::new());
+                }
+                if computed || matches!(held.payload(), Ty::Frame(_)) {
+                    let write = crate::table::column_write().name;
+                    let call = A::Call {
+                        callee: Box::new(A::Ident(write.to_string())),
+                        args: vec![object.clone(), A::Str(field.clone()), value.clone()],
+                    };
+                    let rewritten = match object {
+                        A::Ident(v) => S::Assign { name: v.clone(), value: call },
+                        A::FieldAccess { object: o, field: f } => S::FieldAssign { object: (**o).clone(), field: f.clone(), value: call },
+                        A::Call { callee, args } if args.len() == 1 => S::IndexAssign { object: (**callee).clone(), index: args[0].clone(), value: call },
+                        _ => {
+                            if self.pass == Pass::Final {
+                                self.refuse(format!("a column is written on a frame a variable, a field or an item holds: hold the frame in one, then `.{} = …` it", field));
+                            }
+                            return Ok(Vec::new());
+                        }
+                    };
+                    let out = self.lower_stmt(&rewritten)?;
+                    // a column written through a record's field or a list's
+                    // item: the frame's type there is every record's or every
+                    // item's, and cannot carry the column, so it is open from
+                    // here on and the column is read as the program runs
+                    // (spec, Frames: a column only some add may be there)
+                    match object {
+                        A::FieldAccess { object: o, field: f } => self.open_held_frame(o, Some(f), false),
+                        A::Call { callee, .. } => self.open_held_frame(callee, None, true),
+                        _ => {}
+                    }
+                    return Ok(out);
+                }
+                // (a list, a tensor, text or a number has no field to write:
+                // `xs.k = …` had stopped the interpreter as it ran, and the
+                // compiled program had not built — refused as a read of the
+                // field is, in its words)
+                if self.pass == Pass::Final && !matches!(held.payload(), Ty::Record(_) | Ty::Map(..) | Ty::Json | Ty::Unknown) {
+                    self.check_field(&held, field);
+                }
                 // the target is checked before its value, then lowered after
                 self.check_target(object);
                 if let Some(root) = target_root(object) {
@@ -2203,7 +2309,7 @@ impl<'a> Lowerer<'a> {
                         }
                         Ty::Frame(_) => {
                             self.refuse(format!(
-                                "'{0}' is a frame, whose cells are not written by position: a column is made anew, with[{0}, 'name', values]",
+                                "'{0}' is a frame, whose cells are not written by position: a column is written whole, {0}.name = values",
                                 crate::lower::shown(&var)
                             ));
                         }
@@ -2213,7 +2319,7 @@ impl<'a> Lowerer<'a> {
                         // built)
                         Ty::Column(_) => {
                             self.refuse(format!(
-                                "'{}' is a frame's column, whose cells are not written by position: a column is made anew, with[frame, 'name', values]",
+                                "'{}' is a frame's column, whose cells are not written by position: a column is written whole, df.name = values",
                                 crate::lower::shown(&var)
                             ));
                         }
@@ -3920,6 +4026,32 @@ impl<'a> Lowerer<'a> {
                 Expr::Unary { op: format!("{:?}", op).to_lowercase(), expr: Box::new(x), ty }
             }
             A::Call { callee, args } => self.call(callee, args)?,
+            // a column read by a name the program computes — `df.`name``,
+            // `df.lag_`k`` — through the column read's row (found by its
+            // property): the column `df.name` reads, its cells as they show
+            // when it runs, as an open frame's unnamed column reads (a written
+            // piece names no column: the whole name is the pieces' text)
+            A::FieldAccess { object, field } if field.contains('`') => {
+                let base = self.lower_expr(object)?;
+                let base = if !self.in_fact_default && base.ty().is_result() && matches!(base.ty().payload(), Ty::Frame(_)) {
+                    self.decided(base, Decision::Read(field.clone()))
+                } else {
+                    base
+                };
+                if self.pass == Pass::Final && !matches!(base.ty().payload(), Ty::Frame(_) | Ty::Unknown) {
+                    self.refuse(format!(
+                        "`.{}` names a frame's column by a computed name, and {} is {}: a record's fields are fixed before the program runs, and a map's key is read as `m[key]`",
+                        field,
+                        local_named(&base).map(|n| format!("'{}'", n)).unwrap_or_else(|| "this".to_string()),
+                        crate::table::Arg::of_type(base.ty().payload()).words()
+                    ));
+                }
+                let name = Expr::Interp(self.interpolation(field)?);
+                let carried = base.ty().is_result();
+                let ty = Ty::Column(Box::new(Ty::Json));
+                let ty = if carried { Ty::Result(Box::new(ty)) } else { ty };
+                Expr::Call { target: Target::Row(crate::table::column_read()), args: vec![base, name], ty, propagates: carried }
+            }
             A::FieldAccess { object, field } => {
                 // `m.x` where `m` is no variable names what a part declares:
                 // `m` is not read as one
@@ -5828,6 +5960,17 @@ impl<'a> Lowerer<'a> {
                 (Kind::Item | Kind::ItemRef, Ty::Int) if floats && !matches!(x, Expr::Convert { how: Convert::Unwrap, .. }) => {
                     Expr::Convert { how: Convert::IntToFloat, expr: Box::new(x), ty: Ty::Float }
                 }
+                // ints held as a tensor (`[1, 2]`) written as a column's
+                // values are the column's ints, as a module row's cells take
+                // them (`row_arguments`): the column write is a core row, and
+                // the literal's int columns had become floats through it
+                (Kind::Cells, t) if matches!(t.payload(), Ty::Tensor(e, dims) if **e == Ty::Int && dims.as_ref().is_none_or(|d| d.len() == 1)) => {
+                    let ty = match x.ty() {
+                        Ty::Result(_) => Ty::Result(Box::new(Ty::List(Box::new(Ty::Int)))),
+                        _ => Ty::List(Box::new(Ty::Int)),
+                    };
+                    Expr::Convert { how: Convert::ToList, expr: Box::new(x), ty }
+                }
                 // a whole number of any size where the row takes one
                 // (`decimal[12]`, `fraction[1, 3]`): the int as it grows
                 (Kind::Big, t) if matches!(t.payload(), Ty::Int) => {
@@ -5955,11 +6098,6 @@ impl<'a> Lowerer<'a> {
             A::Ident(n) => self.check_call(n, args, types),
             A::FieldAccess { object, field } => {
                 if let A::Ident(m) = object.as_ref() {
-                    // a frame literal's own `with` steps (its rewrite, not the
-                    // program's words): the import was asked at its `new`
-                    if field == "with" && args.first().is_some_and(|a| literal_step(a, m)) {
-                        return;
-                    }
                     self.check_module_call(m, field);
                 }
             }
@@ -6399,20 +6537,6 @@ pub(crate) fn words_before_placeholders(sql: &str) -> Vec<String> {
 /// where it is assigned).
 /// The variable an expression reads, through the conversions a read is
 /// wrapped in (a value that can fail is decided before it is indexed).
-/// Whether an expression is a frame literal's chain — `m.new[]`, or
-/// `m.with[<chain>, …]` down to it — the rewrite of `m.new[k = v, …]`.
-fn literal_step(e: &A, module: &str) -> bool {
-    match e {
-        A::Call { callee, args } => match callee.as_ref() {
-            A::FieldAccess { object, field } if matches!(object.as_ref(), A::Ident(m) if m == module) => {
-                (field == "new" && args.is_empty()) || (field == "with" && args.first().is_some_and(|a| literal_step(a, module)))
-            }
-            _ => false,
-        },
-        _ => false,
-    }
-}
-
 /// Whether a value was read out of a tensor whose rank is not known: its
 /// kind, a number, is the lowering's guess, not the program's (an index
 /// into it is the rank's refusal, not a number's).
@@ -7543,8 +7667,8 @@ if r.ok
         let ir = ir_of("use frame\nf = frame.new[n = [1, 2], on = [true, false]]\nlog[f[f.on]]\nlog[where[f.on, f.n, 0]]\n");
         // (a frame's mask is fused into the frame's own kernel, as `f[f.on
         // eq true]`'s is)
-        assert!(ir.contains("core.__pick_where(unwrap f, \"c0 v0 eq\", [\"on\"], true)"), "{}", ir);
-        assert!(ir.contains("frame.where((unwrap f.on eq true)"), "{}", ir);
+        assert!(ir.contains("core.__pick_where(f, \"c0 v0 eq\", [\"on\"], true)"), "{}", ir);
+        assert!(ir.contains("frame.where((f.on eq true)"), "{}", ir);
     }
 
     /// A list of lists of numbers is a matrix where a tensor is taken:
@@ -7633,9 +7757,9 @@ if r.ok
     /// are the operators'
     #[test]
     fn a_frames_mask_is_one_call() {
-        let df = "use frame\ndf = with[with[frame.new[], 'name', ['ada', 'bob']], 'age', [30, 50]]\n";
+        let df = "use frame\ndf = frame.new[name = ['ada', 'bob'], age = [30, 50]]\n";
         let ir = ir_of(&format!("{}k = 40\nx = df[df.age gt 40 and df.name ne 'bob' or not (k lt df.age) and df.age.ok]\nlog[len[x]]\n", df));
-        assert!(ir.contains("core.__pick_where(unwrap df, \"c0 v0 gt c1 v1 ne and c0 v2 gt not c0 ok and or\", [\"age\", \"name\"], 40, \"bob\", k)"), "{}", ir);
+        assert!(ir.contains("core.__pick_where(df, \"c0 v0 gt c1 v1 ne and c0 v2 gt not c0 ok and or\", [\"age\", \"name\"], 40, \"bob\", k)"), "{}", ir);
         let call = ir_of(&format!("{}fn limit[]\n    40\nx = df[df.age gt limit[]]\nlog[len[x]]\n", df));
         assert!(!call.contains("__pick_where"), "a value that calls: {}", call);
         let other = ir_of(&format!("{}other = df\nx = df[other.age gt 40]\nlog[len[x]]\n", df));
@@ -7669,7 +7793,7 @@ if r.ok
         assert_eq!(refusal_of("t = now[]\nlog[t gt t - 5]\nlog[(t - 60) - t]\nlog[t + 1.5]\nlog[min[t, t + 1] eq t]\n"), "");
         refused("log[true gt false]\n", "gt compares numbers with numbers or text with text, not a bool with a bool");
         refused("log['a' lte 1]\n", "lte compares numbers with numbers or text with text, not text with a number");
-        let df = "use frame\ndf = with[frame.new[], 'name', ['ada', 'bob']]\n";
+        let df = "use frame\ndf = frame.new[name = ['ada', 'bob']]\n";
         refused(&format!("{}log[df.name gt 2]\n", df), "gt compares numbers with numbers or text with text, not text with a number");
         refused(&format!("{}log[df.name eq 2]\n", df), "eq compares values of one kind, not text with a number");
         refused(&format!("{}log[2 lt df.name]\n", df), "lt compares numbers with numbers or text with text, not a number with text");
@@ -7693,13 +7817,13 @@ if r.ok
     /// is refused, as a key the frame lacks is
     #[test]
     fn a_group_by_keys_a_pivot_and_a_window_are_typed() {
-        let t = "use frame\nt = with[with[with[frame.new[], 'sym', ['b', 'a']], 'day', [2, 1]], 'px', [1.5, 2.0]]\n";
-        let ir = ir_of(&format!("{}g = group[t, ['sym', 'day'], ['px', 'max']]\nlog[g.day[0]]\np = pivot[t, 'sym', 'day', 'px']\nlog[p.sym[0]]\nw = with[t, 'prev', window[t, 'px', 'lag', n = 1, by = 'sym']]\nlog[w.prev[0].ok]\nr = with[t, 'r', window[t, 'px', 'rank']]\nlog[r.r[0]]\nm = with[t, 'm', window[t, 'px', 'mean', n = 2]]\nlog[m.m[0]]\n", t));
+        let t = "use frame\nt = frame.new[sym = ['b', 'a'], day = [2, 1], px = [1.5, 2.0]]\n";
+        let ir = ir_of(&format!("{}g = group[t, ['sym', 'day'], ['px', 'max']]\nlog[g.day[0]]\np = pivot[t, 'sym', 'day', 'px']\nlog[p.sym[0]]\nw = t\nw.prev = window[t, 'px', 'lag', n = 1, by = 'sym']\nlog[w.prev[0].ok]\nr = t\nr.r = window[t, 'px', 'rank']\nlog[r.r[0]]\nm = t\nm.m = window[t, 'px', 'mean', n = 2]\nlog[m.m[0]]\n", t));
         // (`[2, 1]` is a column of ints, so the key is one; the max over floats a float)
-        assert!(ir.contains("let g: Result(Frame{day: Int, px_max: Float, sym: Str}) = frame.group_keys("), "{}", ir);
-        assert!(ir.contains("let p: Result(Frame{sym: Str, …}) = frame.pivot("), "{}", ir);
-        assert!(ir.contains("prev: Result(Float)") && ir.contains("frame.window_one(unwrap t, \"px\", \"lag\", 1, \"sym\", 0.0, \"\")"), "{}", ir);
-        assert!(ir.contains("r: Int") && ir.contains("frame.window(unwrap t, \"px\", \"rank\", 0, [], 0.0, \"\")"), "{}", ir);
+        assert!(ir.contains("let g: Frame{day: Int, px_max: Float, sym: Str} = frame.group_keys("), "{}", ir);
+        assert!(ir.contains("let p: Frame{sym: Str, …} = frame.pivot("), "{}", ir);
+        assert!(ir.contains("prev: Result(Float)") && ir.contains("frame.window_one(t, \"px\", \"lag\", 1, \"sym\", 0.0, \"\")"), "{}", ir);
+        assert!(ir.contains("r: Int") && ir.contains("frame.window(t, \"px\", \"rank\", 0, [], 0.0, \"\")"), "{}", ir);
         assert!(ir.contains("m: Float"), "{}", ir);
         assert!(refusal_of(&format!("{}log[len[group[t, ['sym', 'nope'], ['px', 'max']]]]\n", t)).contains("group: column 'nope' not found — the frame's columns are 'day', 'px', 'sym'"));
         assert!(refusal_of(&format!("{}log[len[pivot[t, 'sym', 'nope', 'px']]]\n", t)).contains("pivot: column 'nope' not found"));
@@ -7814,9 +7938,38 @@ if r.ok
     /// later read has.
     #[test]
     fn a_frame_reassigned_is_bound_anew() {
-        let ir = ir_of("use frame\ndf = with[frame.new[], 'a', [1.5]]\ndf = with[df, 'b', ['x']]\nlog[df.b[0]]\n");
-        assert!(ir.contains("let df: Result(Frame{a: Float}) = frame.with(frame.new()"), "{}", ir);
-        assert!(ir.contains("let df: Result(Frame{a: Float, b: Str}) = frame.with(unwrap df, \"b\""), "{}", ir);
+        let ir = ir_of("use frame\ndf = frame.new[a = [1.5]]\ndf.b = ['x']\nlog[df.b[0]]\n");
+        assert!(ir.contains("let df: Frame{a: Float} = core.__set_col(frame.new()"), "{}", ir);
+        assert!(ir.contains("let df: Frame{a: Float, b: Str} = core.__set_col(df, \"b\""), "{}", ir);
+    }
+
+    /// A column written by the dot (spec, Frames) is the frame assigned
+    /// anew through the column write's row: a name the program writes adds
+    /// the column to the type; a name with a written piece, or one wholly
+    /// computed, is read as the program runs and leaves the frame open; a
+    /// computed read is the read's row, its cells as they show; through a
+    /// record's field the frame is read and written back whole; and a
+    /// scalar repeats down the rows.
+    #[test]
+    fn a_column_written_by_the_dot_is_the_frame_assigned_anew() {
+        let ir = ir_of("use frame\ndf = frame.new[a = [1.5]]\ndf.side = 'buy'\nk = 1\ndf.lag_`k` = [2.0]\nlog[df.`'a'`[0]]\n");
+        assert!(ir.contains("let df: Frame{a: Float, side: Str} = core.__set_col(df, \"side\", \"buy\")"), "{}", ir);
+        assert!(ir.contains("let df: Frame{a: Float, side: Str, …} = core.__set_col(df, interp(\"lag_\", k), [2.0])"), "{}", ir);
+        assert!(ir.contains("core.__col(df, interp(\"a\"))"), "{}", ir);
+        let ir = ir_of("use frame\nstruct B [f]\nb = B[frame.new[px = [1.0]]]\nb.f.d = b.f.px\nlog[b.f.d[0]]\n");
+        assert!(ir.contains("b.f = core.__set_col(b.f, \"d\", b.f.px)"), "{}", ir);
+    }
+
+    /// A computed name is a frame's alone, and a field written on what
+    /// has no fields is refused before the program runs, in both modes
+    #[test]
+    fn a_computed_column_name_is_a_frames_alone() {
+        let e = refusal_of("struct P [x]\np = P[1]\np.`'x'` = 3\nlog[p.x]\n");
+        assert!(e.contains("names a frame's column by a computed name, and this is a record"), "{}", e);
+        let e = refusal_of("struct P [x]\np = P[1]\nlog[p.`'x'`]\n");
+        assert!(e.contains("names a frame's column by a computed name, and 'p' is a record"), "{}", e);
+        let e = refusal_of("xs = ['a']\nxs.k = [3]\nlog[xs]\n");
+        assert!(e.contains("a list has no field 'k'"), "{}", e);
     }
 
     /// A tensor local reassigned another shape is bound anew in the block
@@ -7957,7 +8110,7 @@ if r.ok
     /// holder is read by what it holds (it had been typed a list)
     #[test]
     fn a_failing_tensor_pushed_to_stays_a_tensor() {
-        let ir = ir_of("use frame\ndf = with[frame.new[], 'a', [1, 2]]\nv = push[push[[3, 1], len[frame.stack[df, df]]], 10]\nlog[v]\n");
+        let ir = ir_of("use frame\ndf = frame.new[a = int['1']]\nv = push[push[[3, 1], len[frame.stack[df, df]]], 10]\nlog[v]\n");
         assert!(ir.contains("let v: Result(Tensor(Int"), "{}", ir);
     }
 
@@ -8067,7 +8220,7 @@ if r.ok
     /// no columns, and a table naming the handler's column was refused).
     #[test]
     fn a_frame_fact_holds_what_its_handlers_store() {
-        let src = "use web, ui, frame\nuniverse = frame.new[]\nfn keep[u]\n    universe = u\nfn fill_in[]\n    keep[with[frame.new[], 'symbol', ['a']]]\nview v[]\n    return stack[table[universe, key = 'symbol'], button['Load', click = fill_in]]\npage['/', v]\n";
+        let src = "use web, ui, frame\nuniverse = frame.new[]\nfn keep[u]\n    universe = u\nfn fill_in[]\n    keep[frame.new[symbol = ['a']]]\nview v[]\n    return stack[table[universe, key = 'symbol'], button['Load', click = fill_in]]\npage['/', v]\n";
         assert_eq!(refusal_of(src), "");
         assert!(ir_of(src).contains("fact universe: Frame{…} = frame.new()"), "{}", ir_of(src));
     }
@@ -8077,8 +8230,8 @@ if r.ok
     /// renamed column keeps its type under its new name.
     #[test]
     fn a_copied_or_renamed_column_keeps_its_type() {
-        let ir = ir_of("use frame\ndf = with[frame.new[], 'a', [1.5, 2.5]]\ndf = with[df, 'b', df.a]\nlog[df.b[0] * 2.0]\nr = rename[df, 'a', 'z']\nlog[r.z[0]]\n");
-        assert!(ir.contains("let df: Result(Frame{a: Float, b: Float})"), "{}", ir);
+        let ir = ir_of("use frame\ndf = frame.new[a = [1.5, 2.5]]\ndf.b = df.a\nlog[df.b[0] * 2.0]\nr = rename[df, 'a', 'z']\nlog[r.z[0]]\n");
+        assert!(ir.contains("let df: Frame{a: Float, b: Float}"), "{}", ir);
         assert!(ir.contains("let r: Frame{b: Float, z: Float}") || ir.contains("let r: Result(Frame{b: Float, z: Float})"), "{}", ir);
     }
 
@@ -8087,17 +8240,17 @@ if r.ok
     /// they share keeps its type.
     #[test]
     fn a_frame_after_branches_has_the_columns_they_share() {
-        let ir = ir_of("use frame\ndf = with[frame.new[], 'a', [1.5]]\nif len[df] gt 0\n    df = with[df, 'b', ['x']]\nafter = df\nlog[after.a[0]]\n");
-        assert!(ir.contains("let after: Result(Frame{a: Float, …}) = move df"), "{}", ir);
-        let ir = ir_of("use frame\ndf = with[frame.new[], 'a', [1.5]]\nfor i in range[2]\n    df = with[df, 'c`i`', [2.0]]\nafter = df\nlog[after.a[0]]\n");
-        assert!(ir.contains("let after: Result(Frame{a: Float, …}) = move df"), "{}", ir);
+        let ir = ir_of("use frame\ndf = frame.new[a = [1.5]]\nif len[df] gt 0\n    df.b = ['x']\nafter = df\nlog[after.a[0]]\n");
+        assert!(ir.contains("let after: Frame{a: Float, …} = move df"), "{}", ir);
+        let ir = ir_of("use frame\ndf = frame.new[a = [1.5]]\nfor i in range[2]\n    df.c`i` = [2.0]\nafter = df\nlog[after.a[0]]\n");
+        assert!(ir.contains("let after: Frame{a: Float, …} = move df"), "{}", ir);
     }
 
     /// A function given frames of other columns is a copy per set of them,
     /// as for any other type, so each reads the columns it is handed.
     #[test]
     fn a_function_is_specialized_per_frame_columns() {
-        let ir = ir_of("use frame, math\nfn total[f]\n    return sum[f.amount]\nx = with[frame.new[], 'amount', [1.5]]\ny = with[x, 'who', ['a']]\nlog[total[x]]\nlog[total[y]]\n");
+        let ir = ir_of("use frame, math\nfn total[f]\n    return sum[f.amount]\nx = frame.new[amount = [1.5]]\ny = x\ny.who = ['a']\nlog[total[x]]\nlog[total[y]]\n");
         assert!(ir.contains("(f: Frame{amount: Float}) -> Float"), "{}", ir);
         assert!(ir.contains("(f: Frame{amount: Float, who: Str}) -> Float"), "{}", ir);
     }
@@ -8108,7 +8261,7 @@ if r.ok
     /// frame is handed to.
     #[test]
     fn a_column_a_known_frame_lacks_is_refused() {
-        let frame = "use frame, math\ndf = with[frame.new[], 'price', [1.5, 2.5]]\n";
+        let frame = "use frame, math\ndf = frame.new[price = [1.5, 2.5]]\n";
         for (line, words) in [
             ("log[df.cost[0]]", "frame has no property or column 'cost' — its columns are 'price'"),
             ("log[sort[df, 'cost']]", "sort: column 'cost' not found — the frame's columns are 'price'"),
@@ -8120,12 +8273,12 @@ if r.ok
             let refused = refusal_of(&format!("{}{}\n", frame, line));
             assert!(refused.contains(words), "{}: {}", line, refused);
         }
-        let refused = refusal_of("use frame, math\nfn total[f]\n    return sum[f.amount]\nprices = with[frame.new[], 'price', [1.5]]\nlog[total[prices]]\n");
+        let refused = refusal_of("use frame, math\nfn total[f]\n    return sum[f.amount]\nprices = frame.new[price = [1.5]]\nlog[total[prices]]\n");
         assert!(refused.contains("frame has no property or column 'amount' — its columns are 'price' (the frame total[] is handed as `f`)"), "{}", refused);
         let refused = refusal_of(&format!("{}log[rename[df, 'cost', 'c']]\n", frame));
         assert!(refused.contains("rename: column 'cost' not found"), "{}", refused);
         // what a table or a chart names of the frame it draws
-        let view = "use web, ui, frame\ndf = with[frame.new[], 'price', [1.5, 2.5]]\nview v[]\n    return ";
+        let view = "use web, ui, frame\ndf = frame.new[price = [1.5, 2.5]]\nview v[]\n    return ";
         for (tree, words) in [
             ("table[df, key = 'id']", "table: column 'id' not found — the frame's columns are 'price'"),
             ("table[df, hide = ['id']]", "table: column 'id' not found"),
@@ -8143,7 +8296,7 @@ if r.ok
     /// columns.
     #[test]
     fn a_guarded_failure_hands_back_no_columns() {
-        let ir = ir_of("use frame\nfn pick[n]\n    a = with[frame.new[], 'k', [1.5]]\n    if not a.ok\n        return a\n    return with[frame.new[], 'v', ['s']]\nr = pick[1]\nlog[r.v[0]]\n");
+        let ir = ir_of("use frame\nfn pick[n]\n    a = frame.new[k = float['1.5']]\n    if not a.ok\n        return a\n    return frame.new[v = ['s']]\nr = pick[1]\nlog[r.v[0]]\n");
         assert!(ir.contains("pick(n: Int) -> Result(Frame{v: Str})"), "{}", ir);
     }
 
@@ -8206,7 +8359,7 @@ if r.ok
         let refused = |src: &str| crate::build(src).ok().and_then(|stmts| crate::ir_interp::prepare(&stmts, "t").err()).unwrap_or_default();
         assert!(refused("counts = map[a = 1, b = 2]\nfor k in counts\n    log[k]\n").contains("a loop walks map[int], which has no items — walk keys[m] or values[m]"));
         assert!(refused("for c in 'abc'\n    log[c]\n").contains("a loop walks str, which has no items — walk split[s, '']"));
-        assert!(refused("use frame\ndf = with[frame.new[], 'a', [1, 2]]\nfor r in df\n    log[r]\n").contains("a loop walks frame, which has no items — walk one of its columns"));
+        assert!(refused("use frame\ndf = frame.new[a = [1, 2]]\nfor r in df\n    log[r]\n").contains("a loop walks frame, which has no items — walk one of its columns"));
         assert!(refused("for n in 3\n    log[n]\n").contains("a loop walks int, which has no items"));
         // what has items walks
         assert!(crate::build("for x in [1, 2]\n    log[x]\nfor r in [[1.0, 2.0], [3.0, 4.0]]\n    log[r]\n").ok().and_then(|s| crate::ir_interp::prepare(&s, "t").ok()).is_some());

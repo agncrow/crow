@@ -55,7 +55,6 @@ frame.unpivot_one	frames: held to pandas by tests/parity/185, no reference per c
 frame.where	frames: held to pandas by tests/parity/185, no reference per case yet
 frame.window	frames: held to pandas by tests/parity/185, no reference per case yet
 frame.window_one	frames: held to pandas by tests/parity/185, no reference per case yet
-frame.with	frames: held to pandas by tests/parity/185, no reference per case yet
 io.csv_asked	the batch's cases share their directory, so an answer depends on the cases before it: an io family with a directory per case is the plan
 io.lines_asked	the batch's cases share their directory, so an answer depends on the cases before it: an io family with a directory per case is the plan
 io.read_asked	the batch's cases share their directory, so an answer depends on the cases before it: an io family with a directory per case is the plan

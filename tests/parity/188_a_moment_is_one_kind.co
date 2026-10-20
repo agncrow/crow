@@ -57,7 +57,9 @@ log[f.at[2].minute]
 log[len[f[f.at gt anchor]]]
 log[sort[f, 'at', desc = true].n]
 log[unique[f, 'at']]
-log[fill[with[f, 'seen', anchor], 'seen', anchor].seen[0]]
+fs = f
+fs.seen = anchor
+log[fill[fs, 'seen', anchor].seen[0]]
 log[encode[m]]
 write['moments-note.csv', 'sym,at\nA,2026-07-14T13:30:00Z\nB,2026-07-15\nC,2026-07-15T00:00:00.250+05:30\n']
 t = frame.load['moments-note.csv']

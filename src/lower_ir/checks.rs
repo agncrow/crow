@@ -1048,7 +1048,7 @@ impl<'a> Lowerer<'a> {
             let owner = match field {
                 "shape" | "dtype" | "device" => "a tensor's",
                 "columns" | "dtypes" => "a frame's",
-                _ => "a record's",
+                _ => "a record's field or a frame's column",
             };
             self.refuse(format!("a list has no field '{}': `.{}` is {} — index an item for its own", field, field, owner));
             return;
@@ -1967,12 +1967,12 @@ mod tests {
     /// the compiled program did not build)
     #[test]
     fn a_frame_is_indexed_by_a_mask_alone() {
-        let err = check_source("use frame\nf = with[frame.new[], 'a', [1.0, 2.0]]\nx = f['a']\nlog[x]\n").unwrap_err();
+        let err = check_source("use frame\nf = frame.new[a = [1.0, 2.0]]\nx = f['a']\nlog[x]\n").unwrap_err();
         assert!(err.contains("a frame is indexed by a mask, which picks its rows (f[f.age gt 30]): read a column as `f.name`, its cell as `f.name[i]`"), "{}", err);
-        let err = check_source("use frame\nf = with[frame.new[], 'a', [1.0, 2.0]]\nlog[f[0]]\n").unwrap_err();
+        let err = check_source("use frame\nf = frame.new[a = [1.0, 2.0]]\nlog[f[0]]\n").unwrap_err();
         assert!(err.contains("a frame is indexed by a mask"), "{}", err);
-        assert!(check_source("use frame\nf = with[frame.new[], 'a', [1.0, 2.0]]\nlog[f.a[0]]\n").is_ok());
-        assert!(check_source("use frame\nf = with[frame.new[], 'a', [1.0, 2.0]]\nlog[f[f.a gt 1.0]]\nlog[f.a[f.a gt 1.0]]\n").is_ok());
+        assert!(check_source("use frame\nf = frame.new[a = [1.0, 2.0]]\nlog[f.a[0]]\n").is_ok());
+        assert!(check_source("use frame\nf = frame.new[a = [1.0, 2.0]]\nlog[f[f.a gt 1.0]]\nlog[f.a[f.a gt 1.0]]\n").is_ok());
     }
 
     /// The order of a list of numbers is a list of ints, and its running
@@ -2077,7 +2077,7 @@ mod tests {
     /// missing), and a filled column's cells make one
     #[test]
     fn a_mask_of_values_that_can_fail_is_refused() {
-        let src = "use frame\na = with[with[frame.new[], 'k', [0, 1]], 'p', [1.5, 2.5]]\nb = with[with[frame.new[], 'k', [0]], 'q', [7.5]]\nj = join[a, b, 'k', 'left']\nkeep = for i in range[len[j]]\n    j.q[i] gt 1.0\nlog[len[j[keep]]]\n";
+        let src = "use frame\na = frame.new[k = [0, 1], p = [1.5, 2.5]]\nb = frame.new[k = [0], q = [7.5]]\nj = join[a, b, 'k', 'left']\nkeep = for i in range[len[j]]\n    j.q[i] gt 1.0\nlog[len[j[keep]]]\n";
         let err = check_source(src).unwrap_err();
         assert!(err.contains("'keep' holds values that can fail, and a mask decides every row: guard each value with .ok (cells of a column that can be missing: fill the column first, fill[frame, 'column', value])"), "{}", err);
         assert!(check_source(&src.replace("j = join[a, b, 'k', 'left']", "j = fill[join[a, b, 'k', 'left'], 'q', 0.0]")).is_ok());
@@ -2111,7 +2111,7 @@ mod tests {
     /// kept that, and its cells were refused as JSON: market's `resample`.)
     #[test]
     fn a_tested_function_reads_a_built_frames_columns() {
-        let src = "use frame\nfn table[xs]\n    out = frame.new[]\n    out = with[out, 'x', xs]\n    return out\nfn build[v]\n    hi = []\n    for x in v\n        hi = push[hi, x]\n    return table[hi]\nfn again[f]\n    hi = []\n    for i in range[f.shape[0]]\n        k = len[hi]\n        if k eq 0\n            hi = push[hi, f.x[i]]\n        else\n            hi[k - 1] = max[hi[k - 1], f.x[i]]\n    return table[hi]\ntest t[]\n    f = build[[1.0, 2.0]]\n    g = again[f]\n    assert[g.x[0] eq 2.0]\n";
+        let src = "use frame\nfn table[xs]\n    out = frame.new[]\n    out.x = xs\n    return out\nfn build[v]\n    hi = []\n    for x in v\n        hi = push[hi, x]\n    return table[hi]\nfn again[f]\n    hi = []\n    for i in range[f.shape[0]]\n        k = len[hi]\n        if k eq 0\n            hi = push[hi, f.x[i]]\n        else\n            hi[k - 1] = max[hi[k - 1], f.x[i]]\n    return table[hi]\ntest t[]\n    f = build[[1.0, 2.0]]\n    g = again[f]\n    assert[g.x[0] eq 2.0]\n";
         let checked = check_source(src);
         assert!(checked.is_ok(), "{:?}", checked);
     }
@@ -2211,7 +2211,7 @@ mod tests {
     /// words: `sort = true`, never a value that would sort in one mode.
     #[test]
     fn a_tables_sort_is_written_true() {
-        let page = |table: &str| format!("use web, ui, frame\nlong = true\nview v[]\n    f = with[frame.new[], 'n', [2, 1]]\n    return stack[p['`long`'], {}]\npage['/', v]\n", table);
+        let page = |table: &str| format!("use web, ui, frame\nlong = true\nview v[]\n    f = frame.new[n = [2, 1]]\n    return stack[p['`long`'], {}]\npage['/', v]\n", table);
         assert!(check_source(&page("table[f, sort = true]")).is_ok());
         assert!(check_source(&page("table[f, sort = false]")).is_ok());
         let err = check_source(&page("table[f, sort = long]")).unwrap_err();
@@ -2389,7 +2389,7 @@ mod tests {
     /// program had not built — fuzz seed 506 of the widened generator).
     #[test]
     fn a_predicate_that_is_not_a_function_is_refused_alike() {
-        let err = check_source("use frame\nfn p1[x]\n    return x % 2 eq 0\nfn case[]\n    p1 = with[frame.new[], 'a', [1, 2]]\n    log[all[[2, 4], p1]]\n    return 0\nr = case[]\n").unwrap_err();
+        let err = check_source("use frame\nfn p1[x]\n    return x % 2 eq 0\nfn case[]\n    p1 = frame.new[a = [1, 2]]\n    log[all[[2, 4], p1]]\n    return 0\nr = case[]\n").unwrap_err();
         assert!(err.contains("all[] takes a list and a function, got numbers and a frame"), "{}", err);
         assert!(check_source("fn p1[x]\n    return x % 2 eq 0\nlog[all[[2, 4], p1]]\nlog[any[[1, 3], p1]]\n").is_ok());
     }

@@ -490,8 +490,8 @@ fn pg_describe[parts, s, sql]
     if not f.ok
         return error['postgres describe error: `f.reason`', 'db']
     out = frame.new[]
-    out = with[out, 'name', f.columns]
-    out = with[out, 'type', f.dtypes]
+    out.name = f.columns
+    out.type = f.dtypes
     return out
 
 --- `pg_cancel[parts, stream]`: the statement the connection runs stopped

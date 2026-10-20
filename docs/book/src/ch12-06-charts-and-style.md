@@ -74,15 +74,15 @@ the math does instead of guessing:
 use chart, frame
 
 bars = frame.new[]
-bars = with[bars, 'ts', [0.0, 60.0, 120.0, 180.0, 240.0, 300.0]]
-bars = with[bars, 'c', [10.0, 11.0, 10.5, 11.5, 12.0, 11.0]]
-bars = with[bars, 'vol', [100.0, 200.0, 150.0, 300.0, 250.0, 100.0]]
-bars = with[bars, 'sma3', sma[bars.c, 3]]
-bars = with[bars, 'ema3', ema[bars.c, 3]]
-bars = with[bars, 'rsi3', rsi[bars.c, 3]]
-bars = with[bars, 'vwap', vwap[bars.c, bars.vol]]
-bars = with[bars, 'vol_2m', rolling_sum[bars.ts, bars.vol, 120.0]]
-bars = with[bars, 'cvd', cvd[bars.c, bars.vol]]
+bars.ts = [0.0, 60.0, 120.0, 180.0, 240.0, 300.0]
+bars.c = [10.0, 11.0, 10.5, 11.5, 12.0, 11.0]
+bars.vol = [100.0, 200.0, 150.0, 300.0, 250.0, 100.0]
+bars.sma3 = sma[bars.c, 3]
+bars.ema3 = ema[bars.c, 3]
+bars.rsi3 = rsi[bars.c, 3]
+bars.vwap = vwap[bars.c, bars.vol]
+bars.vol_2m = rolling_sum[bars.ts, bars.vol, 120.0]
+bars.cvd = cvd[bars.c, bars.vol]
 m = macd[bars.c, 2, 4, 2]
 log[bars.sma3[5]]
 log[bars.ema3[5]]
@@ -124,8 +124,9 @@ fn jump[t]
 
 derive bars
     raw = query[conn, 'SELECT ts, o, hi, lo, c, vol FROM bars ORDER BY ts']
-    raw = with[raw, 'rsi', rsi[raw.c, 14]]
-    return with[raw, 'cvd', cvd[raw.c, raw.vol]]
+    raw.rsi = rsi[raw.c, 14]
+    raw.cvd = cvd[raw.c, raw.vol]
+    return raw
 
 derive fills
     return query[conn, 'SELECT ts, px AS y, side AS kind FROM fills']

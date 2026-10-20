@@ -6,7 +6,7 @@
 use math, frame
 
 f = frame.new[]
-f = with[f, 'a', [4, 3, 2, 1]]
+f.a = [4, 3, 2, 1]
 v = (tensor[[2.0, 2.0, 2.0]] + clip[ones[3], -1.0, 2.0]) + float[len[f]]
 log[v]
 w = float[len[f]] + ones[2]

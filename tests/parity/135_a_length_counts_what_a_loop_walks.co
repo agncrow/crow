@@ -30,10 +30,10 @@ log[len[word]]
 log[word.len]
 
 df = frame.new[]
-df = with[df, 'a', [1, 2, 3]]
+df.a = [1, 2, 3]
 log[len[df]]
 log[df.a.len]
-df = with[df, 'len', [9, 8, 7]]
+df.len = [9, 8, 7]
 log[df.len[0]]
 
 struct Bag [len, items]

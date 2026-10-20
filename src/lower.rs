@@ -1410,18 +1410,19 @@ impl Lowerer {
         Expr::Call { callee: Box::new(callee), args: new_args }
     }
 
-    /// map[...] — the variadic named constructor. Desugars to a set[] chain.
-    /// `frame.new[sym = ['A', 'B'], qty = [1, 2]]` is
-    /// `with[with[frame.new[], 'sym', [...]], 'qty', [...]]`: each named
-    /// argument a column, in order, its values a list, a tensor or one
-    /// value repeated — what `with` takes.
+    /// `frame.new[sym = ['A', 'B'], qty = [1, 2]]` is `frame.new[]` with
+    /// each named argument written as a column, in order: the column
+    /// write's own row (`table::column_write`, what `df.sym = […]` lowers
+    /// to — spec, Frames), its values a list, a tensor or one value
+    /// repeated.
     fn lower_frame_literal(&self, module: Expr, args: Vec<Expr>) -> Result<Expr, String> {
         let qualified = |field: &str| Box::new(Expr::FieldAccess { object: Box::new(module.clone()), field: field.to_string() });
+        let write = crate::table::column_write().name;
         let mut result = Expr::Call { callee: qualified("new"), args: vec![] };
         for a in args {
             match a {
                 Expr::Named { name, value, .. } => {
-                    result = Expr::Call { callee: qualified("with"), args: vec![result, Expr::Str(name), *value] };
+                    result = Expr::Call { callee: Box::new(Expr::Ident(write.to_string())), args: vec![result, Expr::Str(name), *value] };
                 }
                 _ => return Err(self.err("frame.new[] takes its columns as named arguments: frame.new[sym = ['A', 'B'], qty = [1, 2]]".to_string())),
             }
@@ -1495,17 +1496,18 @@ mod tests {
     }
 
     #[test]
-    fn a_frame_written_down_is_the_with_chain() {
+    fn a_frame_written_down_is_a_chain_of_column_writes() {
         let out = lower_src("use frame\ndf = frame.new[a = [1, 2], k = ['x', 'y']]\n").expect("lowers");
         let text = format!("{:?}", out);
         assert!(!has_named(&out), "{}", text);
-        assert!(text.contains("field: \"with\""), "{}", text);
+        assert!(text.contains("callee: Ident(\"__set_col\")"), "{}", text);
         assert!(text.contains("Str(\"a\")") && text.contains("Str(\"k\")"), "{}", text);
         let a = text.find("Str(\"a\")").unwrap_or(0);
         let k = text.find("Str(\"k\")").unwrap_or(0);
         assert!(a < k, "the columns keep their order: {}", text);
         let aliased = lower_src("use frame as f\ndf = f.new[a = [1]]\n").expect("lowers");
-        assert!(format!("{:?}", aliased).contains("Ident(\"f\"), field: \"with\""), "{:?}", aliased);
+        let aliased = format!("{:?}", aliased);
+        assert!(aliased.contains("Ident(\"__set_col\")") && aliased.contains("Ident(\"f\"), field: \"new\""), "{}", aliased);
         let err = lower_src("use frame\ndf = frame.new[[1, 2]]\n").unwrap_err();
         assert!(err.contains("frame.new[] takes its columns as named arguments"), "{}", err);
         assert!(lower_src("use frame\ndf = frame.new[]\n").is_ok());

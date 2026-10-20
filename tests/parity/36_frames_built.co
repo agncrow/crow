@@ -3,10 +3,10 @@
 use frame, math
 
 f = frame.new[]
-f = with[f, 'symbol', ['IMRN', 'AOUT', 'CHPT']]
-f = with[f, 'price', [1.91, 13.56, 9.59]]
-f = with[f, 'gate', [1, 0, 1]]
-f = with[f, 'day', '2026-09-04']
+f.symbol = ['IMRN', 'AOUT', 'CHPT']
+f.price = [1.91, 13.56, 9.59]
+f.gate = [1, 0, 1]
+f.day = '2026-09-04'
 log[f.columns]
 log[len[f]]
 log[f.price[1]]

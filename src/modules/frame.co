@@ -88,7 +88,9 @@ fn save[f, path]
 
 --- a table written and read back, in each format a file names
 test a_table_is_saved_and_loaded_in_its_formats[]
-    df = with[with[new[], 'sym', ['AAPL', 'MSFT']], 'qty', [100, 200]]
+    df = new[]
+    df.sym = ['AAPL', 'MSFT']
+    df.qty = [100, 200]
     assert[save[df, 'frame-note.csv'].ok]
     back = load['frame-note.csv']
     assert[back.sym eq ['AAPL', 'MSFT'] and back.qty eq [100, 200]]

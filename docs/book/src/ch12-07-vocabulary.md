@@ -211,8 +211,8 @@ fn delete_row[id]
 
 view records[]
     rows = frame.new[]
-    rows = with[rows, 'id', [3, 4]]
-    rows = with[rows, 'name', ['alpha', 'beta']]
+    rows.id = [3, 4]
+    rows.name = ['alpha', 'beta']
     return stack[
         header[h1['records', size = 'm'], nav[a['Home', href = '/'], active = '/'], gap = 'm'],
         table[rows, click = open_row, key = 'id', actions = map[Delete = delete_row], hide = ['id']]

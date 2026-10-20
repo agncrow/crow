@@ -87,14 +87,14 @@ fn table[times, o, hi, lo, c, vol, n, pv]
     for i in range[len[pv]]
         vwap = push[vwap, pv[i] / vol[i]]
     out = frame.new[]
-    out = with[out, 'ts', times]
-    out = with[out, 'o', o]
-    out = with[out, 'hi', hi]
-    out = with[out, 'lo', lo]
-    out = with[out, 'c', c]
-    out = with[out, 'vol', vol]
-    out = with[out, 'n', n]
-    out = with[out, 'vwap', vwap]
+    out.ts = times
+    out.o = o
+    out.hi = hi
+    out.lo = lo
+    out.c = c
+    out.vol = vol
+    out.n = n
+    out.vwap = vwap
     return out
 
 --- the bars that start in a part of the trading day: 'early', 'regular'

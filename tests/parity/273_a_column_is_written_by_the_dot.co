@@ -1,0 +1,64 @@
+use frame
+
+--- a column is written the way it is read (spec, Frames): a new column, one
+--- replaced, a scalar repeated down the rows
+trades = frame.new[symbol = ['AAPL', 'MSFT'], qty = [100, 50], price = [191.5, 415.2]]
+trades.notional = trades.qty .* trades.price
+trades.side = 'buy'
+trades.price = trades.price .* 2.0
+log[trades]
+log[trades.notional[1]]
+log[trades.columns]
+
+--- ints held as a tensor make a column of ints, in the literal and in a write
+counts = frame.new[n = [1, 2]]
+counts.m = [3, 4]
+log[counts.dtypes]
+
+--- a name with a computed piece, and a name a variable holds: written and
+--- read the same three ways; the frame is open from a wholly computed name
+bars = frame.new[close = [1.0, 2.0, 3.0, 4.0]]
+for k in range[1, 3]
+    bars.lag_`k` = window[bars, 'close', 'lag', n = k]
+log[bars.columns]
+k = 2
+log[bars.lag_`k`[3]]
+name = 'lag_1'
+log[bars.`name`[3]]
+bars.`name` = [9.0, 9.0, 9.0, 9.0]
+log[bars.lag_1[0]]
+log[len[bars.`name`]]
+
+--- a header no dot can write is reached through the marks
+f = frame.new[a = [1, 2]]
+f.`'in px'` = [3, 4]
+log[f.`'in px'`[1]]
+log[f.columns]
+
+--- a function writes the frame it was handed; the caller's copy is untouched
+fn with_rsi[b]
+    b.rsi = b.close .* 0.5
+    b.cvd = 7
+    return b
+g = with_rsi[bars]
+log[g.columns]
+log[bars.columns]
+
+--- through a record's field and a list's item
+struct Book [name, prices]
+book = Book['x', frame.new[px = [1.0, 2.0]]]
+book.prices.doubled = book.prices.px .* 2.0
+log[book.prices]
+log[book.prices.doubled[1]]
+frames = [frame.new[a = [1]], frame.new[a = [2]]]
+frames[1].b = [5]
+log[frames[1]]
+log[frames[1].b[0]]
+log[frames[0].columns]
+
+--- a column written from another keeps its kind and its missing cells
+m = frame.new[a = [1.5, 2.5]]
+m.b = window[m, 'a', 'lag', n = 1]
+m.c = m.b
+log[m.c.ok]
+log[m]

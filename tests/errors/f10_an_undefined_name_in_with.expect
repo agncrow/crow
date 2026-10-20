@@ -1,3 +1,0 @@
-f10_an_undefined_name_in_with.co:4:19: undefined variable 'zz'
-  4 │ g = with[df, 'c', zz]
-    │                   ^^

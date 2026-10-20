@@ -23,10 +23,10 @@ src/ir_interp/prepared.rs	22	1
 src/ir_verify.rs	5	0
 src/kernel.rs	14	0
 src/lexer.rs	0	0
-src/lower.rs	89	0
-src/lower_ir.rs	100	1
+src/lower.rs	88	0
+src/lower_ir.rs	97	1
 src/lower_ir/checks.rs	102	5
-src/lower_ir/frames.rs	70	0
+src/lower_ir/frames.rs	69	0
 src/lower_ir/fuse.rs	5	0
 src/lower_ir/grad.rs	5	0
 src/lower_ir/named.rs	15	0

@@ -596,8 +596,9 @@ fn keep[u]
     universe = u
 
 fn load_universe[]
-    u = with[frame.new[], 'symbol', ['IMRN', 'AOUT', 'CHPT']]
-    keep[with[u, 'gate', [1, 0, 1]]]
+    u = frame.new[symbol = ['IMRN', 'AOUT', 'CHPT']]
+    u.gate = [1, 0, 1]
+    keep[u]
 
 view render[]
     return stack[

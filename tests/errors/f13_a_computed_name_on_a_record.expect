@@ -1,0 +1,3 @@
+f13_a_computed_name_on_a_record.co:4:1: `.`'x'`` names a frame's column by a computed name, and this is a record: a record's fields are fixed before the program runs, and a map's key is written as `m[key] = …`
+  4 │ p.`'x'` = 3
+    │ ^^^^^^^^^^^

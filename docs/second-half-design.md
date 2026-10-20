@@ -143,12 +143,12 @@ agreed, and a column the program misnamed stopped it as it ran.
 
 - *The type.* A frame's type is its columns, `Frame{price: Float, n:
   Int?}`, each column's cell type, `?` where a cell can be missing. Where a
-  column is named by a variable (`with[df, col, xs]`) the type keeps the
+  column is named by a variable (`df.`col` = xs`; `with[df, col, xs]` then) the type keeps the
   columns it knows and is *open*, `Frame{price: Float, …}`: a column it
   cannot name may be there. Where nothing is known (a file loaded as the
   program runs, a query no database described) it is `Frame`, all open.
 - *A reassignment binds anew.* A frame variable's type is its last
-  assignment's: after `df = with[df, 'x', xs]` it is `Frame{…, x: Float}`
+  assignment's: after `df.x = xs` (then `df = with[df, 'x', xs]`) it is `Frame{…, x: Float}`
   from that line on, and before it the frame it was. In the block the
   variable was first bound in, a reassignment that changes the columns is
   a new `Let` of the name in the IR (Rust shadows a `let` the same way).
@@ -195,7 +195,7 @@ open: `load`, a query no database described). A value a guard knows has
 failed (`if not x.ok` … `return x`) hands back its failure, not its
 frame's columns. The generated Rust is byte-identical over the corpus but
 for the new bindings (`let f = …` where it was `f = …`) and a frame read
-inline (`with[g, 'day', 'today'].day[1]`, now read as the text it is).
+inline (`with[g, 'day', 'today'].day[1]` as it was written then, now read as the text it is).
 
 Moving across found what the side map had hidden: it kept a branch's
 columns after the branch, as though the branch had run (a column only one

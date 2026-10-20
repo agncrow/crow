@@ -443,6 +443,14 @@ pub enum Prop {
     /// a provider asks about the program's statements, and the tables the
     /// program declares on the connection are declared there.
     Connects,
+    /// Writes a frame's column where the frame lies: the row `df.name =
+    /// values` lowers to, and the literal's columns (`frame.new[a = xs]`)
+    /// — found by this property (`table::column_write`), so the lowering
+    /// names no row.
+    ColumnWrite,
+    /// Reads a frame's column by a name the program computes (`df.`name``,
+    /// `df.lag_`k``): found by this property (`table::column_read`).
+    ColumnRead,
 }
 
 /// The shape of the tensor a row answers, declared on the row from a fixed
@@ -573,6 +581,11 @@ pub struct Row {
     /// option picks, and its lowered form told from the plain row's by the
     /// hidden name); "" where the row's name is the written one.
     pub written: &'static str,
+    /// How the program writes a hidden row that is a form of the language
+    /// — `df.name = values` for the column write — which a refusal names
+    /// in place of the row's hidden name (`table::form`); "" for a row the
+    /// program calls by its name.
+    pub form: &'static str,
     /// The interpreter's call: the arguments read by kind, the function
     /// applied, the failure dispatched as the row says. `trace` is where an
     /// error value is made.
@@ -1835,7 +1848,7 @@ macro_rules! crow {
     ($id:literal, $module:literal, $name:literal, ($($k:ident),*) -> $r:ident, $($fails:tt)+) => {
         Row {
             id: $id, name: $name, module: $module, path: IN_CROW,
-            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($($fails)+), options: &[], written: "", props: &[], taken: None, big: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None,
+            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($($fails)+), options: &[], written: "", form: "", props: &[], taken: None, big: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None,
             call: |_args: &[CrowValue], _trace: &str| Err(written_in_crow($name)),
             take: |_args: Vec<CrowValue>, _trace: &str| Err(written_in_crow($name)),
         }
@@ -1850,7 +1863,7 @@ macro_rules! maprow {
     ($id:literal, $name:literal, $f:path, ($($k:ident),*) -> $r:ident, $fails:tt, $call:path, $take:path) => {
         Row {
             id: $id, name: $name, module: "", path: stringify!($f),
-            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($fails), options: &[], written: "", props: &[], taken: None, big: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None,
+            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($fails), options: &[], written: "", form: "", props: &[], taken: None, big: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None,
             call: $call,
             take: $take,
         }
@@ -1861,7 +1874,7 @@ macro_rules! row {
     ($id:literal, $module:literal, $name:literal, $f:path, ($($k:ident),*) -> $r:ident, $($fails:tt)+) => {
         Row {
             id: $id, name: $name, module: $module, path: stringify!($f),
-            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($($fails)+), options: &[], written: "", props: &[], taken: None, big: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None,
+            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($($fails)+), options: &[], written: "", form: "", props: &[], taken: None, big: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None,
             call: |args: &[CrowValue], trace: &str| {
                 let _ = trace;
                 let groups = groups_in_place(&[$(Kind::$k),*], args, $name)?;
@@ -2485,7 +2498,17 @@ pub static ROWS: &[Row] = &[
     // program stopped or panicked; values with cannot fit are an error
     // value, as text that is no time is)
     row!("frame.new", "frame", "new", crow_runtime::frames::new, () -> Frame, never),
-    row!("frame.with", "frame", "with", crow_runtime::frames::with, (Frame, Str, Cells) -> Frame, value "frame"),
+    // a column written where the frame lies — `df.name = values`: a new
+    // column, or one replaced; a scalar repeated down the rows; the
+    // literal's columns too (`frame.new[a = xs]` is `new[]` written at each
+    // name) — and a column read by a name the program computes
+    // (`df.`name``): the language's own forms, found by their property and
+    // named in a refusal as the program writes them (spec, Frames). A
+    // write whose values are not as long as the rows stops, as a write at
+    // a position that is not there does (`with` had answered an error
+    // value, which a write statement would hold unseen).
+    Row { props: &[Prop::ColumnWrite], form: "`df.name = values`", ..row!("core.__set_col", "", "__set_col", crow_runtime::frames::with, (Frame, Str, Cells) -> Frame, stops) },
+    Row { props: &[Prop::ColumnRead], form: "`df.`name``", ..row!("core.__col", "", "__col", crow_runtime::frames::column, (Frame, Str) -> Column, stops) },
     Row { props: &[Prop::Binds(1)], ..row!("frame.select", "frame", "select", crow_runtime::frames::select, (Frame, Strs) -> Frame, stops) },
     // `f[mask]`, a frame's rows picked by a mask (the lowering's, at a
     // frame's index), and its fused form where the mask compares the
@@ -2584,7 +2607,7 @@ macro_rules! form {
     ($id:literal, $module:literal, $name:literal, ($($k:ident),*)) => {
         Row {
             id: $id, name: $name, module: $module, path: IN_FORM,
-            params: &[$(Kind::$k),*], ret: Kind::Unit, fails: Fails::Never, options: &[], written: "", props: &[], taken: None, big: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None,
+            params: &[$(Kind::$k),*], ret: Kind::Unit, fails: Fails::Never, options: &[], written: "", form: "", props: &[], taken: None, big: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None,
             call: |_args: &[CrowValue], _trace: &str| Err(a_form($name)),
             take: |_args: Vec<CrowValue>, _trace: &str| Err(a_form($name)),
         }
@@ -3524,6 +3547,10 @@ pub fn wrong_key(key: crate::ir::Key, given: &Ty) -> String {
 /// A row's call as the program writes it, for a refusal: the operator or
 /// the index behind a hidden row, else `name[]`.
 pub fn form(name: &str) -> String {
+    // (a row that declares how it is written: the language's forms)
+    if let Some(r) = ROWS.iter().find(|r| r.name == name && !r.form.is_empty()) {
+        return r.form.to_string();
+    }
     match name {
         "contains" => "`x in xs`".to_string(),
         "__map_of" => "map[keys, values]".to_string(),
@@ -3892,6 +3919,20 @@ mod tests {
 /// same way. None for a row without one.
 pub fn taken_path(id: &str) -> Option<&'static str> {
     ROWS.iter().find(|r| r.id == id).and_then(|r| r.taken)
+}
+
+/// The row a frame's column is written through — `df.name = values`, and
+/// each column of `frame.new[name = values]` — the one row carrying
+/// `Prop::ColumnWrite`: the lowering reaches it by the property, never by
+/// its name.
+pub fn column_write() -> &'static Row {
+    ROWS.iter().find(|r| r.props.contains(&Prop::ColumnWrite)).expect("the column write's row is declared")
+}
+
+/// The row a frame's column is read through by a name the program
+/// computes (`df.`name``): the one row carrying `Prop::ColumnRead`.
+pub fn column_read() -> &'static Row {
+    ROWS.iter().find(|r| r.props.contains(&Prop::ColumnRead)).expect("the column read's row is declared")
 }
 
 /// The row that keeps every digit in place of one that answers 64 bits

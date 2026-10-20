@@ -5,8 +5,8 @@
 use web, ui, frame
 
 fn rows[req]
-    df = with[frame.new[], 'sym', ['AAPL']]
-    df = with[df, 'qty', ['many']]
+    df = frame.new[sym = ['AAPL']]
+    df.qty = ['many']
     return json[df]
 
 data = fetch['/api/rows']

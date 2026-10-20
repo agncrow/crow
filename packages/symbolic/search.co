@@ -398,10 +398,11 @@ fn equations_of[front]
         loss = push[loss, m.loss]
         equation = push[equation, expr.shown[m.tree]]
     f = frame.new[]
-    f = with[f, 'complexity', complexity]
-    f = with[f, 'loss', loss]
-    f = with[f, 'score', scores_of[front]]
-    return with[f, 'equation', equation]
+    f.complexity = complexity
+    f.loss = loss
+    f.score = scores_of[front]
+    f.equation = equation
+    return f
 
 --- PySR's `best`: the highest score among the front's equations whose
 --- loss is within 1.5 times the lowest

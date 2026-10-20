@@ -788,6 +788,14 @@ steps on every push and must be green.
   arguments' ranges into its answer's (and/or/xor/shift's rules): a mask cut
   with `bitand` after a shift stays 64-bit (`shift[1, 13]` is exactly
   8192 — an end from 0 had made every mask look negative).
+- `scripts/coverage.sh` keeps the instrumented build between runs (a
+  full `cargo llvm-cov clean` had rebuilt everything) and so must remove
+  every executable under `target/llvm-cov-target/release/deps` before it
+  builds: cargo-llvm-cov's report reads EVERY executable there, and a test
+  binary a build of 2026-10-17 had left beside the day's — its functions
+  matching no profile, "3070 functions have mismatched data" — pulled
+  the compiler's coverage from 82% to 50% while every test passed
+  (2026-10-20; the `-v` report lists the objects it reads).
 - `scripts/coverage.sh` had been a zsh script, and GitHub's Linux runner
   has no zsh: coverage never ran on CI, and every run after the repository
   went public failed there while every suite before it passed. A script is
@@ -1058,6 +1066,26 @@ steps on every push and must be green.
   version is an attestation `split_attested` strips and `install` holds
   the bytes to. The tests build a bare repo with three tags
   (`tagged_repo`).
+- A column is written by the dot (2026-10-20): `df.name = values`, and
+  `df.`name` = values` by a computed name — the lexer reads a name after
+  a dot with backtick pieces as ONE `Token::Ident` holding the raw
+  pieces (strings keep theirs the same way); the lowering's
+  `S::FieldAssign` arm rewrites a frame's write as the assignment of
+  what holds the frame (`S::Assign`/`S::FieldAssign`/`S::IndexAssign`
+  with the column write's call as its value) and lowers THAT, so typing,
+  `held_to_shape`, a fact's `store` and `taken_in_place` come for free;
+  a computed read is a call of the read's row typed `Column(Json)`, as an
+  open frame's unnamed column is. The rows are found by property
+  (`table::column_write`, `column_read`: `Prop::ColumnWrite`,
+  `Prop::ColumnRead`), never by name — the freeze ratchet counts a hidden
+  row's name as a builtin's — and `Row.form` says how a refusal names a
+  form (`table::form` reads it first). `frame.new[k = v]` desugars to the
+  write's row by `column_write().name`. A walker that reads names inside
+  a string's interpolation spans (rust_names, parallel, the chain's
+  `mentions`) reads a backticked field's too, or a renamed name inside
+  `df.c_`type`` is missed. The core rows' argument conversion
+  (`core_row_arguments`) needed the `Kind::Cells` ints-tensor arm
+  `row_arguments` had: the literal's int columns had become floats.
 - `query` is the one statement verb (2026-10-19): every statement, a frame
   answered. Its row's provider decides read or write from the LITERAL
   statement (`Provider.writes`, crow_db's `describe::writes` over

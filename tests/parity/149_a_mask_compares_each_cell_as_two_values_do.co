@@ -16,11 +16,11 @@
 use frame, math
 
 a = frame.new[symbol = ['A', 'B', 'C', 'D'], n = [1, 2, 3, 4]]
-a = with[a, 'x', [1.0, nan, 0.1 + 0.2, 2.0]]
-a = with[a, 'name', ['ada', 'Bob', 'cy', 'ada']]
-a = with[a, 'b', [true, false, true, false]]
+a.x = [1.0, nan, 0.1 + 0.2, 2.0]
+a.name = ['ada', 'Bob', 'cy', 'ada']
+a.b = [true, false, true, false]
 r = frame.new[symbol = ['C', 'A', 'D'], m = [2.0, 1.0, 5.0]]
-r = with[r, 't', ['2', 'a', 'b']]
+r.t = ['2', 'a', 'b']
 df = join[a, r, 'symbol', 'left']
 log[df.n gt 2]
 log[df.n eq 2.0]

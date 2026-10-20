@@ -8,10 +8,10 @@
 use frame
 
 a = frame.new[symbol = ['A', 'B'], x = [1.0, 2.0]]
-a = with[a, 'n', [1, 2]]
-a = with[a, 's', ['p', 'q']]
+a.n = [1, 2]
+a.s = ['p', 'q']
 r = frame.new[symbol = ['A'], t = ['hi']]
-r = with[r, 'y', [1.0]]
+r.y = [1.0]
 j = join[a, r, 'symbol', 'left']
 log[a.x eq a.x]
 log[a.x eq a.n]

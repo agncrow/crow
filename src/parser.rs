@@ -1286,7 +1286,8 @@ fn mentions(e: &Expr, name: &str) -> bool {
         Expr::BinOp { left, right, .. } => mentions(left, name) || mentions(right, name),
         Expr::UnaryOp { expr, .. } => mentions(expr, name),
         Expr::Call { callee, args } => mentions(callee, name) || args.iter().any(|a| mentions(a, name)),
-        Expr::FieldAccess { object, .. } => mentions(object, name),
+        // (a column's computed name reads names in its pieces, as text does)
+        Expr::FieldAccess { object, field } => mentions(object, name) || (field.contains('`') && field.split('`').skip(1).step_by(2).any(|span| span_names_word(span, name))),
         Expr::Array(items) => items.iter().any(|i| mentions(i, name)),
         Expr::Map(pairs) => pairs.iter().any(|(k, v)| mentions(k, name) || mentions(v, name)),
         Expr::Named { value, .. } => mentions(value, name),
@@ -1403,6 +1404,17 @@ mod then_lines_tests {
         assert!(p.contains("got `t__then1`"), "{}", p);
         assert!(mentions(&Expr::Str("`t.x`".into()), "x") == false);
         assert!(mentions(&Expr::Str("`x.t`".into()), "x"));
+    }
+
+    /// A column's computed name reads the names in its pieces, as a text
+    /// does: a step `df.c_`x`` mentions `x`, and `df.x` does not
+    #[test]
+    fn a_computed_column_name_mentions_what_its_pieces_read() {
+        let field = |f: &str| Expr::FieldAccess { object: Box::new(Expr::Ident("df".into())), field: f.into() };
+        assert!(mentions(&field("c_`x`"), "x"));
+        assert!(mentions(&field("`x`"), "x"));
+        assert!(!mentions(&field("x"), "x"));
+        assert!(!mentions(&field("c_`t.x`"), "x"));
     }
 
     #[test]

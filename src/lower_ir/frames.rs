@@ -637,9 +637,11 @@ impl<'a> Lowerer<'a> {
                     }
                     Arc::new(c)
                 }),
-                // with[df, 'col', values]: one more column, typed by what it
-                // is given; named by a variable, a column the type cannot name
-                "with" => {
+                // `df.col = values` (the column write's row): one more column,
+                // typed by what it is given; named by a value the program
+                // computes (`df.`name` = values`), a column the type cannot
+                // name — the frame is open from there
+                n if n == crate::table::column_write().name => {
                     let value = arg_types.get(2).map(cell_of).unwrap_or(Ty::Str);
                     match (base(0), lit(1)) {
                         (Some(b), Some(col)) => {

@@ -1,0 +1,3 @@
+f15_with_is_no_name.co:4:5: undefined function 'with'
+  4 │ g = with[df, 'b', [3, 4]]
+    │     ^^^^

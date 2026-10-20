@@ -55,8 +55,9 @@ parameters ever:
 ```
 derive bars
     b = query[ch, 'SELECT ... WHERE symbol = ? AND date = ?', [sym, day]]
-    b = with[b, 'rsi', rsi[b.c, 14]]
-    return with[b, 'cvd', cvd[b.c, b.vol]]
+    b.rsi = rsi[b.c, 14]
+    b.cvd = cvd[b.c, b.vol]
+    return b
 
 derive head
     return clock_at[base, anchor, speed, playing, win_end]
@@ -247,7 +248,9 @@ fn set_speed[s]
 --- sim/tape.co
 derive bars[fresh = 300]
     b = query[ch, '... WHERE symbol = ? AND date = ?', [sym, day]]
-    return with[with[b, 'rsi', rsi[b.c, 14]], 'cvd', cvd[b.c, b.vol]]
+    b.rsi = rsi[b.c, 14]
+    b.cvd = cvd[b.c, b.vol]
+    return b
 
 --- scanner.co
 derive universe

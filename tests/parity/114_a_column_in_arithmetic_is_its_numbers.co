@@ -6,8 +6,8 @@
 use frame
 use db
 df = frame.new[]
-df = with[df, 'a', [1.0, 2.0, 3.0]]
-df = with[df, 'b', [10.0, 20.0, 30.0]]
+df.a = [1.0, 2.0, 3.0]
+df.b = [10.0, 20.0, 30.0]
 log[df.a + df.b]
 log[df.b - df.a]
 log[df.a .* df.b]
@@ -19,7 +19,8 @@ query[book, 'INSERT INTO t (id, n) VALUES (?, ?)', [1, 5]]
 query[book, 'INSERT INTO t (id) VALUES (?)', [2]]
 rows = query[book, 'SELECT n FROM t ORDER BY id']
 gone = rows[[false, true]]
-copied = with[gone, 'm', gone.n]
+copied = gone
+copied.m = gone.n
 log[copied.dtypes]
 log[rows.n + 1]
 log['not reached']

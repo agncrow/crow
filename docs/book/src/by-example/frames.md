@@ -28,7 +28,8 @@ d = moment['2026-07-14T13:30:00Z']
 log[moment[d, tz = '+09:00']]
 g = frame.new[symbol = ['A', 'B'], px = [1.5, 2.5]]
 log[g.columns]
-log[with[g, 'day', 'today'].day[1]]
+g.day = 'today'
+log[g.day[1]]
 flags = frame.new[name = ['a', 'b', 'c'], on = [true, false, true]]
 log[flags[flags.on].name]
 log[join[['x', 'y'], '+']]
@@ -42,7 +43,7 @@ log[unpivot[t, 'symbol', ['qty', 'price']].variable]
 log['AA' in t.symbol]
 log[window[t, 'price', 'median', n = 2]]
 log[bucket[d, 3600]]
-log[fill[with[frame.new[], 'x', where[[true, false, true], 1, 2]], 'x', how = 'forward'].x]
+log[fill[frame.new[x = where[[true, false, true], 1, 2]], 'x', how = 'forward'].x]
 gap = frame.new[node = ['a', 'b'], value = [0.5, 0.25]]
     then join[gap, frame.new[node = ['b', 'a'], ref = [0.25, 0.75]], 'node']
     then max[abs[gap.value - gap.ref]]
@@ -88,8 +89,8 @@ x+y
 0.25
 ```
 
-`frame.new[]` and `with[]` build a frame column by column from arrays or
-a repeated scalar. With `frame` imported the core `join`, `sort`, and
+`frame.new[…]` builds a frame from its columns, and `df.name = values`
+writes one more where the frame lies, from an array or a repeated scalar. With `frame` imported the core `join`, `sort`, and
 friends still work on arrays: the first argument decides which one you
 meant.
 

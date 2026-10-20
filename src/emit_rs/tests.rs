@@ -1564,7 +1564,7 @@ fn test_sparse_import_transpile() {
 /// list did not fit the result the statement is — fuzz seed 1791172766)
 #[test]
 fn a_failed_values_payload_converted_in_a_call_keeps_the_failure() {
-    let rust = transpile("use math, frame\nf = with[frame.new[], 'a', [1, 2, 3]]\nv0 = push[[3, 1, 2], len[f]]\nv1 = concat[range[2], push[v0, -6]]\nlog[v1]\n");
+    let rust = transpile("use math\nn = int['3']\nv0 = push[[3, 1, 2], n]\nv1 = concat[range[2], push[v0, -6]]\nlog[v1]\n");
     let line = rust.lines().find(|l| l.contains("let v1:")).expect("v1");
     assert!(line.contains("CrowResult<Vec<i64>>"), "v1 can fail\n{}", line);
     assert!(line.contains("CrowResult { ok: true, value: crow_runtime::core::concat("), "the call is lifted\n{}", line);
@@ -2265,7 +2265,7 @@ fn test_fallible_condition_guarded_and_return_widened() {
 /// column here is written as floats)
 #[test]
 fn a_fact_a_handler_assigns_a_float_is_a_float_from_its_declaration() {
-    let rust = transpile("use web, ui, frame\ndeleted = 0\nfn delete_row[id]\n    deleted = id\nview records[]\n    rows = frame.new[]\n    rows = with[rows, 'id', [3.0, 4.0]]\n    return table[rows, click = delete_row, key = 'id']\npage['/', records]\n");
+    let rust = transpile("use web, ui, frame\ndeleted = 0\nfn delete_row[id]\n    deleted = id\nview records[]\n    rows = frame.new[]\n    rows.id = [3.0, 4.0]\n    return table[rows, click = delete_row, key = 'id']\npage['/', records]\n");
     assert!(rust.contains("    deleted: f64,") && rust.contains("__crow_state.set(\"deleted\", serde_json::json!((((0_i64) as f64))));"), "the key column is float, so the fact is\n{}", rust);
 }
 
@@ -2334,16 +2334,15 @@ fn an_error_of_another_type_returned_from_a_function_is_converted() {
 /// A frame assigned beside an independent statement keeps its columns'
 /// types for the reads that follow (this once exercised the wave
 /// emitter; statements run in order now, and the schema must survive
-/// that path too). `with` can fail — values of another length than the
-/// frame's rows — and a column of a frame that failed is refused before it
-/// is read, so the function hands that failure back: its value is a result
-/// of the float the cell is
+/// that path too). A frame written down cannot fail (a column of another
+/// length than the rows stops), so the function answers the float the
+/// cell is, plain
 #[test]
 fn a_frame_assigned_beside_an_independent_statement_keeps_its_column_types() {
-    let rust = transpile("use frame\nfn go[]\n    rows = with[frame.new[], 'v', [3.5, 4.5]]\n    k = 2\n    return rows.v[0] * k\nlog[go[]]\n");
+    let rust = transpile("use frame\nfn go[]\n    rows = frame.new[v = [3.5, 4.5]]\n    k = 2\n    return rows.v[0] * k\nlog[go[]]\n");
     assert!(!rust.contains("rayon::join"), "statements run in order\n{}", rust);
-    assert!(rust.contains("-> CrowResult<f64>"), "the cell is a float, so the product is\n{}", rust);
-    assert!(rust.contains("if !_c.ok { return CrowResult { ok: false, value: 0.0_f64"), "a frame that failed is handed back\n{}", rust);
+    assert!(rust.contains("-> f64"), "the cell is a float, so the product is\n{}", rust);
+    assert!(!rust.contains("_c.ok"), "a frame written down cannot fail\n{}", rust);
 }
 
 #[test]

@@ -171,13 +171,13 @@ sorted = sort[df, col]             --- dynamic column names just work
 | sort | Sort by a column, or by several with a direction each | `s = sort[df, ['symbol', 'qty'], desc = [false, true]]` |
 | group | Group and aggregate, by one key or several | `g = group[df, ['dept', 'city'], ['salary', 'mean'], ['age', 'max']]` |
 | pivot | The long frame made wide: rows, columns, the values between | `wide = pivot[df, 'symbol', 'day', 'close']` |
-| window | A column computed over each row's partition, over rows or a span of time | `with[df, 'avg3', window[df, 'close', 'mean', n = 3, by = 'symbol']]` |
+| window | A column computed over each row's partition, over rows or a span of time | `df.avg3 = window[df, 'close', 'mean', n = 3, by = 'symbol']` |
 | join | Combine frames on a key or several: inner, left, right, outer, semi, anti, as-of | `m = join[bars, signals, ['symbol', 'at'], 'asof']` |
 | unpivot | The wide frame made long: keys, `variable`, `value` | `long = unpivot[df, 'id', ['q1', 'q2']]` |
 | complete | The rows with every cell present, or every cell of some columns | `clean = complete[df, ['qty', 'price']]` |
 | sample | n rows drawn by the seeded generator, in the frame's order | `some = sample[df, 100]` |
-| where | A column picked by a mask from two sides | `with[df, 'px', where[df.filled, df.price, 0.0]]` |
-| bucket | Each moment's bucket start, a column of moments | `with[df, 'hour', bucket[df.at, 3600]]` |
+| where | A column picked by a mask from two sides | `df.px = where[df.filled, df.price, 0.0]` |
+| bucket | Each moment's bucket start, a column of moments | `df.hour = bucket[df.at, 3600]` |
 | stack | Stack frames vertically | `all = stack[df1, df2]` |
 | head | First N rows | `top = head[df, 5]` |
 | tail | Last N rows | `bottom = tail[df, 5]` |

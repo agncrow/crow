@@ -605,8 +605,12 @@ impl<'r> Case<'r> {
             19 => {
                 let df = self.var_frame(2);
                 let w = format!("m{}", self.lines.len());
-                let ts: Vec<String> = (0..4).map(|_| self.rng.pick(&["moment[1784035800.0]", "moment[1767625200.5]", "moment[1798761599.25]", "moment[0.0]"]).to_string()).collect();
-                self.lines.push(format!("{}{} = with[{}, 't', [{}]]", pad, w, df, ts.join(", ")));
+                // (one moment repeated down the rows: the frame's count of
+                // rows is the generator's to guess, and a column of another
+                // length stops)
+                let t = self.rng.pick(&["moment[1784035800.0]", "moment[1767625200.5]", "moment[1798761599.25]", "moment[0.0]"]).to_string();
+                self.lines.push(format!("{}{} = {}", pad, w, df));
+                self.lines.push(format!("{}{}.t = {}", pad, w, t));
                 self.lines.push(format!("{}log[{}.t.hour]", pad, w));
                 self.lines.push(format!("{}log[bucket[{}.t, 86400]]", pad, w));
                 self.lines.push(format!("{}log[sort[{}, 't'].t]", pad, w));
@@ -705,7 +709,8 @@ impl<'r> Case<'r> {
                     1 => self.lines.push(format!("{}log[{}]", pad, df)),
                     2 => {
                         let w = format!("w{}", self.lines.len());
-                        self.lines.push(format!("{}{} = with[{}, 'c', {}.a * 2]", pad, w, df, df));
+                        self.lines.push(format!("{}{} = {}", pad, w, df));
+                        self.lines.push(format!("{}{}.c = {}.a * 2", pad, w, df));
                         self.lines.push(format!("{}log['`{}.c[0]` `len[{}]` `{}.shape`']", pad, w, w, w));
                     }
                     3 => {
@@ -721,7 +726,8 @@ impl<'r> Case<'r> {
                     }
                     _ => {
                         let w = format!("n{}", self.lines.len());
-                        self.lines.push(format!("{}{} = with[{}, 'w', window[{}, 'a', 'sum', n = 2]]", pad, w, df, df));
+                        self.lines.push(format!("{}{} = {}", pad, w, df));
+                        self.lines.push(format!("{}{}.w = window[{}, 'a', 'sum', n = 2]", pad, w, df));
                         self.lines.push(format!("{}log[{}.w[len[{}] - 1]]", pad, w, w));
                     }
                 }

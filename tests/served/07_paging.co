@@ -4,8 +4,8 @@
 use web, ui, frame
 
 view render[]
-    many = with[frame.new[], 'n', range[120]]
-    huge = with[frame.new[], 'n', range[1500]]
+    many = frame.new[n = range[120]]
+    huge = frame.new[n = range[1500]]
     return stack[
         table[many, page = 50],
         table[huge]

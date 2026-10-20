@@ -881,3 +881,10 @@ options, its seek handler) so that `check_chart_columns` goes with it.
 - A behavior that both modes must keep gets a parity program; a refusal
   gets its line in the errors corpus; a migrated module keeps its own
   tests green at every commit.
+- A form of the language that needs a row — the column write `df.name =
+  values` and the computed read `df.`name`` (2026-10-20) — is found by a
+  property on its row (`Prop::ColumnWrite`, `Prop::ColumnRead`;
+  `table::column_write`, `column_read`), never by its name, and the row's
+  `form` field says how a refusal names it (`table::form` reads it first):
+  the ratchet counts a hidden row's name as a builtin's, so a new form
+  adds no name to a compiler file.

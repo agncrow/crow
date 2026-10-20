@@ -12,7 +12,8 @@ query[book, 'INSERT INTO t (name, score) VALUES (?, ?)', ['a', 1.5]]
 query[book, 'INSERT INTO t (name) VALUES (?)', ['b']]
 query[book, 'INSERT INTO t (name, score) VALUES (?, ?)', ['c', 3.5]]
 df = query[book, 'SELECT name, score FROM t ORDER BY id']
-copied = with[df, 'again', df.score]
+copied = df
+copied.again = df.score
 log[copied.again.ok]
 log[head[sort[df, 'name', desc = true], 2]]
 log[group[df, 'name', ['score', 'count']]]

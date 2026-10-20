@@ -4042,7 +4042,7 @@ mod tests {
     /// index, and out of range refused.
     #[test]
     fn a_field_indexed_in_place_reads_what_the_copy_read() {
-        let src = "use frame\nstruct Bars [c]\ndf = with[with[frame.new[], 'k', [0, 1, 2]], 'p', [1.5, 2.5, 3.5]]\nother = with[with[frame.new[], 'k', [0, 1]], 'q', [7.5, 8.5]]\ndf = join[df, other, 'k', 'left']\nb = Bars[[4.0, 5.0, 6.0]]\nm = map[xs = [1, 2, 3]]\na = df.p[1]\ng = df.q[2]\nz = b.c[-1]\nw = m.xs[0]\nn = b.c[1] + df.p[0]\n";
+        let src = "use frame\nstruct Bars [c]\ndf = frame.new[k = [0, 1, 2], p = [1.5, 2.5, 3.5]]\nother = frame.new[k = [0, 1], q = [7.5, 8.5]]\ndf = join[df, other, 'k', 'left']\nb = Bars[[4.0, 5.0, 6.0]]\nm = map[xs = [1, 2, 3]]\na = df.p[1]\ng = df.q[2]\nz = b.c[-1]\nw = m.xs[0]\nn = b.c[1] + df.p[0]\n";
         let r = run_script(&parse(src), "t").unwrap();
         assert!(matches!(r.var("a").unwrap().value, Value::Float(x) if x == 2.5));
         assert!(r.var("g").is_some_and(|g| !g.is_ok() && g.reason() == "missing"), "{:?}", r.var("g"));
@@ -4070,8 +4070,12 @@ mod tests {
         let took = start.elapsed();
         let _ = std::fs::remove_dir_all(&dir);
         assert!(matches!(r.var("first").unwrap().value, Value::Int(19999)));
-        // (20,000 copies of 20,000 lines took minutes in a test build)
-        assert!(took.as_secs() < 10, "{:?}", took);
+        // (20,000 copies of 20,000 lines took minutes in a test build; the
+        // loop itself runs in a tenth of a second, instrumented too, so the
+        // bound is wall time's under a loaded run — the coverage run's
+        // parallel tests build programs on every core, and this test had
+        // failed there past ten seconds three runs in four, 2026-10-20)
+        assert!(took.as_secs() < 60, "{:?}", took);
     }
 
     /// `cpu[n]` holds from where it runs, in the thread that runs it, and a
@@ -4126,7 +4130,7 @@ mod session_tests {
         assert_eq!(feed(&mut s, "use frame, math\nprices = [187.5, 402.25, 121.0]\nlog['mean: `mean[tensor[prices]]`']\nlen[prices]"), Ok(Some("3".to_string())));
         // (a loop's last value is its log's `done`, which shows nothing)
         assert_eq!(feed(&mut s, "for p in prices\n    log[p * 2.0]"), Ok(Some("done".to_string())));
-        assert_eq!(feed(&mut s, "df = with[frame.new[], 'price', prices]\nlen[df]"), Ok(Some("3".to_string())));
+        assert_eq!(feed(&mut s, "df = frame.new[price = prices]\nlen[df]"), Ok(Some("3".to_string())));
         assert_eq!(feed(&mut s, "df.price[0]"), Ok(Some("187.5".to_string())));
         assert!(feed(&mut s, "df").map(|v| v.unwrap_or_default().contains("price")).unwrap_or(false));
     }

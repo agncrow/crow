@@ -3169,7 +3169,7 @@ mod tests {
     /// response is sent, handed put and the arguments after it
     #[test]
     fn msgpack_arrow_and_stream_are_answers() {
-        let it = run("use web, frame\nfn lines[put, n]\n    for i in range[n]\n        put['line `i`\\n']\nm = msgpack[map[name = 'crow']]\na = arrow[with[frame.new[], 'n', [1, 2]]]\ns = stream[lines, 2]\n").unwrap();
+        let it = run("use web, frame\nfn lines[put, n]\n    for i in range[n]\n        put['line `i`\\n']\nm = msgpack[map[name = 'crow']]\na = arrow[frame.new[n = [1, 2]]]\ns = stream[lines, 2]\n").unwrap();
         let response = |n: &str| match &it.var(n).unwrap().value {
             Value::Response(r) => r.as_ref().clone(),
             other => panic!("{} is {:?}", n, other),
@@ -3196,7 +3196,7 @@ mod tests {
     /// harness the browser's, so an assertion on a row held in one mode only)
     #[test]
     fn a_pages_html_is_the_browsers_in_both_modes() {
-        let issues = harness_issues("use web, ui, frame\nn = 0\nfn pick[k]\n    n = k\nview v[]\n    f = with[frame.new[], 'k', [4]]\n    return stack[p['`n`'], table[f, click = pick, key = 'k']]\ntest t[]\n    a = app[v]\n    assert['<tr data-crow-args=\"[4]\" data-crow-click=\"pick\" tabindex=\"0\"><td class=\"num\">4</td></tr>' in html[a]]\n");
+        let issues = harness_issues("use web, ui, frame\nn = 0\nfn pick[k]\n    n = k\nview v[]\n    f = frame.new[k = [4]]\n    return stack[p['`n`'], table[f, click = pick, key = 'k']]\ntest t[]\n    a = app[v]\n    assert['<tr data-crow-args=\"[4]\" data-crow-click=\"pick\" tabindex=\"0\"><td class=\"num\">4</td></tr>' in html[a]]\n");
         assert!(issues.is_empty(), "{:?}", issues);
     }
 
@@ -3230,7 +3230,7 @@ mod tests {
     /// hands them nothing
     #[test]
     fn a_handler_hands_the_reader_files() {
-        let src = "use web, ui, frame\nn = 0\nfn export[]\n    f = with[frame.new[], 'n', range[1, 3]]\n    download[f, 'numbers.csv']\n    download['hello', 'note.txt']\nfn broken[]\n    download['never', 'lost.txt']\n    x = float['no']\n    if x gt 1.0\n        n = 1\nview v[]\n    return stack[button['Export', click = export], button['Broken', click = broken]]\ntest t[]\n    a = app[v]\n    click[a, export]\n    got = downloads[a]\n    assert[len[got] eq 2]\n    assert[got[0].name eq 'numbers.csv']\n    assert[got[0].text eq 'n\\n1\\n2\\n']\n    assert[got[1].text eq 'hello']\n    r = click[a, broken]\n    assert[not r.ok]\n    assert[len[downloads[a]] eq 2]\n";
+        let src = "use web, ui, frame\nn = 0\nfn export[]\n    f = frame.new[n = range[1, 3]]\n    download[f, 'numbers.csv']\n    download['hello', 'note.txt']\nfn broken[]\n    download['never', 'lost.txt']\n    x = float['no']\n    if x gt 1.0\n        n = 1\nview v[]\n    return stack[button['Export', click = export], button['Broken', click = broken]]\ntest t[]\n    a = app[v]\n    click[a, export]\n    got = downloads[a]\n    assert[len[got] eq 2]\n    assert[got[0].name eq 'numbers.csv']\n    assert[got[0].text eq 'n\\n1\\n2\\n']\n    assert[got[1].text eq 'hello']\n    r = click[a, broken]\n    assert[not r.ok]\n    assert[len[downloads[a]] eq 2]\n";
         let issues = harness_issues(src);
         assert!(issues.is_empty(), "harness issues: {:?}", issues);
     }

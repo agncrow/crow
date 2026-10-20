@@ -110,7 +110,7 @@ impl CrowFrame {
     pub fn with_validity(&self, name: &str, data: Column, valid: Validity) -> Result<CrowFrame, String> {
         let n = data.len();
         if !self.columns.is_empty() && n != self.nrows() {
-            return Err(format!("with: column '{}' has {} values but the frame has {} rows", name, n, self.nrows()));
+            return Err(format!("column '{}' is given {} values, and the frame has {} rows", name, n, self.nrows()));
         }
         if valid.len() != n {
             return Err(format!("with: column '{}' has {} values but {} rows of presence", name, n, valid.len()));

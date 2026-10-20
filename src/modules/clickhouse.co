@@ -334,8 +334,8 @@ fn ch_describe[parts, s, sql]
     if len[names] eq 0
         return error['clickhouse describe: unexpected DESCRIBE output', 'db']
     out = frame.new[]
-    out = with[out, 'name', names]
-    out = with[out, 'type', kinds]
+    out.name = names
+    out.type = kinds
     return out
 
 --- `ch_cancel[parts, stream]`: the statement the connection was running

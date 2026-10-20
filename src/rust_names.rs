@@ -127,8 +127,13 @@ fn collect_stmt(s: &Stmt, declared: &mut BTreeSet<String>, seen: &mut BTreeSet<S
             }
         }
         Stmt::Return(Some(e)) | Stmt::ExprStmt(e) => collect_expr(e, declared, seen),
-        Stmt::FieldAssign { object, value, .. } => {
+        Stmt::FieldAssign { object, field, value } => {
             collect_expr(object, declared, seen);
+            if field.contains('`') {
+                for w in span_words(field) {
+                    seen.insert(w);
+                }
+            }
             collect_expr(value, declared, seen);
         }
         Stmt::IndexAssign { object, index, value } => {
@@ -164,7 +169,15 @@ fn collect_expr(e: &Expr, declared: &mut BTreeSet<String>, seen: &mut BTreeSet<S
                 collect_expr(a, declared, seen);
             }
         }
-        Expr::FieldAccess { object, .. } => collect_expr(object, declared, seen),
+        // (a column's computed name reads names in its pieces, as text does)
+        Expr::FieldAccess { object, field } => {
+            collect_expr(object, declared, seen);
+            if field.contains('`') {
+                for w in span_words(field) {
+                    seen.insert(w);
+                }
+            }
+        }
         Expr::Array(items) => {
             for i in items {
                 collect_expr(i, declared, seen);
@@ -326,8 +339,11 @@ fn rename_stmt(s: &mut Stmt, renames: &BTreeMap<String, String>, global: &BTreeS
             }
         }
         Stmt::Return(Some(e)) | Stmt::ExprStmt(e) => rename_expr(e, renames, &v),
-        Stmt::FieldAssign { object, value, .. } => {
+        Stmt::FieldAssign { object, field, value } => {
             rename_expr(object, renames, &v);
+            if field.contains('`') {
+                *field = rename_in_spans(field, renames, &v);
+            }
             rename_expr(value, renames, &v);
         }
         Stmt::IndexAssign { object, index, value } => {
@@ -358,7 +374,12 @@ pub(crate) fn rename_expr(e: &mut Expr, renames: &BTreeMap<String, String>, visi
                 rename_expr(a, renames, visible);
             }
         }
-        Expr::FieldAccess { object, .. } => rename_expr(object, renames, visible),
+        Expr::FieldAccess { object, field } => {
+            rename_expr(object, renames, visible);
+            if field.contains('`') {
+                *field = rename_in_spans(field, renames, visible);
+            }
+        }
         Expr::Array(items) => {
             for i in items.iter_mut() {
                 rename_expr(i, renames, visible);
@@ -487,6 +508,19 @@ mod tests {
         assert!(text.contains("Named { name: \"move\", int_key: false, value: Ident(\"loop_\") }"), "a map key keeps its spelling: {}", text);
         assert_eq!(shown.get("impl_").map(String::as_str), Some("impl"));
         assert_eq!(shown.get("move_").map(String::as_str), Some("move"));
+    }
+
+    /// A reserved name read inside a column's computed name — written or
+    /// read — is renamed as one inside a text's interpolation is, and the
+    /// name's own words are not
+    #[test]
+    fn a_reserved_name_inside_a_computed_column_name_is_renamed() {
+        let src = "use frame\nmove = 2\ndf = frame.new[a = [1.0]]\ndf.lag_`move` = [1.0]\nlog[df.lag_`move`[0]]\nlog[df.move]\n";
+        let (out, _) = rename_rust_keywords(&stmts(src)).expect("renames");
+        let text = format!("{:?}", out);
+        assert!(text.contains("FieldAssign { object: Ident(\"df\"), field: \"lag_`move_`\""), "the write's piece is renamed: {}", text);
+        assert!(text.contains("FieldAccess { object: Ident(\"df\"), field: \"lag_`move_`\" }"), "the read's piece is renamed: {}", text);
+        assert!(text.contains("FieldAccess { object: Ident(\"df\"), field: \"move\" }"), "a written column name keeps its spelling: {}", text);
     }
 
     /// A reserved name one body declares renames nothing in another: the

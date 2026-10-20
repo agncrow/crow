@@ -167,7 +167,25 @@ impl Lexer {
                         self.advance(); self.advance();
                         tokens.push(tok); continue;
                     }
-                    _ => {} // fall through to single-char '.'
+                    _ => {
+                        // a column's name with a computed piece — `df.lag_`k``,
+                        // `df.`name`` — after a dot, a name reads as text does,
+                        // a backtick inside it an interpolation (spec, Frames):
+                        // one name token holding the raw pieces, which the
+                        // lowering interpolates as it does a string's
+                        if let Some(raw) = self.column_name_ahead()? {
+                            let dot = self.make_token(Token::Dot);
+                            self.advance();
+                            tokens.push(dot);
+                            let tok = self.make_token(Token::Ident(raw.clone()));
+                            for _ in raw.chars() {
+                                self.advance();
+                            }
+                            tokens.push(tok);
+                            continue;
+                        }
+                        // (a plain name: the single-char '.' below)
+                    }
                 }
             }
 
@@ -518,6 +536,66 @@ impl Lexer {
         })
     }
 
+    /// The column name after a dot when it holds an interpolation piece
+    /// (`lag_`k``, `` `name` ``): its raw text, backticks kept, as a string
+    /// keeps its own; None where the dot is followed by a plain name or by
+    /// anything else. A piece is read as a string's is: to the closing
+    /// backtick outside a quoted text, a backslash escaping the next
+    /// character inside one.
+    fn column_name_ahead(&self) -> Result<Option<String>, String> {
+        let mut i = 1;
+        let mut raw = String::new();
+        let mut pieces = 0;
+        loop {
+            match self.peek_at(i) {
+                Some(c) if c.is_ascii_alphanumeric() || c == '_' => {
+                    raw.push(c);
+                    i += 1;
+                }
+                Some('`') => {
+                    raw.push('`');
+                    i += 1;
+                    let mut in_text = false;
+                    loop {
+                        match self.peek_at(i) {
+                            None | Some('\n') => {
+                                return Err(format!(
+                                    "line {}, col {}: a column's name holds an interpolation that is not closed — close it with `",
+                                    self.line, self.col
+                                ));
+                            }
+                            Some('\\') if in_text => {
+                                raw.push('\\');
+                                i += 1;
+                                if let Some(n) = self.peek_at(i) {
+                                    raw.push(n);
+                                    i += 1;
+                                }
+                            }
+                            Some('\'') => {
+                                in_text = !in_text;
+                                raw.push('\'');
+                                i += 1;
+                            }
+                            Some('`') if !in_text => {
+                                raw.push('`');
+                                i += 1;
+                                break;
+                            }
+                            Some(c) => {
+                                raw.push(c);
+                                i += 1;
+                            }
+                        }
+                    }
+                    pieces += 1;
+                }
+                _ => break,
+            }
+        }
+        Ok(if pieces == 0 { None } else { Some(raw) })
+    }
+
     fn lex_ident(&mut self) -> SpannedToken {
         let line = self.line;
         let col = self.col;
@@ -627,5 +705,23 @@ mod tests {
         assert!(Lexer::new("x = 1 + 2\nlog[x]\n").tokenize().is_ok());
         // an identifier that merely starts with f is fine
         assert!(Lexer::new("factor = 3\n").tokenize().is_ok());
+    }
+
+    /// A column's name after a dot with a backtick piece is one name token
+    /// holding the raw pieces (spec, Frames): `lag_`k``, `` `name` ``, a
+    /// quoted text inside a piece with its own backtick kept; a plain name
+    /// after a dot lexes as it did, and a piece left open is refused.
+    #[test]
+    fn a_column_name_with_a_piece_is_one_token() {
+        let names = |src: &str| -> Vec<String> {
+            Lexer::new(src).tokenize().expect("lexes").into_iter().filter_map(|t| if let Token::Ident(n) = t.token { Some(n) } else { None }).collect()
+        };
+        assert_eq!(names("df.lag_`k` = v\n"), vec!["df", "lag_`k`", "v"]);
+        assert_eq!(names("log[df.`name`[3]]\n"), vec!["log", "df", "`name`"]);
+        assert_eq!(names("df.`'in px'` = v\n"), vec!["df", "`'in px'`", "v"]);
+        assert_eq!(names("df.`'a`b'`_x = v\n"), vec!["df", "`'a`b'`_x", "v"]);
+        assert_eq!(names("df.qty\n"), vec!["df", "qty"]);
+        let e = Lexer::new("df.lag_`k = v\n").tokenize().expect_err("an open piece");
+        assert!(e.contains("not closed"), "{}", e);
     }
 }

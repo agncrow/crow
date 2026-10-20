@@ -77,7 +77,13 @@ pub fn expr_reads(expr: &Expr) -> HashSet<String> {
             reads.extend(expr_reads(callee));
             for a in args { reads.extend(expr_reads(a)); }
         }
-        Expr::FieldAccess { object, .. } => { reads.extend(expr_reads(object)); }
+        // (a column's computed name reads what its pieces read)
+        Expr::FieldAccess { object, field } => {
+            reads.extend(expr_reads(object));
+            if field.contains('`') {
+                reads.extend(str_interpolation_reads(field));
+            }
+        }
         Expr::Array(items) => {
             for item in items { reads.extend(expr_reads(item)); }
         }

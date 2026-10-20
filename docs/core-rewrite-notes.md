@@ -941,7 +941,7 @@ weeks; the core stages are weeks each.
   inference of its own (`checker.rs`); the lowering decides both now
   (`lower_test`), and the runner lowers each block once and runs it per
   input. What remains outside is a frame's columns: `frames.rs` keys them
-  by name, flow-sensitively (`df = with[df, …]` gives the same variable
+  by name, flow-sensitively (`df.x = …`, then `df = with[df, …]`, gives the same variable
   new columns, where a variable has one type in its scope), and the call
   scan reads them from the tree. Carrying them in `Ty::Frame` needs each
   such reassignment to be a new binding: a decision for the language,

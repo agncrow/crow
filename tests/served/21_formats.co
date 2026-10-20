@@ -13,7 +13,7 @@ fn packed[req]
     return msgpack[map[name = 'crow', kind = 'bird']]
 
 fn table[req]
-    f = with[frame.new[], 'n', [1, 2, 3]]
+    f = frame.new[n = [1, 2, 3]]
     return arrow[f]
 
 fn lines[put, n]

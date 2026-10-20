@@ -35,7 +35,9 @@ log[bucket[t.at, 86400]]
 log[bucket[t.at, 3600]]
 log[bucket[moment['2026-07-14T23:35:00-04:00'], 86400]]
 log[bucket[moment['2026-07-14T23:35:00Z'], 86400]]
-days = group[with[t, 'day_at', bucket[t.at, 86400]], 'day_at', ['px', 'first'], ['px', 'last'], ['qty', 'count']]
+td = t
+td.day_at = bucket[t.at, 86400]
+days = group[td, 'day_at', ['px', 'first'], ['px', 'last'], ['qty', 'count']]
 log[days.day_at]
 log[days.px_first]
 log[days.qty_count]
@@ -57,7 +59,9 @@ log[join[t, sig, ['sym', 'at'], 'asof'].px]
 u = unique[t, ['sym', 'qty']]
 log[len[u]]
 log[u.px]
-log[len[unique[with[t, 'blank', t.qty], ['blank']]]]
+tb = t
+tb.blank = t.qty
+log[len[unique[tb, ['blank']]]]
 
 --- where over text and moments, and with a list for a side
 log[where[t.day eq 1, t.note, 'other']]

@@ -6,10 +6,10 @@
 use frame
 
 df = frame.new[]
-df = with[df, 'sym', ['AAPL', 'MSFT', 'NVDA']]
-df = with[df, 'price', [187.5, 402.25, 121.0]]
-df = with[df, 'shares', [10, 5, 40]]
-df = with[df, 'open', [true, false, true]]
+df.sym = ['AAPL', 'MSFT', 'NVDA']
+df.price = [187.5, 402.25, 121.0]
+df.shares = [10, 5, 40]
+df.open = [true, false, true]
 
 p = save[df, '/tmp/crow_parity_138.parquet']
 log[p.ok]

@@ -5,7 +5,7 @@
 use web, ui, frame
 
 fn one[k]
-    return with[frame.new[], 'x', [k]]
+    return frame.new[x = [k]]
 
 a = one[1.0]
 b = one[2.0]

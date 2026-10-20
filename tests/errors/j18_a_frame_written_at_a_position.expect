@@ -1,3 +1,3 @@
-j18_a_frame_written_at_a_position.co:3:1: 'f' is a frame, whose cells are not written by position: a column is made anew, with[f, 'name', values]
+j18_a_frame_written_at_a_position.co:3:1: 'f' is a frame, whose cells are not written by position: a column is written whole, f.name = values
   3 │ f[0] = 3
-    │ ^^^^^^^^
+    │ ^

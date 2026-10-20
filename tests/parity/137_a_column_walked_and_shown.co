@@ -5,9 +5,9 @@
 use frame, math
 
 df = frame.new[]
-df = with[df, 'price', [10.5, 11.0, 9.75]]
-df = with[df, 'n', [3, 1, 2]]
-df = with[df, 'sym', ['a', 'b', 'c']]
+df.price = [10.5, 11.0, 9.75]
+df.n = [3, 1, 2]
+df.sym = ['a', 'b', 'c']
 total = 0.0
 for p in df.price
     total = total + p
@@ -30,8 +30,8 @@ for w in ['x', 'y', 'x', 'x']
 log[seen]
 
 --- a column of ints stays ints, divided as ints are; a tensor's are floats
-df = with[df, 'half', df.n / 2]
+df.half = df.n / 2
 log[df.n[0] / 2]
 log[df.half]
-t = with[frame.new[], 'z', tensor[[1, 2, 3]]]
+t = frame.new[z = tensor[[1, 2, 3]]]
 log[t.z[0] / 2]

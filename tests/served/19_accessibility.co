@@ -19,7 +19,7 @@ fn show[]
     showing = true
 
 view render[]
-    picks = with[frame.new[], 'sym', ['IMRN', 'FFIE']]
+    picks = frame.new[sym = ['IMRN', 'FFIE']]
     return stack[
         p['opened `opened`'],
         field['Name', name, type = 'text'],

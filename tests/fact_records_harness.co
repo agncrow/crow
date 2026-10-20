@@ -58,7 +58,7 @@ derive symbols
     return out
 
 derive table
-    return with[frame.new[], 'symbol', ['AB', 'CD', 'AB']]
+    return frame.new[symbol = ['AB', 'CD', 'AB']]
 
 derive counts
     out = []

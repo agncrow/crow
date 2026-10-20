@@ -3,7 +3,7 @@
 Technical indicators for the chart element, computed by the kernel so both execution modes draw the same numbers.
 
 
-Import with `use chart`. Technical indicators for the chart element, computed by the runtime (`crow_runtime::indicators`, over the kernels in `crow_runtime::ta`) so the interpreter and compiled programs draw the same numbers. Every function takes series — frame columns or arrays of numbers — and returns a series of the same length, `NaN` where the value is not yet defined (a 14-period RSI has no value on row 3), so a chart draws a gap instead of a guess. Put a result back into the frame with `with[frame, name, series]` and name the column in `lines = [...]` or `panes = [...]`.
+Import with `use chart`. Technical indicators for the chart element, computed by the runtime (`crow_runtime::indicators`, over the kernels in `crow_runtime::ta`) so the interpreter and compiled programs draw the same numbers. Every function takes series — frame columns or arrays of numbers — and returns a series of the same length, `NaN` where the value is not yet defined (a 14-period RSI has no value on row 3), so a chart draws a gap instead of a guess. Write a result into the frame (`df.name = series`) and name the column in `lines = [...]` or `panes = [...]`.
 
 | Function | Description | Example |
 |----------|-------------|---|
@@ -25,12 +25,12 @@ A trailing window — `rolling_sum`, `vwap` over seconds, `rsi` on buckets — r
 use chart, frame
 
 bars = frame.new[]
-bars = with[bars, 'ts', [0.0, 60.0, 120.0, 180.0, 240.0, 300.0]]
-bars = with[bars, 'c', [10.0, 11.0, 10.5, 11.5, 12.0, 11.0]]
-bars = with[bars, 'vol', [100.0, 200.0, 150.0, 300.0, 250.0, 100.0]]
-bars = with[bars, 'sma3', sma[bars.c, 3]]
-bars = with[bars, 'rsi3', rsi[bars.c, 3]]
-bars = with[bars, 'vwap', vwap[bars.c, bars.vol]]
+bars.ts = [0.0, 60.0, 120.0, 180.0, 240.0, 300.0]
+bars.c = [10.0, 11.0, 10.5, 11.5, 12.0, 11.0]
+bars.vol = [100.0, 200.0, 150.0, 300.0, 250.0, 100.0]
+bars.sma3 = sma[bars.c, 3]
+bars.rsi3 = rsi[bars.c, 3]
+bars.vwap = vwap[bars.c, bars.vol]
 log[bars.sma3[5]]      --- 11.5
 log[bars.rsi3[5]]      --- 50
 log[bars.vwap[1]]      --- 10.666666666666666

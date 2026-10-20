@@ -57,8 +57,8 @@ JSON records or as Parquet — the columnar format data tools share — and
 use frame
 
 prices = frame.new[]
-prices = with[prices, 'symbol', ['AAPL', 'MSFT']]
-prices = with[prices, 'price', [191.5, 415.2]]
+prices.symbol = ['AAPL', 'MSFT']
+prices.price = [191.5, 415.2]
 save[prices, 'ch10_prices.parquet']
 back = frame.load['ch10_prices.parquet']
 log[back.columns]
@@ -182,7 +182,7 @@ database with a web UI on top; next, the database half of that story.
 `group` takes a list of keys for a row per combination; `pivot` lays one
 column's cells out as columns; and `window` computes a column over each
 row's partition — a running sum per symbol, the previous row's price —
-which `with` adds to the frame:
+written into the frame under a name:
 
 ```crow
 use frame
@@ -202,8 +202,8 @@ log[by_day]
 wide = pivot[trades, 'symbol', 'day', 'qty']
 log[wide]
 
-trades = with[trades, 'so_far', window[trades, 'qty', 'sum', by = 'symbol']]
-trades = with[trades, 'prev', window[trades, 'price', 'lag', n = 1, by = 'symbol']]
+trades.so_far = window[trades, 'qty', 'sum', by = 'symbol']
+trades.prev = window[trades, 'price', 'lag', n = 1, by = 'symbol']
 log[trades]
 rm['trades.csv']
 ```
@@ -267,7 +267,8 @@ MSFT,2026-07-14T10:40:00-04:00,70,410.0'
 write['ticks.csv', csv]
 ticks = frame.load['ticks.csv']
 
-hourly = with[ticks, 'hour', bucket[ticks.at, 3600]]
+hourly = ticks
+hourly.hour = bucket[ticks.at, 3600]
 log[group[hourly, ['symbol', 'hour'], ['price', 'first'], ['price', 'max'], ['price', 'min'], ['price', 'last'], ['qty', 'sum']]]
 log[group[ticks, 'symbol', ['price', 'median'], ['price', 'p90'], ['qty', 'distinct']]]
 log[sort[ticks, ['symbol', 'qty'], desc = [false, true]].price]

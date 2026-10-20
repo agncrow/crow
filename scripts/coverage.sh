@@ -38,8 +38,15 @@ floor_of() {
 }
 export CROW_IR_VERIFY=strict
 # (only the profiles go: the instrumented build is kept between runs, its
-# flags never change, so a run after the first rebuilds what changed)
+# flags never change, so a run after the first rebuilds what changed — and
+# the executables go with them: the report reads every executable under
+# the target directory, so a test binary a build of 2026-10-17 had left
+# beside the day's, its functions matching no profile, pulled the
+# compiler's coverage from 82% to 50% while every test passed; the build
+# relinks the day's binaries from the objects it kept)
 cargo llvm-cov clean --workspace --profraw-only > /dev/null 2>&1
+find target/llvm-cov-target/release/deps -maxdepth 1 -type f -perm -100 ! -name '*.dylib' ! -name '*.so' -delete 2> /dev/null || true
+rm -f target/llvm-cov-target/release/crow
 cargo llvm-cov --workspace --release --no-report 2>&1 | grep -E '^test result|^error' || true
 if [ $quick = 0 ]; then
   # the instrumented binary, run as the gate runs it; the programs it

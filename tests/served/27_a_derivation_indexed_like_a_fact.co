@@ -7,8 +7,8 @@ least = 2
 
 derive trades
     t = frame.new[]
-    t = with[t, 'symbol', ['AAPL', 'MSFT', 'NVDA']]
-    t = with[t, 'qty', [1, 2, 3]]
+    t.symbol = ['AAPL', 'MSFT', 'NVDA']
+    t.qty = [1, 2, 3]
     return t
 
 fn more[]

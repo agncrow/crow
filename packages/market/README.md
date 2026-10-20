@@ -58,7 +58,7 @@ volume-weighted price `vwap`. A stretch with no trade has no bar.
 use chart, market.bars
 
 b = bars.build[ts, price, size, 60]
-b = with[b, 'rsi', rsi[b.c, 14]]
+b.rsi = rsi[b.c, 14]
 ```
 
 ## Tests

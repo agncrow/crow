@@ -1382,7 +1382,7 @@ mod tests {
     /// round, and the guess stuck in the derivation's type)
     #[test]
     fn a_join_of_derivations_is_a_frame_join() {
-        let src = "use web, ui, frame\nn = 0\nfn make[]\n    return with[frame.new[], 'k', [1, 2]]\nderive a\n    return make[]\nderive b\n    return make[]\nderive both\n    return join[a, b, 'k']\nview v[]\n    return p['`len[both]` `n`']\n";
+        let src = "use web, ui, frame\nn = 0\nfn make[]\n    return frame.new[k = [1, 2]]\nderive a\n    return make[]\nderive b\n    return make[]\nderive both\n    return join[a, b, 'k']\nview v[]\n    return p['`len[both]` `n`']\n";
         let stmts = crate::lower::lower_program(&crate::build(src).unwrap()).unwrap();
         let mut ctx = TypeContext::new();
         ctx.infer_program(&stmts);

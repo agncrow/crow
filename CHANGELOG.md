@@ -9,6 +9,18 @@ history says the rest.
 
 ### Breaking
 
+- A column is written the way it is read (spec, Frames): `df.name =
+  values` writes a column where the frame lies — a new column, or one
+  replaced; a scalar repeated down the rows — and `with` is gone from
+  the language (an unknown name now). After a dot a column's name reads
+  as text does, a backtick inside it an interpolation: `df.lag_`k` = …`
+  and `df.`name` = …` write a column by a computed name, and read one
+  the same way; a header no dot can write is reached as `df.`'in px'``.
+  `frame.new[a = xs, b = ys]` stays, each column such a write. Values of
+  another length than the rows stop the program where `with` had
+  answered an error value. `crow fix` has no rule: write `x = with[x,
+  'n', v]` as `x.n = v`, a chain over `frame.new[]` as the literal, and
+  a `with` in expression position as a write on the line before.
 - One statement verb (spec, db, Statements): `query` runs every statement
   and answers a frame — the rows a SELECT answers, the rows a RETURNING
   clause reads back, an empty frame for a statement that answers none.

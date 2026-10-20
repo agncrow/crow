@@ -1701,7 +1701,7 @@ mod tests {
     /// baseline when `title` joined the vocabulary).
     #[test]
     fn a_field_named_like_an_element_is_read_not_drawn() {
-        let src = "use web, ui, frame\ncards = with[frame.new[], 'title', ['ship']]\nview render[]\n    return stack[h2[cards.title[0]], title['Board']]\npage['/', render]\n";
+        let src = "use web, ui, frame\ncards = frame.new[title = ['ship']]\nview render[]\n    return stack[h2[cards.title[0]], title['Board']]\npage['/', render]\n";
         let (art, _) = artifacts(src);
         let tree = &art.entries["view render"];
         assert!(tree.contains("h2[] cards.title[0]"), "the column is read: {}", tree);

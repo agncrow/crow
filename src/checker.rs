@@ -1480,7 +1480,8 @@ pub(crate) fn declarations(stmts: &[Stmt]) -> Vec<Stmt> {
             Expr::UnaryOp { op: UnaryOp::Neg, expr } => matches!(expr.as_ref(), Expr::Int(_) | Expr::Float(_)),
             Expr::Array(items) => items.iter().all(is_literal),
             // a default built from literals by a constructor — map[...] (a
-            // set[] chain after lowering), frame.new[], with[...], and a
+            // set[] chain after lowering), frame.new[] (a chain of column
+            // writes after lowering), and a
             // moment of literals (`moment[0.0]`, `moment['2026-01-01']`,
             // `moment[2026, 7, 14, tz = …]`) — is a literal too
             Expr::Call { callee, args } => {
@@ -1489,7 +1490,7 @@ pub(crate) fn declarations(stmts: &[Stmt]) -> Vec<Stmt> {
                     Expr::FieldAccess { object, field } if matches!(object.as_ref(), Expr::Ident(m) if m == "frame") => field.as_str(),
                     _ => return false,
                 };
-                matches!(name, "map" | "set" | "new" | "with" | "moment") && args.iter().all(is_literal)
+                matches!(name, "map" | "set" | "new" | "__set_col" | "moment") && args.iter().all(is_literal)
             }
             // `map[launch = 'VWAP Launch']` as it is written, before its
             // named arguments become a set[] chain

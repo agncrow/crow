@@ -23,7 +23,8 @@ log[type[xs[0]]]
 fn t1[m]
     return sum[m] * 2.0
 
-t = with[df, 'c', df.a * 2]
+t = df
+t.c = df.a * 2
 log['`len[t]` `t1[[1.0, 2.0]]`']
 
 pushed = push[push[[3, 1, 2, 3], 3], len[frame.stack[df, df]]]

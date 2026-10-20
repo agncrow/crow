@@ -1,0 +1,5 @@
+--- with[df, 'b', [3, 4]]
+use frame
+df = frame.new[a = [1, 2]]
+g = with[df, 'b', [3, 4]]
+log[g]

@@ -23,7 +23,7 @@ log[type[concat[[0.5], [1, 2]][2]]]
 
 struct P [x, y]
 a = P[1.5, 2.0]
-df = with[frame.new[], 'a', [1, 2, 3]]
+df = frame.new[a = [1, 2, 3]]
 b = P[len[frame.stack[df, df]], 3.0]
 log[b.x]
 log[type[b.x]]

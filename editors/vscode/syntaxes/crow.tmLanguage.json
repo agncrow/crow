@@ -5,6 +5,7 @@
   "patterns": [
     { "include": "#comment" },
     { "include": "#string" },
+    { "include": "#column-name" },
     { "include": "#number" },
     { "include": "#declaration" },
     { "include": "#control" },
@@ -31,6 +32,23 @@
           "beginCaptures": { "0": { "name": "punctuation.section.embedded.begin.crow" } },
           "endCaptures": { "0": { "name": "punctuation.section.embedded.end.crow" } }
         }
+      ]
+    },
+    "column-name": {
+      "comment": "a column's name after a dot with an interpolation piece (df.lag_`k`, df.`name`): the pieces are code, as a string's are",
+      "begin": "\\.(?=[A-Za-z_0-9]*`)",
+      "end": "(?![A-Za-z_0-9`])",
+      "beginCaptures": { "0": { "name": "punctuation.accessor.crow" } },
+      "patterns": [
+        {
+          "name": "meta.embedded.line.crow",
+          "begin": "`",
+          "end": "`",
+          "patterns": [{ "include": "$self" }],
+          "beginCaptures": { "0": { "name": "punctuation.section.embedded.begin.crow" } },
+          "endCaptures": { "0": { "name": "punctuation.section.embedded.end.crow" } }
+        },
+        { "name": "variable.other.member.crow", "match": "[A-Za-z_0-9]+" }
       ]
     },
     "number": {

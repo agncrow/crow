@@ -113,9 +113,9 @@ fn replay[id]
 
 view records[]
     rows = frame.new[]
-    rows = with[rows, 'id', [3, 4]]
-    rows = with[rows, 'symbol', ['IMRN', 'AXTX']]
-    rows = with[rows, 'pnl', [-1.5, 2.0]]
+    rows.id = [3, 4]
+    rows.symbol = ['IMRN', 'AXTX']
+    rows.pnl = [-1.5, 2.0]
     return stack[
         header[h1['finch', size = 'm'], nav[a['Simulation', href = '/'], active = '/'], gap = 'm'],
         table[rows, click = replay, key = 'id', delta = ['pnl'], actions = map[Delete = ask_delete], hide = ['id']]

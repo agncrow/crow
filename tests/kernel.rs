@@ -114,7 +114,7 @@ fn a_notebook_runs_its_cells_in_one_session() {
         assert!(said.iter().any(|(k, c)| k == "stream" && c["text"] == "40\n"), "{:?}", said);
 
         // a frame's result is a table too
-        let (id, cell) = request("execute_request", json!({"code": "use frame\nwith[frame.new[], 'a', [1, 2]]", "silent": false}));
+        let (id, cell) = request("execute_request", json!({"code": "use frame\nframe.new[a = [1, 2]]", "silent": false}));
         shell.send(cell).await.unwrap();
         let said = broadcasts(&mut iopub, &id).await;
         let _ = shell.recv().await.unwrap();

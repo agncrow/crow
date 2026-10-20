@@ -3,7 +3,7 @@
 use web, ui, frame
 
 fn export[]
-    f = with[frame.new[], 'n', range[1, 4]]
+    f = frame.new[n = range[1, 4]]
     download[f, 'numbers.csv']
 
 fn note[]

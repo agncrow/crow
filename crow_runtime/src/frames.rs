@@ -145,6 +145,13 @@ pub fn with(f: &CrowFrame, name: &str, values: Cells) -> Result<CrowFrame, Strin
     }
 }
 
+/// `df.`name``: a column read by a name the program computes, the column
+/// `df.name` reads; where the frame has no such column the program stops
+/// in the words a written name's read stops with.
+pub fn column(f: &CrowFrame, name: &str) -> Result<CrowColumn, String> {
+    f.col_native(name).ok_or_else(|| crate::stops::no_column(name))
+}
+
 /// `select[frame, names]`.
 pub fn select(f: &CrowFrame, names: &[String]) -> Result<CrowFrame, String> {
     let names: Vec<&str> = names.iter().map(String::as_str).collect();
@@ -411,7 +418,7 @@ mod tests {
         assert_eq!(join_how(&f, &f, "name", "lefty").map(|_| ()), Err("join: no join 'lefty' — write 'inner', 'left', 'right', 'outer', 'semi', 'anti' or 'asof'".to_string()));
         assert_eq!(fill(&f, "age", &Cell::Float(2.5), "").map(|_| ()), Err("fill: column 'age' is int, and 2.5 is not".to_string()));
         assert_eq!(fill(&f, "age", &Cell::Int(0), "sideways").map(|_| ()), Err("fill: no direction 'sideways' — how = 'forward' or 'backward'".to_string()));
-        assert_eq!(with(&f, "x", Cells::from(vec![1_i64])).map(|_| ()), Err("with: column 'x' has 1 values but the frame has 3 rows".to_string()));
+        assert_eq!(with(&f, "x", Cells::from(vec![1_i64])).map(|_| ()), Err("column 'x' is given 1 values, and the frame has 3 rows".to_string()));
     }
 
 
