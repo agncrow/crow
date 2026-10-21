@@ -123,6 +123,10 @@ pub fn unheld(what: String) -> bool {
 /// sent in a recording, its answer kept (`crow_runtime::fixtures`).
 pub fn outside(name: &str, vals: &[crate::value::CrowValue]) -> Option<crate::value::CrowValue> {
     use crate::value::{CrowValue, Value};
+    // (outside a rehearsal nothing is recorded: asked first, since every
+    // call by name comes through here, and reading the kinds first had put
+    // a scan of the table behind each one)
+    let r = active()?;
     // (recorded: what its kind says — a file written, a command run; a
     // request is noted here and runs through its own fixtures)
     let kinds = crate::table::effects_of(name);
@@ -131,7 +135,6 @@ pub fn outside(name: &str, vals: &[crate::value::CrowValue]) -> Option<crate::va
     if !recorded && !noted {
         return None;
     }
-    let r = active()?;
     let shown = |v: &CrowValue| match &v.value {
         Value::Str(s) => {
             let s: String = s.chars().take(80).collect();

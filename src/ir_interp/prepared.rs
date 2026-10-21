@@ -1471,7 +1471,7 @@ impl IrInterp {
             };
         }
         let trace = if row.module.is_empty() && matches!(row.fails, crate::table::Fails::Value(_)) { self.trace_entry() } else { String::new() };
-        let v = (row.call)(&lent[..args.len()], &trace).map(|v| Self::stamp(row.name, v));
+        let v = (row.call)(&lent[..args.len()], &trace).map(|v| Self::stamp_row(row, v));
         for (i, (r, _)) in args.iter().enumerate() {
             if moved[i] {
                 regs[*r as usize] = std::mem::replace(&mut lent[i], CrowValue::done());

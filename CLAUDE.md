@@ -1244,3 +1244,17 @@ steps on every push and must be green.
   parsed value, so the check now calls `catalog`, `discover` and `tool`
   with its values (refused alike: no server named): they moved from
   not-called to agreement-only.
+- A question the interpreter asks of a builtin on EVERY call is answered
+  in constant time: `table::rows_named` reads an index built once (by
+  name and by a hidden form's written name, in the table's order), a
+  row's stamp is `table::row_stamps(row)` (read by the row's place in
+  ROWS/FORMS), and `rehearsal::outside` asks `active()` before reading any
+  kinds. When phase 1 of the freeze (e967633) turned the hand-kept lists
+  (`READERS`, `IN_PLACE_BUILTINS`, the rehearsal's names) into scans of the
+  table by name, the interpreter ran n-body four times slower and nothing
+  failed for three days: found by re-measuring the article's benchmarks,
+  bisected over the 24 commits since 0.7.0 with release binaries as the
+  baseline. A new by-name predicate on a call path goes through the index
+  (`table::a_name_is_answered_without_a_scan_of_the_table` measures it
+  against a scan in the same run), and `sample <pid> 3` of an interpreted
+  benchmark shows any `Chain::try_fold` + `memcmp` at the top.

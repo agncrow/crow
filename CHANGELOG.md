@@ -282,6 +282,16 @@ history says the rest.
 
 ### Fixed
 
+- The interpreter had run two to four times slower since the compiler's
+  freeze began (n-body 2.0 s to 8.0 s, k-nucleotide and reverse
+  complement twice their time; the compiled program untouched): the
+  questions it asks of a builtin's name after every call — whether the
+  answer is stamped, whether a list grows in place, whether a rehearsal
+  records the call — had become scans of the whole table by name when the
+  hand-kept lists became the table's. The table is indexed by name, built
+  once, a row's stamp is read by its place in the table, and a rehearsal
+  is asked about first; n-body is back to 2.2 s. A test holds the index to
+  the scan's answers and to being far faster than one.
 - A parameter reassigned in its body from a value that can fail (`words
   = maybe[1]`) keeps the kind its calls hand it: the body had typed an
   untyped parameter as a value that can fail before any call typed it,

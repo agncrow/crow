@@ -2723,9 +2723,26 @@ pub static FORMS: &[Row] = &[
 ];
 
 /// Every row of a name, the forms included: what the table says of a name
-/// a program can call.
+/// a program can call — by its name, or by the name a hidden form is
+/// written as, in the table's order. Read from an index built once: the
+/// interpreter asks after every builtin call (whether its answer is
+/// stamped, whether it grows in place, whether a rehearsal records it),
+/// and a scan of the table per question had made it two to four times
+/// slower when the hand-kept lists became the table's (e967633: n-body
+/// interpreted 2.0 s to 8.0 s).
 pub fn rows_named(name: &str) -> impl Iterator<Item = &'static Row> {
-    ROWS.iter().chain(FORMS.iter()).filter(move |r| r.name == name || r.written == name)
+    static BY_NAME: std::sync::OnceLock<std::collections::HashMap<&'static str, Vec<&'static Row>>> = std::sync::OnceLock::new();
+    let index = BY_NAME.get_or_init(|| {
+        let mut index: std::collections::HashMap<&'static str, Vec<&'static Row>> = std::collections::HashMap::new();
+        for r in ROWS.iter().chain(FORMS.iter()) {
+            index.entry(r.name).or_default().push(r);
+            if !r.written.is_empty() && r.written != r.name {
+                index.entry(r.written).or_default().push(r);
+            }
+        }
+        index
+    });
+    index.get(name).map_or(&[][..], |rows| rows.as_slice()).iter().copied()
 }
 
 /// A module's rows of a name, the forms included.
@@ -2793,7 +2810,13 @@ pub fn is_effect_in(module: &str, name: &str) -> bool {
 /// Whether the name's kinds include one the predicate holds: `held`,
 /// `stamps`, `recorded`, `acts_for_session` (crate::effects::Effect).
 pub fn effect_is(name: &str, which: fn(crate::effects::Effect) -> bool) -> bool {
-    effects_of(name).into_iter().any(which)
+    // (read as effects_of reads the kinds, with nothing gathered: asked
+    // after every builtin call, whether its answer is stamped)
+    let bare = name.rsplit('.').next().unwrap_or(name);
+    rows_named(bare)
+        .filter(|r| r.name == bare)
+        .flat_map(|r| r.props.iter())
+        .any(|p| matches!(p, Prop::Does(e) if which(*e)))
 }
 
 /// Held to the handler's commit (its kind says: a session's, a database
@@ -2805,6 +2828,24 @@ pub fn held(name: &str) -> bool {
 /// Its answer carries the moment it was read.
 pub fn stamps(name: &str) -> bool {
     effect_is(name, crate::effects::Effect::stamps)
+}
+
+/// Whether a row's answer is stamped, as its name's is (`stamps`): worked
+/// out once for every row of the table and read by the row's place in it,
+/// since the interpreter asks after every builtin call it makes and a
+/// lookup by name there cost n-body a twelfth of its time.
+pub fn row_stamps(row: &'static Row) -> bool {
+    static FLAGS: std::sync::OnceLock<(Vec<bool>, Vec<bool>)> = std::sync::OnceLock::new();
+    let (rows, forms) = FLAGS.get_or_init(|| (ROWS.iter().map(|r| stamps(r.name)).collect(), FORMS.iter().map(|r| stamps(r.name)).collect()));
+    let size = std::mem::size_of::<Row>();
+    let at = row as *const Row as usize;
+    for (table, flags) in [(ROWS, rows), (FORMS, forms)] {
+        let start = table.as_ptr() as usize;
+        if size > 0 && at >= start && at < start + table.len() * size {
+            return flags[(at - start) / size];
+        }
+    }
+    stamps(row.name)
 }
 
 /// Waits: a view or a handler reaching it freezes the live loop.
@@ -3869,6 +3910,54 @@ mod tests {
         assert!(core_row("encode", &[Arg::Bytes]).is_none());
         assert!(core_row("encode", &[Arg::Chunks]).is_none());
         assert!(core_row("encode", &[Arg::Map]).is_some());
+    }
+
+    /// The index answers every name as the scan of the table did: the same
+    /// rows, in the same order, a hidden form found by the name it is
+    /// written as (`query`'s writing twin) and a name no row has answering
+    /// none.
+    #[test]
+    fn a_name_is_answered_from_the_index_as_the_scan_answered_it() {
+        let scan = |name: &str| -> Vec<&'static str> { ROWS.iter().chain(FORMS.iter()).filter(|r| r.name == name || r.written == name).map(|r| r.id).collect() };
+        let mut names: Vec<&str> = ROWS.iter().chain(FORMS.iter()).flat_map(|r| [r.name, r.written]).filter(|n| !n.is_empty()).collect();
+        names.extend(["no_such_builtin", "x"]);
+        for n in names {
+            assert_eq!(rows_named(n).map(|r| r.id).collect::<Vec<_>>(), scan(n), "rows named {}", n);
+        }
+        // (a row's stamp, read by its place in the table, is its name's)
+        for r in ROWS.iter().chain(FORMS.iter()) {
+            assert_eq!(row_stamps(r), stamps(r.name), "the stamp of {}", r.id);
+        }
+    }
+
+    /// The questions the interpreter asks of a name after every builtin
+    /// call are answered without a scan of the table: measured in the same
+    /// run, the index answers a thousand names at least ten times faster
+    /// than a scan does (e967633 had put a scan behind every call, and the
+    /// interpreter ran n-body four times slower).
+    #[test]
+    fn a_name_is_answered_without_a_scan_of_the_table() {
+        let names: Vec<&str> = ROWS.iter().map(|r| r.name).take(200).collect();
+        let rounds = 50;
+        let began = std::time::Instant::now();
+        let mut indexed = 0usize;
+        for _ in 0..rounds {
+            for n in &names {
+                indexed += rows_named(n).count();
+            }
+        }
+        let by_index = began.elapsed();
+        let began = std::time::Instant::now();
+        let mut scanned = 0usize;
+        for _ in 0..rounds {
+            for n in &names {
+                scanned += ROWS.iter().chain(FORMS.iter()).filter(|r| r.name == *n || r.written == *n).count();
+            }
+        }
+        let by_scan = began.elapsed();
+        assert_eq!(indexed, scanned);
+        assert!(by_index * 10 < by_scan, "the index took {:?} where a scan took {:?}", by_index, by_scan);
+        assert!(stamps("read") && !stamps("sqrt") && has("push", Prop::InPlace) && !has("sqrt", Prop::InPlace));
     }
 
     /// Every row is reachable: no earlier row of its name and module takes

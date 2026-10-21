@@ -2156,6 +2156,17 @@ impl IrInterp {
         }
     }
 
+    /// `stamp`, for a call whose row is known: the row's flag, read by its
+    /// place in the table, with no lookup by name (asked after every
+    /// builtin call).
+    fn stamp_row(row: &'static crate::table::Row, v: CrowValue) -> CrowValue {
+        if crate::table::row_stamps(row) && v.is_ok() {
+            v.stamp_captured()
+        } else {
+            v
+        }
+    }
+
     /// A builtin's row, as the IR names it: its runtime function, the call
     /// the compiled program prints (a dual number a function grad
     /// differentiates takes the derivative's own form).
@@ -2170,7 +2181,7 @@ impl IrInterp {
             let handed = crate::table::crow_arguments(row, &vals)?;
             // (a reader's value carries the moment it was read, whichever
             // language the reader is written in)
-            return self.call_user(&crate::table::crow_fn_name(row), handed).map(|v| Self::stamp(row.name, v));
+            return self.call_user(&crate::table::crow_fn_name(row), handed).map(|v| Self::stamp_row(row, v));
         }
         // (by the name the program wrote: `floor[x]` of a float of any
         // size is the growing form's row)
@@ -2184,10 +2195,10 @@ impl IrInterp {
             // (only a row whose failure is a value reads the trace: for the
             // others it is not built — a string formatted at every call)
             let trace = if matches!(row.fails, crate::table::Fails::Value(_)) { self.trace_entry() } else { String::new() };
-            (row.take)(vals, &trace).map(|v| Self::stamp(row.name, v))
+            (row.take)(vals, &trace).map(|v| Self::stamp_row(row, v))
         } else {
             // a module's error value carries no trace, in either mode
-            (row.take)(vals, "").map(|v| Self::stamp(row.name, v))
+            (row.take)(vals, "").map(|v| Self::stamp_row(row, v))
         }
     }
 
@@ -2265,7 +2276,7 @@ impl IrInterp {
     fn crow_row_call(&mut self, module: &str, name: &str, vals: &[CrowValue]) -> Option<Result<CrowValue, String>> {
         let kinds: Vec<crate::table::Arg> = vals.iter().map(crate::table::Arg::of_value).collect();
         let row = crate::table::crow_row(module, name, &kinds)?;
-        Some(crate::table::crow_arguments(row, vals).and_then(|handed| self.call_user(&crate::table::crow_fn_name(row), handed)).map(|v| Self::stamp(row.name, v)))
+        Some(crate::table::crow_arguments(row, vals).and_then(|handed| self.call_user(&crate::table::crow_fn_name(row), handed)).map(|v| Self::stamp_row(row, v)))
     }
 
     /// `mail[mailer, to, subject, body]`: held to a handler's commit, or
