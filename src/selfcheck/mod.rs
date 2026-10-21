@@ -953,6 +953,12 @@ const WRITTEN: &[(&str, &str)] = &[
     // asked so every configuration shows the same — and its digests by the
     // names they take)
     ("sys.process", "process[] gt 0"),
+    // (a process started: a command that writes one line and ends, so every
+    // configuration reads the same and nothing reaches standard error —
+    // generated, `start` ran the kinds' values as commands, and what the
+    // shell said of them on the program's standard error landed in the
+    // other cases' outputs at no fixed moment)
+    ("sys.start", "trim[text[recv[stream_of[start['echo started']], 64, 5.0], '?']]"),
     ("sys.alive", "alive[process[]]"),
     ("sys.machine", "len[machine[]] gt 0"),
     ("sys.random", "len[random[16]]"),

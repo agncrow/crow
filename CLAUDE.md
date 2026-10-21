@@ -1233,3 +1233,14 @@ steps on every push and must be green.
   answer`): `snap_escaped`/`snap_unescaped` in checker.rs escape a
   backslash, a line break and a carriage return, or an answer of several
   lines read back as its first and was "changed" at every later check.
+- A row that leaves something running past its call (`sys.start`'s
+  process) gets a WRITTEN call in the self-check (src/selfcheck/mod.rs):
+  generated, the kinds' values (`42`, `'abc'`, a JSON text, the echo
+  server's URL, SQL) were run as commands through `sh -c`, and what the
+  shell said of them on the program's standard error landed in OTHER
+  cases' outputs at no fixed moment — two disagreements, one of them on
+  `bytes`, a row that starts nothing (2026-10-20). The field-read rule
+  of the same day made mcp's client functions describable as taking a
+  parsed value, so the check now calls `catalog`, `discover` and `tool`
+  with its values (refused alike: no server named): they moved from
+  not-called to agreement-only.

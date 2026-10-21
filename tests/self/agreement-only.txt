@@ -90,7 +90,10 @@ math.stats.kstest	no reference yet: add its answer to tests/self/reference.py, o
 math.stft	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.svd	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.tensor_of_columns	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+mcp.catalog	asks a server: the check's values name none, and are refused alike in every configuration; tests/mcp.rs drives the client against a stand-in server over HTTP (the list read from a stream of events) and a Crow server over stdio, in both modes
+mcp.discover	asks a server: the check's values name none, and are refused alike in every configuration; tests/mcp.rs drives the client against a stand-in server in both modes
 mcp.server	a server's description from its URL or from the command that runs it, the same in every configuration; tests/mcp.rs holds what it describes to a stand-in server and to a Crow server over stdio in both modes
+mcp.tool	calls a server's tool: the check's values name no server, and are refused alike in every configuration; tests/mcp.rs drives the client against a stand-in server over HTTP and a Crow server over stdio in both modes (a result, one marked an error, an unknown tool)
 stats.anova	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 sys.alive	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.answer	the standard library's own layer: bytes, streams and protocols no reference models yet
