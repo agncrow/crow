@@ -333,9 +333,11 @@ other apps' pages are: `app[render]`, `change`, `click`, the facts and
 the derivations read back, the markup searched, interpreted and against
 the compiled app, the model's replies replayed.
 
-**What the build found in the compiler** (reported, not fixed: the
-compiler is frozen, and each has a reproduction under `target/scratch/`
-of the stream's worktree). A value handed to a parameter that becomes a
+**What the build found in the compiler** (three bugs, reported by the
+stream that built the example — held to the freeze — and fixed the same
+day as the bug fixes they are, each with its test: parity 278,
+tests/described.rs, the checker's snapshot round trip; the paragraph
+keeps what was found). A value handed to a parameter that becomes a
 value that can fail is handed bare, and the compiled program does not
 build: `act`'s `system` is reassigned from the skills' prompt, a value
 that can fail, so its parameter is typed as one, and a call that hands it
