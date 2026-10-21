@@ -46,7 +46,7 @@ compiler's was fixed on the way, named below.
 
 | Function | What it does |
 |---|---|
-| `act[m, talk, tools = [], rounds = 8, system = '', tokens = 1024, temperature = 1.0, budget = 0]` | The model runs its tools in a loop until it answers or a limit stops it. Each reply's calls are answered in order by the tool of the call's name, applied to its arguments read by each parameter's kind; a name no tool has, an argument missing or of another kind and a tool's own failure are each told to the model as a failed result that says why, so every call is answered. At most `rounds` model calls, at most `budget` tokens in all (0 for none): the limit stops the run after the reply's calls are answered, so the conversation ends well-formed and can be continued. Answers a record: `text` (the model's last words), `stop` (`end`, `length`, `other`, `rounds`, `budget`), `rounds`, `usage` (`input`, `output` tokens in all), `talk` (the conversation as it ended) and `steps`, a frame with a row per model call and per tool call: `step`, `what` (`chat`, `tool`), `name` (the model's or the tool's), `input`, `output`, `ms`, `how` (a chat's stop; a tool's `ok`, `failed`, `arguments`, `unknown`). An error value of kind `'llm'` as `chat`'s, and for `rounds` below one |
+| `act[m, talk, tools = [], allow = [], rounds = 8, system = '', tokens = 1024, temperature = 1.0, budget = 0, keep = 0, compact = 0, skills = '', servers = []]` | The model runs its tools in a loop until it answers or a limit stops it. Each reply's calls are answered in order: the program's gates first (`allow = [g]`, each a function of the call answering a bool, every one asked), then the tool of the call's name, applied to its arguments read by each parameter's kind; a refusal, a name no tool has, an argument missing or of another kind and a tool's own failure are each told to the model as a failed result that says why, so every call is answered. At most `rounds` model calls, at most `budget` tokens in all (0 for none): the limit stops the run after the reply's calls are answered, so the conversation ends well-formed and can be continued. Answers a record: `text` (the model's last words), `stop` (`end`, `length`, `other`, `rounds`, `budget`), `rounds`, `usage` (`input`, `output` tokens in all), `talk` (the conversation as it ended) and `steps`, a frame with a row per model call and per tool call: `step`, `what` (`chat`, `tool`), `name` (the model's or the tool's), `input`, `output`, `ms`, `how` (a chat's stop; a tool's `ok`, `failed`, `arguments`, `unknown`). An error value of kind `'llm'` as `chat`'s, and for `rounds` below one |
 | `told[talk, call, text, failed = false]` | As before; `failed = true` marks the result a failure the model is to hear as one: Anthropic's block carries `is_error`, the OpenAI-compatible turn its text alone (the wire has no flag) |
 
 ## Design notes
@@ -71,29 +71,30 @@ written calls; and the program's own `if` is the list it wrote — and the
 gate, below, once it can be typed. The hand-written loop stays what it is:
 `chat`, `said`, `told` are the loop's own pieces.
 
-**The gate waits on one inference rule.** The guide's `allow`: a function
-of the call the program hands the loop, asked before every tool runs. Two
-shapes were built and each met the compiler as it is. As a plain function
-parameter (`act[m, talk, allowed, tools = …]`) it is typed by the loop's
-own application of it, but a function taking a function is lowered once
-(spec, Specialization: "a function taking a function is not copied per
-kind"), so one `act` would serve one tool list per program — no subagent
-with tools of its own beside its parent. As a group applied by name
-(`allow = [g, h]`, each asked, which composes gates for free) the module
-hands the call as a parsed value, and a parameter is typed only by a call
-of it or by a single-kind builtin read in its body (`upper[city]`): a body
-that reads the call's fields (`call.name eq 'weather'`) types nothing, so
-`describe` refuses the gate as "typed by nothing", or "handed a parsed
-value and read as nothing". The rule that closes it is small and general:
-a parameter whose fields the body reads, and nothing else types, is a
-parsed value — `param_reads` noting a field read as `Json`, where it
-notes `upper[x]` as text today — which also lets a tool take an object
-(`search[query, filters]`), refused the same way now. It is a change to
-inference, so under rule 24 it is asked for, not made: the loop ships
-without the gate, every tool the program lists allowed as listed, and the
-gate comes as `allow = [g]` once the rule is in. Deferred with it: a reach
-on `describe` (what a function touches), which a gate that refuses
-effectful tools by default would need.
+**The gate, and the rule it needed.** The guide's `allow`: a function of
+the call the program hands the loop, asked before every tool runs. Two
+shapes were built and each met the compiler as it was. As a plain
+function parameter (`act[m, talk, allowed, tools = …]`) it is typed by
+the loop's own application of it, but a function taking a function is
+lowered once (spec, Specialization: "a function taking a function is not
+copied per kind"), so one `act` would serve one tool list per program —
+no subagent with tools of its own beside its parent. As a group applied
+by name (`allow = [g, h]`, each asked, which composes gates for free) the
+module hands the call as a parsed value, and a parameter was typed only
+by a call of it or by a single-kind builtin read in its body
+(`upper[city]`): a body that reads the call's fields (`call.name eq
+'weather'`) typed nothing, so `describe` refused the gate as "typed by
+nothing". The rule that closes it is small and general, and Vijay asked
+for it (2026-10-20): a parameter whose fields the body reads, and nothing
+else types, is a parsed value — `param_reads` notes a field read as
+`Json`, where it notes `upper[x]` as text — which also lets a tool take
+an object (`ship[order]` reading `order.lines`), refused the same way
+before. Built so: `allow = [g]`, each gate checked at the start (one
+parameter, a bool answered, else the call's error says so), each applied
+by name before a tool runs with the call under its parameter's name, a
+refusal told to the model as a failed result (`how` `refused`). Deferred
+still: a reach on `describe` (what a function touches), which a gate that
+refuses effectful tools by default would need.
 
 **The outcome told to the model.** A bad argument, a tool's failure and an
 unknown name are all told, each as a failed result whose text says why —

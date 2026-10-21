@@ -441,6 +441,10 @@ pub struct TypeContext {
     /// parameter is where inference says only "a parsed value" (noted by
     /// the lowering's passes, read where the schema is written).
     pub param_reads: BTreeMap<String, BTreeMap<String, Ty>>,
+    /// The functions a dispatch is applying by name (lower_ir/named.rs): a
+    /// group's member is called where the group was handed, though a
+    /// standard module's function cannot name the program's (`calls_fn`).
+    pub applying: Vec<String>,
     /// Each function's parameters' defaults as written, for `describe`
     /// (kept here, since the final pass lowers on a Lowerer of its own).
     pub fn_defaults: BTreeMap<String, Vec<Option<Expr>>>,
@@ -584,6 +588,7 @@ impl TypeContext {
             views: std::collections::BTreeSet::new(),
             grad_forced: std::collections::BTreeSet::new(),
             param_reads: BTreeMap::new(),
+            applying: Vec::new(),
             fn_defaults: BTreeMap::new(),
             first_call_line: BTreeMap::new(),
             first_items: BTreeMap::new(),
@@ -992,19 +997,6 @@ impl TypeContext {
         let sig = self.functions.get_mut(mangled)?;
         sig.return_type = Ty::Unknown;
         Some(sig.body.clone())
-    }
-
-    /// A function's parameters bound in the environment, typed by its
-    /// signature; the environment before, to put back.
-    pub(crate) fn bind_params(&mut self, name: &str) -> BTreeMap<String, Ty> {
-        let saved_vars = self.vars.clone();
-        if let Some(sig) = self.functions.get(name) {
-            let bind: Vec<(String, Ty)> = sig.params.clone();
-            for (p, t) in bind {
-                self.vars.insert(p, t);
-            }
-        }
-        saved_vars
     }
 
     /// What a loop walks: a list that can fail is refused before the loop

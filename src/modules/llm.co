@@ -868,7 +868,7 @@ fn reply[s]
 struct Done [text, stop, rounds, usage, talk, steps]
 
 --- a call's outcome as a parsed value: the result's text, whether it
---- failed, and how it went — ok, failed, arguments or unknown
+--- failed, and how it went — ok, failed, arguments, refused or unknown
 fn _outcome[words, failed, how]
     return json['{"text": `encode[words]`, "failed": `failed`, "how": `encode[how]`}']
 
@@ -921,6 +921,33 @@ fn _trimmed[talk, keep]
             turns = push[turns, encode[t]]
     glued = join[turns, ', ']
     return json['[`glued`]']
+
+--- ── the gate: the program's say before a tool runs ─────────────────────
+
+--- a refused call's outcome: a failed result that says so
+fn _refused[call]
+    return _outcome['`str[call.name]` is not allowed by the program', true, 'refused']
+
+--- why a gate is no gate: it takes the call, one parameter, and answers a
+--- bool; empty text for one that does
+fn _no_gate[d]
+    if len[d.params] ne 1 or str[d.answers] ne 'a bool'
+        return 'a gate takes the call and answers a bool: `str[d.name]` takes `len[d.params]` and answers `str[d.answers]`'
+    return ''
+
+--- whether every gate allows the call: each applied by name, the call
+--- under its one parameter's name (a parsed value: the gate reads its
+--- fields), and read as its bool
+fn _allowed[gates, call]
+    for g in gates
+        d = describe[g]
+        named = str[d.params[0].name]
+        said = apply[g, json['{"`named`": `encode[call]`}']]
+        if not said.ok
+            return false
+        if said ne 'true'
+            return false
+    return true
 
 --- ── tools from MCP servers ─────────────────────────────────────────────
 
@@ -1131,12 +1158,15 @@ fn _compact_ask[talk]
 fn _compacted[summary]
     return ask['The conversation so far, summarized:\n`summary`\n\nContinue the task from here.']
 
---- `act[m, talk, tools = [], rounds = 8, system = '', tokens = 1024,
---- temperature = 1.0, budget = 0, keep = 0, compact = 0]`: the model runs
---- its tools in a loop until it answers or a limit stops it — each
---- reply's calls answered by the tools' own functions, every call
---- answered and a failure told as one; at most `rounds` model calls, at
---- most `budget` tokens in all (0 for no budget); `keep = n` cuts the
+--- `act[m, talk, tools = [], allow = [], rounds = 8, system = '', tokens =
+--- 1024, temperature = 1.0, budget = 0, keep = 0, compact = 0]`: the
+--- model runs its tools in a loop until it answers or a limit stops it —
+--- each reply's calls answered by the tools' own functions, every call
+--- answered and a failure told as one; `allow = [g]` names the program's
+--- gates, each a function of the call answering a bool, every one asked
+--- before a tool runs and a refusal told to the model as a failed result;
+--- at most `rounds` model calls, at most `budget` tokens in all (0 for no
+--- budget); `keep = n` cuts the
 --- tool results of rounds older than the last n to a stub, `compact = n`
 --- asks the model for a summary once a reply read n tokens or more and
 --- goes on from the summary alone (0 for never); `skills = folder` reads
@@ -1146,7 +1176,7 @@ fn _compacted[summary]
 --- `skill_file`; `servers = [s]` adds the tools each MCP server offers
 --- (`use mcp`), called on the server; a record: `text`, `stop`, `rounds`,
 --- `usage`, `talk`, `steps`
-fn act[m, talk, tools = [], rounds = 8, system = '', tokens = 1024, temperature = 1.0, budget = 0, keep = 0, compact = 0, skills = '', servers = []]
+fn act[m, talk, tools = [], allow = [], rounds = 8, system = '', tokens = 1024, temperature = 1.0, budget = 0, keep = 0, compact = 0, skills = '', servers = []]
     checked = _model_of[m]
     if not checked.ok
         return error[checked.reason, 'llm']
@@ -1155,6 +1185,10 @@ fn act[m, talk, tools = [], rounds = 8, system = '', tokens = 1024, temperature 
         return error[turns.reason, 'llm']
     if rounds lt 1
         return error['act[…] runs at least one round: rounds = `rounds`', 'llm']
+    for g in allow
+        wrong = _no_gate[describe[g]]
+        if len[wrong] gt 0
+            return error[wrong, 'llm']
     known = json['[]']
     if len[skills] gt 0
         read_in = _skills_in[skills]
@@ -1232,13 +1266,15 @@ fn act[m, talk, tools = [], rounds = 8, system = '', tokens = 1024, temperature 
         else
             for call in r.calls
                 t1 = float[now[]]
-                got = _answered[tools, call]
-                if len[servers] gt 0 and _is_served[served, call]
-                    got = _served_call[reached, served, call]
-                if len[skills] gt 0 and str[call.name] eq 'skill'
-                    got = _skill_loaded[known, call]
-                else if len[skills] gt 0 and str[call.name] eq 'skill_file'
-                    got = _skill_file_read[known, call]
+                got = _refused[call]
+                if _allowed[allow, call]
+                    got = _answered[tools, call]
+                    if len[servers] gt 0 and _is_served[served, call]
+                        got = _served_call[reached, served, call]
+                    if len[skills] gt 0 and str[call.name] eq 'skill'
+                        got = _skill_loaded[known, call]
+                    else if len[skills] gt 0 and str[call.name] eq 'skill_file'
+                        got = _skill_file_read[known, call]
                 flag = false
                 if got.failed
                     flag = true
@@ -1283,6 +1319,32 @@ fn _forecast[city, days = 2]
 --- a tool that fails, for the tests: its failure is the call's result
 fn _breaks[city]
     return error['the weather service is down in `upper[city]`', 'weather']
+
+--- a gate that allows every named call, and one that allows none: each
+--- reads the call's fields and is called by no one, so the fields type it
+fn _any_call[call]
+    return len[str[call.name]] gt 0
+
+fn _no_call[call]
+    return len[str[call.name]] eq 0
+
+--- the gates are asked by name, every one, and a gate that is none is
+--- said so; a refused call's outcome says why
+test a_gate_is_asked_by_name[]
+    call = json['{"id": "c1", "name": "_forecast", "args": {"city": "Oslo", "days": 3}}']
+    assert[_allowed[[_any_call], call]]
+    assert[not _allowed[[_no_call], call]]
+    assert[not _allowed[[_any_call, _no_call], call]]
+    assert[_no_gate[describe[_any_call]] eq '']
+    assert[_no_gate[describe[_forecast]] eq 'a gate takes the call and answers a bool: _forecast takes 2 and answers text']
+    refused = _refused[call]
+    assert[str[refused.failed] eq 'true']
+    assert[str[refused.how] eq 'refused']
+    assert[str[refused.text] eq '_forecast is not allowed by the program']
+    m = reach['openai://127.0.0.1:9/self-model']
+    ungated = act[m, ask['hi'], tools = [_forecast], allow = [_forecast]]
+    assert[not ungated.ok]
+    assert[ungated.reason eq 'a gate takes the call and answers a bool: _forecast takes 2 and answers text']
 
 --- a call is answered by the tool of its name — the tool's value as the
 --- model reads it; a missing argument, a tool's own failure and a name

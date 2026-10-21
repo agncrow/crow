@@ -559,6 +559,12 @@ fn forecast[city, days = 2]
 fn echo[words]
     return 'echo `trim[words]`'
 
+--- the program's gate: the weather may be asked for Lisbon alone
+fn only_lisbon[call]
+    if str[call.name] ne 'weather'
+        return true
+    return str[call.args.city] eq 'Lisbon'
+
 done = act[m, ask['act: weather'], tools = [weather]]
 log[done.text]
 log[done.stop]
@@ -593,6 +599,12 @@ log[broken.steps.how]
 two = act[m, ask['act: two'], tools = [weather]]
 log[two.text]
 log[len[two.steps.what]]
+
+gated = act[m, ask['act: two'], tools = [weather], allow = [only_lisbon]]
+log[gated.text]
+log[gated.steps.how]
+ungated = act[m, ask['act: weather'], tools = [weather], allow = [weather]]
+log[ungated.reason]
 
 tight = act[m, ask['act: forever'], tools = [weather], budget = 10]
 log[tight.stop]
@@ -640,6 +652,8 @@ na = act[a, ask['act: nothing'], tools = [weather]]
 log[na.text]
 fa = act[a, ask['act: fail'], tools = [weather]]
 log[fa.text]
+ga = act[a, ask['act: two'], tools = [weather], allow = [only_lisbon]]
+log[ga.text]
 ";
 
 #[test]
@@ -678,6 +692,9 @@ heard: no station in Nowhere\n\
 ['tool', 'failed', 'end']\n\
 heard: sunny in LISBON | sunny in PORTO\n\
 4\n\
+heard: sunny in LISBON | weather is not allowed by the program\n\
+['tool', 'ok', 'refused', 'end']\n\
+a gate takes the call and answers a bool: weather takes 1 and answers text\n\
 budget\n\
 1\n\
 length\n\
@@ -704,7 +721,8 @@ end\n\
 33\n\
 ['tool', 'ok', 'end']\n\
 heard: no tool is named nothing (error)\n\
-heard: no station in Nowhere (error)\n";
+heard: no station in Nowhere (error)\n\
+heard: sunny in LISBON | weather is not allowed by the program (error)\n";
     for mode in [&["run", "-i"][..], &["run"][..]] {
         let out = Command::new(env!("CARGO_BIN_EXE_crow"))
             .args(mode)

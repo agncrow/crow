@@ -104,8 +104,13 @@ history says the rest.
   `text`, `stop`, `rounds`, `usage`, `talk` and `steps`, a frame with a
   row per model call and tool call. `told[…, failed = true]` tells a
   failure by hand; Anthropic's wire carries it as `is_error`. Written in
-  Crow in the module (docs/agents-design.md); the gate waits on an
-  inference rule (a parameter read by its fields is a parsed value).
+  Crow in the module (docs/agents-design.md).
+- The loop's gate: `allow = [g, h]` names functions of the call, each
+  asked before a tool runs and answering a bool; a call one refuses is
+  told to the model as a failed result (`remove is not allowed by the
+  program`, `how` `refused` in the steps frame) rather than run, and a
+  gate that takes another count of parameters or answers another kind is
+  the call's error before any model is asked.
 - The loop's context, skills and servers: `keep = n` cuts the tool
   results of rounds older than the last n to a stub naming their size,
   `compact = n` asks the model for a summary once a reply has read n
@@ -136,6 +141,12 @@ history says the rest.
 
 ### Changed
 
+- A parameter read by its fields, and typed by nothing else, is a parsed
+  value (spec, Tools are the functions): a function called by name —
+  the loop's gate, a tool taking an object, an MCP server's — had been
+  refused as "typed by nothing — read it in the body", which its body
+  did. A parameter any call types keeps that type; the rule only fills
+  the case the compiler refused.
 - The book's standard-library pages (`docs/book/src/stdlib/`) are
   generated for every module the manifest lists that has a section of
   its own in the spec, in the manifest's order; a hand-kept list in the

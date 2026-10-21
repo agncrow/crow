@@ -864,10 +864,6 @@ struct Lowerer<'a> {
     /// The collecting loops over a list of named functions the call scan
     /// is inside (`for f in [a, b]`): the loop's variable and the functions.
     fn_lists: Vec<(String, Vec<String>)>,
-    /// The functions a dispatch is applying by name (named.rs): a group's
-    /// member is called where the group was handed, though a standard
-    /// module's function cannot name the program's functions (`calls_fn`).
-    applying: Vec<String>,
     /// The functions refused as undescribable, each once.
     undescribable: HashSet<String>,
     /// A provisional lowering's locals, each with its first value's type:
@@ -1025,7 +1021,6 @@ impl<'a> Lowerer<'a> {
             collecting: 0,
             unscanned: 0,
             fn_lists: Vec::new(),
-            applying: Vec::new(),
             undescribable: HashSet::new(),
             first_types: HashMap::new(),
             held: Vec::new(),
@@ -2047,7 +2042,7 @@ impl<'a> Lowerer<'a> {
     }
 
     fn calls_fn(&self, name: &str) -> bool {
-        self.ctx.functions.contains_key(name) && (crate::modules::is_crow_fn(name) || !crate::modules::is_crow_fn(&self.current_fn) || self.applying.iter().any(|f| f == name))
+        self.ctx.functions.contains_key(name) && (crate::modules::is_crow_fn(name) || !crate::modules::is_crow_fn(&self.current_fn) || self.ctx.applying.iter().any(|f| f == name))
     }
 
     /// A write at a path — a field, an item, a key — of a local, or of a
@@ -4122,6 +4117,15 @@ impl<'a> Lowerer<'a> {
                             }
                         }
                         let base = if member { self.muted(|l| l.lower_expr(object))? } else { self.lower_expr(object)? };
+                        // a parameter read by its fields, and typed by nothing
+                        // else, is a parsed value (spec, Tools are the
+                        // functions): what a call by name hands a function
+                        // — a gate's call, a tool's object — and the one
+                        // kind a field read says of a value no call types.
+                        // (Such a function had been refused as typed by
+                        // nothing, with advice to read the parameter, which
+                        // the body did — Vijay, 2026-10-20.)
+                        self.note_param_read(&base, &Ty::Json);
                         // a frame, a record, a map or a parsed value that can
                         // fail is read from its payload, refused first when
                         // it failed —
@@ -5204,7 +5208,7 @@ impl<'a> Lowerer<'a> {
         // program's `fn answer` — but one a dispatch there is applying by
         // name, a group's member handed in, is the program's function it
         // names: `applying`)
-        let visible = crate::modules::is_crow_fn(&name) || !crate::modules::is_crow_fn(&self.current_fn) || self.applying.iter().any(|f| *f == name);
+        let visible = crate::modules::is_crow_fn(&name) || !crate::modules::is_crow_fn(&self.current_fn) || self.ctx.applying.iter().any(|f| *f == name);
         if (self.ctx.functions.contains_key(&name) || self.ctx.specializations.contains_key(&name)) && visible {
             if let Some(seen) = &mut self.seen {
                 seen.calls.push((name.clone(), full_types.clone()));

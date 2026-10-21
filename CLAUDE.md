@@ -1171,3 +1171,14 @@ steps on every push and must be green.
   and refused its own code (parity 275, found by the first run of `act`
   against a real model). A new scan path for a body goes through the
   same pair.
+- A parameter read by its fields, and typed by nothing else, is a parsed
+  value (2026-10-20, Vijay's call): `note_param_read(&base, &Ty::Json)` in
+  the lowering's field-access arm, where a single-kind builtin read had
+  been the only body read that typed a parameter. It is what makes the
+  loop's gate (`allow = [g]`) and a tool taking an object describable
+  and applicable by name. The function a dispatch applies is visible to
+  the lowering AND to inference's scope rule through `ctx.applying`
+  (type_infer): the lowering alone had seen it, so the call was typed
+  as nothing and the emitter printed a text placeholder beside a bool.
+  `apply` answers the value ENCODED (a text in quotes): `_plain_of` in
+  llm.co reads it back, and had masked that difference for text tools.

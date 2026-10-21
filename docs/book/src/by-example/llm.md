@@ -134,8 +134,11 @@ argument of the wrong kind and a tool's own failure are each told to the
 model as a failed result that says why — and the run comes back as a
 record: `text`, `stop` (`end`, `length`, `other`, `rounds`, `budget`),
 `rounds`, `usage`, `talk` and `steps`, a frame with a row per model call
-and per tool call. `told[…, failed = true]` is how a failure is told by
-hand; the loop is held to its limits before any model is asked:
+and per tool call. `allow = [g]` names the program's gates, functions of
+the call asked before a tool runs: a call one refuses is told to the
+model as a failed result rather than run, and a gate that is none is the
+call's error. `told[…, failed = true]` is how a failure is told by hand;
+the loop is held to its limits before any model is asked:
 
 ```crow
 use llm
@@ -144,12 +147,20 @@ use llm
 fn weather[city]
     return 'sunny in `upper[city]`'
 
+--- the weather may be asked for Lisbon alone
+fn only_lisbon[call]
+    if str[call.name] ne 'weather'
+        return true
+    return str[call.args.city] eq 'Lisbon'
+
 m = reach['openai://127.0.0.1:1/llama3.2']
-done = act[m, ask['Is it warmer in Lisbon or Porto?'], tools = [weather], rounds = 4]
+done = act[m, ask['Is it warmer in Lisbon or Porto?'], tools = [weather], allow = [only_lisbon], rounds = 4]
 log[done.ok]
 log[done.kind]
 none = act[m, ask['hi'], tools = [weather], rounds = 0]
 log[none.reason]
+ungated = act[m, ask['hi'], tools = [weather], allow = [weather]]
+log[ungated.reason]
 r = json['{"text": "", "calls": [{"id": "c1", "name": "weather", "args": {"city": "Nowhere"}}], "usage": {"input": 3, "output": 4}, "stop": "tool"}']
 talk = told[said[ask['hi'], r], r.calls[0], 'no station in Nowhere', failed = true]
 log[talk[2].failed]
@@ -159,5 +170,6 @@ log[talk[2].failed]
 false
 llm
 act[…] runs at least one round: rounds = 0
+a gate takes the call and answers a bool: weather takes 1 and answers text
 true
 ```

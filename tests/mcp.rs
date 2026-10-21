@@ -182,8 +182,9 @@ an MCP server is reached at its endpoint's URL: localhost:8000/mcp is none — h
     }
 }
 
-/// A Crow program as an MCP server: two tools, one of which fails for one
-/// argument, answered over `/mcp`.
+/// A Crow program as an MCP server: three tools — one of which fails for one
+/// argument, and one taking an object, typed by the fields its body reads
+/// (spec, Tools are the functions) — answered over `/mcp`.
 const SERVER: &str = "use web, mcp
 
 --- the current weather in a city
@@ -196,8 +197,15 @@ fn weather[city]
 fn forecast[city, days = 2]
     return '`days` days of sun in `upper[city]`'
 
+--- ships an order: its id, and its lines, each a sku and a count
+fn ship[order]
+    lines = 0
+    for line in order.lines
+        lines = lines + 1
+    return 'shipped order `order.id` with `lines` lines'
+
 fn served[req]
-    return answer[req, tools = [weather, forecast], name = 'weather-server', instructions = 'ask about the weather']
+    return answer[req, tools = [weather, forecast, ship], name = 'weather-server', instructions = 'ask about the weather']
 
 route['/mcp', 'POST', served]
 serve[PORT]
@@ -264,6 +272,7 @@ fn served_answers(mode: &[&str], port: u16) -> Vec<String> {
         (json!({"jsonrpc": "2.0", "id": 10, "method": "tools/list", "params": {}}).to_string(), vec![version, ("Mcp-Method", "tools/list")]),
         (modern("tools/list", json!({}), json!(11)).replace("2026-07-28", "2025-11-25"), vec![("MCP-Protocol-Version", "2025-11-25"), ("Mcp-Method", "tools/list")]),
         (modern("tools/call", json!({"name": "weather", "arguments": {"city": "Lisbon"}}), json!(12)), vec![version, ("Mcp-Method", "tools/call"), ("Mcp-Name", "forecast")]),
+        (modern("tools/call", json!({"name": "ship", "arguments": {"order": {"id": 7, "lines": [{"sku": "A1", "count": 2}, {"sku": "B2", "count": 1}]}}}), json!(13)), vec![version, ("Mcp-Method", "tools/call"), ("Mcp-Name", "ship")]),
     ];
     let mut answers = Vec::new();
     for (body, headers) in &steps {
@@ -289,7 +298,7 @@ fn served_answers(mode: &[&str], port: u16) -> Vec<String> {
 fn a_program_serves_mcp_in_both_modes() {
     let expected = vec![
         r#"HTTP/1.1 200 OK | {"id":1,"jsonrpc":"2.0","result":{"_meta":{"io.modelcontextprotocol/serverInfo":{"name":"weather-server","version":"0.7.0"}},"cacheScope":"public","capabilities":{"tools":{}},"instructions":"ask about the weather","resultType":"complete","supportedVersions":["2026-07-28"],"ttlMs":3600000}}"#,
-        r#"HTTP/1.1 200 OK | {"id":2,"jsonrpc":"2.0","result":{"_meta":{"io.modelcontextprotocol/serverInfo":{"name":"weather-server","version":"0.7.0"}},"cacheScope":"public","resultType":"complete","tools":[{"description":"the current weather in a city","inputSchema":{"properties":{"city":{"type":"string"}},"required":["city"],"type":"object"},"name":"weather"},{"description":"the forecast for a city, for a number of days","inputSchema":{"properties":{"city":{"type":"string"},"days":{"type":"integer"}},"required":["city","days"],"type":"object"},"name":"forecast"}],"ttlMs":60000}}"#,
+        r#"HTTP/1.1 200 OK | {"id":2,"jsonrpc":"2.0","result":{"_meta":{"io.modelcontextprotocol/serverInfo":{"name":"weather-server","version":"0.7.0"}},"cacheScope":"public","resultType":"complete","tools":[{"description":"the current weather in a city","inputSchema":{"properties":{"city":{"type":"string"}},"required":["city"],"type":"object"},"name":"weather"},{"description":"the forecast for a city, for a number of days","inputSchema":{"properties":{"city":{"type":"string"},"days":{"type":"integer"}},"required":["city","days"],"type":"object"},"name":"forecast"},{"description":"ships an order: its id, and its lines, each a sku and a count","inputSchema":{"properties":{"order":{"type":"object"}},"required":["order"],"type":"object"},"name":"ship"}],"ttlMs":60000}}"#,
         r#"HTTP/1.1 200 OK | {"id":3,"jsonrpc":"2.0","result":{"_meta":{"io.modelcontextprotocol/serverInfo":{"name":"weather-server","version":"0.7.0"}},"content":[{"text":"sunny in LISBON","type":"text"}],"isError":false,"resultType":"complete"}}"#,
         r#"HTTP/1.1 200 OK | {"id":4,"jsonrpc":"2.0","result":{"_meta":{"io.modelcontextprotocol/serverInfo":{"name":"weather-server","version":"0.7.0"}},"content":[{"text":"a parsed value holds text 'many' where the program reads an int (forecast[]'s 'days')","type":"text"}],"isError":true,"resultType":"complete"}}"#,
         r#"HTTP/1.1 200 OK | {"id":5,"jsonrpc":"2.0","result":{"_meta":{"io.modelcontextprotocol/serverInfo":{"name":"weather-server","version":"0.7.0"}},"content":[{"text":"no station in Nowhere","type":"text"}],"isError":true,"resultType":"complete"}}"#,
@@ -301,6 +310,7 @@ fn a_program_serves_mcp_in_both_modes() {
         r#"HTTP/1.1 400 Bad Request | {"error":{"code":-32602,"message":"a request carries its protocol version and the client's capabilities in _meta"},"id":10,"jsonrpc":"2.0"}"#,
         r#"HTTP/1.1 400 Bad Request | {"error":{"code":-32022,"data":{"requested":"2025-11-25","supported":["2026-07-28"]},"message":"Unsupported protocol version"},"id":11,"jsonrpc":"2.0"}"#,
         r#"HTTP/1.1 400 Bad Request | {"error":{"code":-32020,"message":"Header mismatch: Mcp-Name must match the tool called"},"id":12,"jsonrpc":"2.0"}"#,
+        r#"HTTP/1.1 200 OK | {"id":13,"jsonrpc":"2.0","result":{"_meta":{"io.modelcontextprotocol/serverInfo":{"name":"weather-server","version":"0.7.0"}},"content":[{"text":"shipped order 7 with 2 lines","type":"text"}],"isError":false,"resultType":"complete"}}"#,
     ];
     for (mode, port) in [(&["run", "-i"][..], 3495u16), (&["run"][..], 3496u16)] {
         let answers = served_answers(mode, port);

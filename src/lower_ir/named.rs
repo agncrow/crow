@@ -320,10 +320,12 @@ impl<'a> Lowerer<'a> {
         // (the candidate is called as the program's function it is, though
         // the dispatch may lie in a standard module's function, which
         // cannot name the program's: read as a builtin's name there, the
-        // call had reached no function interpreted)
-        self.applying.push(f.to_string());
+        // call had reached no function interpreted, and typed as nothing
+        // by inference's own rule, a gate's bool had been printed where
+        // the call's text was expected and the program did not build)
+        self.ctx.applying.push(f.to_string());
         let encoded = self.lower_expr(&A::Call { callee: Box::new(A::Ident(ENCODE.to_string())), args: vec![call] });
-        self.applying.pop();
+        self.ctx.applying.pop();
         let encoded = encoded?;
         // (text that can fail, whatever the call could: the branches answer one kind)
         let ok_text = crate::table::ROWS.iter().find(|r| r.id == OK_TEXT).expect("the text row exists");

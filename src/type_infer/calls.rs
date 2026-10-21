@@ -28,7 +28,7 @@ impl TypeContext {
     /// invisible there, so a local of the module's named like one is its
     /// local (`lines[0]` in `sys.read_answer`, in a program with a `lines`).
     pub(crate) fn calls_fn(&self, name: &str) -> bool {
-        self.functions.contains_key(name) && (crate::modules::is_crow_fn(name) || !self.current_fn_name.as_deref().is_some_and(crate::modules::is_crow_fn))
+        self.functions.contains_key(name) && (crate::modules::is_crow_fn(name) || !self.current_fn_name.as_deref().is_some_and(crate::modules::is_crow_fn) || self.applying.iter().any(|f| f == name))
     }
 
     /// Whether a call's arguments' types say anything of its callee: a call
