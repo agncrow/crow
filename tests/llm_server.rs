@@ -249,6 +249,12 @@ fn scripted(path: &str, body: &str) -> Option<String> {
         "skills" => reply_text(anthropic, &format!("{}{}", everything, listed), "end"),
         "mcp" if round == 0 => reply_calls(anthropic, &[("echo", json!({"words": "over mcp"})), ("fail", json!({}))]),
         "mcp" => reply_text(anthropic, &everything, "end"),
+        // (a parent delegates: the tool `research` runs a loop of its own
+        // against this same server, asking the `weather` scenario; the
+        // `locked` researcher's model refuses its key, so its run fails and
+        // the parent hears why)
+        "delegate" if round == 0 => reply_calls(anthropic, &[("research", json!({"question": "act: weather"}))]),
+        "locked" if round == 0 => reply_calls(anthropic, &[("research_locked", json!({"question": "anything"}))]),
         _ => reply_text(anthropic, &heard, "end"),
     })
 }
@@ -565,6 +571,24 @@ fn only_lisbon[call]
         return true
     return str[call.args.city] eq 'Lisbon'
 
+--- what a smaller agent finds out about a question, with the weather as
+--- its only tool: its answer, or why its run failed (a subagent is a
+--- tool that runs the loop; a function sees no top-level name, so it
+--- reaches the model itself)
+fn research[question]
+    port = args[][0]
+    inner = act[reach['openai://127.0.0.1:`port`/test-model'], ask[trim[question]], tools = [weather], rounds = 4]
+    return inner.text
+
+--- a researcher whose model refuses its key: its run fails, and it answers
+--- a failure in words of its own, which the parent hears as one
+fn research_locked[question]
+    port = args[][0]
+    inner = act[reach['openai://127.0.0.1:`port`/test-model?key=CROW_LLM_TEST_BAD_KEY'], ask[trim[question]], tools = [weather], rounds = 4]
+    if not inner.ok
+        return error['the researcher could not run: `inner.reason`', 'research']
+    return inner.text
+
 done = act[m, ask['act: weather'], tools = [weather]]
 log[done.text]
 log[done.stop]
@@ -605,6 +629,16 @@ log[gated.text]
 log[gated.steps.how]
 ungated = act[m, ask['act: weather'], tools = [weather], allow = [weather]]
 log[ungated.reason]
+
+delegated = act[m, ask['act: delegate'], tools = [research, weather]]
+log[delegated.text]
+log[delegated.steps.name]
+log[delegated.steps.how]
+log[len[delegated.talk]]
+locked = act[m, ask['act: locked'], tools = [research_locked, weather]]
+log[locked.text]
+log[locked.steps.how]
+log[locked.talk[2].failed]
 
 tight = act[m, ask['act: forever'], tools = [weather], budget = 10]
 log[tight.stop]
@@ -654,6 +688,11 @@ fa = act[a, ask['act: fail'], tools = [weather]]
 log[fa.text]
 ga = act[a, ask['act: two'], tools = [weather], allow = [only_lisbon]]
 log[ga.text]
+dla = act[a, ask['act: delegate'], tools = [research, weather]]
+log[dla.text]
+log[dla.steps.how]
+la = act[a, ask['act: locked'], tools = [research_locked, weather]]
+log[la.text]
 ";
 
 #[test]
@@ -695,6 +734,13 @@ heard: sunny in LISBON | sunny in PORTO\n\
 heard: sunny in LISBON | weather is not allowed by the program\n\
 ['tool', 'ok', 'refused', 'end']\n\
 a gate takes the call and answers a bool: weather takes 1 and answers text\n\
+heard: heard: sunny in LISBON\n\
+['test-model', 'research', 'test-model']\n\
+['tool', 'ok', 'end']\n\
+4\n\
+heard: the researcher could not run: the model's server answered 401: Incorrect API key provided: bad\n\
+['tool', 'failed', 'end']\n\
+true\n\
 budget\n\
 1\n\
 length\n\
@@ -722,7 +768,10 @@ end\n\
 ['tool', 'ok', 'end']\n\
 heard: no tool is named nothing (error)\n\
 heard: no station in Nowhere (error)\n\
-heard: sunny in LISBON | weather is not allowed by the program (error)\n";
+heard: sunny in LISBON | weather is not allowed by the program (error)\n\
+heard: heard: sunny in LISBON\n\
+['tool', 'ok', 'end']\n\
+heard: the researcher could not run: the model's server answered 401: Incorrect API key provided: bad (error)\n";
     for mode in [&["run", "-i"][..], &["run"][..]] {
         let out = Command::new(env!("CARGO_BIN_EXE_crow"))
             .args(mode)
@@ -733,6 +782,7 @@ heard: sunny in LISBON | weather is not allowed by the program (error)\n";
             .env("ANTHROPIC_BASE_URL", format!("http://127.0.0.1:{}", port))
             .env("ANTHROPIC_API_KEY", "test")
             .env("OPENAI_API_KEY", "test")
+            .env("CROW_LLM_TEST_BAD_KEY", "bad")
             .output()
             .unwrap();
         assert_eq!(String::from_utf8_lossy(&out.stdout).to_string(), said.replace("@PORT@", &port.to_string()), "{:?}: {}", mode, String::from_utf8_lossy(&out.stderr));

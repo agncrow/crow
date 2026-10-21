@@ -173,3 +173,40 @@ act[…] runs at least one round: rounds = 0
 a gate takes the call and answers a bool: weather takes 1 and answers text
 true
 ```
+
+A subagent is a tool that runs the loop: a function the parent model
+calls, whose body runs `act` with a model and tools of its own and
+answers what the inner run found. A function sees no top-level name, so
+it reaches its model itself; `trim[question]` reads the question as text
+(`ask` takes any value and types nothing); and a run that failed fails
+the tool, so the parent model hears a failed result that says why. The
+parent's steps show the delegation as one tool row; the inner run's
+steps are the tool's own to read:
+
+```crow
+use llm
+
+--- the current weather in a city
+fn weather[city]
+    return 'sunny in `upper[city]`'
+
+--- what a smaller agent finds out about a question, with the weather as
+--- its only tool
+fn research[question]
+    small = reach['openai://127.0.0.1:1/llama3.2']
+    inner = act[small, ask[trim[question]], tools = [weather], rounds = 4]
+    return inner.text
+
+m = reach['openai://127.0.0.1:1/llama3.2']
+done = act[m, ask['Is it warm in Lisbon today?'], tools = [research]]
+log[done.ok]
+found = research['Is it warm in Lisbon today?']
+log[found.ok]
+log[found.kind]
+```
+
+```text
+false
+false
+llm
+```

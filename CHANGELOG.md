@@ -111,6 +111,15 @@ history says the rest.
   program`, `how` `refused` in the steps frame) rather than run, and a
   gate that takes another count of parameters or answers another kind is
   the call's error before any model is asked.
+- A subagent is a tool that runs the loop (spec, llm): a function the
+  parent model calls, whose body runs `act` with a model and a tool list
+  of its own and answers the inner run's text — nothing new in the
+  language, verified in both modes against a server that scripts a
+  delegating run and against a local model. A run that failed fails the
+  tool, so the parent model hears a failed result that says why; the
+  parent's steps frame shows the delegation as one tool row whose `ms`
+  covers the inner run, and the inner run's steps are the tool's own to
+  read.
 - The loop's context, skills and servers: `keep = n` cuts the tool
   results of rounds older than the last n to a stub naming their size,
   `compact = n` asks the model for a summary once a reply has read n

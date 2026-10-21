@@ -1182,3 +1182,14 @@ steps on every push and must be green.
   as nothing and the emitter printed a text placeholder beside a bool.
   `apply` answers the value ENCODED (a text in quotes): `_plain_of` in
   llm.co reads it back, and had masked that difference for text tools.
+- A subagent is a tool that runs the loop (parity 277, 2026-10-20):
+  nothing in the compiler, and the nested dispatch — the outer copy of
+  `act` applying `research` by name, `research` calling the inner copy —
+  built and agreed first time. What bit: a tool's parameter handed to a
+  module function that takes any value (`ask[question]`, `encode` behind
+  it) is typed by nothing, and an interpolation (`'…`question`'`) types
+  nothing either — `research's parameter 'question' is typed by nothing`;
+  `trim[question]` reads it as text. A parity program is run through the
+  corpus's harness as `crow test --parity 277_a_subagent` (words pick
+  programs by name); `crow test tests/parity/277….co` looks for test
+  blocks and finds none.

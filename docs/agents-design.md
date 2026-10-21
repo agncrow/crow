@@ -169,13 +169,40 @@ colliding names. The schema writer is written twice (llm's for a model,
 mcp's for `tools/list`): a helper is a module's own, and an export only
 programs can call would be documented for nothing.
 
-**Not in this round** (the guide's §15, in order): the gate, above;
-MCP over stdio, a process held open as a handle; subagents need nothing
-new (a tool that runs its own `act`, a smaller model and its own tools,
-since a function sees no top-level variable) and are shown rather than
-built; parallel calls of one reply (a loop with effects runs in order);
-traces and evals beyond the steps frame; runs that resume, agents served
-as pages.
+**A subagent is a tool that runs the loop.** The guide's claim — a
+subagent needs nothing new, since a tool is a program function and a
+function may run `act` with a tool list of its own — was verified
+2026-10-20 in both modes (spec, llm: A subagent is a tool that runs the
+loop), and found nothing to fix in the compiler: the parent model calls
+`research[question]`, `research` runs an inner `act` over its own model
+and tools and answers the inner run's text. Three things the shape rests
+on, each already the language's: a function sees no top-level name, so
+the inner loop reaches its model itself (`reach` in the body); the loop
+is copied per tool list, and the inner copy is reached only through the
+outer copy's dispatch of `research` by name — the path parity 274–276
+had found three bugs on, which holds here; and the tool's parameter is
+typed by its body, where `ask[question]` types nothing (`ask` takes any
+value): `trim[question]` reads it as text. Decided, by recommendation:
+the inner run's record is the tool's to read — `return inner.text` hands
+the parent what the run found, and a run that failed fails the tool, so
+the parent model hears a failed result that says why (the loop's own
+rule for a tool's failure, nothing added), or the tool reads
+`inner.reason` and answers in words of its own; the parent's steps frame
+shows the delegation as one `tool` row whose `ms` covers the whole inner
+run, and the inner run's steps are the tool's own (`inner.steps`), logged
+or kept where the tool decides — no nesting of frames, since a frame's
+cell holds no frame and a trace that joins them is the evals' work.
+Considered: the inner run's steps carried into the parent's frame
+(rejected: a tool's rows beside a model's would need a `depth` column
+every reader skips, and a tool that is not a subagent has none); a
+subagent as a form of its own (`agent[m, tools = …]` handed as a tool;
+rejected: a tool is a function, and this one is a function that calls
+`act` — one way).
+
+**Not in this round** (the guide's §15, in order): MCP over stdio, a
+process held open as a handle; parallel calls of one reply (a loop with
+effects runs in order); traces and evals beyond the steps frame; runs
+that resume, agents served as pages.
 
 **Durable runs (a design note, nothing built; a decision for Vijay).**
 What holds already: a run ends well formed at every stop — a limit stops
@@ -271,6 +298,23 @@ module's parameters, which is why the listing is `catalog` and not
   answering every line.
 - Parity 274 (the loop without a model: its refusals, the failed result's
   turn, both modes), the book page, `crow test --docs`.
+- Subagents: tests/llm_server.rs's delegating runs (`act: delegate` — the
+  stand-in model calls `research`, whose inner loop against the same
+  server asks the `weather` scenario, and the parent's final text says
+  back what `research` returned, on both wires; `act: locked` — a
+  researcher whose model refuses its key fails, and the parent hears a
+  failed result saying why, `is_error` on Anthropic's wire); parity 277
+  (the delegating program builds compiled and both modes agree on the
+  parent's error and on the inner run's failure through the tool); a run
+  against the local model (mlx-lm serving Ministral 3 8B), interpreted and
+  compiled — the parent asked for Lisbon's weather and population with
+  `research` (a subagent over `weather`) and `population` as its tools,
+  and both modes answered from what the subagent found, the inner steps
+  `chat, tool, chat` and the parent's `research` row's `ms` covering
+  them; one compiled run met the server's 404 after the model's own
+  malformed tool text (a sampling accident), and took the failure path as
+  written — the tool answered in its own words and the parent went on,
+  saying the researcher had a problem; the book's llm page.
 
 ## The pieces
 
@@ -290,8 +334,9 @@ module's parameters, which is why the listing is `catalog` and not
 - `src/main.rs` — the stdlib pages derived from the manifest (a hand-kept
   list had lacked mcp's page while the book's index linked it).
 - Tests: `tests/llm_server.rs` (the scripted runs, a stand-in MCP
-  endpoint), `tests/mcp.rs` (both directions), parity 274, the modules'
-  own tests, the self-check's llm cases.
-- The spec (`### llm`: the rows, "The loop is the module's", "Skills are
-  know-how loaded on demand", the design note "who runs the tools";
-  `### mcp`), docs/roadmap.md (P8), the book pages, CHANGELOG, CLAUDE.md.
+  endpoint, the delegating runs), `tests/mcp.rs` (both directions),
+  parity 274–277, the modules' own tests, the self-check's llm cases.
+- The spec (`### llm`: the rows, "The loop is the module's", "A subagent
+  is a tool that runs the loop", "Skills are know-how loaded on demand",
+  the design note "who runs the tools"; `### mcp`), docs/roadmap.md (P8),
+  the book pages, CHANGELOG, CLAUDE.md.

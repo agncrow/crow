@@ -3440,6 +3440,21 @@ log[done.stop]            --- end, or the limit that stopped the run
 log[done.steps]           --- a frame: every model call and tool call, in order
 ```
 
+**A subagent is a tool that runs the loop.** A tool is a function the model calls, and a tool whose body runs `act` with a tool list of its own is a subagent: the parent model calls `research[question]`, `research` runs an inner loop — its own model, prompt, tools, gates and limits — and answers what the inner run found. Nothing of it is new: a function sees no top-level name (Function Scope), so the inner loop reaches its model itself; the loop is copied per tool list (Specialization), the inner copy reached through the outer copy's dispatch of `research` by name; and the tool's parameter is typed as any tool's is — `trim[question]` reads the question as text, where `ask[question]` takes any value and types nothing. The inner run's record is the tool's to read: `inner.text` answered is what the parent hears, as any tool's result, and a run that failed fails the tool — `return inner.text` of a failed run answers its failure — so the parent model hears a failed result that says why (`cannot reach the model at …`, told as a failure, `how` `failed` in the steps), or the tool reads `inner.reason` and answers in words of its own, failed or not. The parent's steps frame shows the delegation as one `tool` row named `research`, its `ms` covering the whole inner run; the inner run's steps are the tool's own, read from `inner.steps` and logged or kept where the tool decides (decided 2026-10-20: a subagent needs nothing new, and the delegating run is held in both modes — tests/llm_server.rs, parity 277).
+
+```
+--- what a smaller agent finds out about a question, with the weather as
+--- its only tool
+fn research[question]
+    small = reach['openai://localhost:11434/llama3.2']
+    inner = act[small, ask[trim[question]], tools = [weather], rounds = 4]
+    return inner.text
+
+done = act[m, ask['Is it warm in Lisbon today?'], tools = [research]]
+log[done.text]            --- what the parent answered, from what research found
+log[done.steps.name]      --- the parent's steps: its model, research, its model
+```
+
 **Skills are know-how loaded on demand.** `skills = 'skills/'` names a folder in the Agent Skills format (agentskills.io): each skill a folder holding a `SKILL.md` — YAML frontmatter with its `name` (1 to 64 characters, lowercase letters, digits and single hyphens, neither first nor last, matching the folder) and its `description` (1 to 1024 characters), then the instructions — and, beside it, the files the instructions refer to. The loop reads every skill's frontmatter once, names each with its description in the system prompt, and offers the model two tools of the module's own: `skill[name]` answers a skill's instructions, `skill_file[name, path]` a file inside the skill (a path that leaves it is refused), so a hundred skills cost the model a line each until one is used. A skill that breaks a rule is the call's error value, naming the skill and the rule, before any model is asked; a program's tool named `skill` or `skill_file` is refused. Scripts are not run: running one is `shell`, which waits on the gate.
 
 **A reply followed is a loop the program writes.** A route forwards the pieces as it reads them with the response `stream[feed]`, a page keeps them in a fact a view shows, a script logs them:
