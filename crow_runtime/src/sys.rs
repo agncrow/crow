@@ -479,16 +479,20 @@ pub fn secure(s: &CrowStream, host: &str) -> Result<CrowStream, String> {
     let name = rustls::pki_types::ServerName::try_from(host.to_string()).map_err(|_| format!("{} is no name a certificate can carry", host))?;
     let secured = match guard.take() {
         None => return Err("the stream is closed".to_string()),
-        Some(Conn::Tls(t)) => {
-            *guard = Some(Conn::Tls(t));
+        Some(Conn::Process(p)) => {
+            *guard = Some(Conn::Process(p));
+            return Err("a process is not put behind TLS: a host is".to_string());
+        }
+        Some(Conn::Net(Net::Tls(t))) => {
+            *guard = Some(Conn::Net(Net::Tls(t)));
             return Err("the stream is already behind TLS".to_string());
         }
-        Some(Conn::Plain(reader)) => {
+        Some(Conn::Net(Net::Plain(reader))) => {
             // (what the server sent before the handshake would be read as
             // TLS: a protocol secures a connection it has read to the end)
             if !reader.buffer().is_empty() {
                 let n = reader.buffer().len();
-                *guard = Some(Conn::Plain(reader));
+                *guard = Some(Conn::Net(Net::Plain(reader)));
                 return Err(format!("{} bytes arrived before the connection was secured", n));
             }
             let tcp = reader.into_inner();
@@ -499,7 +503,7 @@ pub fn secure(s: &CrowStream, host: &str) -> Result<CrowStream, String> {
                     return Err(format!("TLS to {}: {}", host, e));
                 }
             };
-            Conn::Tls(Box::new(rustls::StreamOwned::new(client, tcp)))
+            Conn::Net(Net::Tls(Box::new(rustls::StreamOwned::new(client, tcp))))
         }
     };
     *guard = Some(secured);
@@ -531,20 +535,220 @@ pub fn hmac(key: &Bytes, message: &Bytes, algo: &str) -> Result<Bytes, String> {
 /// a time had cost two million; TLS buffers a record on its own).
 const READ_AHEAD: usize = 64 * 1024;
 
+/// What a stream talks over: a host, plain or behind TLS, or a process the
+/// program started (`sys.start`), its standard input written and its
+/// standard output read.
 enum Conn {
+    Net(Net),
+    Process(Box<ProcessConn>),
+}
+
+enum Net {
     Plain(std::io::BufReader<std::net::TcpStream>),
     Tls(Box<rustls::StreamOwned<rustls::ClientConnection, std::net::TcpStream>>),
 }
 
 impl Conn {
     fn plain(tcp: std::net::TcpStream) -> Conn {
-        Conn::Plain(std::io::BufReader::with_capacity(READ_AHEAD, tcp))
+        Conn::Net(Net::Plain(std::io::BufReader::with_capacity(READ_AHEAD, tcp)))
     }
+}
 
+impl Net {
     fn tcp(&self) -> &std::net::TcpStream {
         match self {
-            Conn::Plain(s) => s.get_ref(),
-            Conn::Tls(s) => s.get_ref(),
+            Net::Plain(s) => s.get_ref(),
+            Net::Tls(s) => s.get_ref(),
+        }
+    }
+}
+
+/// A process the program talks to (`sys.start[command]`): the child, its
+/// input, what the thread reading its output has handed over and a read
+/// has not yet taken, and the command, for messages. Let go — `close`, or
+/// the last value holding it gone — it is ended as the MCP stdio
+/// transport's shutdown says: its input closed, its exit waited for, then
+/// its group signalled, TERM before KILL.
+struct ProcessConn {
+    child: std::process::Child,
+    stdin: Option<std::process::ChildStdin>,
+    out: std::sync::mpsc::Receiver<Vec<u8>>,
+    pending: Vec<u8>,
+}
+
+/// How long a process let go is given to end on its own after its input
+/// closes, and then after TERM, before the next step.
+const END_ON_EOF: std::time::Duration = std::time::Duration::from_millis(1500);
+const END_ON_TERM: std::time::Duration = std::time::Duration::from_millis(500);
+
+impl ProcessConn {
+    /// Whether the process has ended (reaped where it has).
+    fn ended(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(Some(_)))
+    }
+
+    /// Whether the process ends within the duration, asked every 20 ms.
+    fn ends_within(&mut self, most: std::time::Duration) -> bool {
+        let began = std::time::Instant::now();
+        loop {
+            if self.ended() {
+                return true;
+            }
+            if began.elapsed() >= most {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    /// The process ended: its input closed (the end-of-file a server exits
+    /// on), a wait, TERM to its group (`sh -c` and what it runs), a wait,
+    /// KILL; and reaped.
+    fn end(&mut self) {
+        drop(self.stdin.take());
+        if self.ends_within(END_ON_EOF) {
+            return;
+        }
+        signal_group(self.child.id(), "TERM");
+        if self.ends_within(END_ON_TERM) {
+            return;
+        }
+        signal_group(self.child.id(), "KILL");
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl Drop for ProcessConn {
+    fn drop(&mut self) {
+        self.end();
+    }
+}
+
+/// A signal to the process's group — the process is its group's leader
+/// (`process_group(0)`), so `sh -c` and the command it runs both get it.
+#[cfg(unix)]
+fn signal_group(pid: u32, name: &str) {
+    let _ = std::process::Command::new("kill").arg(format!("-{}", name)).arg(format!("-{}", pid)).output();
+}
+
+#[cfg(not(unix))]
+fn signal_group(_pid: u32, _name: &str) {}
+
+thread_local! {
+    /// The processes started on this thread, by command: one per command on
+    /// each thread, kept while the thread lives (`start` answers the running
+    /// one again, or starts the command anew once it ended). Per thread, not
+    /// per program: a served program's handlers run on threads of their
+    /// own, and two exchanges with one process — each a write, then reads
+    /// until its line, the bytes past it put back — would interleave and
+    /// take each other's lines.
+    static STARTED: std::cell::RefCell<std::collections::HashMap<String, Socket>> = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Whether a started process still runs: its stream open, its child not
+/// ended.
+fn running(s: &Socket) -> bool {
+    let Ok(mut guard) = s.0.stream.0.conn.lock() else { return false };
+    match guard.as_mut() {
+        Some(Conn::Process(p)) => !p.ended(),
+        Some(Conn::Net(_)) | None => false,
+    }
+}
+
+/// `sys.start[command]`: the process the command names, started under this
+/// program — `sh -c` runs the command, as `shell` runs one — with its
+/// standard input and output piped and its standard error the program's
+/// own, as a socket: its stream is written (the process's input) and read
+/// (its output), and the socket keeps what a read took past a message for
+/// the next. One process per command on each thread: a `start` of a
+/// command whose process runs on this thread answers the same socket, one
+/// whose process ended (or was closed) starts it again. An error value of kind `'sys'` where the
+/// command is empty or the shell cannot start; a command the shell does
+/// not find starts, says so on standard error and ends — a read then
+/// answers nothing and a write `the process ended`.
+pub fn start(command: &str) -> Result<Socket, String> {
+    if command.trim().is_empty() {
+        return Err("a command is text, and '' is none".to_string());
+    }
+    STARTED.with(|held| {
+        let mut held = held.borrow_mut();
+        if let Some(s) = held.get(command)
+            && running(s)
+        {
+            return Ok(s.clone());
+        }
+        let s = spawn(command)?;
+        held.insert(command.to_string(), s.clone());
+        Ok(s)
+    })
+}
+
+/// The command started: the child in a process group of its own, a thread
+/// handing its output over a channel (a read waits on the channel, so it
+/// can give up after its seconds), and the stream over both.
+fn spawn(command: &str) -> Result<Socket, String> {
+    let mut cmd = std::process::Command::new("sh");
+    cmd.arg("-c").arg(command).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::inherit());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+        cmd.process_group(0);
+    }
+    let mut child = cmd.spawn().map_err(|e| format!("cannot start '{}': {}", command, e))?;
+    let stdin = child.stdin.take();
+    let Some(mut stdout) = child.stdout.take() else {
+        let _ = child.kill();
+        return Err(format!("cannot start '{}': its output is not piped", command));
+    };
+    let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+    let reading = std::thread::Builder::new().name("crow-process-out".to_string()).spawn(move || {
+        let mut buf = vec![0u8; READ_AHEAD];
+        loop {
+            match stdout.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if tx.send(buf[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+    if let Err(e) = reading {
+        let _ = child.kill();
+        return Err(format!("cannot start '{}': {}", command, e));
+    }
+    let conn = Conn::Process(Box::new(ProcessConn { child, stdin, out: rx, pending: Vec::new() }));
+    let stream = CrowStream(Arc::new(StreamInner { conn: Mutex::new(Some(conn)), name: command.to_string(), wait: None, notes: Mutex::new(std::collections::HashMap::new()), timeout_us: std::sync::atomic::AtomicU64::new(0) }));
+    Ok(socket_of(&stream, command, &Bytes(Vec::new())))
+}
+
+/// A read from a process: what its output's thread handed over, up to
+/// `most` bytes, the rest kept; the wait in slices, ending with a stop as
+/// a host's read does; nothing once the output closed.
+fn recv_process(p: &mut ProcessConn, name: &str, most: i64, seconds: f64, wait: Option<std::time::Duration>) -> Result<Bytes, String> {
+    let deadline = wait.and_then(|w| std::time::Instant::now().checked_add(w));
+    loop {
+        if !p.pending.is_empty() {
+            let n = (most as usize).min(p.pending.len());
+            return Ok(Bytes(p.pending.drain(..n).collect()));
+        }
+        let slice = match deadline {
+            Some(d) => d.saturating_duration_since(std::time::Instant::now()).min(std::time::Duration::from_millis(100)).max(std::time::Duration::from_millis(1)),
+            None => std::time::Duration::from_millis(100),
+        };
+        match p.out.recv_timeout(slice) {
+            Ok(chunk) => p.pending = chunk,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Ok(Bytes(Vec::new())),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                if crate::cancel::current_stopped() {
+                    return Err("cancelled: nobody waits for this query any more".to_string());
+                }
+                if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+                    return Err(format!("no data from {} in {} s", name, seconds));
+                }
+            }
         }
     }
 }
@@ -655,7 +859,7 @@ pub fn open(host: &str, port: i64, tls: bool, seconds: f64) -> Result<CrowStream
     let conn = if tls {
         let name = rustls::pki_types::ServerName::try_from(host.to_string()).map_err(|_| format!("{} is no name a certificate can carry", host))?;
         let client = rustls::ClientConnection::new(tls_config(), name).map_err(|e| format!("TLS to {}: {}", host, e))?;
-        Conn::Tls(Box::new(rustls::StreamOwned::new(client, tcp)))
+        Conn::Net(Net::Tls(Box::new(rustls::StreamOwned::new(client, tcp))))
     } else {
         Conn::plain(tcp)
     };
@@ -667,8 +871,16 @@ pub fn send(s: &CrowStream, b: &Bytes) -> Result<i64, String> {
     let mut guard = s.0.conn.lock().map_err(|_| "the stream is held by a thread that stopped".to_string())?;
     let Some(conn) = guard.as_mut() else { return Err("the stream is closed".to_string()) };
     let r = match conn {
-        Conn::Plain(t) => t.get_mut().write_all(&b.0).and_then(|_| t.get_mut().flush()),
-        Conn::Tls(t) => t.write_all(&b.0).and_then(|_| t.flush()),
+        Conn::Net(Net::Plain(t)) => t.get_mut().write_all(&b.0).and_then(|_| t.get_mut().flush()),
+        Conn::Net(Net::Tls(t)) => t.write_all(&b.0).and_then(|_| t.flush()),
+        // (a process that ended has closed its input: the pipe is broken)
+        Conn::Process(p) => match p.stdin.as_mut() {
+            Some(w) => match w.write_all(&b.0).and_then(|_| w.flush()) {
+                Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => return Err("the process ended".to_string()),
+                other => other,
+            },
+            None => return Err("the process's input is closed".to_string()),
+        },
     };
     r.map_err(|e| format!("cannot send to {}: {}", s.0.name, e))?;
     Ok(b.len())
@@ -687,6 +899,10 @@ pub fn recv(s: &CrowStream, most: i64, seconds: f64) -> Result<Bytes, String> {
     // (a read given no seconds waits as the connection was opened to,
     // whatever the read before it waited)
     let wait = if seconds > 0.0 { wait_of(seconds) } else { s.0.wait };
+    let conn = match conn {
+        Conn::Process(p) => return recv_process(p, &s.0.name, most, seconds, wait),
+        Conn::Net(n) => n,
+    };
     // the wait is taken in slices, and ends with a stop: of the work this
     // is in — a derivation's query, whose flag is raised when nobody waits
     // for it any more — or of the program (the driver written in Crow
@@ -713,8 +929,8 @@ pub fn recv(s: &CrowStream, most: i64, seconds: f64) -> Result<Bytes, String> {
                 conn.tcp().set_read_timeout(slice).map_err(|e| e.to_string())?;
             }
             let r = match conn {
-                Conn::Plain(t) => t.read(&mut buf[..want]),
-                Conn::Tls(t) => t.read(&mut buf[..want]),
+                Net::Plain(t) => t.read(&mut buf[..want]),
+                Net::Tls(t) => t.read(&mut buf[..want]),
             };
             match r {
                 Ok(n) => {
@@ -1039,5 +1255,122 @@ mod tests {
         assert!(send(&s, &bytes_of_text("x")).unwrap_err().contains("closed"));
         assert!(open("127.0.0.1", 1, false, 0.2).unwrap_err().contains("cannot connect"));
         assert!(open("127.0.0.1", 70000, false, 0.2).unwrap_err().contains("outside"));
+    }
+
+    /// A process started is a socket: what is written to its stream is its
+    /// input, what is read its output; a second start of the command while
+    /// it runs is the same socket; closed, its input ends it and the next
+    /// start is a new process; an empty command is refused
+    #[test]
+    fn a_process_is_a_socket_written_read_and_closed() {
+        let p = start("/bin/cat").unwrap();
+        let st = stream_of(&p);
+        assert_eq!(format!("{}", p), "<socket /bin/cat>");
+        assert_eq!(send(&st, &bytes_of_text("hello\n")).unwrap(), 6);
+        assert_eq!(text_of_bytes(&recv(&st, 64, 5.0).unwrap()).unwrap(), "hello\n");
+        let again = start("/bin/cat").unwrap();
+        assert!(Arc::ptr_eq(&p.0, &again.0), "the running process is answered again");
+        // what a read takes past what it asked for stays for the next
+        send(&st, &bytes_of_text("abcdef\n")).unwrap();
+        assert_eq!(text_of_bytes(&recv(&st, 3, 5.0).unwrap()).unwrap(), "abc");
+        assert_eq!(text_of_bytes(&recv(&st, 64, 5.0).unwrap()).unwrap(), "def\n");
+        let closing = std::time::Instant::now();
+        close(&st);
+        assert!(closing.elapsed() < std::time::Duration::from_secs(1), "cat ends on its input's end, at once");
+        assert_eq!(send(&st, &bytes_of_text("x")).unwrap_err(), "the stream is closed");
+        let fresh = start("/bin/cat").unwrap();
+        assert!(!Arc::ptr_eq(&p.0, &fresh.0), "a closed process is started anew");
+        assert_eq!(send(&stream_of(&fresh), &bytes_of_text("z\n")).unwrap(), 2);
+        assert_eq!(text_of_bytes(&recv(&stream_of(&fresh), 64, 5.0).unwrap()).unwrap(), "z\n");
+        close(&stream_of(&fresh));
+        assert_eq!(start("  ").unwrap_err(), "a command is text, and '' is none");
+    }
+
+    /// A command the shell does not find starts, says so on standard error
+    /// and ends: a read answers nothing, a write that the process ended,
+    /// and the next start runs it again (a new process)
+    #[test]
+    fn a_command_that_is_not_there_ends() {
+        let p = start("crow-no-such-command-for-the-sys-tests").unwrap();
+        let st = stream_of(&p);
+        assert!(recv(&st, 64, 5.0).unwrap().is_empty(), "its output closed");
+        // (the write may find the pipe already broken, or the shell still
+        // reading: either way the next read answers nothing)
+        let _ = send(&st, &bytes_of_text("x\n"));
+        assert!(recv(&st, 64, 5.0).unwrap().is_empty());
+        let again = start("crow-no-such-command-for-the-sys-tests").unwrap();
+        assert!(!Arc::ptr_eq(&p.0, &again.0), "an ended process is started anew");
+        assert!(recv(&stream_of(&again), 64, 5.0).unwrap().is_empty());
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert_eq!(send(&stream_of(&again), &bytes_of_text("x\n")).unwrap_err(), "the process ended");
+    }
+
+    /// A read waits at most its seconds, and a read given none waits as
+    /// long as it takes; a process that ignores its input's end is ended
+    /// by its signal, within the shutdown's bounds
+    #[test]
+    fn a_process_read_waits_its_seconds_and_a_deaf_process_is_ended() {
+        // (`cat`, not `/bin/cat`: a test of its own command, though the
+        // processes are one per command on each thread and each test runs
+        // on its own)
+        let p = start("cat").unwrap();
+        let st = stream_of(&p);
+        let waited = std::time::Instant::now();
+        assert_eq!(recv(&st, 64, 0.2).unwrap_err(), "no data from cat in 0.2 s");
+        assert!(waited.elapsed() < std::time::Duration::from_millis(900));
+        send(&st, &bytes_of_text("late\n")).unwrap();
+        assert_eq!(text_of_bytes(&recv(&st, 64, 0.0).unwrap()).unwrap(), "late\n");
+        close(&st);
+        let deaf = start("sleep 30").unwrap();
+        let closing = std::time::Instant::now();
+        close(&stream_of(&deaf));
+        let took = closing.elapsed();
+        assert!(took >= END_ON_EOF && took < std::time::Duration::from_secs(4), "ended by TERM after the wait: {:?}", took);
+        assert!(!running(&deaf));
+    }
+
+    /// One process per command on each thread: a thread's second start
+    /// answers its own process, another thread's start another process, so
+    /// two handlers of a served program never read each other's lines
+    #[test]
+    fn each_thread_talks_to_a_process_of_its_own() {
+        // (a shell loop answers each line as it comes: `tr` and its kind hold
+        // their output until their input ends, when it is a pipe)
+        const TWICE: &str = "while read -r l; do echo \"$l $l\"; done";
+        let here = start(TWICE).unwrap();
+        assert!(Arc::ptr_eq(&here.0, &start(TWICE).unwrap().0));
+        let there = std::thread::spawn(|| {
+            let p = start(TWICE).unwrap();
+            send(&stream_of(&p), &bytes_of_text("there\n")).unwrap();
+            let said = text_of_bytes(&recv(&stream_of(&p), 64, 5.0).unwrap()).unwrap();
+            close(&stream_of(&p));
+            (p, said)
+        });
+        send(&stream_of(&here), &bytes_of_text("here\n")).unwrap();
+        assert_eq!(text_of_bytes(&recv(&stream_of(&here), 64, 5.0).unwrap()).unwrap(), "here here\n");
+        let Ok((p, said)) = there.join() else { panic!("the other thread stopped") };
+        assert_eq!(said, "there there\n");
+        assert!(!Arc::ptr_eq(&here.0, &p.0), "another thread, another process");
+        close(&stream_of(&here));
+    }
+
+    /// A long output comes in pieces, every byte once and in order; a
+    /// process is no host, so TLS refuses it
+    #[test]
+    fn a_long_output_comes_in_pieces() {
+        let p = start("head -c 300000 /dev/zero | tr '\\0' 'a'").unwrap();
+        let st = stream_of(&p);
+        let mut total = 0;
+        loop {
+            let got = recv(&st, 1 << 16, 5.0).unwrap();
+            if got.is_empty() {
+                break;
+            }
+            assert!(got.0.iter().all(|b| *b == b'a'));
+            total += got.len();
+        }
+        assert_eq!(total, 300000);
+        assert_eq!(secure(&st, "example.com").unwrap_err(), "a process is not put behind TLS: a host is");
+        close(&st);
     }
 }

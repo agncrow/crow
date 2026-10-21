@@ -199,11 +199,69 @@ subagent as a form of its own (`agent[m, tools = …]` handed as a tool;
 rejected: a tool is a function, and this one is a function that calls
 `act` — one way).
 
-**Not in this round** (the guide's §15, in order): MCP over stdio, a
-process held open as a handle; parallel calls of one reply (a loop with
-effects runs in order); runs that resume (the note below). Traces, evals
-and an agent served as a page are the next section, `examples/agent`
-(2026-10-21).
+**MCP over stdio (2026-10-20).** The revision's other transport
+(https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio):
+the client launches the server as a subprocess; messages are
+newline-delimited JSON-RPC with no embedded newlines, request metadata in
+the body's `_meta` alone ("there is no header layer"); the server may
+log to standard error and must write nothing but messages to standard
+output; the client ends the server by closing its input, waiting, then
+forcing it (TERM before KILL), and a server should exit when its input
+closes; a client should restart a server that exits unexpectedly; a
+dual-era client probes with `server/discover` and falls back to
+`initialize` on any error that is not a recognized modern one, and a
+modern-only server should name the versions it speaks in its answer to
+`initialize`. What it needed was "a handle for a process held open", and
+the handle is the sys layer's socket: `start[command]` (crow_runtime's
+`sys::start`) runs the command through `sh -c`, as `shell` does, with its
+standard input and output piped and its standard error inherited, a
+thread handing the output over a channel so a read can give up after its
+seconds, and answers a socket — the stream (`send`, `recv`, `close`) and
+the bytes read past the last message (`leftover`, `unread`) that a
+line-framed protocol needs between calls. No handle kind was added: a
+kind is a `Value` variant, a `Kind`, an `Arg` and an arm in every rule
+that meets them, which is a compiler change, and a process is bytes in
+and bytes out. `close` of its stream (or the last value holding it gone)
+runs the transport's shutdown: the input closed, 1.5 s for the exit, TERM
+to the process group — the child is its group's leader, so `sh` and what
+it runs both get it — 0.5 s more, KILL. The runtime keeps one process per
+command on each thread, while the thread lives (a served program's
+handlers run on threads of their own, and two exchanges with one process
+would take each other's lines): `start` answers the running one again,
+and starts the command anew once it ended, which is the restart the
+transport asks for; at the program's end the pipes close and a server
+that honours the transport exits. The surface: `server[command = '…']`,
+the command as `shell` takes it (considered and rejected: the transport
+in the URL's text, a second export, a program and a list of arguments —
+the spec's Design Note "a process is a socket" has each with why);
+`server` stays a parsed value and the process starts at the first message
+(a record holding the socket was rejected because `act` reads its servers
+as their JSON — a list option's `[]` default makes a copy whose items
+have no kind — and a handle is no JSON), so `discover`, `catalog`,
+`tool` and `servers = [s]` are unchanged; the ids count up on the
+process's notes (`note`, `noted`), so a late response to a request whose
+wait ran out is passed over, as notifications are; a line that is no
+JSON message is refused with its words. `listen[tools = [f, g]]` is the
+server side: `answer`'s logic factored into `_answered` (a message in,
+a status and a body out, the header checks only where the transport
+mirrors them), a loop over `input[]` writing each answer with `log` —
+`input` flushes what `log` holds before it waits, so an answer is on the
+wire before the next line is read — until the input ends; a legacy
+`initialize` is refused naming the revision spoken, on both transports.
+The client is modern-only and does not probe: `discover` is the
+program's to call, and a legacy server's own error is what it gets.
+Found on the way, none a compiler bug: a local named like a parameter of
+the same function (`given` as `_answered`'s message and as the arguments
+handed to `_call_result`) is the parameter — the refusal came out at the
+`apply` far below it; a shell stand-in reading JSON must read it compact
+and spaced, since `encode[map]` writes no space after a colon.
+
+**Not in this round** (the guide's §15, in order): parallel calls of one
+reply (a loop with effects runs in order); runs that resume (the note
+below); a stdio server's exchanges as fixtures (a rehearsal runs the
+process for real, as it opens a socket for real); the dual-era fallback
+to `initialize`. Traces, evals and an agent served as a page are the next
+section, `examples/agent` (2026-10-21).
 
 **Durable runs (a design note, nothing built; a decision for Vijay).**
 What holds already: a run ends well formed at every stop — a limit stops
@@ -453,8 +511,13 @@ module's parameters, which is why the listing is `catalog` and not
   (`_served_tools`, `_served_call`, `_is_served`), `_result_anthropic`,
   `told`'s `failed`; the record `Done`; `use frame`, `use mcp`.
 - `src/modules/mcp.co` — `server`, `discover`, `catalog`, `tool`,
-  `answer` and their helpers; its line in the manifest
+  `answer`, `listen` and their helpers (the stdio transport:
+  `_process_of`, `_line_of`, `_next_id`, `_sent_over_stdio`; the shared
+  `_answered` and its record `Answered`); its line in the manifest
   (`src/modules/mod.rs`, with crow_web, since it answers responses).
+- `crow_runtime/src/sys.rs` — `start`, `ProcessConn` (the child, its
+  input, the output's channel, the shutdown), the processes kept by
+  command; the row `sys.start` in `src/table.rs`.
 - `src/lower_ir/named.rs` (`note_called_by_name`, `applied`),
   `src/type_infer/calls.rs` (`note_named_call`), `src/lower_ir.rs`
   (`applying`, `calls_fn`, the user-call guard) and
@@ -462,8 +525,11 @@ module's parameters, which is why the listing is `catalog` and not
 - `src/main.rs` — the stdlib pages derived from the manifest (a hand-kept
   list had lacked mcp's page while the book's index linked it).
 - Tests: `tests/llm_server.rs` (the scripted runs, a stand-in MCP
-  endpoint, the delegating runs), `tests/mcp.rs` (both directions),
-  parity 274–277, the modules' own tests, the self-check's llm cases.
+  endpoint, the delegating runs, a Crow server over stdio in the loop),
+  `tests/mcp.rs` (both directions over HTTP; a Crow client against a Crow
+  server over stdio, each side interpreted and compiled), parity 274–277
+  and 279, the modules' own tests, the runtime's process tests, the
+  self-check's llm cases.
 - The spec (`### llm`: the rows, "The loop is the module's", "A subagent
   is a tool that runs the loop", "Skills are know-how loaded on demand",
   the design note "who runs the tools"; `### mcp`), docs/roadmap.md (P8),

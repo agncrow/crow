@@ -675,6 +675,13 @@ log[over.steps.name]
 log[over.steps.how]
 taken = act[m, ask['act: mcp'], tools = [weather, echo], servers = [mcp_s]]
 log[taken.reason]
+std_s = server[command = args[][1]]
+over_stdio = act[m, ask['act: mcp'], tools = [weather], servers = [std_s]]
+log[over_stdio.text]
+log[over_stdio.steps.name]
+log[over_stdio.steps.how]
+both = act[m, ask['act: mcp'], tools = [weather, echo], servers = [std_s]]
+log[both.reason]
 
 a = reach['anthropic://claude-test']
 da = act[a, ask['act: weather'], tools = [weather]]
@@ -708,6 +715,13 @@ fn an_agent_runs_its_tools_in_a_loop_in_both_modes() {
     let bad = dir.join("bad_skills/Bad-Name");
     std::fs::create_dir_all(&bad).unwrap();
     std::fs::write(bad.join("SKILL.md"), "---\nname: Bad-Name\ndescription: a skill whose name is no name\n---\nbody\n").unwrap();
+    // an MCP server over stdio: a Crow program the loop starts as a
+    // command (in a directory of its own, since a `.crow_build` is one
+    // program's), offering the stand-in's two tools
+    let stdio = dir.join("stdio");
+    std::fs::create_dir_all(&stdio).unwrap();
+    std::fs::write(stdio.join("server.co"), STDIO_SERVER).unwrap();
+    let command = format!("cd '{}' && '{}' run -i server.co", stdio.display(), env!("CARGO_BIN_EXE_crow"));
     let said = "heard: sunny in LISBON\n\
 end\n\
 2\n\
@@ -762,6 +776,10 @@ seen: echo: over mcp | it failed, as it always does\n\
 ['test-model', 'echo', 'fail', 'test-model']\n\
 ['tool', 'ok', 'failed', 'end']\n\
 the MCP server http://127.0.0.1:@PORT@/mcp offers a tool named echo, which another tool has: the names must differ\n\
+seen: echo: over mcp | it failed, as it always does\n\
+['test-model', 'echo', 'fail', 'test-model']\n\
+['tool', 'ok', 'failed', 'end']\n\
+the MCP server @STDIO@ offers a tool named echo, which another tool has: the names must differ\n\
 heard: sunny in LISBON\n\
 end\n\
 33\n\
@@ -777,6 +795,7 @@ heard: the researcher could not run: the model's server answered 401: Incorrect 
             .args(mode)
             .arg("main.co")
             .arg(port.to_string())
+            .arg(&command)
             .current_dir(&dir)
             .env("CROW_BUILD_PROFILE", "dev")
             .env("ANTHROPIC_BASE_URL", format!("http://127.0.0.1:{}", port))
@@ -785,6 +804,21 @@ heard: the researcher could not run: the model's server answered 401: Incorrect 
             .env("CROW_LLM_TEST_BAD_KEY", "bad")
             .output()
             .unwrap();
-        assert_eq!(String::from_utf8_lossy(&out.stdout).to_string(), said.replace("@PORT@", &port.to_string()), "{:?}: {}", mode, String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).to_string(), said.replace("@PORT@", &port.to_string()).replace("@STDIO@", &command), "{:?}: {}", mode, String::from_utf8_lossy(&out.stderr));
     }
 }
+
+/// The stand-in's two tools as a Crow program serving over its standard
+/// streams (`listen`), started by the loop's client as a command.
+const STDIO_SERVER: &str = "use mcp
+
+--- says its words back
+fn echo[words]
+    return 'echo: `trim[words]`'
+
+--- always fails
+fn fail[]
+    return error['it failed, as it always does', 'tool']
+
+listen[tools = [echo, fail], name = 'stand-in']
+";

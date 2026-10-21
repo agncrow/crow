@@ -8,7 +8,10 @@
 //! argument and a tool's failure marked errors, an unknown tool, an unknown
 //! method, a notification, a body that is no JSON, a request missing its
 //! headers or `_meta`, and one of another protocol version — the same
-//! lines from `crow run -i` and from the compiled program.
+//! lines from `crow run -i` and from the compiled program. And the stdio
+//! transport: a Crow client against a Crow program serving over its
+//! standard streams (`listen`), the server started as a command by the
+//! client, interpreted and compiled on each side.
 
 use serde_json::{json, Value};
 use std::io::{Read, Write};
@@ -174,7 +177,7 @@ false\n\
 the MCP server answered an error -32602: Unknown tool: nothing\n\
 false\n\
 mcp\n\
-an MCP server is reached at its endpoint's URL: localhost:8000/mcp is none — http://localhost:8000/mcp\n"
+an MCP server is reached at its endpoint's URL: localhost:8000/mcp is none — http://localhost:8000/mcp — or started as a command: server[command = 'npx -y @modelcontextprotocol/server-everything']\n"
     );
     for mode in [&["run", "-i"][..], &["run"][..]] {
         let out = Command::new(env!("CARGO_BIN_EXE_crow")).args(mode).arg("main.co").arg(port.to_string()).current_dir(&dir).env("CROW_BUILD_PROFILE", "dev").output().unwrap();
@@ -315,5 +318,102 @@ fn a_program_serves_mcp_in_both_modes() {
     for (mode, port) in [(&["run", "-i"][..], 3495u16), (&["run"][..], 3496u16)] {
         let answers = served_answers(mode, port);
         assert_eq!(answers, expected, "{:?}", mode);
+    }
+}
+
+/// The same three tools served over the program's standard streams: a
+/// client starts it as a command and talks to it line by line.
+const SERVER_STDIO: &str = "use mcp
+
+--- the current weather in a city
+fn weather[city]
+    if city eq 'Nowhere'
+        return error['no station in `city`', 'weather']
+    return 'sunny in `upper[city]`'
+
+--- the forecast for a city, for a number of days
+fn forecast[city, days = 2]
+    return '`days` days of sun in `upper[city]`'
+
+--- ships an order: its id, and its lines, each a sku and a count
+fn ship[order]
+    lines = 0
+    for line in order.lines
+        lines = lines + 1
+    return 'shipped order `order.id` with `lines` lines'
+
+listen[tools = [weather, forecast, ship], name = 'weather-server', instructions = 'ask about the weather']
+";
+
+/// A client over stdio: the server's command is its first argument, and
+/// the calls are the HTTP client's — discovery, the list, a call with a
+/// map and with a parsed value, a wrong argument, a tool's failure, an
+/// unknown tool, an object handed to a tool.
+const CLIENT_STDIO: &str = "use mcp
+
+s = server[command = args[][0]]
+log[s.url]
+log[len[s.command] gt 0]
+d = discover[s]
+log[d.supportedVersions[0]]
+log[d.instructions]
+log[d['_meta']['io.modelcontextprotocol/serverInfo'].name]
+ts = catalog[s]
+log[len[ts]]
+log[ts[0].name]
+log[ts[0].description]
+log[ts[2].inputSchema.properties.order.type]
+log[tool[s, 'weather', map[city = 'Lisbon']]]
+log[tool[s, 'forecast', json['{\"city\": \"Porto\", \"days\": 3}']]]
+bad = tool[s, 'forecast', json['{\"city\": \"Porto\", \"days\": \"many\"}']]
+log[bad.ok]
+log[bad.kind]
+log[bad.reason]
+failed = tool[s, 'weather', map[city = 'Nowhere']]
+log[failed.ok]
+log[failed.reason]
+unknown = tool[s, 'nothing', map[]]
+log[unknown.reason]
+log[tool[s, 'ship', json['{\"order\": {\"id\": 7, \"lines\": [{\"sku\": \"A1\", \"count\": 2}, {\"sku\": \"B2\", \"count\": 1}]}}']]]
+";
+
+#[test]
+fn a_program_reaches_an_mcp_server_over_stdio_in_both_modes() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/crow_mcp_stdio");
+    // (the server in a directory of its own: a `.crow_build` is one
+    // program's, and the client's compiled run has its own)
+    let server_dir = root.join("server");
+    std::fs::create_dir_all(&server_dir).unwrap();
+    std::fs::write(server_dir.join("server.co"), SERVER_STDIO).unwrap();
+    let said = "\n\
+true\n\
+2026-07-28\n\
+ask about the weather\n\
+weather-server\n\
+3\n\
+weather\n\
+the current weather in a city\n\
+object\n\
+sunny in LISBON\n\
+3 days of sun in PORTO\n\
+false\n\
+mcp\n\
+a parsed value holds text 'many' where the program reads an int (forecast[]'s 'days')\n\
+false\n\
+no station in Nowhere\n\
+the MCP server answered an error -32602: Unknown tool: nothing\n\
+shipped order 7 with 2 lines\n";
+    for server_mode in ["run -i", "run"] {
+        // the server as a command the client starts: into its directory,
+        // then crow interpreting or compiling it (the build's own output
+        // goes to standard error, as the protocol wants)
+        let command = format!("cd '{}' && '{}' {} server.co", server_dir.display(), env!("CARGO_BIN_EXE_crow"), server_mode);
+        for client_mode in [&["run", "-i"][..], &["run"][..]] {
+            let dir = root.join(format!("client_{}", if client_mode.len() == 2 { "i" } else { "c" }));
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("main.co"), CLIENT_STDIO).unwrap();
+            let out = Command::new(env!("CARGO_BIN_EXE_crow")).args(client_mode).arg("main.co").arg(&command).current_dir(&dir).env("CROW_BUILD_PROFILE", "dev").output().unwrap();
+            assert_eq!(String::from_utf8_lossy(&out.stdout), said, "client {:?}, server {}: {}", client_mode, server_mode, String::from_utf8_lossy(&out.stderr));
+        }
     }
 }

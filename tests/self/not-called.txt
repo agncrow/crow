@@ -12,6 +12,7 @@ llm.reply	its parameter 's' is typed by nothing the module's tests hand it (?), 
 mcp.answer	a route's request: tests/mcp.rs drives a stand-in client against a Crow program serving /mcp in both modes (discovery, the list, calls, every error the protocol names)
 mcp.catalog	asks a server: tests/mcp.rs drives the client against a stand-in server in both modes, the list read from a stream of events
 mcp.discover	asks a server: tests/mcp.rs drives the client against a stand-in server in both modes
+mcp.listen	serves over the program's own standard streams until its input ends, over a group of tools: tests/mcp.rs and tests/llm_server.rs drive a Crow client against a Crow program serving so, in both modes
 mcp.tool	calls a server's tool: tests/mcp.rs drives the client against a stand-in server in both modes (a result, one marked an error, an unknown tool)
 sys.put	its parameter 'path' is typed by nothing the module's tests hand it (?), or takes what no kind names
 sys.upgrade	its parameter 'url' is typed by nothing the module's tests hand it (?), or takes what no kind names

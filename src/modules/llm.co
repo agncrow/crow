@@ -963,10 +963,16 @@ fn _served_tools[servers, taken]
         listed = mcp.catalog[s]
         if not listed.ok
             return error[listed.reason, 'llm']
+        --- (a server is named by its endpoint's URL, or by the command that
+        --- runs it over stdio)
+        origin = str[s.url]
+        if len[origin] eq 0
+            if s.command.ok
+                origin = str[s.command]
         for t in listed
             name = str[t.name]
             if name in seen
-                return error['the MCP server `str[s.url]` offers a tool named `name`, which another tool has: the names must differ', 'llm']
+                return error['the MCP server `origin` offers a tool named `name`, which another tool has: the names must differ', 'llm']
             seen = push[seen, name]
             described_as = ''
             if t.description.ok

@@ -1172,6 +1172,24 @@ steps on every push and must be green.
   and refused its own code (parity 275, found by the first run of `act`
   against a real model). A new scan path for a body goes through the
   same pair.
+- A process the program talks to is a SOCKET of the sys layer, not a
+  handle kind of its own (2026-10-20): `start[command]` runs the command
+  through `sh -c` as `shell` does and answers a socket — `send`/`recv`
+  on `stream_of[p]`, `leftover`/`unread` for the bytes past a message —
+  one process per command ON EACH THREAD (the runtime's thread-local
+  registry; `start` again answers the running one or restarts an ended
+  one — per program, two handlers of a served app had written to one
+  process at once and read each other's lines), `close` of its stream the MCP shutdown (input closed, 1.5 s,
+  TERM to the group, 0.5 s, KILL). A new handle kind would be a `Value`
+  variant and an arm in every rule: a compiler change. The MCP stdio
+  transport stands on it (`server[command = …]`, `listen[tools = …]`).
+  Three things that bit: `sh -c nosuch` STARTS fine and ends at once —
+  a missing command is seen at the first read (nothing) or write (`the
+  process ended`), never at `start`; the mcp module's tests share one
+  process per command across blocks (ids count up, so assert
+  relatively); and a local named like a parameter of the same function
+  (`given` for `_answered`'s message and for `_call_result`'s arguments)
+  IS the parameter — the refusal surfaced at an `apply` far below.
 - A parameter read by its fields, and typed by nothing else, is a parsed
   value (2026-10-20, Vijay's call): `note_param_read(&base, &Ty::Json)` in
   the lowering's field-access arm, where a single-kind builtin read had

@@ -93,6 +93,29 @@ history says the rest.
 
 ### Added
 
+- MCP over stdio (spec, mcp: The stdio transport): `server[command =
+  'npx -y @modelcontextprotocol/server-filesystem /tmp']` names a server
+  by the command that runs it, as `shell` takes a command; the process
+  starts at the first message, stays while the thread that started it
+  lives — one per command on each thread, so a served program's handlers
+  never share one — and is started again if it ends; each request is one line on its input with
+  the `_meta` every request carries, the response the line carrying the
+  request's id, notifications and late answers passed over, a line that
+  is no message refused with its words; the server's standard error is
+  the program's. `discover`, `catalog`, `tool` and the loop's `servers =
+  [s]` are the same calls over either transport. `listen[tools = [f,
+  g]]` makes a Crow program such a server over its own standard streams,
+  answering as `answer` answers a route — and a legacy client's
+  `initialize` is refused naming the revision spoken, on both transports.
+- A process the program talks to, in the sys layer (spec, sys):
+  `start[command]` runs the command through `sh -c` with its standard
+  input and output piped and answers a socket — `send` and `recv` on its
+  stream, `leftover` and `unread` for what a read took past a message —
+  one process per command on each thread; `close` of its stream ends
+  it as the MCP stdio transport says a client ends its server: the input
+  closed, its exit waited for, then TERM and KILL to its process group.
+  No new handle kind: a process is a socket, as a WebSocket's connection
+  is.
 - The agent loop, `act` (spec, llm: The loop is the module's):
   `act[m, talk, tools = [f, g]]` runs the model's tools until it answers
   or a limit stops it — each reply's calls answered by the tool of its

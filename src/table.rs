@@ -2377,6 +2377,11 @@ pub static ROWS: &[Row] = &[
     // `use sys`: the standard library's own layer (crow_runtime::sys) — a
     // program may not import it (spec, The standard library's layer)
     row!("sys.open", "sys", "open", crow_runtime::sys::open, (Str, Int, Bool, Float) -> Stream, value "sys"),
+    // a process the program talks to: started as `shell` runs a command,
+    // its input and output the socket's stream, what a read took past a
+    // message kept by the socket (the MCP stdio transport stands on it);
+    // as `open`, the handle made is no effect — its `send` and `recv` are
+    row!("sys.start", "sys", "start", crow_runtime::sys::start, (Str) -> Socket, value "sys"),
     Row { props: &[Prop::Does(crate::effects::Effect::Network)], ..row!("sys.send", "sys", "send", crow_runtime::sys::send, (Stream, Bytes) -> Int, value "sys") },
     Row { props: &[Prop::Does(crate::effects::Effect::Network), Prop::Does(crate::effects::Effect::Waits)], ..row!("sys.recv", "sys", "recv", crow_runtime::sys::recv, (Stream, Int, Float) -> Bytes, value "sys") },
     row!("sys.close", "sys", "close", crow_runtime::sys::close, (Stream) -> Unit, never),

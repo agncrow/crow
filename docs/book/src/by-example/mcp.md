@@ -23,7 +23,7 @@ http://127.0.0.1:1/mcp
 
 secret
 false
-an MCP server is reached at its endpoint's URL: localhost:8000/mcp is none — http://localhost:8000/mcp
+an MCP server is reached at its endpoint's URL: localhost:8000/mcp is none — http://localhost:8000/mcp — or started as a command: server[command = 'npx -y @modelcontextprotocol/server-everything']
 ```
 
 `discover` asks a server what it is and supports, `catalog` lists its tools
@@ -54,6 +54,45 @@ false
 true
 ```
 
+A server named by a command runs over its standard streams — the stdio
+transport: the process starts at the first message and stays while the
+thread that started it lives, each request one line on its input, the response the
+line on its output carrying the request's id. The same `discover`,
+`catalog` and `tool` serve it. `/bin/cat` echoes the request, which is a
+message with no result; a command the shell does not find ends before
+answering (and is started again at the next message); a shell loop that
+answers by method is a server:
+
+```crow
+use mcp
+
+cat = server[command = '/bin/cat']
+log[cat.command]
+log[cat.url]
+got = catalog[cat]
+log[got.ok]
+log[got.reason]
+gone = server[command = 'no-such-mcp-server']
+log[catalog[gone].reason]
+log[server[command = '/bin/cat', token = 't'].reason]
+loop = server[command = 'while read -r line; do id=${line#*\"id\":}; id=${id# }; id=${id%%,*}; case $line in *tools/list*) echo "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"tools\": [{\"name\": \"echo\", \"description\": \"says its words back\", \"inputSchema\": {\"type\": \"object\", \"properties\": {\"words\": {\"type\": \"string\"}}, \"required\": [\"words\"]}}]}}";; *tools/call*) w=${line#*\"words\":}; w=${w# }; w=${w#\"}; w=${w%%\"*}; echo "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"content\": [{\"type\": \"text\", \"text\": \"echo: $w\"}], \"isError\": false}}";; *) echo "{\"jsonrpc\": \"2.0\", \"id\": $id, \"error\": {\"code\": -32601, \"message\": \"Method not found\"}}";; esac; done']
+log[catalog[loop][0].name]
+log[tool[loop, 'echo', map[words = 'hi there']]]
+log[discover[loop].reason]
+```
+
+```text
+/bin/cat
+
+false
+the MCP server answered no result
+cannot reach the MCP server no-such-mcp-server: the process ended
+a bearer token goes to an endpoint's URL: a server started as a command takes none
+echo
+echo: hi there
+the MCP server answered an error -32601: Method not found
+```
+
 A Crow program becomes an MCP server with one route: `answer` reads the
 request a POST route was handed and answers `server/discover`,
 `tools/list` and `tools/call` over the functions themselves — each tool's
@@ -75,5 +114,22 @@ route['/mcp', 'POST', served]
 serve[8000]
 ```
 
-`tests/mcp.rs` drives a Crow client against a stand-in server and a
-stand-in client against a Crow server like this one, in both modes.
+The same program serves over its standard streams with `listen` in place
+of the route — a client starts it as a command, `server[command = 'crow
+run weather.co']`, and reads its answers line by line; it ends when its
+input does:
+
+```crow,norun
+use mcp
+
+--- the current weather in a city, in °C
+fn weather[city]
+    r = request['https://wttr.in/`trim[city]`?format=j1']
+    return str[json[r.body].current_condition[0].temp_C]
+
+listen[tools = [weather], name = 'weather-server']
+```
+
+`tests/mcp.rs` drives a Crow client against a stand-in server, a stand-in
+client against a Crow server like the first one, and a Crow client against
+a Crow program serving over stdio like the second, in both modes.

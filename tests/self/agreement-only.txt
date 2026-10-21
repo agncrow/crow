@@ -90,7 +90,7 @@ math.stats.kstest	no reference yet: add its answer to tests/self/reference.py, o
 math.stft	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.svd	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.tensor_of_columns	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-mcp.server	a server's description from its URL, the same in every configuration; tests/mcp.rs holds what it describes to a stand-in server in both modes
+mcp.server	a server's description from its URL or from the command that runs it, the same in every configuration; tests/mcp.rs holds what it describes to a stand-in server and to a Crow server over stdio in both modes
 stats.anova	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 sys.alive	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.answer	the standard library's own layer: bytes, streams and protocols no reference models yet
@@ -144,6 +144,7 @@ sys.secure	the standard library's own layer: bytes, streams and protocols no ref
 sys.send	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.shaped	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.socket_of	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.start	the standard library's own layer: a process started as a command shows as its socket in every configuration; tests/parity/279 and tests/mcp.rs hold what it carries in both modes
 sys.store	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.stream_of	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.tensor_of_frame	the standard library's own layer: bytes, streams and protocols no reference models yet

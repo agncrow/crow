@@ -54,6 +54,46 @@ sys
 false
 ```
 
+A process the program talks to is a socket too (`start`): the command
+runs as `shell` runs one, what is sent is its input, what is read its
+output, and the socket keeps what a read took past a message. One process
+per command: a second `start` of the command answers the running one. A
+process ends when its stream is closed — its input closed, then, if it
+stays, a signal — and a command the shell does not find says so on
+standard error, then ends: a read answers nothing, a write that the
+process ended.
+
+```crow
+use sys
+
+p = start['/bin/cat']
+log[type[p]]
+log[p]
+log[send[stream_of[p], bytes['hello\n']]]
+log[trim[text[recv[stream_of[p], 64, 5.0], '?']]]
+again = start['/bin/cat']
+log[type[again]]
+close[stream_of[p]]
+late = send[stream_of[p], bytes['x']]
+log[late.reason]
+gone = start['no-such-command-for-the-book']
+log[len[recv[stream_of[gone], 64, 5.0]]]
+log[send[stream_of[gone], bytes['x\n']].reason]
+log[start[''].reason]
+```
+
+```text
+socket
+<socket /bin/cat>
+6
+hello
+socket
+the stream is closed
+0
+the process ended
+a command is text, and '' is none
+```
+
 The rest of the layer, for the modules written on it — a file's bytes and its lines read a block at a time, chunks gathered, digests, and a request's answer made from its parts:
 
 ```crow
