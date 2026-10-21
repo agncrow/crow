@@ -177,6 +177,39 @@ built; parallel calls of one reply (a loop with effects runs in order);
 traces and evals beyond the steps frame; runs that resume, agents served
 as pages.
 
+**Durable runs (a design note, nothing built; a decision for Vijay).**
+What holds already: a run ends well formed at every stop — a limit stops
+it after the reply's calls are answered — and `done.talk` is the whole
+conversation as it ended, a parsed value a program keeps where it likes
+(a fact, a table's cell, a file) and hands back: `act[m, done.talk,
+tools = …]` goes on from a `rounds` stop, `act[m, asked[done.talk,
+'…'], …]` continues the conversation. So resuming after a stop needs
+nothing new. What does not hold: a process killed mid-round loses the
+round in flight (the model's reply, the tool results told so far), and
+nothing records a run until it ends, since the steps frame is answered
+at the end. Considered: (1) `trail = conn`, the loop writing each step's
+row to a table as it happens (rejected: the module would fix the table's
+shape, and every program would pay a database effect inside the loop,
+which `crow check` would see in every run); (2) `trail = path`, a file
+appended per step (rejected for the same reason, with the format the
+module's); (3) the program writing the loop by hand with its own writes
+between the steps (kept as the escape, and the three gaps again);
+(4) `trail = f`, a function of the step the loop calls after each step —
+a parsed value holding the step's row and the talk as it stands — so the
+program writes it where it wants (a table, a file, a fact) and resumes by
+handing the last talk its trail kept back to `act`. Recommended: (4), the
+gate's shape again (a function applied by name, typed by the fields its
+body reads, under the rule of 2026-10-20), so it needs nothing new in the
+compiler and composes with traces (a trail that inserts the row is the
+live trace). What a resume cannot know is whether a tool's effect ran
+before the crash and its result was lost: the trail is written after the
+step, so a resumed run replays from the last complete step, and a tool
+whose effect must not run twice checks for its own work (an order
+already shipped) — the tool's business, as the gate's refusal is the
+program's. Open: whether `trail = f` is wanted now or waits for an app
+that asks for it; the traces example (examples/agent) writes its runs
+after the fact and would be the first user.
+
 ## What was fixed in the compiler
 
 A function called by name — `apply`'s, or a group's member where the
