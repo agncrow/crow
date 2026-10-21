@@ -259,9 +259,11 @@ and spaced, since `encode[map]` writes no space after a colon.
 **Not in this round** (the guide's §15, in order): parallel calls of one
 reply (a loop with effects runs in order); runs that resume (the note
 below); a stdio server's exchanges as fixtures (a rehearsal runs the
-process for real, as it opens a socket for real); the dual-era fallback
-to `initialize`. Traces, evals and an agent served as a page are the next
-section, `examples/agent` (2026-10-21).
+process for real, as it opens a socket for real). The dual-era fallback
+to `initialize` is not built and will not be: the client speaks the
+2026-07-28 revision alone, and a server of an earlier revision answers it
+with an error (Vijay, 2026-10-20: no backward compatibility). Traces, evals and an agent served as a page are the next
+section, `examples/agent` (2026-10-20).
 
 **Durable runs (a design note, nothing built; a decision for Vijay).**
 What holds already: a run ends well formed at every stop — a limit stops

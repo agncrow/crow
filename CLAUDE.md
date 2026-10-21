@@ -1212,7 +1212,7 @@ steps on every push and must be green.
   corpus's harness as `crow test --parity 277_a_subagent` (words pick
   programs by name); `crow test tests/parity/277….co` looks for test
   blocks and finds none.
-- A parameter's type is never a Result (2026-10-21, parity 278): a body's
+- A parameter's type is never a Result (2026-10-20, parity 278): a body's
   reassignment from a value that can fail (`words = maybe[1]`) is written
   back into an UNTYPED parameter by the call scan's `leave_fn_scan`
   (type_infer/calls.rs, "an open parameter the body settled") as its
