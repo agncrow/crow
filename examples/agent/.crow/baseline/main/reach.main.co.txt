@@ -1,0 +1,3 @@
+reach main.co
+  db.write: __query_write
+  serving: page, serve

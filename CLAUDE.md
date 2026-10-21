@@ -41,6 +41,7 @@ cargo clippy --workspace --all-features
 ./target/release/crow test tests/parity/185_frames_held_to_pandas.co
 ./target/release/crow test --modules
 (cd examples/rag && ../../target/release/crow test chat/corpus.co && ../../target/release/crow test chat/retrieve.co && ../../target/release/crow test --fixtures chat/page.co && ../../target/release/crow test --fixtures --compiled chat/page.co)
+(cd examples/agent && ../../target/release/crow test agent/store.co && ../../target/release/crow test agent/judge.co && ../../target/release/crow test --fixtures agent/support.co && ../../target/release/crow test --fixtures agent/trace.co && ../../target/release/crow test --fixtures agent/chat.co && ../../target/release/crow test --fixtures --compiled agent/trace.co && ../../target/release/crow test --fixtures --compiled agent/chat.co)
 scripts/coverage.sh
 ```
 

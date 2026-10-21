@@ -201,8 +201,9 @@ rejected: a tool is a function, and this one is a function that calls
 
 **Not in this round** (the guide's §15, in order): MCP over stdio, a
 process held open as a handle; parallel calls of one reply (a loop with
-effects runs in order); traces and evals beyond the steps frame; runs
-that resume, agents served as pages.
+effects runs in order); runs that resume (the note below). Traces, evals
+and an agent served as a page are the next section, `examples/agent`
+(2026-10-21).
 
 **Durable runs (a design note, nothing built; a decision for Vijay).**
 What holds already: a run ends well formed at every stop — a limit stops
@@ -236,6 +237,131 @@ already shipped) — the tool's business, as the gate's refusal is the
 program's. Open: whether `trail = f` is wanted now or waits for an app
 that asks for it; the traces example (examples/agent) writes its runs
 after the fact and would be the first user.
+
+## Traces, evals and a page
+
+The fourth reference app, `examples/agent`: a support agent over a
+shop's orders, built on `act` with nothing added to the module. What the
+roadmap listed under "Evals and traces" — runs as frames in a database
+with a page, LLM-as-judge in `test` blocks over fixtures — and "agents
+served as pages", decided by recommendation where the design left them
+open.
+
+**The agent.** Five orders in SQLite (`orders`: id, customer, item,
+amount, status), made and seeded by the app's own `CREATE TABLE` and
+`INSERT OR REPLACE` at every start and before every test, so a refund an
+earlier run made is undone and every run reads the rows the fixtures were
+recorded over. Three tools — `order_status[number]`, `search_orders[
+customer]`, `refund[number]` — and one gate, `refund_allowed[call]`: a
+refund of an order that has shipped, or of one of 100 or more, is refused
+before the tool runs (`how` `refused` in the steps), every other call
+allowed. `run[question]` is `act` over them, six rounds at most,
+temperature 0, and then the trace. Two things the writing found. A plain
+function sees no top-level connection (`'book' is a module variable,
+which a function does not see`), and a tool is handed nothing but the
+model's arguments, so each tool opens the shop's own (`store.shop[]`; one
+handle per SQLite file in a process, so it costs nothing). And a tool's
+parameter is typed by what the body reads it as, where a mask comparison
+(`found[found.id eq id]`), arithmetic with a literal, a position and a
+comparison all type nothing — only a builtin whose row takes one kind at
+that position (`trim[number]`, `repeat['x', n]`) or a default literal
+does — so an order's number arrives as text and `int[trim[number]]`
+makes the number, which reads as what a model hands over anyway (its
+arguments are JSON, and the reader of an int argument takes `"2"` as it
+takes `2`). Whether a comparison with a typed column should type the
+parameter is a question for the inference rule, not the example.
+
+**A trace is two tables.** `runs` (id, `at` as ISO text — SQLite has no
+moment, and `moment[column]` reads it back for the chart — question,
+model, answer, stop, rounds, input, output, ms) and `steps` (run, then
+the loop's own columns: step, what, name, input, output, ms, how). The
+frame `act` answers is written as it is: `steps.run = id`, then
+`insert[c, 'steps', steps]` — one statement, no loop over rows — which is
+what the decision to make the record a frame was for. The run's
+milliseconds are the sum of its steps'. Considered: a trace written by the
+loop itself (rejected: the module names no table and no database — a
+program says where its traces go, in one function); a `traces` table of
+JSON (rejected: a frame of steps answers a frame of steps; a row per step
+is what a chart and a `GROUP BY` read). The page (`agent/trace.co`)
+reads them as derivations held per session (`run_id` is the session's):
+the runs newest first with `Open`, the steps of the run open, and two
+charts over the runs oldest first — tokens read and written, and
+milliseconds — on the `at` column read as moments. Not built: ClickHouse,
+which the same `query` and `insert` reach (`clickhouse://` in place of
+`sqlite://`, the tables made the same way), and a dashboard of costs
+across models, since there is one model and no price.
+
+**Evals are test blocks over fixtures.** The questions are four and short
+(the model is slow): an order's status, a refund the gate refuses, a
+refund that goes through, a customer's orders. Each eval runs `run[…]`
+and checks the frame exactly — `r.tools` (the tool rows' names, in
+order) equals `['order_status']`, the refund row's `how` is `refused` or
+`ok`, the order's status after, the stop is `end`, the step count — then
+asks the judge: `judge.graded[m, question, answer, rubric]`, a `chat`
+told to reply PASS or FAIL on its first line and one sentence why,
+`verdict` reading the first line. The judge stays in the example
+(decided, by recommendation): it is one `chat` with a system prompt and
+a line of parsing, a rubric is the program's as a system prompt is, and a
+module function would fix the reply's form for every program; a program
+that wants a score asks for one the same way. Recording: `crow check
+--record-fixtures main.co` once against the real model (mlx-lm 0.32.2
+serving `mlx-community/Ministral-3-8B-Reasoning-2512-4bit` on 127.0.0.1:
+8765; 14 requests — two per run, four runs, four verdicts, and the
+page's run, which records its own because a tool's name differs by
+entry, below), replayed by `crow test --fixtures` in both modes with no
+model. What the recording taught: its writes are recorded and not made,
+so the database is seeded before it starts, and a read statement is
+answered by the database once, its first answer kept for every later
+read of the same text whatever the parameters (`rehearsal::read_real`)
+— a tool asking `WHERE id = ?` would be told one order's row for every
+id, and the model's second request, which carries the tool's result,
+would never match in the replay. So the tools read the orders whole
+(`store.orders[c]`, five rows) and pick the row in Crow. A fixture keyed
+by the statement and its parameters would lift that; a question for the
+recording, noted for Vijay.
+
+**The page asks the agent.** `agent/chat.co`: a question in a field, a
+button, the handler calling `support.run` itself — `act` is an effect,
+so the handler runs off the page's loop while the model answers and the
+button shows it is working — the answer and the tools called shown, and
+the run's steps under them through the trace page's own view
+(`trace.steps_view`, over the fact `trace.run_id` the handler sets).
+Considered: `later[f]` for the run (rejected: a page's `later` carries
+no arguments, the handler's commit holds the answer either way, and a
+chat has no other click to let through while it waits). Tested as the
+other apps' pages are: `app[render]`, `change`, `click`, the facts and
+the derivations read back, the markup searched, interpreted and against
+the compiled app, the model's replies replayed.
+
+**What the build found in the compiler** (reported, not fixed: the
+compiler is frozen, and each has a reproduction under `target/scratch/`
+of the stream's worktree). A value handed to a parameter that becomes a
+value that can fail is handed bare, and the compiled program does not
+build: `act`'s `system` is reassigned from the skills' prompt, a value
+that can fail, so its parameter is typed as one, and a call that hands it
+a local or a function's answer meets rustc's `E0308` — only a literal is
+wrapped, which is why the default `''` and the suites' `system = 'be
+brief'` build. The interpreter widens and never notices. The example
+writes the prompt as a literal in the call (`pa_wrap/`). A function's
+name as `describe` names it — the name a model is told, calls back and
+the steps frame records — is the name as written when its part is the
+entry (`order_status`, the evals) and the part-qualified internal name
+when an entry imports the part (`agent_support_order_status`, the pages:
+`lower::shown` strips a standard module's prefix, not a part's); the page
+tests read the name by its end, and the pages' run records fixtures of
+its own (`tool_name/`). Both modes agree in each case, so neither is a
+parity bug; both are the compiler's. And one of the checker's: the
+snapshot store keeps a function's edge-case answers one per line, so a
+function answering text with a line break — the judge's prompt, four
+lines — is read back as its first line and reported changed by every
+check after the first (27 findings); the example builds the prompt inside
+`graded`, which the checker probes with no edge cases, since its first
+parameter is a model (`snap_lines/`).
+
+**What holds it.** `crow test agent/store.co` (the seed), `crow test
+agent/judge.co` (the verdict), `crow test --fixtures agent/support.co`
+(the evals), `--fixtures agent/trace.co` and `agent/chat.co` (the pages,
+and `--fixtures --compiled` for each), in the gate block and CI.
 
 ## What was fixed in the compiler
 

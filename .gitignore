@@ -54,6 +54,7 @@ _tmp_test_error_line
 !packages/vectors/reference/data/*.csv
 !packages/vectors/reference/expected/*.csv
 !examples/rag/.crow/fixtures/*.json
+!examples/agent/.crow/fixtures/*.json
 !examples/taskboard/fixtures/*.csv
 docs/book/crow-site/
 editors/vscode/node_modules/

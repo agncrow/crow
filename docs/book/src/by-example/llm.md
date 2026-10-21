@@ -210,3 +210,12 @@ false
 false
 llm
 ```
+
+A whole agent — three tools over a shop's orders in SQLite, the refund
+behind a gate, every run's `steps` frame written to the database as a
+trace beside a row per run, a page over the traces with their tokens and
+latency charted, evals as `test` blocks replayed from recorded fixtures
+with a model as the judge, and a page that asks the agent — is
+`examples/agent`, the fourth reference app: from its folder, `crow run
+main.co` serves it, and `crow test --fixtures agent/support.co` runs its
+evals with no model (docs/agents-design.md, Traces, evals and a page).

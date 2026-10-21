@@ -136,6 +136,19 @@ history says the rest.
   server over the functions themselves (`server/discover`, `tools/list`,
   `tools/call`, the errors the protocol names). Written in Crow on
   `request`; tests/mcp.rs drives both directions in both modes.
+- An agent with traces, evals and a page, `examples/agent` (the fourth
+  reference app; docs/agents-design.md, Traces, evals and a page): a
+  support agent over a shop's orders in SQLite — three tools, the refund
+  behind the program's gate — every run written to the database as a
+  trace (a row per run with its question, model, answer, stop, rounds,
+  tokens and milliseconds; a row per step, the loop's own frame handed to
+  `insert`) and a page over the traces, the tokens and the latency of
+  each run charted; evals as `test` blocks replayed from recorded
+  fixtures in both modes — exact checks on the steps frame (the tools
+  called in order, the gate's refusal, the stop) and a model-as-judge
+  asked for PASS or FAIL — and a page that asks the agent and shows the
+  run's steps. Nothing new in the module: the judge is a `chat` with a
+  rubric, kept in the example.
 - The package lock holds the bytes (spec, Package Manager): `crow.lock`
   records the hash of each dependency as installed beside its commit,
   every command that reads a program refuses a package changed by hand

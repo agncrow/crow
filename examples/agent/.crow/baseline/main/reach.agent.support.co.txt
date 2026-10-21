@@ -1,0 +1,7 @@
+reach agent/support.co
+  files: exists, ls, read
+  network: request
+  db.read: connect, query
+  db.write: __query_write, insert
+  clock: now
+  process: env
