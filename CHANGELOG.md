@@ -259,6 +259,30 @@ history says the rest.
 
 ### Fixed
 
+- A parameter reassigned in its body from a value that can fail (`words
+  = maybe[1]`) keeps the kind its calls hand it: the body had typed an
+  untyped parameter as a value that can fail before any call typed it,
+  and a call's plain argument — a function's answer, a local, a value
+  that can fail — was then handed bare to a `Result` parameter; the
+  interpreter ran it and the compiled program did not build (E0308),
+  while a literal argument, which types the parameter first, built. The
+  type had depended on the order inference met the body and the call.
+  `act[…, system = prompt[]]` is such a call: the loop's `system` is
+  reassigned from the skills' prompt (parity 278; found building
+  examples/agent).
+- A part's function is named as the program wrote it wherever `describe`
+  names it — the name a model is told, calls back and the steps frame
+  records, and the name a refusal uses: it had been the part-qualified
+  internal name (`agent_support_order_status`) when an entry imported the
+  part and the written name when the part was the entry, so a trace and a
+  recorded fixture differed by which file was run (tests/described.rs).
+- `crow check`'s snapshot store keeps an answer holding a line break: it
+  had written the answer whole, one line per answer, and read it back as
+  its first line, so a function answering several lines was reported
+  changed by every check after the first. A backslash, a line break and a
+  carriage return are escaped on the line now; a stored answer holding a
+  backslash is rewritten in that form at the next check, and reads the
+  same.
 - A program's function in a group handed to a standard module's function
   (`tools = [weather]` to `act`) was never noted as called where the
   module applied it by name, since a program's functions are invisible

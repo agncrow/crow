@@ -1194,3 +1194,24 @@ steps on every push and must be green.
   corpus's harness as `crow test --parity 277_a_subagent` (words pick
   programs by name); `crow test tests/parity/277….co` looks for test
   blocks and finds none.
+- A parameter's type is never a Result (2026-10-21, parity 278): a body's
+  reassignment from a value that can fail (`words = maybe[1]`) is written
+  back into an UNTYPED parameter by the call scan's `leave_fn_scan`
+  (type_infer/calls.rs, "an open parameter the body settled") as its
+  PAYLOAD — a failed argument never enters a function, and the assignment
+  propagates. Written back as `Result(Str)` it had taken a call's plain
+  argument bare (E0308 compiled, fine interpreted), while a literal
+  argument typed the parameter first and built: a type that depends on the
+  order inference meets the body and the call is this bug class — the
+  verifier's `fits` lets a plain value into a Result slot by design, so it
+  did not catch it.
+- `describe[f].name` is `own_name` in lower_ir/named.rs: a part's prefix
+  (`agent_support_`, `crate::part_prefix_of_declaration`) stripped as a
+  standard module's is by `lower::shown`. The model had been told
+  `agent_support_order_status` from an entry importing the part and
+  `order_status` from the part itself, and the two entries recorded
+  different fixtures of one question (tests/described.rs).
+- `crow check`'s snapshot store is one line per answer (`name[args] =
+  answer`): `snap_escaped`/`snap_unescaped` in checker.rs escape a
+  backslash, a line break and a carriage return, or an answer of several
+  lines read back as its first and was "changed" at every later check.

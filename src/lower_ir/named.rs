@@ -27,6 +27,21 @@ const ARG_BOOL: &str = "core.__arg_bool";
 const ARG_JSON: &str = "core.__arg_json";
 const SYS: &str = "sys";
 
+/// A function's name as the program wrote it, for a model and for a
+/// refusal: a part's prefix stripped as a standard module's is
+/// (`crate::lower::shown`). The name a model is told, calls back and the
+/// steps frame records had been the part-qualified one
+/// (`agent_support_order_status`) when an entry imported the part, and
+/// the written one when the part was the entry: a trace and a recorded
+/// fixture differed by which file was run.
+fn own_name(f: &str) -> String {
+    let own = match crate::part_prefix_of_declaration(f) {
+        Some(prefix) => f[prefix.len()..].to_string(),
+        None => f.to_string(),
+    };
+    crate::lower::shown(&own)
+}
+
 impl<'a> Lowerer<'a> {
     /// `describe[f]` and `apply[f, args]`, the standard modules' two
     /// operations over functions (sys's forms; docs/extending-crow.md,
@@ -204,7 +219,7 @@ impl<'a> Lowerer<'a> {
         if self.undescribable.contains(f) {
             return;
         }
-        let shown = crate::lower::shown(f);
+        let shown = own_name(f);
         let declared: Vec<(String, Ty)> = self.ctx.functions.get(f).map(|sig| sig.params.clone()).unwrap_or_default();
         for ((p, ty), (_, declared)) in self.typed_params(f).iter().zip(declared.iter()) {
             // (a parameter handed a parsed value that the body reads as
@@ -228,7 +243,7 @@ impl<'a> Lowerer<'a> {
     /// A function's description as `describe` answers it: JSON text.
     fn description(&mut self, f: &str) -> String {
         let quoted = |s: &str| serde_json::to_string(s).unwrap_or_default();
-        let shown = crate::lower::shown(f);
+        let shown = own_name(f);
         self.check_describable(f);
         let params: Vec<(String, Ty)> = self.typed_params(f);
         let defaults = self.ctx.fn_defaults.get(f).cloned().unwrap_or_default();
@@ -283,7 +298,7 @@ impl<'a> Lowerer<'a> {
     /// parsed value `a` by name and kind into a hidden local, the call
     /// written over those locals, its answer encoded, as text that can fail.
     fn applied(&mut self, f: &str, a: &str) -> Result<Expr, String> {
-        let shown = crate::lower::shown(f);
+        let shown = own_name(f);
         let params: Vec<(String, Ty)> = self.typed_params(f);
         let mut locals: Vec<A> = Vec::new();
         for (p, ty) in &params {

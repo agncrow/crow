@@ -1,0 +1,38 @@
+--- A parameter reassigned in its body from a value that can fail keeps
+--- the kind its calls hand it (spec, Auto-Propagation: a failed argument
+--- never enters a function), and the assignment propagates the failure:
+--- `words` is text, whether the call hands it a literal, a function's
+--- answer, a local or a value that can fail. The body had typed the
+--- parameter as a value that can fail before a call typed it, and a
+--- call's plain argument was then handed bare to that parameter — the
+--- interpreter ran it, the compiled program did not build (E0308), while
+--- a literal argument, which types the parameter first, built; the type
+--- had depended on the order inference met the body and the call (found
+--- building examples/agent: `act[…, system = prompt[]]`).
+fn maybe[n]
+    if n lt 0
+        return error['no words', 'words']
+    return 'words'
+
+fn shout[words]
+    if len[words] eq 0
+        words = maybe[1]
+    return upper[words]
+
+fn prompt[]
+    return 'hello'
+
+fn empty[]
+    return ''
+
+fn run[q]
+    return '`shout[prompt[]]` `q`'
+
+log[run['x']]
+said = prompt[]
+log[shout[said]]
+log[shout[empty[]]]
+log[shout['direct']]
+held = shout[maybe[-1]]
+log[held.ok]
+log[held.reason]

@@ -2032,6 +2032,37 @@ pub fn run_edge_cases(
 
 const SNAPSHOT_DIR: &str = ".crow/snapshots";
 
+/// A snapshot's text on its one line: a backslash, a line break and a
+/// carriage return escaped (an answer holding a line break had been
+/// written whole and read back as its first line, so a function answering
+/// several lines was reported changed by every check after the first).
+fn snap_escaped(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('\n', "\\n").replace('\r', "\\r")
+}
+
+/// The text a snapshot's line holds, its escapes read back.
+fn snap_unescaped(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some('\\') => out.push('\\'),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
 /// Load existing snapshots from disk.
 fn load_snapshots() -> BTreeMap<String, Vec<(String, String)>> {
     let mut all = BTreeMap::new();
@@ -2046,7 +2077,7 @@ fn load_snapshots() -> BTreeMap<String, Vec<(String, String)>> {
                     let mut pairs = Vec::new();
                     for line in content.lines() {
                         if let Some((input, output)) = line.split_once(" = ") {
-                            pairs.push((input.to_string(), output.to_string()));
+                            pairs.push((snap_unescaped(input), snap_unescaped(output)));
                         }
                     }
                     all.insert(name, pairs);
@@ -2069,7 +2100,7 @@ fn save_snapshots(snapshots: &BTreeMap<String, Vec<(String, String)>>) {
     for (name, pairs) in snapshots {
         let path = dir.join(format!("{}.snap", name));
         let content: String = pairs.iter()
-            .map(|(input, output)| format!("{} = {}", input, output))
+            .map(|(input, output)| format!("{} = {}", snap_escaped(input), snap_escaped(output)))
             .collect::<Vec<_>>()
             .join("\n");
         std::fs::write(path, content).ok();
@@ -2281,6 +2312,22 @@ pub fn run_check(
 mod tests {
     use super::*;
     use crate::type_infer::TypeContext;
+
+    /// A snapshot's answer holding a line break, a backslash or the
+    /// separator survives the store's one line per answer: an answer of
+    /// several lines had been read back as its first line, and reported
+    /// changed by every check after the first (examples/agent's judge
+    /// prompt, 27 findings on the second check).
+    #[test]
+    fn a_snapshot_survives_a_line_break() {
+        for text in ["first\nsecond\nthird", "a backslash \\ and \\n written out", "x = y = z", "ends in a backslash \\", "\r\n windows", ""] {
+            let line = format!("{} = {}", snap_escaped("two[]"), snap_escaped(text));
+            assert!(!line[7..].contains('\n'), "{:?}", line);
+            let (input, output) = line.split_once(" = ").unwrap();
+            assert_eq!(snap_unescaped(input), "two[]");
+            assert_eq!(snap_unescaped(output), text, "{:?}", line);
+        }
+    }
 
     /// A map written as a literal is a declaration's first value, as a list
     /// of literals is: the probes see it (finch's `setup_names`, a map of

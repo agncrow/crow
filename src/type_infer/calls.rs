@@ -570,8 +570,22 @@ impl TypeContext {
                     let open = matches!(pty, Ty::Unknown)
                         || matches!(pty, Ty::List(inner) if matches!(inner.as_ref(), Ty::Unknown))
                         || matches!(pty, Ty::Map(_, inner) if matches!(inner.as_ref(), Ty::Unknown));
-                    if matches!(updated_type, Ty::Fn(_, _)) || (open && updated_type != pty && !matches!(updated_type, Ty::Unknown)) {
-                        new_params[i].1 = new_params[i].1.unify(updated_type);
+                    // (a parameter reassigned from a value that can fail —
+                    // `words = maybe[1]` — keeps the kind its calls hand: the
+                    // payload, never a Result, since a failed argument never
+                    // enters a function (spec, Auto-Propagation) and the
+                    // assignment propagates the failure. Typed a Result by
+                    // its body before a call typed it, the parameter took a
+                    // call's plain argument bare and the compiled program did
+                    // not build, where a literal argument had typed it first
+                    // and the same assignment propagated — the type had
+                    // depended on the order; parity 278)
+                    let updated = match updated_type {
+                        Ty::Result(inner) => inner.as_ref().clone(),
+                        t => t.clone(),
+                    };
+                    if matches!(updated, Ty::Fn(_, _)) || (open && &updated != pty && !matches!(updated, Ty::Unknown)) {
+                        new_params[i].1 = new_params[i].1.unify(&updated);
                     }
                 }
             }
