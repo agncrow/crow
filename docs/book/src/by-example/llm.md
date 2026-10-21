@@ -29,7 +29,8 @@ cannot reach 'ftp://somewhere': a model's URL is anthropic://<model> or openai:/
 ```
 
 A conversation is a parsed value, a list of turns, built a turn at a
-time: `ask` the user's, `said` the model's reply, `told` a tool's result.
+time: `ask` begins one with the user's turn, `asked` adds the user's next,
+`said` the model's reply, `told` a tool's result.
 A reply is a parsed value too — its `text`, its `calls`, its `usage` and
 its `stop` — so the builders take what `chat` answers:
 
@@ -97,10 +98,11 @@ cannot reach 'anthropic://claude-sonnet-5?key=CROW_BOOK_NO_SUCH_KEY': the key's 
 ```
 
 Tools are the functions themselves: `tools = [weather]` hands the function,
-and the compiler writes its schema — the name, the parameters with the
-kinds the body reads them as, and the comment above the function as the
-description. The program dispatches the model's calls and hands each
-result back with `told`:
+and the module writes its schema from the function's description — the
+name, the parameters with the kinds inference found (what the program's
+calls hand them, or what the body reads them as), and the comment above
+the function as the description. The program dispatches the model's calls
+and hands each result back with `told`:
 
 ```crow
 use llm
@@ -136,9 +138,10 @@ record: `text`, `stop` (`end`, `length`, `other`, `rounds`, `budget`),
 `rounds`, `usage`, `talk` and `steps`, a frame with a row per model call
 and per tool call. `allow = [g]` names the program's gates, functions of
 the call asked before a tool runs: a call one refuses is told to the
-model as a failed result rather than run, and a gate that is none is the
-call's error. `told[…, failed = true]` is how a failure is told by hand;
-the loop is held to its limits before any model is asked:
+model as a failed result rather than run, and a function that is no gate
+— one that takes another count of parameters or answers another kind —
+is the call's error. `told[…, failed = true]` is how a failure is told by
+hand; the loop is held to its limits before any model is asked:
 
 ```crow
 use llm
@@ -211,6 +214,35 @@ false
 llm
 ```
 
+The run's context and know-how are options too. `keep = n` cuts the tool
+results of rounds older than the last n to a stub naming their size,
+`compact = n` asks the model for a summary once a reply has read n tokens
+and goes on from the summary alone, and `budget = n` stops the run once
+it has spent n tokens, after the reply's calls are answered. `skills =
+folder` reads a folder of skills in the Agent Skills format — each a
+folder holding a `SKILL.md`: a frontmatter with its `name` (lowercase
+letters, digits and hyphens, the folder's own name) and its
+`description`, then the instructions — names each in the system prompt,
+and lets the model load one, and the files it refers to, through the
+tools `skill` and `skill_file`. `servers = [s]` adds the tools MCP
+servers offer (`use mcp`), each called on its server. A skill that breaks
+the format's rules is the call's error, before any model is asked:
+
+```crow
+use llm
+
+mkdir['ex_skills/refunds']
+write['ex_skills/refunds/SKILL.md', '---\nname: Refunds\ndescription: How the shop decides a refund, and what to ask first.\n---\nAsk for the order number, then read its status.\n']
+m = reach['openai://127.0.0.1:1/llama3.2']
+r = act[m, ask['May I have a refund?'], skills = 'ex_skills', keep = 2, compact = 8000, budget = 20000]
+log[r.reason]
+rm['ex_skills']
+```
+
+```text
+the skill refunds's name 'Refunds' does not match its folder refunds
+```
+
 A whole agent — three tools over a shop's orders in SQLite, the refund
 behind a gate, every run's `steps` frame written to the database as a
 trace beside a row per run, a page over the traces with their tokens and
@@ -219,3 +251,5 @@ with a model as the judge, and a page that asks the agent — is
 `examples/agent`, the fourth reference app: from its folder, `crow run
 main.co` serves it, and `crow test --fixtures agent/support.co` runs its
 evals with no model (docs/agents-design.md, Traces, evals and a page).
+
+Reference: spec section 13 (llm).

@@ -110,7 +110,7 @@ the app's own page, and a served app listens on this machine only; set
 A handler's writes land together when it ends, or not at all. It works on
 its own copy of the session's facts — a render never sees it halfway — and
 its database writes are one transaction, committed with it. When an error
-reaches a decision, a fact or a database call, the handler **stops**:
+reaches a decision, a fact or a database write, the handler **stops**:
 nothing it did lands, and the reader is told so through the session's
 *notice* — that it stopped, that nothing changed, and an id. Why is in the
 server's log beside that id, and is the click's value in a test:
@@ -578,9 +578,11 @@ assigns to a bound variable (a row click that sets `sym`), the field shows
 the new value on the next render. A handler may call a helper that assigns module
 state — `fn restart[]` calling `fn rewind_to[t]` — and the helper joins the
 handler class in both renderers, so its write lands in state. And state
-is not only numbers and strings: an array, a map, or a whole frame can be
-reactive, kept as JSON between renders. The following block is verified
-by the book's tests:
+is not only numbers and strings: an array, a map, a record, or a whole
+frame can be reactive, each kept as the value it is, and written as JSON
+only where it leaves the program — a test's harness, a bound input, a
+session kept across a restart. The following block is verified by the
+book's tests:
 
 ```crow
 use web, ui, frame

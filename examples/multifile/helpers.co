@@ -1,12 +1,13 @@
---- helpers module that uses math ---
+--- helpers module that uses arith ---
 
-use math
+use arith
 
 fn quad[x]
-    return math.double[math.double[x]]
+    return arith.double[arith.double[x]]
 
-fn circle_area[r]
-    return math.pi * math.square[r]
+--- a function sees no module's values: pi comes in as a parameter
+fn circle_area[r, pi]
+    return pi * arith.square[r]
 
 label = 'helpers v1'
 

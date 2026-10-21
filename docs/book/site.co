@@ -12,12 +12,13 @@ out = 'docs/book/crow-site/'
 --- One page: a top bar with search, the menu on the left, the chapter
 --- and its previous/next links on the right. Below tablet width the menu
 --- steps aside and the top bar's button brings it back as an overlay.
---- `up` takes links back to the site root.
-view chapter[title, body, nav, pages, up]
+--- `up` takes links back to the site root; `version` is the mark's, for
+--- its address (a view reads no file, so the caller works it out).
+view chapter[title, body, nav, pages, up, version]
     return stack[
         row[
             button['☰', class = 'nav-toggle', title = 'menu'],
-            img[src = '`up`crow.svg?v=`mark_version[]`', alt = '', width = 28, height = 28],
+            img[src = '`up`crow.svg?v=`version`', alt = '', width = 28, height = 28],
             a['The Crow Programming Language', href = '`up`index.html', class = 'title'],
             row[
                 input[class = 'doc-search', type = 'search', placeholder = 'Search  /', hidden_below = 'phone'],
@@ -35,10 +36,12 @@ view chapter[title, body, nav, pages, up]
         ]
     ]
 
---- A page for the harness: a real chapter with runnable blocks.
+--- A page for the harness: a chapter with a runnable block and the output
+--- the book expects of it, written here since a view reads no file.
 view sample[]
     toc = doc.chapters['# Sample\n\n- [One](one.md)\n  - [Two](two.md)']
-    return chapter['One', doc.markdown[read['docs/book/src/ch01-02-hello-world.md']], doc.menu[toc, 'one.md'], doc.pager[toc, 'one.md'], '']
+    md = '# Hello, World!\n\nA block to run, and what it prints.\n\n\`\`\`crow\nlog[\'hello, world\']\n\`\`\`\n\n\`\`\`text\nhello, world\n\`\`\`\n'
+    return chapter['One', doc.markdown[md], doc.menu[toc, 'one.md'], doc.pager[toc, 'one.md'], '', '']
 
 test layout[]
     s = app[sample, width = 1280]
@@ -94,6 +97,7 @@ fn with_icon[written, up, version]
     return replace[written, '<head>', tag]
 
 toc = doc.chapters[read['`src`SUMMARY.md']]
+version = mark_version[]
 --- (the site directory first: on a fresh checkout nothing has made it, and
 --- a page written into a directory that is not there is a failed write)
 mkdir[out]
@@ -106,12 +110,12 @@ for i in range[len[toc]]
         parts = split[path, '/']
         folder = parts[0]
         mkdir['`out``folder`']
-    doc_page = with_icon[doc.document[title, chapter[title, doc.markdown[read['`src``path`']], doc.menu[toc, path], doc.pager[toc, path], up]], up, mark_version[]]
+    doc_page = with_icon[doc.document[title, chapter[title, doc.markdown[read['`src``path`']], doc.menu[toc, path], doc.pager[toc, path], up, version]], up, version]
     html_path = replace[path, '.md', '.html']
     write['`out``html_path`', doc_page]
 --- the front door is the first chapter
 first = toc.path[0]
-write['`out`index.html', with_icon[doc.document[toc.title[0], chapter[toc.title[0], doc.markdown[read['`src``first`']], doc.menu[toc, first], doc.pager[toc, first], '']], '', mark_version[]]]
+write['`out`index.html', with_icon[doc.document[toc.title[0], chapter[toc.title[0], doc.markdown[read['`src``first`']], doc.menu[toc, first], doc.pager[toc, first], '', version]], '', version]]
 --- the mark, beside the pages, for the favicon and the top bar
 write['`out`crow.svg', read['assets/crow.svg']]
 

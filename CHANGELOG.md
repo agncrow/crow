@@ -186,6 +186,20 @@ history says the rest.
 
 ### Changed
 
+- The documentation no test reads describes the language as it is
+  (2026-10-21): `docs/crow-for-llms.md` (moments as a kind, `in`, ints
+  that grow, and the modules a generator reaches for — frames, db, web,
+  llm, mcp — every block run), the feature map, the by-example index,
+  Appendix B, the comparison (the measurements of 2026-10-21, a section
+  on language models), every command and flag in `docs/usage.md` and the
+  book's toolchain page, `crow check`'s and the language server's notes,
+  the db, frame and math notes, the roadmap's status, and the docs index
+  (ten notes it had not listed). In the spec: the error kinds the
+  modules answer (`'http'`, `'socket'`, `'auth'`, `'mail'`, `'llm'`,
+  `'mcp'`) and what answers `'time'`; a handler's stop by effect kind; a
+  dynamic cell read as its use implies; the project layout as the
+  toolchain reads it (no folder is discovered but `jobs/`, through the
+  crowfile); the note "a moment was a number" marked superseded.
 - A parameter read by its fields, and typed by nothing else, is a parsed
   value (spec, Tools are the functions): a function called by name —
   the loop's gate, a tool taking an object, an MCP server's — had been
@@ -282,6 +296,27 @@ history says the rest.
 
 ### Fixed
 
+- The book's site is built again (`docs/book/site.co`): its page view
+  read a file for the mark's version and the harness's sample chapter
+  was read inside a view, which a view may not do since effects have
+  kinds — CI's test job and the Pages workflow had failed at that step
+  on every push since 2026-10-20, so the live book stayed at
+  2026-10-18's. The version is worked out once and handed to the view,
+  the sample's chapter is written in the program, and the gate's list
+  in `CLAUDE.md` runs the step as CI does.
+- The book's contents list the `chart` and `sys` reference pages: the
+  site writes the pages its contents list, and the standard library's
+  index had linked two it never wrote.
+- Examples that did not run: `examples/dashboard.co` queried inside its
+  view, refused since effects have kinds (it reads through a derivation,
+  as the book's last chapter does); `examples/multifile` named its own
+  module `math`, which `use math` never reaches (it is `arith`, and a
+  function is handed `pi` as a parameter, which it does not see
+  otherwise); and the parallelism examples described statements run in
+  waves and a loop that logs running at once — they show a loop whose
+  body only computes, timed at one thread and at eight. Five of the
+  book's error blocks were refused for an indented comment rather than
+  the mistake they show; each is refused for its own now.
 - The interpreter had run two to four times slower since the compiler's
   freeze began (n-body 2.0 s to 8.0 s, k-nucleotide and reverse
   complement twice their time; the compiled program untouched): the

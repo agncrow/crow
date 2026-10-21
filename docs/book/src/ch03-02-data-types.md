@@ -1,7 +1,7 @@
 # Data Types
 
-The scalar types are `int`, `float`, `bool`, and `string`. Arithmetic is
-familiar, with two things worth pinning down.
+The scalar types are `int`, `float`, `bool`, and `str` (text). Arithmetic
+is familiar, with two things worth pinning down.
 
 **Division between ints rounds toward zero; a float anywhere makes it float:**
 
@@ -113,4 +113,4 @@ log[str[42]]
 42
 ```
 
-Collections — arrays, tensors, maps, structs — get their own chapter (6).
+Collections — arrays, tensors, maps, structs — get their own chapter (5).

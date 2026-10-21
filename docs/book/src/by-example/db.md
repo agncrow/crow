@@ -56,10 +56,13 @@ not today
 5
 ```
 
-`transact` answers what its function answers, committed — or the error of
-a function that failed, its transaction rolled back. `insert` uses each
-backend's bulk path (COPY, RowBinary, batched
-statements) and returns the row count. Migrations are the tool's: `crow db
-apply <dir> <url>`.
+`query` runs every statement — a `CREATE`, an `INSERT`, a `SELECT` — and
+answers a frame: the rows the statement reads, or none; a write that must
+say what it touched reads it back with `RETURNING`. `describe` answers the
+columns a statement would, without running it. `transact` answers what
+its function answers, committed — or the error of a function that failed,
+its transaction rolled back. `insert` uses each backend's bulk path
+(COPY, RowBinary, batched statements) and returns the row count.
+Migrations are the tool's: `crow db apply <dir> <url>`.
 
 Reference: spec section 13 (db) and book chapter 11.

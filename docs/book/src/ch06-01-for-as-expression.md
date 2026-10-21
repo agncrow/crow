@@ -33,9 +33,9 @@ write this.
 
 ## The Parallel Part
 
-Those iterations did not run in order. Crow analyzes what each statement
-reads and writes and runs independent work concurrently — a `for` over ten
-thousand rows uses every core, for free:
+Those iterations did not run in order. Crow reads what the loop's body
+does, and when its rounds are independent it runs them concurrently — a
+`for` over ten thousand rows uses every core, for free:
 
 ```crow
 celsius = [0.0, 21.5, 100.0]

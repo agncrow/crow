@@ -113,8 +113,10 @@ log[round[[1.4, 1.6]]]
 [1, 2]
 ```
 
-Trigonometry and hyperbolics take tensors (wrap a single number in
-brackets). Angles are radians:
+Trigonometry and hyperbolics map over a tensor the same way, and take a
+plain number too (`sin[pi / 2.0]` is 1); `atan2` takes tensors alone.
+Angles are radians. Here each is handed a tensor of one number, and
+`show` prints that number:
 
 ```crow
 use math

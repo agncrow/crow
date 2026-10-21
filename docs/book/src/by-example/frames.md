@@ -89,9 +89,15 @@ x+y
 0.25
 ```
 
-`frame.new[…]` builds a frame from its columns, and `df.name = values`
-writes one more where the frame lies, from an array or a repeated scalar. With `frame` imported the core `join`, `sort`, and
+A mask picks a frame's rows as it picks a list's items,
+`t[t.symbol eq 'AAPL']`, and a column of bools is its own mask
+(`flags[flags.on]`). `frame.new[…]` builds a frame from its columns, and
+`df.name = values` writes one more where the frame lies, from an array or
+a repeated scalar. With `frame` imported the core `join`, `sort`, and
 friends still work on arrays: the first argument decides which one you
-meant.
+meant. The last lines are a `then` chain written as lines: a step that
+names the variable being assigned (`gap`) reads the value so far there,
+so the value may change its kind — a frame through the join, a number at
+the end.
 
 Reference: spec section 13 (frame) and book chapter 10.

@@ -45,8 +45,8 @@ A builtin handed a number of arguments, or a kind of argument, it does not take 
 | `split[s, delim]` | Split string into array — by empty text, its characters, as `len` and `slice` count them: `split['héllo', '']` is `['h', 'é', 'l', 'l', 'o']`, and of empty text `[]` (until 2026-10-18 there had been an empty piece at each end, as Rust's own splitting answers, which every walk over characters stepped around) | [Bits and character codes: `use bits`](../by-example/bits.md) · [Strings](../by-example/strings.md) · [Strings and Interpolation](../ch03-03-strings.md) |
 | `trim[s]` | Remove leading/trailing whitespace | [A language model as a connection: `use llm`](../by-example/llm.md) · [Tools from other programs: `use mcp`](../by-example/mcp.md) · [Strings](../by-example/strings.md) · [The standard library's layer: `use sys`](../by-example/sys.md) |
 | `replace[s, old, new]` | Replace all occurrences | [Strings](../by-example/strings.md) |
-| `occurs[s, part]` | How many times `part` occurs in `s`, not overlapping, as Python's `str.count` counts (`occurs['aaaa', 'aa']` is 2; a part that cannot overlap itself counts every place it is). The search reads the text once at the machine's speed, so counting in a long text costs what reading it does — where `len[s] - len[replace[s, part, '']]` had made a new text for every count. An empty part is refused | [Strings and Interpolation](../ch03-03-strings.md) |
-| `translate[s, from, to]` | Each character of `from` in `s` replaced by the character at its place in `to`, all in one pass — `translate[dna, 'ACGT', 'TGCA']` is the complement, where `replace` in turn needs a stand-in letter to keep one replacement from meeting another's (Unix's `tr`, Python's `str.translate`). `from` and `to` have as many characters, or the program stops with both counts | [Strings and Interpolation](../ch03-03-strings.md) |
+| `occurs[s, part]` | How many times `part` occurs in `s`, not overlapping, as Python's `str.count` counts (`occurs['aaaa', 'aa']` is 2; a part that cannot overlap itself counts every place it is). The search reads the text once at the machine's speed, so counting in a long text costs what reading it does — where `len[s] - len[replace[s, part, '']]` had made a new text for every count. An empty part is refused | [Strings](../by-example/strings.md) · [Strings and Interpolation](../ch03-03-strings.md) |
+| `translate[s, from, to]` | Each character of `from` in `s` replaced by the character at its place in `to`, all in one pass — `translate[dna, 'ACGT', 'TGCA']` is the complement, where `replace` in turn needs a stand-in letter to keep one replacement from meeting another's (Unix's `tr`, Python's `str.translate`). `from` and `to` have as many characters, or the program stops with both counts | [Strings](../by-example/strings.md) · [Strings and Interpolation](../ch03-03-strings.md) |
 | `upper[s]` | Convert to uppercase | [A language model as a connection: `use llm`](../by-example/llm.md) · [Strings](../by-example/strings.md) · [The standard library's layer: `use sys`](../by-example/sys.md) · [Strings and Interpolation](../ch03-03-strings.md) |
 | `lower[s]` | Convert to lowercase | [Strings](../by-example/strings.md) |
 | `starts[s, prefix]` | Check if string starts with prefix | [Documentation: `use doc`](../by-example/doc.md) · [Tools from other programs: `use mcp`](../by-example/mcp.md) · [Strings](../by-example/strings.md) |
@@ -109,8 +109,8 @@ log['P&L: `money[pnl]`']
 |----------|-------------|---|
 | `int[value]` | Convert to int: a float is cut toward zero (the whole number it holds, every digit, past 64 bits; an infinite float stops), a decimal or a fraction toward zero, a bool is 1 or 0, text is parsed as written — no spaces around it, every digit kept — and text or a JSON value that names no int is an error value of kind `'parse'` | [JSON](../by-example/json.md) · [Numbers and conversion](../by-example/numbers.md) · [The standard library's layer: `use sys`](../by-example/sys.md) · [Web: responses and submodules](../by-example/web-more.md) · [Programming a Guessing Game](../ch02-00-guessing-game.md) · [Data Types](../ch03-02-data-types.md) · [Every Value Has Status](../ch07-01-every-value-has-status.md) · [Propagation](../ch07-02-propagation.md) · [Errors Have No Truth Value](../ch07-03-no-truth-value.md) · [Handling Errors Explicitly](../ch07-04-explicit-handling.md) |
 | `float[value]` | Convert to float, as `int` reads its value; an int past 64 bits, a decimal and a fraction are the nearest float | [Numbers and conversion](../by-example/numbers.md) · [The system: shell, environment, time, arguments](../by-example/system.md) · [Data Types](../ch03-02-data-types.md) · [Errors Have No Truth Value](../ch07-03-no-truth-value.md) · [Reactive State and Events](../ch12-02-reactive-state.md) |
-| `decimal[value]` | An exact base-ten number (Numbers That Keep Every Digit): of text as written, its places kept (`decimal['12.30']`; text that writes no number is an error value of kind `'parse'`), of an int exactly, of a float as the shortest text that reads back as it (`decimal[0.1]` is 0.1). `decimal[x, digits = n]` rounds it to `n` significant digits, a half away from zero, and every answer it takes part in to the most digits of the decimals in it: the language's big float (`sqrt[decimal[2, digits = 50]]`) | [Data Types](../ch03-02-data-types.md) |
-| `fraction[n, d]` | The exact ratio n/d in lowest terms, its sign on the top (`fraction[2, -4]` is `-1/2`); a bottom of 0 is an error value of kind `'math'`. `fraction[x]` of an int or a decimal is that number exactly (`fraction[decimal['0.25']]` is `1/4`) | [Data Types](../ch03-02-data-types.md) |
+| `decimal[value]` | An exact base-ten number (Numbers That Keep Every Digit): of text as written, its places kept (`decimal['12.30']`; text that writes no number is an error value of kind `'parse'`), of an int exactly, of a float as the shortest text that reads back as it (`decimal[0.1]` is 0.1). `decimal[x, digits = n]` rounds it to `n` significant digits, a half away from zero, and every answer it takes part in to the most digits of the decimals in it: the language's big float (`sqrt[decimal[2, digits = 50]]`) | [Numbers and conversion](../by-example/numbers.md) · [Data Types](../ch03-02-data-types.md) |
+| `fraction[n, d]` | The exact ratio n/d in lowest terms, its sign on the top (`fraction[2, -4]` is `-1/2`); a bottom of 0 is an error value of kind `'math'`. `fraction[x]` of an int or a decimal is that number exactly (`fraction[decimal['0.25']]` is `1/4`) | [Numbers and conversion](../by-example/numbers.md) · [Data Types](../ch03-02-data-types.md) |
 | `str[value]` | The text a value shows as, as `log` shows it (`str[[1, 2]]` is `'[1, 2]'`). (Compiled, a record holding a list, a list of records and a map of them had shown in Rust's debug form, and a JSON list as its JSON text.) | [A language model as a connection: `use llm`](../by-example/llm.md) · [Tools from other programs: `use mcp`](../by-example/mcp.md) · [Numbers and conversion](../by-example/numbers.md) · [The standard library's layer: `use sys`](../by-example/sys.md) · [Web: responses and submodules](../by-example/web-more.md) · [Data Types](../ch03-02-data-types.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) |
 | `type[value]` | Type name as string: `'int'`, `'float'`, `'str'`, `'bool'`, `'array'`, `'map'`, `'fn'`, `'none'`, `'error'`, `'frame'`, `'sparse'`, `'db'`, or struct name — the same in both modes: a frame's column is an `'array'`, a parsed JSON value what it maps to, and `shell`'s and `find`'s records `'map'` | [Moments and freshness](../by-example/moments.md) · [Numbers and conversion](../by-example/numbers.md) · [The standard library's layer: `use sys`](../by-example/sys.md) |
 
@@ -167,11 +167,11 @@ A collection builtin takes the kinds its forms above say — a list, a map, text
 | Function | Description | Example |
 |----------|-------------|---|
 | `read[path]` | The text of a file, a URL or an S3 object (error-value on failure; Files, URLs and S3) | [Files and directories](../by-example/files.md) · [Moments and freshness](../by-example/moments.md) · [The standard library's layer: `use sys`](../by-example/sys.md) · [Handling Errors Explicitly](../ch07-04-explicit-handling.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) · [View Blocks](../ch12-01-views.md) |
-| `write[path, content]` | Write text to a file or an S3 object (error-value on failure) | [Databases: `use db`](../by-example/db.md) · [Files and directories](../by-example/files.md) · [Frames: `use frame`](../by-example/frames.md) · [Structured files: `use io`](../by-example/io.md) · [Moments and freshness](../by-example/moments.md) · [Errors Have No Truth Value](../ch07-03-no-truth-value.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) · [Reactive State and Events](../ch12-02-reactive-state.md) |
+| `write[path, content]` | Write text to a file or an S3 object (error-value on failure) | [Databases: `use db`](../by-example/db.md) · [Files and directories](../by-example/files.md) · [Frames: `use frame`](../by-example/frames.md) · [Structured files: `use io`](../by-example/io.md) · [A language model as a connection: `use llm`](../by-example/llm.md) · [Moments and freshness](../by-example/moments.md) · [Errors Have No Truth Value](../ch07-03-no-truth-value.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) · [Reactive State and Events](../ch12-02-reactive-state.md) |
 | `exists[path]` | Check if file/directory exists (returns bool) | [Files and directories](../by-example/files.md) |
-| `mkdir[path]` | Create directory (and parents). Error-value on failure | [Files and directories](../by-example/files.md) |
+| `mkdir[path]` | Create directory (and parents). Error-value on failure | [Files and directories](../by-example/files.md) · [A language model as a connection: `use llm`](../by-example/llm.md) |
 | `ls[path]` | List directory entries as sorted array of strings. Error-value on failure | [Files and directories](../by-example/files.md) · [A language model as a connection: `use llm`](../by-example/llm.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
-| `rm[path]` | Remove file or directory (recursive). Error-value on failure | [Databases: `use db`](../by-example/db.md) · [Files and directories](../by-example/files.md) · [Frames: `use frame`](../by-example/frames.md) · [Structured files: `use io`](../by-example/io.md) · [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Moments and freshness](../by-example/moments.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [Errors Have No Truth Value](../ch07-03-no-truth-value.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) |
+| `rm[path]` | Remove file or directory (recursive). Error-value on failure | [Databases: `use db`](../by-example/db.md) · [Files and directories](../by-example/files.md) · [Frames: `use frame`](../by-example/frames.md) · [Structured files: `use io`](../by-example/io.md) · [A language model as a connection: `use llm`](../by-example/llm.md) · [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Moments and freshness](../by-example/moments.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [Errors Have No Truth Value](../ch07-03-no-truth-value.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) |
 | `mv[src, dst]` | Move/rename file or directory. Error-value on failure | [Files and directories](../by-example/files.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) |
 | `cp[src, dst]` | Copy file. Error-value on failure | [Files and directories](../by-example/files.md) |
 | `args[]` | CLI arguments as array of strings: those after the source file when `crow` runs it, after the program when it runs compiled | [The system: shell, environment, time, arguments](../by-example/system.md) |
@@ -473,26 +473,29 @@ snapshot. No primitive can enforce this — it is a modeling rule, and the
 reason it is written down here is that every system that skipped it
 rediscovered it as an incident.
 
-## Design Note: A Moment Is a Number
+## Design Note: A Moment Was a Number
 
-**What was considered:** the previous design — `now[]`/`date[]` returning
+Superseded on 2026-10-06 by "a moment is one kind" (Moments, above): a
+moment is a kind of its own, an instant and the offset it was written in.
+This note is kept for what it decided first and what still holds.
+
+**What was considered:** the design before it — `now[]`/`date[]` returning
 component maps and `elapsed[a, b]` returning a duration map. It could not
 express a named timezone, parse a timestamp, add a duration, or compare two
 moments directly; worse, `now[]` built its components in *machine-local*
 time while `date[]` timestamped at UTC midnight, so mixed arithmetic was
 already silently wrong by hours.
 
-**Why this design:** representing a moment as epoch seconds makes the
-number line do the work — comparison, subtraction, and "ten seconds before
-the bell" are ordinary arithmetic on ordinary floats, with no new type, no
-operator overloads, and no duration vocabulary. Calendars and zones are
-where the real complexity lives, so they are named-argument functions
-(`moment`, `calendar`) rather than hidden defaults. Machine-local time is
-absent by design: "correct on my laptop, wrong on the UTC server" is the
+**What it decided:** a moment as epoch seconds, so that comparison,
+subtraction and "ten seconds before the bell" were ordinary arithmetic on
+floats, with calendars and zones as named-argument functions. **What still
+holds:** a duration is a number of seconds, with no duration kind; zones
+are always explicit and the default is UTC — machine-local time is absent
+by design, since "correct on my laptop, wrong on the UTC server" is the
 classic deploy-day bug, and a language that makes the timezone explicit
-never has it. **Deleted in exchange:** `elapsed` (subtraction), `date`
-(subsumed by `moment`), `today` (`fmt[now[], style = 'date']`) — all three
-now raise teaching errors naming their replacement.
+never has it. `elapsed`, `date` and `today` went with the component maps:
+a moment subtracted from a moment is the seconds between, `moment[…]`
+makes a date, and `fmt[now[], style = 'date']` is today's.
 
 
 

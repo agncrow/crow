@@ -27,7 +27,7 @@ young = query[conn, 'SELECT name FROM users WHERE age < 30']
 log['young users (age < 30):']
 log[young]
 
---- Exec returns affected row count
+--- A write says what it touched with RETURNING: a row per row updated
 n = len[query[conn, 'UPDATE users SET age = age + 1 WHERE name = ? RETURNING id', ['alice']]]
 log['updated `n` row(s)']
 assert[n eq 1, 'should update 1 row']

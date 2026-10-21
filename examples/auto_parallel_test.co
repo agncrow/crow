@@ -1,4 +1,5 @@
---- test auto-parallelism for independent statements
+--- parallelism without threads: statements run in the order written, and
+--- work that should overlap is a for whose body only computes
 
 --- count primes up to n using trial division
 fn count_primes[n]
@@ -16,20 +17,17 @@ fn count_primes[n]
     i = i + 1
   return count
 
---- these 4 assignments are independent
---- the runtime detects this and runs them in parallel
-a = count_primes[15000]
-b = count_primes[12000]
-c = count_primes[18000]
-d = count_primes[10000]
+--- four independent counts, one round each: nothing the body does can
+--- show the order the rounds ran in, so they run across the cores
+counts = for limit in [15000, 12000, 18000, 10000]
+  count_primes[limit]
+a = counts[0]
+b = counts[1]
+c = counts[2]
+d = counts[3]
 
---- this depends on a and b, so it waits for them
 sum_ab = a + b
-
---- this depends on c and d
 sum_cd = c + d
-
---- this depends on both sums
 total = sum_ab + sum_cd
 
 log['a (primes to 15000): `a`']

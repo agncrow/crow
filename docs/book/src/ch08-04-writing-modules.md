@@ -20,9 +20,9 @@ c = geometry.Circle[2.0]
 log[geometry.circle_area[c]]
 ```
 
-Subdirectories map through slashes (`use myapp/utils` → `utils.helper[...]`),
-dots also work for view files (`use views.home`), and aliases apply as
-everywhere (`use geometry as g` → `g.circle_area[...]`).
+Subdirectories map through slashes (`use myapp/utils` → `utils.helper[...]`)
+or dots, the same way (`use views.home` loads `views/home.co`), and
+aliases apply as everywhere (`use geometry as g` → `g.circle_area[...]`).
 
 The asymmetry with the standard library is deliberate: **the bare
 namespace belongs to the language.** Stdlib names are hand-curated and

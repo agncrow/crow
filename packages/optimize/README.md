@@ -13,7 +13,8 @@ deps = map[optimize = 'github.com/agncrow/crow/packages/optimize@main']
 ```
 
 `crow install` checks the package out into `crow_modules/optimize`, and
-`crow.lock` pins the commit it took. A program imports the parts it uses:
+`crow.lock` pins the commit it took and the hash of the files it
+installed. A program imports the parts it uses:
 
 ```
 use optimize.scalar, optimize.roots, optimize.multi

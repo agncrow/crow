@@ -175,7 +175,13 @@ effect `crow check` could not see, and a model deciding what runs with no
 `if` of the program's between). Decided: `tools = [f, g]`, the compiler
 writes the schema from the signature it inferred and the comment above
 the function, and the program dispatches, which is one `if` per tool and
-the place a program decides what a model may make it do.
+the place a program decides what a model may make it do. (Revisited
+2026-10-20, docs/agents-design.md, "Who runs the tools": the loop `act`
+dispatches with `apply` over the list of functions the program hands it,
+which answers the three objections — every call the model can cause is to
+a member of a list the program wrote, `crow check` sees each member
+called with its effects, and the program's gates, `allow = [g]`, are asked
+before any tool runs. The loop written by hand stays a way.)
 
 **Streaming is a socket read piece by piece.** Considered: a feed function
 handed to `stream` and called for each piece, as a response `stream[feed]`
@@ -201,8 +207,9 @@ cache token count, a log probability) is not there until both mean it.
 a conversation kept by the server (Anthropic's prompt caching, OpenAI's
 responses); batches; a model's answer recorded as a fixture so an agent's
 test replays without the model — the next piece, on `request`'s rehearsal
-(`crow check --record-fixtures`); the `models` to list; an `embed` for
-Anthropic-side providers (Voyage) once one speaks a second format.
+(`crow check --record-fixtures`; built 2026-10-12, docs/rag-design.md); the
+`models` to list; an `embed` for Anthropic-side providers (Voyage) once one
+speaks a second format.
 
 ## What holds it
 

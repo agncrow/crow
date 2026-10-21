@@ -76,3 +76,5 @@ log[word]
 2472741726
 crow
 ```
+
+Reference: spec section 13 (bits).

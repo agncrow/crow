@@ -1,6 +1,8 @@
 # Crow Math Library Design
 
-Crow is a data science language. The math library must be powerful enough to build deep learning frameworks like PyTorch from scratch, including distributed training and GPU computing. The runtime is pure Rust — no C/C++ dependencies. CPU math is backed by `faer` (fastest pure Rust linear algebra), GPU compute by `wgpu` (cross-platform WebGPU), and the tensor type is our own.
+Crow is a data science language. The math library must be powerful enough to build deep learning frameworks like PyTorch from scratch, including distributed training and GPU computing. The math runtime is pure Rust: CPU math is backed by `faer` (fastest pure Rust linear algebra), GPU compute by `wgpu` (cross-platform WebGPU), and the tensor type is our own. (The C a Crow program can link lies outside the math, each bundled with its crate: SQLite, the mimalloc allocator, TLS's `ring` and Parquet's `zstd` — spec, Design Note "what stays native, and why".)
+
+This document is the design, written before the build. What runs today is the spec's `math` section and the book's pages for `math`, `math.stats` and `math.nn`; a part of the design that was not built is marked *proposed* below, and the examples are written as the language runs them.
 
 ## Layers
 
@@ -51,7 +53,7 @@ c = a .^ b                                --- element-wise power
 
 --- element-wise math
 c = exp[a]
-c = log[a]
+c = ln[a]                                  --- natural log (`log` writes to the console)
 c = sqrt[a]
 c = abs[a]
 c = sign[a]
@@ -75,39 +77,39 @@ c = tanh[a]
 
 --- reductions
 s = sum[x]                                 --- total
-s = sum[x, axis = 0]                       --- along axis
-m = mean[x]
-mx = max[x, axis = 1]
+col_sums = sum[m, axis = 0]                --- along axis
+avg = mean[x]
+row_max = max[m, axis = 1]
 mn = min[x]
 p = prod[x]                               --- product
 
 --- selection
 i = argmax[x]                              --- index of max
-i = argmin[x]                              --- index of min
-c = where[cond, a, b]                      --- conditional: a if true, b if false
+j = argmin[x]                              --- index of min
+c = where[mask, a, b]                      --- conditional: a where the mask is true, b elsewhere
 
 --- sorting
-s = sort[x]                                --- sorted array
-i = argsort[x]                             --- indices that would sort
-t = topk[x, 5]                             --- top 5 values
+sorted = sort[x]                           --- sorted array
+order = argsort[x]                         --- indices that would sort
+top = topk[x, 5]                           --- top 5 values
 u = unique[x]                              --- unique values
 
 --- cumulative
-c = cumsum[x]                              --- running sum
-c = cumprod[x]                             --- running product
+totals = cumsum[x]                         --- running sum
+products = cumprod[x]                      --- running product
 
 --- shape
-r = reshape[x, [2, 3]]
-t = trans[x]
-f = flatten[x]
-s = slice[x, 0, 3]
+r = reshape[x, 2, 3]
+t = transpose[r]
+f = flatten[r]
+head3 = slice[x, 0, 3]
 
 --- combining
-c = concat[a, b, axis = 0]                --- join along axis
-s = stack[arrays, axis = 0]               --- new axis
+joined = concat[a, b, axis = 0]           --- join along axis
+stacked = stack[[a, b], axis = 0]         --- new axis
 
 --- advanced indexing
-y = x[indices]                             --- gather by index array
+picked = x[indices]                        --- gather by index array
 
 --- broadcasting
 --- shapes [3, 1] + [1, 4] → [3, 4] automatically
@@ -120,23 +122,25 @@ What makes ML possible.
 ```
 --- core
 c = a * b                                 --- matmul
-t = trans[m]
+t = transpose[m]
 i = inv[m]
 d = det[m]
 
---- decompositions
-u, s, v = svd[m]
-q, r = qr[m]
+--- decompositions: each answers a list of tensors, read by index
+usv = svd[m]                               --- [U, S, Vt]: usv[0] is U
+qr_m = qr[m]                               --- [Q, R]
 l = cholesky[m]
-vals, vecs = eigen[m]
+ev = eigen[m]                              --- the eigenvalues, [real parts, imaginary parts]
 
 --- solving
 x = solve[a, b]                            --- solve Ax = b
 
 --- norms
 n = norm[x]                                --- L2 norm
-n = norm[x, p = 1]                         --- L1 norm
+n1 = norm[x, 1]                            --- L1 norm
 ```
+
+Eigenvectors are not computed: `eigen` answers the eigenvalues alone.
 
 ### Layer 3: Random & Distributions
 
@@ -146,17 +150,17 @@ Reproducible random number generation and sampling from distributions.
 --- seeding
 seed[42]                                   --- set global seed
 
---- sampling
+--- sampling: the sizes follow the parameters
 r = uniform[0.0, 1.0, 3, 4]                --- uniform [0, 1)
-n = normal[0, 1, [3, 4]]                  --- normal distribution
-u = uniform[5, 10, [3, 4]]                --- uniform [5, 10)
-p = poisson[3.0, [100]]                   --- poisson distribution
-b = bernoulli[0.5, [100]]                 --- coin flips
+n = normal[0, 1, 3, 4]                     --- normal distribution
+u = uniform[5, 10, 3, 4]                   --- uniform [5, 10)
+p = poisson[3.0, 100]                      --- poisson distribution
+b = bernoulli[0.5, 100]                    --- coin flips
 
 --- array operations
 s = shuffle[x]                             --- random permutation
 c = choice[x, 10]                          --- random sample of 10
-p = permutation[n]                         --- random permutation of 0..n
+perm = permutation[len[x]]                 --- random permutation of 0..n
 ```
 
 ### Layer 4: Signal Processing
@@ -165,13 +169,13 @@ FFT and related transforms. Native implementations — can't build efficiently f
 
 ```
 --- FFT
-f = fft[x]                                --- 1D FFT (returns complex)
-x = ifft[f]                               --- inverse FFT
+f = fft[x]                                --- 1D FFT: [real, imag]
+x = ifft[f[0], f[1]]                      --- inverse FFT, of the real and imaginary parts
 f = fft2[m]                               --- 2D FFT
 
 --- convolution (mathematical, not NN)
 c = conv[a, b]                             --- 1D convolution
-c = conv2d[a, b]                           --- 2D convolution
+c2 = conv2d[m, kernel]                     --- 2D convolution, of matrices
 
 --- windowing
 w = hamming[n]                             --- Hamming window
@@ -183,14 +187,14 @@ w = hanning[n]                             --- Hanning window
 Mathematical functions that can't be built from basic ops, and complex number support (required by FFT).
 
 ```
---- special functions
+--- special functions, of tensors (`e` is the constant)
 g = gamma[x]                               --- gamma function
-e = erf[x]                                --- error function
-b = bessel[x, n]                           --- Bessel function
+er = erf[x]                                --- error function
+b = bessel[x, 1]                           --- Bessel function J₁
 f = factorial[n]                           --- n!
-c = choose[n, k]                           --- binomial coefficient
+ways = choose[n, k]                        --- binomial coefficient
 
---- complex numbers
+--- complex numbers: a value is [real parts, imaginary parts]
 c = complex[3, 4]                          --- 3 + 4i
 r = real[c]                                --- real part
 i = imag[c]                                --- imaginary part
@@ -206,13 +210,13 @@ Different data structure for matrices that are mostly zeros. Native implementati
 ```
 --- creation
 s = sparse[dense_array]                    --- dense to sparse
-s = sparse[rows, cols, vals, shape]        --- COO format
+s2 = sparse[rows, cols, vals, shape]       --- COO format
 d = dense[s]                               --- sparse to dense
 
 --- operations (same syntax as dense)
-c = s * v                                  --- sparse matmul
-c = s + s2                                 --- sparse add
-x = solve[s, b]                            --- sparse solve
+y = s * v                                  --- sparse matmul
+total = s + s2                             --- sparse add
+x = solve[s2, b]                           --- sparse solve
 ```
 
 Sparse arrays use the same operators as dense arrays. The runtime dispatches to sparse-optimized algorithms automatically.
@@ -226,11 +230,11 @@ fn loss[w, x, y]
   return mean[(x * w - y) .* (x * w - y)]
 
 dloss = grad[loss]                         --- returns gradient function
-g = dloss[w, x, y]                         --- computes gradients
-w = w - 0.01 * g
+g = dloss[w, x, y]                         --- computes gradients: one per parameter, [∂w, ∂x, ∂y]
+w = w - g[0] * 0.01
 ```
 
-No manual derivative computation. `grad[f]` transforms a function into its gradient function. Composable: `grad[grad[f]]` for second derivatives.
+No manual derivative computation. `grad[f]` transforms a function into its gradient function. *Proposed:* composing it, `grad[grad[f]]` for second derivatives; today a gradient is not differentiated again (spec, Automatic Differentiation).
 
 ### Layer 8: GPU Computing
 
@@ -242,23 +246,25 @@ gpu[2]                   --- 2 GPUs on this machine
 
 w = randn[784, 128] .* 0.01
 
---- compiler auto-dispatches numeric ops to GPU
+--- numeric ops on tensors placed there run there
 h = relu[data * w + b]
 ```
 
-The compiler decides what is GPU-eligible (numeric ops on arrays) and what falls back to CPU (string ops, I/O). GPU compute uses `wgpu` (WebGPU standard) with WGSL compute shaders. The runtime auto-detects the backend: Apple Silicon → Metal, Linux → Vulkan, Windows → DX12. All from one set of shaders — no platform-specific code. Backend can be pinned in the `crowfile` with `gpu_backend = 'metal'`.
+A tensor made after `gpu[]` is placed on the GPU, and an operation between tensors there runs as a WGSL compute shader through `wgpu` (WebGPU standard): the four arithmetic operators, negation, `abs`, `exp`, `ln`, `sqrt`, `sin`, `cos` and `tan`, a number added to, taken from or multiplied with a tensor there, a matmul and a sum. Anything else falls back to the CPU, as do strings and I/O (spec, GPU Support). wgpu picks the backend: Apple Silicon → Metal, Linux → Vulkan, Windows → DX12. All from one set of shaders — no platform-specific code. One device is used today, whatever count `gpu[n]` names. *Proposed:* pinning the backend in the `crowfile` (`gpu_backend = 'metal'`).
 
-### Layer 9: Distributed Computing
+### Layer 9: Distributed Computing (proposed)
 
-*Superseded (2026-10-11, 2026-10-16): the process count is the launch's — `crow launch <n> file.co` starts the processes and each reads its rank with `env['CROW_RANK', '0']`; `nodes` is no builtin (spec, Design Note "the process count is the launch's"). The directives below were not built.*
+*Superseded in part (2026-10-11, 2026-10-16): the process count is the launch's, not a directive — `crow launch <n> file.co` builds the program and starts n processes of it on this machine, each reading its rank with `env['CROW_RANK', '0']`; `nodes` is no name of the language (spec, Design Note "the process count is the launch's"), so the `nodes[n]` and `nodes[n, gpu = …]` directives first written here will not be built. The runtime's ring (`crow_runtime::distributed`: a mean across the ranks, a broadcast, a barrier, a shard) has no builtin yet, so the compiler-inserted synchronization below is a proposal.*
 
-Training across multiple machines. Crow uses `nodes` as a directive — same philosophy as `gpu`. Specify intent, the compiler handles data sharding, gradient synchronization, and communication.
+Training across multiple machines. Specify intent, and the compiler handles data sharding, gradient synchronization, and communication — the same philosophy as `gpu`.
 
 ```
 gpu[]                    --- all GPUs, this machine
 gpu[2]                   --- 2 GPUs, this machine
-nodes[4]                 --- 4 machines
-nodes[4, gpu = 2]        --- 4 machines, 2 GPUs each
+```
+
+```
+crow launch 4 train.co   --- 4 processes of the program, each with its CROW_RANK
 ```
 
 The user writes the same training loop. The compiler inserts allreduce, data sharding, and gradient sync automatically.
@@ -273,15 +279,9 @@ fn loss[w, x, y]
 dloss = grad[loss]
 for i in range[1000]
   g = dloss[w, x, y]
-  w = w - 0.01 * g
+  w = w - g[0] * 0.01
 
---- distributed across 4 machines, same code
-nodes[4]
-gpu[]
-
-for i in range[1000]
-  g = dloss[w, x, y]
-  w = w - 0.01 * g
+--- distributed across 4 processes, same code: crow launch 4 train.co
 ```
 
 No explicit `allreduce`, `broadcast`, `scatter`, or `gather` calls. The compiler knows the training pattern and inserts the right communication. Data scientists write math, not distributed systems code.
@@ -342,36 +342,33 @@ Built differentiable programming into the compiler. `@differentiable` attribute 
 
 ### Crow's Position
 
-Crow is in the **Julia camp** — transpiles to a fast language (Rust), so no "two language problem." Combined with **JAX-style functional autograd** — `grad[f]` returns a gradient function, composable and stateless. The runtime is pure Rust with zero C/C++ dependencies — `faer` for CPU math (often faster than OpenBLAS), `wgpu` for cross-platform GPU (Metal/Vulkan/DX12), and our own tensor type. This gives Crow:
+Crow is in the **Julia camp** — transpiles to a fast language (Rust), so no "two language problem." Combined with **JAX-style functional autograd** — `grad[f]` returns a gradient function, stateless. The math runtime is pure Rust — `faer` for CPU math (often faster than OpenBLAS), `wgpu` for cross-platform GPU (Metal/Vulkan/DX12), and our own tensor type. This gives Crow:
 
 - Julia's advantage: everything written in one language, no C extensions
 - JAX's advantage: clean functional autograd, no mutable tape
 - MATLAB's advantage: arrays as first-class citizens
 - None of Python's disadvantage: no glue language, no performance cliff
-- Rust's advantage: zero C/C++ deps, `cargo build` works everywhere, memory safety
+- Rust's advantage: no C/C++ under the math, no system library to install, memory safety
 
 ## Library Structure
 
 One `math` library with sub-modules:
 
 ```
-use math                --- core: arrays, ops, linalg
-use math.stats          --- statistics, distributions, hypothesis testing
-use math.signal         --- FFT, convolution, filtering, windowing
-use math.optimize       --- minimize, root finding, curve fitting
-use math.sparse         --- sparse arrays
-use math.cluster        --- k-means, PCA, t-SNE
-use math.nn             --- neural network layers, activations, loss functions
-use math.series         --- time series, rolling, autocorrelation
+use math                --- core: arrays, ops, linalg, random, FFT and filters, sparse arrays
+use math.stats          --- statistics, hypothesis tests, distribution fitting
+use math.nn             --- activations, loss functions, a linear layer
 ```
 
-`use math` gives you arrays, element-wise ops, linalg, autograd, random, and GPU/distributed directives — everything needed for most work. Sub-modules are imported only when needed.
+`use math` gives you arrays, element-wise ops, linear algebra, random draws, signal processing and sparse arrays — everything needed for most work; `grad`, `gpu[]` and `cpu[]` are the core's and need no import. Sub-modules are imported only when needed.
+
+The design named five more sub-modules, and none was built as one. Signal processing (`math.signal`) and sparse arrays (`math.sparse`) are in `math` itself. Minimisation and root finding are the package `optimize` (scipy.optimize's methods, held to scipy), and k-means and PCA are in the package `models`; a curve fit, t-SNE and autocorrelation are not built. A rolling window over a series is the frame's `window`, and the chart module's indicators. *Proposed:* `math.optimize`, `math.cluster` and `math.series` as modules.
 
 ## Architecture
 
 ### Design Decision: Pure Rust (faer + wgpu + own tensor)
 
-Crow owns its runtime. No C/C++ dependencies, no framework wrappers. `cargo build` just works everywhere.
+Crow owns its runtime. No framework wrappers, and no C/C++ under the math. `cargo build` needs no system library installed: the C a program does link (SQLite, the allocator) comes bundled with its crate.
 
 **Why not burn/candle?** Crow is a language, not an application. Building on top of another framework means Crow becomes a syntax layer over someone else's design decisions. If that framework changes its API, deprecates a feature, or makes a design choice that conflicts with Crow's semantics — we're stuck. Languages that own their runtime (Julia) outlast languages that wrap someone else's (Swift for TensorFlow, dead).
 
@@ -395,9 +392,9 @@ Crow owns its runtime. No C/C++ dependencies, no framework wrappers. `cargo buil
 │    ├── reductions                   │  ← sum, mean, max along axes
 │    ├── sorting                      │  ← sort, argsort, topk, unique
 │    ├── creation                     │  ← zeros, ones, eye, linspace, arange
-│    ├── reshaping                    │  ← reshape, trans, flatten, concat
+│    ├── reshaping                    │  ← reshape, transpose, flatten, concat
 │    ├── random                       │  ← rand crate + rand_distr
-│    ├── complex                      │  ← num-complex crate
+│    ├── complex                      │  ← pairs of real tensors [re, im]
 │    └── dispatch                     │  ← CPU vs GPU routing
 ├─────────────────────────────────────┤
 │  CPU backend                        │
@@ -412,7 +409,8 @@ Crow owns its runtime. No C/C++ dependencies, no framework wrappers. `cargo buil
 │         └── DX12 (Windows)          │
 ├─────────────────────────────────────┤
 │  Distributed backend                │
-│    └── custom (TCP/RDMA)            │  ← allreduce, scatter, gather
+│    └── custom (TCP ring)            │  ← mean, broadcast, barrier, shard
+│                                     │     (no builtin reaches it yet)
 └─────────────────────────────────────┘
 ```
 
@@ -442,11 +440,11 @@ enum TensorStorage {
 - f64 on GPU is fine on data center hardware (A100/H100: 1:2 ratio vs f32)
 - f32 on GPU is the default because consumer GPUs cripple f64 (1:32-64 ratio)
 
-**Views: Immutable + Arc.** `trans[m]` and `slice[m, 0, 3]` create new `CrowTensor` values that share the same `Arc<TensorStorage>` with different shape/strides/offset. Zero copy. Operations like `m + 1` always produce a new tensor with new storage. No mutation of existing data, ever.
+**Views: Immutable + Arc.** `transpose[m]` and `slice[m, 0, 3]` create new `CrowTensor` values that share the same `Arc<TensorStorage>` with different shape/strides/offset. Zero copy. Operations like `m + 1` always produce a new tensor with new storage. A write — `m[i][j] = x`, a row `m[i] = row`, a `push` — changes the storage in place only where nothing else holds it, and copies it otherwise, so no value changes under another that shares it.
 
 ```
 m = [[1, 2], [3, 4]]
-t = trans[m]
+t = transpose[m]
 
 m.data ──→ Arc (ref count: 2) ──→ [1.0, 2.0, 3.0, 4.0]
 t.data ──┘
@@ -457,7 +455,7 @@ t: shape [2,2], strides [1,2], offset 0    ← reads column-major, same data
 
 When all references are dropped, ref count hits 0 and memory is freed. Deterministic, no GC.
 
-**Memory pool.** Operations reuse freed buffers instead of hitting the system allocator:
+**Memory pool** (*proposed*). Operations would reuse freed buffers instead of hitting the system allocator:
 
 ```rust
 struct TensorPool {
@@ -465,9 +463,9 @@ struct TensorPool {
 }
 ```
 
-In training loops with millions of iterations, no buffer is ever truly freed and reallocated. Same pattern as PyTorch's CUDA caching allocator.
+In training loops with millions of iterations, no buffer would ever be truly freed and reallocated. Same pattern as PyTorch's CUDA caching allocator. Not in use: `crow_runtime::pool` holds such a pool, by size bucket and per thread, and no operation draws from it; a tensor's storage comes from mimalloc, the allocator of the interpreter and of every compiled program.
 
-**Non-contiguous data.** After `trans[m]`, strides are swapped but data order is unchanged. Before BLAS/faer calls (matmul, SVD, etc.), `make_contiguous()` copies data into the expected layout. Transpose is O(1) to create; the first BLAS operation on it may trigger an O(n) copy. This is how NumPy and PyTorch work.
+**Non-contiguous data.** After `transpose[m]`, strides are swapped but data order is unchanged: O(1). A faer call (matmul, SVD, etc.) copies its operands into faer's own column-major matrices, whatever their layout (`to_contiguous`, then `Mat::from_fn`), and copies the answer back into a tensor — an O(n) copy each way, beside the O(n³) of a product or a decomposition.
 
 #### Memory Layout
 
@@ -476,8 +474,8 @@ Row-major (C order), matching Rust's default. A 3×4 matrix stores 12 f64 values
 #### Two-Tier Value System
 
 ```
-Value::Array(Vec<CrowValue>)     --- general arrays: ['hello', true]
-Value::NumArray(CrowTensor)      --- numeric arrays: contiguous f64, shaped
+Value::Array(Arc<Vec<CrowValue>>)   --- general arrays: ['hello', 'world'], copy-on-write
+Value::NumArray(Box<CrowTensor>)    --- numeric arrays: contiguous f64, shaped
 ```
 
 Type is decided at creation and never changes. Arrays are homogeneous per the spec. `[1, 2, 3]` → `NumArray`. `['a', 'b']` → `Array`. No mixed types, no type changes mid-program.
@@ -490,50 +488,58 @@ Separate `crow_runtime` crate. Transpiled code depends on the runtime only, not 
 
 ```
 crow/
-  Cargo.toml              ← workspace root
-  crow_lang/              ← compiler, interpreter, checker, transpiler
-    Cargo.toml
-    src/
-  crow_runtime/           ← tensor type, ops, GPU, memory pool
+  Cargo.toml              ← workspace root, and the compiler's own package
+  src/                    ← compiler, interpreter, checker, the Rust emitter
+  crow_runtime/           ← tensor type, ops, GPU, frames, the sys layer
     Cargo.toml
     src/
       lib.rs
-      tensor.rs
-      ops.rs
+      tensor.rs           ← CrowTensor, element-wise ops, reductions
+      linalg.rs           ← faer
+      math.rs             ← the math module's builtins, their arguments checked
+      autograd.rs         ← the tape grad[f] walks backwards
       gpu.rs
-      pool.rs
+      signal.rs           ← rustfft
+      sparse.rs           ← sprs
+      distributed.rs
+      ...
+  crow_web/               ← the server and its pages
+  crow_db/                ← the database handles
 ```
 
-Generated binaries (`crow build`) depend on `crow_runtime` only — not the parser, type inference, or checker.
+Generated binaries (`crow build`) depend on the runtime crates — `crow_runtime`, and `crow_web` or `crow_db` where the program serves or connects — not the parser, type inference, or checker.
 
 ### Performance
 
-With faer + SIMD + contiguous memory:
+The design projected NumPy's speed throughout, with faer, SIMD and contiguous memory ("both SIMD", "both BLAS-level"). Measured 2026-10-21 on a 16-core Apple M4 Max, the runtime's kernels called from `crow run -i` (an operation timed over a loop of them), beside NumPy 2.0.2 on the same machine:
 
-| Operation | 1M elements | 1B elements | vs NumPy |
-|-----------|------------|------------|---------|
-| Element-wise add | ~0.5ms | ~500ms | Same (both SIMD) |
-| Matmul 1000×1000 | ~50ms | N/A | Same (both BLAS-level) |
-| Sum reduction | ~0.3ms | ~300ms | Same |
-| Sort | ~20ms | ~20s | Same (both O(n log n)) |
-| Memory per f64 | 8 bytes | 8 bytes | Same |
+| Operation | Crow | NumPy |
+|-----------|------|-------|
+| Element-wise add, 1M | 0.39 ms | 0.19 ms |
+| Sum reduction, 1M | 0.13 ms | 0.12 ms |
+| Matmul 1000×1000 | 7.0 ms | 2.4 ms |
+| Sort, 1M | 58 ms | 25 ms |
+| Memory per f64 | 8 bytes | 8 bytes |
 
-faer is often *faster* than OpenBLAS (which NumPy uses) because it's designed for modern CPU architectures with better cache utilization.
+A sum matches NumPy; an add and a sort are about twice its time, and a matmul three times (NumPy there runs on Apple's Accelerate). faer is often *faster* than OpenBLAS, which NumPy uses on Linux, because it's designed for modern CPU architectures with better cache utilization.
 
 ### Pure Rust Dependencies
 
-| Crate | Purpose | Lines of glue |
+| Crate | Purpose | Lines of glue (estimated) |
 |-------|---------|--------------|
 | `faer` | Matmul, decompositions, solve, norm | ~300 |
 | `wgpu` | GPU compute shaders (Metal/Vulkan/DX12) | ~1500 |
 | `rustfft` | FFT, IFFT, FFT2 | ~200 |
-| `num-complex` | Complex number type | ~100 |
 | `rand` + `rand_distr` | Random distributions | ~200 |
 | `sprs` | Sparse arrays (COO/CSR) | ~200 |
 
-Total pure Rust. No C/C++ compilation. No system library installation. `cargo build` works on every platform.
+`num-complex` comes with `rustfft`, inside the FFT: a program's complex values are pairs of real tensors, `[re, im]`.
 
-### What We Build (~4000 lines)
+The math is pure Rust, with no system library to install. A Crow program can link some C beside it — SQLite, the mimalloc allocator, TLS's `ring`, Parquet's `zstd` — each bundled with its crate.
+
+### What We Build (~4000 lines, estimated)
+
+The estimate was written before the build; the runtime's tensor, linear algebra, GPU, autograd and math files hold about 8,000 lines today, their tests included.
 
 | Component | Effort | Description |
 |-----------|--------|-------------|
@@ -543,7 +549,7 @@ Total pure Rust. No C/C++ compilation. No system library installation. `cargo bu
 | Reductions | ~200 lines | sum, mean, max, min along axes |
 | Sorting & selection | ~200 lines | sort, argsort, topk, unique, where |
 | Creation functions | ~200 lines | zeros, ones, eye, linspace, arange, full, diag |
-| Reshaping & combining | ~200 lines | reshape, trans, flatten, concat, stack |
+| Reshaping & combining | ~200 lines | reshape, transpose, flatten, concat, stack |
 | Autograd | ~800 lines | Tape-based, JAX-style grad[f] |
 | GPU kernels (WGSL) | ~1500 lines | Compute shaders for core ops |
 
@@ -554,7 +560,7 @@ Total pure Rust. No C/C++ compilation. No system library installation. `cargo bu
 | Matmul, LU, SVD, QR, Cholesky, Eigen, Solve | `faer` | Decades of numerical analysis research. Getting these right and fast is a multi-year effort. |
 | FFT | `rustfft` | O(n log n) FFT algorithms are well-understood but tricky to optimize. |
 | Sparse storage formats | `sprs` | COO/CSR conversion, sparse matmul — specialized algorithms. |
-| Complex numbers | `num-complex` | Standard type, no reason to reinvent. |
+| Complex arithmetic inside the FFT | `num-complex` (through `rustfft`) | Standard type, no reason to reinvent. A program's complex values are pairs of real tensors. |
 | Random distributions | `rand` + `rand_distr` | Statistically correct sampling is subtle. |
 | GPU abstraction | `wgpu` | WebGPU API over Metal/Vulkan/DX12. We write shaders, not driver code. |
 
@@ -579,6 +585,8 @@ These are algorithms on top of primitives — pure Crow code.
 | Time series (rolling, autocorr) | Slicing + reductions |
 | Set operations (union, intersect) | Sort + unique |
 
+Several are written in Crow now. The activations, the losses and a linear layer are `math.nn`, the statistics `math.stats`, each a formula over the math builtins. The repository's packages hold more: a nanoGPT trained by `grad` (`gpt`), models from least squares to gradient boosting with k-means and PCA among them (`models`), and scipy.optimize's minimisers and root finders (`optimize`), each held to its Python reference.
+
 ### Autograd Design
 
 Three approaches exist in the wild:
@@ -596,21 +604,25 @@ fn loss[w, x, y]
   return mean[(x * w - y) .* (x * w - y)]
 
 dloss = grad[loss]                         --- returns gradient function
-g = dloss[w, x, y]                         --- computes gradients
-w = w - 0.01 * g
+g = dloss[w, x, y]                         --- computes gradients: [∂w, ∂x, ∂y]
+w = w - g[0] * 0.01
 ```
 
 Zero overhead for non-gradient code — `grad` is only applied where explicitly requested.
 
+As built, the interface is JAX's and the machinery underneath is two (spec, Automatic Differentiation): a function of numbers is differentiated forward, with dual numbers, and a function of tensors backward, over a tape its one traced run records — a tape that lives for one call of the gradient and is never the program's to see. *Proposed:* the compile-time optimization of gradient functions, and `grad[grad[f]]`.
+
 ## Implementation Order
 
-1. **N-dimensional arrays** — shape, stride, dtype, contiguous memory, creation (`zeros`, `ones`, `rand`, `full`, `arange`, `linspace`, `eye`, `diag`)
-2. **Element-wise ops** — `+`, `-`, `.*`, `./`, `.^`, `exp`, `log`, `sqrt`, `abs`, `sign`, `floor`, `ceil`, `round`, `clip`, `mod`
+Steps 1 to 18 are built; step 19 is not.
+
+1. **N-dimensional arrays** — shape, stride, dtype, contiguous memory, creation (`zeros`, `ones`, `uniform`, `full`, `arange`, `linspace`, `eye`, `diag`)
+2. **Element-wise ops** — `+`, `-`, `.*`, `./`, `.^`, `exp`, `ln`, `sqrt`, `abs`, `sign`, `floor`, `ceil`, `round`, `clip`, `mod`
 3. **Trigonometry** — `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`
 4. **Reductions** — `sum`, `mean`, `max`, `min`, `prod`, `argmax`, `argmin` (with axis)
 5. **Sorting & selection** — `sort`, `argsort`, `topk`, `unique`, `where`
 6. **Cumulative ops** — `cumsum`, `cumprod`
-7. **Reshaping & combining** — `reshape`, `trans`, `flatten`, `slice`, `concat`, `stack`
+7. **Reshaping & combining** — `reshape`, `transpose`, `flatten`, `slice`, `concat`, `stack`
 8. **Broadcasting** — automatic shape expansion
 9. **Advanced indexing** — gather by index array
 10. **Matmul (`*`) + BLAS** — matrix multiplication, backed by BLAS
@@ -621,14 +633,14 @@ Zero overhead for non-gradient code — `grad` is only applied where explicitly 
 15. **Special functions** — `gamma`, `erf`, `bessel`, `factorial`, `choose`
 16. **Sparse arrays** — `sparse`, `dense`, sparse matmul/solve
 17. **Autograd** — `grad[f]` functional transformation, gradient computation
-18. **GPU** — `gpu[]`/`gpu[n]` directive, compiler auto-dispatch, backend detection
-19. **Distributed** — `nodes[n]` directive, compiler-managed data sharding and gradient sync
+18. **GPU** — `gpu[]`/`gpu[n]` directive, compiler auto-dispatch, backend detection (one device)
+19. **Distributed** (*proposed*) — compiler-managed data sharding and gradient sync. What exists: `crow launch <n> file.co` starts the processes, each reading its rank with `env['CROW_RANK', '0']`, and the runtime's ring (`crow_runtime::distributed`), which no builtin reaches yet. The `nodes[n]` directive this step first named was decided against (2026-10-11): the process count is the launch's
 
-## Advanced Distributed Patterns
+## Advanced Distributed Patterns (proposed)
 
-*Superseded (2026-10-11, 2026-10-16): the process count is the launch's — `crow launch <n> file.co` starts the processes and each reads its rank with `env['CROW_RANK', '0']`; `nodes` is no builtin (spec, Design Note "the process count is the launch's"). The directives below were not built.*
+*Superseded in part (2026-10-11, 2026-10-16): the process count is the launch's — `crow launch <n> file.co` starts the processes and each reads its rank with `env['CROW_RANK', '0']`; `nodes` is no name of the language (spec, Design Note "the process count is the launch's"). None of the patterns below is built, and the `nodes[…]` directives that spell them here record the design as first written: the strategies remain proposals, with no syntax yet.*
 
-`nodes[n]` handles data parallelism — same model, different data on each device. This covers most training. For larger models, Crow provides strategy directives:
+`nodes[n]` was to handle data parallelism — same model, different data on each device. This covers most training. For larger models, the design gave strategy directives:
 
 ```
 --- data parallelism (default)
@@ -660,12 +672,12 @@ nodes[4, shard = 'full']
 dloss = grad[loss]
 for batch in batches
   g = dloss[w, batch.x, batch.y]
-  w = w - 0.001 * g
+  w = w - g[0] * 0.001
 ```
 
 The compiler inserts gather/scatter operations around forward and backward passes. The user sees no difference.
 
-**Priority: next after `nodes[n]`.** Biggest practical impact — lets you train models 4-8x larger with the same hardware.
+**Priority: next after data parallelism.** Biggest practical impact — lets you train models 4-8x larger with the same hardware.
 
 ### Tensor Parallelism
 
@@ -708,7 +720,7 @@ N "expert" sub-networks with a router that decides which expert processes each t
 nodes[8, split = 'expert', experts = 8]
 ```
 
-### Custom Kernels (Escape Hatch)
+### Custom Kernels (Escape Hatch, proposed)
 
 Sometimes compiler-generated GPU code isn't fast enough. Flash Attention is the classic example — it fuses softmax + matmul into one kernel that never materializes the full N×N attention matrix, giving 2-4x speedup.
 
@@ -724,29 +736,31 @@ native = ['kernels/flash_attention.rs']
 out = flash_attention[q, k, v]     --- calls the Rust kernel
 ```
 
-Custom kernels are a build concern, not a language concern. Long-term, the compiler should recognize common patterns (e.g., `softmax[q * trans[k] ./ sqrt[d]] * v`) and auto-fuse them.
+Custom kernels are a build concern, not a language concern. Long-term, the compiler should recognize common patterns (e.g., `softmax[q * transpose[k] / sqrt[d]] * v`) and auto-fuse them. Neither is built: a crowfile has no `native` list.
 
 ### Priority Summary
 
 | Pattern | When needed | Complexity | Status |
 |---|---|---|---|
-| Data parallelism | Always | Low | `nodes[n]` ✅ |
-| ZeRO/FSDP sharding | Large models | Medium | Next |
-| Tensor parallelism | Very large models | High | After ZeRO |
+| Data parallelism | Always | Low | In part: `crow launch <n>` starts the processes and each reads its rank; the gradient sync is proposed |
+| ZeRO/FSDP sharding | Large models | Medium | Proposed, next |
+| Tensor parallelism | Very large models | High | Proposed, after ZeRO |
 | Pipeline parallelism | Huge models (100B+) | Very high | Deferred |
 | Mixture of Experts | Frontier models | Very high | Deferred |
-| Custom kernels | Perf-critical ops | Escape hatch | Rust FFI |
+| Custom kernels | Perf-critical ops | Escape hatch | Proposed: Rust kernels named in the crowfile |
 
 ## Examples
 
 ### Linear Regression
 
 ```
-x = [1, 2, 3, 4, 5]
-y = [2, 4, 6, 8, 10]
+use math
 
-w = 0.0
-b = 0.0
+x = [1.0, 2.0, 3.0, 4.0, 5.0]
+y = [2.0, 4.0, 6.0, 8.0, 10.0]
+
+w = zeros[1]
+b = zeros[1]
 
 fn loss[w, b, x, y]
   pred = x .* w + b
@@ -755,102 +769,128 @@ fn loss[w, b, x, y]
 dloss = grad[loss]
 
 for i in range[1000]
-  g_w, g_b = dloss[w, b, x, y]
-  w = w - 0.01 * g_w
-  b = b - 0.01 * g_b
+  g = dloss[w, b, x, y]                   --- one gradient per parameter, in order
+  w = w - g[0] * 0.01
+  b = b - g[1] * 0.01
 
 log['w = `w`, b = `b`']
 ```
 
-### Neural Network (2-Layer, From Scratch)
+A function `grad` differentiates takes tensors, or numbers alone: `w` and `b` are tensors of one number here, beside the data.
+
+### Neural Network (2-Layer)
 
 ```
-w = [
-  w1 = randn[784, 128] .* 0.01,
-  b1 = zeros[128],
-  w2 = randn[128, 10] .* 0.01,
-  b2 = zeros[10]
-]
+use math
+use math.nn
 
-fn relu[x]
-  return max[x, 0]
+w1 = randn[784, 128] * 0.01
+b1 = zeros[128]
+w2 = randn[128, 10] * 0.01
+b2 = zeros[10]
 
-fn model[w, x]
-  h = relu[x * w.w1 + w.b1]
-  return h * w.w2 + w.b2
+fn model[w1, b1, w2, b2, x]
+  h = relu[x * w1 + b1]
+  return h * w2 + b2
 
-fn cross_entropy[logits, labels]
-  probs = exp[logits] ./ sum[exp[logits], axis = 1]
-  return -mean[sum[labels .* log[probs], axis = 1]]
-
-fn loss[w, x, y]
-  return cross_entropy[model[w, x], y]
+fn loss[w1, b1, w2, b2, x, y]
+  return crossentropy[model[w1, b1, w2, b2, x], y]
 
 dloss = grad[loss]
 ```
 
+`relu` and `crossentropy` are `math.nn`'s, each a formula written in Crow over the math builtins (`relu[x]` is `clip[x, 0.0, inf]`), and `y` holds each row's class. *Proposed:* the weights held in one map (`map[w1 = …, b1 = …]`), which `grad` takes as one parameter and map arithmetic updates in one line; today `grad` takes tensors or numbers alone, a parameter each.
+
 ### Training Loop with Batching
 
 ```
-data = read['mnist.csv']
-batches = chunk[data, 32]
+use math, math.nn
+
+images = load['mnist_x.csv']             --- a row of 784 pixels per image
+labels = flatten[load['mnist_y.csv']]    --- the digit each one shows
+
+w1 = randn[784, 128] * 0.01
+b1 = zeros[128]
+w2 = randn[128, 10] * 0.01
+b2 = zeros[10]
+
+fn loss[w1, b1, w2, b2, x, y]
+  h = relu[x * w1 + b1]
+  return crossentropy[h * w2 + b2, y]
+
+batches = int[len[labels] / 32]
 
 for epoch in range[10]
   total = 0.0
-  for batch in batches
-    g = dloss[w, batch.x, batch.y]
-    w = w - 0.001 * g                     --- map arithmetic
-    total = total + loss[w, batch.x, batch.y]
-  log['epoch `epoch` loss = `total / len[batches]`']
+  for k in range[batches]
+    x = slice[images, k * 32, k * 32 + 32]
+    y = slice[labels, k * 32, k * 32 + 32]
+    g = grad[loss][w1, b1, w2, b2, x, y]
+    w1 = w1 - g[0] * 0.1
+    b1 = b1 - g[1] * 0.1
+    w2 = w2 - g[2] * 0.1
+    b2 = b2 - g[3] * 0.1
+    total = total + loss[w1, b1, w2, b2, x, y]
+  log['epoch `epoch` loss = `total / batches`']
 ```
+
+`load` here is math's: a CSV of numbers read into a matrix, whose slice is its rows.
 
 ### GPU Training
 
 ```
+use math, math.nn
+
 gpu[]
 
-w = [
-  w1 = randn[784, 128] .* 0.01,
-  b1 = zeros[128]
-]
+w1 = randn[784, 128] * 0.01
+b1 = zeros[128]
+data = uniform[0.0, 1.0, 32, 784]
 
---- compiler auto-dispatches numeric ops to GPU
-h = relu[data * w.w1 + w.b1]
+--- tensors made after gpu[] live on the GPU, and their arithmetic runs there
+h = relu[data * w1 + b1]
 ```
 
 ### Distributed Training
 
 ```
-nodes[4]
-gpu[]
+--- run as: crow launch 4 train.co — four processes of the program
+use math
 
---- same training code, compiler handles distribution
-dloss = grad[loss]
-for i in range[1000]
-  g = dloss[w, x, y]
-  w = w - 0.001 * g
+me = int[env['CROW_RANK', '0']]
+world = int[env['CROW_WORLD_SIZE', '1']]
+
+images = load['mnist_x.csv']
+share = int[len[images] / world]
+mine = slice[images, me * share, me * share + share]   --- this process's rows
 ```
+
+Each process trains on its share of the rows. *Proposed:* the gradients averaged across the processes by the compiler, so that the training loop above runs unchanged; the runtime's ring (`crow_runtime::distributed`: a mean across the ranks, a broadcast, a barrier) has no builtin yet. (`rank` is math's matrix rank, so the process's rank is held as `me`.)
 
 ### Transformer Attention (Core of LLMs)
 
 ```
+use math
+
 fn attention[q, k, v]
-  d = shape[k][-1]
-  scores = q * trans[k] ./ sqrt[d]
-  weights = softmax[scores, axis = -1]
+  rows = len[q]
+  scores = q * transpose[k] / sqrt[k.shape[1]]
+  ex = exp[scores - reshape[max[scores, 1], rows, 1]]   --- a softmax over each row
+  weights = ex ./ reshape[sum[ex, 1], rows, 1]
   return weights * v
 
-fn multi_head[x, wq, wk, wv, wo, heads]
-  q = reshape[x * wq, [-1, heads, 64]]
-  k = reshape[x * wk, [-1, heads, 64]]
-  v = reshape[x * wv, [-1, heads, 64]]
-  out = attention[q, k, v]
-  return reshape[out, [-1, heads * 64]] * wo
+--- two heads, each through its own slice of the output projection
+fn two_heads[x, q0, k0, v0, o0, q1, k1, v1, o1]
+  return attention[x * q0, x * k0, x * v0] * o0 + attention[x * q1, x * k1, x * v1] * o1
 ```
 
-No classes, no decorators, no `self`, no `nn.Module`. Just functions on arrays. `grad[f]` turns any function into its gradient. GPU is a directive, not a code rewrite. Distributed is a directive, not a framework.
+The heads are summed through their slices of the output projection, the same numbers as concatenating them and projecting, as `packages/gpt` computes them; `math.nn`'s `softmax` normalises a whole tensor, so the softmax over each row is written out. *Proposed:* tensors of three axes in a product, for every head at once.
+
+No classes, no decorators, no `self`, no `nn.Module`. Just functions on arrays. `grad[f]` turns any function into its gradient. GPU is a directive, not a code rewrite. Processes are the launch's, not a framework's (the gradient sync between them is proposed).
 
 ## Comparison with Other Languages
+
+The ratings grade the design as written before the build, against what the other languages ship; what Crow has built is the next section's, and a row that names a proposal says so.
 
 ### Simplicity
 
@@ -858,27 +898,34 @@ How easy is it to write ML code?
 
 | Language | Rating | Why |
 |---|---|---|
-| **Crow** | ★★★★★ | `grad[f]`, map arithmetic, directives. Minimal ceremony. |
+| **Crow** | ★★★★★ | `grad[f]`, directives, map arithmetic (proposed). Minimal ceremony. |
 | JAX | ★★★★ | Functional and clean, but Python boilerplate (`@jax.jit`, `jax.tree_map`) |
 | MATLAB | ★★★★ | Great for linear algebra, weak for modern DL |
 | Julia | ★★★½ | Clean but multiple dispatch can be confusing, Zygote has sharp edges |
 | PyTorch | ★★★ | `loss.backward()`, `optimizer.step()`, `optimizer.zero_grad()`, `.to(device)`, `nn.Module`, `self.` everywhere |
 | R | ★★ | Not designed for DL, everything is a workaround |
 
-Crow 2-layer neural network — 10 lines:
+Crow 2-layer neural network, as it runs today — 15 lines (the design's 10 held the weights in one map and updated them with one line of map arithmetic, which is proposed):
 
 ```
-w = [w1 = randn[784, 128] .* 0.01, b1 = zeros[128],
-     w2 = randn[128, 10] .* 0.01, b2 = zeros[10]]
+use math, math.nn
 
-fn loss[w, x, y]
-  h = relu[x * w.w1 + w.b1]
-  return cross_entropy[h * w.w2 + w.b2, y]
+w1 = randn[784, 128] * 0.01
+b1 = zeros[128]
+w2 = randn[128, 10] * 0.01
+b2 = zeros[10]
+
+fn loss[w1, b1, w2, b2, x, y]
+  h = relu[x * w1 + b1]
+  return crossentropy[h * w2 + b2, y]
 
 dloss = grad[loss]
 for batch in batches
-  g = dloss[w, batch.x, batch.y]
-  w = w - 0.001 * g
+  g = dloss[w1, b1, w2, b2, batch.x, batch.y]
+  w1 = w1 - g[0] * 0.001
+  b1 = b1 - g[1] * 0.001
+  w2 = w2 - g[2] * 0.001
+  b2 = b2 - g[3] * 0.001
 ```
 
 PyTorch equivalent — 20 lines:
@@ -914,7 +961,7 @@ How easy is it to scale from laptop to cluster?
 
 | Language | Rating | Why |
 |---|---|---|
-| **Crow** | ★★★★★ | `gpu[]`, `nodes[4]`. One line. Code doesn't change. |
+| **Crow** | ★★★★★ | `gpu[]`: one line, and the code doesn't change. Processes: `crow launch 4`, the gradient sync between them proposed. |
 | JAX | ★★★★ | `pmap` is clean but axis names and `PartitionSpec` get complex |
 | DeepSpeed | ★★★½ | Config-driven but still wraps PyTorch's complexity |
 | PyTorch | ★★½ | `DDP`, `FSDP`, `init_process_group`, `DistributedSampler`... |
@@ -927,15 +974,15 @@ Scaling the same training code:
 | Step | Crow | PyTorch |
 |---|---|---|
 | Single GPU | Add `gpu[]` | `.cuda()` on model + every tensor |
-| Multi-GPU | `gpu[4]` | `DDP(model)` + `DistributedSampler` + `init_process_group` + launch script |
-| Multi-node | Add `nodes[4]` | All of the above + `torchrun` + env vars + NCCL config |
-| ZeRO sharding | `nodes[4, shard = 'full']` | Switch to `FSDP` wrapper or install DeepSpeed + config JSON |
+| Multi-GPU | `gpu[4]` (proposed: one device is used today) | `DDP(model)` + `DistributedSampler` + `init_process_group` + launch script |
+| Multi-node | Proposed: `crow launch 4 train.co` starts four processes on one machine today, each reading its rank, and the gradient sync between them is not built | All of the above + `torchrun` + env vars + NCCL config |
+| ZeRO sharding | Proposed, with no syntax yet | Switch to `FSDP` wrapper or install DeepSpeed + config JSON |
 
 ### Autograd
 
 | Language | Rating | Why |
 |---|---|---|
-| **Crow** | ★★★★★ | `grad[f]` — one concept, composable, no hidden state |
+| **Crow** | ★★★★★ | `grad[f]` — one concept, no hidden state (composing it, `grad[grad[f]]`, is proposed) |
 | JAX | ★★★★★ | Same approach — `jax.grad(f)`. Crow borrowed this. |
 | Swift4TF | ★★★★½ | Compiler-level, beautiful design. Dead project. |
 | Julia/Zygote | ★★★★ | Source-to-source is powerful but fragile |
@@ -947,7 +994,7 @@ Scaling the same training code:
 
 | Language | Rating | Why |
 |---|---|---|
-| **Crow** | ★★★★★ | Map arithmetic: `w = w - lr * g`. One line for all params. |
+| **Crow** | ★★★★★ | Proposed: map arithmetic, `w = w - lr * g`, one line for all params. Today a line per parameter: `grad` takes tensors, not a map |
 | JAX | ★★★★ | Pytrees, but needs `jax.tree_map` — more verbose |
 | PyTorch | ★★★ | `model.parameters()` iterator, tied to `nn.Module` OOP |
 | Julia | ★★½ | Manual, Flux.jl has `Flux.params()` but not as clean |
@@ -978,7 +1025,7 @@ Crow gets ★★★★ not ★★★★★ because it's young. The design produc
 | Julia | ★★★ | Growing, Flux.jl, good for science |
 | MATLAB | ★★½ | Proprietary, shrinking |
 | Mojo | ★ | Very early |
-| **Crow** | ☆ | Doesn't exist yet |
+| **Crow** | ☆ | Barely begun: a package manager and the repository's own packages, each held to its Python reference; no community packages, no pretrained models |
 
 Crow's biggest weakness. Python's ecosystem took 15 years to build.
 
@@ -995,7 +1042,7 @@ Crow's biggest weakness. Python's ecosystem took 15 years to build.
 
 Crow ties with JAX on design quality. Crow wins on simplicity and scaling. JAX wins on ecosystem and proven performance. PyTorch wins only on ecosystem — its developer experience is mediocre.
 
-Crow's math library design is best-in-class. The language-level directives (`gpu[]`, `nodes[n]`, `grad[f]`, map arithmetic) are cleaner than anything else. But design is cheap — execution is everything. The gap between this document and a working system that can train a real model is enormous.
+Crow's math library design is best-in-class. The language-level directives (`gpu[]`, `grad[f]`, and the proposed map arithmetic) are cleaner than anything else. But design is cheap — execution is everything. The gap between this document and a working system that can train a real model is enormous.
 
 ## Implementation Status: Function Coverage Rating
 
@@ -1028,17 +1075,17 @@ Honest assessment of what's actually implemented and working, compared to mature
 - **Syntax**: `W * x + b` for matmul, `.^` for element-wise power, `sort[x]` as universal builtin — cleaner than all competitors.
 - **Operator design**: MATLAB/Julia-style `*` vs `.*` is the right convention for data science.
 - **Error handling**: Automatic `.ok`/`.reason` propagation — no silent NaN poisoning (NumPy), no exceptions (Julia).
-- **Parallel by default**: `for` loops auto-parallelize via rayon. No threading boilerplate.
-- **Linear algebra**: 13 operations (solve, inv, det, svd, qr, cholesky, eigen, norm, dot, pinv, lstsq, triu, tril) — competitive with R, approaching MATLAB's core set.
-- **DataFrames**: Full frame module with load, save, select, filter, sort, group, join, stack, head, tail, fill, unique, rename, stats, datetime, tz — 16 operations covering the core data science workflow.
+- **Parallel by default**: `for` loops auto-parallelize via rayon where nothing the body does can show the order (spec, §14 For Loops). No threading boilerplate.
+- **Linear algebra**: 15 operations (solve, inv, det, svd, qr, cholesky, eigen, norm, dot, pinv, lstsq, triu, tril, rank, cond) — competitive with R, approaching MATLAB's core set.
+- **DataFrames**: Full frame module with new, load, save, select, sort, group, pivot, window, join, unpivot, complete, sample, where, bucket, stack, head, tail, fill, unique, rename and stats — 21 operations, beside a mask's rows (`df[df.age gt 30]`), a column written by the dot (`df.name = values`) and moments in a column — covering the core data science workflow, held to pandas.
 - **Distributions**: 8 distributions (normal, uniform, poisson, bernoulli, gamma, beta, exponential + randn) cover ~90% of practical use cases.
 
 ### Weaknesses
 
 - **Statistics depth**: 13 functions vs SciPy's ~200. Core tests covered (chi-square, ANOVA, KS, distribution fitting) but many specialized tests still missing.
 - **Signal processing**: Good coverage (FFT, conv, windows, STFT, spectrogram, lowpass/highpass/bandpass) but no adaptive filters, no wavelet transforms.
-- **GPU**: Directive works (`gpu[n]`) with verified WGSL shaders for matmul, parallel reduction (sum), and all element-wise ops. Benchmarks available. Memory management with OOM detection. Still ★★★ not ★★★★★ — missing conv2d kernel, multi-GPU coordination, and large-scale production benchmarks.
-- **Ecosystem**: No package manager, no community packages, no pretrained models.
+- **GPU**: Directive works (`gpu[n]`) with verified WGSL shaders for matmul, parallel reduction (sum), the four arithmetic operators and `neg`, `abs`, `exp`, `ln`, `sqrt`, `sin`, `cos`, `tan`; a power and a tensor divided by a number fall back to the CPU. Benchmarks available. Memory management with OOM detection. Still ★★★ not ★★★★★ — missing conv2d kernel, multi-GPU coordination (one device is used), and large-scale production benchmarks.
+- **Ecosystem**: A package manager (`crow install`, `crow.lock`) and the repository's own packages, each held to its Python reference; no community packages, no pretrained models.
 
 ### Overall
 
@@ -1056,5 +1103,5 @@ Honest assessment of what's actually implemented and working, compared to mature
 2. ~~**Distribution fitting**~~ ✅ `fit[data, 'normal']` → `{mu, sigma}` (normal, exponential, uniform, poisson)
 3. ~~**More stats tests**~~ ✅ chi-square, ANOVA, KS test
 4. ~~**Signal depth**~~ ✅ STFT, spectrogram, lowpass/highpass/bandpass filters
-5. **Optimization** — `minimize`, `root`, `curve_fit` (not yet implemented)
-6. **Advanced ML** — beyond basic NN layers (not yet implemented)
+5. **Optimization** — in part, as the package `optimize` rather than `math`: scalar minimisation (Brent, golden section, bounded), roots (bisection, Brent, Newton, secant), Nelder–Mead and BFGS, held to scipy; `curve_fit` not yet implemented
+6. **Advanced ML** — in part, as packages: `models` (regressions, support vector machines, trees, forests, gradient boosting, clustering, a Gaussian mixture, PCA, a small network), `gpt` (nanoGPT, held to PyTorch), `vectors` (nearest neighbours, held to faiss), `retrieval` (TF-IDF and BM25)

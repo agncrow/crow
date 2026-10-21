@@ -43,4 +43,7 @@ A moment is a kind of its own: the instant, and the offset it was written
 in, which its fields and `str[t]` read in. `moment[…]` makes one from
 text, from its parts in a zone, or from a moment in another zone; `fmt`
 renders it in a style; `t2 - t1` is the seconds between, `t + 60` a
-moment. Reference: spec section 11 (Moments, Freshness).
+moment. `captured[x]` is the moment a value read from outside — a file,
+a query, a request — arrived; a value computed here has none, and the
+answer is an error value of kind `no_capture`. Reference: spec section 11
+(Moments, Freshness).

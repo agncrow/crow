@@ -103,7 +103,7 @@ view render[]
 4. it reads `now[]` and a tick of `serve refresh` passed — a click's render is not a tick, so a click recomputes only what it moved;
 5. it reads a table this program never writes — an external source — and its freshness window elapsed. `fresh = N` is seconds; the default `fresh = 0` means *as fresh as the loop*: recomputed every tick, which is what a query inside a view did before. Declaring `fresh` is the relaxation.
 
-A derivation that fails — a query error — holds the error value; readers see `.ok` and `.reason` and a view renders the reason in place. `captured[x]` on a derivation is the moment it last ran. Derivations live in a program that serves: a `use ui` program with a page, whose views and handlers read them, or a `use web` program whose routes read them — `derive x needs a program that serves — …` in a script, which computes a value where it needs it. In the test harness `html[a]` is a tick and `click[a, h]` marks what the handler wrote. Design: `derive-design.md`.
+A derivation that fails — a query error — holds the error value; readers see `.ok` and `.reason`, and a view shows the failure in place as an id, its reason in the server's log beside the id. `captured[x]` on a derivation is the moment it last ran. Derivations live in a program that serves: a `use ui` program with a page, whose views and handlers read them, or a `use web` program whose routes read them — `derive x needs a program that serves — …` in a script, which computes a value where it needs it. In the test harness `html[a]` is a tick and `click[a, h]` marks what the handler wrote. Design: `derive-design.md`.
 
 **Who holds a derivation is inferred from what it reads.** A fact is a top-level variable; a database or socket handle is not one, and neither is a `fetch`/`poll` binding. A derivation that reads a fact a session writes — assigned by a handler or a helper a handler calls, bound to an input like `field` or `select`, or carried in a page's address (a `:name` of its path, a name of its `url = […]`) — or a data source, whose answers land in each session that asks, or another derivation held per session, is computed per session. One that reads only constants, tables and the clock — the day's universe, the latest bar in a table — is computed once for the app and shared by every session and route, and a table write in any session, or any route, reaches every derivation over that table. (A derivation over a fact of the address, or over a source, had been counted the app's: one session's address, or the source's first answer, served to all.) `crow check` prints each derivation's read set and who holds it — `held by the app`, or `held by each session (it reads 'picked', which a session writes)`.
 
@@ -147,7 +147,7 @@ A route's handler reads each derivation it names once, as its request begins —
 
 **Rows keep their identity through `id`.** The live client patches the page in place: an element with an `id` is matched to the element with that `id` in the previous render, so a row rendered from data — `p['`s.name`', id = 's-`s.id`']` — moves when its list is reordered and is dropped when its item is gone, while its neighbours are untouched. Elements without an `id` match by position. A node that survives a render keeps its focus, caret and scroll, so the field a reader is typing in is never rebuilt under them.
 
-**The checker teaches the form.** A top-level variable assigned from a query and read by a view (a launch-time snapshot), and a query against a remote database inside a view, are errors in `crow check`; `d` in the check loop rewrites the first into `derive x` and hoists the second above its view as `derive rows[fresh = 60]`.
+**The checker teaches the form.** A top-level variable assigned from a query and read by a view (a launch-time snapshot) is an error in `crow check`; `d` in the check loop rewrites it into `derive x`. A query inside a view never gets that far: a view reaches no database (Effects Have Kinds), so it is refused before the program runs, and the query's place is a `derive` above the view (`derive rows[fresh = 60]` for a remote database).
 
 ### Tables over frames
 
@@ -271,8 +271,10 @@ Three attributes any element takes: `tip = 'text'` is the browser's tooltip, `fi
 A chart is a view over a frame. `chart` is an element like `table`: valid only inside views, it takes a frame plus named arguments that say which columns to draw, and renders server-side as SVG:
 
 ```
+derive bars
+    return query[conn, 'SELECT ts, o, hi, lo, c, vol FROM bars ORDER BY ts']
+
 view render[]
-    bars = query[conn, 'SELECT ts, o, hi, lo, c, vol FROM bars ORDER BY ts']
     return div[
         chart[bars, candles = ['o', 'hi', 'lo', 'c'], bars_y = 'vol',
               marker = open_bell, tz = 'America/New_York', height = 200]

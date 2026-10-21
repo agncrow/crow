@@ -33,7 +33,7 @@ verification:
 ```text
 $ crow test pricing.co
 
-  ✓ 1 block pass — 3 truths, 1 law, 5 inputs run
+  ✓ 1 block pass — 4 truths, 1 law, 5 inputs run
 ```
 
 ## Truths: bare booleans
@@ -44,7 +44,7 @@ you chose. `fee[100.0] eq 1.0` records a *decision* (the fee floor is one
 dollar), and the `.kind` line pins the error path — error values are
 ordinary values (chapter 7), so verifying them needs nothing special.
 
-A truth under a precondition (`if s gt 0.0`, and the comparison inside
+A truth under a precondition (`if n gte 0.0`, and the comparison inside
 it) is checked where the precondition holds. A block has to reach at
 least one truth or `assert`, in its body or in a function it calls. One that reaches none fails with `asserts nothing`: a
 test that cannot fail tests nothing, and a line that was meant as a truth
@@ -56,9 +56,9 @@ When a truth fails, you see both sides:
   ⚠ 1 failing of 1 block
 
   pricing.co:5
-     fee tests — line 6: assert failed: eq
+     fee tests — line 7: assert failed: eq
     left:  0.1
-    right: 1.0
+    right: 1  (at n = 0)
 ```
 
 Someone "simplified" `fee` and dropped the floor; the truth caught it with

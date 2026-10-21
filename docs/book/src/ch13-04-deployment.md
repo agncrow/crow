@@ -113,7 +113,7 @@ Every direction from here is a chapter you've already read:
 
 A data application with live UI, in one language, one file, one binary —
 parallel where it helps, sequential where it matters, with failures that
-carry their reasons all the way to the pixel. That's Crow's whole bet.
+never lose their reasons. That's Crow's whole bet.
 
 The reference (`docs/language-spec.md`) covers what this book didn't;
 the Design Notes there explain every "why can't I…" you'll hit next.

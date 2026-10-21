@@ -15,7 +15,8 @@ deps = map[retrieval = 'github.com/agncrow/crow/packages/retrieval@main']
 ```
 
 `crow install` checks the package out into `crow_modules/retrieval`, and
-`crow.lock` pins the commit it took. A program imports the parts it uses:
+`crow.lock` pins the commit it took and the hash of the files it
+installed. A program imports the parts it uses:
 
 ```
 use retrieval.words, retrieval.tfidf, retrieval.bm25
@@ -55,8 +56,9 @@ has none in its top three).
 ## Held to the references
 
 ```
-crow test --packages retrieval          # held.co: every number the same
-crow run packages/retrieval/example.co  # the package at work, both modes
+crow test --packages retrieval             # held.co: every number the same; the example in both modes
+crow run -i packages/retrieval/example.co  # the package at work, interpreted
+crow run packages/retrieval/example.co     # and compiled
 ```
 
 `reference/reference.py` (scikit-learn 1.9, rank_bm25 0.2.2, numpy 2.5)

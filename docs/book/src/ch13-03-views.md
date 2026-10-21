@@ -61,15 +61,15 @@ page['/', render]
 
 Walk it top to bottom and count the chapters:
 
-- **`db.connect`** — qualified, because `use web` also exports a
-  `connect` (the websocket client); the prefix resolves it, exactly as
-  chapter 8 said it must. The connection is infrastructure, not UI state
-  — Crow keeps it as a process-wide handle, never serialized.
+- **`db.connect`** — written with its module's prefix, which always
+  reaches a module's name (chapter 8); bare `connect` would do as well,
+  since `db` alone provides it. The connection is infrastructure, not UI
+  state — Crow keeps it as a process-wide handle, never serialized.
 - **`min_qty` / `reset_filters`** — chapter 12's reactive loop: edit the
   field, the state changes, the page re-renders; click Reset, same.
 - **`stat_card`** — a parameterized component, used at two types
-  (string and int values). Chapter 4's monomorphization quietly makes
-  both work.
+  (string and int values). A function or a view called with two kinds is
+  compiled once for each, which quietly makes both work.
 - **`trades`** — a derivation, chapter 12's other half: the query runs
   off the render, and runs again when a handler writes the table or a
   refresh tick passes, so every page shows the database as it is *now*
@@ -77,9 +77,10 @@ Walk it top to bottom and count the chapters:
   queried itself would be refused, since a view is a function of the
   state it is given. Frames flow from the derivation through masks,
   `sort` and `group` into `table[...]` untouched.
-- **A failed query renders its reason** — a view renders what it's
+- **A failed query renders in place** — a view renders what it's
   given, and what it's given is chapter 7's error value. Stop the
-  database and the page tells you why, instead of crashing.
+  database and the page shows the failure where the data would be, with
+  an id the server's log explains, instead of crashing.
 
 Seed, run, open `localhost:3000` — the page below is real output, served
 by this program during this book's own verification:

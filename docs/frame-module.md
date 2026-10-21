@@ -77,7 +77,7 @@ df.columns  --- ['name', 'age', 'city', 'salary', 'score']
 ```
 
 - Clean separation — frame is its own thing
-- Properties (.shape, .columns, .dtypes) without conflicting with column names
+- Properties (.shape, .columns, .dtypes) beside the columns: the property is read first, and a column named like one is read as `` df.`'shape'` ``
 - Column order preserved (not alphabetically sorted like BTreeMap)
 - Optimized internal storage: typed vectors (Vec<i64>, Vec<f64>, Vec<bool>, Vec<i64> + Vec<i16> for DateTime); text in one buffer with an offset per cell, or a code per cell into a dictionary (`textcol.rs`); a bit per cell for which are there (`validity.rs`)
 - Display shows a nice table format
@@ -107,8 +107,10 @@ others = df[not (df.name eq 'alice')]
 
 Mask semantics (implemented in both interpreter and transpiler):
 - `eq ne gt lt gte lte` on a column vs a scalar → boolean array, element-wise
+- `'li' in df.name`, `starts[df.name, 'a']`, `ends[df.name, 'e']` → a text column tested cell by cell, a boolean array
 - `and` / `or` on two boolean arrays → boolean array, element-wise
 - `not` on a boolean array → boolean array, element-wise
+- A column of bools is its own mask: `df[df.active]`
 - Missing values compare as `false` (excluded by the filter)
 
 ---
@@ -121,23 +123,23 @@ Two forms of `tensor[]`:
 use frame
 use math
 
-df = load['scores.csv']
+df = frame.load['scores.csv']         --- `load` is math's too: the module says which
 --- df has columns: age(float), salary(float), score(float)
 
 --- all-numeric frame → tensor
 t = tensor[df]                        --- shape: [N, 3]
 
 --- pick specific columns → tensor
-t = tensor[df, [age, salary]]         --- shape: [N, 2]
+t = tensor[df, ['age', 'salary']]     --- shape: [N, 2]
 ```
 
-Not duplicates — different use cases. `tensor[df]` errors on string columns to prevent silent data loss.
+Not duplicates — different use cases. `tensor[df]` stops the program on a text column, naming it, to prevent silent data loss.
 
 ---
 
 ## Function List
 
-Replaces `math.load` and `io.csv[]` — `load` is the single CSV entry point.
+`load` reads a table into a frame: CSV, JSON records or Parquet, by the file's extension. (`math`'s `load` reads a table of numbers into a tensor, and `io`'s `csv` reads rows as maps; with `math` imported too, the frame's is written `frame.load`.)
 
 **Column references: strings for names, expressions for computation.**
 Naming a column is a string (`sort[df, 'age']`). Computing on a column is a
@@ -145,13 +147,13 @@ normal Crow expression over `df.col` (`df[df.age gt 50]`). Every line
 is plain Crow — no special evaluation rules inside frame calls.
 
 ```crow
-sort[df, 'age']                    --- name a column: string
-sort[df, 'first name']             --- spaces, hyphens — no escape hatch needed
-select[df, ['name', 'age']]        --- list of names: strings
-df[df.age gt 50]           --- compute on a column: expression
+by_age = sort[df, 'age']             --- name a column: string
+by_name = sort[df, 'first name']     --- spaces, hyphens — no escape hatch needed
+two = select[df, ['name', 'age']]    --- list of names: strings
+old = df[df.age gt 50]               --- compute on a column: expression
 
 col = 'age'
-sorted = sort[df, col]             --- dynamic column names just work
+sorted = sort[df, col]               --- dynamic column names just work
 ```
 
 > **Design Note (July 2026):** Bare-name column references (`sort[df, age]`)
@@ -164,9 +166,10 @@ sorted = sort[df, col]             --- dynamic column names just work
 
 | Function | Description | Example |
 |----------|-------------|---------|
+| new | A frame written down, each named argument a column (`frame.new[]` the empty frame) | `bars = frame.new[sym = ['AAPL', 'MSFT'], qty = [100, 50]]` |
 | load | Load CSV → frame | `df = load['data.csv']` |
 | save | Write frame → CSV | `save[df, 'out.csv']` |
-| select | Pick columns | `sub = select[df, ['age', 'salary']]` |
+| select | Pick columns | `picked = select[df, ['age', 'salary']]` |
 | a mask | Pick rows | `old = df[df.age gt 50]` |
 | sort | Sort by a column, or by several with a direction each | `s = sort[df, ['symbol', 'qty'], desc = [false, true]]` |
 | group | Group and aggregate, by one key or several | `g = group[df, ['dept', 'city'], ['salary', 'mean'], ['age', 'max']]` |
@@ -178,7 +181,7 @@ sorted = sort[df, col]             --- dynamic column names just work
 | sample | n rows drawn by the seeded generator, in the frame's order | `some = sample[df, 100]` |
 | where | A column picked by a mask from two sides | `df.px = where[df.filled, df.price, 0.0]` |
 | bucket | Each moment's bucket start, a column of moments | `df.hour = bucket[df.at, 3600]` |
-| stack | Stack frames vertically | `all = stack[df1, df2]` |
+| stack | Stack frames vertically | `both = stack[df1, df2]` |
 | head | First N rows | `top = head[df, 5]` |
 | tail | Last N rows | `bottom = tail[df, 5]` |
 | fill | Fill missing values, with a value or by direction | `clean = fill[df, 'age', how = 'forward']` |
@@ -191,11 +194,12 @@ sorted = sort[df, col]             --- dynamic column names just work
 - `pivot` reshapes only: a pair two rows share stops the program, naming the `group` that aggregates it first (spec, Design Note "pivot reshapes, group aggregates").
 - `group` and `window` take `sum`, `mean`, `min`, `max`, `count`, `median`, `std`, `var`, `first`, `last`, `distinct` and a percentile `p1`…`p99`; `window` also `lag`, `lead` and `rank`, over the trailing `n` rows (0: every row so far) or the rows within `span` seconds before each row's own on the column `on` names, within the partitions `by` names (2026-10-02; the rest 2026-10-07, held to pandas 3.0 to the last digit — its rolling kernels compile to fused multiply-adds, which the runtime's `mul_add` reproduces).
 - `join` defaults inner. `join[df1, df2, 'id', 'left']` for left/right/outer; `semi` and `anti` keep the left's rows with and without a match; `asof` matches the last key by time, the others exactly.
-- Text functions (`lower`, `upper`, `trim`, `replace`, `sub`, `contains`, `starts`, `ends`), casts (`int`, `float`, `str`, `moment`) and a moment's fields (`df.at.hour`) work over a column cell by cell; a cell that cannot convert is missing.
+- Text functions (`lower`, `upper`, `trim`, `replace`, `sub`, `starts`, `ends`, and `x in df.col`), casts (`int`, `float`, `str`, `moment`) and a moment's fields (`df.at.hour`) work over a column cell by cell; a cell that cannot convert is missing.
+- A column is written the way it is read: `df.bonus = values` adds the column, or replaces it, where the frame lies — `values` a list, a tensor or a column as long as the rows, or one value repeated down them; values of another length stop the program. `` df.`name` = values `` writes the column a variable names (spec, Frames).
 
 Plus properties: `.shape`, `.columns`, `.dtypes`
 
-Plus conversion: `tensor[df]` or `tensor[df, ['age', 'salary']]`
+Plus conversion, with `use math`: `tensor[df]` or `tensor[df, ['age', 'salary']]`
 
 ---
 
@@ -203,22 +207,30 @@ Plus conversion: `tensor[df]` or `tensor[df, ['age', 'salary']]`
 
 Each column stores a **validity bitmap** (1 bit per row). No sentinels, no `none`/`null` in the language.
 
-- **Column ops** (vectorized): missing propagates in arithmetic, excluded in comparisons. Zero error values allocated.
-- **Individual cell access**: missing surfaces as an **error value** (Crow's existing system).
+- **Column ops** (vectorized): excluded in comparisons — a missing cell is `false` in a mask. Arithmetic over a column with a missing cell stops the program (`row 2 of the column is missing — fill the column first: fill[frame, 'column', value]`): fill it first. Zero error values allocated.
+- **Individual cell access**: missing surfaces as an **error value** (Crow's existing system) — of reason `missing` where the column can have missing cells (a database column that can hold NULL, the side of a `join` a row can have no match on), of reason `null` for a loaded file's column no read types (spec, Frames and db, Typed cells).
 - **Numeric storage**: missing cells store `nan` in `Vec<f64>` (bitmap is source of truth). `tensor[df]` preserves `nan` — standard for ML.
 - **String/DateTime**: bitmap says "missing", individual access returns error value.
 
 ```crow
-df.name[1]       --- error: missing
-df.name[1].ok    --- false
+use frame
+
+df = load['people.csv']          --- the file of the Complete Example, below
+log[df.age]                      --- [30, error: missing, 25, 42]
 
 --- .ok returns boolean array — same for every column type
-df.name.ok       --- [true, true, false, true]
-df.age.ok        --- [true, false, true, true]
+log[df.name.ok]                  --- [true, true, false, true]
+log[df.age.ok]                   --- [true, false, true, true]
 
---- count present/missing
-count[df.age.ok]         --- 3 (present)
-count[not df.age.ok]     --- 1 (missing)
+--- count present/missing: the rows each mask keeps
+log[len[df[df.age.ok]]]          --- 3 (present)
+log[len[df[not df.age.ok]]]      --- 1 (missing)
+
+--- a cell read one at a time, from a column that can have missing cells
+depts = frame.new[name = ['alice', 'carol'], dept = ['eng', 'ops']]
+both = join[df, depts, 'name', 'left']
+log[both.dept[1]]                --- error: missing
+log[both.dept[1].ok]             --- false
 ```
 
 ---
@@ -228,11 +240,11 @@ count[not df.age.ok]     --- 1 (missing)
 A `datetime` column stores UTC epoch milliseconds (`i64`) and the offset
 each cell was written in, in minutes (`i16`) — the same two numbers a
 moment carries (`crow_runtime::moments::Moment`), so a cell read one at a
-time is a moment, a list of moments handed to `with` is a column, and a
-mask compares the column with a moment by instant. One kind in both modes
-and from every source, since 2026-10-06 (spec, Design Note "a moment is one
-kind"); the module's own `datetime` and `tz` went with it, their jobs done
-by `moment[text]` and `moment[t, tz = zone]`.
+time is a moment, a list of moments written as a column (`df.at = times`)
+is one, and a mask compares the column with a moment by instant. One kind
+in both modes and from every source, since 2026-10-06 (spec, Design Note
+"a moment is one kind"); the module's own `datetime` and `tz` went with
+it, their jobs done by `moment[text]` and `moment[t, tz = zone]`.
 
 ```crow
 --- auto-detect ISO 8601 in CSV
@@ -241,8 +253,8 @@ by `moment[text]` and `moment[t, tz = zone]`.
 d = moment['2024-01-15T10:30:00-05:00']
 d.year           --- 2024
 d.offset         --- -300 (minutes from UTC)
-moment[d, tz = 'UTC']
-moment[d, tz = '+09:00']
+utc = moment[d, tz = 'UTC']          --- 2024-01-15T15:30:00Z
+tokyo = moment[d, tz = '+09:00']     --- 2024-01-16T00:30:00+09:00
 ```
 
 ---
@@ -268,32 +280,36 @@ use math
 ---      ,25,,2024-03-20
 ---      carol,42,90000,2024-06-01
 
---- load
-df = load['people.csv']
+--- load (with math imported too, `load` and `stack` take the module's name)
+df = frame.load['people.csv']
 log[df]
 
 --- properties
 log[df.shape]      --- [4, 4]
 log[df.columns]    --- ['name', 'age', 'salary', 'start_date']
-log[df.dtypes]     --- ['str', 'int', 'float', 'datetime']
+log[df.dtypes]     --- ['str', 'int', 'int', 'datetime']
 
 --- column access
 log[df.age]        --- [30, error: missing, 25, 42]
-log[df.name]       --- ['alice', 'bob', error, 'carol']
+log[df.name]       --- ['alice', 'bob', error: missing, 'carol']
 
 --- missing values
 log[df.age.ok]             --- [true, false, true, true]
-log[count[not df.age.ok]]  --- 1
+log[sum[not df.age.ok]]    --- 1
 clean = fill[df, 'age', 0]
 
---- column arithmetic
-log[df.salary * 1.1]       --- [55000, 82500, nan, 99000]
+--- column arithmetic: a missing cell stops it, so fill the column first
+paid = fill[df, 'salary', 0]
+log[paid.salary * 2]       --- [100000, 150000, 0, 180000]
 
---- filter
+--- write a column
+paid.bonus = paid.salary * 0.1
+
+--- pick rows by a mask
 rich = df[df.salary gt 60000]
 
 --- select
-sub = select[df, ['age', 'salary']]
+picked = select[df, ['age', 'salary']]
 
 --- sort
 sorted = sort[df, 'age']
@@ -303,22 +319,22 @@ sorted_desc = sort[df, 'age', desc = true]
 g = group[df, 'name', ['salary', 'mean'], ['age', 'max']]
 
 --- join
-deps = load['departments.csv']
+deps = frame.load['departments.csv']
 merged = join[df, deps, 'name']
 merged2 = join[df, deps, 'name', 'left']
 
 --- stack
-df3 = load['more_people.csv']
-all = stack[df, df3]
+df3 = frame.load['more_people.csv']
+everyone = frame.stack[df, df3]
 
 --- unique
-log[unique[df.name]]   --- ['alice', 'bob', 'carol']
+log[unique[df, 'name']]   --- ['alice', 'bob', 'carol']
 
 --- rename
 df2 = rename[df, 'salary', 'pay']
 
 --- stats
-stats[df]
+log[stats[df]]
 
 --- head/tail
 top = head[df, 5]
@@ -326,6 +342,6 @@ top = head[df, 5]
 --- save
 save[df, 'out.csv']
 
---- convert to tensor
+--- convert to tensor (a missing cell is NaN there)
 t = tensor[df, ['age', 'salary']]
 ```

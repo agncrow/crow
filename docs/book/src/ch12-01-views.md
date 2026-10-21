@@ -22,8 +22,8 @@ page['/', render]
 ```
 
 Run it and open `localhost:3000` — a server, a page, no other files.
-`page[path, view]` registers a route; `serve[port]` starts the app (the
-runtime manages the app object; you never thread one through).
+`page[path, view]` serves the view at that path; `serve[port]` starts the
+app (the runtime manages the app object; you never thread one through).
 
 Elements nest by nesting calls — the tree you write is the tree you get.
 Attributes are named arguments: `a['docs', href = '/docs']`,
@@ -58,7 +58,7 @@ exactly this way. Two rules make this safe:
   what they are given (chapter 12.5), and so does a view: an error value
   handed to a view shows as `error: the server's log has why, as <id>` in
   place of the tree — the reader is told an id, the server's log has the
-  reason (chapter 13.4). A page with one unreadable chapter is still a page.
+  reason. A page with one unreadable chapter is still a page.
 
 ```crow
 use web, ui, doc

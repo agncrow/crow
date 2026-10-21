@@ -703,8 +703,9 @@ fn scaled[n]
     return count          ---     unrelated to the module variable
 
 fn bad[x]
-    return x + count      --- error: 'count' is a module variable, which a
-                          --- function does not see — pass it as a parameter
+    --- error: 'count' is a module variable, which a function does not see —
+    --- pass it as a parameter
+    return x + count
 
 count = 6                 --- ok: top-level code mutates top-level state freely
 log[scaled[count]]        --- 12: pass it in
@@ -1205,7 +1206,7 @@ log[r.ok]                --- false — the parse error propagated out
 log[r.reason]            --- cannot convert 'abc' to int
 ```
 
-The same holds when a function hands back an error of another shape — `if not b.ok` / `return b` in a function whose value is a number, where `b` is a frame: the caller receives the error with its reason, kind and trace, and the value is the function's default. A handler has no caller to hand an error to. **A handler stops when an error value reaches a decision, a fact, or an effect** — an `if` or `while` condition, the list a `for` walks, an assignment to reactive state or to a variable whose first value could not fail, or an argument of `query`, `exec`, `insert`, `transact`, `read`, `write`, `fetch`, `shell`, `later`, `notice` or `sign_in`, or of a function that writes facts called for what it writes (a statement, or the handler's last line, whose value nobody reads) — and nothing it did lands: its fact writes are discarded, its database writes are rolled back, its held effects are dropped. The reader is told, as the session's notice, that it stopped and that nothing changed, with an id — `apply stopped, and nothing changed — the server's log has why, as 3f9a1c07` — and the served program's log has the reason beside the id (`crow live: apply stopped [3f9a1c07]: cannot convert 'x' to float`): a stop's reason is the runtime's own words, which can name a database's address or a file's path, so it goes no further, as a failed route's does (Vijay, 2026-10-01). Under `crow dev` the dev panel lists the stopped event with its reason and id. A local whose first value could fail, holding an error and guarded later, computes as it always has: `.ok`, `.reason`, `.kind` and `.trace` never propagate, so `if not r.ok` is how a handler does something other than stop. In the harness, `click[a, apply]` evaluates to that error value and the session's facts are as they were before the click. An event that does not fit the program — no handler of its name, or not the arguments the handler takes (`click[a, apply]` where `apply` takes one) — stops the same way, on a served page and in a test, in both modes. A fact never holds an error: a derivation, which is a belief, may; a fact, which the reader acts on, keeps its last good value.
+The same holds when a function hands back an error of another shape — `if not b.ok` / `return b` in a function whose value is a number, where `b` is a frame: the caller receives the error with its reason, kind and trace, and the value is the function's default. A handler has no caller to hand an error to. **A handler stops when an error value reaches a decision, a fact, or an effect** — an `if` or `while` condition, the list a `for` walks, an assignment to reactive state or to a variable whose first value could not fail, or an argument of an effect held to the handler's commit — the `session`, `db.write` and `mail` kinds: a `notice`, a database write, a `mail` (Effects Have Kinds; a read, a request, a query that reads or a command handed a failed argument answers the failure, as any call does) — or of a function that writes facts called for what it writes (a statement, or the handler's last line, whose value nobody reads) — and nothing it did lands: its fact writes are discarded, its database writes are rolled back, its held effects are dropped. The reader is told, as the session's notice, that it stopped and that nothing changed, with an id — `apply stopped, and nothing changed — the server's log has why, as 3f9a1c07` — and the served program's log has the reason beside the id (`crow live: apply stopped [3f9a1c07]: cannot convert 'x' to float`): a stop's reason is the runtime's own words, which can name a database's address or a file's path, so it goes no further, as a failed route's does (Vijay, 2026-10-01). Under `crow dev` the dev panel lists the stopped event with its reason and id. A local whose first value could fail, holding an error and guarded later, computes as it always has: `.ok`, `.reason`, `.kind` and `.trace` never propagate, so `if not r.ok` is how a handler does something other than stop. In the harness, `click[a, apply]` evaluates to that error value and the session's facts are as they were before the click. An event that does not fit the program — no handler of its name, or not the arguments the handler takes (`click[a, apply]` where `apply` takes one) — stops the same way, on a served page and in a test, in both modes. A fact never holds an error: a derivation, which is a belief, may; a fact, which the reader acts on, keeps its last good value.
 
 **Design Note: a loop over an error is refused.** Considered: running such a loop zero times, which the interpreter did for the statement form (the collecting form made a one-item list of the error). Decided (Vijay, 2026-09-23): refused like a condition, so an error never vanishes into an empty loop. A function whose loop walks a list that can fail can fail itself, as one with a condition that can; a guard before the loop narrows (below), so a guarded loop is an ordinary one.
 
@@ -1283,7 +1284,13 @@ The kinds the language itself produces — branch on `.kind` when a category mat
 | `'load'` | `math.load` |
 | `'env'` | `env[name]` when the variable is not set |
 | `'shell'` | `shell[cmd]` when the command cannot be started (a non-zero exit is not an error — read `.status`) |
-| `'time'` | `moment`, `parse_time`, `calendar`, `fmt[t, time =]`, and `use frame`'s `datetime` and `tz` |
+| `'time'` | `moment[…]` of text that is no moment, of a day that does not exist, or in a zone it does not know; `fmt[t, style = …]` of a style or a zone it does not know |
+| `'http'` | `request[…]` when no answer came (a 404 or a 500 is an answer: read `.status`) |
+| `'socket'` | `web.ws`'s `socket`, `send` and `recv` |
+| `'auth'` | `web.auth`'s `sign` and `verify` (a token refused says why) |
+| `'mail'` | `web.mail`'s `mail` (a server that refuses the message or does not answer) |
+| `'llm'` | `use llm`: no answer, a status that is no success, an answer that is no JSON, a stream that breaks; `act` with `rounds` below one |
+| `'mcp'` | `use mcp`: a tool's result the server marks an error, a tool it does not have, a server that answers an error or does not answer |
 | `'regex'` | `matches`, `find`, `sub` with a pattern that is not one |
 | `'no_capture'` | `captured[x]` on a value that was computed, not read |
 | `'conflict'` | a write refused by a database constraint (see `crow-check.md`) |
@@ -1863,26 +1870,29 @@ snapshot. No primitive can enforce this — it is a modeling rule, and the
 reason it is written down here is that every system that skipped it
 rediscovered it as an incident.
 
-### Design Note: A Moment Is a Number
+### Design Note: A Moment Was a Number
 
-**What was considered:** the previous design — `now[]`/`date[]` returning
+Superseded on 2026-10-06 by "a moment is one kind" (Moments, above): a
+moment is a kind of its own, an instant and the offset it was written in.
+This note is kept for what it decided first and what still holds.
+
+**What was considered:** the design before it — `now[]`/`date[]` returning
 component maps and `elapsed[a, b]` returning a duration map. It could not
 express a named timezone, parse a timestamp, add a duration, or compare two
 moments directly; worse, `now[]` built its components in *machine-local*
 time while `date[]` timestamped at UTC midnight, so mixed arithmetic was
 already silently wrong by hours.
 
-**Why this design:** representing a moment as epoch seconds makes the
-number line do the work — comparison, subtraction, and "ten seconds before
-the bell" are ordinary arithmetic on ordinary floats, with no new type, no
-operator overloads, and no duration vocabulary. Calendars and zones are
-where the real complexity lives, so they are named-argument functions
-(`moment`, `calendar`) rather than hidden defaults. Machine-local time is
-absent by design: "correct on my laptop, wrong on the UTC server" is the
+**What it decided:** a moment as epoch seconds, so that comparison,
+subtraction and "ten seconds before the bell" were ordinary arithmetic on
+floats, with calendars and zones as named-argument functions. **What still
+holds:** a duration is a number of seconds, with no duration kind; zones
+are always explicit and the default is UTC — machine-local time is absent
+by design, since "correct on my laptop, wrong on the UTC server" is the
 classic deploy-day bug, and a language that makes the timezone explicit
-never has it. **Deleted in exchange:** `elapsed` (subtraction), `date`
-(subsumed by `moment`), `today` (`fmt[now[], style = 'date']`) — all three
-now raise teaching errors naming their replacement.
+never has it. `elapsed`, `date` and `today` went with the component maps:
+a moment subtracted from a moment is the seconds between, `moment[…]`
+makes a date, and `fmt[now[], style = 'date']` is today's.
 
 
 ## 12. Modules and Imports
@@ -2674,7 +2684,7 @@ Properties: `.shape`, `.columns`, `.dtypes`. Column access: `df.age`. `len[df]` 
 
 **Design Note: a column is written by the dot.** Considered: `with[df, 'name', values]`, a verb answering a new frame (shipped until 2026-10-20; rejected: a verb for what the dot already reads, the quoted name, the assignment back, and the chains it bred — `with[with[frame.new[], 'symbol', syms], 'rsi_3m', vals]`); `set[df, name, values]`, the map's verb lifted to frames (rejected: the same shape as `with`); a method, `df.add['name', values]` (rejected: a second call shape for one kind, and a method's name reserved on every frame's columns — pandas's `df.count`); `df[name] = values`, the index write (rejected: a frame's index is a mask, by the decision of 2026-10-16, and it would mean a column on the left of `=` and rows on the right); a `then` chain of column steps (rejected: a step that mentions the frame changes shape); and no computed name at all, `rename` after a write under a placeholder (rejected: a loop writing a column per `k` was two lines of indirection). **Decision (Vijay, 2026-10-20):** the dot writes, as it reads; after a dot a name reads as text does, a backtick inside it an interpolation; `with` is removed from the language (an unknown name, as every removed builtin is). The write is the hidden row `__set_col` and the computed read `__col`, found by the lowering through their rows' properties (`Prop::ColumnWrite`, `Prop::ColumnRead`), so the compiler names neither; a refusal names the form as the program writes it.
 
-**Text, casts and a moment's fields over a column.** `lower`, `upper`, `trim`, `replace` and `sub` of a frame's column answer a column of text, each present cell as the text function answers it, a missing cell staying missing (a `sub` pattern that is none stops the program: a cell cannot carry the reason); `contains`, `starts` and `ends` of a column answer a mask, a missing cell false. `int`, `float`, `str` and `moment` of a column convert every cell as the one-value form does — text read as a number or a moment, a number as seconds, a moment as its seconds, anything as the text it shows — a cell that cannot be converted missing, which the column's `.ok` says (`int[df.price]` cuts toward zero; `str[df.day]` is text that `load` would read back as ints). `df.at.hour`, `.year`, `.month`, `.day`, `.minute`, `.second`, `.weekday` and `.offset` of a column of moments are a column of ints, each read in its own zone. (`len[df.col]` stays the column's length: a cell's length is `len[df.col[i]]`.)
+**Text, casts and a moment's fields over a column.** `lower`, `upper`, `trim`, `replace` and `sub` of a frame's column answer a column of text, each present cell as the text function answers it, a missing cell staying missing (a `sub` pattern that is none stops the program: a cell cannot carry the reason); `part in c` of a text column (whether each cell holds the part: `'AA' in df.sym`), `starts` and `ends` answer a mask, a missing cell false. `int`, `float`, `str` and `moment` of a column convert every cell as the one-value form does — text read as a number or a moment, a number as seconds, a moment as its seconds, anything as the text it shows — a cell that cannot be converted missing, which the column's `.ok` says (`int[df.price]` cuts toward zero; `str[df.day]` is text that `load` would read back as ints). `df.at.hour`, `.year`, `.month`, `.day`, `.minute`, `.second`, `.weekday` and `.offset` of a column of moments are a column of ints, each read in its own zone. (`len[df.col]` stays the column's length: a cell's length is `len[df.col[i]]`.)
 
 A column the frame lacks, an aggregation or a join it does not know, a mask of another length than the rows, a negative count for `head` or `tail`, a `fill` value of another kind than the column's (an int fills a float column), and a count of arguments the function does not take stop the program with the reason (see When a Program Stops), in both modes, as `df.col` of a missing column does. A column written from another (`df.b = df.a`) keeps its missing cells.
 
@@ -2874,7 +2884,7 @@ view render[]
 4. it reads `now[]` and a tick of `serve refresh` passed — a click's render is not a tick, so a click recomputes only what it moved;
 5. it reads a table this program never writes — an external source — and its freshness window elapsed. `fresh = N` is seconds; the default `fresh = 0` means *as fresh as the loop*: recomputed every tick, which is what a query inside a view did before. Declaring `fresh` is the relaxation.
 
-A derivation that fails — a query error — holds the error value; readers see `.ok` and `.reason` and a view renders the reason in place. `captured[x]` on a derivation is the moment it last ran. Derivations live in a program that serves: a `use ui` program with a page, whose views and handlers read them, or a `use web` program whose routes read them — `derive x needs a program that serves — …` in a script, which computes a value where it needs it. In the test harness `html[a]` is a tick and `click[a, h]` marks what the handler wrote. Design: `derive-design.md`.
+A derivation that fails — a query error — holds the error value; readers see `.ok` and `.reason`, and a view shows the failure in place as an id, its reason in the server's log beside the id. `captured[x]` on a derivation is the moment it last ran. Derivations live in a program that serves: a `use ui` program with a page, whose views and handlers read them, or a `use web` program whose routes read them — `derive x needs a program that serves — …` in a script, which computes a value where it needs it. In the test harness `html[a]` is a tick and `click[a, h]` marks what the handler wrote. Design: `derive-design.md`.
 
 **Who holds a derivation is inferred from what it reads.** A fact is a top-level variable; a database or socket handle is not one, and neither is a `fetch`/`poll` binding. A derivation that reads a fact a session writes — assigned by a handler or a helper a handler calls, bound to an input like `field` or `select`, or carried in a page's address (a `:name` of its path, a name of its `url = […]`) — or a data source, whose answers land in each session that asks, or another derivation held per session, is computed per session. One that reads only constants, tables and the clock — the day's universe, the latest bar in a table — is computed once for the app and shared by every session and route, and a table write in any session, or any route, reaches every derivation over that table. (A derivation over a fact of the address, or over a source, had been counted the app's: one session's address, or the source's first answer, served to all.) `crow check` prints each derivation's read set and who holds it — `held by the app`, or `held by each session (it reads 'picked', which a session writes)`.
 
@@ -2918,7 +2928,7 @@ A route's handler reads each derivation it names once, as its request begins —
 
 **Rows keep their identity through `id`.** The live client patches the page in place: an element with an `id` is matched to the element with that `id` in the previous render, so a row rendered from data — `p['`s.name`', id = 's-`s.id`']` — moves when its list is reordered and is dropped when its item is gone, while its neighbours are untouched. Elements without an `id` match by position. A node that survives a render keeps its focus, caret and scroll, so the field a reader is typing in is never rebuilt under them.
 
-**The checker teaches the form.** A top-level variable assigned from a query and read by a view (a launch-time snapshot), and a query against a remote database inside a view, are errors in `crow check`; `d` in the check loop rewrites the first into `derive x` and hoists the second above its view as `derive rows[fresh = 60]`.
+**The checker teaches the form.** A top-level variable assigned from a query and read by a view (a launch-time snapshot) is an error in `crow check`; `d` in the check loop rewrites it into `derive x`. A query inside a view never gets that far: a view reaches no database (Effects Have Kinds), so it is refused before the program runs, and the query's place is a `derive` above the view (`derive rows[fresh = 60]` for a remote database).
 
 #### Tables over frames
 
@@ -3042,8 +3052,10 @@ Three attributes any element takes: `tip = 'text'` is the browser's tooltip, `fi
 A chart is a view over a frame. `chart` is an element like `table`: valid only inside views, it takes a frame plus named arguments that say which columns to draw, and renders server-side as SVG:
 
 ```
+derive bars
+    return query[conn, 'SELECT ts, o, hi, lo, c, vol FROM bars ORDER BY ts']
+
 view render[]
-    bars = query[conn, 'SELECT ts, o, hi, lo, c, vol FROM bars ORDER BY ts']
     return div[
         chart[bars, candles = ['o', 'hi', 'lo', 'c'], bars_y = 'vol',
               marker = open_bell, tz = 'America/New_York', height = 200]
@@ -3296,7 +3308,7 @@ log[len[gone]]
 
 **List parameters.** An array bound as a parameter stands for a list: its `?` becomes `(?, ?, …)` with one placeholder per element, on every backend. Write `WHERE id IN ?` and pass `[[1, 3]]`; an empty list matches nothing. A list goes after `IN` and nowhere else: handed to another `?` — `x = ANY(?)` — it would be sent as a row where the database wants an array, so a literal statement that does so is refused, in both modes, before it runs. The compiler asks a database about `IN ?` as the list of one it is sent as, `IN (?)`.
 
-**Typed cells in compiled programs.** The compiler asks the program's databases what each literal query returns — a `prepare` on Postgres, `DESCRIBE` on ClickHouse — and types every column: `rows.price[0]` is a float, `rows.n[0]` an int, in the compiled program as it always was in the interpreter. A column that can hold NULL has fallible cells, in both modes: a NULL one is an error value of reason `missing` (see frame). The compiler reads which can from the statement and the tables' declarations — a column read from a table can hold NULL unless it is declared `NOT NULL` (or is SQLite's `INTEGER PRIMARY KEY`); every column of the side of an outer join a row can have no match on can; an expression can where what it reads can, except `count`, `coalesce` with an argument that cannot, `IS NULL` and a literal, and an aggregate over no rows (no `GROUP BY`) can; a function it does not know can; and a column the `WHERE` clause compares or asks `IS NOT NULL` of cannot, in the rows it keeps. ClickHouse says it itself, by a `Nullable` type. A statement it cannot read that way can hold NULL in every column. Connections bound to a literal URL (`pg = db.connect['postgres://…']`) are asked in declaration order; `?` placeholders and interpolated spans stand in as NULL. A database that cannot be reached at compile time is skipped. What each database answers is kept in the project's `.crow/schema` — a file per statement and the connection it was asked on, holding the statement and its columns' types, a column that can hold NULL marked `?` (`float?`) — and when no database answers a statement its cells are typed from that record, and the build says so once; with no record they are dynamic, as below. A project may keep `.crow/schema` in version control, so a machine without the databases — CI, a laptop without the data — builds the program typed as it was. The frames the standard modules build are typed as they are built: `doc.chapters`' `title`, `path` and `part` are text and its `depth` an int, and `chart.macd`'s columns are floats. Frames derived through `select`, a mask, `sort`, `head`, `tail`, `fill`, `stack`, and `join` keep their column types; `group` gives its key columns as they were and a float per aggregate (`group[df, 'dept', ['salary', 'mean']]` has `dept` and `salary_mean`); `pivot` gives its rows column as it was, the rest as they show; a `window` is typed by what it computes (frame). A frame handed to a function keeps its column types there — each call's, the function a copy per set of columns (see frame, A frame's type is its columns) — so a function reads its cells as the numbers or text they are. A cell of a column whose type nothing tells the compiler — a file loaded as it runs, a query no database answered and no record holds — is dynamic, as a value `json[]` parsed is, in both modes: `int[c]`, `float[c]` and `str[c]` read it as one type (and fail as they do on text), arithmetic or a comparison with a number on it is refused until the program says what it is (`cannot use '*' with json and float — … read as one first: int[…], float[…] or str[…]`), as is giving one to a variable that holds another type (`cannot reassign 'next' from str to json — … read as one first`), and a missing one is JSON's `null`, an error value of reason `null`. (Compiled, such a cell was read as text while the interpreter read the number: the same line meant two things.) On sqlite, a computed column (`count(*)`, `round(...)`) is typed by stepping the SELECT once with null parameters; when no row comes back — `WHERE session_id = ?`, an empty table — it is typed from the statement itself, by the declared types of the columns it reads and SQLite's rules (`round`, `avg` and arithmetic on a `REAL` are floats, `count` and comparisons ints, `||` and `datetime` text; a parameter or `NULL` alone stays text). The cells of a `RETURNING` clause — `query[book, 'INSERT ... RETURNING id', [...]]`, the way to read back a row the database numbered — are typed from the table's declared columns; asking never runs a write, and never creates a sqlite file that is not there yet. Every command asks the same way — `crow run`, `crow run -i`, `crow test`, `crow check` and the app's book — so a program refused for its columns' types (a local given an int cell, then text) is refused by all of them. Set `CROW_NO_DESCRIBE=1` to build without asking: no database answers then, so the records type the cells, and nothing is written.
+**Typed cells in compiled programs.** The compiler asks the program's databases what each literal query returns — a `prepare` on Postgres, `DESCRIBE` on ClickHouse — and types every column: `rows.price[0]` is a float, `rows.n[0]` an int, in the compiled program as it always was in the interpreter. A column that can hold NULL has fallible cells, in both modes: a NULL one is an error value of reason `missing` (see frame). The compiler reads which can from the statement and the tables' declarations — a column read from a table can hold NULL unless it is declared `NOT NULL` (or is SQLite's `INTEGER PRIMARY KEY`); every column of the side of an outer join a row can have no match on can; an expression can where what it reads can, except `count`, `coalesce` with an argument that cannot, `IS NULL` and a literal, and an aggregate over no rows (no `GROUP BY`) can; a function it does not know can; and a column the `WHERE` clause compares or asks `IS NOT NULL` of cannot, in the rows it keeps. ClickHouse says it itself, by a `Nullable` type. A statement it cannot read that way can hold NULL in every column. Connections bound to a literal URL (`pg = db.connect['postgres://…']`) are asked in declaration order; `?` placeholders and interpolated spans stand in as NULL. A database that cannot be reached at compile time is skipped. What each database answers is kept in the project's `.crow/schema` — a file per statement and the connection it was asked on, holding the statement and its columns' types, a column that can hold NULL marked `?` (`float?`) — and when no database answers a statement its cells are typed from that record, and the build says so once; with no record they are dynamic, as below. A project may keep `.crow/schema` in version control, so a machine without the databases — CI, a laptop without the data — builds the program typed as it was. The frames the standard modules build are typed as they are built: `doc.chapters`' `title`, `path` and `part` are text and its `depth` an int, and `chart.macd`'s columns are floats. Frames derived through `select`, a mask, `sort`, `head`, `tail`, `fill`, `stack`, and `join` keep their column types; `group` gives its key columns as they were and a float per aggregate (`group[df, 'dept', ['salary', 'mean']]` has `dept` and `salary_mean`); `pivot` gives its rows column as it was, the rest as they show; a `window` is typed by what it computes (frame). A frame handed to a function keeps its column types there — each call's, the function a copy per set of columns (see frame, A frame's type is its columns) — so a function reads its cells as the numbers or text they are. A cell of a column whose type nothing tells the compiler — a file loaded as it runs, a query no database answered and no record holds — is dynamic, as a value `json[]` parsed is, in both modes: `int[c]`, `float[c]` and `str[c]` read it as one type (and fail as they do on text), arithmetic or a comparison with a number reads it as a number, and giving one to a variable that holds another type reads it as that type, as a parsed value's field is read (Parsed values: read as its use implies) — a cell that is not what the use reads stops the program and says where (`a parsed value holds text 'abc' where the program reads a number (met in mul at line 6)`) — and a missing one is JSON's `null`, an error value of reason `null`. (Compiled, such a cell was read as text while the interpreter read the number: the same line meant two things.) On sqlite, a computed column (`count(*)`, `round(...)`) is typed by stepping the SELECT once with null parameters; when no row comes back — `WHERE session_id = ?`, an empty table — it is typed from the statement itself, by the declared types of the columns it reads and SQLite's rules (`round`, `avg` and arithmetic on a `REAL` are floats, `count` and comparisons ints, `||` and `datetime` text; a parameter or `NULL` alone stays text). The cells of a `RETURNING` clause — `query[book, 'INSERT ... RETURNING id', [...]]`, the way to read back a row the database numbered — are typed from the table's declared columns; asking never runs a write, and never creates a sqlite file that is not there yet. Every command asks the same way — `crow run`, `crow run -i`, `crow test`, `crow check` and the app's book — so a program refused for its columns' types (a local given an int cell, then text) is refused by all of them. Set `CROW_NO_DESCRIBE=1` to build without asking: no database answers then, so the records type the cells, and nothing is written.
 
 
 #### Bulk Insert
@@ -3479,7 +3491,7 @@ A conversation is a parsed value — a list of turns, each its `role` (`user`, `
 
 **Design Note: a reply followed is a socket read piece by piece, not a feed.** Considered: a function handed to `follow` and called for each piece, as a response `stream[feed]` hands its feed a `put` (rejected: a builtin's row takes no function value — one handed to a row is typed by nothing — and a loop the program writes can stop, show, keep or forward a piece where a callback only receives it). Decided: `follow` answers a socket, `next` the pieces, `reply` the whole; the loop is the program's.
 
-Not in this round, each a later note: images and documents in a turn, a conversation the server keeps (prompt caching, stored responses), batches, a model's answer recorded as a fixture so an agent's test replays without the model (on `request`'s rehearsal), and `embed` for a provider that serves no OpenAI-compatible endpoint.
+Not in this round, each a later note: images and documents in a turn, a conversation the server keeps (prompt caching, stored responses), batches, and `embed` for a provider that serves no OpenAI-compatible endpoint. A model's answer is kept and replayed as any request's is (Requests: `crow check --record-fixtures`, `crow test --fixtures`), so an agent's test runs without the model.
 
 ### mcp
 
@@ -3557,7 +3569,7 @@ write['out.csv', text]
 df = frame.load['out.csv']   --- reads what the line above wrote
 ```
 
-Work that should overlap is written as a `for` over the pieces: ten fetches in a for-expression run at once (below).
+Work that should overlap is written as a `for` over the pieces whose body only computes: its rounds run across the cores (below). A loop that reads, writes, requests or queries keeps its order, as statements do.
 
 
 ### Design Note: Statements Run in Order (a reversal)
@@ -3751,24 +3763,11 @@ crow launch 4 train.co     --- build + run on 4 processes
 
 #### Backend Detection
 
-The toolchain auto-detects the available GPU runtime:
-
-- NVIDIA → CUDA
-- Apple Silicon → Metal
-- Cross-platform → Vulkan / WebGPU
-
-The backend can be pinned in the `crowfile`:
-
-```
-gpu_backend = 'auto'        --- default: detect at build time
-gpu_backend = 'cuda'
-gpu_backend = 'metal'
-gpu_backend = 'vulkan'
-```
+The runtime reaches the GPU through wgpu, which takes the interface the machine has when the program first asks: Metal on Apple Silicon, Vulkan on Linux (NVIDIA's and AMD's cards included). Nothing in the program or the crowfile names one, and where no adapter answers the work runs on the CPU.
 
 #### Decoupled from Language Version
 
-New GPU vendors, new CUDA versions, or new backends are **toolchain updates** (`crow update`), not language changes. The `.co` source files never change. This follows the same model as LLVM — Rust and Swift don't change when LLVM adds a new target.
+New GPU interfaces, or a new wgpu, are **runtime updates** (`crow upgrade`), not language changes. The `.co` source files never change. This follows the same model as LLVM — Rust and Swift don't change when LLVM adds a new target.
 
 The language specifies *intent*. The toolchain handles *implementation*.
 
@@ -3918,7 +3917,7 @@ serve[3000, refresh = 5, budget = 50]
 
 | Named arg | Meaning |
 |-----------|---------|
-| `refresh = N` | re-render every connected session every N seconds. Render-time queries re-run, so pages stay current with zero user code. Missed ticks are skipped, never stacked — a slow render coalesces. |
+| `refresh = N` | re-render every connected session every N seconds. A derivation that reads `now[]`, or a table the program never writes once its `fresh` window has passed, recomputes on the tick (Derivations), so pages stay current with zero user code. Missed ticks are skipped, never stacked — a slow render coalesces. |
 | `budget = M` | log any handler or render that takes more than M ms, with its name — the loop ships its own heartbeat. |
 
 There is no `every[]`, no timer builtin, and no way to write periodic user
@@ -4145,7 +4144,7 @@ ordinary Crow. A block that reaches no truth and no `assert` — in its body
 or in a function it calls — fails with `asserts nothing`: a test that
 cannot fail tests nothing.
 
-A test block sees declarations (functions, views, structs, imports) and two kinds of top-level assignment: literal values — a number, text, a bool, a list or a map of them, a frame built from them, a moment of them (`moment[0.0]`, `moment['2026-01-01']`) — which are reactive-state defaults, and connections (`db.connect[...]`), which are resources a render-time view needs. Computed top-level values are invisible, as inside any function.
+A test block sees declarations (functions, views, structs, imports) and two kinds of top-level assignment: literal values — a number, text, a bool, a list or a map of them, a frame built from them, a moment of them (`moment[0.0]`, `moment['2026-01-01']`) — which are reactive-state defaults, and connections (`db.connect[...]`), which are resources the derivations and handlers under test need. Computed top-level values are invisible, as inside any function.
 
 Live apps are tested through a headless session — `app[view]` opens one,
 `click[a, handler]` runs a handler on it, `a.name` reads reactive state,
@@ -4343,7 +4342,6 @@ myapp/
 
   jobs/                       --- batch tasks (crow run <name>)
     train.co                --- crow run train
-    migrate.co              --- crow run migrate
     sync.co                 --- crow run sync
 
   views/                       --- web views (imported and wired in main.co)
@@ -4381,15 +4379,15 @@ myapp/
 | `crowfile` | Project identity, entry points, deps | Required for projects |
 | `main.co` | Default entry point. `crow run` runs this | Yes — convention |
 | `views/` | Web views. Import with `use views.X`, wire with `page[]` | Explicit |
-| `layout.co` | Shared UI wrapper for all pages | **Yes** — auto-applied |
-| `db/schema.co` | Table definitions, auto-migrations | **Yes** — auto-discovered |
+| `layout.co` | Shared UI wrapper for all pages | No — import with `use`, wrap each page's view |
+| `db/schema.co` | The tables the program declares (its `CREATE TABLE` statements; `crow db diff`, `crow db apply`) | No — import with `use` |
 | `jobs/` | Batch tasks. `crow run <name>` | **Yes** — listed in crowfile |
-| `tests/` | Integration tests. `crow test` | **Yes** — auto-discovered |
+| `tests/` | Integration tests, as `test` blocks | No — run with `crow test tests/x.co` |
 | `lib/` | Your code, any organization | No — import with `use` |
 | `components/` | Reusable UI functions | No — import with `use` |
 | `config/` | Configuration files | No — import with `use` |
 
-Only three magic folders: `views/`, `db/`, `tests/`. Plus `layout.co` and `main.co` by convention. Everything else is just files you import.
+The toolchain reads two things by convention: `main.co`, the default entry, and the jobs the crowfile names. Every other folder is a habit, and its files are imported.
 
 #### Entry Points
 
@@ -4398,7 +4396,7 @@ Only three magic folders: `views/`, `db/`, `tests/`. Plus `layout.co` and `main.
 ```
 crow run              --- runs main.co (long-running)
 crow run train        --- runs jobs/train.co (batch, exits)
-crow run migrate      --- runs jobs/migrate.co (batch, exits)
+crow run sync         --- runs jobs/sync.co (batch, exits)
 ```
 
 Rule: **`main.co` is the thing that stays running. Everything else runs and exits.**
@@ -4429,7 +4427,7 @@ db = 'sqlite://dev.db'              --- optional: lets crow check read the schem
 cpu = 4                             --- optional: default thread count
 
 deps = map[models = 'github.com/agncrow/crow-models@v0.1.0', utils = './libs/utils']
-jobs = map[train = 'jobs/train.co', migrate = 'jobs/migrate.co']
+jobs = map[train = 'jobs/train.co', sync = 'jobs/sync.co']
 ```
 
 | Key | Meaning |
@@ -4471,7 +4469,7 @@ crow                        --- start interactive REPL
 crow new myapp              --- create new project (crowfile + main.co)
 crow new myapp --web        --- create web project (+ views/home.co)
 crow new myapp --ml         --- create ML project (+ jobs/train.co, lib/model.co)
-crow new myapp --db         --- create DB project (+ db/schema.co, jobs/migrate.co)
+crow new myapp --db         --- create DB project (+ db/schema.co)
 crow new myapp --web --ml --db  --- all capabilities
 crow install                --- install deps into crow_modules/, pinned by crow.lock (--update [name] moves them)
 crow setup                  --- fetch the pinned Rust toolchain and this release's runtime into ~/.crow for compiled builds, each file verified (--check: what is present)
@@ -4687,6 +4685,8 @@ Three options were evaluated:
 2. **Skip** — silently ignore non-numeric leaves
 3. **Apply where possible** — multiply numbers, skip strings
 
+**Not built:** arithmetic over a map is refused today (`2 * model`, a map plus a map; 2026-10-21) — this note records the rule it is to follow when it is built.
+
 **Decision:** Error. Map arithmetic requires every leaf to be numeric (tensor, int, float). If any leaf is a string, bool, or other non-numeric type, it's an error.
 
 - **Compile time:** The compiler checks map leaf types and rejects the program when they are statically known, in both modes and with the same message.
@@ -4898,11 +4898,10 @@ Including `sum` but not `min[arr]`/`max[arr]` created an inconsistency — all t
 
 Crow intentionally has no `chars` builtin to split a string into an array of characters.
 
-**Why:** With string indexing (`s[0]`, `s[-1]`) and `for`-as-expression, splitting a string into characters is a one-liner:
+**Why:** `split[s, '']` already answers a text's characters — the text split between every two characters, with no empty piece at either end — and `s[i]` reads one by its place (`s[0]`, `s[-1]`):
 
 ```
-chars = for i in range[len[s]]
-    s[i]
+letters = split['crow', '']   --- ['c', 'r', 'o', 'w']
 ```
 
 Adding a dedicated `chars` builtin would create a second way to do the same thing.

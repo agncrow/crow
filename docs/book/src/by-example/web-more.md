@@ -1,7 +1,7 @@
 # Web: responses and submodules
 
-These blocks are compiled by the book's verification but not run — they
-start servers.
+The blocks that start a server or reach another host are built by the
+book's verification but not run; the others run.
 
 Every kind of response a route can return:
 
@@ -107,12 +107,15 @@ alice
 the token's signature does not match
 ```
 
-A mailer is made from `web.mail`:
+A mailer is made from `web.mail`, once for the whole program as a
+connection is, and its messages come from its user, an address;
+`mail[mailer, to, subject, body]` sends one, held to a handler's commit
+(chapter 12):
 
 ```crow,norun
 use web, web.mail
 
-smtp['smtp.example.com', 587, 'user', 'pass']
+smtp['smtp.example.com', 587, 'ops@example.com', 'pass']
 serve[3000]
 ```
 

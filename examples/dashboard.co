@@ -1,5 +1,5 @@
 --- Live trading dashboard: SQLite -> frames -> views
---- Seed first: crow run dashboard_seed.crow   Then: crow run dashboard.crow
+--- Seed first: crow run dashboard_seed.co   Then: crow run dashboard.co
 use web, ui, db, frame, math
 
 conn = db.connect['sqlite://trades.db']
@@ -18,8 +18,10 @@ view stat_card[label, value]
         class = 'card'
     ]
 
+derive trades
+    return query[conn, 'SELECT symbol, qty, price, pnl FROM trades ORDER BY id']
+
 view render[]
-    trades = query[conn, 'SELECT symbol, qty, price, pnl FROM trades ORDER BY id']
     total_pnl = sum[trades.pnl]
 
     shown = trades

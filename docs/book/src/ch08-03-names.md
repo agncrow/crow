@@ -5,15 +5,15 @@ name the language or an import already owns. Not shadowing, not
 precedence — an error, at the definition line, with the fix included.
 
 ```crow,error
-range = [10, 20, 30]     --- error: 'range' is a core builtin —
-                         --- pick another name for this variable
+--- error: 'range' is a core builtin — pick another name for this variable
+range = [10, 20, 30]
 ```
 
 ```crow,error
 use math
-sum = 0                  --- error: 'sum' is provided by math (line 1) —
-                         --- rename the variable, or import qualified:
-                         --- use math as m
+--- error: 'sum' is provided by math (imported on line 1) — rename the
+--- variable, or import qualified: use math as m
+sum = 0
 ```
 
 Why so strict? Because Crow's brackets serve both calling and indexing.
@@ -28,7 +28,7 @@ form is there when you'd rather keep your word. What it buys: any bare
 name in any Crow file means one thing, for you, for readers, and for
 every AI assistant generating Crow.
 
-Three softenings keep it livable:
+Four softenings keep it livable:
 
 - **Core is frozen** — the ~70 always-reserved names never grow, so code
   that compiles today can't be broken by a future builtin.

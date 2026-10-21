@@ -57,11 +57,11 @@ false
 A process the program talks to is a socket too (`start`): the command
 runs as `shell` runs one, what is sent is its input, what is read its
 output, and the socket keeps what a read took past a message. One process
-per command: a second `start` of the command answers the running one. A
-process ends when its stream is closed — its input closed, then, if it
-stays, a signal — and a command the shell does not find says so on
-standard error, then ends: a read answers nothing, a write that the
-process ended.
+per command on each thread: a second `start` of the command answers the
+running one, and starts it again once it has ended. A process ends when
+its stream is closed — its input closed, then, if it stays, a signal —
+and a command the shell does not find says so on standard error, then
+ends: a read answers nothing, a write that the process ended.
 
 ```crow
 use sys
@@ -94,7 +94,7 @@ the process ended
 a command is text, and '' is none
 ```
 
-The rest of the layer, for the modules written on it — a file's bytes and its lines read a block at a time, chunks gathered, digests, and a request's answer made from its parts:
+The rest of the layer, for the modules written on it — a file's bytes and its lines read a block at a time, chunks joined (`concat`), digests, and a request's answer made from its parts:
 
 ```crow
 use sys
@@ -329,4 +329,17 @@ log[missing.kind]
 for tool in [forecast, clock]
     log[str[describe[tool].name]]
 log[apply[clock, json['{"zone": "Rome"}']]]
+```
+
+```text
+forecast
+the forecast for a city
+days
+an int
+2
+"3 days of sun in OSLO"
+call
+forecast
+clock
+"noon in ROME"
 ```

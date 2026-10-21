@@ -170,7 +170,7 @@ trading.co:7-9 — two programs can pass this check at the same time
 
   what can happen:
     1. program A runs the query (line 7) — the check passes
-    2. program B runs the same query — the check passes too
+    2. program B runs the same query — the check passes too (A hasn't written yet)
     3. A writes (line 9).  4. B writes.
     5. the rule the check was protecting is now broken
 
@@ -182,11 +182,12 @@ trading.co:7-9 — two programs can pass this check at the same time
         CREATE UNIQUE INDEX one_active_per_symbol ON trades(symbol) WHERE status = 'active';
 ```
 
-`crow fix trading.co --hazard 1 --option 1` applies the first option:
-writes the migration, applies it to the dev database, and re-checks to
-confirm the hazard is gone. After that, the losing program's insert comes
-back as an ordinary error value with `kind = 'conflict'` — loud, at the
-moment it matters, instead of a silent duplicate.
+`crow fix trading.co --hazard 1 --option 1 --db 'sqlite://dev.db'`
+applies the first option: writes the migration, applies it to the dev
+database, and re-checks to confirm the hazard is gone (with the database
+in the crowfile, below, `--db` can go). After that, the losing program's
+insert comes back as an ordinary error value with `kind = 'conflict'` —
+loud, at the moment it matters, instead of a silent duplicate.
 
 The catalog goes well beyond this one shape — lost updates, one-way status
 flags, single-row reads on non-unique columns, un-transacted write pairs,
@@ -194,8 +195,6 @@ plus schema verification (column typos get did-you-mean suggestions). Put
 `db = 'sqlite://dev.db'` in your crowfile and every `crow check` — and the
 editor, through `crow lsp` — runs them. The full reference is
 `docs/crow-check.md`.
-
-Next: putting a live web page in front of it.
 
 ## A list is a parameter too
 
@@ -263,14 +262,18 @@ does not make is not its to check.
 ## The compiler asks your database
 
 A query's result is a frame, and a frame's cells are typed by the
-database: an integer column reads as an int, a numeric one as a float.
-The interpreter sees that at run time. The compiled program cannot, so
-`crow build` and `crow run` ask the databases your program connects to
+database: an integer column reads as an int, a numeric one as a float,
+and a column that can hold NULL has cells that can be missing. Before the
+program runs — under `crow run`, `crow run -i`, `crow build`, `crow test`
+and `crow check` alike — Crow asks the databases your program connects to
 what each literal query returns — a prepared statement on Postgres, a
-`DESCRIBE` on ClickHouse — and type the cells the same way. A `?`
-placeholder and an interpolated span stand in as NULL for the question.
-If a database cannot be reached while building, the build says so once
-and that query's cells read as text, which is what compiled frames always
-did before. `CROW_NO_DESCRIBE=1` skips the question entirely.
+`DESCRIBE` on ClickHouse — and types the cells the same way in both
+modes. A `?` placeholder and an interpolated span stand in as NULL for
+the question. What each database answers is kept in the project's
+`.crow/schema`, so when a database cannot be reached — a server down, a
+machine without the data — the build says so once and types the cells
+from that record; with no record, that query's cells are dynamic, read
+with `int[…]`, `float[…]` or `str[…]`. `CROW_NO_DESCRIBE=1` skips the
+question: the record types the cells, and nothing is written.
 
 Next: the web layer, where these frames become pages.

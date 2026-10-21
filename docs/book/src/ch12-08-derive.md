@@ -96,7 +96,7 @@ old it may be:
 ```crow,norun
 use web, ui, db
 
-ch = db.connect['clickhouse://clickhouse.example:9000/market']
+ch = db.connect['clickhouse://clickhouse.example:8123/market']
 sym = 'IMRN'
 day = '2026-09-04'
 
@@ -262,13 +262,13 @@ moves, and nobody wrote a line about caching.
 
 The checker now teaches the form instead of warning about its absence.
 A top-level variable assigned from a query and read by a view — a
-launch-time snapshot served forever — and a query against a remote
-database inside a view are errors in `crow check`, each with a
-one-key rewrite: `d` turns `trades = query[…]` into `derive trades`, and
-hoists a `rows = query[pg, …]` line out of a view as
-`derive rows[fresh = 60]` above it, the view reading `rows` as before.
+launch-time snapshot served forever — is an error in `crow check`, with a
+one-key rewrite: `d` turns `trades = query[…]` into `derive trades`. A
+query inside a view is refused before the program runs: a view shows the
+page's state, and a derivation is where a page reads a table.
 
-Derivations are reactive state, so they live in a `use ui` program with
-a page. In the test harness `html[a]` is a tick and `click[a, h]` marks
+Derivations are state, so they live in a program that serves: a `use ui`
+program with a page, or a `use web` program whose routes read them. In
+the test harness `html[a]` is a tick and `click[a, h]` marks
 what the handler wrote, so a test can watch a derivation follow its
 inputs the way these blocks do.

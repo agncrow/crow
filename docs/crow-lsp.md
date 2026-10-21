@@ -12,9 +12,10 @@ with the compiler.
   same teaching messages `crow run` prints), with one broken statement never
   hiding the rest of the file (the parser recovers per statement). A
   squiggle sits under the name the message names (`undefined function
-  'lenn'` underlines `lenn`), else under the line's text. A part the file
-  imports that has an error of its own is a diagnostic on the `use` line
-  that imports it, its file and line in the message.
+  'lenn'` underlines `lenn`), else under the token at the column the
+  refusal gives, else under the statement — what the terminal underlines.
+  A part the file imports that has an error of its own is a diagnostic on
+  the `use` line that imports it, its file and line in the message.
 - **Quick fixes** — a slip's nearest name (`undefined function 'lenn' —
   did you mean 'len'?`) put in its place, and an import a function needs
   (``mean[] is math's: add `use math` ``) added below the file's imports.
@@ -24,12 +25,14 @@ with the compiler.
   (`calc.total`, `c.total` under `use lib.calc as c`). A builtin, a field or
   a name already in use is refused with the reason.
 - **Database hazards, live** — when the workspace crowfile sets
-  `db = 'sqlite://dev.db'`, the schema-aware checks run on every edit:
-  the racy check-then-act gets a warning squiggle with its headline
-  ("two programs can pass this check at the same time") the moment you
-  type it. Details and fixes stay in `crow check` / `crow fix`.
+  `db = 'sqlite://dev.db'` (read as the server starts), the schema-aware
+  checks run on every edit: the racy check-then-act gets a warning
+  squiggle with its headline ("two programs can pass this check at the
+  same time") the moment you type it. Details and fixes stay in `crow
+  check` / `crow fix`.
 - **Completions** — your functions, structs and variables, plus builtins
-  and keywords, with inferred signatures as detail.
+  and keywords, with inferred signatures as detail; a function completes
+  as its whole call, each parameter a placeholder to tab through.
 - **Hover** — inferred types (`name: str`, `fn add[a: int, b: int] -> int`),
   struct fields.
 - **Signature help** inside a call's brackets, the active parameter marked.
@@ -58,19 +61,23 @@ the release; 2026-10-18). From a checkout:
 python3 editors/vscode/package_vsix.py 0.7.0 crow-lang-0.7.0.vsix
 code --install-extension crow-lang-0.7.0.vsix --force
 ```
-`editors/vscode/test.sh` drives the extension inside VS Code itself: VS
-Code's extension test host loads `editors/vscode/test/index.js`, which asks
-every feature through VS Code's own commands — diagnostics, hover,
-completion, definition, symbols, references, signature help, rename, code
-actions — then kills the server and waits for the extension to start it
-again and the diagnostics to come back. A window opens for the run.
 (or open the folder and press F5 for a dev session), then reload the
 window. VS Code runs the copy it installed, not the folder: after any
 change under `editors/vscode`, package and install again. (The `.co` rename
 reached the folder in September and the installed copy a month later; until
 then VS Code opened every `.co` file as plain text, so it neither
 highlighted it nor started the server.) Set `crow.serverPath` if `crow` is
-not on PATH.
+not on PATH; a change to it starts the server again.
+
+`editors/vscode/test.sh [path to crow]` drives the extension inside VS Code
+itself: VS Code's extension test host loads `editors/vscode/test/index.js`,
+which asks every feature through VS Code's own commands — diagnostics,
+hover, completion, definition, symbols, references, signature help,
+rename, code actions — then kills the server and waits for the extension
+to start it again and the diagnostics to come back. A window opens for the
+run. The crow it tests is the checkout's `target/release/crow` unless
+named, and `CROW_VSCODE` names the VS Code binary (macOS's application by
+default).
 
 **Neovim (0.11+)**
 ```lua
@@ -105,15 +112,18 @@ generic LSP configuration for the language `crow` on files ending in `.co`.
 - **One binary.** The server is a subcommand of `crow` itself — no separate
   install, no version skew between the compiler and the editor.
 - **A server outlives no install.** The server watches the binary it runs
-  from: when `install.sh` or `cargo install` replaces `crow`, it stops at
-  its next message, or within two seconds when idle, and the editor starts
-  it again on the new binary — VS Code writes "Connection to server got
-  closed. Server will restart." to the server's output pane, where the
-  server also names its binary, and when it was written, at start; its
-  `serverInfo` carries the same. (A server that had outlived its install kept
-  refusing, for two days, programs the installed crow accepted — a query's
-  cell pushed onto a list — until the window was reloaded.) A reload is
-  still needed after the extension itself is reinstalled.
+  from: when `crow upgrade`, `install.sh` or `cargo install` replaces
+  `crow`, it says so and stops at its next message, or within two seconds
+  when idle, and the editor starts it again on the new binary. In VS Code
+  the server's output pane, *Crow Language Server*, shows `the server left
+  (exit 0)` and `starting crow lsp`, and each server names its binary, and
+  when it was written, as it starts (`crow lsp: crow 0.7.0 at …/crow,
+  written Oct 21 14:02`); its `serverInfo` carries the same. The extension
+  starts a server that leaves at most five times in three minutes, then
+  says so and waits for a reload. (A server that had outlived its install
+  kept refusing, for two days, programs the installed crow accepted — a
+  query's cell pushed onto a list — until the window was reloaded.) A
+  reload is still needed after the extension itself is reinstalled.
 - **Whole-file re-analysis per change, parts kept.** Each change re-runs
   the pipeline on the file, and a change that another change to the same
   file has overtaken is not analysed at all. The parts it imports are
@@ -123,9 +133,11 @@ generic LSP configuration for the language `crow` on files ending in `.co`.
   project's databases answered last (`.crow/schema`), never asking a
   database per keystroke.
 - **Ranges from the message.** A diagnostic's range is the name its
-  message quotes or calls, found on its line as a whole word; the line's
-  text otherwise. (Spans from the syntax tree would be finer still, for
-  what the messages do not name.)
-- **When in doubt, show nothing.** Hover and completion answer from the last
-  good analysis; the server never invents information the pipeline didn't
-  compute.
+  message quotes or calls, found on its line as a whole word; else the
+  token at the column the refusal gives; else the statement, past its
+  indentation — one rule with the terminal's underline
+  (`src/diagnostic.rs`). (Spans from the syntax tree would be finer still,
+  for what the messages do not name.)
+- **When in doubt, show nothing.** Hover and completion answer from the
+  latest analysis, which keeps every statement that parsed; the server
+  never invents information the pipeline didn't compute.

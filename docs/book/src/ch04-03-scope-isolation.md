@@ -11,8 +11,9 @@ Here is the rule, and it is stricter than Python's:
 count = 5
 
 fn bad[]
-    return count + 1    --- error: 'count' is a module variable, which a
-                        --- function does not see — pass it as a parameter
+    --- error: 'count' is a module variable, which a function does not
+    --- see — pass it as a parameter
+    return count + 1
 ```
 
 The fix is always the same shape:
@@ -47,6 +48,8 @@ Two reasons, and they're both load-bearing:
    every read and write in the loop body is visible at the call site. Hidden reads would turn "parallel by default" into "data races
    by default." Crow chose the scope rule that makes the loop rule sound.
 
-The one sanctioned exception is reactive state in web UIs (`view` blocks
-and event handlers, chapter 12) — a managed channel, synchronized by the
-runtime, not ambient mutation.
+The one sanctioned exception is the state of a program that serves
+(chapter 12): `view` blocks, event handlers and derivations read a page's
+reactive state, and a route's handler reads the derivations its app
+holds — a managed channel, synchronized by the runtime, not ambient
+mutation.

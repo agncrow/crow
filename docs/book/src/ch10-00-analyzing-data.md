@@ -42,9 +42,9 @@ ambiguity, exactly as chapter 8 promised:
 
 ```crow,error
 use frame, math
-df = load['trades.csv']   --- error: 'load' is ambiguous — provided by
-                          --- frame and math; use frame.load[...] or
-                          --- math.load[...]
+--- error: 'load' is ambiguous — provided by frame and math; use
+--- frame.load[...] or math.load[...]
+df = load['trades.csv']
 ```
 
 ## Other Formats, Other Places
@@ -174,8 +174,7 @@ symbol  qty_sum
 
 Twenty-odd lines: load, validate shape, filter, sort, aggregate, format.
 Every piece was a chapter you've already read — frames just give the
-pieces something worth doing. Chapter 13 does this against a live
-database with a web UI on top; next, the database half of that story.
+pieces something worth doing.
 
 ## Several Keys, Pivots and Windows
 
@@ -242,8 +241,9 @@ symbol  day  qty  price  so_far     prev
 A pivot's cell is missing where no row has the pair (NVDA on day 2), and
 a pair two rows share stops the program, naming the `group` that would
 aggregate it first. A window's `n` is the trailing rows (`n = 3` for a
-three-row mean; 0, the default, for every row so far), and `how` is one
-of `sum`, `mean`, `min`, `max`, `count`, `lag`, `lead` and `rank`.
+three-row mean; 0, the default, for every row so far), and `how` is an
+aggregate `group` takes — `sum`, `mean`, `min`, `max`, `count` and the
+ones below — or `lag`, `lead` or `rank`.
 
 ## Keys, Time and Text
 
@@ -252,8 +252,9 @@ a `group` over the bucket makes bars; `group` and `window` take `median`,
 a percentile, `std`, `first`, `last` and `distinct` beside `sum` and
 `mean`; `sort` and `join` take several keys; `where` picks a cell by a
 mask; `complete` keeps the rows with no missing cell; `unpivot` makes a
-wide frame long; `contains` tests a text column, and `.hour` reads a
-moment column's field — each over the whole column at once:
+wide frame long; `in` tests a text column (`'AA' in ticks.symbol`), and
+`.hour` reads a moment column's field — each over the whole column at
+once:
 
 ```crow
 use frame
@@ -321,8 +322,12 @@ symbol  variable    value
 
 A time window takes the rows within `span` seconds before each row's own
 moment, on the column `on` names, so a five-minute average is `span =
-300` and never a guess at how many rows five minutes hold; the frame is
-sorted by that column within each partition first. A bucket's edge is
-midnight in the moment's own offset, so a day in New York starts at the
-exchange's midnight. Every one of these is held to pandas, to the last
-digit, by `tests/parity/185_frames_held_to_pandas.co`.
+300` and never a guess at how many rows five minutes hold; each
+partition must already be in ascending order of that column, or the
+program stops and says to `sort` first. A bucket's edge is midnight in
+the moment's own offset, so a day in New York starts at the exchange's
+midnight. Every one of these is held to pandas, to the last digit, by
+`tests/parity/185_frames_held_to_pandas.co`.
+
+Chapter 13 does this kind of work against a live database with a web UI
+on top; next, the database half of that story.

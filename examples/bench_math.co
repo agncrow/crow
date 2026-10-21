@@ -1,6 +1,6 @@
 --- Math library performance benchmark
---- Compare: crow run -i examples/bench_math.crow
----          crow build examples/bench_math.crow && ./bench_math
+--- Compare: crow run -i examples/bench_math.co
+---          crow build examples/bench_math.co && ./examples_bench_math
 
 use math
 

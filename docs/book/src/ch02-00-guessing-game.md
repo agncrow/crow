@@ -62,10 +62,10 @@ never think about it (notice `n + 8` just works — values auto-unwrap).
 For a failure, `.ok` is `false` and `.reason` says why.
 
 What if you ignore the failure and use `bad` anyway? Crow refuses to guess:
-an error value has no truth value, so a comparison or branch on it stops
-the program (or returns the error from a function) rather than silently
-picking a wrong path. Chapter 7 is entirely about this; for the game, all
-we need is `.ok`.
+an error value has no truth value — compared with something, it answers
+the error again — so a branch on it stops the program (or returns the
+error from a function) rather than silently picking a wrong path.
+Chapter 7 is entirely about this; for the game, all we need is `.ok`.
 
 ## Generating the Secret Number
 

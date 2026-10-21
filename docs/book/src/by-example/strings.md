@@ -34,4 +34,25 @@ h
 o
 ```
 
+A text's characters are `split[s, '']`, counted as `len` counts them;
+`occurs` counts a part without overlap, and `translate` maps each
+character of one set to the character at its place in another, in one
+pass:
+
+```crow
+log[split['héllo', '']]
+log[len['héllo']]
+log[occurs['banana', 'an']]
+log[occurs['aaaa', 'aa']]
+log[translate['GATTACA', 'ACGT', 'TGCA']]
+```
+
+```text
+['h', 'é', 'l', 'l', 'o']
+5
+2
+2
+CTAATGT
+```
+
 Reference: spec section 11 (Strings) and section 1 (String Interpolation).

@@ -22,6 +22,6 @@ name,age
 
 `csv[]` gives an array of maps (every cell a string) — handy for small
 config-shaped files. For real tables use `frame.load` (chapter 10), which
-types the columns and knows how to filter, sort, and group.
+types the columns, picks rows by a mask, sorts and groups.
 
 Reference: spec section 13 (io).

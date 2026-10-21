@@ -13,7 +13,8 @@ deps = map[graph = 'github.com/agncrow/crow/packages/graph@main']
 ```
 
 `crow install` checks the package out into `crow_modules/graph`, and
-`crow.lock` pins the commit it took. A program imports the parts it uses:
+`crow.lock` pins the commit it took and the hash of the files it
+installed. A program imports the parts it uses:
 
 ```
 use graph.graph, graph.paths, graph.rank

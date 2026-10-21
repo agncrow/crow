@@ -14,7 +14,8 @@ deps = map[vectors = 'github.com/agncrow/crow/packages/vectors@main']
 ```
 
 `crow install` checks the package out into `crow_modules/vectors`, and
-`crow.lock` pins the commit it took. A program imports the part it uses:
+`crow.lock` pins the commit it took and the hash of the files it
+installed. A program imports the part it uses:
 
 ```
 use vectors.flat

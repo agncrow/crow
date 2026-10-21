@@ -37,6 +37,7 @@ cargo clippy --workspace --all-features
 ./target/release/crow test --served
 ./target/release/crow test --docs
 ./target/release/crow test --book
+./target/release/crow test docs/book/site.co && ./target/release/crow run -i docs/book/site.co
 ./target/release/crow test tests/layout/conformance.co
 ./target/release/crow test tests/parity/185_frames_held_to_pandas.co
 ./target/release/crow test --modules

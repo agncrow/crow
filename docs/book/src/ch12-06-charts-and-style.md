@@ -220,8 +220,8 @@ that agreement is kept.
 
 ### The whole vocabulary
 
-Every attribute is a literal, and `crow check` rejects a value the table
-does not know.
+Every attribute is a literal, and a value the table does not know is
+refused before the program runs, naming the values it takes.
 
 | On | Attribute | Values |
 |---|---|---|
@@ -230,9 +230,9 @@ does not know.
 | `grid` | `columns` | a count; cells share the width equally |
 | `scroll` | `height` | a size such as `'96px'` |
 | `overlay` children | `anchor` | `'top_left' 'top_right' 'bottom_left' 'bottom_right' 'center'` |
-| any element | `width`, `min_width`, `max_width`, `fill` | `'240px'`, `'50%'`, `'fill'`; `fill = 'true'` takes the remaining space in a row |
-| any element | `size`, `weight`, `lines` | `'xs' 's' 'm' 'l' 'xl' 'xxl'`; `'normal' 'bold'`; a line clamp |
-| any element | `surface`, `radius`, `border`, `shadow` | `surface = 'card'`; `radius = 's'`; `border = 'true'`; `shadow = 's' 'm'` |
+| any element | `width`, `height`, `min_width`, `max_width`, `fill`, `aspect` | `'240px'`, `'50%'` (a width), `'fill'`; `fill = 'true'` takes the remaining space in a row; `aspect = '16/9'` |
+| any element | `size`, `weight`, `font`, `lines` | `'xs' 's' 'm' 'l' 'xl' 'xxl'`; `'regular' 'medium' 'bold'`; `font = 'mono'`, the monospace face with tabular digits; a line clamp |
+| any element | `surface`, `radius`, `border`, `shadow` | `surface = 'card'`; `radius = 'none' 's' 'm' 'l' 'round'`; `border = 'true'`; `shadow = 's' 'm' 'l'` |
 | any element | `color`, `background` | a token name: `'text' 'muted' 'accent' 'up' 'down' 'surface' 'bg'` |
 | any container | `below` + `becomes`, `below` + `columns_then`, `hidden_below` | `below = 'phone'` (under 600px) or `'tablet'` (under 1024px); `becomes = 'stack'` turns a row into a stack; `columns_then = 1` reflows a grid; `hidden_below` hides the element |
 
@@ -299,4 +299,4 @@ token there and every element and chart that uses it follows:
 CSS never appears inside a `.co` file: the view says *what*, the
 stylesheet says *how it looks*, and the boundary is the file extension.
 
-That's all of it. Next: the final project puts the whole stack together.
+That's all of it. Next: the rest of the element vocabulary.

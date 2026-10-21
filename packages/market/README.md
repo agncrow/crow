@@ -15,7 +15,7 @@ use market.sessions, market.bars
 ## sessions
 
 A day is `Day[year, month, day]` in New York, where the exchange keeps its
-hours, and a moment is epoch seconds, as everywhere in Crow.
+hours, and a moment is Crow's moment (`moment[…]`, `now[]`).
 
 | Function | Answers |
 |----------|---------|
@@ -30,9 +30,11 @@ hours, and a moment is epoch seconds, as everywhere in Crow.
 | `between[first, last]` | the trading days in a span, both ends included |
 | `easter[year]` | Easter Sunday (Good Friday is two days before) |
 
-The calendar is exact from 2001 on. `phase` can fail, as the calendar
-underneath it can (a moment that is not finite), so a program guards it
-with `.ok` where every value must decide something.
+The calendar is exact from 2001 on. A moment made from a day's parts in
+New York's zone can fail (a date that does not exist, a time in a
+daylight-saving gap), so the functions over such moments answer values
+that can fail — `at`, `opens`, `closes` and `phase` among them — and a
+program guards them with `.ok` where every value must decide something.
 
 ```
 use market.sessions
@@ -46,7 +48,9 @@ log[sessions.phase[sessions.at[d, 14, 0]]]  --- late
 
 A bar covers `secs` seconds of the clock, aligned to it, and holds its start
 `ts`, `o`, `hi`, `lo`, `c`, its volume `vol`, its trade count `n` and its
-volume-weighted price `vwap`. A stretch with no trade has no bar.
+volume-weighted price `vwap`. A stretch with no trade has no bar. The
+trades' times and the bars' starts are epoch seconds, as numbers; `during`
+reads each start as a moment (`moment[t]`).
 
 | Function | Answers |
 |----------|---------|

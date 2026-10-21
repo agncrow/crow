@@ -18,7 +18,8 @@ deps = map[models = 'github.com/agncrow/crow/packages/models@main']
 ```
 
 `crow install` checks the package out into `crow_modules/models`, and
-`crow.lock` pins the commit it took. A program imports the models it uses:
+`crow.lock` pins the commit it took and the hash of the files it
+installed. A program imports the models it uses:
 
 ```
 use models.regression, models.tree
@@ -53,7 +54,7 @@ holds a target (or a class) for each.
 | `agglomerative` | `fit[x, k, linkage]` → `Merged[labels]`, linkage `'single'`, `'complete'` or `'average'` | — |
 | `mixture` | `fit[x, k, rounds]` → `Mixture[weights, means, variances]`, by expectation–maximisation | `probability[m, r]` — a probability per curve; `classify[m, r]` — the likeliest curve |
 | `isolation` | `fit[x, trees, sample, seed]` → `Isolation[trees, sample]` | `score[f, r]` — an anomaly score, 0 to 1; `anomalies[f, x, threshold]` — the rows scoring at least it |
-| `crossval` | `crossval[x, y, folds, seed, fit, score]` → `Folds[scores, mean]`; `search[x, y, folds, seed, candidates, fit, score]` → `Search[best, score, scores]` | `fit` a function of (x, y) — or (x, y, candidate) — answering a model, `score` one of (model, x, y) answering a number (`fit_ridge`, `score_ridge` show the shape) |
+| `crossval` | `crossval[x, y, folds, seed, fit, score]` → `Folds[scores, mean]`; `search[x, y, folds, seed, candidates, fit, score]` → `Search[best, scorer, scores]`, `scorer` the best candidate's mean score | `fit` a function of (x, y) — or (x, y, candidate) — answering a model, `score` one of (model, x, y) answering a number (`fit_ridge`, `score_ridge` show the shape) |
 
 - `regression` solves the centred inputs by least squares (`lstsq`), so the
   intercept is exact and `r2` says how much of `y`'s variance the fit explains.
@@ -64,8 +65,9 @@ holds a target (or a class) for each.
   when no sample changes centre.
 - `tree` splits on the feature and threshold that leave the least Gini
   impurity, down to `depth` levels or a pure node.
-- `mlp` has ReLU hidden units and a sigmoid output, with backpropagation
-  written out; its weights start from `seed`.
+- `mlp` has ReLU hidden units and a sigmoid output, and descends the mean
+  binary cross-entropy with its gradient by `grad`, nothing written out;
+  its weights start from `seed`.
 - `ridge` solves (XᵀX + penalty·I) coef = Xᵀy on the centred inputs, the
   intercept exact and unpenalised; `penalty = 0` is least squares.
 - `knn` keeps the data and does the work when asked: Euclidean distance,

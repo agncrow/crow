@@ -36,8 +36,11 @@ optimised with probability 0.14, seed 0. The operators: `+ - * / ^` and
 
 ## The trees
 
-`symbolic.expr` holds the expression trees: a record per node (`Node[op,
-a, b, value, feature]`), evaluated over a dataset with tensor operations,
+`symbolic.expr` holds the expression trees: a tree is a list of nodes in
+preorder — the root, then its first child's subtree, then its second's —
+each a record of its operator, its constant, its feature and the size of
+its subtree (`Node[op, value, feature, size]`), so a subtree is a slice
+of the list. A tree is evaluated over a dataset with tensor operations,
 printed as an equation, measured by node count, simplified by folding
 constants, and changed by PySR's mutations — `mutate_constant`,
 `mutate_operator`, `mutate_feature`, `swap_operands`, `append_random_op`,

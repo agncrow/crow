@@ -35,7 +35,7 @@ if not prices.ok
 - **Parallel by default** — `for` loops run their iterations concurrently; no threads, no async
 - **Errors are values** — no exceptions, no null; failures carry `.ok` / `.reason` and refuse to be silently misread
 - **One way to do things** — one call syntax `f[x]`, one string quote, one loop; every rejected feature has a documented reason
-- **Batteries included** — tensors, data frames, SQL, a reactive web framework (LiveView-style `view` blocks), and a language model as a connection (`use llm`), in one binary
+- **Batteries included** — tensors, data frames, SQL, a reactive web framework (LiveView-style `view` blocks), and language models: a model as a connection, and an agent loop over the program's own functions with a gate, skills and MCP (`use llm`, `use mcp`), in one binary
 - **Verified** — `crow check` runs your tests plus generated edge cases, replays recorded database and model answers, and diffs what the app does against the accepted baseline; the two execution modes are held to one behaviour on every block of the book
 - **Held to references** — frames to pandas and models to scikit-learn to the last digit, optimisation to scipy step for step, retrieval to rank_bm25 and faiss, a GPT to nanoGPT; each package ships with the reference script it is held to
 
@@ -62,7 +62,8 @@ build` fetches a pinned one into `~/.crow`, with the runtime, once (about
 what is present. Until then `crow run` says so and interprets, which
 answers the same, only slower.
 
-`crow help` lists every command. To upgrade, `crow upgrade` replaces the
+`crow help` lists the main commands, and the [toolchain guide](docs/usage.md)
+every one. To upgrade, `crow upgrade` replaces the
 binary with the latest release, held to its published hash; to remove
 Crow, delete `~/.crow` and the PATH line. Working on Crow itself?
 `git clone https://github.com/agncrow/crow && cd crow && ./install.sh --dev`

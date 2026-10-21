@@ -1,9 +1,11 @@
 # Appendix B: Coming from Another Language
 
 Every language you already know has habits that Crow deliberately breaks.
-Each wrong reflex below produces a compile error that names the fix, so
-you would find these out anyway — this appendix just saves you the
-round-trips. Read the six facts, then the section for your language.
+Most wrong reflexes below produce a compile error that names the fix, so
+you would find those out anyway — this appendix saves you the round-trips,
+and warns of the few that run and mean something else: `^` is the power,
+not exclusive or, and an index counts from 0. Read the six facts, then the
+section for your language.
 
 ## The six facts that cover most of it
 
@@ -12,7 +14,7 @@ round-trips. Read the six facts, then the section for your language.
 3. **Comparison and logic are words.** `eq ne gt lt gte lte`, `and or not`. No `==`, `<`, `&&`, `!`, and no `+=`.
 4. **Blocks are indentation; there is no `:`, `{}`, `end`, or `;`.** `fn f[x]`, `if x gt 0`, `else if`, `while`, `for x in xs`.
 5. **No lambdas, no null, no exceptions.** Behavior is a named `fn` passed by name; failure is a value with `.ok` and `.reason` that propagates through use and refuses to decide a branch.
-6. **`for` is an expression that runs in parallel.** `ys = for x in xs` … `x * 2` is your `map`; a trailing `if` is your `filter`; `any`/`all`/`find` with a named predicate are your early-exit searches. There are no threads to write.
+6. **`for` is an expression that runs in parallel.** `ys = for x in xs` … `x * 2` is your `map`; a trailing `if` is your `filter`; `any`/`all`/`find` with a named predicate are your early-exit searches. A loop whose body prints, writes or draws keeps its order, decided for you. There are no threads to write.
 
 A seventh, for anyone with a data background: an all-numeric array *is* a
 tensor (`*` is matmul, `.*` is element-wise), and a table is a *frame*
@@ -29,8 +31,11 @@ tensor (`*` is matmul, `.*` is element-wise), and a table is a *frame*
 | `"text"` / `f"hi {name}"` | `'text'` / `` 'hi `name`' `` |
 | `"a" + "b"` | interpolate, or `join[parts, sep]` |
 | `x += 1` | `x = x + 1` |
+| `x ** 2` | `x ^ 2` (`-x ^ 2` is `-(x ^ 2)`, as in Python) |
+| `a ^ b`, `a & b`, `a << n` | `bitxor[a, b]`, `bitand[a, b]`, `shift[a, n]` after `use bits` — `^` is the power |
 | `==  !=  <  >=` | `eq  ne  lt  gte` |
 | `and or not` | same words, same meaning |
+| `x in xs`, `x not in xs` | the same — an item of a list, a part of text, a key of a map |
 | `def f(x):` | `fn f[x]` + indentation (no `:`) |
 | `lambda` | a named `fn`, passed by name |
 | `class` | `struct` + free functions |
@@ -41,14 +46,22 @@ tensor (`*` is matmul, `.*` is element-wise), and a table is a *frame*
 | `None` | doesn't exist — error values + `.ok` |
 | `True/False` | `true/false` |
 | `try/except/raise` | errors are values (chapter 7); `raise` is `return error[reason, kind]` |
-| `a, b = f()` | `r = f[]; a = r[0]; b = r[1]` |
+| `a, b = f()` | `r = f[]`, then `a = r[0]` and `b = r[1]` |
 | `[x*2 for x in xs]` | `for`-as-expression |
+| `xs.append(v)` | `xs = push[xs, v]` — a builtin answers a new value |
+| `for c in s`, `for k in d` | `for c in split[s, '']`, `for k in keys[m]` — text and maps are not walked |
+| `break` in a `for` loop | `while`, or `find`/`any`/`all` — a `for`'s rounds run at once |
 | `dict` | `map[k = v]` (one value type) or a `struct` |
 | `# comment` | `--- comment` |
 | global variables in functions | invisible — pass parameters (chapter 4) |
-| threads / asyncio / multiprocessing | delete them — `for` is already parallel; `later[f]` for background work |
-| `pandas.DataFrame` | `use frame`; `df[df.age > 30]` → `df[df.age gt 30]` |
+| threads / asyncio / multiprocessing | delete them — `for` is already parallel where its body only computes; `later[f]` for background work |
+| `pandas.DataFrame` | `use frame`; `df[df.age > 30]` → `df[df.age gt 30]`, `df['c'] = v` → `df.c = v` |
 | `numpy` arrays | plain numeric arrays; `@` → `*`, `*` → `.*` |
+| `datetime.now()`, `datetime(2026, 7, 14)`, `timedelta` | `now[]`, `moment[2026, 7, 14]`, seconds: `t + 60` |
+| `Decimal('0.1')`, `Fraction(1, 3)` | `decimal['0.1']`, `fraction[1, 3]`; an int grows as Python's does |
+| `json.loads(s)`, `json.dumps(v)` | `json[s]`, `encode[v]` |
+| `requests.get(url)` | `request[url]` |
+| the `anthropic` or `openai` SDK, an agent framework | `use llm`: `chat[m, talk]`; `act[m, talk, tools = [f]]` runs the tool loop |
 | `pytest` files | `test` blocks under the function (chapter 9) |
 
 ## From JavaScript and TypeScript
@@ -62,6 +75,8 @@ tensor (`*` is matmul, `.*` is element-wise), and a table is a *frame*
 | `===  !==  <  >=` | `eq  ne  lt  gte` |
 | `&&  \|\|  !` | `and  or  not` |
 | `x++`, `x += 1` | `x = x + 1` |
+| `x ** 2` | `x ^ 2` |
+| `a ^ b`, `a & b`, `a << n` | `bitxor[a, b]`, `bitand[a, b]`, `shift[a, n]` after `use bits` — `^` is the power |
 | `function f(x) { }` / `(x) => x * 2` | `fn f[x]` + indented body; no arrow functions |
 | `{ }` blocks | indentation |
 | `x ? a : b` | `if`/`else` statements |
@@ -71,14 +86,20 @@ tensor (`*` is matmul, `.*` is element-wise), and a table is a *frame*
 | `async/await`, Promises | none — `later[f]` runs work off the loop; `for` is parallel |
 | `xs.map(f)`, `.filter`, `.reduce` | `for`-as-expression; named reductions (`sum` …) |
 | `xs.find(p)`, `.some`, `.every` | `find[xs, p]`, `any[xs, p]`, `all[xs, p]` with a named `fn` |
+| `xs.includes(x)`, `'k' in obj` | `x in xs`, `'k' in m` |
+| `xs.push(x)` | `xs = push[xs, x]` |
 | `{ k: v }` object | `map[k = v]` (one value type) or a `struct` |
 | `class` | `struct` + free functions |
 | `import x from 'y'` | `use y` (then `y.x`) |
-| `JSON.parse(s)` | `json[s]` (error value on bad input) |
+| `JSON.parse(s)`, `JSON.stringify(v)` | `json[s]` (error value on bad input), `encode[v]` |
+| `fetch(url)` | `request[url]`; in a page, `fetch[url]` loads a frame when the page connects |
+| `new Date()`, `Date.parse(s)` | `now[]`, `moment[s]` |
+| `BigInt`, `123n` | plain ints: an int grows past 64 bits |
 | `xs.length` | `len[xs]` |
 | `// comment` | `--- comment` |
 | React/Vue components + fetch + REST | `view` blocks over reactive state, rendered on the server (chapter 12) |
 | `npm test`, Jest | `test` blocks under the function; `crow test` |
+| Vercel's AI SDK, LangChain.js | `use llm`: `chat[m, talk]`; `act[m, talk, tools = [f]]` runs the tool loop |
 
 ## From R
 
@@ -92,10 +113,10 @@ tensor (`*` is matmul, `.*` is element-wise), and a table is a *frame*
 | `xs %>% f() %>% g(a)` | `xs then f then g[a]` |
 | `sapply(xs, f)`, `lapply`, `purrr::map` | `for`-as-expression |
 | `df[df$age > 30, ]`, `dplyr::filter` | `df[df.age gt 30]` |
-| `df$col` | `df.col` |
+| `df$col`, `df$c <- v`, `mutate` | `df.col`, `df.c = v` |
 | `nrow(df)` | `len[df]` |
 | `group_by %>% summarise` | `group[df, 'dept', ['salary', 'mean']]` |
-| `NULL`, `NA` | no null — error values: a NULL cell read from a database, or a frame's missing cell, is an error of reason `missing`; filters exclude missing cells |
+| `NULL`, `NA` | no null — error values: a NULL cell read from a database, or a frame's missing cell, is an error of reason `missing`; a mask excludes missing cells |
 | `TRUE/FALSE` | `true/false` |
 | `==  !=  <=` | `eq  ne  lte` |
 | `&&  \|\|  !`, `&  \|` | `and  or  not` (they work element-wise on columns too) |
@@ -106,7 +127,8 @@ tensor (`*` is matmul, `.*` is element-wise), and a table is a *frame*
 | `stop("msg")`, `tryCatch` | `return error['msg', kind]`; check `.ok` |
 | `%in%` | `v in xs` |
 | `# comment` | `--- comment` |
-| `mean(x)`, `sd(x)` | `mean[x]`, `std[x]` after `use math` |
+| `mean(x)`, `sd(x)` | `mean[x]` after `use math`, `std[x]` after `use math.stats` |
+| `Sys.time()`, `as.POSIXct(s)` | `now[]`, `moment[s]` |
 
 ## From MATLAB and Octave
 
@@ -120,7 +142,7 @@ tensor (`*` is matmul, `.*` is element-wise), and a table is a *frame*
 | `A \ b` | `solve[A, b]` |
 | `zeros(3, 4)`, `eye(3)`, `linspace(0, 1, 5)` | `zeros[3, 4]`, `eye[3]`, `linspace[0, 1, 5]` after `use math` |
 | `x(end)` | `x[-1]` |
-| `length(x)`, `numel`, `size(A)` | `len[x]`, `A.shape` |
+| `length(x)`, `numel(A)`, `size(A)` | `len[x]` (a matrix's rows), `len[flatten[A]]`, `A.shape` |
 | `function y = f(x) … end` | `fn f[x]` + indented body; last expression returns |
 | `if … elseif … else … end` | `if` / `else if` / `else`, indentation, no `end` |
 | `for i = 1:10 … end` | `for i in range[10]` (0–9); the loop is parallel |
@@ -135,6 +157,7 @@ tensor (`*` is matmul, `.*` is element-wise), and a table is a *frame*
 | `try … catch … end` | errors are values; check `.ok` |
 | `parfor` | plain `for` — already parallel |
 | tables (`readtable`) | `use frame`; `frame.load['file.csv']` |
+| `bitand(a, b)`, `bitshift(a, n)` | `bitand[a, b]`, `shift[a, n]` after `use bits` |
 
 ## From Julia
 
@@ -151,16 +174,17 @@ tensor (`*` is matmul, `.*` is element-wise), and a table is a *frame*
 | `Dict("a" => 1)` | `map[a = 1]` |
 | `struct P; x; y; end` | `struct P [x, y]` |
 | `x::Int` annotations | none — inferred |
-| `using Statistics` | `use math.stats` |
+| `using Statistics` | `use math, math.stats` |
 | `nothing`, `missing` | no null — error values |
+| `big(2)^100`, `1//3`, `BigFloat` | `2 ^ 100` (an int grows), `fraction[1, 3]`, `decimal[x, digits = 50]` |
 | `try/catch`, `error("…")` | errors are values; `return error['…', kind]` |
 | `Threads.@threads for` | plain `for` — already parallel |
-| `push!(v, x)` | `v = push[v, x]` — nothing mutates in place |
+| `push!(v, x)` | `v = push[v, x]` — a builtin answers a new value, and leaves what it was handed as it was |
 | `println(x)` | `log[x]` |
 | `# comment` | `--- comment` |
 | `==  !=  <=  &&  \|\|  !` | `eq  ne  lte  and  or  not` |
 | `1:10` | `range[1, 11]` (exclusive end) |
-| `@time`, `@test` | `crow check` reports timings; `test` blocks |
+| `@time`, `@test` | `t0 = now[]`, then `now[] - t0` in seconds; `test` blocks |
 
 ## From Go
 
@@ -176,18 +200,21 @@ tensor (`*` is matmul, `.*` is element-wise), and a table is a *frame*
 | `for i := 0; i < n; i++` | `for i in range[n]` (parallel) or `while` (sequential) |
 | `for _, x := range xs` | `for x in xs` |
 | `go f()`, channels, `sync.WaitGroup` | `for` is already parallel; `later[f]` for background work |
-| `map[string]int{}` | `map[]` then `set[m, k, v]` |
+| `map[string]int{}` | `m = map[]`, then `m = set[m, k, v]` |
 | `append(xs, x)` | `xs = push[xs, x]` |
 | `type P struct { … }` + methods | `struct P [x, y]` + free functions |
 | `switch` | `if` / `else if` |
 | `fmt.Println(x)`, `fmt.Sprintf("%.2f", x)` | `log[x]`, `fmt[x, decimals = 2]` |
 | `==  !=  <=  &&  \|\|  !` | `eq  ne  lte  and  or  not` |
 | `x++`, `x += 1` | `x = x + 1` |
+| `a ^ b`, `a & b`, `a << n` | `bitxor[a, b]`, `bitand[a, b]`, `shift[a, n]` after `use bits` — `^` is the power |
+| `math/big` | nothing to import: an int grows past 64 bits; `fraction[n, d]` for a ratio |
 | `// comment` | `--- comment` |
 | `package` / `import "x"` | `use x` |
 | `_test.go` files, `testing.T` | `test` blocks under the function; `crow test` |
-| `defer` | not needed — files and connections are values; nothing to close |
+| `defer` | not needed — a file is read or written in one call, and a database connection is the program's pool; a WebSocket is closed with `close[s]` |
 | `net/http` handlers | `use web`; `route['/api', handler]`, `serve[3000]` |
+| `http.Get(url)` | `request[url]` |
 
 ## From Rust
 
@@ -197,7 +224,7 @@ tensor (`*` is matmul, `.*` is element-wise), and a table is a *frame*
 | `fn f(x: i64) -> i64 { }` | `fn f[x]` — types inferred at each call site (section 17 of the spec) |
 | `f(x)` | `f[x]` |
 | `Result<T, E>`, `?` | every value is a result already; propagation is automatic; `.ok`/`.reason`/`.kind` where you handle it |
-| `Option<T>`, `None`, `unwrap()` | no null; values auto-unwrap on use; a miss is an error value |
+| `Option<T>`, `None`, `unwrap()` | no null; values auto-unwrap on use; a miss is an error value; a tree's `Option<Box<Node>>` is a field holding `0` for none, asked `t.left eq 0` |
 | `match` | `if` / `else if` — no pattern matching, no enums |
 | `\|x\| x * 2` closures | a named `fn`, passed by name |
 | `xs.iter().map(f).collect()` | `for`-as-expression |
@@ -207,9 +234,11 @@ tensor (`*` is matmul, `.*` is element-wise), and a table is a *frame*
 | `struct` + `impl` | `struct P [x, y]` + free functions; no methods, no traits |
 | `enum` | none — structs, error kinds, or strings |
 | `println!("{x}")`, `format!` | `log['`x`']`, `fmt[x, decimals = 2]` |
-| `"str"`, `'c'` | `'str'` only; characters are 1-length strings |
+| `"str"`, `'c'` | `'str'` only; characters are 1-length strings, and `s.chars()` is `split[s, '']` |
 | `==  !=  <=  &&  \|\|  !` | `eq  ne  lte  and  or  not` |
 | `x += 1` | `x = x + 1` |
+| `a ^ b`, `a & b`, `a << n` | `bitxor[a, b]`, `bitand[a, b]`, `shift[a, n]` after `use bits` — `^` is the power |
+| `i64` overflow, `num-bigint` | an int grows past 64 bits; the compiled program keeps 64 bits where it can show they suffice |
 | `// comment`, `/// doc` | `--- comment` |
 | `use x::y;`, `mod` | `use x` (then `x.y`); every file is a module |
 | `#[test]`, `assert_eq!` | `test` blocks with bare boolean truths; `assert[cond]` in scenarios |
@@ -244,6 +273,8 @@ tensor (`*` is matmul, `.*` is element-wise), and a table is a *frame*
 | `def f(x) … end` | `fn f[x]` + indentation, no `end` |
 | `f(x)`, `f x` | `f[x]` — always brackets |
 | `xs.each { \|x\| … }`, `.map`, `.select` | `for`-as-expression (parallel); no blocks or procs |
+| `xs.include?(x)` | `x in xs` |
+| `xs << x`, `xs.push(x)` | `xs = push[xs, x]` |
 | `"#{x}"` | `` '`x`' `` |
 | `'a' + 'b'`, `<<` | interpolate, or `join` |
 | `nil` | doesn't exist |
@@ -273,6 +304,8 @@ tensor (`*` is matmul, `.*` is element-wise), and a table is a *frame*
 | `throws`, `try`, `do/catch` | errors are values; `return error[reason, kind]` |
 | `{ x in x * 2 }` closures | a named `fn`, passed by name |
 | `xs.map { }`, `.filter`, `.first(where:)` | `for`-as-expression, `find[xs, p]` |
+| `xs.contains(x)` | `x in xs` |
+| `xs.append(x)` | `xs = push[xs, x]` |
 | `struct` with methods, `class`, `enum` | `struct P [x, y]` + free functions; no enums |
 | `[1, 2, 3]`, `["a": 1]` | `[1, 2, 3]`, `map[a = 1]` |
 | `switch` | `if` / `else if` |
@@ -302,7 +335,8 @@ tensor (`*` is matmul, `.*` is element-wise), and a table is a *frame*
 | `defer`, `comptime` | neither exists; nothing to free, nothing to compute at compile time |
 | `==  !=  <=  and  or  !` | `eq  ne  lte  and  or  not` |
 | `x += 1` | `x = x + 1` |
+| `a ^ b`, `a & b`, `a << n` | `bitxor[a, b]`, `bitand[a, b]`, `shift[a, n]` after `use bits` — `^` is the power |
 | `// comment` | `--- comment` |
 | `@import("std")` | `use math`, `use io`, … |
-| `test "name" { }` | `test name[]` — the same idea, attached to the function it tests |
+| `test "name" { }` | `test name[]`, a named scenario; a `test` block written under a function is that function's examples and laws |
 | `zig build`, `zig test` | `crow build`, `crow test`, `crow check` |

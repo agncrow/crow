@@ -21,10 +21,10 @@ OpenAI-compatible, since Anthropic serves no embeddings).
 |---|---|
 | `main.co` | `serve`, the page |
 | `chat/corpus.co` | The notes cut into chunks at blank lines — each its file and its number, a heading on its own left out — and the embedder reached; `crow test chat/corpus.co` |
-| `chat/retrieve.co` | `fused[near, lexical_top, k]`: two rankings fused by reciprocal rank (k = 60); `hybrid[…]`: a question's chunks, by its embedding's nearest (`vectors.flat`) and BM25's best (`retrieval.bm25`); `crow test chat/retrieve.co` |
+| `chat/retrieve.co` | `fused[near, lexical_top, k]`: two rankings fused by reciprocal rank — each position scoring 1 / (60 + its rank) in each ranking it is in — and the `k` best kept; `hybrid[…]`: a question's chunks, by its embedding's nearest (`vectors.flat`) and BM25's best (`retrieval.bm25`); `crow test chat/retrieve.co` |
 | `chat/page.co` | The derivations — the chunks, their index, their BM25 ranking — the handler that asks (the chunks numbered in the system prompt, the model held to them), and the page: each turn's question, answer and the notes it read; `crow test --fixtures chat/page.co` |
 | `docs/*.md` | The notes: five short pages about Crow |
-| `crow_modules/` | The packages the app imports, linked to `packages/vectors` and `packages/retrieval` (`crowfile` names them; `crow install` makes the links) |
+| `crow_modules/` | The packages the app imports, linked to `packages/vectors` and `packages/retrieval` (`crowfile` names them; the links are committed, relative to the checkout, where `crow install` would write them again as absolute paths) |
 | `reference/standin.py` | A stand-in for the model's server, for recording the fixtures with no model |
 
 ## The tests, without a model
@@ -56,5 +56,5 @@ crow check --record-fixtures main.co
 ```
 
 A question the fixtures do not hold is named by the failing test (``no
-fixture held `POST http://127.0.0.1:11434/v1/chat/completions` — `crow
+fixture holds `POST http://127.0.0.1:11434/v1/chat/completions` — `crow
 check --record-fixtures` records it where the server is``).

@@ -1,8 +1,9 @@
 # Maps Are Dictionaries
 
-A map is a lookup table: string keys, values of **one** type. Build one
-with the `map[...]` constructor; read with dot or bracket; `set` returns
-an updated copy:
+A map is a lookup table: keys of one kind — text, or ints
+(`map[1 = 'a']`) — and values of **one** type. Build one with the
+`map[...]` constructor; read with dot or bracket; `set` returns an
+updated copy:
 
 ```crow
 scores = map[alice = 10, bob = 7]

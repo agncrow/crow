@@ -42,8 +42,8 @@ arrive a query later. You wrote nothing for either.
 
 Before its first value, a derivation that queries reads as an error of kind
 `'pending'` with the reason `loading` — a view that renders a failed read
-in place shows "loading", and the page appears at once instead of waiting
-for its slowest query. `running[trades]` is true while it recomputes, for a
+in place shows `error: loading`, and the page appears at once instead of
+waiting for its slowest query. `running[trades]` is true while it recomputes, for a
 spinner of your own.
 
 Nothing one reader does holds another. Handlers and renders run on worker
@@ -115,8 +115,10 @@ anything:
    Its writes are applied between renders, serially, so a view never sees
    half-finished state.
 2. **Impatience is harmless.** A second `later[load_book]` while the
-   first is still running is skipped. Hammering the refresh button cannot
-   stack five queries.
+   first is still running is not stacked: `load_book` runs once more when
+   the first ends, from the state as it then stands, however many asked
+   meanwhile. Hammering the refresh button cannot stack five queries, and
+   the last ask is never lost.
 3. **Failure stops it cleanly.** If a query inside the fn fails at a
    decision, the fn stops as a handler does: nothing it wrote lands, the
    page keeps its last good values, and the notice says why.
@@ -175,7 +177,8 @@ serve[3000, refresh = 5, budget = 50]
 ```
 
 `refresh = 5` re-renders every connected session every five seconds —
-render-time queries re-run, so the page tracks the database with zero
+a derivation over the clock, or over a table something else writes, is
+computed again (chapter 12.8), so the page tracks the database with zero
 lines of update code. If a render is slow, missed ticks are *skipped*,
 never stacked. And `budget = 50` is the loop's own heartbeat: any handler
 or render over 50ms gets logged with its name, so a freezing loop is
@@ -200,9 +203,11 @@ design on Crow's roadmap, not a property of `later`.
 
 ## The checker knows this chapter
 
-`crow check` detects the frozen version statically — a view or handler
-that reaches `sleep`, `shell`, or `input` through any chain of calls gets
-flagged with the path, and the interactive loop can apply the fix for you:
+`crow check` detects the frozen version statically — a handler that
+reaches a call that waits (`sleep`, `shell`, `input`, a socket's `recv`)
+through any chain of calls gets flagged with the path, and the
+interactive loop can apply the fix for you (a view that reaches one is
+refused before the program runs):
 
 ```text
 [1/1] scanner.co:14 in refresh

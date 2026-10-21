@@ -1,4 +1,4 @@
---- Seed the dashboard database (run once): crow run dashboard_seed.crow
+--- Seed the dashboard database (run once): crow run dashboard_seed.co
 use db
 
 conn = connect['sqlite://trades.db']

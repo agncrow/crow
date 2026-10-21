@@ -2,8 +2,10 @@
 
 The Model Context Protocol is how a harness gets tools from another
 program: a server offers tools, each a name, a description and an input
-schema, and a client lists and calls them over one HTTP endpoint. `server`
-names an endpoint; what it answers is a description the program can read:
+schema, and a client lists and calls them over one HTTP endpoint, or over
+the standard streams of a process it starts. `server` names an endpoint,
+or by name the command that starts one (below); what it answers is a
+description the program can read:
 
 ```crow
 use mcp
@@ -130,6 +132,13 @@ fn weather[city]
 listen[tools = [weather], name = 'weather-server']
 ```
 
+An agent takes a server's tools beside the program's own: `act[m, talk,
+tools = [f], servers = [s]]` (`use llm`) adds every tool `s` offers, each
+called on the server, and a name a server's tool shares with another tool
+is refused before any model is asked.
+
 `tests/mcp.rs` drives a Crow client against a stand-in server, a stand-in
 client against a Crow server like the first one, and a Crow client against
 a Crow program serving over stdio like the second, in both modes.
+
+Reference: spec section 13 (mcp).

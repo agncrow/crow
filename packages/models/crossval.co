@@ -1,7 +1,7 @@
 --- Cross-validation and a search over a parameter. The rows are dealt
 --- into `folds` parts (shuffled from `seed`, so the folds are the same
 --- every run); each part is held out in turn while a model is fitted to
---- the rest and scored on it, and the mean scorer is the model's measure
+--- the rest and scored on it, and the mean score is the model's measure
 --- on rows it has not seen. `fitter` is a function of (x, y) answering a
 --- model, `scorer` one of (model, x, y) answering a number — `fit_ridge`
 --- and `score_ridge` below are the shape they take. `search` does it for
@@ -73,7 +73,7 @@ fn fit_ridge_with[x, y, penalty]
 fn score_ridge[m, x, y]
     return metrics.r2[y, ridge.predict[m, x]]
 
---- a line with a little noise: ridge scores high on rows it did not fitter,
+--- a line with a little noise: ridge scores high on rows it did not fit,
 --- and the search prefers the lightest penalty on clean data
 test scores_held_out_rows[]
     x = [[0.0], [1.0], [2.0], [3.0], [4.0], [5.0], [6.0], [7.0], [8.0]]

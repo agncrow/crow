@@ -46,8 +46,9 @@ log[a * 2.0]
 ```
 
 Nest literals and you have a matrix — `m[0]` is a row, `.shape` tells you
-the dimensions, and `use math` unlocks the full toolkit (`zeros`, `eye`,
-`matmul`, reductions along axes — chapter 10 puts it to work):
+the dimensions, `*` of two matrices multiplies them, and `use math`
+unlocks the full toolkit (`zeros`, `eye`, `transpose`, reductions along
+axes — chapter 10 puts it to work):
 
 ```crow
 m = [[1, 2], [3, 4]]

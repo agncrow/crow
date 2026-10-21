@@ -13,7 +13,7 @@ both modes with the same clicks and compares what they settle on.
 
 ## The harness
 
-Five verbs, valid only inside test blocks:
+Its verbs, valid only inside test blocks:
 
 | Verb | What it does |
 |---|---|
@@ -133,10 +133,10 @@ re-renders with it, the handler puts it back.
 A test block sees declarations: functions, views, structs, imports. Of the
 top-level assignments only two kinds ride along — literal values, which
 are reactive-state defaults the harness reads and handlers write, and
-connections (`db.connect[...]`), which are resources a render-time view
-needs to exist at all. Everything computed at the top level is invisible,
-exactly as it is inside a function, so a view under test cannot depend on
-work the program did before `page[]`.
+connections (`db.connect[...]`), which are resources the derivations and
+handlers under test need to exist at all. Everything computed at the top
+level is invisible, exactly as it is inside a function, so a view under
+test cannot depend on work the program did before `page[]`.
 
 ## Failure renders, it doesn't crash
 
@@ -205,7 +205,7 @@ log['clock defined']
 clock defined
 ```
 
-A click that stops — an error at a decision, a fact, a database call —
+A click that stops — an error at a decision, a fact, a database write —
 evaluates to that error, and the session is exactly as it was before the
 click: `r = click[a, apply]`, then `assert[not r.ok]`.
 
@@ -274,10 +274,10 @@ page renders. Per-user state is the default; shared state is a table.
 | A click doesn't change state, or changes the wrong thing | `click[s, handler]` then `s.field` |
 | Typing into a bound field doesn't propagate | `change[s, 'var', value]`, then render again |
 | Wrong `href`, missing `name`, wrong class | attribute keys on element records |
-| A failed query crashes instead of rendering its reason | render with an error value, assert on the tree |
+| A failed query crashes instead of rendering in place | render with an error value, assert on the tree |
 | Two users' events interleave badly | two `app[]` sessions in one test |
 | Background work never lands | `later[]` runs inline in tests — observable on the next line |
-| A view blocks the live loop or serves a stale snapshot | `crow check`, statically — no test needed |
+| A handler blocks the live loop, or a view serves a stale snapshot | `crow check`, statically — no test needed |
 | A chart draws the wrong thing | `elements[s, 'rect']` walks the SVG too |
 
 ## What this cannot see
@@ -310,7 +310,7 @@ they always do, and nothing is built for them.
 
 ```text
 $ crow test --compiled sim/clock.co
-  ✓ 2 blocks pass, the apps they opened compiled (1 run) — 0 truths, 1 law, 51 inputs run
+  ✓ 3 blocks pass, the apps they opened compiled (2 runs) — 2 truths, 1 law, 52 inputs run
 ```
 
 A test that reaches a database server or a model needs it running —
@@ -323,9 +323,7 @@ sends, so a changed prompt to a model is a changed request; its headers,
 and the key in them, are no part of it.
 
 `crow test` runs these blocks; `crow check` runs them plus the live-loop
-hazards; `crow run` and `crow build` ignore them. Next: the two things
-every dashboard needs that you haven't written yet — a chart, and a page
-that looks right.
+hazards; `crow run` and `crow build` ignore them.
 
 ## The baseline: what changed, without writing a test
 
@@ -394,3 +392,6 @@ crow book: http://localhost:3101/  — the app's book (Ctrl-C or `crow stop book
 
 The book serves next to the app, on its `serve` port plus one; `--port`
 chooses another. `crow stop book` stops it from anywhere in the project.
+
+Next: the two things every dashboard needs that you haven't written yet —
+a chart, and a page that looks right.

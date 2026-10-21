@@ -36,6 +36,20 @@
 
 ## Notes
 
+- **2026-10-21, the interpreter's speed, lost for three days and
+  kept.** Phase 1 of the compiler's freeze (e967633) had turned the
+  lists the interpreter reads after every builtin call — whether the
+  answer is stamped, whether a list grows in place, whether a rehearsal
+  records the call — into scans of the whole table by name. Re-measuring
+  the benchmarks game programs against Rust, Go and CPython found n-body
+  interpreted at 8.0 s for a million steps where 0.7.0 took 2.0 s, and
+  k-nucleotide and reverse complement at twice their time, with every
+  suite passing. A name is looked up in an index built once now
+  (d3ee350): n-body 2.13 s, k-nucleotide 0.26 s, reverse complement
+  0.55 s, spectral norm 6.57 s (medians of three runs, Apple M4 Max);
+  the compiled programs were unchanged. A unit test measures the index
+  against a scan in the same run. The table above is still the
+  2026-10-06 recording.
 - **2026-10-01, element-wise chains in one pass.** `tensors`'
   `elementwise_chain` (`x * 2.0 + x .* x - 1.0` over ten million
   elements) is one call of the fused kernel (second-half-design.md §3):

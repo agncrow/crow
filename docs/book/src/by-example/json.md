@@ -22,9 +22,13 @@ parse
 ```
 
 Strings are inert outside backtick interpolation, so JSON braces and
-double quotes need no escaping. A parsed field is open-schema data: convert
-it with `int[]`, `float[]`, or `str[]` before arithmetic — the conversion
-is an error value if the field isn't what you expected.
+double quotes need no escaping. A parsed field is open-schema data, read
+as the kind its use implies: `obj.n + 1` reads `n` as a number,
+`upper[obj.name]` reads `name` as text, and a field that holds another
+kind stops the program, naming what it holds and the read that asked.
+`int[]`, `float[]` and `str[]` read one by hand, as `int[obj.n]` does
+here, and that conversion is an error value where the field isn't what
+you expected.
 
 ## Text for a header or a URL
 

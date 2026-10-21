@@ -49,31 +49,35 @@ The tradeoff: no lambdas, no pattern matching, no sum types. Languages like Elix
 | Zig | Static | Yes (comptime) | Yes (unions) | No | 8 |
 | Rust | Static | Yes (powerful) | Yes (enums) | Yes (core feature) | 9 |
 
-Crow has no explicit generics or sum types, but its call-site type inference effectively monomorphizes functions — you can write `fn keep[items, f]` and it works across types because the compiler infers concrete types from each call site. This is similar to C++ templates or Julia's specialization, but with zero syntax overhead. Less expressive than Rust or Elixir for modeling complex domains, but more capable than Go for higher-order abstractions.
+Crow has no explicit generics or sum types, but its call-site type inference monomorphizes functions — you can write `fn first[arr]` and call it with a list of ints and a list of text, because the compiler infers concrete types from each call site and compiles a version for each. This is similar to C++ templates or Julia's specialization, but with zero syntax overhead. The limit is higher-order code: a function that takes a function, such as `fn keep[items, f]`, is compiled once, so every call must hand it items of one kind, where Go's generics write `Filter[T]` once for every `T`. Less expressive than Rust or Elixir for modeling complex domains.
 
 Where Crow loses points: no generics, no sum types, `.kind` is a free-form string. But for the target audience (data science, scripting), this is the right tradeoff.
 
 ## 3. Parallelism
 
-Side-by-side — parallel fetch:
+Side-by-side — score every item, on every core:
 
 ```
 --- Go
-ch1 := make(chan string)
-ch2 := make(chan string)
-go func() { ch1 <- fetch("url1") }()
-go func() { ch2 <- fetch("url2") }()
-a, b := <-ch1, <-ch2
+results := make([]float64, len(xs))
+var wg sync.WaitGroup
+for i, x := range xs {
+    wg.Add(1)
+    go func(i int, x float64) {
+        defer wg.Done()
+        results[i] = score(x)
+    }(i, x)
+}
+wg.Wait()
 
 --- Crow
-a = fetch['url1']
-b = fetch['url2']
-d = a + b
+results = for x in xs
+    score[x]
 ```
 
 | Language | Model | Effort Required | Rating |
 |----------|-------|-----------------|--------|
-| **Crow** | Automatic — parallel `for` loops, independent statement waves via `rayon::join` | Zero (default) | **9** |
+| **Crow** | Automatic — a `for` whose body only computes runs on every core; frame and tensor operations use every core inside themselves | Zero (default) | **9** |
 | Elixir | BEAM processes, OTP | Low (built-in) | 8 |
 | Go | Goroutines + channels | Low-moderate | 7 |
 | Julia | `@threads`, `@distributed`, tasks | Low | 7 |
@@ -85,27 +89,27 @@ d = a + b
 | Python | GIL, `multiprocessing`, `asyncio` | High | 3 |
 | Ruby | GVL, threads, Ractors | High | 3 |
 
-This is Crow's strongest differentiator. `for` loops are parallel by default, frame and tensor operations use every core inside themselves, and the search builtins (`any`, `all`, `find`) run in parallel with early exit. No annotations, no imports, no async/await. Statements themselves run in the order written (the spec's Design Note "Statements Run in Order" records why the earlier statement-level waves were dropped). `cpu[n]`/`gpu[n]` provide resource control.
+This is Crow's strongest differentiator. `for` loops are parallel by default, frame and tensor operations use every core inside themselves, and the search builtins (`any`, `all`, `find`) run in parallel with early exit. No annotations, no imports, no async/await. A loop runs in order only where its body could show the order — output, a file, the network or the database, a random draw, a write to a variable outside it — which the compiler decides once, the same in both modes. Statements themselves run in the order written (the spec's Design Note "Statements Run in Order" records why the earlier statement-level waves were dropped). `cpu[n]`/`gpu[n]` provide resource control.
 
-The gap: no async/await, no channels, no actor model. Crow's parallelism is data-parallel, not concurrent. Elixir and Go are far better for networked services, message passing, and fault-tolerant systems. Loses 1 point because automatic parallelism is ambitious and unproven at scale.
+The gap: no async/await, no channels, no actor model. Crow's parallelism is data-parallel, not concurrent: requests do not overlap, and a loop whose body makes a request runs its requests one after another. Elixir and Go are far better for networked services, message passing, and fault-tolerant systems. Loses 1 point because automatic parallelism is ambitious and unproven at scale.
 
 ## 4. Performance
 
 | Language | Execution | Relative Speed | Rating |
 |----------|-----------|---------------|--------|
 | Rust | Compiled (LLVM) | Baseline | 10 |
-| **Crow** | Transpiles to Rust → native binary | Near-Rust | **9** |
+| **Crow** | Transpiles to Rust → native binary; `crow run -i` interprets | Near-Rust | **9** |
 | Zig | Compiled (LLVM) | Near-C | 9 |
 | Crystal | Compiled (LLVM), GC | ~1.5-3x slower | 8 |
-| Go | Compiled, GC | ~2-5x slower | 8 |
+| Go | Compiled, GC | Near-Rust on the programs below | 8 |
 | Julia | JIT compiled (LLVM) | Near-C for numeric | 8 |
 | Swift | Compiled (LLVM), ARC | ~1.5-3x slower | 8 |
 | JS | V8 JIT | ~5-20x slower | 5 |
 | Elixir | BEAM VM | ~10-30x slower | 4 |
-| Python | Interpreted (CPython) | ~50-100x slower | 3 |
+| Python | Interpreted (CPython) | ~20-150x slower on numeric loops | 3 |
 | Ruby | Interpreted (CRuby) | ~50-100x slower | 3 |
 
-By transpiling to Rust and compiling in release mode, Crow gets near-Rust performance with Python-like syntax. Crystal is the closest competitor (compiled, inferred types), but Crow's automatic parallelism can give it an edge on multi-core workloads.
+By transpiling to Rust and compiling in release mode, Crow gets near-Rust performance with Python-like syntax. Measured on 2026-10-21 (Apple M4 Max, crow at commit d3ee350, medians of five runs, three for the interpreter) over seven programs of the benchmarks game, the binaries `crow build` makes ran fannkuch-redux and spectral norm in Rust's time, reverse complement, k-nucleotide and n-body in 1.75 to 2.75 times it, and pidigits and binary trees faster than Rust's programs — binary trees faster even with Rust linked against mimalloc, the allocator Crow's programs use. Go ran the same seven in 0.3 to 4.7 times Rust's time. The interpreter, `crow run -i`, ran five of the seven faster than CPython (k-nucleotide 16 times faster) and two slower (reverse complement and binary trees). Crystal is the closest competitor (compiled, inferred types), but Crow's automatic parallelism can give it an edge on multi-core workloads.
 
 ## 5. Error Handling
 
@@ -145,16 +149,16 @@ if not bad.ok
 | JS | Exceptions (`try`/`catch`) + Promises | 5 |
 | Ruby | Exceptions | 5 |
 
-Crow's model is closest to Go and Elixir — errors are values, not exceptions. But unlike Go, you don't have to check every call. Error-values auto-unwrap in normal usage and auto-propagate through function calls and operators. Errors never crash the program; they flow until you handle them.
+Crow's model is closest to Go and Elixir — errors are values, not exceptions. But unlike Go, you don't have to check every call. Error-values auto-unwrap in normal usage and auto-propagate through function calls and operators. An error flows until it is handled or a decision meets it — an `if` on it, a line that drops it, a variable that holds no errors: there a function hands it to its caller, and the top level stops with the line and the reason.
 
 **What makes Crow's error handling stand out:**
 
 1. **Zero syntax overhead** — no `try`, `catch`, `?`, `do`, `throws`, `Result<>`. Just `.ok`.
 2. **Free stack trace** — `bad.trace` gives you `['main:3', 'utils.parse:7']` with no extra code.
-3. **Auto-propagation** — `double[bad_value]` and `bad + 10` propagate the error *and* append to the trace automatically.
+3. **Auto-propagation** — `double[bad_value]` hands the error on *and* appends the call to its trace automatically; `bad + 10` is the same error.
 4. **Uniform model** — every value has `.ok`, `.reason`, `.kind`, `.trace`. No special types.
 
-**Where Crow loses to Rust (Safety: 8 vs 10):** Rust's `Result<T, E>` is compile-time enforced — you cannot compile code that ignores an error. Crow's propagation is runtime. Rust has typed error enums; Crow's `.kind` is a free-form string.
+**Where Crow loses to Rust:** Rust's `Result<T, E>` is compile-time enforced — you cannot compile code that ignores an error. Crow's propagation is runtime. Rust has typed error enums; Crow's `.kind` is a free-form string.
 
 ## 6. Data Structures
 
@@ -166,9 +170,9 @@ Crow's model is closest to Go and Elixir — errors are values, not exceptions. 
 | Julia | Int, Float, Bool, String | Array, Dict, Set, tuples | Structs, abstract types | 7 |
 | Go | int, float, bool, string | slices, maps | Structs, interfaces | 7 |
 | JS | number, string, boolean | Array, Object, Map, Set | Classes, prototypes | 7 |
-| **Crow** | int, float, bool, str | list, map | Structs (pure data) | **6** |
+| **Crow** | int (any size), float, decimal, fraction, bool, str, moment | list (a tensor when numeric), map, frame | Structs (pure data) | **6** |
 
-Crow is intentionally minimal: lists, maps, structs. No tuples, no enums, no sets, no mixed-type collections. The tradeoff is consistency — but you'll feel the gap when you need `zip` or heterogeneous data. `range[len[list]]` works but is less elegant than `enumerate`.
+Crow is intentionally minimal: lists (numeric ones are tensors), maps, structs, and frames for tables. No tuples, no enums, no sets, no mixed-type collections. The tradeoff is consistency — but you'll feel the gap when you need `zip` or heterogeneous data. `range[len[list]]` works but is less elegant than `enumerate`.
 
 ## 7. Modularity & Imports
 
@@ -187,7 +191,7 @@ Crow is intentionally minimal: lists, maps, structs. No tuples, no enums, no set
 |----------|-------|--------|
 | Rust | `cargo` — best-in-class. Build, test, publish, bench. | 9 |
 | Go | `go run`, `go build`, `go mod`. Excellent built-in. | 8 |
-| **Crow** | `crow run`, `crow build`, `crow new`, `crow install`, REPL. All-in-one. | **8** |
+| **Crow** | `crow run` (`-i` to interpret), `crow build`, `crow test`, `crow check`, `crow fmt`, `crow new`, `crow install`, `crow dev`, a language server, a REPL and a Jupyter kernel. All-in-one. | **8** |
 | Swift | Xcode, SPM. Good but Apple-centric. | 7 |
 | Python | `pip`, `venv`, `poetry`, `conda` — fragmented. | 5 |
 | JS | `npm`/`yarn`/`pnpm`/`bun`. `package.json` + lockfile chaos. | 4 |
@@ -253,18 +257,32 @@ The key distinction: Rust proves your code is memory-safe. Crow finds bugs in yo
 
 | Language | Age | Packages | Community | Rating |
 |----------|-----|----------|-----------|--------|
-| Python | 34 years | ~500K (PyPI) | Massive | 10 |
-| JS | 29 years | ~2M (npm) | Massive | 10 |
-| Rust | 10 years | ~150K (crates) | Large | 8 |
-| Go | 15 years | Large (modules) | Large | 8 |
-| Ruby | 29 years | ~180K (RubyGems) | Large | 8 |
-| Swift | 10 years | Growing (SPM) | Large | 7 |
-| Elixir | 12 years | ~15K (Hex) | Medium | 5 |
-| Julia | 12 years | ~10K | Growing | 5 |
-| Crystal | 10 years | ~2K (shards) | Small | 2 |
+| Python | 35 years | ~500K (PyPI) | Massive | 10 |
+| JS | 31 years | ~2M (npm) | Massive | 10 |
+| Rust | 11 years | ~150K (crates) | Large | 8 |
+| Go | 17 years | Large (modules) | Large | 8 |
+| Ruby | 31 years | ~180K (RubyGems) | Large | 8 |
+| Swift | 12 years | Growing (SPM) | Large | 7 |
+| Elixir | 14 years | ~15K (Hex) | Medium | 5 |
+| Julia | 14 years | ~10K | Growing | 5 |
+| Crystal | 12 years | ~2K (shards) | Small | 2 |
 | **Crow** | New | Near zero | None yet | **1** |
 
-Crow is brand new. Even Crystal, after 10 years, has a small ecosystem. Language adoption is driven as much by ecosystem and community as by language design.
+Crow is brand new. Even Crystal, after 12 years, has a small ecosystem. Language adoption is driven as much by ecosystem and community as by language design.
+
+## 14. Language Models and Agents
+
+Python and TypeScript have the model providers' official SDKs and the frameworks built on them — LangChain and LangGraph, the OpenAI Agents SDK, Vercel's AI SDK — and the integrations around them (document loaders, vector databases, tracing services), which Crow does not have. A tool there is a function and a schema, written beside it or read from its type hints (a Zod schema in TypeScript), and the framework runs the loop.
+
+Crow ships the pieces in its standard library, written in Crow and the same in both execution modes:
+
+- `use llm` makes a model a connection — Anthropic's API, or any server speaking the OpenAI chat completions (Ollama, vLLM, OpenRouter, LiteLLM) — with `chat`, a reply followed piece by piece, and embeddings.
+- A tool is the function itself, `tools = [weather]`: its schema is written from the kinds inference found for its parameters and the comment above it, with nothing annotated.
+- `act[m, talk, tools = [f, g]]` is the agent loop: limits on rounds and tokens, gates the program names (`allow = [g]`) asked before a tool runs, every call answered — a tool's failure is told to the model as one — and a frame with a row per model call and per tool call. Skills in the Agent Skills format load on demand, and a subagent is a tool whose body runs `act`.
+- `use mcp` speaks the Model Context Protocol over HTTP and stdio, as a client and as a server over a program's own functions.
+- A test replays a model's answers from the fixtures `crow check --record-fixtures` kept, so evals run with no model, in both modes.
+
+Not there yet: images and documents in a turn, prompt caching, batches, and the calls of one reply run at once (the loop runs them in order).
 
 ## Overall Rating
 
@@ -285,11 +303,11 @@ Subjective scores from 1 (weakest) to 10 (strongest):
 | Learnability | **9** | 9 | 4 | 7 | 6 | 6 | 6 | 5 |
 | Safety & verification | **8** | 3 | 8 | 5 | 3 | 6 | 4 | 5 |
 | Ecosystem | **1** | 10 | 8 | 8 | 10 | 7 | 5 | 5 |
-| **Average** | **7.7** | **6.1** | **7.3** | **6.7** | **5.6** | **6.8** | **6.5** | **6.5** |
+| **Average** | **7.7** | **6.1** | **7.3** | **6.7** | **5.2** | **6.8** | **6.3** | **6.1** |
 
 ## Summary
 
-**Crow's niche:** A language that combines Python-level simplicity with Rust-level performance, zero-effort parallelism, and automatic verification. No other language occupies exactly this space.
+**Crow's niche:** A language that combines Python-level simplicity with near-Rust performance, zero-effort parallelism, and automatic verification. No other language occupies exactly this space.
 
 **Crow's biggest strengths:** Consistency (10), parallelism (9), error handling (9), syntax simplicity (9), learnability (9), performance (9). Six dimensions at 9 or above, plus safety & verification at 8 — no other language scores this consistently across all dimensions.
 
@@ -299,5 +317,5 @@ Subjective scores from 1 (weakest) to 10 (strongest):
 
 - **Crystal** — similar vision (Ruby-like syntax, compiled, inferred types), but has union types and explicit generics
 - **Julia** — similar target audience (data/science), but dynamic with JIT
-- **Go** — similar simplicity philosophy, but no type inference and manual concurrency
+- **Go** — similar simplicity philosophy, but types written on every function's signature, and manual concurrency
 - **Rust** — Crow transpiles to it, so performance is comparable. Rust is more expressive but far more complex. Stronger memory safety guarantees, but requires significant developer effort. Crow's automatic verification catches logic bugs that Rust's type system doesn't address.

@@ -1,10 +1,12 @@
 # crow check — schema-aware database checks
 
-`crow check` verifies a program without running it: purity analysis, edge-case
-generation, and regression snapshots. With a database URL it also
-cross-references the program's SQL against the schema the database actually
-enforces, and reports **concurrency hazards** — the class of bug where code is
-correct alone but wrong the moment two copies of it run.
+`crow check` verifies a program without running it against the world: your
+test blocks, purity analysis, edge cases generated for the pure functions
+with their answers kept as regression snapshots (`.crow/snapshots/`),
+live-loop hazards, and the app baseline (below). With a database URL it
+also cross-references the program's SQL against the schema the database
+actually enforces, and reports **concurrency hazards** — the class of bug
+where code is correct alone but wrong the moment two copies of it run.
 
 ```
 crow check app.co --db 'sqlite://dev.db'      --- live introspection
@@ -13,7 +15,8 @@ crow check app.co --strict                     --- exit 1 on any finding (CI)
 ```
 
 The url can also live in the crowfile: `db = 'sqlite://dev.db'`.
-Findings are advisory by default — they print, teach, and never block.
+The database findings are advisory unless `--strict`: they print and
+teach, and never fail the check.
 
 The checks read the entry and every part it imports, each against its own
 lines, so an app that keeps its queries in its parts has them all checked;
@@ -29,6 +32,10 @@ Before any of it runs, the program passes the checks `crow run` passes it
 through — scope, reservation and `ui` rules, made as the program is
 lowered — so `crow check` and `crow test` refuse what `crow run` refuses,
 with the same message.
+
+A dependency's functions (`crow_modules/`, a package's) are not probed
+with edge cases: a package is held by its own tests, and the app's check
+reports the app's.
 
 ## The baseline
 
@@ -66,24 +73,27 @@ stays right — and the file says so.
 
 Each file's `reach` is what it can touch outside its values: every
 effect its functions, derivations and top level reach, through
-whatever they call, by capability — `database` (a query, a
-connection), `files`, `network`, `serving` (a page, a route), `shell`,
-`mail`, `clock`, `process` (an argument, the environment, an exit) and
-`session` (a notice, a sign-in, a download, work held for later):
+whatever they call, by the kind its builtin's row declares (spec,
+Effects Have Kinds) — `files` (a read), `files.write`, `network`,
+`db.read` (a read, a connection), `db.write`, `mail`, `clock`, `random`,
+`input`, `process` (an argument, the environment), `exit`, `shell`,
+`session` (a notice, a sign-in, a download, work held for later),
+`waits` and `serving` (a page, a route); writing to the console touches
+nothing outside:
 
 ```
 reach board/cards.co
-  database: connect, query
-  files: cp, mkdir
+  files.write: cp, mkdir
+  db.read: connect, query
   session: download, notice
 ```
 
 A file that touches nothing says `nothing`, so a part that starts
 writing files or calling a shell is its reach changing, a change to
 accept like any other. `crow check` prints each file's capabilities on
-one line (`board/cards.co: database, files, session`). Nothing declares
-a reach: it is derived from the program, which already names each
-effect it makes (second-half-design.md §1).
+one line (`board/cards.co: files.write, db.read, session`). Nothing
+declares a reach: it is derived from the program, which already names
+each effect it makes (second-half-design.md §1).
 
 A page's `layout` file is its **layout bounds**: each state of the page
 (each path of its view) laid out by the engine the harness uses, at 1280
@@ -103,38 +113,39 @@ text, true, false, true for a flag — and NULL in the second row of a
 column that can hold one (`float?` in the record), so a program that walks
 the rows meets the missing cell it has to decide on. A statement that
 hands `IN ?` a list runs as `IN (?, ?, …)`, and matches its record and
-fixture as the `?` it was written as. `crow check --record-fixtures` runs
-the scenarios as *recordings*: a statement that can only read goes to the
-real database, what it answers first is kept as its fixture (its first
-10,000 rows; the run says when it kept fewer than there were), and a later
-read of it is answered from that, as the rehearsals after will be. The
-same fixtures run the tests where the servers are not: `crow test
---fixtures` answers each Postgres and ClickHouse read from them, in both
-modes (spec, `crow test --fixtures`). A write
-is recorded as in any rehearsal, so a recording never changes a database. A write — a `query` whose statement writes, `insert`, a
-migration, a statement through `query` that changes rows — is recorded
-with its payload and the program sees success; a shell command and a file
-written, moved or removed are recorded instead of run; an HTTP `request`
-is answered from its fixture where a recording kept one, else as a
-request that landed — `200` with nothing to say — and recorded; mail is
+fixture as the `?` it was written as. A write — a `query` whose statement
+writes, an `insert` — is recorded with its payload and the program sees
+success (a `RETURNING` clause reads back a generated row); a shell command
+and a file written, moved or removed are recorded instead of run; an HTTP
+`request` is answered from its fixture where a recording kept one, else as
+a request that landed — `200` with nothing to say — and recorded; mail is
 recorded as the harness records it, and `fetch` answers nothing, as in
-any test. A dependency's functions (`crow_modules/`, a package's) are not probed
-with edge cases: a package is held by its own tests, and the app's check
-reports the app's. In a recording a request is sent, and what it answered is kept
-as its fixture — named by its method, its URL with the query and what it
-sends, its headers no part of it — so `crow test --fixtures` answers it
-with no server and no model, in both modes (spec, Requests), and the
-rehearsals after answer it the same, so a scenario that asks a model
-comes out as the recording did; a recording runs the tests that open no
-app too, for their fixtures alone, since the replay runs every test. The clock stands at 2026-01-01 00:00 UTC until the
-test moves it, and random draws are seeded, so a scenario comes out the
-same on every run. An assertion that does not hold is reported, not
-failed — the data was the rehearsal's. The scenario's file says how it
-ended, what it wrote and mailed, which statements were answered with
-generated rows, which assertions did not hold, and every fact it changed,
-so a handler that starts writing somewhere new, or leaves a fact
-different, is a diff. A test of pure functions leaves no state and is not
-a scenario; `crow test` runs it, and every test, against the real data.
+any test.
+
+`crow check --record-fixtures` runs the scenarios as *recordings*: a
+statement that can only read goes to the real database, what it answers
+first is kept as its fixture (its first 10,000 rows; the run says when it
+kept fewer than there were), and a later read of it is answered from that,
+as the rehearsals after will be. A write is recorded as in any rehearsal,
+so a recording never changes a database. A request is sent, and what it
+answered is kept as its fixture — named by its method, its URL with the
+query and what it sends, its headers no part of it — and the rehearsals
+after answer it the same, so a scenario that asks a model comes out as the
+recording did. A recording runs the tests that open no app too, for their
+fixtures alone, since the replay runs every test. The same fixtures run
+the tests where the servers are not: `crow test --fixtures` answers each
+Postgres and ClickHouse read, and each request, from them, with no server
+and no model, in both modes (spec, `crow test --fixtures`; Requests).
+
+The clock stands at 2026-01-01 00:00 UTC until the test moves it, and
+random draws are seeded, so a scenario comes out the same on every run. An
+assertion that does not hold is reported, not failed — the data was the
+rehearsal's. The scenario's file says how it ended, what it wrote and
+mailed, which statements were answered with generated rows, which
+assertions did not hold, and every fact it changed, so a handler that
+starts writing somewhere new, or leaves a fact different, is a diff. A
+test of pure functions leaves no state and is not a scenario; `crow test`
+runs it, and every test, against the real data.
 
 The first check records the baseline. Every check after diffs against
 it, per declaration, and reports each difference with its cause (the
@@ -151,8 +162,9 @@ connect to nothing.
 
 `crow book`, run inside the app, is the same material as a book: each
 page with its composition tree and wireframes, a chapter per part, the
-data wiring and the changes, served on port 3008 and derived afresh on
-every start (`app-baseline-design.md` §8).
+data wiring and the changes, served next to the app on its `serve` port
+plus one (3009 when it names none) and derived afresh on every start
+(`app-baseline-design.md` §8).
 
 `crow check --show` prints the app as a tree — each page, the views it
 composes under their guards, the inputs they bind, the controls and the
@@ -187,14 +199,19 @@ programs that are not this one.
 ## Live-loop checks (no database needed)
 
 Views and event handlers run on the live loop — mined from a production
-trading system's bug history:
+trading system's bug history. A view does none of the work itself: the
+compiler refuses a view, or a function a view calls, that waits, reads a
+file or queries a table, whatever the database (spec, Effects Have
+Kinds), so a page reads a table through a derivation —
+`derive rows[fresh = 60]` for a remote one, a network hop once per
+window.
 
 | Finding | What it means |
 |---|---|
-| blocking in view/handler | `sleep`/`input`/`shell` reachable (directly or through helpers, path shown) — every connected client freezes while it runs. Do the work before `serve[]`; render-time `query` is fine and deliberately not flagged. |
+| blocking in a handler | a call that waits (`sleep`, `input`, `shell`, a socket's `recv`) reachable from a handler, directly or through helpers, path shown — it holds the session's other clicks until it ends. `f` moves the helper's call into `later[…]`; or do the work before `serve[]`. |
 | unguarded staleness | a value read from outside flows into a decision (directly or through computation) with no freshness check — guard it with `now[] - captured[x]`. This is the propagation the runtime deliberately does not carry. |
 | stale snapshot (error) | a top-level variable queried once at startup is read by a view — every render serves launch-time data. The cure is a derivation: `d` rewrites `x = query[…]` into `derive x`, which recomputes when a fact it reads or a table this program writes changes. Re-querying in a handler also clears the finding. |
-| remote query in view (error) | a view queries a remote database — a network hop per render, every connected client waiting on it. `d` hoists a single-line `rows = query[pg, …]` above the view as `derive rows[fresh = 60]`; `a` records `--- crow: remote-render` above the view when querying every render is the design. |
+| stale loop read | a poll loop (`while` with a `sleep`) reads a query result captured before the loop — every round decides on launch-time data. Re-query inside the loop. |
 
 The language gaps these point at (background work, freshness, periodicity)
 are documented as reviewable proposals in `discovered-features.md`.
@@ -207,7 +224,9 @@ kind or an operator added to the compiler is covered the day it is added,
 with no test someone has to remember to write:
 
 - every builtin row (`src/table.rs`) called with a value of each kind its
-  parameters take — the kinds' values tried until a call lowers — then each
+  parameters take — the kinds' values tried until a call lowers, and a row
+  whose arguments its kinds do not say (a scheme's name, an option given by
+  name, the command `start` runs) called as written — then each
   parameter varied over the catalog's values: the usual one and its edges
   (zero, negative, empty, past 64 bits, text that reads as a number, a
   value that can fail, one that failed) — and every two of its parameters
@@ -455,17 +474,16 @@ lost-update fusion (1b), transact wrapping (1e).
 **Tier 2 — mechanical but intent-gated.** The edit is derivable, but only
 the developer knows whether the pattern is a bug or a design. A stale
 snapshot is a bug for live coverage and correct for a static lookup table.
-These fixes are offered, never assumed — and the deliberate case gets an
-acknowledgment comment. Current members: stale snapshot and remote query in
-view, both cured by a derivation (`d = derive` in the check loop rewrites
-the exact single-line shapes and spells out the manual edit otherwise), and
-blocking in view (`f`, below).
+These fixes are offered, never assumed. Current members: stale snapshot, cured by a
+derivation (`d = derive` in the check loop rewrites the exact single-line
+shape and spells out the manual edit otherwise), and blocking in a
+handler (`f`, below).
 
 **Tier 3 — design work.** The cure is a restructuring only the developer can
 choose — or the language cannot express it yet. The one-way latch's fix is
 modeling ("derive from ground truth"). The check teaches; the code is yours.
 
-Blocking-in-view graduated from Tier 3 to Tier 2 when `later[]` shipped:
+Blocking in a handler graduated from Tier 3 to Tier 2 when `later[]` shipped:
 the interactive check loop offers `f = fix`, which rewrites the bare
 `helper[]` call in the handler to `later[helper]` and re-checks. Slow work
 scheduled via `later[]` is the sanctioned home for blocking calls and is
@@ -475,9 +493,9 @@ never flagged.
 
 | Data | Blessed home | Checks fencing it |
 |---|---|---|
-| local (sqlite) state | a derivation over the table — recomputed when this program writes it — or a query inside the view | stale-snapshot pushes in, with `d = derive` |
-| remote (network db) state | `derive rows[fresh = N]` — once per window, shared by every session when it reads no session fact | remote-query-in-view pushes out of render, with `d = derive`; stale-snapshot still bars startup-forever |
-| on-demand background work | `later[fn]` from a handler; results land in state | blocking-in-view teaches and applies it |
+| local (sqlite) state | a derivation over the table — recomputed when this program writes it | stale-snapshot pushes in, with `d = derive`; the compiler refuses a query in a view |
+| remote (network db) state | `derive rows[fresh = N]` — once per window, shared by every session when it reads no session fact | the compiler refuses a query in a view; stale-snapshot bars startup-forever |
+| on-demand background work | `later[fn]` from a handler; results land in state | blocking-in-a-handler teaches and applies it |
 | periodic freshness | `serve[port, refresh = N]` — runtime-owned, skipped-not-stacked | stale-loop-read steers script polls; UI polls need no code at all |
 
 ## Accepting a hazard

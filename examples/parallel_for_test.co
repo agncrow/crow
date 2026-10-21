@@ -1,18 +1,18 @@
---- parallel for loops
---- for loops use par_iter by default
+--- parallel for loops: a for runs its rounds in parallel when nothing its
+--- body does can show the order they ran in, and in order when something can
 
 items = [1, 2, 3, 4, 5]
 
---- this runs in parallel
+--- a body that logs keeps its order: the lines come out 1 to 5
 for x in items
   log['`x`']
 
---- for-as-expression also runs in parallel
+--- a body that only computes runs in parallel; the results keep their order
 doubled = for x in items
   x * 2
 log['doubled: `doubled`']
 
---- sequential fallback: body mutates outer variable
+--- a body that writes an outer variable runs in order
 total = 0
 for x in items
   total = total + x

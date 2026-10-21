@@ -29,6 +29,6 @@ fix:
 
 ```crow,error
 use math as m
-log[sum[[1.0, 2.0]]]    --- error: 'sum' comes from math which was
-                        --- imported as 'm' — call m.sum[...]
+--- error: 'sum' comes from math which was imported as 'm' — call m.sum[...]
+log[sum[[1.0, 2.0]]]
 ```

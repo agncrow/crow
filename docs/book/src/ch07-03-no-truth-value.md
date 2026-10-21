@@ -18,7 +18,7 @@ if bad gt 5
 ```
 
 ```text
-error: cannot branch on an error value — cannot convert 'x' to int
+runtime error: line 2: cannot branch on an error value — cannot convert 'x' to int
 ```
 
 At top level, the program halts with the original reason. Inside a
@@ -137,9 +137,10 @@ asserted.
 
 A few failures have no error value to become. `xs[i]` reads an element and
 `a / b` of two ints makes an int, and neither an element nor an int can say
-it failed. So an index outside its array, a key the map lacks, an int
-divided by zero, or an int that no longer fits in 64 bits stops the program
-on the line it happened on:
+it failed. So an index outside its array, a key the map lacks, or an int
+divided by zero stops the program on the line it happened on — as does an
+int grown past 64 bits where only 64 bits are taken, a position or a size
+(an int itself grows as far as it needs: chapter 3):
 
 ```crow,norun
 fn pick[xs, i]
