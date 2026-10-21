@@ -130,7 +130,12 @@ impl<'a> Lowerer<'a> {
     /// A function called by name (`apply`, a group's call) is read by the
     /// scan as called with its parameters' kinds — what the body reads
     /// them as, or their defaults — so inference types it and the compiled
-    /// program holds it though no call names it positionally.
+    /// program holds it though no call names it positionally. The note is
+    /// made past the scope rule a call is read by (`calls_fn`): a standard
+    /// module's function applies the program's functions it was handed in
+    /// a group, which it cannot name (a tool only `act`'s dispatch called
+    /// had stayed untyped, and the compiled program left it out — parity
+    /// 274).
     pub(super) fn note_called_by_name(&mut self, fns: &[String]) {
         if self.pass != Pass::Scan || self.unscanned > 0 {
             return;
@@ -141,8 +146,7 @@ impl<'a> Lowerer<'a> {
                 continue;
             }
             let types: Vec<Ty> = typed.iter().map(|(_, t)| t.clone()).collect();
-            let dummies: Vec<A> = typed.iter().map(|_| A::Str(String::new())).collect();
-            self.ctx.note_call(&A::Ident(f.clone()), &dummies, &types);
+            self.ctx.note_named_call(f, &types);
         }
     }
 
@@ -313,7 +317,14 @@ impl<'a> Lowerer<'a> {
             locals.push(A::Ident(t));
         }
         let call = A::Call { callee: Box::new(A::Ident(f.to_string())), args: locals };
-        let encoded = self.lower_expr(&A::Call { callee: Box::new(A::Ident(ENCODE.to_string())), args: vec![call] })?;
+        // (the candidate is called as the program's function it is, though
+        // the dispatch may lie in a standard module's function, which
+        // cannot name the program's: read as a builtin's name there, the
+        // call had reached no function interpreted)
+        self.applying.push(f.to_string());
+        let encoded = self.lower_expr(&A::Call { callee: Box::new(A::Ident(ENCODE.to_string())), args: vec![call] });
+        self.applying.pop();
+        let encoded = encoded?;
         // (text that can fail, whatever the call could: the branches answer one kind)
         let ok_text = crate::table::ROWS.iter().find(|r| r.id == OK_TEXT).expect("the text row exists");
         let (arg, propagates) = if encoded.ty().is_result() {

@@ -136,6 +136,15 @@ pub static MODULES: &[Module] = &[
         module: Some(|| Arc::new(Named::new("llm"))),
         ..Module::plain("llm", "_llm")
     },
+    // tools from other programs, and a program as one: the client on
+    // request, the server a function a route calls (it answers responses,
+    // so crow_web comes with the import)
+    Module {
+        source: Some(MCP_SOURCE), needs: &[("crow_web", &[]), RUNTIME], registry: true,
+        docs: Some("Tools from other programs, and a Crow program as one: the Model Context Protocol over Streamable HTTP — a server named, its tools listed and called, and a route answering as a server over the functions themselves."),
+        module: Some(|| Arc::new(Named::new("mcp"))),
+        ..Module::plain("mcp", "_mcp")
+    },
     // the database: its verbs are forms of their own, its drivers written
     // in Crow are carried by its import
     Module {
@@ -260,6 +269,7 @@ pub(crate) const POSTGRES_SOURCE: &str = include_str!("postgres.co");
 pub(crate) const SYS_SOURCE: &str = include_str!("sys.co");
 /// `use llm`: a language model as a connection, written in Crow.
 pub(crate) const LLM_SOURCE: &str = include_str!("llm.co");
+pub(crate) const MCP_SOURCE: &str = include_str!("mcp.co");
 /// `io.lines`, `io.csv`: readers written in Crow.
 pub(crate) const IO_SOURCE: &str = include_str!("io.co");
 /// `frame.load`, `frame.save`: written in Crow.

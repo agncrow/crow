@@ -4,18 +4,22 @@
 --- completions that Ollama, vLLM, OpenRouter and LiteLLM serve too. Its
 --- functions are its declaration (docs/extending-crow.md): a program calls
 --- `reach`, `ask`, `asked`, `said`, `told`, `chat`, `follow`, `next`,
---- `reply` and `embed`, each typed by its use; a helper begins with an
---- underscore and is the module's own. A conversation and a reply are
+--- `reply`, `embed` and `act`, each typed by its use; a helper begins with
+--- an underscore and is the module's own. A conversation and a reply are
 --- parsed values in one shape both formats are written from; `chat` and
 --- `embed` send through `request`, and
 --- `follow` reads a reply piece by piece on a socket of its own, the
 --- chunked body decoded as it comes and the reply gathered so far kept in
---- the connection's notes. The tests are the module's own (`crow test
---- src/modules/llm.co`), and tests/llm_server.rs drives the module against
---- a server speaking both formats in both modes. The design is
---- docs/llm-design.md.
+--- the connection's notes; `act` is the agent loop, the model's calls
+--- answered through the program's gate and the tools' own functions
+--- (`describe` and `apply`, sys). The tests are the module's own (`crow
+--- test src/modules/llm.co`), and tests/llm_server.rs drives the module
+--- against a server speaking both formats in both modes. The design is
+--- docs/llm-design.md and, for the loop, docs/agents-design.md.
 use sys
 use math
+use frame
+use mcp
 
 --- the model's description, a parsed value: the provider, the model, the
 --- base the requests go to, the path the OpenAI-compatible endpoints hang
@@ -130,14 +134,17 @@ fn said[talk, message]
         return error['a reply is what chat[…] and reply[…] answer', 'llm']
     return _appended[talk, '{"role": "assistant", "text": `encode[str[message.text]]`, "calls": `encode[message.calls]`}']
 
---- `told[talk, call, text]`: the conversation with a tool's result added,
---- answering the call by its id
-fn told[talk, call, words]
+--- `told[talk, call, text, failed = false]`: the conversation with a
+--- tool's result added, answering the call by its id; `failed = true`
+--- marks the result a failure the model is to hear as one
+fn told[talk, call, words, failed = false]
     turns = _talk_of[talk]
     if not turns.ok
         return error[turns.reason, 'llm']
     if type[call] ne 'map' or not call.id.ok
         return error['a call is one of a reply\'s calls', 'llm']
+    if failed
+        return _appended[talk, '{"role": "tool", "id": `encode[str[call.id]]`, "text": `encode[words]`, "failed": true}']
     return _appended[talk, '{"role": "tool", "id": `encode[str[call.id]]`, "text": `encode[words]`}']
 
 --- a tool's schema as a model is told it, from the function's
@@ -225,6 +232,15 @@ fn _blocks_anthropic[t]
             blocks = push[blocks, '{"type": "tool_use", "id": `encode[str[c.id]]`, "name": `encode[str[c.name]]`, "input": `encode[c.args]`}']
     return blocks
 
+--- a tool's result as Anthropic's block, `is_error` where the result
+--- failed (the OpenAI-compatible form has no flag: its text says)
+fn _result_anthropic[t]
+    flagged = ''
+    if t.failed.ok
+        if t.failed
+            flagged = ', "is_error": true'
+    return '{"type": "tool_result", "tool_use_id": `encode[str[t.id]]`, "content": `encode[str[t.text]]``flagged`}'
+
 --- the conversation as Anthropic's messages: a user turn's text, a
 --- model's turn's blocks, and every run of tool results as one user turn
 --- of tool_result blocks (the API wants the roles to alternate)
@@ -234,7 +250,7 @@ fn _messages_anthropic[talk]
     for t in talk
         role = str[t.role]
         if role eq 'tool'
-            pending = push[pending, '{"type": "tool_result", "tool_use_id": `encode[str[t.id]]`, "content": `encode[str[t.text]]`}']
+            pending = push[pending, _result_anthropic[t]]
         else
             if len[pending] gt 0
                 glued2 = join[pending, ', ']
@@ -843,11 +859,481 @@ fn reply[s]
     glued15 = encode[noted[st, 'llm.text']]
     return json['{"text": `glued15`, "calls": [`calls`], "usage": {"input": `used_in`, "output": `used_out`}, "stop": "`stop`"}']
 
+--- ── the loop: the model runs its tools until it answers ───────────────
+
+--- what a run answered: the model's last text, why the run ended (`end`,
+--- `length`, `other`, `rounds`, `budget`), the rounds it took, the tokens
+--- it spent (`usage.input`, `usage.output`), the conversation as it ended,
+--- and a frame of its steps — a row per model call and per tool call
+struct Done [text, stop, rounds, usage, talk, steps]
+
+--- a call's outcome as a parsed value: the result's text, whether it
+--- failed, and how it went — ok, failed, arguments or unknown
+fn _outcome[words, failed, how]
+    return json['{"text": `encode[words]`, "failed": `failed`, "how": `encode[how]`}']
+
+--- what `apply` answered, as the model is to read it: a text's own words
+--- (`apply` encodes its answer), any other value as its JSON
+fn _plain_of[encoded]
+    parsed = json[encoded]
+    if parsed.ok
+        if type[parsed] eq 'str'
+            return str[parsed]
+    return encoded
+
+--- the call's tool applied to its arguments, each read by its parameter's
+--- kind; an argument missing or of another kind, a tool's own failure and
+--- a name no tool has are each a failed result that says why, so every
+--- call is answered
+fn _answered[tools, call]
+    for t in tools
+        if str[describe[t].name] eq str[call.name]
+            out = apply[t, call.args]
+            if not out.ok
+                how = 'failed'
+                if out.kind eq 'call'
+                    how = 'arguments'
+                return _outcome[out.reason, true, how]
+            return _outcome[_plain_of[out], false, 'ok']
+    return _outcome['no tool is named `str[call.name]`', true, 'unknown']
+
+--- the conversation with the tool results of rounds older than the last
+--- `keep` cut to a stub naming their size (a round is a model's turn and
+--- the results that answer it); a result already cut stays as it is
+fn _trimmed[talk, keep]
+    seen = 0
+    for t in talk
+        if str[t.role] eq 'assistant'
+            seen = seen + 1
+    turns = []
+    round_n = 0
+    for t in talk
+        role = str[t.role]
+        if role eq 'assistant'
+            round_n = round_n + 1
+        if role eq 'tool' and round_n lte seen - keep and not t.cut.ok
+            words = str[t.text]
+            failed = ''
+            if t.failed.ok
+                failed = ', "failed": true'
+            turns = push[turns, '{"role": "tool", "id": `encode[str[t.id]]`, "text": "[a result of `len[words]` characters, cut]", "cut": true`failed`}']
+        else
+            turns = push[turns, encode[t]]
+    glued = join[turns, ', ']
+    return json['[`glued`]']
+
+--- ── tools from MCP servers ─────────────────────────────────────────────
+
+--- the tools the servers offer, each as a parsed value of its name, its
+--- schema in the one shape a model is told, and which server has it (its
+--- place in the list); a name two servers share, or one a program's tool
+--- has, is refused, as the protocol advises
+fn _served_tools[servers, taken]
+    found = []
+    seen = taken
+    at = 0
+    for s in servers
+        listed = mcp.catalog[s]
+        if not listed.ok
+            return error[listed.reason, 'llm']
+        for t in listed
+            name = str[t.name]
+            if name in seen
+                return error['the MCP server `str[s.url]` offers a tool named `name`, which another tool has: the names must differ', 'llm']
+            seen = push[seen, name]
+            described_as = ''
+            if t.description.ok
+                described_as = str[t.description]
+            schema = '{"type": "object"}'
+            if t.inputSchema.ok
+                schema = encode[t.inputSchema]
+            found = push[found, '{"name": `encode[name]`, "schema": {"name": `encode[name]`, "description": `encode[described_as]`, "parameters": `schema`}, "server": `at`}']
+        at = at + 1
+    glued = join[found, ', ']
+    return json['[`glued`]']
+
+--- the server's tool a call names, called with the call's arguments; a
+--- failed result where the server marks one, or does not answer
+fn _served_call[servers, served, call]
+    name = str[call.name]
+    for t in served
+        if str[t.name] eq name
+            at = _count_of[t.server]
+            s = servers[at]
+            out = mcp.tool[s, name, call.args]
+            if not out.ok
+                return _outcome[out.reason, true, 'failed']
+            return _outcome[out, false, 'ok']
+    return _outcome['no tool is named `name`', true, 'unknown']
+
+--- whether a call names a server's tool
+fn _is_served[served, call]
+    name = str[call.name]
+    for t in served
+        if str[t.name] eq name
+            return true
+    return false
+
+--- ── skills: know-how loaded on demand (agentskills.io) ─────────────────
+
+--- a SKILL.md's frontmatter as a parsed value — the `key: value` lines
+--- between the first `---` and the next — and its body after it; an
+--- error naming the file where the frontmatter is none
+fn _skill_read[path]
+    whole = read[path]
+    if not whole.ok
+        return error['the skill file `path` cannot be read: `whole.reason`', 'llm']
+    lines = split[replace[whole, '\r\n', '\n'], '\n']
+    if len[lines] eq 0 or trim[lines[0]] ne '---'
+        return error['the skill file `path` does not begin with a --- frontmatter line', 'llm']
+    fields = []
+    closed = -1
+    i = 1
+    while i lt len[lines]
+        line = lines[i]
+        if trim[line] eq '---'
+            closed = i
+            break
+        pieces = split[line, ':']
+        if len[pieces] gt 1 and not starts[line, ' ']
+            key = trim[pieces[0]]
+            value = trim[join[slice[pieces, 1, len[pieces]], ':']]
+            fields = push[fields, '`encode[key]`: `encode[value]`']
+        i = i + 1
+    if closed lt 0
+        return error['the skill file `path` does not close its frontmatter with a --- line', 'llm']
+    body = join[slice[lines, closed + 1, len[lines]], '\n']
+    glued = join[fields, ', ']
+    return json['{"fields": {`glued`}, "body": `encode[trim[body]]`}']
+
+--- why a skill's name is no name under the standard's rules: 1 to 64
+--- characters, lowercase letters, digits and single hyphens, neither
+--- first nor last, matching its folder; empty text for a name that is one
+fn _skill_name_fault[name, folder]
+    if len[name] lt 1 or len[name] gt 64
+        return 'is `len[name]` characters long, and a name is 1 to 64'
+    if name ne folder
+        return 'does not match its folder `folder`'
+    if starts[name, '-'] or ends[name, '-']
+        return 'begins or ends with a hyphen'
+    if '--' in name
+        return 'holds two hyphens in a row'
+    for ch in split[name, '']
+        if not (ch in 'abcdefghijklmnopqrstuvwxyz0123456789-')
+            return 'holds \'`ch`\', and a name holds lowercase letters, digits and hyphens'
+    return ''
+
+--- the skills a folder holds, each a parsed value of its name,
+--- description and folder, read by the standard's rules; an error naming
+--- the skill and the rule where one is broken
+fn _skills_in[folder]
+    entries = ls[folder]
+    if not entries.ok
+        return error['the skills folder `folder` cannot be read: `entries.reason`', 'llm']
+    found = []
+    for entry in entries
+        path = '`folder`/`entry`/SKILL.md'
+        if exists[path]
+            s = _skill_read[path]
+            if not s.ok
+                return error[s.reason, 'llm']
+            if not s.fields.name.ok or not s.fields.description.ok
+                return error['the skill `entry` lacks a name or a description in its frontmatter', 'llm']
+            name = str[s.fields.name]
+            fault = _skill_name_fault[name, entry]
+            if len[fault] gt 0
+                return error['the skill `entry`\'s name \'`name`\' `fault`', 'llm']
+            described = str[s.fields.description]
+            if len[described] lt 1 or len[described] gt 1024
+                return error['the skill `entry`\'s description is `len[described]` characters long, and a description is 1 to 1024', 'llm']
+            where = '`folder`/`entry`'
+            found = push[found, '{"name": `encode[name]`, "description": `encode[described]`, "folder": `encode[where]`}']
+    glued = join[found, ', ']
+    return json['[`glued`]']
+
+--- what the system prompt says of the skills: each name with its
+--- description, and how to load one
+fn _skills_prompt[skills]
+    if len[skills] eq 0
+        return ''
+    lines = ['Skills you can load when a task matches one, with the tool skill[name]; its files with skill_file[name, path]:']
+    for s in skills
+        lines = push[lines, '- `str[s.name]`: `str[s.description]`']
+    return join[lines, '\n']
+
+--- the two tools the skills bring, as the model is told them
+fn _skill_schemas[]
+    load = '{"name": "skill", "description": "the instructions of a skill, loaded by its name", "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}}'
+    file = '{"name": "skill_file", "description": "a file a skill refers to, read by the skill\'s name and the file\'s path inside the skill", "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "path": {"type": "string"}}, "required": ["name", "path"]}}'
+    return [load, file]
+
+--- the skill of a name, or none
+fn _skill_named[skills, name]
+    for s in skills
+        if str[s.name] eq name
+            return s
+    return json['{}']
+
+--- a skill's instructions (its body), by name: a failed result where no
+--- skill has the name
+fn _skill_loaded[skills, call]
+    name = str[call.args.name]
+    s = _skill_named[skills, name]
+    if not s.name.ok
+        return _outcome['no skill is named `name`', true, 'unknown']
+    read_in = _skill_read['`str[s.folder]`/SKILL.md']
+    if not read_in.ok
+        return _outcome[read_in.reason, true, 'failed']
+    return _outcome[str[read_in.body], false, 'ok']
+
+--- a file of a skill's, by the skill's name and the file's path inside
+--- it: a path that leaves the skill is refused
+fn _skill_file_read[skills, call]
+    name = str[call.args.name]
+    path = str[call.args.path]
+    s = _skill_named[skills, name]
+    if not s.name.ok
+        return _outcome['no skill is named `name`', true, 'unknown']
+    if starts[path, '/'] or '..' in path or len[path] eq 0
+        return _outcome['a skill\'s file is named by its path inside the skill: `path`', true, 'failed']
+    whole = read['`str[s.folder]`/`path`']
+    if not whole.ok
+        return _outcome['the skill `name` has no file `path`', true, 'failed']
+    return _outcome[whole, false, 'ok']
+
+--- the conversation as a model can read it whole, a turn per line: who
+--- spoke and the words, a model's calls beside its words, a result
+--- naming the call it answers
+fn _transcript[talk]
+    lines = []
+    for t in talk
+        role = str[t.role]
+        if role eq 'tool'
+            lines = push[lines, 'result `str[t.id]`: `str[t.text]`']
+        else if role eq 'assistant'
+            said = str[t.text]
+            if t.calls.ok
+                for c in t.calls
+                    said = '`said` [call `str[c.id]`: `str[c.name]` `encode[c.args]`]'
+            lines = push[lines, 'assistant: `said`']
+        else
+            lines = push[lines, 'user: `str[t.text]`']
+    return join[lines, '\n']
+
+--- what the model is asked when the conversation is compacted: a
+--- summary of the transcript, for itself, asked in one user turn of a
+--- conversation of its own (a user turn added after a tool's results
+--- breaks the alternation of roles the wires require); and the user turn
+--- a compacted conversation starts from
+fn _compact_ask[talk]
+    return ask['Summarize the conversation below for yourself, to continue the task from the summary alone: the task, what has been done and found, and what remains. Answer with the summary only.\n\n`_transcript[talk]`']
+
+fn _compacted[summary]
+    return ask['The conversation so far, summarized:\n`summary`\n\nContinue the task from here.']
+
+--- `act[m, talk, tools = [], rounds = 8, system = '', tokens = 1024,
+--- temperature = 1.0, budget = 0, keep = 0, compact = 0]`: the model runs
+--- its tools in a loop until it answers or a limit stops it — each
+--- reply's calls answered by the tools' own functions, every call
+--- answered and a failure told as one; at most `rounds` model calls, at
+--- most `budget` tokens in all (0 for no budget); `keep = n` cuts the
+--- tool results of rounds older than the last n to a stub, `compact = n`
+--- asks the model for a summary once a reply read n tokens or more and
+--- goes on from the summary alone (0 for never); `skills = folder` reads
+--- the skills the folder holds (a SKILL.md in each, by the standard's
+--- rules), names them in the system prompt and lets the model load one,
+--- and the files it refers to, through the tools `skill` and
+--- `skill_file`; `servers = [s]` adds the tools each MCP server offers
+--- (`use mcp`), called on the server; a record: `text`, `stop`, `rounds`,
+--- `usage`, `talk`, `steps`
+fn act[m, talk, tools = [], rounds = 8, system = '', tokens = 1024, temperature = 1.0, budget = 0, keep = 0, compact = 0, skills = '', servers = []]
+    checked = _model_of[m]
+    if not checked.ok
+        return error[checked.reason, 'llm']
+    turns = _talk_of[talk]
+    if not turns.ok
+        return error[turns.reason, 'llm']
+    if rounds lt 1
+        return error['act[…] runs at least one round: rounds = `rounds`', 'llm']
+    known = json['[]']
+    if len[skills] gt 0
+        read_in = _skills_in[skills]
+        if not read_in.ok
+            return error[read_in.reason, 'llm']
+        known = read_in
+        for t in tools
+            named = str[describe[t].name]
+            if named eq 'skill' or named eq 'skill_file'
+                return error['a tool is named `named`, which the skills\' own tools take: rename it', 'llm']
+        listed = _skills_prompt[known]
+        if len[system] gt 0
+            system = '`system`\n\n`listed`'
+        else
+            system = listed
+    --- (each tool's schema, or the module's error where a tool takes what
+    --- a model cannot hand it; a list of text, as the skills' and the
+    --- servers' schemas are)
+    schemas = []
+    for t in tools
+        one = _schema_of[describe[t]]
+        if not one.ok
+            return error[one.reason, 'llm']
+        schemas = push[schemas, one]
+    if len[skills] gt 0
+        schemas = concat[schemas, _skill_schemas[]]
+    served = json['[]']
+    --- (the servers as their JSON: a list the loop reads the same whatever
+    --- the program's list holds — the default `[]` has items of no kind,
+    --- and the copy of act made for it is compiled too)
+    reached = json['[]']
+    if len[servers] gt 0
+        reached = json[encode[servers]]
+        taken = for t in tools
+            str[describe[t].name]
+        if len[skills] gt 0
+            taken = concat[taken, ['skill', 'skill_file']]
+        listed = _served_tools[reached, taken]
+        if not listed.ok
+            return error[listed.reason, 'llm']
+        served = listed
+        for t in served
+            schemas = push[schemas, encode[t.schema]]
+    whats = []
+    names = []
+    ins = []
+    outs = []
+    mss = []
+    hows = []
+    spent_in = 0
+    spent_out = 0
+    round_n = 0
+    stop = ''
+    words = ''
+    while len[stop] eq 0
+        round_n = round_n + 1
+        if keep gt 0
+            talk = _trimmed[talk, keep]
+        t0 = float[now[]]
+        r = _chat_with[m, talk, system, schemas, tokens, temperature]
+        if not r.ok
+            return error[r.reason, 'llm']
+        whats = push[whats, 'chat']
+        names = push[names, str[m.model]]
+        ins = push[ins, _count_of[r.usage.input]]
+        outs = push[outs, _count_of[r.usage.output]]
+        mss = push[mss, (float[now[]] - t0) * 1000.0]
+        hows = push[hows, str[r.stop]]
+        spent_in = spent_in + _count_of[r.usage.input]
+        spent_out = spent_out + _count_of[r.usage.output]
+        words = str[r.text]
+        talk = said[talk, r]
+        if str[r.stop] ne 'tool'
+            stop = str[r.stop]
+        else
+            for call in r.calls
+                t1 = float[now[]]
+                got = _answered[tools, call]
+                if len[servers] gt 0 and _is_served[served, call]
+                    got = _served_call[reached, served, call]
+                if len[skills] gt 0 and str[call.name] eq 'skill'
+                    got = _skill_loaded[known, call]
+                else if len[skills] gt 0 and str[call.name] eq 'skill_file'
+                    got = _skill_file_read[known, call]
+                flag = false
+                if got.failed
+                    flag = true
+                whats = push[whats, 'tool']
+                names = push[names, str[call.name]]
+                ins = push[ins, 0]
+                outs = push[outs, 0]
+                mss = push[mss, (float[now[]] - t1) * 1000.0]
+                hows = push[hows, str[got.how]]
+                talk = told[talk, call, str[got.text], failed = flag]
+            if round_n gte rounds
+                stop = 'rounds'
+            else if budget gt 0 and spent_in + spent_out gte budget
+                stop = 'budget'
+            else if compact gt 0 and _count_of[r.usage.input] gte compact
+                --- (the summary is asked with no tools, so the model answers
+                --- in words; the run goes on from it alone, the original
+                --- question inside the summary)
+                t2 = float[now[]]
+                summary = _chat_with[m, _compact_ask[talk], system, [], tokens, temperature]
+                if not summary.ok
+                    return error[summary.reason, 'llm']
+                whats = push[whats, 'compact']
+                names = push[names, str[m.model]]
+                ins = push[ins, _count_of[summary.usage.input]]
+                outs = push[outs, _count_of[summary.usage.output]]
+                mss = push[mss, (float[now[]] - t2) * 1000.0]
+                hows = push[hows, str[summary.stop]]
+                spent_in = spent_in + _count_of[summary.usage.input]
+                spent_out = spent_out + _count_of[summary.usage.output]
+                talk = _compacted[str[summary.text]]
+    steps = frame.new[step = range[1, len[whats] + 1], what = whats, name = names, input = ins, output = outs, ms = mss, how = hows]
+    usage = json['{"input": `spent_in`, "output": `spent_out`}']
+    return Done[words, stop, round_n, usage, talk, steps]
+
 --- ── the module's own tests ────────────────────────────────────────────
 
 --- a tool the module's own tests describe and call by name
 fn _forecast[city, days = 2]
     return '`days` days of sun in `upper[city]`'
+
+--- a tool that fails, for the tests: its failure is the call's result
+fn _breaks[city]
+    return error['the weather service is down in `upper[city]`', 'weather']
+
+--- a call is answered by the tool of its name — the tool's value as the
+--- model reads it; a missing argument, a tool's own failure and a name
+--- no tool has each a failed result saying why
+test a_call_is_answered_by_the_tool_of_its_name[]
+    call = json['{"id": "c1", "name": "_forecast", "args": {"city": "Oslo", "days": 3}}']
+    got = _answered[[_forecast, _breaks], call]
+    assert[str[got.text] eq '3 days of sun in OSLO']
+    assert[str[got.failed] eq 'false']
+    assert[str[got.how] eq 'ok']
+    missing = _answered[[_forecast, _breaks], json['{"id": "c2", "name": "_forecast", "args": {"days": 3}}']]
+    assert[str[missing.failed] eq 'true']
+    assert[str[missing.how] eq 'arguments']
+    broken = _answered[[_forecast, _breaks], json['{"id": "c3", "name": "_breaks", "args": {"city": "Oslo"}}']]
+    assert[str[broken.how] eq 'failed']
+    assert[str[broken.text] eq 'the weather service is down in OSLO']
+    unknown = _answered[[_forecast, _breaks], json['{"id": "c4", "name": "nothing", "args": {}}']]
+    assert[str[unknown.how] eq 'unknown']
+    assert[str[unknown.text] eq 'no tool is named nothing']
+    assert[_plain_of['"plain words"'] eq 'plain words']
+    assert[_plain_of['{"a": 1}'] eq '{"a": 1}']
+    assert[_plain_of['42'] eq '42']
+
+--- a failed result is told as one: the turn says so, Anthropic's block
+--- carries is_error, and the OpenAI-compatible turn its text alone
+test a_failed_result_is_told_as_one[]
+    r = json['{"text": "", "calls": [{"id": "c1", "name": "weather", "args": {"city": "Nowhere"}}], "usage": {"input": 3, "output": 4}, "stop": "tool"}']
+    talk = told[said[ask['hi'], r], r.calls[0], 'the weather service is down', failed = true]
+    assert[str[talk[2].failed] eq 'true']
+    fine = told[said[ask['hi'], r], r.calls[0], '21']
+    assert[not fine[2].failed.ok]
+    a = json[_messages_anthropic[talk]]
+    assert[str[a[2].content[0].is_error] eq 'true']
+    assert[str[a[2].content[0].content] eq 'the weather service is down']
+    b = json[_messages_anthropic[fine]]
+    assert[not b[2].content[0].is_error.ok]
+    o = json[_messages_openai[talk, '']]
+    assert[str[o[2].content] eq 'the weather service is down']
+    assert[not o[2].failed.ok]
+
+--- the loop refuses a round count below one, and a model nobody answers
+--- is its error, as chat's
+test the_loop_is_held_to_its_limits[]
+    m = reach['openai://127.0.0.1:9/self-model']
+    none = act[m, ask['hi'], tools = [_forecast], rounds = 0]
+    assert[not none.ok]
+    assert[none.reason eq 'act[…] runs at least one round: rounds = 0']
+    gone = act[m, ask['hi'], tools = [_forecast]]
+    assert[not gone.ok]
+    assert[gone.kind eq 'llm']
+    assert[starts[gone.reason, 'cannot reach the model']]
 
 --- a function described (its name, its comment, its parameters' kinds and
 --- defaults, what it answers) and called by name, with an argument

@@ -1132,3 +1132,42 @@ steps on every push and must be green.
   parse_power). A tensor divided by a number divides each number
   (`div_scalar`): a multiply by the reciprocal rounds twice. A Rust `sum`
   of no floats is -0: a sum a program sees folds from +0.
+- The agent loop is Crow in `src/modules/llm.co` (`act`, 2026-10-20):
+  `describe`/`apply` over the group the program hands it, nothing in the
+  compiler. Three traps: a function called only by name from INSIDE a
+  standard module (a group member applied by `act`) is noted as called
+  through `note_named_call`, past `note_call`'s scope rule — the rule
+  makes a program's functions invisible inside a module, and the tool had
+  stayed untyped and been left out of the compiled program (parity 274);
+  a frame column named `kind` (or `ok`, `reason`, `trace`) is unreadable,
+  since `f.kind` is the frame's status; and two functions of one name in
+  a module read as one (the second's parameters are "undefined
+  variables") — the compiler does not name the collision. A gate for the
+  loop waits on an inference rule (a parameter read by its fields is a
+  parsed value; docs/agents-design.md): a function taking a function is
+  not copied per kind, and a group member applied by name is typed only
+  by a call of it or a single-kind builtin read.
+- Writing a module that calls another module's exports (llm's loop over
+  `use mcp`, 2026-10-20): an import's ALIAS is not resolved inside a
+  module (`use mcp as peer` leaves `peer` undefined in the inlined body,
+  and `remote` had silently resolved to sys's `remote` function), while a
+  bare `use mcp` reserves every export's name from the module's own
+  parameters (`tools = []` on `act` met mcp's `tools`) — so an export is
+  named for the program's sake AND for the modules that import it
+  (`catalog`). A list parameter with a `[]` default makes a copy of the
+  function whose items are of no kind, and a helper that takes the list
+  typed by another copy does not build compiled: read the list as its JSON
+  (`json[encode[servers]]`), the same in every copy. `args` is a core
+  builtin (no parameter of that name). A program's top-level value named
+  with a standard module's prefix (`mcp_s`) had been printed as a Rust
+  constant by the emitter's rule for user modules' hoisted values
+  (`emit_module_consts`): a standard module hoists no value, so its
+  prefix names none.
+- A function copied per signature (`scan_clone`) is scanned INSIDE the
+  function's scope (`enter_fn_scan`/`leave_fn_scan`), as `scan_program`
+  scans the function itself: binding the parameters alone had left the
+  program's top-level names visible in the copy's scan, so a module's
+  copy read a program variable named like its local (`one`, a record)
+  and refused its own code (parity 275, found by the first run of `act`
+  against a real model). A new scan path for a body goes through the
+  same pair.

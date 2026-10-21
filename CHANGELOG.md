@@ -93,6 +93,35 @@ history says the rest.
 
 ### Added
 
+- The agent loop, `act` (spec, llm: The loop is the module's):
+  `act[m, talk, tools = [f, g]]` runs the model's tools until it answers
+  or a limit stops it — each reply's calls answered by the tool of its
+  name through `apply`, a name no tool has, an argument of the wrong
+  kind and a tool's own failure each told to the model as a failed
+  result that says why, so every call is answered; `rounds` (8) and
+  `budget` (tokens in all) as the limits, stopping after a reply's calls
+  are answered so the conversation stays well-formed. Answers a record:
+  `text`, `stop`, `rounds`, `usage`, `talk` and `steps`, a frame with a
+  row per model call and tool call. `told[…, failed = true]` tells a
+  failure by hand; Anthropic's wire carries it as `is_error`. Written in
+  Crow in the module (docs/agents-design.md); the gate waits on an
+  inference rule (a parameter read by its fields is a parsed value).
+- The loop's context, skills and servers: `keep = n` cuts the tool
+  results of rounds older than the last n to a stub naming their size,
+  `compact = n` asks the model for a summary once a reply has read n
+  tokens and goes on from the summary alone, `skills = folder` reads a
+  folder of skills in the Agent Skills format (agentskills.io: each
+  skill's `SKILL.md` frontmatter held to the standard's rules), names
+  them in the system prompt and lets the model load one, and the files
+  it refers to, through the tools `skill` and `skill_file`; `servers =
+  [s]` adds the tools MCP servers offer, called on the server.
+- `use mcp` (spec, section 13): the Model Context Protocol, revision
+  2026-07-28, over Streamable HTTP — `server[url]` names an endpoint,
+  `discover[s]`, `tools[s]` and `tool[s, name, given]` ask it, and
+  `answer[req, tools = [f, g]]` in a POST route makes a Crow program a
+  server over the functions themselves (`server/discover`, `tools/list`,
+  `tools/call`, the errors the protocol names). Written in Crow on
+  `request`; tests/mcp.rs drives both directions in both modes.
 - The package lock holds the bytes (spec, Package Manager): `crow.lock`
   records the hash of each dependency as installed beside its commit,
   every command that reads a program refuses a package changed by hand
@@ -107,6 +136,10 @@ history says the rest.
 
 ### Changed
 
+- The book's standard-library pages (`docs/book/src/stdlib/`) are
+  generated for every module the manifest lists that has a section of
+  its own in the spec, in the manifest's order; a hand-kept list in the
+  docs check had lacked a module's page while the book's index linked it.
 - The shape of the tensor a builtin answers is declared on its row
   (`table::Shape`, a fixed vocabulary: an argument's own shape, a
   broadcast, a dimension per size, each dimension stated, a reduction, a
@@ -193,6 +226,28 @@ history says the rest.
 
 ### Fixed
 
+- A program's function in a group handed to a standard module's function
+  (`tools = [weather]` to `act`) was never noted as called where the
+  module applied it by name, since a program's functions are invisible
+  inside a module: the function stayed untyped and the compiled program
+  called one it did not hold ("cannot find function `weather`"). The
+  note records the signature itself now, and the dispatch's call of such
+  a function is lowered as the program's call it is, where the interpreter
+  had met a by-name call of a function it does not run (parity 274,
+  tests/llm_server.rs).
+- A program's own top-level value named with a standard module's prefix
+  (`mcp_s = server[…]` under `use mcp`) was printed as a Rust constant,
+  by the rule that hoists a user module's values, and the compiled program
+  did not build: a standard module hoists no value, so its prefix names
+  none now.
+- A function copied per signature was scanned without entering its own
+  scope: its first assignment to a name was not a local of its own, and
+  inside a standard module's copy the program's top-level names were
+  visible. The copy of llm's `act` made for a second tool list read the
+  program's `one` — the record the first call answered — as the loop's
+  local `one`, and refused the module's own push in both modes (parity
+  275). A copy's scan enters the function's scope as the function's own
+  does.
 - `find['a', 'b']` under `use sys` had reached the layer's `find` of
   bytes (the one resolver read the core's runtime rows alone, and the
   core's `find` is a form), and the lowered program disagreed with

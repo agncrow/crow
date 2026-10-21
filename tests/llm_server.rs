@@ -9,6 +9,7 @@
 //! gathered, embeddings, and the refusals (a bad key, a body that is no
 //! JSON, a server nobody answers), the same lines from both.
 
+use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::process::Command;
 
@@ -120,6 +121,161 @@ fn anthropic_stream(tool: bool) -> String {
     events.iter().map(|(e, d)| format!("event: {}\ndata: {}\n\n", e, d)).collect()
 }
 
+/// A reply of text in the format the path names, with the stop reason the
+/// loop reads as `end` or `length`.
+fn reply_text(anthropic: bool, text: &str, stop: &str) -> String {
+    if anthropic {
+        let reason = if stop == "length" { "max_tokens" } else { "end_turn" };
+        json!({"content": [{"type": "text", "text": text}], "stop_reason": reason, "usage": {"input_tokens": 21, "output_tokens": 3}}).to_string()
+    } else {
+        let reason = if stop == "length" { "length" } else { "stop" };
+        json!({"choices": [{"message": {"role": "assistant", "content": text}, "finish_reason": reason}], "usage": {"prompt_tokens": 21, "completion_tokens": 3}}).to_string()
+    }
+}
+
+/// A reply of calls — one block or tool_call each, ids numbered — in the
+/// format the path names.
+fn reply_calls(anthropic: bool, calls: &[(&str, Value)]) -> String {
+    if anthropic {
+        let blocks: Vec<Value> = calls.iter().enumerate().map(|(i, (n, a))| json!({"type": "tool_use", "id": format!("toolu_{}", i + 1), "name": n, "input": a})).collect();
+        json!({"content": blocks, "stop_reason": "tool_use", "usage": {"input_tokens": 12, "output_tokens": 15}}).to_string()
+    } else {
+        let tcs: Vec<Value> = calls.iter().enumerate().map(|(i, (n, a))| json!({"id": format!("call_{}", i + 1), "type": "function", "function": {"name": n, "arguments": a.to_string()}})).collect();
+        json!({"choices": [{"message": {"role": "assistant", "content": null, "tool_calls": tcs}, "finish_reason": "tool_calls"}], "usage": {"prompt_tokens": 7, "completion_tokens": 5}}).to_string()
+    }
+}
+
+/// The tool results the last turn carries — each result's text and
+/// whether it was flagged an error (Anthropic's `is_error`; the
+/// OpenAI-compatible wire has no flag).
+fn told_results(messages: &[Value], anthropic: bool) -> Vec<(String, bool)> {
+    if anthropic {
+        let Some(last) = messages.last().filter(|m| m["role"] == "user") else { return Vec::new() };
+        last["content"]
+            .as_array()
+            .map(|blocks| blocks.iter().filter(|b| b["type"] == "tool_result").map(|b| (b["content"].as_str().unwrap_or("").to_string(), b["is_error"].as_bool().unwrap_or(false))).collect())
+            .unwrap_or_default()
+    } else {
+        messages.iter().rev().take_while(|m| m["role"] == "tool").map(|m| (m["content"].as_str().unwrap_or("").to_string(), false)).collect::<Vec<_>>().into_iter().rev().collect()
+    }
+}
+
+/// Every tool result the conversation holds, in order, each with whether
+/// it was flagged an error.
+fn all_told(messages: &[Value], anthropic: bool) -> Vec<(String, bool)> {
+    let mut out = Vec::new();
+    for m in messages {
+        if anthropic {
+            if m["role"] != "user" {
+                continue;
+            }
+            if let Some(blocks) = m["content"].as_array() {
+                for b in blocks.iter().filter(|b| b["type"] == "tool_result") {
+                    out.push((b["content"].as_str().unwrap_or("").to_string(), b["is_error"].as_bool().unwrap_or(false)));
+                }
+            }
+        } else if m["role"] == "tool" {
+            out.push((m["content"].as_str().unwrap_or("").to_string(), false));
+        }
+    }
+    out
+}
+
+/// The system prompt sent, in either format.
+fn system_of(v: &Value, messages: &[Value], anthropic: bool) -> String {
+    if anthropic {
+        v["system"].as_str().unwrap_or("").to_string()
+    } else {
+        messages.iter().find(|m| m["role"] == "system").and_then(|m| m["content"].as_str()).unwrap_or("").to_string()
+    }
+}
+
+/// A scripted run for the agent loop: a question beginning `act:` names
+/// the scenario, the model's turns so far say which step this is, and the
+/// final text says back what the model was told (`heard: …`, each failed
+/// result marked `(error)` where the wire carries the flag), so the test
+/// sees what the model heard. None for any other question.
+fn scripted(path: &str, body: &str) -> Option<String> {
+    let anthropic = path == "/v1/messages";
+    if !anthropic && path != "/v1/chat/completions" {
+        return None;
+    }
+    let v: Value = serde_json::from_str(body).ok()?;
+    let messages = v["messages"].as_array().cloned().unwrap_or_default();
+    let user_text = |m: &Value| -> String {
+        if anthropic {
+            m["content"].as_array().and_then(|b| b.iter().find(|x| x["type"] == "text")).and_then(|x| x["text"].as_str()).unwrap_or("").to_string()
+        } else {
+            m["content"].as_str().unwrap_or("").to_string()
+        }
+    };
+    let first = messages.iter().find(|m| m["role"] == "user")?;
+    let question = user_text(first);
+    let last_user = messages.iter().rev().find(|m| m["role"] == "user").map(user_text).unwrap_or_default();
+    // (a compacted conversation starts from a summary; a summary is asked
+    // with no tools and the question gone)
+    if last_user.starts_with("Summarize the conversation") {
+        return Some(reply_text(anthropic, "the task: the weather (a summary)", "end"));
+    }
+    if question.starts_with("The conversation so far, summarized:") {
+        return Some(reply_text(anthropic, &format!("heard: resumed from {}", question.lines().nth(1).unwrap_or("")), "end"));
+    }
+    let scenario = question.strip_prefix("act: ")?.to_string();
+    let everything = {
+        let parts: Vec<String> = all_told(&messages, anthropic).iter().map(|(t, e)| if *e { format!("{} (error)", t) } else { t.clone() }).collect();
+        format!("seen: {}", parts.join(" | "))
+    };
+    let listed = if system_of(&v, &messages, anthropic).contains("crow-parity-test: ") { " | listed" } else { "" };
+    let round = messages.iter().filter(|m| m["role"] == "assistant").count();
+    let heard = {
+        let parts: Vec<String> = told_results(&messages, anthropic).iter().map(|(t, e)| if *e { format!("{} (error)", t) } else { t.clone() }).collect();
+        format!("heard: {}", parts.join(" | "))
+    };
+    let lisbon = json!({"city": "Lisbon"});
+    Some(match scenario.as_str() {
+        "weather" if round == 0 => reply_calls(anthropic, &[("weather", lisbon)]),
+        "forever" => reply_calls(anthropic, &[("weather", lisbon)]),
+        "nothing" if round == 0 => reply_calls(anthropic, &[("nothing", json!({}))]),
+        "bad" if round == 0 => reply_calls(anthropic, &[("forecast", json!({"city": "Lisbon", "days": "many"}))]),
+        "fail" if round == 0 => reply_calls(anthropic, &[("weather", json!({"city": "Nowhere"}))]),
+        "two" if round == 0 => reply_calls(anthropic, &[("weather", lisbon), ("weather", json!({"city": "Porto"}))]),
+        "length" => reply_text(anthropic, "cut off", "length"),
+        "keep" if round < 3 => reply_calls(anthropic, &[("weather", lisbon)]),
+        "keep" => reply_text(anthropic, &everything, "end"),
+        "compact" if round == 0 => reply_calls(anthropic, &[("weather", lisbon)]),
+        "skills" if round == 0 => reply_calls(anthropic, &[("skill", json!({"name": "crow-parity-test"}))]),
+        "skills" if round == 1 => reply_calls(anthropic, &[("skill_file", json!({"name": "crow-parity-test", "path": "references/parity.md"}))]),
+        "skills" if round == 2 => reply_calls(anthropic, &[("skill_file", json!({"name": "crow-parity-test", "path": "../../secrets.txt"})), ("skill", json!({"name": "nothing"}))]),
+        "skills" => reply_text(anthropic, &format!("{}{}", everything, listed), "end"),
+        "mcp" if round == 0 => reply_calls(anthropic, &[("echo", json!({"words": "over mcp"})), ("fail", json!({}))]),
+        "mcp" => reply_text(anthropic, &everything, "end"),
+        _ => reply_text(anthropic, &heard, "end"),
+    })
+}
+
+/// A stand-in MCP server at `/mcp`: an `echo` tool and one that fails,
+/// listed and called by the loop's `servers = [s]`.
+fn mcp_answer(body: &str) -> String {
+    let sent: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+    let id = sent["id"].clone();
+    match sent["method"].as_str().unwrap_or("") {
+        "tools/list" => json!({"jsonrpc": "2.0", "id": id, "result": {"resultType": "complete", "tools": [
+            {"name": "echo", "description": "says its words back", "inputSchema": {"type": "object", "properties": {"words": {"type": "string"}}, "required": ["words"]}},
+            {"name": "fail", "description": "always fails", "inputSchema": {"type": "object", "additionalProperties": false}}
+        ]}}).to_string(),
+        "tools/call" => {
+            let name = sent["params"]["name"].as_str().unwrap_or("");
+            let result = if name == "echo" {
+                json!({"resultType": "complete", "content": [{"type": "text", "text": format!("echo: {}", sent["params"]["arguments"]["words"].as_str().unwrap_or(""))}], "isError": false})
+            } else {
+                json!({"resultType": "complete", "content": [{"type": "text", "text": "it failed, as it always does"}], "isError": true})
+            };
+            json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string()
+        }
+        other => json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32601, "message": format!("Method not found: {}", other)}}).to_string(),
+    }
+}
+
 /// One request answered by what it asked: the path names the format, the
 /// body says whether a reply is streamed and whether tools were offered
 /// (a tool call comes once, then its result is read back).
@@ -151,6 +307,12 @@ fn answer(mut stream: std::net::TcpStream) {
     let wants_tool = offered && !told;
     if path.starts_with("/broken") {
         return respond(stream, "200 OK", "this is not json");
+    }
+    if let Some(reply) = scripted(&path, &body) {
+        return respond(stream, "200 OK", &reply);
+    }
+    if path == "/mcp" {
+        return respond(stream, "200 OK", &mcp_answer(&body));
     }
     match path.as_str() {
         "/v1/chat/completions" => {
@@ -367,5 +529,194 @@ llm\n"
             .output()
             .unwrap();
         assert_eq!(String::from_utf8_lossy(&out.stdout), said, "{:?}: {}", mode, String::from_utf8_lossy(&out.stderr));
+    }
+}
+
+/// The agent loop against the scripted model (spec, llm: The loop is the
+/// module's): a tool called once and answered, a model that keeps calling
+/// stopped by `rounds` and by `budget`, an unknown name, a wrong argument,
+/// a tool's own failure and two calls in one reply each told as the loop
+/// tells them (the wrong argument against a second tool list: the loop is
+/// copied per list), a reply cut by its length, and the same in
+/// Anthropic's format, where a failed result reaches the wire as
+/// `is_error`.
+const AGENT: &str = "use llm, mcp
+
+port = args[][0]
+m = reach['openai://127.0.0.1:`port`/test-model']
+
+--- the current weather in a city
+fn weather[city]
+    if city eq 'Nowhere'
+        return error['no station in `city`', 'weather']
+    return 'sunny in `upper[city]`'
+
+--- the forecast for a city, for a number of days
+fn forecast[city, days = 2]
+    return '`days` days of sun in `upper[city]`'
+
+--- says its words back, from the program (a name an MCP server also offers)
+fn echo[words]
+    return 'echo `trim[words]`'
+
+done = act[m, ask['act: weather'], tools = [weather]]
+log[done.text]
+log[done.stop]
+log[done.rounds]
+log[done.usage.input]
+log[done.usage.output]
+log[len[done.talk]]
+log[done.steps.what]
+log[done.steps.name]
+log[done.steps.how]
+log[done.steps.input]
+log[len[done.steps.ms]]
+
+more = act[m, ask['act: forever'], tools = [weather], rounds = 3]
+log[more.stop]
+log[more.rounds]
+log[len[more.talk]]
+log[more.steps.how]
+
+none = act[m, ask['act: nothing'], tools = [weather]]
+log[none.text]
+log[none.steps.how]
+
+bad = act[m, ask['act: bad'], tools = [weather, forecast]]
+log[bad.text]
+log[bad.steps.how]
+
+broken = act[m, ask['act: fail'], tools = [weather]]
+log[broken.text]
+log[broken.steps.how]
+
+two = act[m, ask['act: two'], tools = [weather]]
+log[two.text]
+log[len[two.steps.what]]
+
+tight = act[m, ask['act: forever'], tools = [weather], budget = 10]
+log[tight.stop]
+log[tight.rounds]
+
+cut = act[m, ask['act: length'], tools = [weather]]
+log[cut.stop]
+log[cut.text]
+
+kept = act[m, ask['act: keep'], tools = [weather], keep = 1]
+log[kept.text]
+log[kept.rounds]
+log[kept.talk[2].text]
+log[kept.talk[2].cut]
+
+packed = act[m, ask['act: compact'], tools = [weather], compact = 1]
+log[packed.text]
+log[packed.steps.what]
+log[len[packed.talk]]
+log[packed.rounds]
+
+skilled = act[m, ask['act: skills'], tools = [weather], skills = 'skills', system = 'be brief']
+log[skilled.text]
+log[skilled.steps.how]
+log[len[skilled.steps.what]]
+unskilled = act[m, ask['act: skills'], tools = [weather], skills = 'bad_skills']
+log[unskilled.ok]
+log[unskilled.reason]
+
+mcp_s = server['http://127.0.0.1:`port`/mcp']
+over = act[m, ask['act: mcp'], tools = [weather], servers = [mcp_s]]
+log[over.text]
+log[over.steps.name]
+log[over.steps.how]
+taken = act[m, ask['act: mcp'], tools = [weather, echo], servers = [mcp_s]]
+log[taken.reason]
+
+a = reach['anthropic://claude-test']
+da = act[a, ask['act: weather'], tools = [weather]]
+log[da.text]
+log[da.stop]
+log[da.usage.input]
+log[da.steps.how]
+na = act[a, ask['act: nothing'], tools = [weather]]
+log[na.text]
+fa = act[a, ask['act: fail'], tools = [weather]]
+log[fa.text]
+";
+
+#[test]
+fn an_agent_runs_its_tools_in_a_loop_in_both_modes() {
+    let port = model_server();
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/crow_llm_server_agent");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("main.co"), AGENT).unwrap();
+    let skill = dir.join("skills/crow-parity-test");
+    std::fs::create_dir_all(skill.join("references")).unwrap();
+    std::fs::write(skill.join("SKILL.md"), "---\nname: crow-parity-test\ndescription: Writes a parity program. Use when a feature needs a test under tests/parity/.\n---\n# A parity program\n\n1. Take the next number.\n").unwrap();
+    std::fs::write(skill.join("references/parity.md"), "Both modes must print the same lines.\n").unwrap();
+    let bad = dir.join("bad_skills/Bad-Name");
+    std::fs::create_dir_all(&bad).unwrap();
+    std::fs::write(bad.join("SKILL.md"), "---\nname: Bad-Name\ndescription: a skill whose name is no name\n---\nbody\n").unwrap();
+    let said = "heard: sunny in LISBON\n\
+end\n\
+2\n\
+28\n\
+8\n\
+4\n\
+['chat', 'tool', 'chat']\n\
+['test-model', 'weather', 'test-model']\n\
+['tool', 'ok', 'end']\n\
+[7, 0, 21]\n\
+3\n\
+rounds\n\
+3\n\
+7\n\
+['tool', 'ok', 'tool', 'ok', 'tool', 'ok']\n\
+heard: no tool is named nothing\n\
+['tool', 'unknown', 'end']\n\
+heard: a parsed value holds text 'many' where the program reads an int (forecast[]'s 'days')\n\
+['tool', 'arguments', 'end']\n\
+heard: no station in Nowhere\n\
+['tool', 'failed', 'end']\n\
+heard: sunny in LISBON | sunny in PORTO\n\
+4\n\
+budget\n\
+1\n\
+length\n\
+cut off\n\
+seen: [a result of 15 characters, cut] | [a result of 15 characters, cut] | sunny in LISBON\n\
+4\n\
+[a result of 15 characters, cut]\n\
+true\n\
+heard: resumed from the task: the weather (a summary)\n\
+['chat', 'tool', 'compact', 'chat']\n\
+2\n\
+2\n\
+seen: # A parity program\n\n1. Take the next number. | Both modes must print the same lines.\n | a skill's file is named by its path inside the skill: ../../secrets.txt | no skill is named nothing | listed\n\
+['tool', 'ok', 'tool', 'ok', 'tool', 'failed', 'unknown', 'end']\n\
+8\n\
+false\n\
+the skill Bad-Name's name 'Bad-Name' holds 'B', and a name holds lowercase letters, digits and hyphens\n\
+seen: echo: over mcp | it failed, as it always does\n\
+['test-model', 'echo', 'fail', 'test-model']\n\
+['tool', 'ok', 'failed', 'end']\n\
+the MCP server http://127.0.0.1:@PORT@/mcp offers a tool named echo, which another tool has: the names must differ\n\
+heard: sunny in LISBON\n\
+end\n\
+33\n\
+['tool', 'ok', 'end']\n\
+heard: no tool is named nothing (error)\n\
+heard: no station in Nowhere (error)\n";
+    for mode in [&["run", "-i"][..], &["run"][..]] {
+        let out = Command::new(env!("CARGO_BIN_EXE_crow"))
+            .args(mode)
+            .arg("main.co")
+            .arg(port.to_string())
+            .current_dir(&dir)
+            .env("CROW_BUILD_PROFILE", "dev")
+            .env("ANTHROPIC_BASE_URL", format!("http://127.0.0.1:{}", port))
+            .env("ANTHROPIC_API_KEY", "test")
+            .env("OPENAI_API_KEY", "test")
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).to_string(), said.replace("@PORT@", &port.to_string()), "{:?}: {}", mode, String::from_utf8_lossy(&out.stderr));
     }
 }

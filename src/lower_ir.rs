@@ -864,6 +864,10 @@ struct Lowerer<'a> {
     /// The collecting loops over a list of named functions the call scan
     /// is inside (`for f in [a, b]`): the loop's variable and the functions.
     fn_lists: Vec<(String, Vec<String>)>,
+    /// The functions a dispatch is applying by name (named.rs): a group's
+    /// member is called where the group was handed, though a standard
+    /// module's function cannot name the program's functions (`calls_fn`).
+    applying: Vec<String>,
     /// The functions refused as undescribable, each once.
     undescribable: HashSet<String>,
     /// A provisional lowering's locals, each with its first value's type:
@@ -1021,6 +1025,7 @@ impl<'a> Lowerer<'a> {
             collecting: 0,
             unscanned: 0,
             fn_lists: Vec::new(),
+            applying: Vec::new(),
             undescribable: HashSet::new(),
             first_types: HashMap::new(),
             held: Vec::new(),
@@ -1288,12 +1293,18 @@ impl<'a> Lowerer<'a> {
     fn scan_clone(&mut self, mangled: &str) {
         let body = self.ctx.functions.get(mangled).map(|sig| sig.body.clone()).unwrap_or_default();
         let params: HashSet<String> = self.ctx.functions.get(mangled).map(|sig| sig.params.iter().map(|(p, _)| p.clone()).collect()).unwrap_or_default();
-        let saved = self.ctx.bind_params(mangled);
+        // (the copy's scan enters the body's scope as the function's own
+        // does: its first assignment to a name is a local of its own, and
+        // inside a standard module's copy the program's names are
+        // invisible — a copy of llm's `act` had read the program's `one`,
+        // a record its first call answered, as its own local `one`, and
+        // refused its own push of a schema onto a list)
+        let scan = self.ctx.enter_fn_scan(mangled);
         self.at = Where::In(self.kind_of(mangled, &body, false));
         self.current_fn = mangled.to_string();
         self.ctx.registry.enter(&self.current_fn);
         self.provisional(Pass::Scan, Some(params), &body);
-        self.ctx.vars = saved;
+        self.ctx.leave_fn_scan(mangled, scan);
     }
 
     /// The top level's variables (F5): its statements lowered as they run,
@@ -2036,7 +2047,7 @@ impl<'a> Lowerer<'a> {
     }
 
     fn calls_fn(&self, name: &str) -> bool {
-        self.ctx.functions.contains_key(name) && (crate::modules::is_crow_fn(name) || !crate::modules::is_crow_fn(&self.current_fn))
+        self.ctx.functions.contains_key(name) && (crate::modules::is_crow_fn(name) || !crate::modules::is_crow_fn(&self.current_fn) || self.applying.iter().any(|f| f == name))
     }
 
     /// A write at a path — a field, an item, a key — of a local, or of a
@@ -5190,8 +5201,10 @@ impl<'a> Lowerer<'a> {
         }
         // (a program's function, or a copy of one, is invisible inside a
         // standard module's function: sys's `answer[…]` is its row, not a
-        // program's `fn answer`)
-        let visible = crate::modules::is_crow_fn(&name) || !crate::modules::is_crow_fn(&self.current_fn);
+        // program's `fn answer` — but one a dispatch there is applying by
+        // name, a group's member handed in, is the program's function it
+        // names: `applying`)
+        let visible = crate::modules::is_crow_fn(&name) || !crate::modules::is_crow_fn(&self.current_fn) || self.applying.iter().any(|f| *f == name);
         if (self.ctx.functions.contains_key(&name) || self.ctx.specializations.contains_key(&name)) && visible {
             if let Some(seen) = &mut self.seen {
                 seen.calls.push((name.clone(), full_types.clone()));

@@ -3,11 +3,16 @@
 # listed one the cases reach fails it until it is struck (--bless rewrites the list).
 db.clickhouse.ch_cancel	a driver's own row, reached through use db (the db family): a stop abandoning a statement in flight calls it, which tests/query_cancel.rs holds in both modes
 db.postgres.pg_cancel	a driver's own row, reached through use db (the db family): a stop abandoning a statement in flight calls it, which tests/query_cancel.rs holds in both modes
+llm.act	the loop against a model: tests/llm_server.rs scripts its runs (a tool called and answered, the limits, the failures, keep, compact, skills, an MCP server's tools) in both modes, the llm family's live cases run it against the check's model, parity 274 its refusals
 llm.chat	its parameter 'm' is typed by nothing the module's tests hand it (?), or takes what no kind names
 llm.embed	its parameter 'm' is typed by nothing the module's tests hand it (?), or takes what no kind names
 llm.follow	its parameter 'm' is typed by nothing the module's tests hand it (?), or takes what no kind names
 llm.next	its parameter 's' is typed by nothing the module's tests hand it (?), or takes what no kind names
 llm.reply	its parameter 's' is typed by nothing the module's tests hand it (?), or takes what no kind names
+mcp.answer	a route's request: tests/mcp.rs drives a stand-in client against a Crow program serving /mcp in both modes (discovery, the list, calls, every error the protocol names)
+mcp.catalog	asks a server: tests/mcp.rs drives the client against a stand-in server in both modes, the list read from a stream of events
+mcp.discover	asks a server: tests/mcp.rs drives the client against a stand-in server in both modes
+mcp.tool	calls a server's tool: tests/mcp.rs drives the client against a stand-in server in both modes (a result, one marked an error, an unknown tool)
 sys.put	its parameter 'path' is typed by nothing the module's tests hand it (?), or takes what no kind names
 sys.upgrade	its parameter 'url' is typed by nothing the module's tests hand it (?), or takes what no kind names
 web.ws.close	its parameter 's' is typed by nothing the module's tests hand it (?), or takes what no kind names

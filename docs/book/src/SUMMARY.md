@@ -94,6 +94,7 @@
   - [Views: the whole element vocabulary](by-example/views-elements.md)
   - [The standard library's layer: `use sys`](by-example/sys.md)
   - [A language model as a connection: `use llm`](by-example/llm.md)
+  - [Tools from other programs: `use mcp`](by-example/mcp.md)
 
 - [Appendix A: The Language at a Glance](appendix-a-language-at-a-glance.md)
 - [Appendix B: Coming from Another Language](appendix-b-from-another-language.md)
@@ -113,4 +114,5 @@
   - [ui](stdlib/ui.md)
   - [web](stdlib/web.md)
   - [llm](stdlib/llm.md)
+  - [mcp](stdlib/mcp.md)
 - [The Crow Language Specification](language-spec.md)

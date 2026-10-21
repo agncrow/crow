@@ -366,6 +366,27 @@ impl TypeContext {
         }
     }
 
+    /// A function called by name — `apply`'s, or a group's member where
+    /// the group was handed — noted as called with the kinds the call
+    /// hands it: its parameters unify with them and the signature is kept
+    /// for the copies. Wherever the call is lowered: a standard module's
+    /// function applies the program's functions it was handed, which it
+    /// cannot name (`calls_fn`), so the note does not go through
+    /// `note_call`'s scope rule.
+    pub(crate) fn note_named_call(&mut self, f: &str, types: &[Ty]) {
+        let Some(sig) = self.functions.get(f).cloned() else { return };
+        let mut params = sig.params.clone();
+        for (p, t) in params.iter_mut().zip(types) {
+            p.1 = p.1.unify(t);
+        }
+        if types.len() == params.len() && types.iter().all(|t| Self::type_is_concrete(t) || Self::empty_collection(t)) {
+            self.note_signature(f, types.to_vec());
+        }
+        if let Some(s) = self.functions.get_mut(f) {
+            s.params = params;
+        }
+    }
+
     pub(crate) fn hand_functions(&mut self, callee: &str, args: &[Expr]) {
         let handed_to = callee;
         let Some(sig) = self.functions.get(callee).cloned() else { return };

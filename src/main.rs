@@ -1037,14 +1037,18 @@ fn cmd_test_docs() {
     if let Some(m) = section("### math") { let ex: Vec<(usize, usize)> = [stats, nn].iter().flatten().copied().collect(); add("math", "math", "use math", "math", modules::by_path("math").and_then(|m| m.docs).unwrap_or_default(), one(Some(m)), ex); }
     if stats.is_some() { add("math-stats", "math.stats", "use math.stats", "math.stats", modules::by_path("math.stats").and_then(|m| m.docs).unwrap_or_default(), one(stats), vec![]); }
     if nn.is_some() { add("math-nn", "math.nn", "use math.nn", "math.nn", modules::by_path("math.nn").and_then(|m| m.docs).unwrap_or_default(), one(nn), vec![]); }
-    if let Some(f) = section("### frame") { add("frame", "frame", "use frame", "frame", modules::by_path("frame").and_then(|m| m.docs).unwrap_or_default(), one(Some(f)), vec![]); }
-    if let Some(d) = section("### db") { add("db", "db", "use db", "db", modules::by_path("db").and_then(|m| m.docs).unwrap_or_default(), one(Some(d)), vec![]); }
-    if let Some(l) = section("### llm") { add("llm", "llm", "use llm", "llm", modules::by_path("llm").and_then(|m| m.docs).unwrap_or_default(), one(Some(l)), vec![]); }
-    if let Some(i) = section("### io") { add("io", "io", "use io", "io", modules::by_path("io").and_then(|m| m.docs).unwrap_or_default(), one(Some(i)), vec![]); }
-    if let Some(d) = section("### doc") { add("doc", "doc", "use doc", "doc", modules::by_path("doc").and_then(|m| m.docs).unwrap_or_default(), one(Some(d)), vec![]); }
-    if let Some(b) = section("### bits") { add("bits", "bits", "use bits", "bits", modules::by_path("bits").and_then(|m| m.docs).unwrap_or_default(), one(Some(b)), vec![]); }
-    if let Some(c) = section("### chart") { add("chart", "chart", "use chart", "chart", modules::by_path("chart").and_then(|m| m.docs).unwrap_or_default(), one(Some(c)), vec![]); }
-    if let Some(y) = section("### sys") { add("sys", "sys", "use sys", "sys", modules::by_path("sys").and_then(|m| m.docs).unwrap_or_default(), one(Some(y)), vec![]); }
+    // every other module with a section of its own in the spec, in the
+    // manifest's order (a hand-kept list had lacked a module's page while
+    // the book's index linked it); math's family, web's and ui's are
+    // handed above and below, the drivers have no section of their own
+    for m in modules::MODULES.iter() {
+        if m.path == "math" || m.path.starts_with("math.") || m.path == "ui" || m.path == "web" || m.path.starts_with("web.") || m.path.starts_with("db.") {
+            continue;
+        }
+        if let Some(s) = section(&format!("### {}", m.path)) {
+            add(&m.path.replace('.', "-"), m.path, &format!("use {}", m.path), m.path, m.docs.unwrap_or_default(), one(Some(s)), vec![]);
+        }
+    }
     // web splits where the spec does: the view side (`use ui`) and the server side (`use web`)
     // (the spec's `### web` runs, through the `### Layout` section, up to `### db`)
     if let (Some((w0, _)), Some((d0, _))) = (section("### web"), section("### db")) {

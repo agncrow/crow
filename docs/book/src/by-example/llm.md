@@ -126,3 +126,38 @@ log[weather['Lisbon']]
 false
 sunny in LISBON
 ```
+
+`act` is that loop, written once in the module: the model runs its tools
+until it answers or a limit stops it. Each reply's calls are answered by
+the tools' own functions, every call answered — a name no tool has, an
+argument of the wrong kind and a tool's own failure are each told to the
+model as a failed result that says why — and the run comes back as a
+record: `text`, `stop` (`end`, `length`, `other`, `rounds`, `budget`),
+`rounds`, `usage`, `talk` and `steps`, a frame with a row per model call
+and per tool call. `told[…, failed = true]` is how a failure is told by
+hand; the loop is held to its limits before any model is asked:
+
+```crow
+use llm
+
+--- the current weather in a city
+fn weather[city]
+    return 'sunny in `upper[city]`'
+
+m = reach['openai://127.0.0.1:1/llama3.2']
+done = act[m, ask['Is it warmer in Lisbon or Porto?'], tools = [weather], rounds = 4]
+log[done.ok]
+log[done.kind]
+none = act[m, ask['hi'], tools = [weather], rounds = 0]
+log[none.reason]
+r = json['{"text": "", "calls": [{"id": "c1", "name": "weather", "args": {"city": "Nowhere"}}], "usage": {"input": 3, "output": 4}, "stop": "tool"}']
+talk = told[said[ask['hi'], r], r.calls[0], 'no station in Nowhere', failed = true]
+log[talk[2].failed]
+```
+
+```text
+false
+llm
+act[…] runs at least one round: rounds = 0
+true
+```

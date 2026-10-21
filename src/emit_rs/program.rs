@@ -951,6 +951,10 @@ impl Emitter {
     }
 
     /// A user module's top-level values (`mymath_pi`), printed as consts.
+    /// A standard module hoists no value (the inliner carries its functions
+    /// and records alone), so its prefix names none: a program's own
+    /// `mcp_s = server[…]` had been printed as a const and the compiled
+    /// program had not built (tests/llm_server.rs, the loop's servers).
     fn emit_module_consts(&mut self) {
         if self.needs_ui {
             return;
@@ -959,7 +963,7 @@ impl Emitter {
         let mut any = false;
         for s in &main {
             if let Stmt::Let { var, expr, .. } = s {
-                let prefixed = self.modules.iter().any(|m| var.starts_with(&format!("{}_", m)));
+                let prefixed = self.modules.iter().filter(|m| crate::modules::module_by_path(m).is_none()).any(|m| var.starts_with(&format!("{}_", m)));
                 if !prefixed {
                     continue;
                 }

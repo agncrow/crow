@@ -2326,11 +2326,15 @@ def llm_answers():
         "chat": "\n".join([hi_there, "end", "1", str(len(hi_there.split())), "0"]),
         "chat-options": "\n".join([llm_heard("hi", "be brief", 16, 0.5), "2"]),
         "tool": tool,
+        # the loop: a chat that calls the tool (1 turn in, 1 token out), the
+        # tool's answer, a chat that says it back (3 turns in, 3 words out)
+        "act": "\n".join(["told echo hi", "end", "2", "4", "['chat', 'tool', 'chat']", "['tool', 'ok', 'end']", "4", "4"]),
         "follow": llm_streamed(one_two, [one_two, "end", "1", str(len(one_two.split()))]),
         "follow-tool": "tool\ntrue\nhi",
         "embed": "[[3, 0.5, -0.25], [5, 0.5, -0.25]]",
         "anthropic": "\n".join([llm_heard("hi there", "be brief"), "end", "1", str(len(llm_heard("hi there", "be brief").split()))]),
         "anthropic-tool": tool,
+        "anthropic-act": "\n".join(["told echo hi", "end", "2", "['tool', 'ok', 'end']"]),
         "anthropic-follow": llm_streamed(one_two, [one_two, "end", str(len(one_two.split()))]),
         "anthropic-follow-tool": "tool\ntoolu_self\nhi",
         "anthropic-embed": "anthropic serves no embeddings: reach an openai://<host>/<embedding model>",

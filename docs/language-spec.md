@@ -3378,7 +3378,7 @@ CREATE TABLE IF NOT EXISTS labels (card INTEGER, name TEXT);
 
 ### llm
 
-Import with `use llm`. A language model as a connection: one way to ask a model, the same in both modes, over two wire formats — Anthropic's Messages API, and the OpenAI-compatible chat completions that Ollama, vLLM, OpenRouter and LiteLLM serve too — so a program written against a local model runs unchanged against a hosted one. Written in Crow on the `sys` layer (design rule 20; `src/modules/llm.co`), its functions its declaration (section 13's opening: `reach`, `ask`, `asked`, `said`, `told`, `chat`, `follow`, `next`, `reply`, `embed`); `crow test src/modules/llm.co` runs its own tests, and `tests/llm_server.rs` drives it against a server speaking both formats in both modes. The design is docs/llm-design.md.
+Import with `use llm`. A language model as a connection: one way to ask a model, the same in both modes, over two wire formats — Anthropic's Messages API, and the OpenAI-compatible chat completions that Ollama, vLLM, OpenRouter and LiteLLM serve too — so a program written against a local model runs unchanged against a hosted one. Written in Crow on the `sys` layer (design rule 20; `src/modules/llm.co`), its functions its declaration (section 13's opening: `reach`, `ask`, `asked`, `said`, `told`, `chat`, `follow`, `next`, `reply`, `embed`, `act`); `crow test src/modules/llm.co` runs its own tests, and `tests/llm_server.rs` drives it against a server speaking both formats in both modes, the agent loop against runs that server scripts. The design is docs/llm-design.md and, for the loop, docs/agents-design.md.
 
 ```
 use llm
@@ -3396,14 +3396,15 @@ log[r.usage.input]                       --- 21
 | `ask[text]` | A conversation of one user turn: a parsed value, a list of turns |
 | `asked[talk, text]` | The conversation with another user turn added |
 | `said[talk, reply]` | The conversation with the model's reply added — its text and its tool calls — as the next request needs it |
-| `told[talk, call, text]` | The conversation with a tool's result added: what the program computed for one of the reply's `calls` |
+| `told[talk, call, text, failed = false]` | The conversation with a tool's result added: what the program computed for one of the reply's `calls`. `failed = true` marks the result a failure the model is to hear as one: the turn says so, Anthropic's block carries `is_error`, and the OpenAI-compatible turn its text alone, since that wire has no flag |
 | `chat[m, talk]` | The model's reply: a parsed value with `text`, `calls` (each `id`, `name` and `args`, the arguments as the model wrote them, read as the program's use implies), `usage` (`input` and `output` tokens) and `stop` — `end`, `tool` (the model waits for its calls' results), `length` (its `tokens` reached) or `other`. By name: `system = text`, `tools = [f, g]` (the functions themselves, see below), `tokens = n` (1024), `temperature = t` (1.0). An error value of kind `'llm'` when no answer came, when the server's status is no success (its message quoted: `the model's server answered 401: invalid x-api-key`) or when its answer is no JSON |
 | `follow[m, talk]` | The same request, the reply followed as the model writes it: a socket the pieces are read from; the same options and errors as `chat` |
 | `next[s]` | The next piece of the reply's text, as the model writes it; empty text once the reply has ended. A tool call the model streams is gathered into `reply`, not shown. An error value of kind `'llm'` when the connection breaks |
 | `reply[s]` | The whole reply the socket has carried so far, in `chat`'s shape — complete once `next` has answered empty text |
 | `embed[m, texts]` | The texts' embeddings: a matrix, a row per text, from an OpenAI-compatible embeddings endpoint (`openai://host/<embedding model>`); an Anthropic connection is refused, since it serves none |
+| `act[m, talk, tools = [], rounds = 8, system = '', tokens = 1024, temperature = 1.0, budget = 0, keep = 0, compact = 0, skills = '', servers = []]` | The agent loop: the model runs its tools until it answers or a limit stops it. Each reply's calls are answered in order by the tool of the call's name, applied to its arguments read by each parameter's kind (`apply`, sys); a name no tool has, an argument missing or of another kind and a tool's own failure are each told to the model as a failed result that says why, so every call is answered. At most `rounds` model calls and at most `budget` tokens in all (0 for none): a limit stops the run after the reply's calls are answered, so the conversation ends well-formed and can be continued. `keep = n` cuts the tool results of rounds older than the last n to a stub naming their size (`[a result of 2400 characters, cut]`, the turn marked `cut`), `compact = n` asks the model for a summary once a reply has read n tokens or more and goes on from the summary alone (a step of `what` `compact`), `skills = folder` names a folder of skills (below), and `servers = [s]` adds the tools each MCP server offers (`use mcp`), called on the server. Answers a record: `text` (the model's last words), `stop` (`end`, `length`, `other`, `rounds`, `budget`), `rounds`, `usage` (`input` and `output` tokens in all, a parsed value as a reply's), `talk` (the conversation as it ended) and `steps`, a frame with a row per model call, tool call and compaction — `step`, `what` (`chat`, `tool` or `compact`), `name` (the model's or the tool's), `input`, `output`, `ms`, and `how` (a chat's stop; a tool's `ok`, `failed`, `arguments` or `unknown`). An error value of kind `'llm'` as `chat`'s, for `rounds` below one, for a skill that breaks the standard's rules, and for a tool's name two of the lists share |
 
-`chat`, `follow`, `next` and `embed` are effects: a route's handler that calls one runs off the server's threads (Routes), and `crow check` sees the call.
+`chat`, `follow`, `next`, `embed` and `act` are effects: a route's handler that calls one runs off the server's threads (Routes), and `crow check` sees the call.
 
 **Tools are the functions.** `tools = [weather, search]` hands the functions themselves — a group (Specialization) — and the module writes each one's schema from its description (`describe[t]`, sys): its name, its parameters by name with the kinds inference found — an int `integer`, a float `number`, text `string`, a bool `boolean`, a list an `array` of its items' kind, a map, a record or a parsed value an `object` — and, as the description, the comment written above the function. A parameter's kind is what the program's calls of the function hand it, or, where the program never calls it (a tool only the model calls), what its body reads it as: handed to a builtin whose rows take one kind there, `upper[city]` reads it as text. (Only a call had typed one, and a tool read in its body was refused with the advice to read it there.) A function whose parameter nothing types is refused before the program runs, with the fix (`weather's parameter 'city' is typed by nothing — read it in the body, or call weather[…] once with a value of its kind`), and so is a `tools` that is not a list of functions written. The program makes the calls: the reply's `calls` name a tool and its arguments, the program dispatches on the name, reads the arguments as its use implies and hands each result back with `told`.
 
@@ -3424,6 +3425,17 @@ while r.stop eq 'tool'
 log[r.text]
 ```
 
+**The loop is the module's.** Written by hand, that loop has three gaps every program would close again: no limit, a call the `if` does not handle left unanswered (the next request is refused), a tool that fails ending the run with nothing told to the model. `act[m, talk, tools = [weather]]` is the loop written once, in Crow, in the module: the dispatch is `apply` over the group (sys), which the compiler writes for any list of functions, so every call the model can cause is to a member of the list the program wrote, `crow check` sees each member called with its effects, and the limits, the failed results and the record of the steps are one code for every program (docs/agents-design.md). A tool's failure, a wrong argument and an unknown name are told to the model, each as a failed result whose text says why, since a model that hears why can try another way; `told[…, failed = true]` tells one by hand.
+
+```
+done = act[m, ask['Is it warmer in Lisbon or Porto?'], tools = [weather], rounds = 8]
+log[done.text]            --- the answer
+log[done.stop]            --- end, or the limit that stopped the run
+log[done.steps]           --- a frame: every model call and tool call, in order
+```
+
+**Skills are know-how loaded on demand.** `skills = 'skills/'` names a folder in the Agent Skills format (agentskills.io): each skill a folder holding a `SKILL.md` — YAML frontmatter with its `name` (1 to 64 characters, lowercase letters, digits and single hyphens, neither first nor last, matching the folder) and its `description` (1 to 1024 characters), then the instructions — and, beside it, the files the instructions refer to. The loop reads every skill's frontmatter once, names each with its description in the system prompt, and offers the model two tools of the module's own: `skill[name]` answers a skill's instructions, `skill_file[name, path]` a file inside the skill (a path that leaves it is refused), so a hundred skills cost the model a line each until one is used. A skill that breaks a rule is the call's error value, naming the skill and the rule, before any model is asked; a program's tool named `skill` or `skill_file` is refused. Scripts are not run: running one is `shell`, which waits on the gate.
+
 **A reply followed is a loop the program writes.** A route forwards the pieces as it reads them with the response `stream[feed]`, a page keeps them in a fact a view shows, a script logs them:
 
 ```
@@ -3441,9 +3453,50 @@ A conversation is a parsed value — a list of turns, each its `role` (`user`, `
 
 **Design Note: tools are the functions, the schema the compiler's.** Considered: a tool written by hand — a name, a description and a schema beside the function (rejected: the signature said twice, and the two drift); the module calling the tool for the program and sending the result back by itself, as agent SDKs do (rejected: a call the program never wrote, an effect `crow check` could not see, and a model deciding what runs with no `if` of the program's between); a description handed beside the tool, `describe = map[weather = '…']` (rejected: one thing in two places — the comment above the function is the sentence the code already carries). Decided: `tools = [f, g]`, the compiler writes each schema from the signature it inferred and the function's comment, and the program dispatches.
 
+**Design Note: who runs the tools.** Considered: the program writes the loop, as before (kept, and the only way until 2026-10-20; as the only way rejected: three gaps written again in each program); the lowering expanding `act` into a loop over hidden rows of llm's, the dispatch written by the compiler per listed tool (rejected: the compiler holds the language and names no module, design rule 24); the module dispatching by name at run time over a table from names to function values (rejected: Crow has no such value — a list of functions is a group whose members are known before the program runs — and the checker could not tell which functions will run). Decided (2026-10-20): the module writes the loop in Crow, and the dispatch is `apply` over the group, which the compiler writes for any group. It answers this section's objections to a module calling the program's functions: every call the model can cause is to a member of a list the program wrote, the dispatch is over those members alone, and `crow check` sees each one called, with its effects. A gate the program hands the loop — a function of the call answering a bool, asked before every tool runs — is the next piece: a gate's parameter is a parsed value its body reads by its fields, which types nothing today (a parameter is typed by a call of it, or by a single-kind builtin read of it), so it waits on an inference rule of the compiler's, asked for under rule 24. A run's record is a frame, one row per step, so traces go to ClickHouse and to charts with no conversion; its columns avoid `kind`, `ok`, `reason` and `trace`, which are every value's own.
+
 **Design Note: a reply followed is a socket read piece by piece, not a feed.** Considered: a function handed to `follow` and called for each piece, as a response `stream[feed]` hands its feed a `put` (rejected: a builtin's row takes no function value — one handed to a row is typed by nothing — and a loop the program writes can stop, show, keep or forward a piece where a callback only receives it). Decided: `follow` answers a socket, `next` the pieces, `reply` the whole; the loop is the program's.
 
 Not in this round, each a later note: images and documents in a turn, a conversation the server keeps (prompt caching, stored responses), batches, a model's answer recorded as a fixture so an agent's test replays without the model (on `request`'s rehearsal), and `embed` for a provider that serves no OpenAI-compatible endpoint.
+
+### mcp
+
+Import with `use mcp`. Tools from other programs, and a Crow program as one: the Model Context Protocol, revision 2026-07-28 — stateless, every request carrying its protocol version and the client's capabilities in `_meta`, over Streamable HTTP, one POST per message — written in Crow on `request` and the `sys` layer (design rule 20; `src/modules/mcp.co`), its functions its declaration (`server`, `discover`, `catalog`, `tool`, `answer`); `crow test src/modules/mcp.co` runs its own tests, and `tests/mcp.rs` drives a Crow client against a stand-in server and a stand-in client against a Crow server, in both modes. The design is docs/agents-design.md.
+
+```
+use mcp
+
+s = server['http://localhost:8000/mcp']
+log[catalog[s][0].name]                      --- the first tool the server offers
+log[tool[s, 'weather', map[city = 'Lisbon']]] --- the text its result carries
+```
+
+| Function | Description |
+|----------|-------------|
+| `server[url, token = '']` | An MCP server as a connection: the URL of its MCP endpoint (`http://` or `https://`), and the bearer token its requests carry, if any. A parsed value: `s.url`, `s.token`. An error value of kind `'mcp'` for a URL that names no endpoint |
+| `discover[s]` | What the server says of itself (`server/discover`): `supportedVersions`, `capabilities`, its `instructions` for a model, and who it is under `_meta`; a parsed value |
+| `catalog[s]` | The tools the server offers (`tools/list`): a parsed value list, each its `name`, `description` and `inputSchema`. A response streamed as events is read to its last message |
+| `tool[s, name, given]` | A tool called with its arguments — a map, or a parsed value (`tools/call`) — answering the text its result's content carries. A result the server marks an error (`isError`) is an error value of kind `'mcp'` saying what it said, as is a tool the server does not have, a server that answers an error, and one nobody answers |
+| `answer[req, tools = [f, g], name = 'crow', instructions = '']` | The request a POST route was handed, answered as an MCP server over the functions themselves: `server/discover` with the versions, the capabilities and the instructions; `tools/list` with each tool's schema from its description (`describe`, sys — the comment above the function, its parameters by name with the kinds inference found); `tools/call` with the tool of the name applied to its arguments (`apply`), its value's text the result, a wrong argument or the tool's own failure a result marked an error, a name no tool has the protocol's `Unknown tool` error. A notification is accepted with 202; a body that is no JSON, a request missing its `_meta` or the headers the transport requires (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`), and one of another protocol version are refused with 400 and the JSON-RPC error the protocol names (`-32700`, `-32602`, `-32020`, `-32022`); an unknown method with 404 and `-32601` |
+
+`discover`, `catalog` and `tool` reach the network through `request`, and `crow check` sees the call. A program becomes an MCP server with one route:
+
+```
+use web, mcp
+
+--- the current weather in a city, in °C
+fn weather[city]
+    r = request['https://wttr.in/`trim[city]`?format=j1']
+    return str[json[r.body].current_condition[0].temp_C]
+
+fn served[req]
+    return answer[req, tools = [weather], name = 'weather-server']
+
+route['/mcp', 'POST', served]
+serve[8000]
+```
+
+**Design Note: a module of its own, stateless as the protocol is.** Considered: the client inside `use llm`, since an agent is who calls a server's tools (rejected: a server needs no model, and `use llm` stays the one place a program reaches a model); the connection as a handle kind (rejected, as `reach`'s was: it holds a URL and a token's text, which a parsed value shows); the earlier revisions' `initialize` handshake and `Mcp-Session-Id` (rejected: the 2026-07-28 revision removed sessions, and a client sends one request and reads one answer, which is what `request` does; a legacy server answers 400 with no modern error, which the client names). Decided (2026-10-20): `use mcp`, the client on `request` with the headers the transport mirrors from the body, the server a function a POST route calls, the schema writer the same shape `use llm` writes for a model (a helper is a module's own, so each module writes it). The transport over stdio — a process held open as a connection — waits on a handle for a child process.
 
 
 ## 14. Parallelism

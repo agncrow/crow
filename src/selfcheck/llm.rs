@@ -270,9 +270,10 @@ fn anthropic_events(r: &Heard) -> String {
 /// value is not what it says; a model reached by each URL's form and
 /// refused by each mistake; then, against the check's model, a reply, its
 /// options sent, a tool called and its result read back, a reply followed
-/// piece by piece (a call's too), embeddings, each again in Anthropic's
-/// format, and a server that refuses, one that answers no JSON and one
-/// nobody answers.
+/// piece by piece (a call's too), embeddings, the agent loop (the first
+/// tool called, its result said back, the steps recorded), each again in
+/// Anthropic's format, and a server that refuses, one that answers no
+/// JSON and one nobody answers.
 pub(super) fn llm_cases() -> Vec<Case> {
     let reply = r#"json['{"text": "hello", "calls": [], "usage": {"input": 1, "output": 1}, "stop": "end"}']"#;
     let called = r#"json['{"text": "", "calls": [{"id": "c1", "name": "f", "args": {"x": 1}}], "usage": {"input": 1, "output": 1}, "stop": "tool"}']"#;
@@ -305,11 +306,13 @@ pub(super) fn llm_cases() -> Vec<Case> {
         ("chat", format!("{}\nr = chat[m, ask['hi there']]\nlog[r.text]\nlog[r.stop]\nlog[r.usage.input]\nlog[r.usage.output]\nlog[len[r.calls]]", open)),
         ("chat-options", format!("{}\nr = chat[m, ask['hi'], system = 'be brief', tokens = 16, temperature = 0.5]\nlog[r.text]\nlog[r.usage.input]", open)),
         ("tool", format!("{}\n{}", open, tool_flow("m"))),
+        ("act", format!("{}\nd = act[m, ask['hi'], tools = [self_tool_@N]]\nlog[d.text]\nlog[d.stop]\nlog[d.rounds]\nlog[len[d.talk]]\nlog[d.steps.what]\nlog[d.steps.how]\nlog[d.usage.input]\nlog[d.usage.output]", open)),
         ("follow", format!("{}\ns = follow[m, ask['one two']]\n{}\nlog[whole.text]\nlog[whole.stop]\nlog[whole.usage.input]\nlog[whole.usage.output]", open, follow("s"))),
         ("follow-tool", format!("{}\ns = follow[m, ask['hi'], tools = [self_tool_@N]]\n{}\nlog[whole.stop]\nlog[starts[whole.calls[0].name, 'self_tool_']]\nlog[whole.calls[0].args.x]", open, follow("s"))),
         ("embed", format!("{}\nlog[embed[m, ['one', 'three']]]", open)),
         ("anthropic", format!("{}\n{}\nr = chat[a, ask['hi there'], system = 'be brief']\nlog[r.text]\nlog[r.stop]\nlog[r.usage.input]\nlog[r.usage.output]", open, anthropic)),
         ("anthropic-tool", format!("{}\n{}\n{}", open, anthropic, tool_flow("a"))),
+        ("anthropic-act", format!("{}\n{}\nd = act[a, ask['hi'], tools = [self_tool_@N]]\nlog[d.text]\nlog[d.stop]\nlog[d.rounds]\nlog[d.steps.how]", open, anthropic)),
         ("anthropic-follow", format!("{}\n{}\ns = follow[a, ask['one two']]\n{}\nlog[whole.text]\nlog[whole.stop]\nlog[whole.usage.output]", open, anthropic, follow("s"))),
         ("anthropic-follow-tool", format!("{}\n{}\ns = follow[a, ask['hi'], tools = [self_tool_@N]]\n{}\nlog[whole.stop]\nlog[whole.calls[0].id]\nlog[whole.calls[0].args.x]", open, anthropic, follow("s"))),
         ("anthropic-embed", format!("{}\n{}\nlog[embed[a, ['x']].reason]", open, anthropic)),
