@@ -1813,10 +1813,11 @@ fn cmd_new() {
             process::exit(1);
         }
     };
-
-    let has_web = args.iter().any(|a| a == "--web");
-    let has_ml = args.iter().any(|a| a == "--ml");
-    let has_db = args.iter().any(|a| a == "--db");
+    let flavour = Flavour {
+        web: args.iter().any(|a| a == "--web"),
+        ml: args.iter().any(|a| a == "--ml"),
+        db: args.iter().any(|a| a == "--db"),
+    };
 
     let project_dir = std::path::PathBuf::from(&name);
     let short_name = project_dir.file_name()
@@ -1826,92 +1827,105 @@ fn cmd_new() {
         eprintln!("directory '{}' already exists", name);
         process::exit(1);
     }
-
-    // Helper to write a file, creating parent dirs
-    let write_file = |path: &std::path::Path, content: &str| {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).unwrap_or_else(|e| {
-                eprintln!("error creating directory: {}", e);
-                process::exit(1);
-            });
-        }
-        std::fs::write(path, content).unwrap_or_else(|e| {
-            eprintln!("error writing {}: {}", path.display(), e);
-            process::exit(1);
-        });
-    };
-
-    // Create project directory
-    std::fs::create_dir_all(&project_dir).unwrap_or_else(|e| {
-        eprintln!("error creating directory '{}': {}", name, e);
+    let files = scaffold(&project_dir, &short_name, flavour).unwrap_or_else(|e| {
+        eprintln!("error: {}", e);
         process::exit(1);
     });
 
-    // Build crowfile
-    let mut crowfile = format!("name = '{}'\n", short_name);
-    let mut jobs_section = Vec::new();
-
-    // main.co
-    if has_web {
-        write_file(&project_dir.join("main.co"), "use web, ui\nuse views.home\n\nserve[3000]\npage['/', home.render]\n");
-    } else {
-        write_file(&project_dir.join("main.co"), &format!("log['hello, {}']\n", short_name));
-    }
-
-    // --web: add views/home.co
-    if has_web {
-        write_file(&project_dir.join("views/home.co"),
-            "--- home page ---\nuse ui\n\nmessage = 'welcome to crow'\n\nview render[]\n    return div[\n        h1['`message`']\n    ]\n");
-    }
-
-    // --ml: add jobs/train.co and lib/model.co
-    if has_ml {
-        write_file(&project_dir.join("jobs/train.co"),
-            "use lib.model\n\nlog['training started']\ntrain[]\nlog['training complete']\n");
-        write_file(&project_dir.join("lib/model.co"),
-            "fn train[]\n  log['model training...']\n");
-        jobs_section.push(("train".to_string(), "jobs/train.co".to_string()));
-    }
-
-    // --db: add db/schema.co (migrations are the tool's: `crow db apply`)
-    if has_db {
-        write_file(&project_dir.join("db/schema.co"),
-            "use db\n\ntable users\n  name, str\n  email, str\n");
-    }
-
-    // Add [jobs] section to crowfile if needed
-    if !jobs_section.is_empty() {
-        crowfile.push_str("\njobs = map[");
-        let entries: Vec<String> = jobs_section.iter()
-            .map(|(k, v)| format!("{} = '{}'", k, v))
-            .collect();
-        crowfile.push_str(&entries.join(", "));
-        crowfile.push_str("]\n");
-    }
-
-    write_file(&project_dir.join("crowfile"), &crowfile);
-    // what crow builds and installs is rebuilt from the project: crow.lock,
-    // committed, is what makes `crow install` the same everywhere
-    write_file(&project_dir.join(".gitignore"), "crow_modules/\n.crow_build/\n");
-
     println!("created project '{}'", short_name);
-    let mut files: Vec<String> = Vec::new();
-    files.push("  crowfile".to_string());
-    files.push("  main.co".to_string());
-    files.push("  .gitignore".to_string());
-    if has_web { files.push("  views/home.co".to_string()); }
-    if has_ml {
-        files.push("  jobs/train.co".to_string());
-        files.push("  lib/model.co".to_string());
-    }
-    if has_db {
-        files.push("  db/schema.co".to_string());
-        files.push("  jobs/migrate.co".to_string());
-    }
+    // what was written, as it was written
     for f in &files {
-        println!("{}", f);
+        println!("  {}", f);
     }
     println!("\ncd {} && crow run", name);
+}
+
+/// What `crow new` adds to a project: pages, a training job, a database.
+#[derive(Clone, Copy, Default)]
+struct Flavour {
+    web: bool,
+    ml: bool,
+    db: bool,
+}
+
+/// A new project's files, written into `dir` (made here), each one a
+/// program that runs, a job that runs or a part that lowers; the paths
+/// written, in the order written. (`--db` had written a `table users`
+/// block that does not parse and printed a `jobs/migrate.co` it never
+/// wrote; `--ml`'s job called its library's `train` bare, which is
+/// undefined: a part's function is reached by its module's name.) A
+/// database is declared as the spec's db section declares one: its
+/// `CREATE TABLE` statements, run on the connection the program opens,
+/// with `crow db diff` to draft what a database lacks and `crow db apply`
+/// for the migrations kept.
+fn scaffold(dir: &std::path::Path, name: &str, flavour: Flavour) -> Result<Vec<String>, String> {
+    let mut written: Vec<String> = Vec::new();
+    let mut write = |path: &str, content: &str| -> Result<(), String> {
+        let at = dir.join(path);
+        if let Some(parent) = at.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("could not make {}: {}", parent.display(), e))?;
+        }
+        std::fs::write(&at, content).map_err(|e| format!("could not write {}: {}", at.display(), e))?;
+        written.push(path.to_string());
+        Ok(())
+    };
+
+    let mut crowfile = format!("name = '{}'\n", name);
+    if flavour.ml {
+        crowfile.push_str("\njobs = map[train = 'jobs/train.co']\n");
+    }
+    write("crowfile", &crowfile)?;
+
+    // main.co: what the project does when it runs
+    let mut uses: Vec<&str> = Vec::new();
+    let mut body = String::new();
+    if flavour.web {
+        uses.push("use web, ui");
+    }
+    if flavour.db {
+        uses.push("use db");
+    }
+    if flavour.web {
+        uses.push("use views.home");
+    }
+    if flavour.db {
+        uses.push("use db/schema");
+        body.push_str(&format!("conn = connect['sqlite://{}.db']\nschema.setup[conn]\n", name));
+    }
+    if flavour.web {
+        if !body.is_empty() {
+            body.push('\n');
+        }
+        body.push_str("serve[3000]\npage['/', home.render]\n");
+    } else {
+        body.push_str(&format!("log['hello, {}']\n", name));
+    }
+    let main = if uses.is_empty() { body } else { format!("{}\n\n{}", uses.join("\n"), body) };
+    write("main.co", &main)?;
+
+    // what crow builds and installs is rebuilt from the project: crow.lock,
+    // committed, is what makes `crow install` the same everywhere; the
+    // database a run makes is the machine's
+    let mut ignored = String::from("crow_modules/\n.crow_build/\n");
+    if flavour.db {
+        ignored.push_str(&format!("{}.db\n", name));
+    }
+    write(".gitignore", &ignored)?;
+
+    if flavour.web {
+        write("views/home.co", "--- home page\nuse ui\n\nmessage = 'welcome to crow'\n\nview render[]\n    return div[\n        h1['`message`']\n    ]\n")?;
+    }
+    if flavour.ml {
+        write("jobs/train.co", "use lib.model\n\nlog['training started']\nmodel.train[]\nlog['training complete']\n")?;
+        write("lib/model.co", "fn train[]\n    log['model training...']\n")?;
+    }
+    if flavour.db {
+        write(
+            "db/schema.co",
+            "--- the tables the program declares: the statements that make them, run on\n--- each connection handed to setup (crow db diff drafts what a database\n--- lacks; crow db apply runs the migrations a project keeps)\nuse db\n\nfn setup[conn]\n    query[conn, 'CREATE TABLE IF NOT EXISTS users (name TEXT NOT NULL, email TEXT)']\n",
+        )?;
+    }
+    Ok(written)
 }
 
 /// `crow install [--update [name …]]`: the crowfile's deps into

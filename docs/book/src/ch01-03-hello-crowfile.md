@@ -49,8 +49,10 @@ crow fmt          # format the project's entry, or the files you name
 ```
 
 For a web project, `crow new myapp --web` adds a `views/` directory
-wired into the server (chapter 12); `--db` and `--ml` add database and
-training scaffolds. `crow run` works the moment `crow new` finishes.
+wired into the server (chapter 12); `--db` adds `db/schema.co`, the
+tables `main.co` declares on a SQLite database (chapter 11), and `--ml`
+a training job that `crow run train` runs. `crow run` works the moment
+`crow new` finishes.
 
 You now have everything the rest of this book needs. Next: build a real
 program before learning any more theory.

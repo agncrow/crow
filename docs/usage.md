@@ -145,8 +145,8 @@ Without `crow book`, the pages still read fine from disk and the buttons say how
 |---|---|
 | `crow new myapp` | Scaffold a project: `crowfile`, `main.co`, and a `.gitignore` that leaves out `crow_modules/` and `.crow_build/`. |
 | `crow new myapp --web` | Adds `views/home.co`, wired into `main.co` with `page['/', home.render]`. |
-| `crow new myapp --ml` | Adds `jobs/train.co`, `lib/model.co`. |
-| `crow new myapp --db` | Adds `db/schema.co`. Flags combine. |
+| `crow new myapp --ml` | Adds `jobs/train.co`, the job `crow run train` runs (the crowfile names it), and `lib/model.co`, the module it calls. |
+| `crow new myapp --db` | Adds `db/schema.co`, the tables the program declares — its `CREATE TABLE` statements — and has `main.co` open a SQLite database (`myapp.db`, left out of version control) and declare them on it; `crow db diff` drafts what a database lacks of them. Flags combine. |
 | `crow install` | Install the crowfile's `deps` into `crow_modules/`, each pinned by `crow.lock`; `--update [name]` moves them to what their versions name now. |
 | `crow setup` | Fetch the pinned Rust toolchain and this release's runtime into `~/.crow` for compiled builds, each file verified; `--check` says what is present and whether compiled builds are ready. |
 | `crow upgrade` | Replace the binary the install line put in `~/.crow/bin` with the latest release, held to its published hash (a mismatch is named and nothing is kept); `--version X` installs that release instead, a downgrade too; `--check` says whether a newer release is out and changes nothing. The new binary is written beside the old one and renamed over it once it runs. A crow installed any other way — a checkout's build, `--dev`, `--source` — is left as it is, and the command says where it is and how that install upgrades. The new version's toolchain and runtime come with its first compiled build, or `crow setup`. |
