@@ -345,42 +345,56 @@ impl Lexer {
     }
 
     fn handle_indentation(&mut self, tokens: &mut Vec<SpannedToken>) -> Result<(), String> {
-        let mut indent = 0;
+        let indent = loop {
+            let mut indent = 0;
 
-        // skip blank lines entirely
-        while self.pos < self.source.len() && self.source[self.pos] == '\n' {
-            self.pos += 1;
-            self.line += 1;
-            self.col = 1;
-        }
+            // skip blank lines entirely
+            while self.pos < self.source.len() && self.source[self.pos] == '\n' {
+                self.pos += 1;
+                self.line += 1;
+                self.col = 1;
+            }
 
-        // count spaces at start of line
-        while self.pos < self.source.len() && self.source[self.pos] == ' ' {
-            indent += 1;
-            self.pos += 1;
-            self.col += 1;
-        }
+            // count spaces at start of line
+            while self.pos < self.source.len() && self.source[self.pos] == ' ' {
+                indent += 1;
+                self.pos += 1;
+                self.col += 1;
+            }
 
-        // skip tabs (convert to spaces: 1 tab = 4 spaces)
-        while self.pos < self.source.len() && self.source[self.pos] == '\t' {
-            indent += 4;
-            self.pos += 1;
-            self.col += 1;
-        }
+            // skip tabs (convert to spaces: 1 tab = 4 spaces)
+            while self.pos < self.source.len() && self.source[self.pos] == '\t' {
+                indent += 4;
+                self.pos += 1;
+                self.col += 1;
+            }
 
-        // if we hit end of file or another blank line, don't emit indent/dedent
-        if self.pos >= self.source.len() {
-            return Ok(());
-        }
-        if self.source[self.pos] == '\n' {
-            return Ok(());
-        }
+            // if we hit end of file or another blank line, don't emit indent/dedent
+            if self.pos >= self.source.len() {
+                return Ok(());
+            }
+            if self.source[self.pos] == '\n' {
+                return Ok(());
+            }
 
-        // skip comment-only lines
-        if self.check_str("---") {
-            // this is a comment line, let the main loop handle it
-            // but we still need to process indentation for it
-        }
+            // a line that holds only a comment opens and closes no block,
+            // whatever its indentation: it is passed over whole, as a blank
+            // line is (spec, Blocks) — a comment continued under a line's
+            // trailing one, aligned with it, had been "indented under a
+            // line that opens no block", and one at the margin inside a
+            // block had ended the block
+            if self.check_str("---") {
+                self.skip_comment()?;
+                if self.pos >= self.source.len() {
+                    return Ok(());
+                }
+                self.pos += 1; // the comment's line break
+                self.line += 1;
+                self.col = 1;
+                continue;
+            }
+            break indent;
+        };
 
         let current = *self.indent_stack.last().unwrap();
 
@@ -726,6 +740,39 @@ mod tests {
         // (an escaped character before the break, and a break escaped)
         let tokens = Lexer::new("s = 'a\\t\nb\\\nc'\ny = 1\n").tokenize().expect("lexes");
         assert_eq!(tokens.iter().find(|t| t.token == Token::Ident("y".into())).map(|t| t.line), Some(4));
+    }
+
+    /// A line that holds only a comment opens and closes no block, whatever
+    /// its indentation: it lexes to nothing, as a blank line does (spec,
+    /// Blocks). A comment continued under a trailing one, aligned with it,
+    /// had been a line indented under one that opens no block; one at the
+    /// margin inside a block had ended the block; one before a chain's first
+    /// step had left the step a line indented under nothing.
+    #[test]
+    fn a_comment_alone_on_its_line_is_no_line_of_a_block() {
+        let tokens = |src: &str| -> Vec<Token> { Lexer::new(src).tokenize().expect("lexes").into_iter().map(|t| t.token).collect() };
+        let pairs = [
+            (
+                "fn f[x]\n    return x + 1      --- a comment that\n                      --- goes on\nlog[f[1]]\n",
+                "fn f[x]\n    return x + 1\nlog[f[1]]\n",
+            ),
+            (
+                "fn f[x]\n--- the body\n    y = x + 1\n--- at the margin\n        --- deeper\n  --- at no block's\n    return y\n",
+                "fn f[x]\n    y = x + 1\n    return y\n",
+            ),
+            ("x = s\n--- then the steps\n    then trim\n        --- one more\n    then upper\n", "x = s\n    then trim\n    then upper\n"),
+            ("if a\n    b = 1\n\t--- a tab's\n  --- between the branches\nelse\n    b = 2\n", "if a\n    b = 1\nelse\n    b = 2\n"),
+            // the last line, with no line break after it
+            ("x = 1\n    --- the end", "x = 1\n"),
+        ];
+        for (with, without) in pairs {
+            assert_eq!(tokens(with), tokens(without), "{:?}", with);
+        }
+        // the lines after the comments are counted on
+        let after = Lexer::new("--- one\n    --- two\nx = 1\n").tokenize().expect("lexes");
+        assert_eq!((after[0].token.clone(), after[0].line, after[0].col), (Token::Ident("x".into()), 3, 1));
+        // a line of code indented under a comment is still under nothing
+        assert_eq!(tokens("x = 1\n--- a comment\n    y = 2\n"), tokens("x = 1\n    y = 2\n"));
     }
 
     #[test]

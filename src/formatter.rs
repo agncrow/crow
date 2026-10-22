@@ -62,12 +62,14 @@ pub fn format_source(source: &str) -> Result<String, String> {
 
 /// Detect the indentation unit size used in the source.
 /// Returns the smallest non-zero leading whitespace count (in spaces, tabs=4).
+/// A line holding only a comment has no indentation of its own (spec,
+/// Blocks): one aligned under a trailing comment does not set the unit.
 fn detect_indent_size(source: &str) -> usize {
     let mut min_indent: Option<usize> = None;
 
     for line in source.lines() {
         let trimmed = line.trim_start();
-        if trimmed.is_empty() {
+        if trimmed.is_empty() || trimmed.starts_with("---") {
             continue;
         }
         let leading = leading_whitespace_len(line);
@@ -211,6 +213,19 @@ mod tests {
         let first = format_source(input).unwrap();
         let second = format_source(&first).unwrap();
         assert_eq!(first, second);
+    }
+
+    /// A line holding only a comment has no indentation of its own (spec,
+    /// Blocks): one aligned under a trailing comment does not set the unit,
+    /// so the code is indented as it is without it, and formatting is
+    /// formatting once.
+    #[test]
+    fn test_comment_alone_sets_no_indent() {
+        let with = format_source("fn f[x]\n    return x + 1      --- a comment that\n                      --- goes on\nlog[f[1]]\n").unwrap();
+        let without = format_source("fn f[x]\n    return x + 1      --- a comment that\nlog[f[1]]\n").unwrap();
+        let code: Vec<&str> = with.lines().filter(|l| !l.trim_start().starts_with("---")).collect();
+        assert_eq!(code, without.lines().collect::<Vec<_>>());
+        assert_eq!(format_source(&with).unwrap(), with);
     }
 
     #[test]

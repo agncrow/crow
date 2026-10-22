@@ -240,6 +240,18 @@ next_thing[]
 
 A line holds one statement: `x = 1 y = 2` is refused — the second starts a line of its own (it had run as two). A line is indented only under one that opens a block; one indented under a plain statement is refused, and a block's first line with no indented body under it is too.
 
+A line that holds only a comment opens and closes no block, whatever its indentation, as a blank line does. A comment that goes on from a trailing one may be aligned under it, and one at the margin inside a block leaves the block open:
+
+```
+fn hello[name]
+    words = 'hi `name`'     --- the greeting, as the
+                            --- page shows it
+--- a note at the margin, inside the function
+    return words
+```
+
+(Such a line had been refused as indented under a line that opens no block, or had ended the block it sat in.)
+
 
 ## 4. Operators
 

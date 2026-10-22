@@ -7535,6 +7535,35 @@ if r.ok
         assert!(ir.contains(r#"{\"name\": \"weather\", \"doc\": \"the weather in a city\", \"params\": [{\"name\": \"city\", \"takes\": \"text\", \"default\": null}], \"answers\": \"text\"}"#), "{}", ir);
     }
 
+    /// A comment alone on its line opens and closes no block, whatever its
+    /// indentation (spec, Blocks), and the comment written above a function
+    /// is still its description: `describe`'s `doc`, the sentence a tool's
+    /// schema quotes.
+    #[test]
+    fn a_comment_at_any_indentation_leaves_a_functions_description() {
+        let src = "use llm
+
+--- the weather in a city
+fn weather[city]
+    said = 'sunny in `upper[city]`'      --- the sky, as the
+                                         --- model is told it
+--- at the margin, inside the body
+            --- and deeper than it
+    return said
+
+m = reach['openai://127.0.0.1:1/x']
+r = chat[m, ask['hi'], tools = [weather]]
+  --- under nothing
+log[r.ok]
+if r.ok
+--- before the branch's first line
+    log[weather[r.calls[0].args.city]]
+";
+        crate::note_fn_docs("", src);
+        let ir = ir_of(src);
+        assert!(ir.contains(r#"{\"name\": \"weather\", \"doc\": \"the weather in a city\", \"params\": [{\"name\": \"city\", \"takes\": \"text\", \"default\": null}], \"answers\": \"text\"}"#), "{}", ir);
+    }
+
     fn ir_of(src: &str) -> String {
         let mut lexer = crate::lexer::Lexer::new(src);
         let tokens = lexer.tokenize().unwrap();

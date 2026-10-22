@@ -1,0 +1,44 @@
+--- A line that holds only a comment opens and closes no block, whatever
+--- its indentation, as a blank line does: a trailing comment continued
+--- under itself, a comment at the margin inside a block, one deeper than
+--- its block, one at no block's indentation, one before a block's first
+--- line and one before a chain's first step. Each had been refused as a
+--- line indented under one that opens no block, or had ended its block.
+fn bump[x]
+    return x + 1      --- a comment that
+                      --- goes on
+log[bump[1]]
+
+fn grade[score]
+--- at the margin, inside the function
+    if score gte 90
+            --- deeper than the line under it
+        return 'A'
+  --- between the branches, at no block's indentation
+    else
+        --- before the branch's first line
+        return 'B'
+log[grade[95]]
+log[grade[70]]
+
+i = 0
+while i lt 2
+   --- three spaces: no block's
+    log[i * 10]
+--- the margin, between the loop's lines
+    i = i + 1
+log[i]
+
+squares = for x in [1, 2, 3]
+    y = x * x
+--- the body's last line is its item
+    y + 1
+log[squares]
+
+words = 'b a c'
+--- the steps of a chain
+    then split[' ']
+        --- deeper, between them
+    then sort
+log[words]
+          --- the last line, under nothing
