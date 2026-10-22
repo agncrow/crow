@@ -3828,12 +3828,19 @@ by kind, once:
 | a route's handler | anything; one that reaches no effect is answered on the server's own thread (Routes) |
 
 A call a context cannot hold is refused where it is written, in one
-wording whatever the builtin — `write[] writes a file — a view shows the
-page's state and does nothing else, since it runs whenever the page needs
-it (it may write to the console, and read the clock): call it from a
-handler, or a function a handler calls` — and one the context reaches
-through a function it calls
-is refused naming that function. The other rules, by kind: a loop whose
+wording per kind whatever the builtin — `write[] writes a file — a view
+shows the page's state and does nothing else, since it runs whenever the
+page needs it (it may write to the console, and read the clock): call it
+from a handler, or a function a handler calls` — and where the call
+belongs is its kind's: a read a derivation may make (`files`, `network`,
+`db.read`, `process`) is a derivation's, which the view reads — ``query[]
+reads a database — a view shows …: read it in a derivation the view reads
+— `derive x` above the view, returning it`` — and a write, or any other
+kind, a handler's (a call of several kinds goes where the one a
+derivation cannot hold says: `recv`, which waits). (Until 2026-10-21 a
+read had been sent to a handler too, where the book and this section
+teach a derivation for it.) One the context reaches through a function it
+calls is refused naming that function. The other rules, by kind: a loop whose
 body reaches an effect of any kind keeps its order (For Loops); a value
 read by an effect of the kinds `files`, `network`, `db.read`, `input`,
 `process` or `shell` carries the moment it was read (`captured`); a

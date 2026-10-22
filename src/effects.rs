@@ -193,6 +193,27 @@ impl Context {
         }
     }
 
+    /// The kind a refusal of a call speaks of, among the call's kinds: one
+    /// the context cannot hold, and of those first one a derivation cannot
+    /// hold either — a call that reads and waits (`recv`) is a handler's,
+    /// whatever else it does. None when the context holds every kind.
+    pub fn refused(self, kinds: &[Effect]) -> Option<Effect> {
+        let refused: Vec<Effect> = kinds.iter().copied().filter(|e| !self.allows(*e)).collect();
+        refused.iter().copied().find(|e| !Context::Derive.allows(*e)).or_else(|| refused.first().copied())
+    }
+
+    /// Where a call the context refuses belongs, by its kind: a read a
+    /// derivation may make is a derivation's, which the view reads (the
+    /// book's `derive rows`, above the view); a write, or any other kind, a
+    /// handler's.
+    pub fn belongs(self, e: Effect) -> &'static str {
+        if self == Context::View && Context::Derive.allows(e) {
+            "read it in a derivation the view reads — `derive x` above the view, returning it"
+        } else {
+            "call it from a handler, or a function a handler calls"
+        }
+    }
+
     /// Why the context refuses the call, worded once for every kind: what
     /// the builtin does, what the context is for, and where the call
     /// belongs. `via` names the function the context reaches it through,
@@ -207,7 +228,7 @@ impl Context {
             Context::Derive => "a derivation reads — files, the network, a database, the clock, the process's environment — and changes nothing, since it runs whenever the page needs it",
             _ => "",
         };
-        format!("{} — {}: call it from a handler, or a function a handler calls", call, rule)
+        format!("{} — {}: {}", call, rule, self.belongs(e))
     }
 }
 
@@ -251,5 +272,28 @@ mod tests {
         let through = Context::Derive.refusal("mail", Effect::Mail, Some("notify"));
         assert!(through.starts_with("calls notify[], which reaches mail[]: it sends a message — a derivation reads"), "{}", through);
         assert!(through.ends_with("call it from a handler, or a function a handler calls"));
+        // a read a view may not make is a derivation's, which the view reads
+        let read = Context::View.refusal("read", Effect::Files, None);
+        assert!(read.ends_with("(it may write to the console, and read the clock): read it in a derivation the view reads — `derive x` above the view, returning it"), "{}", read);
+    }
+
+    /// Where a refused call belongs is decided by its kind alone: a read a
+    /// derivation may make goes to a derivation, a write or any other kind
+    /// to a handler — and a call of several kinds by the one a derivation
+    /// cannot hold
+    #[test]
+    fn a_refused_call_belongs_where_its_kind_says() {
+        for e in Effect::ALL {
+            if Context::View.allows(e) {
+                continue;
+            }
+            let derived = Context::View.refusal("f", e, None).contains("`derive x`");
+            assert_eq!(derived, Context::Derive.allows(e), "{:?}", e);
+            assert!(Context::Derive.refusal("f", e, None).ends_with("a function a handler calls") || Context::Derive.allows(e), "{:?}", e);
+        }
+        assert_eq!(Context::View.refused(&[Effect::Network, Effect::Waits]), Some(Effect::Waits));
+        assert_eq!(Context::View.refused(&[Effect::Files]), Some(Effect::Files));
+        assert_eq!(Context::View.refused(&[Effect::Console, Effect::Clock, Effect::Random]), None);
+        assert_eq!(Context::Derive.refused(&[Effect::Files, Effect::FilesWrite]), Some(Effect::FilesWrite));
     }
 }

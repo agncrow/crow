@@ -1,4 +1,4 @@
---- a view may read the clock (one moment per event) and write to the console, and nothing else: a file read at every render is refused where it is written
+--- a view may read the clock (one moment per event) and write to the console, and nothing else: a file read at every render is refused where it is written, and sent where a read belongs — a derivation the view reads, not a handler
 use web, ui
 
 view render[]

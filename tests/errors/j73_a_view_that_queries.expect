@@ -1,0 +1,3 @@
+j73_a_view_that_queries.co:7:12: query[] reads a database — a view shows the page's state and does nothing else, since it runs whenever the page needs it (it may write to the console, and read the clock): read it in a derivation the view reads — `derive x` above the view, returning it
+  7 │     rows = query[book, 'SELECT name FROM cards']
+    │            ^^^^^

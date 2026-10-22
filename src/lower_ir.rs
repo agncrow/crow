@@ -1138,7 +1138,7 @@ impl<'a> Lowerer<'a> {
 
     fn effect_kinds_in_context(&mut self, name: &str, kinds: Vec<crate::effects::Effect>) {
         if let Some(ctx) = self.context() {
-            if let Some(e) = kinds.into_iter().find(|e| !ctx.allows(*e)) {
+            if let Some(e) = ctx.refused(&kinds) {
                 let bare = crate::table::shown_effect(name);
                 self.refuse(ctx.refusal(bare, e, None));
             }
@@ -1592,7 +1592,7 @@ impl<'a> Lowerer<'a> {
                     if own.contains(e) {
                         continue;
                     }
-                    if let Some(k) = crate::table::effects_of(e).into_iter().find(|k| !ctx.allows(*k)) {
+                    if let Some(k) = ctx.refused(&crate::table::effects_of(e)) {
                         found = Some((c.clone(), e.clone(), k));
                         break;
                     }

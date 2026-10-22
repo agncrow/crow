@@ -1,0 +1,11 @@
+--- a query in a view runs at every render: refused where it is written, by its kind, and sent to a derivation the view reads, as the book teaches (`derive rows`, above the view) — the refusal had sent it to a handler, which is where a write goes
+use web, ui, db
+
+book = connect['sqlite://cards.db']
+
+view render[]
+    rows = query[book, 'SELECT name FROM cards']
+    return p['`len[rows]` cards']
+
+page['/', render]
+serve[3100]
