@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><link rel="icon" type="image/svg+xml" href="crow.svg?v=098a6183"><link rel="icon" href="favicon.ico?v=098a6183" sizes="32x32"><link rel="apple-touch-icon" href="apple-touch-icon.png?v=098a6183">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Testing a Live App</title>
+<style>:root{--crow-bg:#f6f7f9;--crow-surface:#ffffff;--crow-text:#1b222b;--crow-muted:#5d6773;--crow-border:#dce1e8;--crow-accent:#9a6519;--crow-up:#177a4e;--crow-down:#bd3a3a;--crow-series-2:#2f6fb5;--crow-series-3:#7c4dbd;--crow-series-4:#178a8a;--crow-series-5:#c23d7a;--crow-series-6:#d2701a}
+@media (prefers-color-scheme:dark){:root{--crow-bg:#0f1317;--crow-surface:#171d24;--crow-text:#e6e9ec;--crow-muted:#8b95a1;--crow-border:#28313c;--crow-accent:#e8a940;--crow-up:#3dbd85;--crow-down:#e06060;--crow-series-2:#5b9cf0;--crow-series-3:#a884ee;--crow-series-4:#3cc0c0;--crow-series-5:#ee6fa8;--crow-series-6:#f09a4a}}
+:root[data-theme="dark"]{--crow-bg:#0f1317;--crow-surface:#171d24;--crow-text:#e6e9ec;--crow-muted:#8b95a1;--crow-border:#28313c;--crow-accent:#e8a940;--crow-up:#3dbd85;--crow-down:#e06060;--crow-series-2:#5b9cf0;--crow-series-3:#a884ee;--crow-series-4:#3cc0c0;--crow-series-5:#ee6fa8;--crow-series-6:#f09a4a}
+:root[data-theme="light"]{--crow-bg:#f6f7f9;--crow-surface:#ffffff;--crow-text:#1b222b;--crow-muted:#5d6773;--crow-border:#dce1e8;--crow-accent:#9a6519;--crow-up:#177a4e;--crow-down:#bd3a3a;--crow-series-2:#2f6fb5;--crow-series-3:#7c4dbd;--crow-series-4:#178a8a;--crow-series-5:#c23d7a;--crow-series-6:#d2701a}
+*{box-sizing:border-box}
+body{margin:0 auto;max-width:860px;padding:2.2rem 1.25rem 4rem;background:var(--crow-bg);color:var(--crow-text);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:15px;line-height:1.55}
+h1{font-size:1.45rem;font-weight:650;letter-spacing:-0.015em;margin:0 0 0.25rem}
+h2{font-size:0.8rem;font-weight:600;text-transform:uppercase;letter-spacing:0.09em;color:var(--crow-muted);margin:2.2rem 0 0.7rem}
+h3{font-size:0.95rem;margin:1.2rem 0 0.4rem}
+p{margin:0.4rem 0}
+a{color:var(--crow-accent)}
+button{font:inherit;font-size:0.92rem;color:var(--crow-text);background:var(--crow-surface);border:1px solid var(--crow-border);border-radius:4px;padding:0.42rem 0.95rem;cursor:pointer;transition:border-color 120ms ease,background 120ms ease}
+button:hover{border-color:var(--crow-accent)}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--crow-accent);outline-offset:1px}
+@media (prefers-reduced-motion:reduce){button{transition:none}}
+label{color:var(--crow-muted);font-size:0.88rem;display:inline-flex;align-items:center;gap:0.5rem}
+input,select,textarea{font:inherit;font-size:0.92rem;color:var(--crow-text);background:var(--crow-surface);border:1px solid var(--crow-border);border-radius:4px;padding:0.4rem 0.6rem}
+input{width:9.5rem}
+pre,code{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:0.9em}
+table{border-collapse:collapse;width:100%;font-size:0.92rem}
+th{text-align:left;font-weight:600;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.08em;color:var(--crow-muted);border-bottom:1px solid var(--crow-border);padding:0.45rem 0.9rem 0.45rem 0}
+td{border-bottom:1px solid var(--crow-border);padding:0.5rem 0.9rem 0.5rem 0;font-variant-numeric:tabular-nums}
+th button{font:inherit;text-transform:inherit;letter-spacing:inherit;color:inherit;background:none;border:0;border-radius:0;padding:0;cursor:pointer}
+th[aria-sort="ascending"] button::after{content:" ▲"}
+th[aria-sort="descending"] button::after{content:" ▼"}
+td.crow-pager{border-bottom:0;text-align:right;color:var(--crow-muted)}
+[data-crow-click][tabindex]:focus-visible{outline:2px solid var(--crow-accent);outline-offset:-2px}
+@media (prefers-reduced-motion:reduce){.drawer{transition:none}}
+td.crow-pager span{margin:0 0.75rem}
+td.crow-refused{color:var(--crow-down)}
+.controls{display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;margin:0.9rem 0}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0.6rem;margin:1.1rem 0}
+.card{background:var(--crow-surface);border:1px solid var(--crow-border);border-radius:4px;padding:0.75rem 0.9rem}
+.card h3{margin:0 0 0.3rem;font-size:0.68rem;font-weight:600;text-transform:uppercase;letter-spacing:0.09em;color:var(--crow-muted)}
+.card p{margin:0}
+header{display:flex;align-items:center;padding:0.5rem 0.9rem;background:var(--crow-surface);border:1px solid var(--crow-border);border-radius:4px}
+td.actions{white-space:nowrap}td.actions button{padding:0.15rem 0.55rem;font-size:0.8rem;margin-right:0.35rem}
+button.primary{background:var(--crow-accent);border-color:var(--crow-accent);color:var(--crow-bg);font-weight:600}
+button.primary:hover{filter:brightness(1.08)}
+.up{color:var(--crow-up)}
+.down{color:var(--crow-down)}
+.stale{color:var(--crow-muted)}
+tr[data-crow-click]{cursor:pointer}
+tr[data-crow-click]:hover td{background:color-mix(in srgb,var(--crow-accent) 10%,transparent)}
+tr.marked td{background:color-mix(in srgb,var(--crow-up) 14%,transparent)}
+.crow-slider input{width:16rem;padding:0;border:0;background:transparent}
+.crow-field{display:inline-flex;align-items:center;gap:0.4rem}
+.crow-field:has(textarea){align-items:flex-start}
+hr.divider{border:0;border-top:1px solid var(--crow-border);margin:0;width:100%;height:0}
+.row > hr.divider{width:0;height:auto;align-self:stretch;border-top:0;border-left:1px solid var(--crow-border);min-height:1.5em}
+details{border:1px solid var(--crow-border);border-radius:4px;background:var(--crow-surface);padding:0.5rem 0.75rem}
+summary{cursor:pointer;font-weight:600;list-style:none;display:flex;align-items:center;gap:0.5rem}
+summary::-webkit-details-marker{display:none}
+summary::before{content:'';width:0.4em;height:0.4em;border-right:2px solid var(--crow-muted);border-bottom:2px solid var(--crow-muted);transform:rotate(-45deg);transition:transform 120ms ease;flex:none}
+details[open] > summary::before{transform:rotate(45deg)}
+details > :not(summary){margin-top:0.5rem}
+.dropdown{position:relative;display:inline-block;border:0;padding:0;background:transparent}
+.dropdown > summary{border:1px solid var(--crow-border);border-radius:4px;padding:0.42rem 0.95rem;background:var(--crow-surface);font-weight:400;font-size:0.92rem}
+.dropdown > summary::before{order:2;margin-left:0.25rem}
+.dropdown > :not(summary){position:absolute;top:calc(100% + 4px);left:0;z-index:20;min-width:12rem;margin:0;padding:0.35rem;background:var(--crow-surface);border:1px solid var(--crow-border);border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,.18)}
+.dropdown[data-side="right"] > :not(summary){left:auto;right:0}
+.dropdown > :not(summary) > button,.dropdown > :not(summary) > a{display:block;width:100%;text-align:left;border:0;background:transparent;border-radius:3px;padding:0.4rem 0.6rem;color:var(--crow-text);text-decoration:none}
+.dropdown > :not(summary) > button:hover,.dropdown > :not(summary) > a:hover{background:color-mix(in srgb,var(--crow-accent) 12%,transparent)}
+.modal{display:none;position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.45);align-items:center;justify-content:center;padding:1rem}
+.modal[data-open="true"]{display:flex}
+.modal > *{background:var(--crow-surface);border:1px solid var(--crow-border);border-radius:6px;padding:1.25rem;max-width:min(560px,100%);max-height:90vh;overflow:auto;box-shadow:0 6px 18px rgba(0,0,0,.25)}
+.drawer{position:fixed;top:0;bottom:0;right:0;z-index:100;width:min(420px,92vw);background:var(--crow-surface);border-left:1px solid var(--crow-border);box-shadow:-6px 0 18px rgba(0,0,0,.18);padding:1.25rem;overflow:auto;display:flex;flex-direction:column;gap:0.75rem;transform:translateX(105%);visibility:hidden;transition:transform 160ms ease,visibility 160ms}
+.drawer[data-open="true"]{transform:none;visibility:visible}
+.drawer[data-side="left"]{left:0;right:auto;border-left:0;border-right:1px solid var(--crow-border);box-shadow:6px 0 18px rgba(0,0,0,.18);transform:translateX(-105%)}
+.drawer[data-side="left"][data-open="true"]{transform:none}
+.toast{display:none;position:fixed;right:24px;bottom:24px;z-index:110;max-width:min(420px,92vw);background:var(--crow-surface);color:var(--crow-text);border:1px solid var(--crow-border);border-left:4px solid var(--crow-accent);border-radius:4px;padding:0.7rem 1rem;box-shadow:0 6px 18px rgba(0,0,0,.18)}
+.toast[style*="color:"]{border-left-color:currentColor}
+.toast[data-open="true"]{display:block;animation:crow-toast 4s ease forwards}
+@keyframes crow-toast{0%{opacity:0;transform:translateY(8px)}8%{opacity:1;transform:none}85%{opacity:1}100%{opacity:0;visibility:hidden}}
+.crow-check{display:inline-flex;align-items:center;gap:0.5rem;color:var(--crow-text);font-size:0.92rem;cursor:pointer}
+.crow-check input{width:auto;margin:0;accent-color:var(--crow-accent)}
+.crow-toggle input{appearance:none;-webkit-appearance:none;width:2.2rem;height:1.25rem;border-radius:999px;background:var(--crow-border);position:relative;padding:0;border:0;transition:background 120ms ease;cursor:pointer}
+.crow-toggle input::after{content:'';position:absolute;top:2px;left:2px;width:calc(1.25rem - 4px);height:calc(1.25rem - 4px);border-radius:50%;background:var(--crow-surface);box-shadow:0 1px 2px rgba(0,0,0,.3);transition:transform 120ms ease}
+.crow-toggle input:checked{background:var(--crow-accent)}
+.crow-toggle input:checked::after{transform:translateX(0.95rem)}
+.crow-radio{display:inline-flex;gap:1rem;flex-wrap:wrap;align-items:center}
+.crow-radio label{color:var(--crow-text);cursor:pointer}
+.crow-radio input{width:auto;margin:0;accent-color:var(--crow-accent)}
+.crow-tabs{display:flex;gap:0;border-bottom:1px solid var(--crow-border);align-items:stretch}
+.crow-tabs label{cursor:pointer;padding:0.5rem 0.9rem;margin-bottom:-1px;border-bottom:2px solid transparent;color:var(--crow-muted);font-size:0.92rem;font-weight:500;white-space:nowrap;position:relative}
+.crow-tabs label[aria-selected="true"]{color:var(--crow-text);border-bottom-color:var(--crow-accent)}
+.crow-tabs input{position:absolute;opacity:0;width:0;height:0;margin:0;padding:0;border:0}
+progress.crow-progress{display:block;width:100%;height:0.5rem;appearance:none;-webkit-appearance:none;border:0;border-radius:999px;overflow:hidden;background:var(--crow-border);accent-color:var(--crow-accent)}
+progress.crow-progress::-webkit-progress-bar{background:var(--crow-border)}
+progress.crow-progress::-webkit-progress-value{background:var(--crow-accent)}
+progress.crow-progress::-moz-progress-bar{background:var(--crow-accent)}
+svg.icon{display:inline-block;vertical-align:-0.2em;flex:none}
+.icon-loader{animation:crow-spin 1s linear infinite}
+@keyframes crow-spin{to{transform:rotate(360deg)}}
+nav:not(.doc-nav):not(.doc-pager){display:flex;gap:0.25rem;align-items:center;flex-wrap:wrap}
+nav:not(.doc-nav):not(.doc-pager) a{color:var(--crow-muted);text-decoration:none;padding:0.35rem 0.6rem;border-radius:4px}
+nav:not(.doc-nav):not(.doc-pager) a:hover{color:var(--crow-text)}
+nav:not(.doc-nav):not(.doc-pager) a[aria-current="page"]{color:var(--crow-text);background:color-mix(in srgb,var(--crow-accent) 14%,transparent)}
+td.num,th.num{text-align:right}
+td.up{color:var(--crow-up)}
+td.down{color:var(--crow-down)}
+img[style*="object-fit"]{display:block}
+:root[data-wide="true"] body{max-width:none;padding:1.25rem 1.25rem 3rem}
+:root[data-density="compact"] body{font-size:13.5px;line-height:1.45;padding-top:1.25rem}
+[data-density="compact"] h1{font-size:1.25rem}
+[data-density="compact"] h2{margin:1.4rem 0 0.5rem}
+[data-density="compact"] button{padding:0.3rem 0.7rem;font-size:0.88rem}
+[data-density="compact"] input,[data-density="compact"] select,[data-density="compact"] textarea{padding:0.28rem 0.5rem;font-size:0.88rem}
+[data-density="compact"] th{padding:0.3rem 0.7rem 0.3rem 0}
+[data-density="compact"] td{padding:0.32rem 0.7rem 0.32rem 0}
+[data-density="compact"] .card{padding:0.55rem 0.7rem}
+[data-density="compact"] 
+[data-density="compact"] .crow-tabs label{padding:0.4rem 0.7rem}
+.overlay > :not(:first-child){position:absolute}.overlay > [data-anchor="center"]{left:50%;top:50%;transform:translate(-50%,-50%)}.overlay > [data-anchor="top_right"]{right:0;top:0}.overlay > [data-anchor="top_left"]{left:0;top:0}.overlay > [data-anchor="bottom_right"]{right:0;bottom:0}.overlay > [data-anchor="bottom_left"]{left:0;bottom:0}@media (max-width:1023px){[data-below="tablet"][data-becomes="stack"]{flex-direction:column!important;align-items:stretch!important}[data-below="tablet"][data-columns-then="1"]{grid-template-columns:repeat(1,minmax(0,1fr))!important}[data-below="tablet"][data-columns-then="2"]{grid-template-columns:repeat(2,minmax(0,1fr))!important}[data-hidden-below="tablet"]{display:none!important}}@media (max-width:599px){[data-below="phone"][data-becomes="stack"]{flex-direction:column!important;align-items:stretch!important}[data-below="phone"][data-columns-then="1"]{grid-template-columns:repeat(1,minmax(0,1fr))!important}[data-below="phone"][data-columns-then="2"]{grid-template-columns:repeat(2,minmax(0,1fr))!important}[data-hidden-below="phone"]{display:none!important}}
+body{max-width:none;padding:0;background:var(--crow-bg)}.doc-top{position:sticky;top:0;z-index:5;height:52px;padding:0 1rem;background:var(--crow-surface);border-bottom:1px solid var(--crow-border)}.doc-top .title{font-weight:650;letter-spacing:-0.01em;color:var(--crow-text);text-decoration:none}.doc-top .links a{color:var(--crow-muted);text-decoration:none;font-size:0.9rem}.doc-top .links a:hover{color:var(--crow-accent)}.doc-search{width:220px;font-size:0.88rem;padding:0.35rem 0.6rem}.doc-results{position:fixed;top:52px;right:1rem;width:min(520px,92vw);max-height:70vh;overflow:auto;z-index:7;background:var(--crow-surface);border:1px solid var(--crow-border);border-radius:6px;box-shadow:0 12px 40px rgba(0,0,0,0.35);padding:0.4rem}.doc-results a{display:block;padding:0.5rem 0.7rem;border-radius:4px;text-decoration:none;color:var(--crow-text)}.doc-results a:hover{background:color-mix(in srgb,var(--crow-accent) 12%,transparent)}.doc-results a b{display:block;font-weight:600;color:var(--crow-accent);margin-bottom:0.15rem}.doc-results a span{display:block;font-size:0.84rem;color:var(--crow-muted);line-height:1.4}.doc-results .none{margin:0.5rem 0.7rem;color:var(--crow-muted)}.doc-pager{display:flex;justify-content:space-between;gap:1rem;margin-top:2.5rem;padding-top:1.2rem;border-top:1px solid var(--crow-border)}.doc-pager a{flex:1 1 0;max-width:48%;text-decoration:none;color:var(--crow-text);border:1px solid var(--crow-border);border-radius:6px;padding:0.7rem 0.9rem;background:var(--crow-surface)}.doc-pager a:hover{border-color:var(--crow-accent)}.doc-pager a span{display:block;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.08em;color:var(--crow-muted);margin-bottom:0.2rem}.doc-pager a.next{text-align:right;margin-left:auto}.nav-toggle{width:34px;height:34px;padding:0;font-size:1.1rem;line-height:1;background:transparent;border-color:transparent}.nav-toggle:hover{background:var(--crow-bg);border-color:var(--crow-border)}.doc-side{position:sticky;top:52px;height:calc(100vh - 52px);overflow:auto;background:var(--crow-surface);border-right:1px solid var(--crow-border);padding:1rem 0.75rem 2rem}body.nav-closed .doc-side{display:none!important}@media (max-width:1023px){body.nav-open .doc-side[data-hidden-below]{display:flex!important;position:fixed;left:0;top:52px;width:280px;max-width:85vw;z-index:6;box-shadow:0 12px 40px rgba(0,0,0,0.35)}}.doc-nav{font-size:0.9rem;line-height:1.45}.doc-nav .brand{display:block;font-weight:650;color:var(--crow-text);text-decoration:none;padding:0.3rem 0.6rem 0.9rem;letter-spacing:-0.01em}.doc-nav .part{margin:1.2rem 0 0.35rem;padding:0 0.6rem;font-size:0.68rem;font-weight:600;text-transform:uppercase;letter-spacing:0.09em;color:var(--crow-muted)}.doc-nav a{display:block;color:var(--crow-text);text-decoration:none;padding:0.3rem 0.6rem;border-radius:4px;border-left:2px solid transparent}.doc-nav a:hover{background:color-mix(in srgb,var(--crow-text) 6%,transparent)}.doc-nav a.current{color:var(--crow-accent);font-weight:600;background:color-mix(in srgb,var(--crow-accent) 12%,transparent);border-left-color:var(--crow-accent);border-radius:0 4px 4px 0}.doc-nav a.d2{padding-left:1.6rem;font-size:0.86rem;color:var(--crow-muted)}.doc-nav a.d2:hover,.doc-nav a.d2.current{color:var(--crow-accent)}.doc-nav a.d2:hover{color:var(--crow-text)}.doc-nav a.d3{padding-left:2.4rem;font-size:0.84rem;color:var(--crow-muted)}.doc-nav details>summary{list-style:none;display:flex;align-items:center;cursor:pointer;border-radius:4px}.doc-nav details>summary::-webkit-details-marker{display:none}.doc-nav details>summary>a{flex:1 1 auto}.doc-nav details>summary::after{content:'';flex:none;width:0.45rem;height:0.45rem;margin:0 0.7rem 0 0.4rem;border-right:1.5px solid var(--crow-muted);border-bottom:1.5px solid var(--crow-muted);transform:rotate(-45deg);transition:transform 120ms ease}.doc-nav details[open]>summary::after{transform:rotate(45deg)}.doc{min-width:0;max-width:880px;font-size:1rem;line-height:1.65}.doc h1{font-size:1.9rem;margin:0 0 1rem}.doc h2{font-size:1.35rem;font-weight:650;text-transform:none;letter-spacing:-0.01em;color:var(--crow-text);margin:2rem 0 0.6rem;padding-top:0.4rem;border-top:1px solid var(--crow-border)}.doc h3{font-size:1.1rem;margin:1.5rem 0 0.4rem}.doc h1 a.anchor,.doc h2 a.anchor,.doc h3 a.anchor,.doc h4 a.anchor{color:inherit;text-decoration:none}.doc p{margin:0.7rem 0}.doc pre{background:var(--crow-surface);border:1px solid var(--crow-border);border-radius:6px;padding:0.8rem 1rem;overflow-x:auto;margin:0.8rem 0;font-size:0.88rem;line-height:1.5}.doc pre.output{border-left:3px solid var(--crow-muted);color:var(--crow-muted)}.doc pre.crow-error{border-left:3px solid var(--crow-down)}.doc :not(pre)>code{background:var(--crow-surface);border:1px solid var(--crow-border);border-radius:3px;padding:0.05em 0.3em;font-size:0.88em}.doc blockquote{margin:1rem 0;padding:0.2rem 1rem;border-left:3px solid var(--crow-accent);color:var(--crow-muted)}.doc table{margin:0.8rem 0;display:block;overflow-x:auto}.doc th{text-transform:none;letter-spacing:0;font-size:0.9rem;color:var(--crow-text)}.doc td{font-variant-numeric:normal;vertical-align:top}.doc ul,.doc ol{padding-left:1.4rem}.doc li{margin:0.25rem 0}.doc img{max-width:100%}.doc hr{border:0;border-top:1px solid var(--crow-border);margin:2rem 0}.crow-run{margin:0.8rem 0}.crow-run .crow-editor pre{margin:0}.crow-run pre.gutter{flex:none;text-align:right;user-select:none;color:var(--crow-muted);padding-right:0.7rem;border-right:0;border-radius:6px 0 0 6px}.crow-run pre.crow{flex:1 1 0;min-width:0;border-left:0;border-radius:0 6px 6px 0}.crow-run code[contenteditable]{display:block;outline:none;cursor:text;min-height:1.4em}.crow-run .crow-toolbar button{font-size:0.85rem;padding:0.2rem 0.7rem}.crow-run .crow-toolbar button.stop{margin-left:auto}.crow-run .crow-caption{margin:0;font-size:0.78rem;color:var(--crow-muted)}.crow-run pre.output{margin:0;white-space:pre-wrap}.crow-run pre.crow-result.ok{border-left-color:var(--crow-up)}.crow-run pre.crow-result.fail{border-left-color:var(--crow-down)}.crow-run pre.crow-result.busy{border-left-color:var(--crow-accent);opacity:0.8}.k{color:var(--crow-accent)}.s{color:var(--crow-up)}.c{color:var(--crow-muted);font-style:italic}.n{color:var(--crow-down)}.v{font-weight:600}.f{color:var(--crow-text)}</style>
+</head>
+<body>
+<div class="stack" style="display:flex;flex-direction:column"><div class="row doc-top" style="display:flex;flex-direction:row;flex-wrap:nowrap;align-items:center;gap:16px;justify-content:space-between"><button class="nav-toggle" title="menu">☰</button><img alt="" src="crow.svg?v=098a6183" style="height:28px;width:28px"></img><a class="title" href="index.html">The Crow Programming Language</a><div class="row links" data-hidden-below="phone" style="display:flex;flex-direction:row;flex-wrap:nowrap;align-items:center;gap:16px"><input class="doc-search" data-hidden-below="phone" placeholder="Search  /" type="search"></input><a href="language-spec.html">Spec</a><a href="https://github.com/agncrow/crow">GitHub</a></div></div><div class="doc-results" hidden="hidden"></div><div class="row" style="display:flex;flex-direction:row;flex-wrap:nowrap;align-items:flex-start"><div class="stack doc-side" data-hidden-below="tablet" style="display:flex;flex-direction:column;width:272px"><nav class="doc-nav"><a class="brand" href="ch00-00-introduction.html">The Crow Programming Language</a><p class="part">Part I — Learning Crow</p><details class="group"><summary><a class="d1" href="ch01-00-getting-started.html">Getting Started</a></summary><a class="d2" href="ch01-01-toolchain.html">The Toolchain</a><a class="d2" href="ch01-02-hello-world.html">Hello, World!</a><a class="d2" href="ch01-03-hello-crowfile.html">Hello, Crowfile!</a></details><a class="d1" href="ch02-00-guessing-game.html">Programming a Guessing Game</a><details class="group"><summary><a class="d1" href="ch03-00-common-concepts.html">Common Programming Concepts</a></summary><a class="d2" href="ch03-01-variables.html">Variables</a><a class="d2" href="ch03-02-data-types.html">Data Types</a><a class="d2" href="ch03-03-strings.html">Strings and Interpolation</a><a class="d2" href="ch03-04-comments.html">Comments</a><a class="d2" href="ch03-05-control-flow.html">Control Flow</a></details><details class="group"><summary><a class="d1" href="ch04-00-functions-and-scope.html">Functions and Scope</a></summary><a class="d2" href="ch04-01-defining-functions.html">Defining and Calling Functions</a><a class="d2" href="ch04-02-named-arguments.html">Named Arguments</a><a class="d2" href="ch04-03-scope-isolation.html">Function Scope Isolation</a></details><details class="group"><summary><a class="d1" href="ch05-00-collections.html">Collections</a></summary><a class="d2" href="ch05-01-arrays-and-tensors.html">Arrays and Tensors</a><a class="d2" href="ch05-02-maps.html">Maps Are Dictionaries</a><a class="d2" href="ch05-03-structs.html">Structs Are Records</a></details><details class="group"><summary><a class="d1" href="ch06-00-parallel-by-default.html">Parallel by Default</a></summary><a class="d2" href="ch06-01-for-as-expression.html">for as an Expression</a><a class="d2" href="ch06-02-search-builtins.html">Searching with any, all, and find</a><a class="d2" href="ch06-03-resources.html">Controlling Resources</a></details><details class="group"><summary><a class="d1" href="ch07-00-errors-are-values.html">Errors Are Values</a></summary><a class="d2" href="ch07-01-every-value-has-status.html">Every Value Has Status</a><a class="d2" href="ch07-02-propagation.html">Propagation</a><a class="d2" href="ch07-03-no-truth-value.html">Errors Have No Truth Value</a><a class="d2" href="ch07-04-explicit-handling.html">Handling Errors Explicitly</a></details><details class="group"><summary><a class="d1" href="ch08-00-modules-and-names.html">Modules and Names</a></summary><a class="d2" href="ch08-01-importing.html">Importing with use</a><a class="d2" href="ch08-02-aliased-imports.html">Aliased Imports</a><a class="d2" href="ch08-03-names.html">Names Are Never Ambiguous</a><a class="d2" href="ch08-04-writing-modules.html">Writing Your Own Modules</a></details><a class="d1" href="ch09-00-testing.html">Testing</a><a class="d1" href="ch10-00-analyzing-data.html">Project: Analyzing Data</a><a class="d1" href="ch11-00-databases.html">Working with Databases</a><details class="group" open="open"><summary><a class="d1" href="ch12-00-web-uis.html">Building Web UIs</a></summary><a class="d2" href="ch12-01-views.html">View Blocks</a><a class="d2" href="ch12-02-reactive-state.html">Reactive State and Events</a><a class="d2" href="ch12-03-components.html">Components</a><a class="d2" href="ch12-04-background-work.html">Slow Work and the Live Loop</a><a class="d2 current" href="ch12-05-testing-live-apps.html">Testing a Live App</a><a class="d2" href="ch12-06-charts-and-style.html">Charts and Styling</a><a class="d2" href="ch12-07-vocabulary.html">The Element Vocabulary</a><a class="d2" href="ch12-08-derive.html">Derivations</a></details><details class="group"><summary><a class="d1" href="ch13-00-final-project.html">Final Project: A Live Dashboard</a></summary><a class="d2" href="ch13-01-data.html">Loading and Shaping the Data</a><a class="d2" href="ch13-02-database.html">The Database Layer</a><a class="d2" href="ch13-03-views.html">Views and Live Updates</a><a class="d2" href="ch13-04-deployment.html">Polish and Deployment</a></details><details class="group"><summary><a class="d1" href="by-example/index.html">Crow by Example</a></summary><a class="d2" href="by-example/numbers.html">Numbers and conversion</a><a class="d2" href="by-example/strings.html">Strings</a><a class="d2" href="by-example/formatting.html">Formatting</a><a class="d2" href="by-example/regex.html">Regular expressions</a><a class="d2" href="by-example/arrays.html">Arrays</a><a class="d2" href="by-example/maps.html">Maps</a><a class="d2" href="by-example/files.html">Files and directories</a><a class="d2" href="by-example/json.html">JSON</a><a class="d2" href="by-example/system.html">The system: shell, environment, time, arguments</a><a class="d2" href="by-example/moments.html">Moments and freshness</a><a class="d2" href="by-example/math.html">Math: tensors</a><a class="d2" href="by-example/math-linalg.html">Math: reductions and linear algebra</a><a class="d2" href="by-example/math-more.html">Math: random, signal, special, and sparse</a><a class="d2" href="by-example/grad.html">Automatic differentiation</a><a class="d2" href="by-example/stats.html">Statistics: `use math.stats`</a><a class="d2" href="by-example/nn.html">Neural-network building blocks: `use math.nn`</a><a class="d2" href="by-example/io.html">Structured files: `use io`</a><a class="d2" href="by-example/doc.html">Documentation: `use doc`</a><a class="d2" href="by-example/bits.html">Bits and character codes: `use bits`</a><a class="d2" href="by-example/frames.html">Frames: `use frame`</a><a class="d2" href="by-example/db.html">Databases: `use db`</a><a class="d2" href="by-example/web.html">Web: a JSON route</a><a class="d2" href="by-example/web-more.html">Web: responses and submodules</a><a class="d2" href="by-example/views-elements.html">Views: the whole element vocabulary</a><a class="d2" href="by-example/sys.html">The standard library's layer: `use sys`</a><a class="d2" href="by-example/llm.html">A language model as a connection: `use llm`</a><a class="d2" href="by-example/mcp.html">Tools from other programs: `use mcp`</a></details><a class="d1" href="appendix-a-language-at-a-glance.html">Appendix A: The Language at a Glance</a><a class="d1" href="appendix-b-from-another-language.html">Appendix B: Coming from Another Language</a><p class="part">Part II — The Reference</p><details class="group"><summary><a class="d1" href="stdlib/index.html">The Standard Library</a></summary><a class="d2" href="stdlib/core.html">Core builtins</a><a class="d2" href="stdlib/math.html">math</a><a class="d2" href="stdlib/math-stats.html">math.stats</a><a class="d2" href="stdlib/math-nn.html">math.nn</a><a class="d2" href="stdlib/frame.html">frame</a><a class="d2" href="stdlib/db.html">db</a><a class="d2" href="stdlib/io.html">io</a><a class="d2" href="stdlib/doc.html">doc</a><a class="d2" href="stdlib/bits.html">bits</a><a class="d2" href="stdlib/ui.html">ui</a><a class="d2" href="stdlib/chart.html">chart</a><a class="d2" href="stdlib/web.html">web</a><a class="d2" href="stdlib/llm.html">llm</a><a class="d2" href="stdlib/mcp.html">mcp</a><a class="d2" href="stdlib/sys.html">sys</a></details><a class="d1" href="language-spec.html">The Crow Language Specification</a></nav></div><div class="stack doc" style="display:flex;flex-direction:column;flex:1 1 0;min-width:0;padding:32px"><h1 id="testing-a-live-app"><a class="anchor" href="#testing-a-live-app">Testing a Live App</a></h1>
+<p>A view is a function from reactive state to a tree. That one fact is why
+Crow's UI tests need no browser, no driver, and no fixtures: render the
+tree, run a handler, render again, and state truths about what you see.
+UI tests are ordinary named <code>test</code> blocks (chapter 9), run by <code>crow test</code>,
+stripped from every build.</p>
+<p>Both <code>crow run app.co</code> (compiled) and <code>crow run -i app.co</code> (the
+interpreter, with no compile between an edit and the page) serve it, and
+they serve the same page: <code>crow test --served</code> drives a set of pages in
+both modes with the same clicks and compares what they settle on.</p>
+<h2 id="the-harness"><a class="anchor" href="#the-harness">The harness</a></h2>
+<p>Its verbs, valid only inside test blocks:</p>
+<table><thead><tr><th>Verb</th><th>What it does</th></tr></thead><tbody>
+<tr><td><code>s = app[view]</code></td><td>opens a headless session that renders <code>view</code> against the program's reactive state</td></tr>
+<tr><td><code>click[s, handler]</code></td><td>runs an event handler on the session — the same thing a button click does (deferred calls too: <code>click[s, set_speed[10.0]]</code>)</td></tr>
+<tr><td><code>change[s, 'var', value]</code></td><td>what typing into a bound <code>field</code> does: sets the reactive variable, so the next render and the next handler see it</td></tr>
+<tr><td><code>html[s]</code></td><td>the rendered view as one HTML string — for "does the page say <em>ready</em>"</td></tr>
+<tr><td><code>elements[s, selector]</code></td><td>the rendered elements matching a selector, in document order, as records — for <em>where</em> and <em>what</em> things are</td></tr>
+<tr><td><code>box[s, selector]</code></td><td>the layout engine's boxes for matching elements — <code>x y width height overflow</code> — at the session's viewport (<code>app[view, width = 390]</code>)</td></tr>
+<tr><td><code>style[s, selector]</code></td><td>resolved colour and type tokens — <code>background color size weight</code></td></tr>
+<tr><td><code>fits[s, width]</code></td><td>true when nothing overflows at that width</td></tr>
+</tbody></table>
+<p>Reactive state reads as fields of the session: <code>s.status</code>, <code>s.min_qty</code>,
+and a derivation as that session sees it: <code>len[s.orders]</code>.</p>
+<p>A selector is a tag (<code>'button'</code>), a class (<code>'.card'</code>), both
+(<code>'div.stats'</code>), or a space-separated chain that must nest
+(<code>'div.controls button'</code>). Each record has <code>tag</code>, <code>text</code>, and <code>class</code>,
+plus every attribute the element carries — <code>href</code>, <code>name</code>, <code>src</code> — as a
+key.</p>
+<h2 id="behaviour-a-click-changes-state"><a class="anchor" href="#behaviour-a-click-changes-state">Behaviour: a click changes state</a></h2>
+<div class="stack crow-run" data-mode="norun" style="display:flex;flex-direction:column;gap:8px"><div class="row crow-editor" style="display:flex;flex-direction:row;flex-wrap:nowrap;align-items:stretch"><pre class="gutter">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26</pre><pre class="crow" data-mode="norun" style="flex:1 1 0;min-width:0"><code contenteditable="plaintext-only" spellcheck="false" title="editable — Tab indents, Ctrl/Cmd-Enter runs"><span class="k">use</span> web, ui
+
+status = <span class="s">'ready'</span>
+count = <span class="n">0</span>
+
+<span class="k">fn</span> <span class="f">slow_refresh</span>[]
+    count = count + <span class="n">1</span>
+    status = <span class="s">'updated'</span>
+
+<span class="k">fn</span> <span class="f">go</span>[]
+    status = <span class="s">'loading'</span>
+    <span class="f">later</span>[slow_refresh]
+
+<span class="k">view</span> <span class="f">render</span>[]
+    <span class="k">return</span> <span class="f">div</span>[<span class="f">h1</span>[<span class="s">'Live book'</span>], <span class="f">p</span>[<span class="s">'status: <span class="v">`status`</span> count: <span class="v">`count`</span>'</span>],
+               <span class="f">button</span>[<span class="s">'refresh'</span>, click = go]]
+
+<span class="k">test</span> <span class="f">refresh_flow</span>[]
+    s = <span class="f">app</span>[render]
+    <span class="f">assert</span>[<span class="s">'ready'</span> <span class="k">in</span> <span class="f">html</span>[s]]
+    <span class="f">click</span>[s, go]
+    <span class="f">assert</span>[s.status <span class="k">eq</span> <span class="s">'updated'</span>]
+    <span class="f">assert</span>[<span class="s">'count: 1'</span> <span class="k">in</span> <span class="f">html</span>[s]]
+
+<span class="f">page</span>[<span class="s">'/'</span>, render]
+<span class="f">serve</span>[<span class="n">3000</span>]</code></pre></div><div class="row crow-toolbar" style="display:flex;flex-direction:row;flex-wrap:nowrap;align-items:center;gap:8px;flex-wrap:wrap"><button data-action="compile" title="crow run — compile, then serve; stop it with ■">▶ Serve</button><button data-action="test" title="crow test — run this block's test blocks">✓ Test</button><button data-action="reset" title="restore the book's text">↺ Reset</button><button data-action="stop" class="stop">■ Stop</button></div><p class="crow-caption" hidden="hidden"></p><pre class="output crow-result" hidden="hidden"></pre></div>
+<p>The <code>later[]</code> call is the interesting part. In production it schedules
+<code>slow_refresh</code> off the live loop; in a test it runs inline, so the line
+after <code>click</code> already sees the final state. Background work is
+deterministic in tests and concurrent in production — the same code,
+verified without waiting or flakiness.</p>
+<h2 id="structure-attributes-and-two-way-binding"><a class="anchor" href="#structure-attributes-and-two-way-binding">Structure, attributes, and two-way binding</a></h2>
+<p><code>html[s]</code> is one string. For <em>where</em> things are — the button inside the
+controls panel, two cards in the stats row, the heading first — ask for
+elements. For what a link points at, read its attribute. For typing into a
+bound field, <code>change</code> the variable it is bound to:</p>
+<div class="stack crow-run" data-mode="run" style="display:flex;flex-direction:column;gap:8px"><div class="row crow-editor" style="display:flex;flex-direction:row;flex-wrap:nowrap;align-items:stretch"><pre class="gutter">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34</pre><pre class="crow" data-mode="run" style="flex:1 1 0;min-width:0"><code contenteditable="plaintext-only" spellcheck="false" title="editable — Tab indents, Ctrl/Cmd-Enter runs"><span class="k">use</span> web, ui
+
+min_qty = <span class="n">0</span>
+
+<span class="k">fn</span> <span class="f">reset</span>[]
+    min_qty = <span class="n">0</span>
+
+<span class="k">view</span> <span class="f">panel</span>[]
+    <span class="k">return</span> <span class="f">div</span>[
+        <span class="f">h1</span>[<span class="s">'Trades'</span>],
+        <span class="f">a</span>[<span class="s">'docs'</span>, href = <span class="s">'/docs'</span>],
+        <span class="f">div</span>[<span class="f">field</span>[<span class="s">'Min qty'</span>, min_qty], <span class="f">button</span>[<span class="s">'Reset'</span>, click = reset], class = <span class="s">'controls'</span>],
+        <span class="f">div</span>[<span class="f">div</span>[<span class="s">'P&amp;L'</span>, class = <span class="s">'card'</span>], <span class="f">div</span>[<span class="s">'Count'</span>, class = <span class="s">'card'</span>], class = <span class="s">'stats'</span>],
+        <span class="f">p</span>[<span class="s">'showing trades with qty above <span class="v">`min_qty`</span>'</span>]
+    ]
+
+<span class="k">test</span> <span class="f">layout</span>[]
+    s = <span class="f">app</span>[panel]
+    <span class="f">assert</span>[<span class="f">len</span>[<span class="f">elements</span>[s, <span class="s">'div.controls button'</span>]] <span class="k">eq</span> <span class="n">1</span>]
+    <span class="f">assert</span>[<span class="f">elements</span>[s, <span class="s">'button'</span>][<span class="n">0</span>].text <span class="k">eq</span> <span class="s">'Reset'</span>]
+    <span class="f">assert</span>[<span class="f">len</span>[<span class="f">elements</span>[s, <span class="s">'.stats .card'</span>]] <span class="k">eq</span> <span class="n">2</span>]
+    <span class="f">assert</span>[<span class="f">len</span>[<span class="f">elements</span>[s, <span class="s">'.stats button'</span>]] <span class="k">eq</span> <span class="n">0</span>]
+    <span class="f">assert</span>[<span class="f">elements</span>[s, <span class="s">'h1'</span>][<span class="n">0</span>].text <span class="k">eq</span> <span class="s">'Trades'</span>]
+    <span class="f">assert</span>[<span class="f">elements</span>[s, <span class="s">'a'</span>][<span class="n">0</span>].href <span class="k">eq</span> <span class="s">'/docs'</span>]
+
+<span class="k">test</span> <span class="f">typing_into_the_field</span>[]
+    s = <span class="f">app</span>[panel]
+    <span class="f">change</span>[s, <span class="s">'min_qty'</span>, <span class="n">50</span>]
+    <span class="f">assert</span>[<span class="f">elements</span>[s, <span class="s">'p'</span>][<span class="n">0</span>].text <span class="k">eq</span> <span class="s">'showing trades with qty above 50'</span>]
+    <span class="f">click</span>[s, reset]
+    <span class="f">assert</span>[s.min_qty <span class="k">eq</span> <span class="n">0</span>]
+
+<span class="f">page</span>[<span class="s">'/'</span>, panel]
+<span class="f">log</span>[<span class="s">'panel defined'</span>]</code></pre></div><div class="row crow-toolbar" style="display:flex;flex-direction:row;flex-wrap:nowrap;align-items:center;gap:8px;flex-wrap:wrap"><button data-action="interp" title="crow run -i — interpret instantly">▶ Run</button><button data-action="compile" title="crow run — transpile to Rust and run the native binary">⚙ Compile</button><button data-action="test" title="crow test — run this block's test blocks">✓ Test</button><button data-action="reset" title="restore the book's text">↺ Reset</button><button data-action="stop" class="stop">■ Stop</button></div><p class="crow-caption" hidden="hidden"></p><pre class="output crow-result" hidden="hidden"></pre><p class="crow-caption expected">expected output — from the book, verified by crow test --book</p><pre class="output expected"><code>panel defined</code></pre></div>
+<p>Read the <code>layout</code> block as a set of claims about the tree: one button in
+the controls panel, none in the stats panel, two cards, the heading text,
+the link target. Move the Reset button into the stats panel and the fourth
+line fails in <code>crow test</code> with both sides shown — the kind of mistake that
+otherwise survives until someone looks at the page. The second block is
+two-way binding end to end: the field's variable changes, the paragraph
+re-renders with it, the handler puts it back.</p>
+<h2 id="what-a-test-block-sees"><a class="anchor" href="#what-a-test-block-sees">What a test block sees</a></h2>
+<p>A test block sees declarations: functions, views, structs, imports. Of the
+top-level assignments only two kinds ride along — literal values, which
+are reactive-state defaults the harness reads and handlers write, and
+connections (<code>db.connect[...]</code>), which are resources the derivations and
+handlers under test need to exist at all. Everything computed at the top
+level is invisible, exactly as it is inside a function, so a view under
+test cannot depend on work the program did before <code>page[]</code>.</p>
+<h2 id="failure-renders-it-doesn-t-crash"><a class="anchor" href="#failure-renders-it-doesn-t-crash">Failure renders, it doesn't crash</a></h2>
+<p>A view renders what it is given, and what it is given may be an error
+value (chapter 7). The page shows the failure as <code>error: the server's log has why, as &lt;id&gt;</code> — a reader is told an id, never the reason, which names
+what the program reaches — and the server's log has the reason beside the
+id. Feed a view one on purpose and check that the failure reaches the
+page; the reason itself is yours to check on the value:</p>
+<div class="stack crow-run" data-mode="run" style="display:flex;flex-direction:column;gap:8px"><div class="row crow-editor" style="display:flex;flex-direction:row;flex-wrap:nowrap;align-items:stretch"><pre class="gutter">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16</pre><pre class="crow" data-mode="run" style="flex:1 1 0;min-width:0"><code contenteditable="plaintext-only" spellcheck="false" title="editable — Tab indents, Ctrl/Cmd-Enter runs"><span class="k">use</span> web, ui
+
+<span class="k">fn</span> <span class="f">latest_price</span>[]
+    <span class="k">return</span> <span class="f">error</span>[<span class="s">'price feed is down'</span>, <span class="s">'network'</span>]
+
+<span class="k">view</span> <span class="f">quote</span>[]
+    px = <span class="f">latest_price</span>[]
+    <span class="k">return</span> <span class="f">div</span>[<span class="f">h1</span>[<span class="s">'AAPL'</span>], <span class="f">p</span>[<span class="s">'last: <span class="v">`px`</span>'</span>], class = <span class="s">'card'</span>]
+
+<span class="k">test</span> <span class="f">feed_down_is_visible</span>[]
+    s = <span class="f">app</span>[quote]
+    <span class="f">assert</span>[<span class="s">'the server\'s log has why'</span> <span class="k">in</span> <span class="f">elements</span>[s, <span class="s">'p'</span>][<span class="n">0</span>].text]
+    <span class="f">assert</span>[<span class="f">latest_price</span>[].reason <span class="k">eq</span> <span class="s">'price feed is down'</span>]
+
+<span class="f">page</span>[<span class="s">'/'</span>, quote]
+<span class="f">log</span>[<span class="s">'quote defined'</span>]</code></pre></div><div class="row crow-toolbar" style="display:flex;flex-direction:row;flex-wrap:nowrap;align-items:center;gap:8px;flex-wrap:wrap"><button data-action="interp" title="crow run -i — interpret instantly">▶ Run</button><button data-action="compile" title="crow run — transpile to Rust and run the native binary">⚙ Compile</button><button data-action="test" title="crow test — run this block's test blocks">✓ Test</button><button data-action="reset" title="restore the book's text">↺ Reset</button><button data-action="stop" class="stop">■ Stop</button></div><p class="crow-caption" hidden="hidden"></p><pre class="output crow-result" hidden="hidden"></pre><p class="crow-caption expected">expected output — from the book, verified by crow test --book</p><pre class="output expected"><code>quote defined</code></pre></div>
+<h2 id="time-is-an-input"><a class="anchor" href="#time-is-an-input">Time is an input</a></h2>
+<p>Inside a test the clock is yours: it starts when the first <code>app[…]</code> opens
+and moves only when you move it, the way a field changes when you type in
+it. A handler that stamps <code>now[]</code> stamps the moment you set, and the fact
+holds a moment — <code>moment[0.0]</code>, the epoch, until a handler moves it:</p>
+<div class="stack crow-run" data-mode="run" style="display:flex;flex-direction:column;gap:8px"><div class="row crow-editor" style="display:flex;flex-direction:row;flex-wrap:nowrap;align-items:stretch"><pre class="gutter">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21</pre><pre class="crow" data-mode="run" style="flex:1 1 0;min-width:0"><code contenteditable="plaintext-only" spellcheck="false" title="editable — Tab indents, Ctrl/Cmd-Enter runs"><span class="k">use</span> web, ui
+
+stamped = <span class="f">moment</span>[<span class="n">0.0</span>]
+
+<span class="k">fn</span> <span class="f">stamp</span>[]
+    stamped = <span class="f">now</span>[]
+
+<span class="k">view</span> <span class="f">clock</span>[]
+    <span class="k">return</span> <span class="f">p</span>[<span class="s">'stamped <span class="v">`stamped`</span>'</span>]
+
+<span class="k">test</span> <span class="f">the_test_sets_the_clock</span>[]
+    a = <span class="f">app</span>[clock]
+    <span class="f">change</span>[a, <span class="s">'now'</span>, <span class="n">1000.0</span>]
+    <span class="f">click</span>[a, stamp]
+    <span class="f">assert</span>[a.stamped <span class="k">eq</span> <span class="f">moment</span>[<span class="n">1000.0</span>]]
+    <span class="f">change</span>[a, <span class="s">'now'</span>, <span class="f">moment</span>[<span class="s">'2026-07-14T09:30:00Z'</span>]]
+    <span class="f">click</span>[a, stamp]
+    <span class="f">assert</span>[<span class="f">str</span>[a.stamped] <span class="k">eq</span> <span class="s">'2026-07-14T09:30:00Z'</span>]
+
+<span class="f">page</span>[<span class="s">'/'</span>, clock]
+<span class="f">log</span>[<span class="s">'clock defined'</span>]</code></pre></div><div class="row crow-toolbar" style="display:flex;flex-direction:row;flex-wrap:nowrap;align-items:center;gap:8px;flex-wrap:wrap"><button data-action="interp" title="crow run -i — interpret instantly">▶ Run</button><button data-action="compile" title="crow run — transpile to Rust and run the native binary">⚙ Compile</button><button data-action="test" title="crow test — run this block's test blocks">✓ Test</button><button data-action="reset" title="restore the book's text">↺ Reset</button><button data-action="stop" class="stop">■ Stop</button></div><p class="crow-caption" hidden="hidden"></p><pre class="output crow-result" hidden="hidden"></pre><p class="crow-caption expected">expected output — from the book, verified by crow test --book</p><pre class="output expected"><code>clock defined</code></pre></div>
+<p>A click that stops — an error at a decision, a fact, a database write —
+evaluates to that error, and the session is exactly as it was before the
+click: <code>r = click[a, apply]</code>, then <code>assert[not r.ok]</code>.</p>
+<h2 id="two-users-at-once"><a class="anchor" href="#two-users-at-once">Two users at once</a></h2>
+<p>Two sessions are two independent pages, each with its own reactive
+state — exactly what two browser tabs get from the server. That is how
+you test the awkward orderings — one person resets while another is
+still typing — with no threads to wrangle:</p>
+<div class="stack crow-run" data-mode="run" style="display:flex;flex-direction:column;gap:8px"><div class="row crow-editor" style="display:flex;flex-direction:row;flex-wrap:nowrap;align-items:stretch"><pre class="gutter">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38</pre><pre class="crow" data-mode="run" style="flex:1 1 0;min-width:0"><code contenteditable="plaintext-only" spellcheck="false" title="editable — Tab indents, Ctrl/Cmd-Enter runs"><span class="k">use</span> web, ui, db
+
+book = db.<span class="f">connect</span>[<span class="s">'sqlite://:memory:'</span>]
+min_qty = <span class="n">0</span>
+
+<span class="k">fn</span> <span class="f">setup</span>[]
+    <span class="f">query</span>[book, <span class="s">'CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY, qty INTEGER)'</span>]
+
+derive orders
+    <span class="k">return</span> <span class="f">query</span>[book, <span class="s">'SELECT qty FROM orders ORDER BY id'</span>]
+
+<span class="k">fn</span> <span class="f">reset</span>[]
+    min_qty = <span class="n">0</span>
+
+<span class="k">fn</span> <span class="f">order</span>[]
+    <span class="f">query</span>[book, <span class="s">'INSERT INTO orders (qty) VALUES (?)'</span>, [min_qty]]
+
+<span class="k">view</span> <span class="f">panel</span>[]
+    <span class="k">return</span> <span class="f">stack</span>[
+        <span class="f">p</span>[<span class="s">'min <span class="v">`min_qty`</span>'</span>],
+        <span class="f">p</span>[<span class="s">'orders: <span class="v">`len[orders]`</span>'</span>],
+        <span class="f">button</span>[<span class="s">'Reset'</span>, click = reset],
+        <span class="f">button</span>[<span class="s">'Order'</span>, click = order]
+    ]
+
+<span class="k">test</span> <span class="f">two_people</span>[]
+    alice = <span class="f">app</span>[panel]
+    bob = <span class="f">app</span>[panel]
+    <span class="f">click</span>[alice, setup]
+    <span class="f">change</span>[alice, <span class="s">'min_qty'</span>, <span class="n">25</span>]
+    <span class="f">click</span>[bob, reset]
+    <span class="f">assert</span>[alice.min_qty <span class="k">eq</span> <span class="n">25</span>]
+    <span class="f">change</span>[bob, <span class="s">'min_qty'</span>, <span class="n">10</span>]
+    <span class="f">click</span>[bob, order]
+    <span class="f">assert</span>[<span class="f">elements</span>[alice, <span class="s">'p'</span>][<span class="n">1</span>].text <span class="k">eq</span> <span class="s">'orders: 1'</span>]
+
+<span class="f">page</span>[<span class="s">'/'</span>, panel]
+<span class="f">log</span>[<span class="s">'panel defined'</span>]</code></pre></div><div class="row crow-toolbar" style="display:flex;flex-direction:row;flex-wrap:nowrap;align-items:center;gap:8px;flex-wrap:wrap"><button data-action="interp" title="crow run -i — interpret instantly">▶ Run</button><button data-action="compile" title="crow run — transpile to Rust and run the native binary">⚙ Compile</button><button data-action="test" title="crow test — run this block's test blocks">✓ Test</button><button data-action="reset" title="restore the book's text">↺ Reset</button><button data-action="stop" class="stop">■ Stop</button></div><p class="crow-caption" hidden="hidden"></p><pre class="output crow-result" hidden="hidden"></pre><p class="crow-caption expected">expected output — from the book, verified by crow test --book</p><pre class="output expected"><code>panel defined</code></pre></div>
+<p>Bob's reset is his own: Alice still has 25. What the two share is the
+database — the order Bob places is in Alice's list the next time her
+page renders. Per-user state is the default; shared state is a table.</p>
+<h2 id="what-kind-of-mistake-which-truth"><a class="anchor" href="#what-kind-of-mistake-which-truth">What kind of mistake, which truth</a></h2>
+<table><thead><tr><th>The mistake</th><th>How you catch it</th></tr></thead><tbody>
+<tr><td>Wrong structure — a button in the wrong panel, a missing heading</td><td><code>elements[s, sel]</code> with a nested selector</td></tr>
+<tr><td>Wrong content or formatting</td><td><code>elements[...].text</code>, or <code>… in html[s]</code></td></tr>
+<tr><td>A click doesn't change state, or changes the wrong thing</td><td><code>click[s, handler]</code> then <code>s.field</code></td></tr>
+<tr><td>Typing into a bound field doesn't propagate</td><td><code>change[s, 'var', value]</code>, then render again</td></tr>
+<tr><td>Wrong <code>href</code>, missing <code>name</code>, wrong class</td><td>attribute keys on element records</td></tr>
+<tr><td>A failed query crashes instead of rendering in place</td><td>render with an error value, assert on the tree</td></tr>
+<tr><td>Two users' events interleave badly</td><td>two <code>app[]</code> sessions in one test</td></tr>
+<tr><td>Background work never lands</td><td><code>later[]</code> runs inline in tests — observable on the next line</td></tr>
+<tr><td>A handler blocks the live loop, or a view serves a stale snapshot</td><td><code>crow check</code>, statically — no test needed</td></tr>
+<tr><td>A chart draws the wrong thing</td><td><code>elements[s, 'rect']</code> walks the SVG too</td></tr>
+</tbody></table>
+<h2 id="what-this-cannot-see"><a class="anchor" href="#what-this-cannot-see">What this cannot see</a></h2>
+<ul>
+<li><strong>Pixels beyond the layout model.</strong> Positions, sizes, and colours <em>are</em>
+testable now — <code>box[]</code>, <code>style[]</code>, <code>fits[]</code> in the next section — for
+everything built from the layout vocabulary. What they can't see is
+whatever lives in <code>css/app.css</code> outside that vocabulary, and glyph
+rendering, which stays the platform's. The design and its limits:
+<code>docs/ui-engine-design.md</code>.</li>
+<li><strong>Routing.</strong> That a page is registered on the right path is not
+testable through a session today.</li>
+<li><strong>Remote data.</strong> <code>fetch</code> and <code>poll</code> sources cannot be stubbed inside a
+test yet; put the logic that depends on them in a function that takes
+the data as a parameter, and test that.</li>
+</ul>
+<h2 id="against-the-compiled-program"><a class="anchor" href="#against-the-compiled-program">Against the compiled program</a></h2>
+<p><code>crow test</code> runs a block in the interpreter, and the apps it opens with
+it. <code>crow test --compiled app.co</code> runs the same blocks with every app they
+open compiled: the program is built once, each run that opens an app
+starts it fresh, and <code>click</code>, <code>change</code>, <code>html</code>, <code>elements</code>, <code>box</code>, a
+session's facts and derivations all reach the compiled program. The block
+itself, its truths and the functions it calls directly, still runs in the
+interpreter. So a handler the compiled program runs differently fails the
+test that exercises it, with the same message. A handler a test clicks
+with arguments (<code>click[a, begin[1000.0, 100.0, 1050.0]]</code>) is typed by
+them when nothing in the program types it. Blocks that open no app run as
+they always do, and nothing is built for them.</p>
+<pre class="output"><code>$ crow test --compiled sim/clock.co
+  ✓ 3 blocks pass, the apps they opened compiled (2 runs) — 2 truths, 1 law, 52 inputs run
+</code></pre>
+<p>A test that reaches a database server or a model needs it running —
+unless it was recorded. <code>crow check --record-fixtures</code> runs the tests
+against the real servers and keeps what each statement and each request
+answered under <code>.crow/fixtures</code>; <code>crow test --fixtures</code> runs them from
+what was kept, in both modes, and names a statement or a request nothing
+recorded. A request's fixture is named by its method, its URL and what it
+sends, so a changed prompt to a model is a changed request; its headers,
+and the key in them, are no part of it.</p>
+<p><code>crow test</code> runs these blocks; <code>crow check</code> runs them plus the live-loop
+hazards; <code>crow run</code> and <code>crow build</code> ignore them.</p>
+<h2 id="the-baseline-what-changed-without-writing-a-test"><a class="anchor" href="#the-baseline-what-changed-without-writing-a-test">The baseline: what changed, without writing a test</a></h2>
+<p>Every <code>crow check</code> derives what the program does and keeps it beside the
+source, under <code>.crow/baseline/</code>: for each handler, every path through it
+as a condition over facts and inputs with the facts it writes; for each
+view, its tree of elements, controls and sub-views under their guards;
+for each fact, who writes it and who reads it. The first check records
+it. Every check after diffs against it.</p>
+<pre class="output"><code>$ crow check
+  baseline — 95 unchanged, 1 changed (.crow/baseline/main)
+  [1/1] sim/session.co in start_session
+        handler start_session changed (sim/session.co, in what you edited):
+          ~ …when (not (v2 «lte» → «lt» v1)) and v1.ok and v2.ok:
+        fix: if intended, accept with a and the baseline moves; otherwise fix the cause — reaches page /
+</code></pre>
+<p>Locals and temporaries are substituted and paths are sorted, so a
+rename, a reordering or a helper moved to another part changes nothing.
+A guard, a write, an effect or a wiring that changed shows as a diff,
+with the file it came from and the views and pages it reaches; a diff
+reached from a file you did not edit is the headline. Accept with <code>a</code>
+and the baseline travels with your change; without a terminal, an
+unaccepted change fails the check, so CI blocks on it. Nothing runs and
+nothing is written: the artifacts come from the source alone.</p>
+<p>Each page also has its <strong>states</strong>: every state the handlers can bring it
+to, from the declared facts, with each control said once with when it is
+offered.</p>
+<pre class="output"><code>states / (board_page_render)
+  button 'Sign in' → board_door_log_in: when reader = 'nobody'
+  button 'Attach' → board_cards_attach: when board_cards_card_id = * · reader = 'someone'
+  ...
+</code></pre>
+<p>A fact takes the few values the program gives it — a literal, or <code>*</code>
+for some other — and <code>reader</code> is the signed-in reader. A button that
+becomes reachable where it was not, a field left on screen after its
+session ended, is that control's line changing.</p>
+<p>And each page has its <strong>layout</strong>: every state laid out by the engine at
+desktop and phone widths, with its height and anything that runs past
+the width (<code>390: 185 high, past the width: button 'Sign in' by 181</code>), so
+a row that no longer fits a phone shows in the check.</p>
+<h2 id="the-app-s-book"><a class="anchor" href="#the-app-s-book">The app's book</a></h2>
+<p><code>crow book</code>, run inside the app, serves a book derived from the source on
+every start: the app and its parts, each page as a composition tree with
+a wireframe per state at desktop and phone widths, a chapter per part
+with its facts, derivations, handlers as paths, views with their trees
+and wireframes, and tests as steps, then the data wiring and the changes
+since the accepted baseline. The wireframes are the layout engine's
+boxes over the view's tree with placeholders, so nothing runs and no
+database is touched.</p>
+<pre class="output"><code>$ crow book
+crow book: the app's book is written to .crow/book/site
+crow book: http://localhost:3101/  — the app's book (Ctrl-C or `crow stop book` to stop)
+</code></pre>
+<p>The book serves next to the app, on its <code>serve</code> port plus one; <code>--port</code>
+chooses another. <code>crow stop book</code> stops it from anywhere in the project.</p>
+<p>Next: the two things every dashboard needs that you haven't written yet —
+a chart, and a page that looks right.</p><nav class="doc-pager"><a class="prev" href="ch12-04-background-work.html" rel="prev"><span>Previous</span>Slow Work and the Live Loop</a><a class="next" href="ch12-06-charts-and-style.html" rel="next"><span>Next</span>Charts and Styling</a></nav></div></div></div>
+<script>(function(){
+var b=document.body,key='crow-doc-nav';
+try{if(localStorage.getItem(key)==='closed')b.classList.add('nav-closed');}catch(e){}
+document.querySelectorAll('.nav-toggle').forEach(function(t){t.onclick=function(){
+  if(window.innerWidth<1024){b.classList.toggle('nav-open');}
+  else{b.classList.toggle('nav-closed');try{localStorage.setItem(key,b.classList.contains('nav-closed')?'closed':'open');}catch(e){}}
+};});
+document.addEventListener('click',function(e){if(b.classList.contains('nav-open')&&!e.target.closest('.doc-side')&&!e.target.closest('.nav-toggle'))b.classList.remove('nav-open');});
+var cur=document.querySelector('.doc-nav .current');if(cur&&cur.scrollIntoView)cur.scrollIntoView({block:'center'});
+var box=document.querySelector('.doc-search'),res=document.querySelector('.doc-results');
+if(box&&res){
+  var title=document.querySelector('.doc-top .title'),up=title?title.getAttribute('href').replace('index.html',''):'',index=null;
+  function load(cb){if(index)return cb();fetch(up+'search.json').then(function(r){return r.json();}).then(function(j){index=j;cb();}).catch(function(){index=[];cb();});}
+  function esc(t){return t.replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
+  function search(q){
+    var words=q.toLowerCase().split(/\s+/).filter(Boolean);if(!words.length){res.hidden=true;res.innerHTML='';return;}
+    var hits=[];
+    index.forEach(function(e){var t=e.t.toLowerCase(),x=e.x.toLowerCase(),score=0,pos=-1;
+      words.forEach(function(w){if(t.indexOf(w)>=0)score+=10;var i=x.indexOf(w);if(i>=0){score+=1;if(pos<0)pos=i;}else if(t.indexOf(w)<0)score-=100;});
+      if(score>0)hits.push({e:e,score:score,pos:pos});});
+    hits.sort(function(a,b){return b.score-a.score;});
+    hits=hits.slice(0,8);
+    if(!hits.length){res.innerHTML='<p class="none">No matches</p>';res.hidden=false;return;}
+    res.innerHTML=hits.map(function(h){var x=h.e.x,p=h.pos<0?0:Math.max(0,h.pos-60),snip=(p>0?'… ':'')+x.slice(p,p+140)+(p+140<x.length?' …':'');
+      return '<a href="'+up+h.e.p+'"><b>'+esc(h.e.t)+'</b><span>'+esc(snip)+'</span></a>';}).join('');
+    res.hidden=false;
+  }
+  box.addEventListener('input',function(){load(function(){search(box.value);});});
+  box.addEventListener('focus',function(){load(function(){});});
+  box.addEventListener('keydown',function(e){if(e.key==='Escape'){box.value='';res.hidden=true;box.blur();}if(e.key==='Enter'){var a=res.querySelector('a');if(a)a.click();}});
+  document.addEventListener('keydown',function(e){if(e.key==='/'&&document.activeElement!==box&&!(document.activeElement&&document.activeElement.isContentEditable)){e.preventDefault();box.focus();}});
+  document.addEventListener('click',function(e){if(!e.target.closest('.doc-results')&&e.target!==box)res.hidden=true;});
+}
+})();
+(function(){
+var running={};
+function setup(run){
+  var code=run.querySelector('code'),gutter=run.querySelector('.gutter'),cap=run.querySelector('.crow-caption'),out=run.querySelector('.crow-result');
+  var expCap=run.querySelector('.crow-caption.expected'),expPre=run.querySelector('pre.expected');
+  var original=code.textContent,serves=run.getAttribute('data-mode')==='norun';
+  var expected=expPre?expPre.textContent.replace(/\s+$/,''):null;
+  var id=Math.random().toString(36).slice(2);
+  function renumber(){var n=code.textContent.replace(/\n$/,'').split('\n').length,a=[];for(var i=1;i<=n;i++)a.push(i);gutter.textContent=a.join('\n');}
+  function edited(){return code.textContent!==original;}
+  function show(text,kind,note){out.hidden=false;cap.hidden=false;out.className='output crow-result '+(kind||'');out.textContent=text;cap.textContent=note||'';if(expPre){expPre.hidden=true;expCap.hidden=true;}}
+  function go(mode){
+    var src=code.textContent;serves=serves||/^\s*serve\[/m.test(src);
+    if(serves){var m=src.match(/serve\[\s*(\d+)/);show('crow run … compiling, then serving. When it is up, open http://localhost:'+(m?m[1]:'3000')+'/ in a new tab. Press ■ Stop to end it; its output appears here afterwards.','busy');}
+    else show('crow '+(mode==='test'?'test':mode==='compile'?'run':'run -i')+' … ('+(mode==='compile'?'compiling to Rust, ~20s the first time':'starting')+')','busy');
+    running[id]=true;
+    fetch('/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,code:src,mode:mode})})
+    .then(function(r){return r.json();}).then(function(res){
+      delete running[id];var text=res.output||'';if(res.timeout)text+='\n[stopped: '+res.timeout+']';if(serves)text='server stopped\n'+text;
+      var kind='',note='';
+      if(expected!==null&&!serves&&!edited()&&mode!=='test'){var same=text.replace(/\s+$/,'')===expected;note=same?'output — matches the book ✓':'output — differs from the book (expected: '+expected.split('\n').join(' ⏎ ')+')';if(!same)kind='fail';}
+      else note=mode==='test'?'crow test':serves?'server output':edited()?'output — of your edited version':'output';
+      show(text.length?text:'(no output)',kind||(res.ok||serves?'ok':'fail'),note);
+    }).catch(function(){delete running[id];show('No runner on this page. Start one from the repository:\n\n    crow book\n\nthen reload — every block gets a real ▶ Run button.','fail');});
+  }
+  function stop(){fetch('/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id})}).then(function(){show('stopped','fail');}).catch(function(){});}
+  code.addEventListener('input',renumber);
+  code.addEventListener('keydown',function(e){
+    if(e.key==='Tab'){e.preventDefault();document.execCommand('insertText',false,'    ');}
+    if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)){e.preventDefault();go(serves?'compile':'interp');}
+  });
+  run.querySelectorAll('button[data-action]').forEach(function(b){
+    var a=b.getAttribute('data-action');
+    b.onclick=function(){if(a==='reset'){code.textContent=original;renumber();}else if(a==='stop')stop();else go(a);};
+  });
+}
+document.querySelectorAll('.crow-run').forEach(setup);
+})();</script>
+</body>
+</html>
