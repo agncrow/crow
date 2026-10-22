@@ -52,7 +52,6 @@ pub fn emit_with(
     registry: crate::modules::ModuleRegistry,
     source_file: &str,
     shown_names: BTreeMap<String, String>,
-    cpu: Option<usize>,
     test_control: bool,
     schema: Option<crow_db::schema::Mode>,
 ) -> Result<Emitted, String> {
@@ -66,9 +65,6 @@ pub fn emit_with(
     let mut e = Emitter::new(part, registry, source_file, shown_names);
     e.test_control = test_control;
     e.schema_mode = schema;
-    if let Some(n) = cpu {
-        e.cpu_count = Some(n);
-    }
     let source = e.program();
     e.registry.resume(outer);
     let source = source?;

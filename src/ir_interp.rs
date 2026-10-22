@@ -333,7 +333,7 @@ pub fn prepare(stmts: &[crate::ast::Stmt], name: &str) -> Result<(Program, crate
     Ok((program, ctx))
 }
 
-/// A script run for its variables: the crowfile.
+/// A script run for its variables.
 pub fn run_script(stmts: &[crate::ast::Stmt], name: &str) -> Result<IrInterp, String> {
     let (program, ctx) = prepare(stmts, name)?;
     let mut it = IrInterp::new(&ctx.registry, name);
@@ -359,6 +359,11 @@ impl Session {
     /// (a notebook's interrupt), as a served session's cancelled work does.
     pub fn cancel_with(&mut self, flag: Arc<AtomicBool>) {
         self.it.cancel = Some(flag);
+    }
+
+    /// A name the fragments so far bound (a crowfile's key).
+    pub fn var(&self, name: &str) -> Option<&CrowValue> {
+        self.it.var(name)
     }
 
     pub fn feed(&mut self, stmts: &[crate::ast::Stmt]) -> Result<Option<CrowValue>, String> {

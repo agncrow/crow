@@ -293,7 +293,7 @@ fn transpile(source: &str) -> String {
     let mut ctx = TypeContext::new();
     ctx.infer_program(&stmts);
     let program = crate::lower_ir::lower(&stmts, &mut ctx, "t").expect("lowering to the IR failed");
-    crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), None, false, None).expect("emitting failed").source
+    crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), false, None).expect("emitting failed").source
 }
 
 /// The runtime features a program's build asks for (crow_runtime::sources).
@@ -302,7 +302,7 @@ fn runtime_features(source: &str) -> Vec<String> {
     let mut ctx = TypeContext::new();
     ctx.infer_program(&stmts);
     let program = crate::lower_ir::lower(&stmts, &mut ctx, "t").expect("lowering to the IR failed");
-    let emitted = crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), None, false, None).expect("emitting failed");
+    let emitted = crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), false, None).expect("emitting failed");
     emitted.runtime_features.into_iter().collect()
 }
 
@@ -1819,7 +1819,7 @@ fn a_web_programs_connection_from_the_environment_compiles() {
     let mut ctx = TypeContext::new();
     ctx.infer_program(&stmts);
     let program = crate::lower_ir::lower(&stmts, &mut ctx, "t").expect("lowering to the IR failed");
-    let emitted = crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), None, false, None).expect("emitting failed");
+    let emitted = crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), false, None).expect("emitting failed");
     let features: Vec<&str> = emitted.db_features.iter().map(String::as_str).collect();
     assert_eq!(features, ["sqlite"]);
     // a URL the source spells builds its own backend alone
@@ -1827,7 +1827,7 @@ fn a_web_programs_connection_from_the_environment_compiles() {
     let mut ctx = TypeContext::new();
     ctx.infer_program(&stmts);
     let program = crate::lower_ir::lower(&stmts, &mut ctx, "t").expect("lowering to the IR failed");
-    let emitted = crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), None, false, None).expect("emitting failed");
+    let emitted = crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), false, None).expect("emitting failed");
     assert_eq!(emitted.db_features.iter().map(String::as_str).collect::<Vec<_>>(), ["sqlite"]);
 }
 
@@ -1947,7 +1947,7 @@ fn a_derivation_of_records_answers_the_harness() {
     let mut ctx = crate::type_infer::TypeContext::new();
     ctx.infer_program(&stmts);
     let program = crate::lower_ir::lower(&stmts, &mut ctx, "t").unwrap();
-    let rust = crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), None, true, None).expect("emitting failed").source;
+    let rust = crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), true, None).expect("emitting failed").source;
     assert!(rust.contains("\"chunks\" => Some(serde_json::json!({ \"ok\": true, \"value\": crow_runtime::json::ToJson::to_json(&__derive_chunks(state)) })),"), "{}", rust);
     assert!(rust.contains("impl crow_runtime::json::ToJson for Chunk"), "{}", rust);
 }
@@ -1962,11 +1962,11 @@ fn a_test_build_answers_the_harness() {
     let mut ctx = crate::type_infer::TypeContext::new();
     ctx.infer_program(&stmts);
     let program = crate::lower_ir::lower(&stmts, &mut ctx, "t").unwrap();
-    let rust = crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), None, true, None).expect("emitting failed").source;
+    let rust = crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), true, None).expect("emitting failed").source;
     assert!(rust.contains("fn __crow_view(") && rust.contains("\"v\" => Some(v(state)),"), "{}", rust);
     assert!(rust.contains("fn __crow_derived(") && rust.contains("\"twice\" =>"), "{}", rust);
     assert!(rust.contains("crow_web::live::test_control::router(") && rust.contains("__crow_app.serve(0)"), "{}", rust);
-    let plain = crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), None, false, None).map(|e| e.source).unwrap_or_default();
+    let plain = crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), false, None).map(|e| e.source).unwrap_or_default();
     assert!(!plain.contains("test_control"), "{}", plain);
 }
 
@@ -2451,7 +2451,7 @@ fn only_a_program_that_asks_for_the_gpu_links_it() {
         let mut ctx = TypeContext::new();
         ctx.infer_program(&stmts);
         let program = crate::lower_ir::lower(&stmts, &mut ctx, "t").expect("lowering to the IR failed");
-        crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), None, false, None).expect("emitting failed").runtime_features
+        crate::emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), false, None).expect("emitting failed").runtime_features
     };
     assert!(features("use math\ngpu[1]\nt = tensor[[[1.0, 2.0]]]\nlog[sum[t]]\n").contains("gpu"));
     assert!(!features("use math\nt = tensor[[[1.0, 2.0]]]\nlog[sum[t]]\n").contains("gpu"));

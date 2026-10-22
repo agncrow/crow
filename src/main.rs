@@ -132,7 +132,7 @@ fn crow_main() {
     // mode, or verifies
     let runs = match args.get(1).map(|a| a.as_str()) {
         None | Some("run" | "test" | "check" | "launch" | "db") => true,
-        Some(a) => is_source(a) || is_bytecode(a),
+        Some(a) => is_source(a),
     };
     if runs && std::env::var_os("CROW_SCHEMA").is_none() {
         let mode = crowfile_schema_or_stop().unwrap_or(crow_db::schema::Mode::Reconcile);
@@ -410,7 +410,7 @@ fn crow_main() {
                 eprintln!("{}", e);
                 process::exit(1);
             });
-            let no_compiler = !interp && rest.first().is_none_or(|t| is_source(t)) && !home::can_compile();
+            let no_compiler = !interp && !home::can_compile();
             if no_compiler {
                 // both modes answer the same by design; the difference is
                 // speed, so a machine with no compiler yet runs the program
@@ -418,19 +418,20 @@ fn crow_main() {
                 eprintln!("(o.o) no compiler here yet: running interpreted — `crow setup` fetches the Rust toolchain and the runtime (about 175 MB, once), and `crow run` compiles from then on");
             }
             if interp || no_compiler {
-                if let Some(file) = rest.first() {
-                    cmd_run_file_interpreted(file);
-                } else {
-                    cmd_run_interpreted();
+                match rest.first() {
+                    Some(file) if is_source(file) => cmd_run_file_interpreted(file, Resources::default()),
+                    // crow run -i <job>: a job the crowfile names
+                    Some(job) => cmd_run_job(job, opt, true),
+                    None => cmd_run_interpreted(),
                 }
             } else if let Some(target) = rest.first() {
-                if is_source(target) || is_bytecode(target) {
+                if is_source(target) {
                     // crow run file.co arg1 arg2 ... -> transpile + compile + run
                     let extra_args = rest[1..].to_vec();
                     cmd_run_file(target, &extra_args, opt);
                 } else {
                     // crow run <job_name> -> look up in crowfile [jobs]
-                    cmd_run_job(target, opt);
+                    cmd_run_job(target, opt, false);
                 }
             } else {
                 // crow run (uses crowfile) -> transpile + compile + run
@@ -438,11 +439,11 @@ fn crow_main() {
             }
         }
         other => {
-            // check if it's a .co or .coc file (shortcut)
+            // `crow file.co`: the short form of `crow run file.co`
             if is_source(other) && !home::can_compile() {
                 eprintln!("(o.o) no compiler here yet: running interpreted — `crow setup` fetches the Rust toolchain and the runtime (about 175 MB, once), and `crow run` compiles from then on");
-                cmd_run_file_interpreted(other);
-            } else if is_source(other) || is_bytecode(other) {
+                cmd_run_file_interpreted(other, Resources::default());
+            } else if is_source(other) {
                 let extra_args = args[2..].to_vec();
                 cmd_run_file(other, &extra_args, 0);
             } else {
@@ -1956,7 +1957,7 @@ pub(crate) fn from_dependency(fn_name: &str) -> bool {
 /// If `release` is true, compile with --release (optimized). Otherwise, use debug mode (fast compile).
 /// `opt` is the dev build's optimization level (`crow run --opt N`; 0 unless
 /// said); a release build ignores it.
-fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: bool, opt: u8) -> std::path::PathBuf {
+fn transpile_and_compile(entry: &str, quiet: bool, resources: Resources, release: bool, opt: u8) -> std::path::PathBuf {
     // Verification harnesses (`crow test --book`, `--parity`) set
     // CROW_BUILD_PROFILE=dev: a checked program only has to run, not ship,
     // and skipping optimization + LTO is most of the per-block build time.
@@ -1994,19 +1995,21 @@ fn transpile_and_compile(entry: &str, quiet: bool, cpu: Option<usize>, release: 
     // the compiled program renames each one it declares, after the gate has
     // spoken in the program's own names, and prints the program's name
     // wherever one reaches the reader
-    let (ctx, program, shown) = match rust_names::rename_rust_keywords(&stmts) {
+    let (ctx, mut program, shown) = match rust_names::rename_rust_keywords(&stmts) {
         None => (ctx, program, std::collections::BTreeMap::new()),
         Some((renamed, shown)) => {
             let (ctx, program) = infer_and_lower(&renamed, describing(), &name).unwrap_or_else(|e| refuse(entry, &source, &e));
             (ctx, program, shown)
         }
     };
+    // the crowfile's cpu and gpu, as the interpreter takes them
+    resources.apply(&mut program);
     for note in &ctx.describe_notes {
         eprintln!("{}", note);
     }
     // The Rust backend: the program's IR printed as Rust
     let test_control = TEST_CONTROL.load(std::sync::atomic::Ordering::SeqCst);
-    let emitted = emit_rs::emit_with(&program, ctx.registry.clone(), &entry_file, shown, cpu, test_control, crowfile_schema_or_stop()).unwrap_or_else(|e| {
+    let emitted = emit_rs::emit_with(&program, ctx.registry.clone(), &entry_file, shown, test_control, crowfile_schema_or_stop()).unwrap_or_else(|e| {
         eprintln!("error: {}", e);
         process::exit(1);
     });
@@ -2317,7 +2320,7 @@ fn cmd_build() {
     if args.iter().any(|a| a == "--rs") {
         PRINT_RS.store(true, std::sync::atomic::Ordering::SeqCst);
         let file = args.iter().skip(2).find(|a| !a.starts_with('-')).cloned().unwrap_or_else(|| parse_crowfile().entry);
-        transpile_and_compile(&file, true, None, false, 0);
+        transpile_and_compile(&file, true, Resources::default(), false, 0);
         return;
     }
     // `crow build --types file.co`: every type inference found, each
@@ -2340,17 +2343,17 @@ fn cmd_build() {
         }
         return;
     }
-    let (entry, cpu) = if args.len() > 2 {
-        (args[2].clone(), None)
+    let (entry, resources) = if args.len() > 2 {
+        (args[2].clone(), Resources::default())
     } else if std::path::Path::new("crowfile").exists() {
         let config = parse_crowfile();
-        (config.entry, config.cpu)
+        (config.entry, config.resources)
     } else {
         eprintln!("usage: crow build <file.co> or run from a project with crowfile");
         process::exit(1);
     };
 
-    let binary = transpile_and_compile(&entry, false, cpu, true, 0);
+    let binary = transpile_and_compile(&entry, false, resources, true, 0);
 
     // Copy binary to current directory
     let binary_name = binary.file_name().unwrap().to_string_lossy().to_string();
@@ -2390,18 +2393,18 @@ fn cmd_launch() {
         process::exit(1);
     }
 
-    let entry = if args.len() > 3 {
-        args[3].clone()
+    let (entry, resources) = if args.len() > 3 {
+        (args[3].clone(), Resources::default())
     } else if std::path::Path::new("crowfile").exists() {
         let config = parse_crowfile();
-        config.entry
+        (config.entry, config.resources)
     } else {
         eprintln!("usage: crow launch <num_processes> <file.co>");
         process::exit(1);
     };
 
     // Build the binary
-    let binary = transpile_and_compile(&entry, true, None, true, 0);
+    let binary = transpile_and_compile(&entry, true, resources, true, 0);
 
     let master_addr = "127.0.0.1";
     let master_port = 29500u16;
@@ -2444,10 +2447,29 @@ fn cmd_launch() {
 
 struct CrowfileConfig {
     entry: String,
-    cpu: Option<usize>,
-    gpu: Option<usize>,
+    resources: Resources,
     deps: Vec<(String, String)>,  // (name, version)
     jobs: Vec<(String, String)>,  // (job_name, file_path)
+}
+
+/// The crowfile's resource defaults (spec, Resource Control): the counts
+/// the entry part holds as its `cpu` and `gpu`, which both backends take
+/// as the program starts — the interpreter in `run_main`, the compiled
+/// program in its `main` (a compiled run had taken `cpu` alone, and
+/// `crow run -i` both).
+#[derive(Clone, Copy, Default)]
+struct Resources {
+    cpu: Option<i64>,
+    gpu: Option<i64>,
+}
+
+impl Resources {
+    fn apply(self, program: &mut ir::Program) {
+        if let Some(part) = program.parts.first_mut() {
+            part.cpu = self.cpu.or(part.cpu);
+            part.gpu = self.gpu.or(part.gpu);
+        }
+    }
 }
 
 /// Run a binary, forwarding its exit code and passing extra args.
@@ -3158,7 +3180,7 @@ fn cmd_test_blocks(filename: &str) {
     let compiled = std::env::args().any(|a| a == "--compiled");
     if compiled && compiled_harness::opens_an_app(&lowered) {
         TEST_CONTROL.store(true, std::sync::atomic::Ordering::SeqCst);
-        let binary = transpile_and_compile(filename, true, None, false, 0);
+        let binary = transpile_and_compile(filename, true, Resources::default(), false, 0);
         compiled_harness::use_binary(std::fs::canonicalize(&binary).unwrap_or(binary));
     }
     // the blocks are prepared from the statements as written: the shared
@@ -3372,21 +3394,9 @@ fn build_app_book(entry: &str) -> Result<std::path::PathBuf, String> {
     appbook::build(&input)
 }
 
-/// Source files end in `.co`, bytecode in `.coc`.
+/// Source files end in `.co`.
 fn is_source(path: &str) -> bool { path.ends_with(".co") }
-fn is_bytecode(path: &str) -> bool { path.ends_with(".coc") }
 fn strip_source_ext(path: &str) -> &str { path.strip_suffix(".co").unwrap_or(path) }
-fn bytecode_path(entry: &str) -> String { format!("{}.coc", strip_source_ext(entry)) }
-/// The source a path names: a bytecode path's `.co` beside it; any other
-/// path is the source already. (After the `.co` rename it appended `.co`
-/// to a source too, and every interpreter trace named `main.co` where the
-/// compiled program names `main`.)
-fn source_of_bytecode(path: &str) -> String {
-    match path.strip_suffix(".coc") {
-        Some(base) => format!("{}.co", base),
-        None => path.to_string(),
-    }
-}
 
 #[cfg(test)]
 mod fix_tests {
@@ -3414,22 +3424,16 @@ mod fix_tests {
 mod extension_tests {
     use super::*;
 
-    // `.crow` and `.crowc` were read for a release after the rename to
-    // `.co`; they are no longer Crow files.
+    // `.crow` was read for a release after the rename to `.co`, and `.coc`
+    // was a bytecode nothing wrote: neither is a Crow file.
     #[test]
-    fn source_and_bytecode_extensions() {
+    fn a_source_ends_in_co() {
         assert!(is_source("a.co"));
         assert!(!is_source("a.coc"));
         assert!(!is_source("a.crow"));
-        assert!(is_bytecode("a.coc"));
-        assert!(!is_bytecode("a.co"));
-        assert!(!is_bytecode("a.crowc"));
         assert_eq!(strip_source_ext("dir/a.co"), "dir/a");
         assert_eq!(strip_source_ext("dir/a"), "dir/a");
         assert_eq!(strip_source_ext("dir/a.crow"), "dir/a.crow");
-        assert_eq!(bytecode_path("dir/a.co"), "dir/a.coc");
-        assert_eq!(source_of_bytecode("dir/a.coc"), "dir/a.co");
-        assert_eq!(source_of_bytecode("main.co"), "main.co");
     }
 }
 
@@ -4217,24 +4221,28 @@ fn run_flags(args: &[String]) -> Result<(bool, u8, Vec<String>), String> {
 
 fn cmd_run(extra_args: &[String], opt: u8) {
     let config = parse_crowfile();
-    let binary = transpile_and_compile(&config.entry, true, config.cpu, false, opt);
+    let binary = transpile_and_compile(&config.entry, true, config.resources, false, opt);
     run_binary(&binary, extra_args);
 }
 
 fn cmd_run_file(filename: &str, extra_args: &[String], opt: u8) {
-    let binary = transpile_and_compile(filename, true, None, false, opt);
+    let binary = transpile_and_compile(filename, true, Resources::default(), false, opt);
     run_binary(&binary, extra_args);
 }
 
-fn cmd_run_job(job_name: &str, opt: u8) {
+/// `crow run <job>`, and `crow run -i <job>` interpreted: a job the
+/// crowfile names, run with the crowfile's resources as its entry is (the
+/// interpreter had read the job's name as a file's).
+fn cmd_run_job(job_name: &str, opt: u8, interpreted: bool) {
     let config = parse_crowfile();
     let job_file = config.jobs.iter()
         .find(|(name, _)| name == job_name)
         .map(|(_, path)| path.clone());
 
     match job_file {
+        Some(path) if interpreted => cmd_run_file_interpreted(&path, config.resources),
         Some(path) => {
-            let binary = transpile_and_compile(&path, true, config.cpu, false, opt);
+            let binary = transpile_and_compile(&path, true, config.resources, false, opt);
             run_binary(&binary, &[]);
         }
         None => {
@@ -4260,62 +4268,36 @@ fn cmd_run_interpreted() {
             eprintln!("warning: '{}' ({}) is not installed — run crow install", name, spec);
         }
     }
-    // the crowfile's cpu count bounds the parallel loops, as it does the
-    // compiled program's (crow_runtime::cores); its gpu setting turns the
-    // device on
-    if let Some(n) = config.cpu {
-        crow_runtime::cores::set_default(n);
-    }
-    if config.gpu.is_some() {
-        crow_runtime::gpu::set_gpu_enabled(true);
-    }
-    // the bytecode when `crow compile` left one, else the entry's source;
     // user modules and crow_modules/ deps are expanded on the way
-    let compiled_path = bytecode_path(&config.entry);
-    if std::path::Path::new(&compiled_path).exists() {
-        cmd_run_file_interpreted(&compiled_path);
-    } else {
-        cmd_run_file_interpreted(&config.entry);
-    }
+    cmd_run_file_interpreted(&config.entry, config.resources);
 }
 
-fn cmd_run_file_interpreted(filename: &str) {
-    let (stmts, source) = if is_bytecode(filename) {
-        let bytes = std::fs::read(filename).unwrap_or_else(|e| {
-            eprintln!("error reading '{}': {}", filename, e);
-            process::exit(1);
-        });
-        let stmts: Vec<ast::Stmt> = bincode::deserialize(&bytes).unwrap_or_else(|e| {
-            eprintln!("error loading bytecode '{}': {}", filename, e);
-            process::exit(1);
-        });
-        (stmts, String::new())
-    } else {
-        let source = read_file(filename);
-        let stmts = build(&source).unwrap_or_else(|e| refuse(filename, &source, &e));
-        // Expand user-module imports exactly as the compiled path does — the
-        // lowerer needs the prefixed fns to resolve qualified named-arg calls
-        let source_dir = std::path::Path::new(filename)
-            .parent()
-            .unwrap_or(std::path::Path::new("."));
-        let mut visited = std::collections::HashSet::new();
-        (expand_module_imports(&stmts, source_dir, &mut visited), source)
-    };
+fn cmd_run_file_interpreted(filename: &str, resources: Resources) {
+    let source = read_file(filename);
+    let stmts = build(&source).unwrap_or_else(|e| refuse(filename, &source, &e));
+    // Expand user-module imports exactly as the compiled path does — the
+    // lowerer needs the prefixed fns to resolve qualified named-arg calls
+    let source_dir = std::path::Path::new(filename)
+        .parent()
+        .unwrap_or(std::path::Path::new("."));
+    let mut visited = std::collections::HashSet::new();
+    let stmts = expand_module_imports(&stmts, source_dir, &mut visited);
     // Lower + validate exactly as the compiled path does — the two modes
     // must reject the same programs (reservation, scope, ui rules)
     let lowered = lower::lower_program(&stmts).unwrap_or_else(|e| refuse(filename, &source, &e));
     let serves = serve_line(&lowered).is_some();
     // then the one typed form (ir-design.md), walked by the interpreter
-    let base = source_of_bytecode(filename);
-    let name = std::path::Path::new(&base)
+    let name = std::path::Path::new(filename)
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| base.clone());
-    let (ctx, program) = infer_and_lower(&lowered, describing(), &name).unwrap_or_else(|e| refuse(filename, &source, &e));
+        .unwrap_or_else(|| filename.to_string());
+    let (ctx, mut program) = infer_and_lower(&lowered, describing(), &name).unwrap_or_else(|e| refuse(filename, &source, &e));
+    // the crowfile's cpu and gpu, as the compiled program takes them
+    resources.apply(&mut program);
     if serves {
         // a program that serves pages: its main runs, then the interpreter
         // renders and handles for the live runtime's sessions
-        let template = match ir_interp::run_to_serve(&program, &ctx.registry, &base) {
+        let template = match ir_interp::run_to_serve(&program, &ctx.registry, filename) {
             Ok(it) => it,
             Err(e) => {
                 eprintln!("runtime error: {}", e);
@@ -4331,7 +4313,7 @@ fn cmd_run_file_interpreted(filename: &str) {
     // a script's output in blocks when it goes to a file or a pipe, as the
     // compiled script's (crow_runtime::display::buffer_output)
     crow_runtime::display::buffer_output();
-    let ran = ir_interp::run(&program, &ctx.registry, &base);
+    let ran = ir_interp::run(&program, &ctx.registry, filename);
     crow_runtime::display::flush_output();
     if let Err(e) = ran {
         eprintln!("runtime error: {}", e);
@@ -4371,8 +4353,7 @@ pub(crate) fn crowfile_db_url_at(dir: &std::path::Path) -> Option<String> {
 /// or no such variable, is `None`.
 fn crowfile_text_at(dir: &std::path::Path, var: &str) -> Option<String> {
     let source = std::fs::read_to_string(dir.join("crowfile")).ok()?;
-    let stmts = build(&source).ok()?;
-    let it = ir_interp::run_script(&stmts, "crowfile").ok()?;
+    let it = Crowfile::run(&source).ok()?;
     match it.var(var) {
         Some(val) => match &val.value {
             value::Value::Str(s) => Some(s.clone()),
@@ -4486,14 +4467,55 @@ fn cmd_db(args: &[String]) {
 pub(crate) fn crowfile_deps(dir: &std::path::Path) -> Result<Vec<(String, String)>, String> {
     let path = dir.join("crowfile");
     let Ok(source) = std::fs::read_to_string(&path) else { return Ok(Vec::new()) };
-    let stmts = build(&source).map_err(|e| format!("{}: {}", path.display(), e))?;
-    let it = ir_interp::run_script(&stmts, "crowfile").map_err(|e| format!("{}: {}", path.display(), e))?;
+    let it = Crowfile::run(&source).map_err(|e| format!("{}: {}", path.display(), e))?;
     Ok(deps_in(&it))
+}
+
+/// The suffix a crowfile's key carries while the file runs (`Crowfile`).
+const CROWFILE_KEY: &str = "__crowfile";
+
+/// A crowfile, run for its keys (spec, crowfile).
+struct Crowfile(ir_interp::Session);
+
+impl Crowfile {
+    /// The crowfile is configuration: a name it sets is a key the
+    /// toolchain reads, not a program's variable, so the rule that keeps a
+    /// program's names apart from the language's does not hold it —
+    /// `cpu = 4` and `gpu = 1`, keys the spec documents, had stopped every
+    /// command (`'cpu' is a core builtin`). Each name its top level sets is
+    /// renamed out of the language's way before the file runs, at every
+    /// read of it too, and read back by its key. The file runs as a
+    /// session's cell, whose names outlive it: run as a script, a key
+    /// another key read was moved out at that read (`jobs = map[main =
+    /// entry]` had left `entry` reading `done`).
+    fn run(source: &str) -> Result<Crowfile, String> {
+        let mut stmts = build(source)?;
+        let keys: std::collections::BTreeSet<String> = stmts
+            .iter()
+            .flat_map(|s| match s {
+                ast::Stmt::Assign { name, .. } => vec![name.clone()],
+                ast::Stmt::MultiAssign { names, .. } => names.clone(),
+                _ => Vec::new(),
+            })
+            .collect();
+        let renames = keys.iter().map(|k| (k.clone(), format!("{}{}", k, CROWFILE_KEY))).collect();
+        for s in stmts.iter_mut() {
+            rust_names::rename_stmt(s, &renames, &keys, &std::collections::BTreeSet::new());
+        }
+        let mut session = ir_interp::Session::new();
+        session.feed(&stmts).map_err(|e| e.replace(CROWFILE_KEY, ""))?;
+        Ok(Crowfile(session))
+    }
+
+    /// What the crowfile sets the key to.
+    fn var(&self, key: &str) -> Option<&value::CrowValue> {
+        self.0.var(&format!("{}{}", key, CROWFILE_KEY))
+    }
 }
 
 /// `deps = map[models = 'github.com/…@v1', mine = '../mine']`, as a ran
 /// crowfile holds it.
-fn deps_in(it: &ir_interp::IrInterp) -> Vec<(String, String)> {
+fn deps_in(it: &Crowfile) -> Vec<(String, String)> {
     it.var("deps")
         .map(|val| {
             if let value::Value::Map(map) = &val.value {
@@ -4516,16 +4538,8 @@ fn parse_crowfile() -> CrowfileConfig {
         }
     };
 
-    match build(&crowfile_source) {
-        Ok(stmts) => {
-            let it = match ir_interp::run_script(&stmts, "crowfile") {
-                Ok(it) => it,
-                Err(e) => {
-                    eprintln!("error in crowfile: {}", e);
-                    process::exit(1);
-                }
-            };
-
+    match Crowfile::run(&crowfile_source) {
+        Ok(it) => {
             let entry = match it.var("entry") {
                 Some(val) => match &val.value {
                     value::Value::Str(s) => s.clone(),
@@ -4537,21 +4551,18 @@ fn parse_crowfile() -> CrowfileConfig {
                 None => "main.co".to_string(),
             };
 
-            let cpu = it.var("cpu").and_then(|val| {
-                if let value::Value::Int(n) = &val.value {
-                    Some(*n as usize)
-                } else {
-                    None
-                }
-            });
-
-            let gpu = it.var("gpu").and_then(|val| {
-                if let value::Value::Int(n) = &val.value {
-                    Some(*n as usize)
-                } else {
-                    None
-                }
-            });
+            // a resource count is a whole number of 1 or more, as `cpu[n]`
+            // and `gpu[n]` take it
+            let count = |key: &str| {
+                it.var(key).map(|val| match &val.value {
+                    value::Value::Int(n) if *n >= 1 => *n,
+                    _ => {
+                        eprintln!("crowfile: '{}' is a count — a whole number of 1 or more, as {}[n] takes", key, key);
+                        process::exit(1);
+                    }
+                })
+            };
+            let resources = Resources { cpu: count("cpu"), gpu: count("gpu") };
 
             // parse deps: [math = '1.0', http = '2.3']
             let deps = deps_in(&it);
@@ -4571,12 +4582,65 @@ fn parse_crowfile() -> CrowfileConfig {
                 }
             }).unwrap_or_default();
 
-            CrowfileConfig { entry, cpu, gpu, deps, jobs }
+            CrowfileConfig { entry, resources, deps, jobs }
         }
         Err(e) => {
             eprintln!("error in crowfile: {}", e);
             process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod crowfile_tests {
+    use super::*;
+
+    /// Every key the spec documents is read, `cpu` and `gpu` among them —
+    /// builtins' names, which the reserved-name rule had refused as
+    /// variables, stopping every command — and a key read by another is
+    /// the same key
+    #[test]
+    fn a_crowfile_holds_every_documented_key() {
+        let file = Crowfile::run("name = 'demo'\nentry = 'app.co'\ndb = 'sqlite://dev.db'\nschema = 'verify'\ncpu = 4\ngpu = 1\ndeps = map[utils = './libs/utils']\njobs = map[train = 'jobs/train.co', again = entry]\n").expect("the crowfile runs");
+        let text = |k: &str| file.var(k).map(|v| v.value.to_string());
+        assert_eq!(text("name").as_deref(), Some("demo"));
+        assert_eq!(text("entry").as_deref(), Some("app.co"));
+        assert_eq!(text("db").as_deref(), Some("sqlite://dev.db"));
+        assert_eq!(text("schema").as_deref(), Some("verify"));
+        assert!(matches!(file.var("cpu").map(|v| &v.value), Some(value::Value::Int(4))));
+        assert!(matches!(file.var("gpu").map(|v| &v.value), Some(value::Value::Int(1))));
+        assert_eq!(deps_in(&file), vec![("utils".to_string(), "./libs/utils".to_string())]);
+        let jobs = text("jobs").unwrap_or_default();
+        assert!(jobs.contains("jobs/train.co") && jobs.contains("app.co"), "{}", jobs);
+        // an error names the key as the crowfile wrote it
+        let err = Crowfile::run("cpu = 4\ncpu = 'four'\n").err().unwrap_or_default();
+        assert!(err.contains("'cpu'") && !err.contains(CROWFILE_KEY), "{}", err);
+    }
+
+    /// The crowfile's cpu and gpu are the entry part's, which both backends
+    /// take as the program starts: the compiled program sets the default
+    /// count and turns the device on (a compiled run had taken cpu alone),
+    /// and the interpreter does the same from the same part
+    #[test]
+    fn both_modes_take_the_crowfiles_resources() {
+        let stmts = build("log['hi']\n").unwrap();
+        let (mut program, ctx) = ir_interp::prepare(&stmts, "t").unwrap();
+        Resources { cpu: Some(4), gpu: Some(1) }.apply(&mut program);
+        assert_eq!((program.parts[0].cpu, program.parts[0].gpu), (Some(4), Some(1)));
+        let emitted = emit_rs::emit_with(&program, ctx.registry.clone(), "t.co", Default::default(), false, None).expect("emitted");
+        assert!(emitted.source.contains("crow_runtime::cores::set_default(4);"), "{}", emitted.source);
+        assert!(emitted.source.contains("crow_runtime::gpu::set_gpu_enabled(true);"), "{}", emitted.source);
+        assert!(emitted.runtime_features.contains("gpu"), "{:?}", emitted.runtime_features);
+        // (in a thread of its own: the count it reads is the default)
+        let interpreted = std::thread::spawn(move || {
+            ir_interp::run(&program, &ctx.registry, "t.co").unwrap();
+            crow_runtime::cores::get()
+        })
+        .join()
+        .unwrap();
+        crow_runtime::cores::set_default(0);
+        crow_runtime::gpu::set_gpu_enabled(false);
+        assert_eq!(interpreted, 4);
     }
 }
 

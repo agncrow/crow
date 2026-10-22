@@ -66,7 +66,7 @@ crow run -i hello.co        # interpret (instant start)
 | `crow run --opt N file.co` | The same, the program optimized at level N (0 to 3, 0 unless said; the runtime crates follow above 1): a program whose own loops are the work runs many times faster at 1. `crow build` is the shipped binary, level 3 with LTO. |
 | `crow run -i file.co` | Run in the interpreter — instant start, same output (both modes are held to identical behavior). |
 | `crow run` | Run the project in the current directory: the crowfile's `entry`, `main.co` by default. |
-| `crow run <job>` | Run a named job from the crowfile's `jobs` map, compiled, e.g. `crow run train` (`crow run -i jobs/train.co` interprets it). Jobs run and exit; `main.co` is the thing that stays running. |
+| `crow run <job>` | Run a named job from the crowfile's `jobs` map, compiled, e.g. `crow run train` (`crow run -i train` interprets it). Jobs run and exit; `main.co` is the thing that stays running. |
 | `crow build [file.co]` | Compile without running: the release build, level 3 with LTO. The binary lands in the current directory, named after the file (`hello`; `main` for a project); for a file outside the directory the name is path-mangled (`examples_hello`). |
 | `crow dev [file.co]` | Serve the program with the interpreter and reload it as its files change. A change is checked first, by the gate `crow run -i` passes; a program that passes replaces the one serving, and every tab reconnects and resumes its session. A change that breaks the program leaves the last good one serving, its pages showing the refusal until a change mends it. A change to what a page's shell carries (`css/app.css`, a widget's script) reloads the tabs, and a program that serves nothing runs again. Ctrl+Shift+D opens the dev panel over the page. Nothing is compiled. |
 | `crow stop` | Stop the running app — by pidfile, then by the project binary's name, then a program the interpreter serves (`crow run -i`) and `crow dev`'s watcher with it; only processes running in this project's directory. `crow run` on a busy port tells you to use it. |
@@ -183,14 +183,16 @@ bare names — see book chapter 8.
 ## The crowfile
 
 The crowfile is a Crow file; the toolchain evaluates it and reads these
-variables. `crow new` writes only `name`.
+variables. A name it sets is a key the toolchain reads, not a program's
+variable, so a key may share a builtin's name, as `cpu` and `gpu` do.
+`crow new` writes only `name`.
 
 ```
 name = 'myapp'
 entry = 'main.co'                 --- optional: main.co is the default
 db = 'sqlite://dev.db'              --- optional: schema for crow check and the editor
 schema = 'verify'                   --- optional: what opening a connection does with the tables the program declares
-cpu = 4                             --- optional: default thread count (integer)
+cpu = 4                             --- optional: default thread count (a whole number of 1 or more)
 
 deps = map[models = 'github.com/agncrow/crow-models@v0.1.0', utils = './libs/utils']
 jobs = map[train = 'jobs/train.co', sync = 'jobs/sync.co']
@@ -199,7 +201,8 @@ jobs = map[train = 'jobs/train.co', sync = 'jobs/sync.co']
 `schema` is `'reconcile'`, `'verify'` or `'trust'`: a program run from
 source reconciles and a built program verifies unless it says otherwise
 (spec, db, The schema a program declares). `gpu`, like `cpu`, is a default
-resource count (spec, Resource Control).
+resource count (spec, Resource Control); both modes take them, for the
+entry and for a job alike.
 
 Dependencies (`deps`) take two forms:
 

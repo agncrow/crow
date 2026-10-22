@@ -271,7 +271,7 @@ fn rename(n: &mut String, renames: &BTreeMap<String, String>, visible: &BTreeSet
     }
 }
 
-fn rename_stmt(s: &mut Stmt, renames: &BTreeMap<String, String>, global: &BTreeSet<String>, locals: &BTreeSet<String>) {
+pub(crate) fn rename_stmt(s: &mut Stmt, renames: &BTreeMap<String, String>, global: &BTreeSet<String>, locals: &BTreeSet<String>) {
     let v = visible(global, locals);
     match s {
         Stmt::Assign { name, value } => {
