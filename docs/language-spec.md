@@ -3333,7 +3333,7 @@ log[len[gone]]
 
 | Function | Description |
 |---|---|
-| `insert[conn, table, frame]` | Bulk insert a frame into a table using native fast paths |
+| `insert[conn, table, frame]` | Bulk insert a frame into a table using native fast paths: the count of rows written, or, when the database refuses them — a constraint they break, a column the table lacks — an error value of kind `'db'` with the database's reason, as a refused statement is (compiled, it had stopped on a Rust unwrap) |
 
 Uses backend-specific protocols for maximum performance:
 - **PostgreSQL:** `COPY … FROM STDIN`, the text format

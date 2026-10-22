@@ -34,7 +34,7 @@ src/lower_ir/schema.rs	0	4
 src/lower_ir/shapes.rs	0	0
 src/lower_ir/uses.rs	26	0
 src/main.rs	68	9
-src/modules/db.rs	23	3
+src/modules/db.rs	22	3
 src/modules/math.rs	17	0
 src/modules/mod.rs	41	0
 src/ops.rs	28	5

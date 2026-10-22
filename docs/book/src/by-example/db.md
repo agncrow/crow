@@ -62,7 +62,8 @@ say what it touched reads it back with `RETURNING`. `describe` answers the
 columns a statement would, without running it. `transact` answers what
 its function answers, committed — or the error of a function that failed,
 its transaction rolled back. `insert` uses each backend's bulk path
-(COPY, RowBinary, batched statements) and returns the row count.
+(COPY, RowBinary, batched statements) and returns the row count, or the
+database's refusal — a key two rows share — as an error value.
 Migrations are the tool's: `crow db apply <dir> <url>`.
 
 Reference: spec section 13 (db) and book chapter 11.

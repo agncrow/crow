@@ -1883,6 +1883,14 @@ fn test_db_import() {
 fn test_db_insert() {
     let rust = transpile("use db\nconn = connect['sqlite://test.db']\ndf = query[conn, 'SELECT * FROM t']\ninsert[conn, 'backup', df]\n");
     assert!(rust.contains(".insert("), "should emit .insert()\n{}", rust);
+    // the database's refusal is the call's answer, as the interpreter's is:
+    // unwrapped, rows that broke a constraint had panicked the program
+    let at = rust.find(".insert(").expect("the insert");
+    let call: String = rust[at..].chars().take(80).collect();
+    assert!(!call.contains(".unwrap()"), "an insert is never unwrapped: {}", call);
+    assert!(rust.contains("Err(_e) => CrowResult { ok: false, value: 0_i64, reason: _e, kind: \"db\".to_string()"), "the refusal answered\n{}", rust);
+    // (given a frame that can fail, answered once: not wrapped twice)
+    assert!(!rust.contains("CrowResult { ok: true, value: { match conn.insert("), "wrapped twice\n{}", rust);
 }
 
 // --- P4: Response format codegen tests ---

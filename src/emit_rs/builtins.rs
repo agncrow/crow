@@ -154,6 +154,17 @@ impl Emitter {
         )
     }
 
+    /// `insert[conn, table, frame]`: the count of rows written, or the
+    /// database's refusal as an error value of kind 'db', as the
+    /// interpreter answers (it had been unwrapped: a constraint the rows
+    /// broke panicked the program).
+    fn db_insert(&self, conn: &str, table: &str, frame: &str) -> String {
+        format!(
+            "{{ match {}.insert(&{}, &{}) {{ Ok(_n) => CrowResult {{ ok: true, value: _n, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_e) => CrowResult {{ ok: false, value: 0_i64, reason: _e, kind: \"db\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
+            conn, table, frame
+        )
+    }
+
     /// `describe[conn, sql]`: the columns a statement answers, as a frame
     /// of name and kind; what the compiler asks at build time, asked by
     /// the program as it runs.
@@ -225,7 +236,7 @@ impl Emitter {
                 "connect" => return self.db_connect(args, arg_strs),
                 "query" | "__query_write" if arg_strs.len() >= 2 => return self.db_query(f, &arg_strs[0], &arg_strs[1], &args[2..]),
                 "describe" if arg_strs.len() == 2 => return self.db_describe(&arg_strs[0], &arg_strs[1]),
-                "insert" if arg_strs.len() == 3 => return format!("{}.insert(&{}, &{}).unwrap()", arg_strs[0], arg_strs[1], arg_strs[2]),
+                "insert" if arg_strs.len() == 3 => return self.db_insert(&arg_strs[0], &arg_strs[1], &arg_strs[2]),
                 "transact" if arg_strs.len() == 2 => return self.db_transact(&arg_strs[0], &arg_strs[1]),
                 _ => {}
             }
@@ -714,7 +725,7 @@ impl Emitter {
             "connect" if db => self.db_connect(args, a),
             "query" | "__query_write" if db && n >= 2 => self.db_query(name, &a[0], &a[1], &args[2..]),
             "describe" if db && n == 2 => self.db_describe(&a[0], &a[1]),
-            "insert" if db && n == 3 => format!("{}.insert(&{}, &{}).unwrap()", a[0], a[1], a[2]),
+            "insert" if db && n == 3 => self.db_insert(&a[0], &a[1], &a[2]),
             "transact" if db && n == 2 => self.db_transact(&a[0], &a[1]),
             "page" if web && (n == 2 || n == 3) => self.page_route(args, a),
             "fetch" if n == 1 => format!("{{ __crow_state.register_fetch(\"_anon\", &{}, Vec::new()); serde_json::Value::Null }}", a[0]),

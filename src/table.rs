@@ -2706,7 +2706,9 @@ pub static FORMS: &[Row] = &[
     // the program runs — its writing twin, hidden, written as `query`
     Row { provider: Some(&Provider { connection: 0, statement: 1, columns: crow_db::describe::columns, writes: crow_db::describe::writes }), props: &[Prop::Does(crate::effects::Effect::DbRead)], ..form!("db.query", "db", "query", (Shown, Str, Shows)) },
     Row { written: "query", provider: Some(&Provider { connection: 0, statement: 1, columns: crow_db::describe::columns, writes: crow_db::describe::writes }), props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.__query_write", "db", "__query_write", (Shown, Str, Shows)) },
-    Row { props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.insert", "db", "insert", (Shows)) },
+    // (a bulk insert the database refuses answers why, as a statement's
+    // refusal does: an error value of kind 'db')
+    Row { fails: Fails::Value("db"), props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.insert", "db", "insert", (Shows)) },
     Row { params: &[Kind::Db, Kind::FnOf(&TX_BODY)], props: &[Prop::Does(crate::effects::Effect::DbWrite)], ..form!("db.transact", "db", "transact", ()) },
     form!("db.describe", "db", "describe", (Shows)),
     // (counted by nothing, as before: `later`, a control, the harness verbs)
@@ -2973,6 +2975,13 @@ pub fn core(name: &str) -> Option<&'static Row> {
 /// parsed value) has its row picked from the values as the program runs.
 pub fn core_row(name: &str, args: &[Arg]) -> Option<&'static Row> {
     ROWS.iter().filter(|r| r.module.is_empty() && r.name == name).find(|r| takes(r, args))
+}
+
+/// Whether a form of the name says it answers its failure as a value
+/// (`fails`), as a row that can fail does: what the Rust backend reads of a
+/// form that prints itself (db's `insert`).
+pub fn form_fails(name: &str) -> bool {
+    FORMS.iter().any(|r| r.name == name && matches!(r.fails, Fails::Value(_)))
 }
 
 /// A form that says what it answers (`Prop::Answers`), for a call with

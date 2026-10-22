@@ -119,7 +119,7 @@ fn call_db(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
             };
             match conn.query(sql, &params) {
                 Ok(frame) => Ok(CrowValue::ok(Value::Frame(Box::new(frame)))),
-                Err(e) => Ok(CrowValue::error_with_kind(&e, "db", "")),
+                Err(e) => Ok(refused(&e)),
             }
         }
         "insert" => {
@@ -133,8 +133,14 @@ fn call_db(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
                 Value::Frame(f) => f,
                 _ => return Err("insert[] data must be a frame".into()),
             };
-            let count = conn.insert(table, frame)?;
-            Ok(CrowValue::ok(Value::Int(count)))
+            // a bulk insert the database refuses (a constraint, a column it
+            // lacks) is an error value of kind 'db', as a refused statement
+            // is (spec, Fallible Builtins): it had stopped the program, and
+            // the compiled program had stopped on a Rust unwrap
+            match conn.insert(table, frame) {
+                Ok(count) => Ok(CrowValue::ok(Value::Int(count))),
+                Err(e) => Ok(refused(&e)),
+            }
         }
         "describe" => {
             // describe[conn, sql]: the columns a statement answers, as a
@@ -146,7 +152,7 @@ fn call_db(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
             let sql = to_str(&args[1], "describe")?;
             match conn.describe(sql) {
                 Ok(cols) => Ok(CrowValue::ok(Value::Frame(Box::new(crow_db::driven::describe_frame(&cols))))),
-                Err(e) => Ok(CrowValue::error_with_kind(&e, "db", "")),
+                Err(e) => Ok(refused(&e)),
             }
         }
         "transact" => {
@@ -156,6 +162,12 @@ fn call_db(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
         }
         _ => Err(format!("unknown db function: {}", name)),
     }
+}
+
+/// What the database refused, as the error value a statement, a bulk
+/// insert and a description answer: kind 'db', with no trace of its own.
+fn refused(reason: &str) -> CrowValue {
+    CrowValue::error_with_kind(reason, "db", "")
 }
 
 /// The leftmost value that failed among a statement's parameters, a list
@@ -219,7 +231,7 @@ fn db_type_of(name: &str) -> Ty {
         "connect" => Ty::Handle(&crate::table::DB),
         "query" | "__query_write" => Ty::Result(Box::new(Ty::Frame(None))),
         "describe" => Ty::Result(Box::new(Ty::Frame(None))),
-        "insert" => Ty::Int,
+        "insert" => Ty::Result(Box::new(Ty::Int)),
         "transact" => Ty::Unknown,
         _ => Ty::Unknown,
     }

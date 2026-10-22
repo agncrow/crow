@@ -1,0 +1,42 @@
+--- A bulk insert the database refuses — rows that break a constraint, a
+--- column the table lacks — answers an error value of kind 'db' with the
+--- database's reason, as a statement the database refuses does (spec,
+--- Fallible Builtins), and nothing of it is written. The compiled program
+--- had unwrapped the answer and panicked, where the interpreter stopped
+--- with the reason; dropped by its line, the failure now halts the program
+--- as any value that failed does.
+use db
+use frame
+c = connect['sqlite://:memory:']
+query[c, 'CREATE TABLE t (id INTEGER PRIMARY KEY, v REAL NOT NULL)']
+
+--- a key two rows share
+twice = frame.new[id = [1, 1], v = [1.5, 2.5]]
+n = insert[c, 't', twice]
+log[n.ok]
+log[n.reason]
+log[n.kind]
+log[len[query[c, 'SELECT id FROM t']]]
+
+--- rows the table takes
+log[insert[c, 't', frame.new[id = [5, 6], v = [1.5, 2.5]]]]
+log[len[query[c, 'SELECT id FROM t']]]
+
+--- a column the table lacks
+odd = insert[c, 't', frame.new[id = [7], w = [1.0]]]
+log[odd.ok]
+log[odd.kind]
+
+--- inside a function, handed back to its caller
+fn put[c, rows]
+    k = insert[c, 't', rows]
+    return k + 1
+
+log[put[c, frame.new[id = [8], v = [1.0]]]]
+again = put[c, frame.new[id = [8], v = [1.0]]]
+log[again.ok]
+log[again.reason]
+
+--- dropped by its line, the failure halts the program
+insert[c, 't', frame.new[id = [8], v = [2.0]]]
+log['not reached']

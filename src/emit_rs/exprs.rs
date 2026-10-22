@@ -2012,6 +2012,12 @@ impl Emitter {
                         return matches!(t, Ty::Result(_));
                     }
                 }
+                // (a form whose row says it answers its failure, as db's
+                // statements print themselves: the table's word, not a name
+                // here)
+                if crate::table::form_fails(name) {
+                    return true;
+                }
                 // (math's sign[x] is no token's)
                 FALLIBLE_BUILTINS.contains(&name) && !(name == "sign" && raw_args.len() != 2)
             }
