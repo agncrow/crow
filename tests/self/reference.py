@@ -2320,7 +2320,7 @@ def llm_answers():
         "reach-options": "org/model\nhttp://127.0.0.1:8000\n/api/v1\nSELF_KEY",
         "reach-no-key": "cannot reach 'openai://api.example.com/gpt': the key's variable OPENAI_API_KEY is not set",
         "reach-anthropic-no-key": "cannot reach 'anthropic://claude-x': the key's variable ANTHROPIC_API_KEY is not set",
-        "reach-no-model": "cannot reach 'anthropic://': no model is named — anthropic://claude-sonnet-5",
+        "reach-no-model": "cannot reach 'anthropic://': no model is named — anthropic://claude-sonnet-5-5",
         "reach-host-no-model": "cannot reach 'openai://localhost:11434': a model is named after its host — openai://localhost:11434/llama3.2",
         "reach-scheme": "cannot reach 'http://x': a model's URL is anthropic://<model> or openai://<host>/<model>",
         "chat": "\n".join([hi_there, "end", "1", str(len(hi_there.split())), "0"]),

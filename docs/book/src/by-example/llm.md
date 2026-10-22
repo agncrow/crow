@@ -83,7 +83,7 @@ whole = reply[s]
 log[whole.ok]
 e = embed[m, ['one', 'two']]
 log[e.ok]
-a = reach['anthropic://claude-sonnet-5?key=CROW_BOOK_NO_SUCH_KEY']
+a = reach['anthropic://claude-sonnet-5-5?key=CROW_BOOK_NO_SUCH_KEY']
 log[a.reason]
 ```
 
@@ -94,7 +94,7 @@ false
 false
 false
 false
-cannot reach 'anthropic://claude-sonnet-5?key=CROW_BOOK_NO_SUCH_KEY': the key's variable CROW_BOOK_NO_SUCH_KEY is not set
+cannot reach 'anthropic://claude-sonnet-5-5?key=CROW_BOOK_NO_SUCH_KEY': the key's variable CROW_BOOK_NO_SUCH_KEY is not set
 ```
 
 Tools are the functions themselves: `tools = [weather]` hands the function,

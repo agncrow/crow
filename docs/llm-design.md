@@ -20,7 +20,7 @@ unchanged against a hosted one.
 ```
 use llm
 
-m = connect['anthropic://claude-sonnet-5']
+m = connect['anthropic://claude-sonnet-5-5']
 chat = user['What is the capital of Mongolia?']
 r = chat[m, chat, system = 'Answer in one word.']
 log[r.text]                                  --- Ulaanbaatar
@@ -152,7 +152,7 @@ keep theirs.
 ## Design notes
 
 **A model as a connection.** Considered: the model named on every call
-(`chat['anthropic://claude-sonnet-5', chat]`), as many SDKs take a model
+(`chat['anthropic://claude-sonnet-5-5', chat]`), as many SDKs take a model
 string. Decided: `connect`, as `db`'s `connect[url]` and `web.mail`'s
 `smtp` make a handle once; the URL is parsed and the key's presence
 checked where the program says it, and a program's calls read as calls on

@@ -3412,7 +3412,7 @@ Import with `use llm`. A language model as a connection: one way to ask a model,
 ```
 use llm
 
-m = reach['anthropic://claude-sonnet-5']
+m = reach['anthropic://claude-sonnet-5-5']
 talk = ask['What is the capital of Mongolia?']
 r = chat[m, talk, system = 'Answer in one word.']
 log[r.text]                              --- Ulaanbaatar

@@ -29,7 +29,7 @@ fn weather[city]
     r = request['https://wttr.in/`trim[city]`?format=j1']
     return str[json[r.body].current_condition[0].temp_C]
 
-m = reach['anthropic://claude-sonnet-5']
+m = reach['anthropic://claude-sonnet-5-5']
 done = act[m, ask['Is it warmer in Lisbon or Porto?'], tools = [weather], rounds = 8]
 log[done.text]            --- the answer
 log[done.stop]            --- end, or the limit that stopped the run

@@ -59,7 +59,7 @@ fn reach[url]
     if starts[plain, 'anthropic://']
         model = slice[plain, 12, len[plain]]
         if len[model] eq 0
-            return error['cannot reach \'`url`\': no model is named — anthropic://claude-sonnet-5', 'llm']
+            return error['cannot reach \'`url`\': no model is named — anthropic://claude-sonnet-5-5', 'llm']
         key = 'ANTHROPIC_API_KEY'
         if 'key' in pairs
             key = pairs['key']
@@ -1444,9 +1444,9 @@ test a_models_url_is_read_apart[]
     assert[not reach['anthropic://'].ok]
     assert[not reach['https://api.anthropic.com'].ok]
     assert[reach['ftp://x'].reason eq 'cannot reach \'ftp://x\': a model\'s URL is anthropic://<model> or openai://<host>/<model>']
-    unset = reach['anthropic://claude-sonnet-5?key=CROW_LLM_TEST_NO_SUCH_KEY']
+    unset = reach['anthropic://claude-sonnet-5-5?key=CROW_LLM_TEST_NO_SUCH_KEY']
     assert[not unset.ok]
-    assert[unset.reason eq 'cannot reach \'anthropic://claude-sonnet-5?key=CROW_LLM_TEST_NO_SUCH_KEY\': the key\'s variable CROW_LLM_TEST_NO_SUCH_KEY is not set']
+    assert[unset.reason eq 'cannot reach \'anthropic://claude-sonnet-5-5?key=CROW_LLM_TEST_NO_SUCH_KEY\': the key\'s variable CROW_LLM_TEST_NO_SUCH_KEY is not set']
 
 --- a conversation grows a turn at a time, each in the one shape
 test a_conversation_is_built_a_turn_at_a_time[]

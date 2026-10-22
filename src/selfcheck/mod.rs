@@ -152,7 +152,7 @@ fn values() -> Vec<Val> {
         // empty replay answers in place of the network)
         Val { name: "socket".into(), expr: "socket['ws://127.0.0.1:9/self']".into(), setup: Vec::new(), imports: vec!["web.ws"] },
         Val { name: "mailer".into(), expr: "smtp['127.0.0.1', 9, 'u', 'p']".into(), setup: Vec::new(), imports: vec!["web.mail"] },
-        Val { name: "model".into(), expr: "reach['anthropic://claude-sonnet-5']".into(), setup: Vec::new(), imports: vec!["llm"] },
+        Val { name: "model".into(), expr: "reach['anthropic://claude-sonnet-5-5']".into(), setup: Vec::new(), imports: vec!["llm"] },
         Val { name: "talk".into(), expr: "ask['hello']".into(), setup: Vec::new(), imports: vec!["llm"] },
         plain("record", "SelfP[1, 2]"),
         plain("fn", "self_double"),
@@ -945,8 +945,8 @@ const WRITTEN: &[(&str, &str)] = &[
     ("frame.window_one", "window[sf, 'a', 'lag', n = 1]"),
     // (an address nothing answers; the empty replay answers a model)
     ("core.request", "request['http://127.0.0.1:9/self']"),
-    ("llm.chat", "chat[reach['anthropic://claude-sonnet-5'], ask['hello'], system = 'One word.']"),
-    ("llm.follow", "follow[reach['anthropic://claude-sonnet-5'], ask['hello'], system = 'One word.']"),
+    ("llm.chat", "chat[reach['anthropic://claude-sonnet-5-5'], ask['hello'], system = 'One word.']"),
+    ("llm.follow", "follow[reach['anthropic://claude-sonnet-5-5'], ask['hello'], system = 'One word.']"),
     // (a duration a case can wait out)
     ("core.sleep", "sleep[0.01]"),
     // (the layer's rows whose answer is the process's or the machine's —

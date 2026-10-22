@@ -458,7 +458,7 @@ moved = transact[conn, rebalance]       --- committed; rolled back where rebalan
 ```
 use llm
 
-m = reach['anthropic://claude-sonnet-5']   --- the key comes from ANTHROPIC_API_KEY
+m = reach['anthropic://claude-sonnet-5-5']   --- the key comes from ANTHROPIC_API_KEY
 --- (openai://localhost:11434/llama3.2 reaches Ollama, or any OpenAI-compatible server)
 r = chat[m, ask['Capital of Mongolia?'], system = 'One word.', tokens = 50]
 log[r.text]                     --- also r.calls, r.usage.input, r.stop: end, tool, length, other
@@ -484,7 +484,7 @@ log[done.steps]                 --- a frame: a row per model call and tool call
 ```
 use llm, mcp
 
-m = reach['anthropic://claude-sonnet-5']
+m = reach['anthropic://claude-sonnet-5-5']
 s = server['http://localhost:8000/mcp']
 --- (or a process over stdio: server[command = 'npx -y @modelcontextprotocol/server-filesystem /tmp'])
 log[catalog[s][0].name]                       --- the tools it offers; discover[s] says what it is
