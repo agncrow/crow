@@ -194,11 +194,16 @@ impl Issue {
                 else { format!("if intended, accept with a and the baseline moves; otherwise fix the cause{}", where_) }
             }
             Issue::UiRule { fix, .. } => fix.clone(),
+            // (a name beginning with `_` is one the check asks nothing of; a
+            // bare `_` is no name: the parser takes it nowhere)
             Issue::UnusedVariable { var, line, .. } =>
                 if *line == 0 {
-                    format!("remove parameter '{}'", var)
+                    format!("remove parameter '{}', or name it '_{}' where its callers hand it anyway", var, var)
                 } else {
-                    format!("remove '{}' or use _ for destructuring", var)
+                    format!(
+                        "remove '{}' and what makes it, or name it '_{}' to keep a value nobody reads on purpose — a call that can fail, left alone on its line, hands its failure on, and the top level halts on it",
+                        var, var
+                    )
                 },
             Issue::UnreachableCode { .. } =>
                 "remove the dead code or move it before the return".to_string(),
@@ -1267,7 +1272,9 @@ fn collect_callees_from_expr(expr: &Expr, callees: &mut BTreeSet<String>) {
 
 // --- Static checks ---
 
-/// Find unused variables within a function body.
+/// Find unused variables within a function body. A name beginning with
+/// `_` is kept unread on purpose (`_kept = rm[tmp]` holds a failure it
+/// ignores; spec, a value that can fail, dropped by its line).
 fn find_unused_vars_in_fn(
     name: &str, params: &[String], body: &[Stmt], extra_reads: &BTreeSet<String>,
 ) -> Vec<Issue> {
@@ -1276,7 +1283,7 @@ fn find_unused_vars_in_fn(
     let mut read: BTreeSet<String> = extra_reads.clone();
     collect_reads_from_stmts(body, &mut read);
     for p in params {
-        if !read.contains(p) {
+        if !read.contains(p) && !p.starts_with('_') {
             issues.push(Issue::UnusedVariable {
                 func: name.to_string(), var: p.clone(), line: 0,
             });
@@ -1284,7 +1291,7 @@ fn find_unused_vars_in_fn(
     }
     collect_assigns_from_stmts(body, &mut assigned);
     for (var, line) in &assigned {
-        if !read.contains(var) && var != "_" {
+        if !read.contains(var) && !var.starts_with('_') {
             issues.push(Issue::UnusedVariable {
                 func: name.to_string(), var: var.clone(), line: *line,
             });
@@ -2680,6 +2687,29 @@ mod tests {
         let issues = run_static_checks(&ctx, &stmts);
         let unused_in_add: Vec<_> = issues.iter().filter(|i| matches!(i, Issue::UnusedVariable { func, .. } if func == "add")).collect();
         assert!(unused_in_add.is_empty(), "add uses both params, no unused vars expected");
+    }
+
+    /// The advice for an unused variable names a form that parses and that
+    /// the check leaves be: `_kept`. It had said "use _", and `_ = …` parses
+    /// nowhere; nor may it lead to the call alone on its line, which hands
+    /// a failure on (the top level halts on it)
+    #[test]
+    fn an_unused_variables_advice_names_a_form_that_parses_and_is_left_be() {
+        let src = "fn tidy[path]\n    _kept = rm[path]\n    swept = rm[path]\n    return 1\nlog[tidy['x.tmp']]\n";
+        let (stmts, ctx) = parse_and_infer(src);
+        let issues = run_static_checks(&ctx, &stmts);
+        let unused: Vec<&Issue> = issues.iter().filter(|i| matches!(i, Issue::UnusedVariable { .. })).collect();
+        assert_eq!(unused.len(), 1, "{:?}", unused);
+        assert!(matches!(unused[0], Issue::UnusedVariable { var, .. } if var == "swept"), "{:?}", unused);
+        let advice = unused[0].suggest();
+        assert!(advice.contains("'_swept'") && !advice.contains("use _"), "{}", advice);
+        // the form it names parses, and the check leaves it be
+        let renamed = src.replace("swept = rm[path]", "_swept = rm[path]");
+        let (stmts, ctx) = parse_and_infer(&renamed);
+        assert!(!run_static_checks(&ctx, &stmts).iter().any(|i| matches!(i, Issue::UnusedVariable { .. })));
+        assert!(crate::build("_ = 3\n").is_err(), "a bare _ is no name");
+        let (stmts, ctx) = parse_and_infer("fn on_pick[_value]\n    return 1\nlog[on_pick[2]]\n");
+        assert!(!run_static_checks(&ctx, &stmts).iter().any(|i| matches!(i, Issue::UnusedVariable { .. })), "a parameter kept for its callers");
     }
 
     #[test]

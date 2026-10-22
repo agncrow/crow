@@ -17,7 +17,6 @@ true  false                          literals
 eq  ne  gt  lt  gte  lte            comparison (words, not symbols)
 and  or  not  then                   logic and chaining
 in  not in                           membership: an item, a part, a key, a mask over a column
-_                                    discard
 ```
 
 There is no `class`, `lambda`, `async`, `await`, `try`, `catch`,
@@ -47,6 +46,7 @@ are no braces, semicolons, or parentheses for calls.
 
 ```text
 x = 1                      bind (rebinding is fine; values never mutate in place)
+_kept = rm[tmp]            a value kept unread on purpose: crow check asks nothing of a name beginning with _
 a, b = x, y                parallel assignment
 s.field = v   xs[i] = v    field and index assignment (a fresh value, not a mutation)
 fn name[a, b = 1.0]        function; defaults are literals, callers may name them
