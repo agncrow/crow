@@ -298,7 +298,21 @@ impl<'c> Uses<'c> {
                 self.walk_expr(condition, env);
                 self.walk_block(body, env);
             }
-            S::FieldAssign { object, value, .. } | S::IndexAssign { object, value, .. } => {
+            S::FieldAssign { object, field, value } => {
+                self.walk_expr(object, env);
+                self.walk_expr(value, env);
+                // a column written on a loaded frame (`df.when = …`) is the
+                // program's from here on: the reads after it say nothing of
+                // the file, which need not have it (a moment column written
+                // and compared had been asked of the file, and the load
+                // stopped: "the frame has no column 'when'")
+                if let A::Ident(df) = object
+                    && let Some(key) = env.frames.get(df)
+                {
+                    env.written.insert((key.clone(), field.clone()));
+                }
+            }
+            S::IndexAssign { object, value, .. } => {
                 self.walk_expr(object, env);
                 self.walk_expr(value, env);
             }
@@ -306,12 +320,16 @@ impl<'c> Uses<'c> {
         }
     }
 
-    /// The frame and column a value walks (`df.col`), when the frame is loaded.
+    /// The frame and column a value walks (`df.col`), when the frame is
+    /// loaded and the column is the file's (not one the program wrote).
     fn column_of(&self, e: &A, env: &Env) -> Option<(FrameKey, String)> {
         if let A::FieldAccess { object, field } = e {
             if let A::Ident(df) = object.as_ref() {
                 if let Some(key) = env.frames.get(df) {
-                    return Some((key.clone(), field.clone()));
+                    let column = (key.clone(), field.clone());
+                    if !env.written.contains(&column) {
+                        return Some(column);
+                    }
                 }
             }
         }
@@ -369,7 +387,9 @@ impl<'c> Uses<'c> {
                     if self.ctx.functions.contains_key(&key) {
                         for (i, a) in positional.iter().enumerate() {
                             if let Some(frame) = frame_of(a, env) {
-                                self.frame_handed(&key, i, frame);
+                                // (with the columns the caller wrote on it)
+                                let written: HashSet<(FrameKey, String)> = env.written.iter().filter(|(k, _)| *k == frame).cloned().collect();
+                                self.frame_handed(&key, i, frame, written);
                             }
                         }
                     }
@@ -508,8 +528,9 @@ impl<'c> Uses<'c> {
 
     /// A function handed a frame: its body walked with the parameter as
     /// that frame, so its reads are the frame's (once per frame handed;
-    /// a body that hands it on again to itself stops there).
-    fn frame_handed(&mut self, f: &str, at: usize, frame: FrameKey) {
+    /// a body that hands it on again to itself stops there) — those of a
+    /// column the caller wrote on it before the call excepted.
+    fn frame_handed(&mut self, f: &str, at: usize, frame: FrameKey, written: HashSet<(FrameKey, String)>) {
         let key = (f.to_string(), at, frame.clone());
         if !self.walking_frames.insert(key.clone()) {
             return;
@@ -521,6 +542,7 @@ impl<'c> Uses<'c> {
                 let mut env = Env::new(top.iter().map(|n| (n.clone(), (TOP.to_string(), n.clone()))).collect());
                 env.body = f.to_string();
                 env.frames.insert(param, frame);
+                env.written = written;
                 let line = self.line;
                 self.walk_block(&sig.body, &mut env);
                 self.line = line;
@@ -570,11 +592,15 @@ struct Env {
     cells: HashMap<String, (FrameKey, String)>,
     /// the locals the body gave a literal, and the kind each says
     kinds: HashMap<String, Ty>,
+    /// the columns the body has written on a loaded frame so far (`df.when
+    /// = …`), in the order it runs: read after the write, a column is the
+    /// program's own, not the file's
+    written: HashSet<(FrameKey, String)>,
 }
 
 impl Env {
     fn new(frames: HashMap<String, FrameKey>) -> Self {
-        Env { body: String::new(), frames, cells: HashMap::new(), kinds: HashMap::new() }
+        Env { body: String::new(), frames, cells: HashMap::new(), kinds: HashMap::new(), written: HashSet::new() }
     }
 }
 
@@ -783,6 +809,22 @@ mod tests {
         assert_eq!(df.get("qty"), None, "{:?}", df);
         assert_eq!(df.get("sym"), Some(&Ty::Str), "{:?}", df);
         assert_eq!(df.get("px"), Some(&Ty::Float), "{:?}", df);
+    }
+
+    /// A column the program writes on a loaded frame is its own from then
+    /// on: what it reads of it after the write — on the frame, on a frame
+    /// derived from it, in a function handed it — says nothing of the file
+    /// (a column of moments written and compared had been held to the
+    /// file, and the load stopped); a read before the write is the file's,
+    /// and the file's other columns are read as ever.
+    #[test]
+    fn a_column_written_before_it_is_read_is_not_the_files() {
+        let s = shapes("use frame\nfn recent[f]\n    kept = f[f.when gte moment[0]]\n    return kept.sym\ndf = frame.load[args[][0]]\nfor t in df.at\n    log[t gt moment[0]]\ndf.when = [moment[0]]\ndf.at = [moment[0]]\nlate = df[df.when gt moment[0]]\nlog[late.when gt moment[1]]\nlog[recent[df]]\nfor q in df.qty\n    log[q * 2.0]\n");
+        let df = s.frames.get(&(TOP.to_string(), "df".to_string())).expect("df");
+        assert_eq!(df.get("when"), None, "{:?}", df);
+        assert_eq!(df.get("at"), Some(&Ty::Moment), "{:?}", df);
+        assert_eq!(df.get("qty"), Some(&Ty::Float), "{:?}", df);
+        assert!(s.conflicts.is_empty(), "{:?}", s.conflicts);
     }
 
     /// A column read as text and as a number is refused, naming both reads;

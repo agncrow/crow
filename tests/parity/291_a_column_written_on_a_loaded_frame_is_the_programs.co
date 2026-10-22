@@ -1,0 +1,37 @@
+--- A column the program writes on a loaded frame is the program's from
+--- then on: what it reads of it after the write says nothing of the file,
+--- which need not have it (spec, Frames: a loaded frame has the columns
+--- the program reads). A column of moments written and compared had been
+--- asked of the file, and the load stopped in both modes — "the frame has
+--- no column 'when'" — where a column of ints written and compared ran.
+use frame
+
+write['parity_291.csv', 'sym,qty\nAAPL,10\nMSFT,30\nIBM,20\n']
+df = frame.load['parity_291.csv']
+rm['parity_291.csv']
+
+--- moments written, then compared: a mask over the program's own column
+df.when = [moment[1767225600], moment[1772323200], moment[1777593600]]
+late = df[df.when gt moment[1769904000]]
+log[len[late]]
+log[late.sym]
+
+--- ints written, then compared, as before
+df.n = [1, 2, 3]
+big = df[df.n gt 1]
+log[len[big]]
+
+--- a function handed the frame after the write reads the written column
+fn recent[f, since]
+    kept = f[f.when gte since]
+    return kept.sym
+
+log[recent[df, moment[1772323200]]]
+
+--- the file's own column, read after the write, is still the file's
+for q in df.qty
+    log[q * 2]
+
+--- a file's column written over is the program's from then on
+df.qty = [1.5, 2.5, 3.5]
+log[df.qty[0] + 1]
