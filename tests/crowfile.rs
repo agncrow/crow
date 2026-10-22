@@ -31,3 +31,20 @@ fn a_crowfile_with_cpu_and_gpu_runs_its_entry_and_its_jobs() {
     assert!(!ok && said.contains("'cpu' is a count"), "{}", said);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `crow build --ir` with no file prints the crowfile's entry with the
+/// crowfile's counts, as the build compiles it: the printing flags had
+/// taken the entry and left its `cpu` and `gpu` behind.
+#[test]
+fn the_printed_ir_carries_the_crowfiles_counts() {
+    let dir = std::env::temp_dir().join(format!("crow_crowfile_ir_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("crowfile"), "name = 'res'\ncpu = 3\n").unwrap();
+    std::fs::write(dir.join("main.co"), "log['hi']\n").unwrap();
+    let (ok, said) = crow(&dir, &["build", "--ir"]);
+    assert!(ok && said.lines().any(|l| l.trim() == "cpu 3"), "{}", said);
+    let (ok, said) = crow(&dir, &["build", "--ir", "main.co"]);
+    assert!(ok && !said.lines().any(|l| l.trim() == "cpu 3"), "a file named is built as itself: {}", said);
+    let _ = std::fs::remove_dir_all(&dir);
+}

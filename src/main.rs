@@ -2373,10 +2373,19 @@ static RECORD_FIXTURES: std::sync::atomic::AtomicBool = std::sync::atomic::Atomi
 
 fn cmd_build() {
     let args: Vec<String> = std::env::args().collect();
+    // the file named, or the crowfile's entry with its resources, as a
+    // build without a printing flag takes them
+    let named_or_entry = || match args.iter().skip(2).find(|a| !a.starts_with('-')).cloned() {
+        Some(file) => (file, Resources::default()),
+        None => {
+            let config = parse_crowfile();
+            (config.entry, config.resources)
+        }
+    };
     if args.iter().any(|a| a == "--rs") {
         PRINT_RS.store(true, std::sync::atomic::Ordering::SeqCst);
-        let file = args.iter().skip(2).find(|a| !a.starts_with('-')).cloned().unwrap_or_else(|| parse_crowfile().entry);
-        transpile_and_compile(&file, true, Resources::default(), false, 0);
+        let (file, resources) = named_or_entry();
+        transpile_and_compile(&file, true, resources, false, 0);
         return;
     }
     // `crow build --types file.co`: every type inference found, each
@@ -2392,9 +2401,12 @@ fn cmd_build() {
     // `crow build --ir file.co`: the program's one typed form, printed
     // (docs/ir-design.md); nothing is compiled
     if args.iter().any(|a| a == "--ir") {
-        let file = args.iter().skip(2).find(|a| !a.starts_with('-')).cloned().unwrap_or_else(|| parse_crowfile().entry);
-        match ir_of_file(&file, describing()) {
-            Ok(text) => print!("{}", text),
+        let (file, resources) = named_or_entry();
+        match program_of_file(&file, describing()) {
+            Ok(mut program) => {
+                resources.apply(&mut program);
+                print!("{}", ir::print(&program))
+            }
             Err(e) => refuse(&file, &read_file(&file), &e),
         }
         return;
