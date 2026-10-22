@@ -4536,7 +4536,7 @@ crow launch 4 file.co     --- build + run on 4 distributed processes
 **`.env` auto-loading:** Both `crow run` and `crow build` automatically load a `.env` file from the current directory if it exists. Each line should be `KEY=VALUE`. Lines starting with `#` are comments. Quoted values (`'...'` or `"..."`) are unquoted. Real environment variables take priority over `.env` values — the file only sets variables that aren't already set.
 
 `crow fmt` auto-formats Crow source files. Formatting rules:
-- 2-space indentation (normalizes tabs, 4-space, or mixed indentation)
+- 4-space indentation, the unit every example here and in the book writes (normalizes tabs, 2-space, or mixed indentation)
 - No trailing whitespace
 - At most one consecutive blank line
 - Single newline at end of file

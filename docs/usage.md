@@ -135,7 +135,7 @@ Without `crow book`, the pages still read fine from disk and the buttons say how
 
 | Command | What it does |
 |---|---|
-| `crow fmt [file.co …]` | Format the files named, or the crowfile's entry: 2-space indentation, no trailing whitespace, at most one blank line, single trailing newline. Source-level, so comments and `then` chains are preserved exactly. A file that does not parse is left as it is, and the run stops at it with its error. |
+| `crow fmt [file.co …]` | Format the files named, or the crowfile's entry: 4-space indentation, no trailing whitespace, at most one blank line, single trailing newline. Source-level, so comments and `then` chains are preserved exactly. A file that does not parse is left as it is, and the run stops at it with its error. |
 | `crow fmt --check` | Exit 1 if anything needs formatting, naming each file; nothing is written. |
 | `crow fmt --fix-interpolation` | Migrate pre-backtick `{expr}` strings to `` `expr` ``. |
 | `crow fmt --fix-views` | Migrate ui-building `fn` declarations to `view` declarations. |

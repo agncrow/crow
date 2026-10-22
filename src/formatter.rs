@@ -1,7 +1,8 @@
 /// Crow source code formatter
 ///
-/// Normalizes indentation (2 spaces), trailing whitespace,
-/// blank lines, and final newline. Works at the source level
+/// Normalizes indentation (4 spaces, the unit every document, the book,
+/// the spec's examples and the standard modules write), trailing
+/// whitespace, blank lines, and final newline. Works at the source level
 /// (not AST) to preserve comments, then chains, and all syntax.
 
 /// Format a Crow source string. Returns formatted source.
@@ -40,9 +41,9 @@ pub fn format_source(source: &str) -> Result<String, String> {
         let leading = leading_whitespace_len(line);
         let level = if indent_size > 0 { leading / indent_size } else { 0 };
 
-        // Emit with normalized 2-space indentation
+        // Emit with normalized 4-space indentation
         for _ in 0..level {
-            output.push_str("  ");
+            output.push_str("    ");
         }
         output.push_str(trimmed);
         output.push('\n');
@@ -78,7 +79,7 @@ fn detect_indent_size(source: &str) -> usize {
         }
     }
 
-    min_indent.unwrap_or(2)
+    min_indent.unwrap_or(4)
 }
 
 /// Count leading whitespace as equivalent spaces (tab = 4 spaces).
@@ -110,18 +111,26 @@ mod tests {
         assert_eq!(result, "x = 1\ny = 2\n");
     }
 
+    /// The unit is four spaces, as every document, the book and the
+    /// standard modules write (it had been two)
     #[test]
-    fn test_normalize_indent_4_to_2() {
-        let input = "if true\n    x = 1\n    y = 2\n";
+    fn test_normalize_indent_2_to_4() {
+        let input = "if true\n  x = 1\n  y = 2\n";
         let result = format_source(input).unwrap();
-        assert_eq!(result, "if true\n  x = 1\n  y = 2\n");
+        assert_eq!(result, "if true\n    x = 1\n    y = 2\n");
+    }
+
+    #[test]
+    fn test_four_spaces_are_kept() {
+        let input = "fn f[]\n    if true\n        x = 1\n    return 2\n";
+        assert_eq!(format_source(input).unwrap(), input);
     }
 
     #[test]
     fn test_normalize_indent_tab() {
         let input = "if true\n\tx = 1\n";
         let result = format_source(input).unwrap();
-        assert_eq!(result, "if true\n  x = 1\n");
+        assert_eq!(result, "if true\n    x = 1\n");
     }
 
     #[test]
@@ -168,16 +177,16 @@ mod tests {
 
     #[test]
     fn test_nested_indent() {
-        let input = "fn foo[]\n    if true\n        x = 1\n";
+        let input = "fn foo[]\n  if true\n    x = 1\n";
         let result = format_source(input).unwrap();
-        assert_eq!(result, "fn foo[]\n  if true\n    x = 1\n");
+        assert_eq!(result, "fn foo[]\n    if true\n        x = 1\n");
     }
 
     #[test]
     fn test_then_lines_preserved() {
-        let input = "pr = frame.new[a = [1]]\n    then join[pr, t, 'k']\n    then max[pr]\nlog[pr]\n";
+        let input = "pr = frame.new[a = [1]]\n  then join[pr, t, 'k']\n  then max[pr]\nlog[pr]\n";
         let result = format_source(input).unwrap();
-        assert_eq!(result, "pr = frame.new[a = [1]]\n  then join[pr, t, 'k']\n  then max[pr]\nlog[pr]\n");
+        assert_eq!(result, "pr = frame.new[a = [1]]\n    then join[pr, t, 'k']\n    then max[pr]\nlog[pr]\n");
         assert_eq!(format_source(&result).unwrap(), result);
     }
 
@@ -206,21 +215,21 @@ mod tests {
 
     #[test]
     fn test_for_loop_indent() {
-        let input = "for i in [1, 2, 3]\n    log[i]\n";
+        let input = "for i in [1, 2, 3]\n  log[i]\n";
         let result = format_source(input).unwrap();
-        assert_eq!(result, "for i in [1, 2, 3]\n  log[i]\n");
+        assert_eq!(result, "for i in [1, 2, 3]\n    log[i]\n");
     }
 
     #[test]
     fn test_mixed_content() {
-        let input = "\n\nx = 1   \n\n\n\nif true\n    y = 2\n\nlog[x]\n\n\n";
+        let input = "\n\nx = 1   \n\n\n\nif true\n  y = 2\n\nlog[x]\n\n\n";
         let result = format_source(input).unwrap();
-        assert_eq!(result, "x = 1\n\nif true\n  y = 2\n\nlog[x]\n");
+        assert_eq!(result, "x = 1\n\nif true\n    y = 2\n\nlog[x]\n");
     }
 }
 
 
-/// One-time migration: convert legacy {expr} interpolation to `expr` inside/// Every program in the repository survives the formatter: formatted, it
+/// Every program in the repository survives the formatter: formatted, it
 /// parses to the same tree (line numbers aside), and formatted again it
 /// does not change. The parser has few tests of its own; this holds it,
 /// and the formatter, to every program there is.
@@ -298,6 +307,7 @@ mod round_trip {
 }
 
 
+/// One-time migration: convert legacy {expr} interpolation to `expr` inside
 /// string literals (and \{ \} escapes to plain braces). Used by
 /// `crow fmt --fix-interpolation`. Character-exact outside strings.
 pub fn migrate_interpolation(source: &str) -> String {
