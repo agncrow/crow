@@ -4139,7 +4139,10 @@ it, when nothing else does), or a number, when it meets one in arithmetic.
 A bare boolean line is a truth to check. `assert` is for steps inside
 scenarios, and reports both operands on failure. Preconditions are plain
 `if`s, and a bare boolean line under one is a truth too, checked where the
-precondition holds. Bindings are plain assignments. A test body is
+precondition holds. A failure names the generated input it failed at only
+where the failing line reads one — a law, a line reading a name made from
+one, or a line under a precondition that does (`(at n = -1)`); an example
+fails alike at every input, and names none. Bindings are plain assignments. A test body is
 ordinary Crow. A block that reaches no truth and no `assert` — in its body
 or in a function it calls — fails with `asserts nothing`: a test that
 cannot fail tests nothing.

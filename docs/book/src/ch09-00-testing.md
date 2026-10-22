@@ -58,11 +58,12 @@ When a truth fails, you see both sides:
   pricing.co:5
      fee tests — line 7: assert failed: eq
     left:  0.1
-    right: 1  (at n = 0)
+    right: 1
 ```
 
 Someone "simplified" `fee` and dropped the floor; the truth caught it with
-the actual values, not just a red X.
+the actual values, not just a red X. A failing law — a line that reads the
+generated input — also names the input it failed at: `(at n = -1)`.
 
 ## Laws: generated inputs
 

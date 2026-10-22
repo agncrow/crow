@@ -391,6 +391,10 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
             counts.laws += 1;
             generate_input_combos(&sig)
         };
+        // the block's lines, and those that read its generated inputs: a
+        // failure at one of its other lines is an example's, the same at
+        // every input, and names none
+        let (law_lines, block_lines) = law_lines(&block.body, &block.params);
         // a block that reaches no assertion — no bare truth, no assert[],
         // in its body or in a function it calls — cannot fail, and is a
         // failure itself (a block whose one truth was never a truth had
@@ -427,7 +431,7 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
                 Err(_) => Some("panicked".to_string()),
             };
             if let Some(msg) = failure {
-                let at = if block.params.is_empty() {
+                let at = if block.params.is_empty() || !reads_inputs(&msg, &law_lines, &block_lines) {
                     String::new()
                 } else {
                     let vals: Vec<String> = block
@@ -459,6 +463,121 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
 
     std::panic::set_hook(prev_hook);
     (issues, counts)
+}
+
+/// The lines of a test block that read its generated inputs — a law's —
+/// and all its lines: a statement that reads an input, or a name made
+/// from one, or that stands under a condition or a loop that does. A
+/// truth that reads none is an example, true or false at every input
+/// alike (`fee[100.0] eq 1.0` failing had been reported "at n = 0").
+fn law_lines(body: &[Stmt], params: &[String]) -> (BTreeSet<usize>, BTreeSet<usize>) {
+    fn reads_any(e: &Expr, names: &BTreeSet<String>) -> bool {
+        let mut reads = BTreeSet::new();
+        collect_reads_from_expr(e, &mut reads);
+        reads.iter().any(|r| names.contains(r))
+    }
+    // the names an input flows into — by a value, or under a decision
+    // the input makes — to a fixed point
+    fn taint(body: &[Stmt], tainted: &mut BTreeSet<String>, under: bool) {
+        for s in body {
+            match s {
+                Stmt::Assign { name, value } => {
+                    if under || reads_any(value, tainted) {
+                        tainted.insert(name.clone());
+                    }
+                }
+                Stmt::MultiAssign { names, values } => {
+                    if under || values.iter().any(|v| reads_any(v, tainted)) {
+                        tainted.extend(names.iter().cloned());
+                    }
+                }
+                Stmt::FieldAssign { object: Expr::Ident(n), value, .. } => {
+                    if under || reads_any(value, tainted) {
+                        tainted.insert(n.clone());
+                    }
+                }
+                Stmt::IndexAssign { object: Expr::Ident(n), index, value } => {
+                    if under || reads_any(index, tainted) || reads_any(value, tainted) {
+                        tainted.insert(n.clone());
+                    }
+                }
+                Stmt::For { var, iter, body } => {
+                    let t = under || reads_any(iter, tainted);
+                    if t {
+                        tainted.insert(var.clone());
+                    }
+                    taint(body, tainted, t);
+                }
+                Stmt::While { condition, body } => taint(body, tainted, under || reads_any(condition, tainted)),
+                Stmt::If { condition, then_body, else_body } => {
+                    let t = under || reads_any(condition, tainted);
+                    taint(then_body, tainted, t);
+                    if let Some(eb) = else_body {
+                        taint(eb, tainted, t);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    fn mark(body: &[Stmt], tainted: &BTreeSet<String>, under: bool, line: &mut usize, laws: &mut BTreeSet<usize>, lines: &mut BTreeSet<usize>) {
+        for s in body {
+            match s {
+                Stmt::Line(n) => {
+                    *line = *n;
+                    lines.insert(*n);
+                }
+                Stmt::If { condition, then_body, else_body } => {
+                    let t = under || reads_any(condition, tainted);
+                    if t {
+                        laws.insert(*line);
+                    }
+                    mark(then_body, tainted, t, line, laws, lines);
+                    if let Some(eb) = else_body {
+                        mark(eb, tainted, t, line, laws, lines);
+                    }
+                }
+                Stmt::While { condition: head, body } | Stmt::For { iter: head, body, .. } => {
+                    let t = under || reads_any(head, tainted);
+                    if t {
+                        laws.insert(*line);
+                    }
+                    mark(body, tainted, t, line, laws, lines);
+                }
+                other => {
+                    let mut reads = BTreeSet::new();
+                    collect_reads_from_stmt(other, &mut reads);
+                    if under || reads.iter().any(|r| tainted.contains(r)) {
+                        laws.insert(*line);
+                    }
+                }
+            }
+        }
+    }
+    let mut tainted: BTreeSet<String> = params.iter().cloned().collect();
+    loop {
+        let before = tainted.len();
+        taint(body, &mut tainted, false);
+        if tainted.len() == before {
+            break;
+        }
+    }
+    let (mut laws, mut lines) = (BTreeSet::new(), BTreeSet::new());
+    mark(body, &tainted, false, &mut 0, &mut laws, &mut lines);
+    (laws, lines)
+}
+
+/// Whether a block's failure is named with its generated inputs: one at a
+/// line that reads them (a law's), or one the block's lines do not place —
+/// a stop inside a function it called, which an input may have reached. A
+/// declaration that failed before the block ran, or a truth of the block
+/// that reads no input, failed the same at every input.
+fn reads_inputs(msg: &str, laws: &BTreeSet<usize>, lines: &BTreeSet<usize>) -> bool {
+    if msg.starts_with("a declaration failed") {
+        return false;
+    }
+    let line = msg.strip_prefix("line ").and_then(|r| r.split(':').next()).and_then(|n| n.trim().parse::<usize>().ok());
+    line.is_none_or(|l| laws.contains(&l) || !lines.contains(&l))
 }
 
 // --- Layer 0: determinism contract ---
@@ -2197,6 +2316,31 @@ mod tests {
         let decls = declarations(&stmts);
         assert!(decls.iter().any(|s| matches!(s, Stmt::Assign { name, .. } if name == "low")), "{:?}", decls);
         assert!(crate::ir_interp::prepare(&decls, "check").is_ok());
+    }
+
+    /// A failed truth names the generated inputs only when it reads them: an
+    /// example (`fee[100.0] eq 1.0`, the book's ch09) had been reported
+    /// `(at n = 0)`, the first input, which it never read; a law (`fee[n]
+    /// gte 1.0`) names the input it failed at, and so does a truth under a
+    /// precondition that reads one, or a truth reading a name made from one
+    #[test]
+    fn a_failure_names_the_inputs_only_where_the_truth_reads_them() {
+        let detail = |src: &str| -> String {
+            let stmts = crate::build(src).unwrap();
+            let (issues, _) = run_test_blocks(&stmts);
+            issues.iter().map(|i| i.summary()).collect::<Vec<_>>().join("\n")
+        };
+        let floorless = "fn fee[notional]\n    if notional lt 0\n        return error['negative notional', 'validation']\n    return notional * 0.001\ntest[n]\n    fee[50000.0] eq 50.0\n    fee[100.0] eq 1.0\n    fee[-5.0].kind eq 'validation'\n    if n gte 0.0\n        fee[n] gte 1.0\n";
+        let said = detail(floorless);
+        assert!(said.contains("line 7: assert failed") && !said.contains("(at n"), "{}", said);
+        let unguarded = "fn fee[notional]\n    if notional lt 0\n        return error['negative notional', 'validation']\n    return max[1.0, notional * 0.001]\ntest[n]\n    fee[100.0] eq 1.0\n    fee[n] gte 1.0\n";
+        let said = detail(unguarded);
+        assert!(said.contains("line 7: ") && said.contains("(at n = -1)"), "{}", said);
+        let made = "fn half[x]\n    return x / 2.0\ntest[n]\n    m = n * 2.0\n    if n gte 0.0\n        half[100.0] eq 49.0\n    half[m] eq n + 1.0\n";
+        let said = detail(made);
+        assert!(said.contains("line 6: ") && said.contains("(at n = 0)"), "a truth under a precondition that reads n: {}", said);
+        let (laws, lines) = law_lines(&crate::build("test[n]\n    m = n * 2.0\n    k = 3\n    k eq 3\n    m gte 0.0\n").unwrap().iter().find_map(|s| if let Stmt::TestBlock { body, .. } = s { Some(body.clone()) } else { None }).unwrap(), &["n".to_string()]);
+        assert_eq!((laws.into_iter().collect::<Vec<_>>(), lines.into_iter().collect::<Vec<_>>()), (vec![2, 5], vec![2, 3, 4, 5]));
     }
 
     #[test]
