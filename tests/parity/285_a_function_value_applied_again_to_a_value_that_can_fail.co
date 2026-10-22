@@ -1,0 +1,16 @@
+--- A function value applied to a local that can fail, then applied to it
+--- again: the failed argument is each call's value, and the local stays
+--- where it lies. Compiled, the first call had moved the local into its
+--- own binding, and the program did not build ("use of moved value").
+fn add[a, b]
+    return a + b
+
+f = add
+n = float['abc']
+log[f[1.0, n]]
+log[f[2.0, n]]
+m = float['2.5']
+log[f[1.0, m]]
+log[f[2.0, m]]
+log['n still holds its failure:', n.ok, n.reason]
+log['m still holds its number:', m]

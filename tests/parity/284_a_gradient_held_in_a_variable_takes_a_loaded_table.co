@@ -1,0 +1,50 @@
+--- A gradient held in a variable (`dloss = grad[loss]`) is applied to a
+--- table `load` read, a value that can fail: the call hands the function
+--- it is of what a call of it would, the payload, so the variable is a
+--- function of tensors in every pass (it had been typed a function of a
+--- value that can fail in the call scan and of a tensor after: "cannot
+--- reassign 'dloss'" on its only assignment, while `grad[loss][…]` written
+--- inline ran). A gradient applied to a value that failed answers that
+--- failure and never runs, as any call does, held or inline, whichever
+--- argument failed (interpreted it had been handed in — "takes numbers or
+--- tensors, got done" — and compiled it stopped or answered by whether the
+--- failure was the first argument).
+use math
+
+fn loss[w, x]
+    return sum[x * w]
+
+written = write['/tmp/crow_parity_284.csv', 'a,b,c\n1.0,2.0,3.0\n4.0,5.0,6.0\n']
+xs = load['/tmp/crow_parity_284.csv']
+dloss = grad[loss]
+grads = dloss[ones[3, 1], xs]
+log['by w:', grads[0]]
+log['by x:', grads[1]]
+log['inline:', grad[loss][ones[3, 1], xs][0]]
+
+--- a step of descent with the held gradient
+w = ones[3, 1]
+i = 0
+while i lt 3
+    g = dloss[w, xs]
+    w = w - g[0] * 0.01
+    i = i + 1
+log['w after three steps:', w]
+log['loss:', loss[w, xs]]
+
+--- a table that is not there: the gradient's value is the failure
+gone = load['/tmp/crow_parity_284_missing.csv']
+held = dloss[ones[3, 1], gone]
+log['held ok:', held.ok]
+log[held]
+log[grad[loss][ones[3, 1], gone]]
+
+--- a gradient of numbers handed a number that failed
+fn square[x]
+    return x * x
+
+dsquare = grad[square]
+log['d square at 3:', dsquare[3.0]]
+n = float['abc']
+log[dsquare[n]]
+log['after']

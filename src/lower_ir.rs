@@ -4716,7 +4716,19 @@ impl<'a> Lowerer<'a> {
             }
             let arg_types: Vec<Ty> = idx.iter().map(read).collect();
             let full_types: Vec<Ty> = idx.iter().map(full).collect();
-            self.scan_call(callee, args, &full_types);
+            // a gradient applied (`dloss[w, xs]`, or `grad[f][w, xs]`) hands
+            // the function it is of what a call of it would: a value that can
+            // fail by its payload, which is all the gradient takes, as
+            // `grad[f]`'s type says (a function of f's parameters) — `xs`
+            // from `load` had made the variable holding the gradient a
+            // function of a value that can fail in the scan and of a tensor
+            // after, a type it "cannot change"
+            let gradient = self.gradient_of(&base);
+            let scanned: Vec<Ty> = match &gradient {
+                Some(_) => full_types.iter().map(|t| t.payload().clone()).collect(),
+                None => full_types.clone(),
+            };
+            self.scan_call(callee, args, &scanned);
             let checks: Vec<Ty> = idx.iter().map(|x| self.checked(x)).collect();
             self.check_callee(callee, args, &checks);
             // (an indexed column is read as it is lowered here, not where
@@ -4736,12 +4748,12 @@ impl<'a> Lowerer<'a> {
             // call would: the tensors it hands retype parameters the seek
             // guessed floats (a function grad differentiates is of numbers,
             // or of tensors), and every call after unifies
-            if let Some(f) = self.gradient_of(&base) {
+            if let Some(f) = gradient.clone() {
                 // (the call typed wherever it is lowered: as an index's base
                 // too, `grad[f][x][1]` — unifying twice changes nothing)
                 if self.pass == Pass::Scan {
                     // (an int handed to a function of numbers is a float)
-                    let handed: Vec<Ty> = full_types.iter().map(|t| if *t == Ty::Int { Ty::Float } else { t.clone() }).collect();
+                    let handed: Vec<Ty> = scanned.iter().map(|t| if *t == Ty::Int { Ty::Float } else { t.clone() }).collect();
                     self.ctx.grad_forced.remove(&f);
                     self.ctx.note_call(&A::Ident(f), args, &handed);
                 }
@@ -4768,6 +4780,16 @@ impl<'a> Lowerer<'a> {
             // a parsed value's item can fail itself, JSON's null where it
             // has none)
             let ty = if refused && !matches!(base.ty(), Ty::Json) { ty.payload().clone() } else { ty };
+            // a gradient applied to a value that failed answers that failure,
+            // the leftmost, and never runs, as any call does (spec,
+            // Auto-Propagation): the interpreter had handed the failure in
+            // ("takes numbers or tensors, got done"), and the compiled call
+            // had stopped or answered it by whether it was the first argument
+            let ty = if gradient.is_some() && !matches!(ty, Ty::Unknown) && !ty.is_result() && idx.iter().any(|i| i.ty().is_result()) {
+                Ty::Result(Box::new(ty))
+            } else {
+                ty
+            };
             return Ok(Expr::Index { base: Box::new(base), indices: idx, ty });
         }
         let (module, name) = match callee {
@@ -8262,6 +8284,21 @@ if r.ok
         refuses("use math\nfn f[w, k]\n    return sum[w] * k\nlog[grad[f][[1.0, 2.0], 3.0]]\n", "a function grad differentiates takes tensors, or numbers alone — f takes a tensor, a number");
         refuses("use math\nfn inner[x]\n    return x * x\nfn outer[w]\n    return sum[w] * grad[inner][2.0]\nlog[grad[outer][[1.0]]]\n", "grad: outer calls grad");
         refuses("use math\nfn f[w]\n    n = len[w gt 0.0]\n    return sum[w] * float[n]\nlog[grad[f][[3.0, 1.0]]]\n", "grad: f compares tensors with `gt`");
+    }
+
+    /// A gradient held in a variable and applied to a value that can fail
+    /// (a table `load` read) is a function of the payload in every pass, as
+    /// `grad[f]`'s type says: the call scan had typed it a function of a
+    /// value that can fail, and the final pass refused its one assignment
+    /// as a change of type
+    #[test]
+    fn a_held_gradient_takes_a_loaded_tables_payload() {
+        let src = "use math\nfn loss[w, x]\n    return sum[x * w]\nxs = load['xs.csv']\ndloss = grad[loss]\nlog[dloss[ones[3, 1], xs]]\nn = float['2.5']\nfn square[x]\n    return x * x\nd = grad[square]\nlog[d[n]]\n";
+        assert_eq!(refusal_of(src), "", "accepted");
+        let ir = ir_of(src);
+        assert!(ir.contains("let dloss: Fn(Tensor(Float, [3, 1]), Tensor(Float, [?, ?])) -> List(Tensor(Float, [?, ?])) = grad(fn loss)"), "{}", ir);
+        assert!(ir.contains("pure loss(w: Tensor(Float, [3, 1]), x: Tensor(Float, [?, ?])) -> Float"), "{}", ir);
+        assert!(ir.contains("let d: Fn(Float) -> Float = grad(fn square)"), "{}", ir);
     }
 
     /// A builtin's answer a line drops is refused naming the call as the

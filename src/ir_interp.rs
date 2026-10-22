@@ -1608,6 +1608,14 @@ impl IrInterp {
                         return self.call_user(&name, idx);
                     }
                     Value::GradFn(fv) => {
+                        // (an argument that failed is the call's value, the
+                        // first such, and the gradient never runs — as a
+                        // function value's, and as the IR types the call: it
+                        // had been handed in, "takes numbers or tensors, got
+                        // done")
+                        if let Some(err) = self.first_error(&idx) {
+                            return Ok(err);
+                        }
                         let name = fv.name.clone();
                         return self.grad_call(&name, idx);
                     }

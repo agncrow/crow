@@ -1347,8 +1347,11 @@ impl Emitter {
             // parameter lent its record had been handed as a reference)
             let s = if matches!(self.tt(a), Ty::Result(_)) { self.expr(a) } else { self.owned_expr(a) };
             vals.push(match self.tt(a) {
+                // (borrowed where it lies: a local read again after the call
+                // had been moved into the binding, and the program did not
+                // build — `f[1.0, n]` twice)
                 Ty::Result(t) if answers_failure => {
-                    binds.push_str(&format!("let _fa{} = {}; ", k, s));
+                    binds.push_str(&format!("let _fa{} = &({}); ", k, s));
                     failing.push(k);
                     if takes_failure { format!("_fa{}.clone()", k) } else { as_float(format!("_fa{}.value.clone()", k), &t) }
                 }
