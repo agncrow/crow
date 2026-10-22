@@ -1,0 +1,3 @@
+j74_a_function_the_standard_module_lacks.co:4:23: math has no 'double'
+  4 │ log['double 5:', math.double[5]]
+    │                       ^^^^^^

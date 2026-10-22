@@ -1,0 +1,9 @@
+--- basic math module, beside the program that imports it (examples/multifile's, before it was renamed arith.co)
+
+fn double[x]
+    return x * 2
+
+fn square[x]
+    return x * x
+
+pi = 3.14159

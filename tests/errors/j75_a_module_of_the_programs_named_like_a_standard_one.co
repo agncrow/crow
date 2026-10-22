@@ -1,0 +1,6 @@
+--- a module of the program's named like a standard one: `use math` beside a math.co names two modules, and is refused at the import, naming the file and both ways out — the calls through it are not refused again (the standard module had been reached silently, and the file's `math.double[5]` failed only as the program ran, interpreted)
+use math
+
+log['double 5:', math.double[5]]
+log['square 3:', math.square[3]]
+log['pi:', math.pi]

@@ -105,6 +105,7 @@ pub fn analyze(
             // (no expansion ran: no import of this document's is unresolved,
             // and no part's import stands beside its own)
             crate::UNRESOLVED_USES.with(|u| u.borrow_mut().clear());
+            crate::AMBIGUOUS_USES.with(|u| u.borrow_mut().clear());
             crate::PART_ONLY_IMPORTS.with(|p| p.borrow_mut().clear());
             stmts
         }

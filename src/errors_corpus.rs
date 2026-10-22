@@ -17,6 +17,12 @@
 //! refusal (`log[int['abc'] + 1]`).
 //! `known` lists the rules the case breaks today; a rule listed that holds
 //! fails the case until it is struck, so the list only shrinks.
+//!
+//! A case whose mistake is about the files beside it (a module of the
+//! program's named like a standard one) keeps them in a directory of the
+//! case's name (`tests/errors/<name>/`): they are copied beside the
+//! program, which then runs in a directory of its own, so no other case
+//! sees them.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -170,7 +176,32 @@ struct Outcome {
     answer: String,
 }
 
+/// The files of a directory copied into another, its directories with them.
+fn copy_into(from: &Path, to: &Path) {
+    let _ = std::fs::create_dir_all(to);
+    for entry in std::fs::read_dir(from).into_iter().flatten().flatten() {
+        let (path, target) = (entry.path(), to.join(entry.file_name()));
+        if path.is_dir() {
+            copy_into(&path, &target);
+        } else {
+            let _ = std::fs::copy(&path, &target);
+        }
+    }
+}
+
 fn check(case: &Case, exe: &Path, dir: &Path, bless: bool) -> Outcome {
+    // (the files a case keeps beside it are its own: copied into a
+    // directory no other case runs in)
+    let beside = case.path.with_extension("");
+    let own;
+    let dir = if beside.is_dir() {
+        own = dir.join(&case.name);
+        let _ = std::fs::remove_dir_all(&own);
+        copy_into(&beside, &own);
+        own.as_path()
+    } else {
+        dir
+    };
     let _ = std::fs::create_dir_all(dir);
     let file = format!("{}.co", case.name);
     let _ = std::fs::write(dir.join(&file), &case.source);

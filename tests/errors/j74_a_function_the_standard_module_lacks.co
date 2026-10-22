@@ -1,0 +1,4 @@
+--- a call through a standard module of a name it does not have is refused before the program runs (`math` is among the names its import makes, which had let `math.double[5]` by, typed as nothing known, to fail as the program ran, interpreted)
+use math
+
+log['double 5:', math.double[5]]

@@ -356,6 +356,26 @@ impl<'a> Lowerer<'a> {
                             self.refuse(format!("no module '{}'{}", path, near));
                         }
                     }
+                    // a standard module the program has a module of the same
+                    // name beside (spec, Names Are Never Ambiguous): `use
+                    // math` had reached the standard one silently, and the
+                    // file's functions failed only as the program ran
+                    if let Some(file) = crate::AMBIGUOUS_USES.with(|u| u.borrow().iter().find(|(l, p, _)| *l == line && p == path).map(|(_, _, f)| f.clone())) {
+                        self.v.line = line;
+                        let last = path.rsplit('.').next().unwrap_or(path);
+                        let renamed = match path.rsplit_once('.') {
+                            Some((parent, _)) => format!("{}.my_{}", parent, last),
+                            None => format!("my_{}", last),
+                        };
+                        self.refuse(format!(
+                            "'{}' names two modules, the standard library's and {} in the project — rename {} and import it by its new name ({}.co, `use {}`), or move it out of the project to import the standard one",
+                            path,
+                            file,
+                            file,
+                            renamed.replace('.', "/"),
+                            renamed
+                        ));
+                    }
                     if let Some(sub) = path.strip_prefix("web.")
                         && !WEB_MODULES.contains(&sub)
                     {
@@ -1193,10 +1213,20 @@ impl<'a> Lowerer<'a> {
             self.refuse_missing_use(&format!("{}.{}", module, field), &real, "");
             return;
         }
-        if registry_module || self.ctx.functions.contains_key(&prefixed) || self.ctx.structs.contains_key(&prefixed) || self.defined(module) {
+        // (a standard module the program imports is no value of its own: its
+        // name is among the names an import makes, so that its constants
+        // read, and that had let any `math.f[…]` by — `math.double[5]` was
+        // typed as nothing known and failed only as the program ran)
+        let known = known_module(&real);
+        let a_value = self.defined(module) && (!known || self.declared(module));
+        if registry_module || self.ctx.functions.contains_key(&prefixed) || self.ctx.structs.contains_key(&prefixed) || a_value {
             return;
         }
-        let known = known_module(&real);
+        // (an import refused as naming two modules: what is called through
+        // it is that mistake's, not asked again)
+        if crate::AMBIGUOUS_USES.with(|u| u.borrow().iter().any(|(_, p, _)| *p == real)) {
+            return;
+        }
         let providers = stdlib_providers(field);
         if known {
             if CORE_RESERVED.contains(&field) {

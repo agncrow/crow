@@ -31,4 +31,10 @@ none of anyone's vocabulary — the import costs exactly one word, the
 prefix. That's also why two modules can never collide: same trailing
 name, different aliases, done.
 
+The one name your module cannot take is a standard module's. A
+`math.co` beside a program that says `use math` would make the import
+mean two modules, so it is refused at the import, naming the file:
+rename it (`arith.co`, then `use arith`), or move it out of the
+project to import the standard `math`.
+
 Next: saying what a function must do — and having Crow prove it.

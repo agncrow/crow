@@ -4925,12 +4925,42 @@ mod refine_tests {
 /// reaches what `sys` builds — `request`, `socket`, the readers — never
 /// `sys` itself (spec, The standard library's layer).
 fn sys_allowed(dir: &std::path::Path) -> bool {
-    if std::env::var_os("CROW_SYS").is_some() {
-        return true;
-    }
+    std::env::var_os("CROW_SYS").is_some() || in_standard_sources(dir)
+}
+
+/// Whether a directory is the standard library's own sources, whose
+/// modules import each other beside their own files.
+fn in_standard_sources(dir: &std::path::Path) -> bool {
     let canon = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
     let here = canon(dir);
     home::module_source_dirs().iter().any(|standard| here.starts_with(canon(standard)))
+}
+
+/// The files an import of `file_rel` (a module's path, `views/home`) looks
+/// for a module of the program's in, in order.
+fn module_files(file_rel: &str, source_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    // The path is rooted at the project (the directory holding the
+    // crowfile), so a part under views/ reaches a part under sim/
+    // whichever file is the entry; without a crowfile the entry file's
+    // directory is the root
+    let root = project_root(source_dir);
+    // a package reaches the packages installed beside it — its own
+    // dependencies, which `crow install` puts in the same crow_modules/
+    // (read from the directory as its path spells it: a linked
+    // package's root is where it really lies)
+    let beside = package_dir(source_dir).and_then(|p| p.parent().map(|m| m.to_path_buf()));
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    candidates.push(root.join(format!("{}.co", file_rel)));
+    candidates.push(root.join(format!("crow_modules/{}.co", file_rel)));
+    candidates.push(root.join(format!("crow_modules/{}/main.co", file_rel)));
+    if let Some(modules) = &beside {
+        candidates.push(modules.join(format!("{}.co", file_rel)));
+        candidates.push(modules.join(format!("{}/main.co", file_rel)));
+    }
+    if root != source_dir {
+        candidates.push(source_dir.join(format!("{}.co", file_rel)));
+    }
+    candidates
 }
 
 fn sys_refusal(line: usize) -> String {
@@ -5053,6 +5083,7 @@ pub(crate) fn expand_module_imports_checked(
     PLAIN_ENTRY.with(|p| p.set(plain));
     // (set last, after each part validated alone set its own)
     UNRESOLVED_USES.with(|u| *u.borrow_mut() = ex.unresolved);
+    AMBIGUOUS_USES.with(|u| *u.borrow_mut() = ex.ambiguous);
     // the standard modules only a part imports: the entry's own imports
     // are what its names resolve against
     let entry_has: std::collections::BTreeSet<String> = stmts
@@ -5575,6 +5606,9 @@ struct ModuleExpansion {
     /// the entry's imports of a module there is no file and no standard
     /// module for, with the line of each
     unresolved: Vec<(usize, String)>,
+    /// the entry's imports of a standard module that a module of the
+    /// program's would answer too: the line, the path, and the file
+    ambiguous: Vec<(usize, String, String)>,
     /// the parts that do not lex or parse, each with its own refusal (a
     /// part dropped silently had left its names undefined in the entry:
     /// "undefined variable 'sim'" for a `contains[…]` in views/sim.co)
@@ -5586,6 +5620,12 @@ thread_local! {
     /// refuse each where the program's other refusals are made (spec,
     /// Error Messages). Set when a program is expanded.
     pub(crate) static UNRESOLVED_USES: std::cell::RefCell<Vec<(usize, String)>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// The entry's imports of a standard module that a module of the
+    /// program's would answer too (`use math` beside a math.co), each with
+    /// its line and the file: the checks refuse each, as an import of
+    /// none is (spec, Names Are Never Ambiguous). Set when a program is
+    /// expanded.
+    pub(crate) static AMBIGUOUS_USES: std::cell::RefCell<Vec<(usize, String, String)>> = const { std::cell::RefCell::new(Vec::new()) };
     /// The standard modules the entry's parts import and the entry does
     /// not: each file's imports are its own (spec, Modules), so a name the
     /// entry reaches only through a part's import is refused for the
@@ -5631,6 +5671,19 @@ fn expand_into(
         // read as a module of the program's — a file beside them would be;
         // a `web.` module the web has none of is the checks' to refuse)
         if lower_ir::is_standard_module(path) || path.starts_with("web.") {
+            // a module of the program's the import would reach as well — a
+            // math.co beside `use math` — makes the import two modules: the
+            // entry's is refused with its line (a part's is the part's,
+            // validated alone), as an import of none is
+            if ex.depth == 0
+                && lower_ir::is_standard_module(path)
+                && !in_standard_sources(source_dir)
+                && let Some(file) = module_files(&path.replace('.', "/"), source_dir).into_iter().find(|p| p.exists())
+            {
+                let root = project_root(source_dir);
+                let shown = file.strip_prefix(&root).map(|p| p.display().to_string()).unwrap_or_else(|_| file.display().to_string());
+                ex.ambiguous.push((line, path.clone(), shown));
+            }
             expanded.push(stmt.clone());
             continue;
         }
@@ -5642,28 +5695,8 @@ fn expand_into(
                 .unwrap_or(path)
                 .to_string()
         });
-        // The path is rooted at the project (the directory holding the
-        // crowfile), so a part under views/ reaches a part under sim/
-        // whichever file is the entry; without a crowfile the entry file's
-        // directory is the root
         let root = project_root(source_dir);
-        // a package reaches the packages installed beside it — its own
-        // dependencies, which `crow install` puts in the same crow_modules/
-        // (read from the directory as its path spells it: a linked
-        // package's root is where it really lies)
-        let beside = package_dir(source_dir).and_then(|p| p.parent().map(|m| m.to_path_buf()));
-        let mut candidates: Vec<std::path::PathBuf> = Vec::new();
-        candidates.push(root.join(format!("{}.co", file_rel)));
-        candidates.push(root.join(format!("crow_modules/{}.co", file_rel)));
-        candidates.push(root.join(format!("crow_modules/{}/main.co", file_rel)));
-        if let Some(modules) = &beside {
-            candidates.push(modules.join(format!("{}.co", file_rel)));
-            candidates.push(modules.join(format!("{}/main.co", file_rel)));
-        }
-        if root != source_dir {
-            candidates.push(source_dir.join(format!("{}.co", file_rel)));
-        }
-        let Some(file_path) = candidates.iter().find(|p| p.exists()).cloned() else {
+        let Some(file_path) = module_files(&file_rel, source_dir).into_iter().find(|p| p.exists()) else {
             // no file and no standard module: the entry's import is refused
             // with its line (a part's is the part's, validated alone)
             if ex.depth == 0 {
@@ -6415,6 +6448,49 @@ mod module_parts_tests {
         assert!(!err.contains("with"), "the entry's own form, not its rewrite: {}", err);
         let own = leaking.replacen("use lib.helpers\n", "use lib.helpers, frame, math\n", 1);
         assert!(check(&own).is_ok(), "{:?}", check(&own).err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A module of the program's named like a standard one makes an import
+    /// of the name two modules: `use math` beside a math.co is refused at
+    /// the import, naming the file and both ways out, and the calls through
+    /// it are not refused again — the entry's and a part's alike (the
+    /// standard module had been reached silently, and the file's
+    /// `math.double[5]` failed only as the program ran, interpreted).
+    /// Without the file, a name the standard module lacks is refused as
+    /// any module's is.
+    #[test]
+    fn a_standard_modules_name_beside_a_file_of_it_is_refused() {
+        let dir = std::env::temp_dir().join(format!("crow_parts_ambiguous_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'ambiguous'\n").unwrap();
+        std::fs::write(dir.join("math.co"), "fn double[x]\n    return x * 2\n").unwrap();
+        std::fs::write(dir.join("lib/twice.co"), "use math\n\nfn twice[x]\n    return math.double[x]\n").unwrap();
+        let check = |src: &str| -> Result<(), String> {
+            let stmts = build(src).unwrap();
+            let mut visited = std::collections::HashSet::new();
+            let stmts = expand_module_imports_checked(&stmts, &dir, &mut visited)?;
+            let lowered = lower::lower_program(&stmts).map_err(|e| format!("error: {}", e))?;
+            infer_and_validate(&lowered, false).map(|_| ())
+        };
+        let err = check("use math\n\nlog[math.double[5]]\nlog[math.pi]\n").unwrap_err();
+        assert!(
+            err.contains("line 1: 'math' names two modules, the standard library's and math.co in the project — rename math.co and import it by its new name (my_math.co, `use my_math`), or move it out of the project to import the standard one"),
+            "{}",
+            err
+        );
+        assert_eq!(err.matches("line ").count(), 1, "the calls through it are the import's: {}", err);
+        // a part's import is the part's, named by its file
+        let err = check("use lib.twice\n\nlog[twice.twice[5]]\n").unwrap_err();
+        assert!(err.contains("lib/twice.co: line 1: 'math' names two modules"), "{}", err);
+        // the module of the program's under another name is reached as it
+        std::fs::rename(dir.join("math.co"), dir.join("arith.co")).unwrap();
+        assert!(check("use arith\n\nlog[arith.double[5]]\n").is_ok());
+        let err = check("use math\n\nlog[math.double[5]]\nlog[math.meen[[1.0, 2.0]]]\n").unwrap_err();
+        assert!(err.contains("line 3: math has no 'double'"), "{}", err);
+        assert!(err.contains("line 4: math has no 'meen' — did you mean 'mean'?"), "{}", err);
+        assert!(check("use math\n\nlog[math.mean[[1.0, 2.0]]]\nlog[math.pi]\n").is_ok());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
