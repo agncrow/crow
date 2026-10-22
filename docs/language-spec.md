@@ -4518,7 +4518,7 @@ crow check --strict         --- exit 1 on any finding (CI)
 crow check --verbose        --- every finding with its fix, and the purity and snapshot details, without waiting
 crow check --self           --- in the crow repository: Crow held to itself (below; crow-check.md)
 crow fix file.co             --- apply the fixes the program's refusal names (a slip, an import, a habit), then list them
-crow fix file.co --hazard N [--option M]   --- apply a fix from the check report
+crow fix file.co --hazard N [--option M] [--db url]   --- apply a fix from the check report, as it prints the command; a constraint's migration is written numbered and applied as crow db apply applies one
 crow fmt                    --- format project (uses crowfile; or: crow fmt file.co)
 crow fmt --check            --- check if formatting needed (exit 1 if not)
 crow fmt --fix-interpolation  --- migrate {expr} strings to `expr`

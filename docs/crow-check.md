@@ -449,14 +449,22 @@ for, where the refusal names the fix — a slip, a missing import, another
 language's habit (spec, Error Messages) — and lists each change; a program
 that is not refused goes on to its hazards.
 
-Each hazard's menu is executable:
+Each hazard's menu is executable, and the check prints the exact command
+— with the `--db` it was handed (a url the crowfile names, `crow fix`
+reads itself) — and the exact file a constraint is written as:
 
 ```
 crow fix app.co --hazard 1 --option 1 [--db url]
 ```
 
-- **constraint options** write `migrations/NNNN_name.sql`, apply it to the
-  `--db` database, and re-run the checks to confirm the hazard is gone
+- **constraint options** write the next numbered file of `migrations/`
+  (`migrations/0001_one_active_per_symbol.sql` in an empty one), apply the
+  directory to the `--db` database as `crow db apply` does — each file not
+  yet applied, in name order, recorded in `_crow_migrations`, so a later
+  `crow db apply` does not run it again — and re-run the checks to confirm
+  the hazard is gone. Against an offline schema (`--db migrations://dir`)
+  the file goes in that directory, the schema the check reads, and
+  `crow db apply dir <url>` applies it to a database later
 - **fusion options** rewrite the slice into one atomic statement (e.g.
   `SET balance = ?` fed by read-plus-delta becomes `SET balance = balance + ?`)
 - **transact options** wrap consecutive writes in a generated fn + `transact`

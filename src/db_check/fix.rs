@@ -10,6 +10,54 @@ use super::report;
 use super::sql_facts::{self, SqlKind};
 use super::{FixKind, Hazard, HazardKind};
 
+/// Where `crow fix` writes a constraint migration, and how it lands: the
+/// check's report names the same file and the same command, read the same
+/// way. A database's migrations go in `migrations/`, applied as `crow db
+/// apply` applies a directory, each recorded in `_crow_migrations` (a fix
+/// had run its statement unrecorded, so the next `crow db apply` ran it
+/// again: "index … already exists"). An offline schema's — `--db
+/// migrations://dir`, or a directory — go in that directory, which is the
+/// schema the check reads; there is no database to apply them to (the
+/// url had been handed to `connect`: "unknown database URL scheme").
+pub struct Migrations {
+    pub dir: String,
+    /// The database the directory is applied to, when there is one.
+    pub apply_to: Option<String>,
+    /// The directory is the schema the check reads.
+    pub offline: bool,
+}
+
+impl Migrations {
+    pub fn for_url(db_url: Option<&str>) -> Migrations {
+        let offline = |dir: &str| Migrations { dir: dir.to_string(), apply_to: None, offline: true };
+        match db_url {
+            Some(url) => match url.strip_prefix("migrations://") {
+                Some(dir) => offline(dir),
+                None if std::path::Path::new(url).is_dir() => offline(url),
+                None => Migrations { dir: "migrations".to_string(), apply_to: Some(url.to_string()), offline: false },
+            },
+            None => Migrations { dir: "migrations".to_string(), apply_to: None, offline: false },
+        }
+    }
+
+    /// The file the migration named `name` is written as: numbered one past
+    /// the directory's highest (`0001_one_active_per_symbol.sql` in an
+    /// empty one), as `crow db apply` runs them in name order.
+    pub fn next_path(&self, name: &str) -> String {
+        let next = std::fs::read_dir(&self.dir)
+            .map(|entries| {
+                entries
+                    .filter_map(|e| e.ok())
+                    .filter_map(|e| e.file_name().to_string_lossy().split('_').next().and_then(|p| p.parse::<u32>().ok()))
+                    .max()
+                    .unwrap_or(0)
+                    + 1
+            })
+            .unwrap_or(1);
+        format!("{}/{:04}_{}.sql", self.dir.trim_end_matches('/'), next, name)
+    }
+}
+
 pub fn apply(
     file: &str,
     source: &str,
@@ -18,6 +66,7 @@ pub fn apply(
     option_m: usize,
 ) -> Result<String, String> {
     let result = super::run(file, source, db_url)?;
+    let migrations = Migrations::for_url(db_url);
     let ordered = report::ordered(&result.hazards);
     let Some(hazard) = ordered.get(hazard_n.wrapping_sub(1)) else {
         return Err(format!(
@@ -27,7 +76,7 @@ pub fn apply(
             if ordered.len() == 1 { "" } else { "s" }
         ));
     };
-    let options = report::fix_options(&hazard.kind);
+    let options = report::fix_options(&hazard.kind, &migrations);
     let Some(option) = options.get(option_m.wrapping_sub(1)) else {
         return Err(format!(
             "hazard #{} has {} option{} — asked for option {}",
@@ -41,7 +90,7 @@ pub fn apply(
     let mut log = String::new();
     match &option.kind {
         FixKind::Migration { name, sql } => {
-            apply_migration(name, sql, db_url, &mut log)?;
+            apply_migration(name, sql, &migrations, &mut log)?;
             reverify(file, source, db_url, hazard, &mut log)?;
         }
         FixKind::Fusion => match &hazard.kind {
@@ -92,48 +141,24 @@ pub fn apply(
     Ok(log)
 }
 
-/// Write migrations/NNNN_name.sql and apply it to the dev database.
-fn apply_migration(
-    name: &str,
-    sql: &str,
-    db_url: Option<&str>,
-    log: &mut String,
-) -> Result<(), String> {
-    std::fs::create_dir_all("migrations")
-        .map_err(|e| format!("could not create migrations/: {}", e))?;
-    let next = std::fs::read_dir("migrations")
-        .map(|entries| {
-            entries
-                .filter_map(|e| e.ok())
-                .filter_map(|e| {
-                    e.file_name()
-                        .to_string_lossy()
-                        .split('_')
-                        .next()
-                        .and_then(|p| p.parse::<u32>().ok())
-                })
-                .max()
-                .unwrap_or(0)
-                + 1
-        })
-        .unwrap_or(1);
-    let path = format!("migrations/{:04}_{}.sql", next, name);
-    std::fs::write(&path, format!("{}\n", sql))
-        .map_err(|e| format!("could not write {}: {}", path, e))?;
+/// Write the migration as its numbered file, then apply the directory as
+/// `crow db apply` does: each file the database has not applied yet, in
+/// name order, recorded in `_crow_migrations`.
+fn apply_migration(name: &str, sql: &str, migrations: &Migrations, log: &mut String) -> Result<(), String> {
+    std::fs::create_dir_all(&migrations.dir).map_err(|e| format!("could not create {}/: {}", migrations.dir, e))?;
+    let path = migrations.next_path(name);
+    std::fs::write(&path, format!("{}\n", sql)).map_err(|e| format!("could not write {}: {}", path, e))?;
     writeln!(log, "wrote {}", path).ok();
-
-    match db_url {
+    match &migrations.apply_to {
         Some(url) => {
-            let db = crow_db::connect(url, None)?;
-            db.exec(sql.trim_end_matches(';'), &[])?;
-            writeln!(log, "applied to {}", url).ok();
+            let said = crate::driver::apply_migrations(&migrations.dir, url)?;
+            writeln!(log, "{} (crow db apply {} {})", said, migrations.dir, url).ok();
+        }
+        None if migrations.offline => {
+            writeln!(log, "the schema read from {}/ holds it now — `crow db apply {} <url>` applies it to a database", migrations.dir, migrations.dir).ok();
         }
         None => {
-            writeln!(
-                log,
-                "no --db url — migration written but not applied; run it with crow migrate"
-            )
-            .ok();
+            writeln!(log, "no --db url — the migration is written, not applied: `crow db apply {} <url>` applies it", migrations.dir).ok();
         }
     }
     Ok(())
@@ -367,6 +392,39 @@ mod tests {
         assert!(fused.contains("[amount, acct]"));
         assert!(!fused.contains("bal = "), "derived assign should be removed");
         crate::build(&fused).expect("fused source must still parse");
+    }
+
+    /// A constraint migration lands as `crow db apply` lands one: written as
+    /// the next numbered file and recorded in `_crow_migrations`, so the
+    /// next `crow db apply` of the directory has nothing to run (the fix had
+    /// run its statement unrecorded, and the apply ran it again: "index …
+    /// already exists"); an offline schema's directory takes the file, and
+    /// nothing connects to its `migrations://` url
+    #[test]
+    fn a_migration_is_written_numbered_and_applied_as_crow_db_apply_does() {
+        let dir = std::env::temp_dir().join(format!("crow_fix_migration_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("migrations")).unwrap();
+        let db_path = dir.join("dev.db");
+        let url = format!("sqlite://{}", db_path.display());
+        let db = crow_db::connect(&url, Some(1)).unwrap();
+        db.exec("CREATE TABLE trades (id INTEGER PRIMARY KEY, symbol TEXT NOT NULL, status TEXT NOT NULL)", &[]).unwrap();
+        std::fs::write(dir.join("migrations/0001_init_notes.sql"), "CREATE TABLE notes (body TEXT)\n").unwrap();
+        let migrations = Migrations { dir: dir.join("migrations").display().to_string(), apply_to: Some(url.clone()), offline: false };
+        assert!(migrations.next_path("one_active_per_symbol").ends_with("migrations/0002_one_active_per_symbol.sql"));
+        let mut log = String::new();
+        apply_migration("one_active_per_symbol", "CREATE UNIQUE INDEX one_active_per_symbol ON trades(symbol) WHERE status = 'active';", &migrations, &mut log).unwrap();
+        assert!(log.contains("0002_one_active_per_symbol.sql") && log.contains("applied 2 migrations"), "{}", log);
+        let applied = db.query("SELECT name FROM _crow_migrations ORDER BY name", &[]).unwrap();
+        assert_eq!(applied.nrows(), 2, "both recorded");
+        assert_eq!(crate::driver::apply_migrations(&migrations.dir, &url).unwrap(), format!("applied 0 migrations from {} on {}", migrations.dir, url));
+        // offline: the directory is the schema, and nothing is connected to
+        let offline = Migrations::for_url(Some(&format!("migrations://{}", dir.join("schema").display())));
+        assert!(offline.offline && offline.apply_to.is_none());
+        let mut log = String::new();
+        apply_migration("unique_users_email", "CREATE UNIQUE INDEX unique_users_email ON users(email);", &offline, &mut log).unwrap();
+        assert!(dir.join("schema/0001_unique_users_email.sql").exists() && log.contains("crow db apply"), "{}", log);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

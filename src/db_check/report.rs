@@ -3,11 +3,22 @@
 /// is golden-tested below — detectors must satisfy these messages, not the
 /// other way around.
 
+use super::fix::Migrations;
 use super::{FixKind, FixOption, Hazard, HazardKind};
+
+/// What a printed fix says of the `crow fix` that applies it, exactly as
+/// that command will act: the `--db` it is run with (the url the check was
+/// handed; one the crowfile names `crow fix` reads itself, and without
+/// either it found no hazard to fix), and the file its migration is
+/// written as.
+pub struct Fixing {
+    pub db_flag: Option<String>,
+    pub migrations: Migrations,
+}
 
 /// Render the full report section. Concurrency hazards first, then
 /// verification findings. Returns None when there is nothing to say.
-pub fn render_all(hazards: &[Hazard], source: &str) -> Option<String> {
+pub fn render_all(hazards: &[Hazard], source: &str, fixing: &Fixing) -> Option<String> {
     if hazards.is_empty() {
         return None;
     }
@@ -17,7 +28,7 @@ pub fn render_all(hazards: &[Hazard], source: &str) -> Option<String> {
         if i > 0 {
             out.push('\n');
         }
-        out.push_str(&render_hazard(h, i + 1, source));
+        out.push_str(&render_hazard(h, i + 1, source, fixing));
     }
     Some(out)
 }
@@ -31,7 +42,7 @@ pub fn ordered(hazards: &[Hazard]) -> Vec<&Hazard> {
 }
 
 /// Render one hazard, numbered `n` (1-indexed, used by `crow fix --hazard n`).
-pub fn render_hazard(h: &Hazard, n: usize, source: &str) -> String {
+pub fn render_hazard(h: &Hazard, n: usize, source: &str, fixing: &Fixing) -> String {
     let mut s = String::new();
     s.push_str(&format!(
         "{}:{} — {}\n",
@@ -42,7 +53,7 @@ pub fn render_hazard(h: &Hazard, n: usize, source: &str) -> String {
     s.push('\n');
     excerpt(&mut s, source, h.span);
     body(&mut s, h);
-    let fixes = fix_options(&h.kind);
+    let fixes = fix_options(&h.kind, &fixing.migrations);
     if !fixes.is_empty() {
         s.push('\n');
         s.push_str("  fixes, safest first:\n");
@@ -54,9 +65,10 @@ pub fn render_hazard(h: &Hazard, n: usize, source: &str) -> String {
         }
         if fixes.iter().any(|f| !matches!(f.kind, FixKind::Advice)) {
             s.push('\n');
+            let db = fixing.db_flag.as_ref().map(|u| format!(" --db '{}'", u)).unwrap_or_default();
             s.push_str(&format!(
-                "  apply: crow fix {} --hazard {} --option 1\n",
-                h.file, n
+                "  apply: crow fix {} --hazard {} --option 1{}\n",
+                h.file, n, db
             ));
         }
     }
@@ -257,8 +269,11 @@ fn plural(n: usize) -> &'static str {
 }
 
 /// The ranked fix menu for a hazard. `crow fix` executes the same list,
-/// so menu text and applied behavior cannot drift apart.
-pub fn fix_options(k: &HazardKind) -> Vec<FixOption> {
+/// so menu text and applied behavior cannot drift apart: a migration's is
+/// named as the file `crow fix` writes (it had been named without its
+/// number, `one_active_per_symbol.sql`, and written as
+/// `0001_one_active_per_symbol.sql`).
+pub fn fix_options(k: &HazardKind, migrations: &Migrations) -> Vec<FixOption> {
     match k {
         HazardKind::WriteSkew {
             table,
@@ -270,8 +285,8 @@ pub fn fix_options(k: &HazardKind) -> Vec<FixOption> {
             vec![
                 FixOption {
                     headline: format!(
-                        "let the database enforce it — generates migrations/{}.sql:",
-                        name
+                        "let the database enforce it — writes {}:",
+                        migrations.next_path(&name)
                     ),
                     body: vec![
                         format!("  {}", sql),
@@ -324,8 +339,8 @@ pub fn fix_options(k: &HazardKind) -> Vec<FixOption> {
             vec![
                 FixOption {
                     headline: format!(
-                        "make it actually unique — generates migrations/{}.sql:",
-                        name
+                        "make it actually unique — writes {}:",
+                        migrations.next_path(&name)
                     ),
                     body: vec![format!("  {}", sql)],
                     kind: FixKind::Migration { name, sql },
@@ -378,6 +393,12 @@ fn unique_index_sql(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// As a check with no `--db` renders it: the crowfile's url, if any, is
+    /// `crow fix`'s too.
+    fn fixing() -> Fixing {
+        Fixing { db_flag: None, migrations: Migrations::for_url(None) }
+    }
 
     fn h(kind: HazardKind, span: (usize, usize)) -> Hazard {
         Hazard {
@@ -435,7 +456,7 @@ trading.co:13-15 — two programs can pass this check at the same time
   so this if is the only guard — and an if cannot hold between two programs.
 
   fixes, safest first:
-  [1] let the database enforce it — generates migrations/one_active_per_symbol.sql:
+  [1] let the database enforce it — writes migrations/0001_one_active_per_symbol.sql:
         CREATE UNIQUE INDEX one_active_per_symbol ON trades(symbol) WHERE status = 'active';
       the losing write then returns an error (kind = 'conflict') instead of breaking the rule.
       protects every writer — including programs that are not this one.
@@ -445,7 +466,15 @@ trading.co:13-15 — two programs can pass this check at the same time
   apply: crow fix trading.co --hazard 1 --option 1
   accept as-is: put `--- crow: single-writer` on the line above line 13
 ";
-        assert_eq!(render_hazard(&hz, 1, TRADING_SRC), expected);
+        assert_eq!(render_hazard(&hz, 1, TRADING_SRC, &fixing()), expected);
+        // a check handed its url prints the command with it, which `crow
+        // fix` needs unless the crowfile names the database: without it the
+        // fix had found no hazard to fix
+        let with_db = Fixing { db_flag: Some("sqlite://dev.db".into()), migrations: Migrations::for_url(Some("sqlite://dev.db")) };
+        assert!(render_hazard(&hz, 1, TRADING_SRC, &with_db).contains("  apply: crow fix trading.co --hazard 1 --option 1 --db 'sqlite://dev.db'\n"));
+        // an offline schema's migration goes in its own directory
+        let offline = Fixing { db_flag: Some("migrations://schema".into()), migrations: Migrations::for_url(Some("migrations://schema")) };
+        assert!(render_hazard(&hz, 1, TRADING_SRC, &offline).contains("writes schema/0001_one_active_per_symbol.sql:"));
     }
 
     #[test]
@@ -487,7 +516,7 @@ bank.co:1-3 — concurrent updates to 'balance' can vanish here
   apply: crow fix bank.co --hazard 1 --option 1
   accept as-is: put `--- crow: single-writer` on the line above line 1
 ";
-        assert_eq!(render_hazard(&hz, 1, src), expected);
+        assert_eq!(render_hazard(&hz, 1, src, &fixing()), expected);
     }
 
     #[test]
@@ -520,7 +549,7 @@ hotel.co:1 — 'checked_out' only ever moves one way
   [2] keep the flag, but add a reconciliation job that re-derives it on a schedule
   accept as-is: put `--- crow: single-writer` on the line above line 1
 ";
-        assert_eq!(render_hazard(&hz, 1, src), expected);
+        assert_eq!(render_hazard(&hz, 1, src, &fixing()), expected);
     }
 
     #[test]
@@ -548,14 +577,14 @@ app.co:1-2 — this code assumes one matching row; the schema allows many
   two rows can match, and which one you get is luck.
 
   fixes, safest first:
-  [1] make it actually unique — generates migrations/unique_users_email.sql:
+  [1] make it actually unique — writes migrations/0001_unique_users_email.sql:
         CREATE UNIQUE INDEX unique_users_email ON users(email);
   [2] handle multiple rows explicitly (sort and choose, or aggregate)
 
   apply: crow fix app.co --hazard 1 --option 1
   accept as-is: put `--- crow: single-writer` on the line above line 1
 ";
-        assert_eq!(render_hazard(&hz, 1, src), expected);
+        assert_eq!(render_hazard(&hz, 1, src, &fixing()), expected);
     }
 
     #[test]
@@ -586,7 +615,7 @@ transfer.co:1-2 — these writes succeed or fail separately
   apply: crow fix transfer.co --hazard 1 --option 1
   accept as-is: put `--- crow: single-writer` on the line above line 1
 ";
-        assert_eq!(render_hazard(&hz, 1, src), expected);
+        assert_eq!(render_hazard(&hz, 1, src, &fixing()), expected);
     }
 
     #[test]
@@ -607,6 +636,6 @@ app.co:1 — column 'users.nmae' does not exist
     1 │ df = query[conn, 'SELECT nmae FROM users']
   did you mean 'name'?
 ";
-        assert_eq!(render_hazard(&hz, 1, src), expected);
+        assert_eq!(render_hazard(&hz, 1, src, &fixing()), expected);
     }
 }

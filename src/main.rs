@@ -282,7 +282,8 @@ fn crow_main() {
                                     db_check::report::headline(&h.kind)
                                 );
                             }
-                            println!("\napply one with: crow fix {} --hazard N", filename);
+                            let db = db_url.as_ref().map(|u| format!(" --db '{}'", u)).unwrap_or_default();
+                            println!("\napply one with: crow fix {} --hazard N{}", filename, db);
                         }
                         process::exit(0);
                     }
@@ -3895,8 +3896,12 @@ fn cmd_check(filename: &str, verbose: bool, db_url: Option<String>, strict: bool
 
     // Schema-aware database checks (Level 1): the entry and every part it
     // imports, each against its own lines — an app keeps its queries in its
-    // parts. Advisory unless --strict.
+    // parts. Advisory unless --strict. A fix is printed as the command that
+    // applies it: with the `--db` the check was handed, and the file its
+    // migration is written as
+    let db_flag = db_url.clone();
     let resolved_db = db_url.or_else(crowfile_db_url);
+    let fixing = db_check::report::Fixing { db_flag, migrations: db_check::fix::Migrations::for_url(resolved_db.as_deref()) };
     let mut files: Vec<(String, String)> = vec![(filename.to_string(), read_file(filename))];
     let parts = EXPANSION_PARTS.with(|p| p.borrow().clone());
     let paths = EXPANSION_FILES.with(|f| f.borrow().clone());
@@ -3916,7 +3921,7 @@ fn cmd_check(filename: &str, verbose: bool, db_url: Option<String>, strict: bool
                 calls += db_result.sql_calls;
                 checked |= db_result.schema_checked;
                 other_db += db_result.other_db;
-                if let Some(report) = db_check::report::render_all(&db_result.hazards, source) {
+                if let Some(report) = db_check::report::render_all(&db_result.hazards, source, &fixing) {
                     findings += db_result.hazards.len();
                     reports.push((name.clone(), report));
                 }
