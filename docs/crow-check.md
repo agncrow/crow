@@ -79,12 +79,14 @@ Effects Have Kinds) — `files` (a read), `files.write`, `network`,
 `input`, `process` (an argument, the environment), `exit`, `shell`,
 `session` (a notice, a sign-in, a download, work held for later),
 `waits` and `serving` (a page, a route); writing to the console touches
-nothing outside:
+nothing outside. Each is named as the program writes it: a `query`
+whose statement writes is `query` under `db.write`:
 
 ```
 reach board/cards.co
   files.write: cp, mkdir
   db.read: connect, query
+  db.write: insert, query
   session: download, notice
 ```
 
@@ -176,7 +178,9 @@ artifact in full, matched by the end of its name.
 Four kernel rules read the same wiring, generic and nobody's to
 maintain: a `modal`, `drawer` or `toast` whose `open` fact no handler
 sets true, or none sets false; a `disabled` fact no handler writes; a
-control whose handler writes nothing and performs nothing; a function
+control whose handler writes nothing and performs nothing (a database
+write is something it performs — a setup button whose handler only runs
+`CREATE TABLE` is no dead control); a function
 that assigns a fact but is wired by nothing and called by nothing. The
 design is `app-baseline-design.md`.
 

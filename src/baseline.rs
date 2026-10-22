@@ -12,12 +12,33 @@ use crate::ast::{BinOp, Expr, Stmt, UnaryOp};
 use crate::type_infer::TypeContext;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Whether a call of the name is an effect a scenario records: one that
-/// changes something — a write, a command, a message, the session's — as
-/// its row's kinds say (crate::effects); a read is not.
-fn is_recorded_effect(name: &str) -> bool {
+/// Whether a kind of effect is one a scenario records: one that changes
+/// something — a write, a command, a message, the session's; a read is not.
+fn recorded_kind(e: crate::effects::Effect) -> bool {
     use crate::effects::Effect;
-    crate::table::effects_of(name).into_iter().any(|e| matches!(e, Effect::FilesWrite | Effect::Network | Effect::DbWrite | Effect::Mail | Effect::Shell | Effect::Session))
+    matches!(e, Effect::FilesWrite | Effect::Network | Effect::DbWrite | Effect::Mail | Effect::Shell | Effect::Session)
+}
+
+/// Whether a call of the name is an effect a scenario records, as its
+/// row's kinds say (crate::effects).
+fn is_recorded_effect(name: &str) -> bool {
+    crate::table::effects_of(name).into_iter().any(recorded_kind)
+}
+
+/// Whether a call is a statement form's (`query`) whose statement writes,
+/// as the lowering decides it (`statement_twin`): a literal statement the
+/// provider reads as a write, or one built as the program runs, is its
+/// writing twin's call, of that row's kinds (a database write). The form's
+/// own row reads, so a handler that only ran `CREATE TABLE` — a setup
+/// button — had read as performing nothing on any path: a dead control.
+fn writes_by_statement(name: &str, args: &[Expr]) -> bool {
+    let Some(row) = crate::table::statement_form(None, name) else { return false };
+    let (Some(provider), Some(twin)) = (row.provider, crate::table::writing_twin(row)) else { return false };
+    let literal = match args.get(provider.statement) {
+        Some(Expr::Str(s)) if !s.contains('`') => Some(s.as_str()),
+        _ => None,
+    };
+    (provider.writes)(literal) && crate::table::effects_of_in(twin.module, twin.name).into_iter().any(recorded_kind)
 }
 /// Events a control declares in a view.
 const EVENTS: &[&str] = &["click", "input", "submit", "change", "seek"];
@@ -318,7 +339,7 @@ impl<'m, 'a> Walker<'m, 'a> {
     }
 
     fn effect_of(&self, name: &str, args: &[Expr], env: &Env) -> Option<String> {
-        if !is_recorded_effect(name) { return None; }
+        if !is_recorded_effect(name) && !writes_by_statement(name, args) { return None; }
         let a: Vec<String> = args.iter().map(|x| canon(x, env)).collect();
         Some(format!("effect {} {}", name, a.join(" ")))
     }
@@ -1458,9 +1479,11 @@ pub fn reach_entries(program: &crate::ir::Program, parts: &BTreeMap<String, Stri
             let key = format!("reach {}", file);
             let mut text = format!("{}\n", key);
             for cap in capabilities() {
-                let mine: Vec<&str> = effects.iter().filter(|e| capability_of(e) == Some(cap)).map(|e| e.as_str()).collect();
+                // (a form as the program writes it: `query`'s writing twin
+                // is `query`, never `__query_write`)
+                let mine: BTreeSet<&str> = effects.iter().filter(|e| capability_of(e) == Some(cap)).map(|e| crate::table::shown_effect(e)).collect();
                 if !mine.is_empty() {
-                    text.push_str(&format!("  {}: {}\n", cap, mine.join(", ")));
+                    text.push_str(&format!("  {}: {}\n", cap, mine.into_iter().collect::<Vec<_>>().join(", ")));
                 }
             }
             if !text.contains(':') {
@@ -1682,6 +1705,41 @@ mod tests {
         ctx.infer_program(&stmts);
         let program = crate::lower_ir::lower(&stmts, &mut ctx, "main").expect("lowers to the IR");
         assert_eq!(reach_entries(&program, &BTreeMap::new(), "main.co")["reach main.co"].1, "reach main.co\n  nothing\n");
+    }
+
+    /// A database write a handler makes is something its control does: a
+    /// setup button whose handler only runs `CREATE TABLE` (the book's
+    /// pattern) had been a dead control, since the walk read `query` by its
+    /// own row, a read; a statement that reads is still no effect
+    #[test]
+    fn a_handler_that_only_creates_a_table_is_no_dead_control() {
+        let setup = "use web, ui, db\nbook = db.connect['sqlite://:memory:']\nfn setup[]\n    query[book, 'CREATE TABLE IF NOT EXISTS people (name TEXT)']\nview door[]\n    return stack[button['Set up', click = setup]]\npage['/', door]\n";
+        let (art, rules) = artifacts(setup);
+        assert!(!rules.iter().any(|r| r.detail.contains("dead control")), "{:?}", rules);
+        let handler = art.entries.get("handler setup").cloned().unwrap_or_default();
+        assert!(handler.contains("effect query book 'CREATE TABLE IF NOT EXISTS people (name TEXT)'"), "{}", handler);
+        // a statement built as the program runs may write: as the lowering
+        // takes it, a write
+        let (_, rules) = artifacts(&setup.replace("'CREATE TABLE IF NOT EXISTS people (name TEXT)'", "'CREATE TABLE IF NOT EXISTS `name` (name TEXT)'").replace("fn setup[]", "name = 'people'\nfn setup[]"));
+        assert!(!rules.iter().any(|r| r.detail.contains("dead control")), "{:?}", rules);
+        // one that only reads does nothing a control is for
+        let (_, rules) = artifacts(&setup.replace("CREATE TABLE IF NOT EXISTS people (name TEXT)", "SELECT 1 AS one"));
+        assert!(rules.iter().any(|r| r.detail.contains("dead control")), "{:?}", rules);
+    }
+
+    /// A file's reach names a form as the program writes it: a writing
+    /// query is `query`, never the hidden `__query_write` its lowering
+    /// reaches
+    #[test]
+    fn a_reach_names_a_writing_query_as_written() {
+        let src = "use db\nbook = connect['sqlite://:memory:']\nquery[book, 'CREATE TABLE IF NOT EXISTS people (name TEXT)']\nrows = query[book, 'SELECT name FROM people']\nlog[len[rows]]\n";
+        let stmts = crate::lower::lower_program(&crate::build(src).expect("parses")).expect("lowers");
+        let mut ctx = TypeContext::new();
+        ctx.infer_program(&stmts);
+        let program = crate::lower_ir::lower(&stmts, &mut ctx, "main").expect("lowers to the IR");
+        let reach = &reach_entries(&program, &BTreeMap::new(), "main.co")["reach main.co"].1;
+        assert!(reach.contains("  db.read: connect, query\n") && reach.contains("  db.write: query\n"), "{}", reach);
+        assert!(!reach.contains("__"), "{}", reach);
     }
 
     /// A local holding a tree is the path's own: the branch that reassigns
