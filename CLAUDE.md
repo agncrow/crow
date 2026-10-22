@@ -1259,3 +1259,72 @@ steps on every push and must be green.
   (`table::a_name_is_answered_without_a_scan_of_the_table` measures it
   against a scan in the same run), and `sample <pid> 3` of an interpreted
   benchmark shows any `Chain::try_fold` + `memcmp` at the top.
+- A line that holds only a comment lexes to nothing (spec, Blocks):
+  whatever reads comments — a function's description (`note_fn_docs`), the
+  formatter — reads the source text, never the tokens, and the console's
+  own block rule lets a comment go on with a block. A refused line's text,
+  the printer's underline and the formatter's view of a line read through
+  `diagnostic::code_from` with the line's `Opening` (inside a string
+  written across lines, or its interpolation): a new reader of lines takes
+  the opening, or the line a string closes on is read as text. The
+  formatter's levels are the nesting's (a stack of widths), a line inside
+  a bracket moves with its statement, and a string's lines are left as
+  written — a unit divided out of every line's width had multiplied every
+  level by one odd-width continuation.
+- A compiled program builds in `.crow_build` under the CURRENT directory,
+  not the program's: copying a program to the scratchpad is not enough —
+  run a probe with the scratchpad as the current directory, never from the
+  repository root while a suite runs (a probe made parity 270 fail to
+  build).
+- The crowfile is read by `Crowfile::run` (main.rs): its top-level names
+  are renamed out of the reserved-name rule's way (`cpu = 4` had stopped
+  every command) and it runs as a session's cell — never through
+  `run_script`, whose last read of a name moves it out. Its `cpu`/`gpu`
+  reach both backends only as the entry part's `Part.cpu`/`Part.gpu`
+  (`Resources::apply`; `crow build --ir`/`--rs` apply them too). A
+  session's fragment is verified with the earlier fragments' functions
+  (`lower_fragment(…, earlier)`), and `IrInterp::load` drops a redefined
+  function's prepared body. `crow help` is main.rs's `USAGE` table: a
+  `--flag` main.rs reads and the table lacks fails `usage_tests`.
+- The answer of a call that answers nothing is refused where a place is
+  given it (`refuse_nothing_held`, checks.rs, at every assignment site of
+  the final pass; a row answers nothing by `ret: Kind::Unit`, a FORMS
+  row's `ret` being no contract): a new assignment form calls it too, or
+  the verifier meets the Unit first ("disagrees with itself").
+- An import is resolved in one list of places (`module_files`, main.rs). A
+  standard module's name beside a program's file of that name is
+  `AMBIGUOUS_USES` (refused at the import; set beside `UNRESOLVED_USES`
+  and cleared by the language server where no expansion runs), and a
+  `db.…` path is refused only where the registry lists it
+  (`modules::by_path`: `use db.schema` is a program's file). `math` is in
+  the checks' `used` set so its constants read, and `check_module_call`
+  reads a known module's name as a value only where it is declared —
+  `math.double[5]` had passed, typed as nothing known. An errors case
+  about files beside it keeps them in `tests/errors/<name>/`.
+- A gradient applied is scanned with its arguments' payloads and typed as
+  a call that can fail where an argument can; the interpreter's
+  `Value::GradFn` arm answers the first failure, as `Value::Fn`'s does,
+  and `apply_fn_value` borrows a failing argument (parity 285). `grad`
+  inside a function `grad` differentiates — over numbers or tensors, or in
+  a function it reaches — and `grad` of a gradient are refused in the
+  lowering (lower_ir/grad.rs, `Lowerer::call`).
+- A loaded frame's or a data source's columns, typed by the program's
+  reads (`apply_shapes`), are `Result(T)` cells, as a nullable database
+  column's are: a reader of a column's kind for the runtime takes
+  `t.payload().crow_name()`. A column the program writes on the frame
+  (`Env.written`, uses.rs) is not asked of the file.
+- A statement's parameter that failed is the statement's answer
+  (`failed_param`, src/modules/db.rs, a list parameter's items too;
+  compiled, each guarded), and a handler stops only for a statement
+  `table::held` holds to the commit. `describe` has one answer,
+  `crow_db::describe::described` (the program's, the compiler's and `crow
+  db describe`'s), and a replay's records are final (`describes_fully`).
+  The emitter's registry loads no db: a db form that answers its failure
+  says so on its row (`fails`, read by `table::form_fails`), never in a
+  list of names.
+- `crow fix` and the check's report share `db_check::fix::Migrations`
+  (where a constraint migration goes, recorded in `_crow_migrations`). The
+  baseline walker decides whether a statement form writes as the lowering
+  does (`writes_by_statement`), and the reach shows `table::shown_effect`.
+  `crow test --docs` reads a call of a name only where `name[` begins a
+  name (`calls_name`): `area[` had counted as a use of `a`.

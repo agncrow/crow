@@ -9,6 +9,30 @@ history says the rest.
 
 ### Breaking
 
+- One value for several names is refused before the program runs, in
+  both modes (spec, Multiple Assignment; Design Note: No Destructuring):
+  `a, b = xs` and `c, d = pair[]` had run interpreted and not built
+  compiled. The refusal gives the form in the program's names (`r =
+  pair[]`, then `c = r[0]`, `d = r[1]`). Values of another count than
+  the names are refused too: a value past the names had been dropped,
+  and a name past the values left unset.
+- A loaded file's empty cell is missing in a column the program's reads
+  type: read one at a time it is an error value of reason `missing`,
+  `.ok` false, in both modes and for a page's data source too, as the
+  spec says. The reads had typed the cells plain, and a missing cell had
+  read as `''` or NaN with `.ok` true. A program that decides on one now
+  meets the refusal a failed value meets, and a list of such cells used
+  as a mask is refused: fill the column first. On the way, a call
+  answering a list of values that can fail, given an argument that can
+  fail, builds compiled, and an item read from such a list keeps its
+  failure.
+- A module of the program's takes no standard module's name (spec,
+  Importing): `use math` where a `math.co` of the program's lies — or a
+  package `math` under `crow_modules/` — names two modules and is
+  refused at the import, naming the file and how to rename it. The
+  import had reached the standard module silently, and the file's
+  functions failed as the program ran. The standard library's own
+  sources are not the program's.
 - A column is written the way it is read (spec, Frames): `df.name =
   values` writes a column where the frame lies — a new column, or one
   replaced; a scalar repeated down the rows — and `with` is gone from
@@ -186,6 +210,52 @@ history says the rest.
 
 ### Changed
 
+- `crow fmt` indents at four spaces, the unit every document, the book
+  and the standard modules write (it had normalized every file to two),
+  and reads levels from the nesting: a line inside a bracket moves with
+  its statement, keeping its alignment, and the lines a string written
+  across lines runs onto are left as written. One continuation aligned
+  at an odd width had multiplied every level of a file
+  (`tests/layout/conformance.co` came out four times as deep), and a
+  string's lines had been re-indented, changing its text.
+- `crow help` lists every command and flag the binary takes, one line
+  each, on standard output, held by a test to the flags the binary
+  reads; `crow file.co` is documented as the short form of `crow run
+  file.co`.
+- `crow new --db` declares the program's tables as the db section does:
+  `db/schema.co` holds a `setup[conn]` running `CREATE TABLE IF NOT
+  EXISTS users (…)`, and `main.co` opens `sqlite://<name>.db` and hands
+  it to `schema.setup`; `crow db diff` drafts what a database lacks of
+  them. The scaffold lists no migrate job.
+- `crow check`'s rules for a view that queries, reads a file or waits
+  are gone — a remote query in a view, its `--- crow: remote-render`
+  acknowledgment, and blocking rooted at a view — since the compiler
+  refuses such a view first; blocking in a handler stays.
+- A name beginning with `_` is one `crow check` asks nothing of: `_kept
+  = rm[tmp]` keeps a failure it ignores, and the unused-variable advice
+  names that form (it had said "use _", which parses nowhere).
+- `.coc` bytecode is no longer read (nothing wrote it since `crow
+  compile` went): a project's `main.coc` and `crow x.coc` are not Crow
+  files.
+- A call a view may not make is sent where its kind belongs (spec,
+  Effects Have Kinds): a read a derivation may make — a file, the
+  network, a database, the process's environment — to a derivation the
+  view reads (``read it in a derivation the view reads — `derive x`
+  above the view, returning it``), as the book teaches, and a write or
+  any other kind to a handler, as before; a call of several kinds goes
+  where the one a derivation cannot hold says (`recv`, which waits, is a
+  handler's). Every refusal had sent the call to a handler.
+- A method call written as another language writes one is taught the
+  Crow form there is, never a function Crow lacks (spec, Error
+  Messages): `datetime.now()` names `now[]` (it had said `now[datetime,
+  …]`), `xs.includes(1)` and its kin name `1 in xs` (it had said
+  `includes[xs, …]`), a call through an imported module is that call in
+  square brackets, a value's method is the builtin of its name with the
+  value first (`upper[s]`), and anything else is told that a call is
+  `f[x]`.
+- The examples reach `claude-sonnet-5-5` (they had named
+  `claude-sonnet-5`): llm's hint, its tests, the spec, the book and the
+  design notes.
 - The core's names are held, not frozen (spec, Three namespace tiers;
   the book's chapter 8): until 1.0 a core name is added only as a
   breaking change the changelog lists first, since a name it reserves
@@ -310,6 +380,116 @@ history says the rest.
 
 ### Fixed
 
+- A line that holds only a comment opens and closes no block, whatever
+  its indentation, as a blank line does (spec, Blocks), in a file and in
+  the console. A trailing comment continued aligned under itself had
+  been refused ("this line is indented, but the line above it opens no
+  block"), a comment at the margin inside a block had ended the block,
+  and one before a chain's first `then` step left the step indented
+  under nothing.
+- A string written across lines counts its lines: a stop, an error's
+  trace and a refusal after one had named a line short by every line
+  break the string held, in both modes (`line 4` for line 6). A refusal
+  on the line such a string closes on is placed and underlined there, in
+  the terminal and the editor.
+- A crowfile holding `cpu` or `gpu`, keys the spec documents, stopped
+  every command ("'cpu' is a core builtin — pick another name for this
+  variable"): the crowfile's names are keys, not a program's variables.
+  A key another key reads is no longer read back as `done`. Both modes
+  take both counts, for the entry and for a job (a compiled run had
+  taken `cpu` alone), `crow build --ir` and `--rs` print the entry with
+  them, and `crow run -i <job>` runs the job interpreted (it had read
+  the job's name as a file's).
+- In the console and a notebook, a function one cell defines is the next
+  cell's to call (an internal error: "calls 'double', which the program
+  does not define"), and a cell that defines a function again runs its
+  new body.
+- `crow new`: `--db` wrote a `table users` block that does not parse and
+  listed a `jobs/migrate.co` it never wrote; `--ml`'s job called `train`
+  bare, which is undefined. Every file a flavour scaffolds runs now,
+  held by a test of each flavour.
+- `crow fix --hazard`'s constraint migration is written as the next
+  numbered file and applied as `crow db apply` applies it, recorded in
+  `_crow_migrations` (the next `crow db apply` had run it again: "index
+  … already exists"). With `--db migrations://dir` it goes in that
+  directory ("unknown database URL scheme"). The check prints the exact
+  command, the `--db` it was handed included, and the exact file name.
+  No message names `crow migrate`.
+- `crow check` reported a control whose handler only runs `CREATE TABLE`
+  (a setup button, as the book writes one) as a dead control: a database
+  write is something a control does. Its reach named a writing query
+  `__query_write`; it names it `query`. A failed example truth was
+  reported "(at n = 0)", naming an input it never read (the book's
+  chapter 9 `fee`): a failure names the inputs only where its line reads
+  one.
+- A program's own `db/schema.co` is imported by its dot path, `use
+  db.schema`, as `views/home.co` is: every `use db.…` had been refused
+  as a driver's own module (a driver's, `db.postgres`, still is).
+- A second derivative is refused before the program runs, as the spec
+  says (Automatic Differentiation): `fn df[x]` answering `grad[f][x]`,
+  then `grad[df][2.0]`, had answered 0 in both modes — the inner
+  gradient ran on the dual numbers' values alone — where the second
+  derivative of x³ at 2 is 12, and `grad[grad[f]]` had stopped as it
+  ran, interpreted, and not built compiled. `grad` inside a function
+  `grad` differentiates, or inside one it reaches, is refused at its
+  line (`grad: df calls grad, and a function grad differentiates
+  cannot`), and `grad` handed a gradient where it is written; a function
+  that computes a derivative and is differentiated by nothing runs as
+  before.
+- A gradient held in a variable takes what a call takes: `dloss =
+  grad[loss]`, then `dloss[w, xs]` with `xs` read by `load`, had been
+  refused on its only assignment ("cannot reassign 'dloss'"), where
+  `grad[loss][w, xs]` written inline ran. A gradient applied to a value
+  that failed answers that failure, the leftmost, in both modes (the
+  interpreter had handed it in, and the compiled call had stopped or
+  answered it by whether the failure was the first argument), and a
+  function value applied twice to a local that can fail builds compiled.
+- `y = 1.0`, then `y = log[3]`, was an internal error ("the lowered
+  program disagrees with itself"). The answer of a call that answers
+  nothing — a builtin whose row declares no answer (`log`, `sleep`,
+  `exit`, `seed` …), or a function of the program's whose every return
+  hands on nothing — given to a variable, a field, an item or names
+  assigned together is refused where it is written, in both modes:
+  `log[] answers nothing, which 'y' cannot hold — call it on a line of
+  its own`. A new variable given one had held `done`, and a record's
+  field had changed kind.
+- A line that drops an index by a mask (`df[df.age gt 50]` alone) is
+  refused naming the form the program wrote — `` `f[mask]` answers a
+  frame, and this line drops it — keep it: df = df[…] `` — where it had
+  named the hidden `__pick_frame[]`; `crow fix` and the language server
+  apply the keep.
+- A call through a standard module of a name it does not have (`use
+  math`, then `math.double[5]`) is refused before the program runs, the
+  nearest of its names offered where one is a slip away (`math has no
+  'meen' — did you mean 'mean'?`): `math`, a name its own import makes
+  so that its constants read, had let any `math.f[…]` by, typed as
+  nothing known, to stop as the program ran, interpreted, and not build
+  compiled.
+- A column the program writes on a loaded frame (`df.when = …`) is the
+  program's from then on: what it reads of it afterwards asks nothing of
+  the file. A column of moments written and compared had stopped the
+  load ("the frame has no column 'when'").
+- A statement handed a parameter that failed answers the failure, as any
+  call does: the interpreter had stopped (`cannot bind done as SQL
+  param`), inside `transact` too, where the compiled program answered
+  it. A list parameter holding an item that failed builds compiled. In a
+  handler a read answers the failure and a write stops the handler, in
+  both modes; a read had stopped it in both.
+- `insert` answers the database's refusal (rows that break a constraint,
+  a column the table lacks) as an error value of kind `'db'`, in both
+  modes: the compiled program had unwrapped it and panicked, and the
+  interpreter had stopped.
+- `describe[conn, sql]` answers what the compiler reads: a computed
+  column typed from the statement, a column that can hold NULL marked
+  `?` on SQLite and Postgres, `IN ?` described as a list of one. It had
+  answered the database's word alone.
+- `crow test --docs` reads a call of a name only where `name[` begins a
+  name: the coverage check could have counted a builtin as called inside
+  a longer name, and the standard library's pages had linked `area[…]`
+  to the `a * b` row and `greet[…]` to the moment's `t` rows.
+- The task board's committed baseline is the app as it is (`query` where
+  it had `exec`, reach by effect kind): it had been accepted before both
+  changed, and no suite diffs it.
 - The book's site is built again (`docs/book/site.co`): its page view
   read a file for the mark's version and the harness's sample chapter
   was read inside a view, which a view may not do since effects have
