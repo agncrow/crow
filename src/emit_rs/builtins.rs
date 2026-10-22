@@ -68,29 +68,50 @@ impl Emitter {
                 o => (false, o),
             };
             let value = if f { format!("({}).value", s) } else { format!("({})", s) };
+            // a list parameter whose items can fail (`IN ?` given `[[1.5,
+            // px]]`): each item's payload bound, the first that failed the
+            // statement's answer (it had not built: a value that can fail is
+            // no JSON)
+            let items_fail = match &inner {
+                Ty::List(item) if item.is_result() => Some(item.payload().clone()),
+                _ => None,
+            };
             let json = if Self::is_empty_list(e) {
                 "serde_json::Value::Array(vec![])".to_string()
             } else if matches!(inner, Ty::Tensor(..)) {
                 format!("serde_json::json!({}.to_vec().iter().map(|&_f| if _f.is_finite() && _f == (_f as i64) as f64 {{ serde_json::json!(_f as i64) }} else {{ serde_json::json!(_f) }}).collect::<Vec<_>>())", value)
+            } else if items_fail.is_some() {
+                format!("serde_json::Value::Array({}.iter().map(|_x| serde_json::json!(_x.value)).collect())", value)
             } else {
                 format!("serde_json::json!({})", value)
             };
             out.push(json);
             if f {
-                fallible.push(s);
+                fallible.push(s.clone());
+            }
+            if let Some(item) = items_fail {
+                fallible.push(format!(
+                    "({}).iter().find(|_x| !_x.ok).cloned().unwrap_or_else(|| CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }})",
+                    value,
+                    item.default_rust_value()
+                ));
             }
         }
         (out.join(", "), fallible)
     }
 
-    fn db_guard(&self, fallible: &[String], err_value: &str, body: String) -> String {
-        let stop_as = self.reactive_epilogue.is_some().then(|| self.shown_fn_name());
+    /// A statement given a parameter that failed answers the failure, as
+    /// any call does; in a handler, one held to its commit (a write) stops
+    /// the handler instead (spec, A handler is a transaction) — a read had
+    /// stopped it too, where the interpreter answered the failure.
+    fn db_guard(&self, fallible: &[String], err_value: &str, body: String, held: bool) -> String {
+        let stop_as = (held && self.reactive_epilogue.is_some()).then(|| self.shown_fn_name());
         let mut out = body;
         for f in fallible.iter().rev() {
             out = match &stop_as {
                 Some(who) => format!("{{ if !({f}).ok {{ state.stop(format!(\"{who} stopped: {{}}\", ({f}).reason)); return; }} else {out} }}", f = f, who = who, out = out),
                 None => format!(
-                    "{{ if !({f}).ok {{ CrowResult {{ ok: false, value: {ev}, reason: ({f}).reason.clone(), kind: ({f}).kind.clone(), trace: vec![], captured: 0.0 }} }} else {out} }}",
+                    "{{ if !({f}).ok {{ CrowResult {{ ok: false, value: {ev}, reason: ({f}).reason.clone(), kind: ({f}).kind.clone(), trace: ({f}).trace.clone(), captured: 0.0 }} }} else {out} }}",
                     f = f,
                     ev = err_value,
                     out = out
@@ -100,14 +121,14 @@ impl Emitter {
         out
     }
 
-    fn db_query(&mut self, conn: &str, sql: &str, params: &[Expr]) -> String {
+    fn db_query(&mut self, name: &str, conn: &str, sql: &str, params: &[Expr]) -> String {
         self.needs_serde_json = true;
         let (p, fallible) = self.db_params(params);
         let body = format!(
             "{{ match {}.query(&{}, &[{}]) {{ Ok(_f) => CrowResult {{ ok: true, value: _f, reason: String::new(), kind: String::new(), trace: vec![], captured: {} }}, Err(_e) => CrowResult {{ ok: false, value: crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![]), reason: _e, kind: \"db\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
             conn, sql, p, STAMP
         );
-        self.db_guard(&fallible, "crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![])", body)
+        self.db_guard(&fallible, "crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![])", body, crate::table::held(name))
     }
 
     /// `connect[url]`, with a pool, and with the statements the lowering
@@ -202,7 +223,7 @@ impl Emitter {
         if m == "db" && self.needs_crow_db {
             match f {
                 "connect" => return self.db_connect(args, arg_strs),
-                "query" | "__query_write" if arg_strs.len() >= 2 => return self.db_query(&arg_strs[0], &arg_strs[1], &args[2..]),
+                "query" | "__query_write" if arg_strs.len() >= 2 => return self.db_query(f, &arg_strs[0], &arg_strs[1], &args[2..]),
                 "describe" if arg_strs.len() == 2 => return self.db_describe(&arg_strs[0], &arg_strs[1]),
                 "insert" if arg_strs.len() == 3 => return format!("{}.insert(&{}, &{}).unwrap()", arg_strs[0], arg_strs[1], arg_strs[2]),
                 "transact" if arg_strs.len() == 2 => return self.db_transact(&arg_strs[0], &arg_strs[1]),
@@ -691,7 +712,7 @@ impl Emitter {
             // (`connect[env['DATABASE_URL']]`) had compiled to a call to
             // nothing, from when web's socket client was `connect` too
             "connect" if db => self.db_connect(args, a),
-            "query" | "__query_write" if db && n >= 2 => self.db_query(&a[0], &a[1], &args[2..]),
+            "query" | "__query_write" if db && n >= 2 => self.db_query(name, &a[0], &a[1], &args[2..]),
             "describe" if db && n == 2 => self.db_describe(&a[0], &a[1]),
             "insert" if db && n == 3 => format!("{}.insert(&{}, &{}).unwrap()", a[0], a[1], a[2]),
             "transact" if db && n == 2 => self.db_transact(&a[0], &a[1]),

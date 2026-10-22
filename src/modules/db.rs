@@ -105,6 +105,13 @@ fn call_db(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
             }
             let conn = to_db(&args[0], "query")?;
             let sql = to_str(&args[1], "query")?;
+            // a parameter that failed is the statement's answer, as any
+            // call's failed argument is (spec, Auto-Propagation): it had
+            // stopped the program — "cannot bind done as SQL param" — where
+            // the compiled program answered the failure
+            if let Some(failed) = args.get(2).and_then(failed_param) {
+                return Ok(failed.clone());
+            }
             let params = if args.len() == 3 {
                 crow_value_to_json_params(&args[2])?
             } else {
@@ -148,6 +155,18 @@ fn call_db(name: &str, args: &[CrowValue]) -> Result<CrowValue, String> {
             Err("transact[] must be called at top level — see interpreter".into())
         }
         _ => Err(format!("unknown db function: {}", name)),
+    }
+}
+
+/// The leftmost value that failed among a statement's parameters, a list
+/// parameter's items included.
+fn failed_param(v: &CrowValue) -> Option<&CrowValue> {
+    if v.is_error() {
+        return Some(v);
+    }
+    match &v.value {
+        Value::Array(items) => items.iter().find_map(failed_param),
+        _ => None,
     }
 }
 

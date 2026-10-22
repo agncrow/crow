@@ -1,0 +1,69 @@
+--- A statement handed a parameter that failed answers the failure, as any
+--- call handed a failed argument does (spec, Auto-Propagation): its reason,
+--- its kind and its trace, and nothing run. The interpreter had stopped —
+--- "cannot bind done as SQL param" — where the compiled program answered
+--- it; a list parameter holding an item that failed (`IN ?`) had not built
+--- compiled; a write handed one is not made, and a transaction whose
+--- function meets one is rolled back; `insert` handed a frame that failed
+--- answers it too. (In a handler, a write handed one stops the handler:
+--- tests/failed_statement_parameter_harness.co.)
+use db
+use frame
+c = connect['sqlite://:memory:']
+query[c, 'CREATE TABLE t (v REAL NOT NULL)']
+query[c, 'INSERT INTO t VALUES (1.5), (2.5)']
+
+--- a read
+px = float['x']
+r = query[c, 'SELECT v FROM t WHERE v > ?', [px]]
+log[r.ok]
+log[r.reason]
+log[r.kind]
+log[r.trace]
+
+--- a write, not made
+w = query[c, 'INSERT INTO t VALUES (?)', [px]]
+log[w.ok]
+log[w.reason]
+log[len[query[c, 'SELECT v FROM t']]]
+
+--- a list parameter, its items numbers or ints
+l = query[c, 'SELECT v FROM t WHERE v IN ?', [[1.5, px]]]
+log[l.ok]
+log[l.reason]
+ids = [1, int['z']]
+k = query[c, 'SELECT v FROM t WHERE rowid IN ?', [ids]]
+log[k.reason]
+good = [1, int['2']]
+log[len[query[c, 'SELECT v FROM t WHERE rowid IN ?', [good]]]]
+
+--- inside a function, handed back to its caller
+fn over[c, text]
+    x = float[text]
+    return query[c, 'SELECT v FROM t WHERE v > ?', [x]]
+
+f = over[c, 'y']
+log[f.ok]
+log[f.reason]
+log[f.trace]
+log[len[over[c, '2.0']]]
+
+--- inside a transaction: the function hands the failure back, and the
+--- transaction is rolled back (the interpreter had stopped: "transact[]:
+--- rolled back: … cannot bind done as SQL param")
+fn bump[t]
+    query[t, 'INSERT INTO t VALUES (?)', [9.5]]
+    v = float['nope']
+    query[t, 'INSERT INTO t VALUES (?)', [v]]
+    return 1
+
+done = transact[c, bump]
+log[done.ok]
+log[done.reason]
+log[len[query[c, 'SELECT v FROM t']]]
+
+--- a frame that failed, handed to insert
+gone = frame.load['no_such_file_292.csv']
+n = insert[c, 't', gone]
+log[n.ok]
+log[n.reason]

@@ -1,0 +1,53 @@
+--- A statement handed a parameter that failed, in a handler: a read
+--- answers the failure, as any call does, and the handler goes on; a
+--- write, held to the handler's commit, stops the handler, and nothing it
+--- did lands (spec, A handler is a transaction). The interpreter had
+--- stopped on the read too — "cannot bind done as SQL param" — and the
+--- compiled program had stopped on it with the reason. CI runs it against
+--- the interpreter and against the compiled program (crow test --compiled).
+use web, ui, db
+book = db.connect['sqlite://:memory:']
+entry = '5'
+seen = ''
+count = 0
+fn setup[]
+    query[book, 'CREATE TABLE IF NOT EXISTS t (v REAL NOT NULL)']
+    query[book, 'INSERT INTO t VALUES (1.5), (7.5)']
+fn look[]
+    count = count + 1
+    r = query[book, 'SELECT v FROM t WHERE v > ?', [float[entry]]]
+    if r.ok
+        seen = 'rows `len[r]`'
+    else
+        seen = 'failed: `r.reason`'
+fn add[]
+    count = count + 1
+    kept = query[book, 'INSERT INTO t VALUES (?)', [float[entry]]]
+    if not kept.ok
+        seen = 'went on'
+view panel[]
+    return stack[
+        p['`count` `seen`'],
+        p['`notice.text`'],
+        button['Setup', click = setup],
+        button['Look', click = look],
+        button['Add', click = add]
+    ]
+page['/', panel]
+
+test a_read_answers_a_failed_parameter_and_a_write_stops[]
+    a = app[panel]
+    click[a, setup]
+    click[a, look]
+    assert[a.seen eq 'rows 1', 'the read: `a.seen`']
+    change[a, 'entry', 'x']
+    r = click[a, look]
+    assert[r.ok, 'the read went on: `r.reason`']
+    assert[a.count eq 2, 'the read counted: `a.count`']
+    assert[starts[a.seen, 'failed: cannot convert'], 'the read answered the failure: `a.seen`']
+    w = click[a, add]
+    assert[not w.ok, 'the write stopped the handler']
+    assert['cannot convert' in w.reason, 'why it stopped: `w.reason`']
+    assert[a.count eq 2, 'nothing the write did landed: `a.count`']
+    assert[starts[a.seen, 'failed: cannot convert'], 'the handler went no further: `a.seen`']
+    assert['add stopped, and nothing changed' in html[a], 'the page `html[a]`']
