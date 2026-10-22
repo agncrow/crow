@@ -620,13 +620,18 @@ fn pieces_of_call(e: &Expr) -> Option<Vec<Option<Dims>>> {
     row.and_then(|r| shapes::declared_pieces(r, args))
 }
 
+/// What `grad` is handed, when an expression is a call of it.
+fn grad_argument(e: &Expr) -> Option<&Expr> {
+    match e {
+        Expr::Call { target: Target::Runtime(n), args, .. } if n == "grad" || n.ends_with(".grad") => args.first(),
+        _ => None,
+    }
+}
+
 fn gradient_of_call(e: &Expr) -> Option<String> {
     // the function a gradient is of, when an expression is `grad[f]`
-    match e {
-        Expr::Call { target: Target::Runtime(n), args, .. } if n == "grad" || n.ends_with(".grad") => match args.first() {
-            Some(Expr::FnRef(f, _)) => Some(f.clone()),
-            _ => None,
-        },
+    match grad_argument(e) {
+        Some(Expr::FnRef(f, _)) => Some(f.clone()),
         _ => None,
     }
 }
@@ -4428,6 +4433,19 @@ impl<'a> Lowerer<'a> {
         }
         let out = self.call_inner(callee, args);
         self.params_items = saved;
+        // a gradient differentiated again — `grad[grad[f]]`, or `grad[g]` of
+        // a variable that holds one — is a second derivative, which is not
+        // built (spec, Automatic Differentiation): refused before either
+        // mode runs, as `grad` inside a function `grad` differentiates is
+        // (the interpreter had stopped, "grad[] takes a function, got fn",
+        // and the compiled program had not built)
+        if self.pass == Pass::Final
+            && let Ok(x) = &out
+            && let Some(handed) = grad_argument(x)
+            && self.gradient_of(handed).is_some()
+        {
+            self.refuse("grad[] takes a function the program writes, and this is a gradient — a gradient is not differentiated again: a second derivative is not built".to_string());
+        }
         out
     }
 
@@ -8284,6 +8302,28 @@ if r.ok
         refuses("use math\nfn f[w, k]\n    return sum[w] * k\nlog[grad[f][[1.0, 2.0], 3.0]]\n", "a function grad differentiates takes tensors, or numbers alone — f takes a tensor, a number");
         refuses("use math\nfn inner[x]\n    return x * x\nfn outer[w]\n    return sum[w] * grad[inner][2.0]\nlog[grad[outer][[1.0]]]\n", "grad: outer calls grad");
         refuses("use math\nfn f[w]\n    n = len[w gt 0.0]\n    return sum[w] * float[n]\nlog[grad[f][[3.0, 1.0]]]\n", "grad: f compares tensors with `gt`");
+    }
+
+    /// A second derivative is not built: `grad` inside a function `grad`
+    /// differentiates over numbers, or one it reaches, and `grad` handed a
+    /// gradient, are refused before the program runs, in the words the
+    /// tensors' refusal has (the first had answered 0 in both modes, the
+    /// second stopped interpreted and did not build compiled); a function
+    /// that computes a derivative, which nothing differentiates, runs
+    #[test]
+    fn a_second_derivative_is_refused() {
+        let refuses = |src: &str, words: &str| {
+            let r = refusal_of(src);
+            assert!(r.contains(words), "{}\n--- wanted: {}", r, words);
+        };
+        refuses("fn f[x]\n    return x * x * x\nfn df[x]\n    return grad[f][x]\nlog[grad[df][2.0]]\n", "line 4: grad: df calls grad, and a function grad differentiates cannot");
+        refuses(
+            "fn cube[x]\n    return x * x * x\nfn slope[x]\n    if x gt 0.0\n        return grad[cube][x]\n    return 0.0\nfn tangent[x, at]\n    return cube[at] + slope[at] * (x - at)\nlog[grad[tangent][3.0, 2.0]]\n",
+            "line 5: grad: slope calls grad, and a function grad differentiates cannot",
+        );
+        refuses("fn f[x]\n    return x * x\nlog[grad[grad[f]][2.0]]\n", "line 3: grad[] takes a function the program writes, and this is a gradient — a gradient is not differentiated again");
+        refuses("fn f[x]\n    return x * x\ng = grad[f]\nlog[grad[g][2.0]]\n", "line 4: grad[] takes a function the program writes, and this is a gradient");
+        assert_eq!(refusal_of("fn f[x]\n    return x * x * x\nfn df[x]\n    return grad[f][x]\nlog[df[2.0]]\n"), "");
     }
 
     /// A gradient held in a variable and applied to a value that can fail

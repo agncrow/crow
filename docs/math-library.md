@@ -234,7 +234,7 @@ g = dloss[w, x, y]                         --- computes gradients: one per param
 w = w - g[0] * 0.01
 ```
 
-No manual derivative computation. `grad[f]` transforms a function into its gradient function. *Proposed:* composing it, `grad[grad[f]]` for second derivatives; today a gradient is not differentiated again (spec, Automatic Differentiation).
+No manual derivative computation. `grad[f]` transforms a function into its gradient function. *Proposed:* composing it, `grad[grad[f]]` for second derivatives; today a gradient is not differentiated again — `grad[grad[f]]`, and `grad` called inside a function `grad` differentiates, are refused before the program runs (spec, Automatic Differentiation).
 
 ### Layer 8: GPU Computing
 

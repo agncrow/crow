@@ -1,0 +1,5 @@
+--- grad handed a gradient — a second derivative, which is not built — is refused before the program runs (the interpreter had stopped as it ran, "grad[] takes a function, got fn", and the compiled program had not built)
+fn f[x]
+    return x * x * x
+
+log[grad[grad[f]][2.0]]

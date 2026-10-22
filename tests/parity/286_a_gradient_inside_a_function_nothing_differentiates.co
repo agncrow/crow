@@ -1,0 +1,26 @@
+--- `grad` called inside a function is refused only where `grad`
+--- differentiates that function, or one it reaches (a second derivative is
+--- not built — the refusals are tests/errors j76 and j77): a function that
+--- computes a derivative, and a function calling it, run as any function
+--- does, in both modes, beside a gradient of a function of its own.
+fn cube[x]
+    return x * x * x
+
+fn slope[x]
+    return grad[cube][x]
+
+fn slopes[xs]
+    out = for x in xs
+        slope[x]
+    return out
+
+fn tangent[x, at]
+    return cube[at] + slope[at] * (x - at)
+
+fn square[x]
+    return x * x
+
+log['slope of x^3 at 2:', slope[2.0]]
+log['slopes:', slopes[[1.0, 2.0, 3.0]]]
+log['the tangent at 2, at 3:', tangent[3.0, 2.0]]
+log['the slope of x^2 at 3:', grad[square][3.0]]

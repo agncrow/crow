@@ -1,0 +1,9 @@
+--- grad called inside a function grad differentiates is refused before the program runs, over numbers as over tensors (a second derivative is not built: the inner gradient had run on the dual numbers' values alone, and `grad[df][2.0]` answered 0 where 12 is the second derivative of x^3 at 2)
+fn f[x]
+    return x * x * x
+
+fn df[x]
+    return grad[f][x]
+
+log[df[2.0]]
+log[grad[df][2.0]]

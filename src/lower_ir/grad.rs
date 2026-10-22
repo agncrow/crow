@@ -35,6 +35,22 @@ pub(super) fn settle(program: &mut Program) -> Vec<(String, String)> {
             traced.insert(t.clone());
             traced.extend(reached_from(part, t));
         }
+        // a function differentiated over numbers, and every function it
+        // reaches (each run on the dual numbers), calls no `grad` either,
+        // as the spec refuses it for both kinds: the inner gradient had run
+        // on the dual's value alone, and the outer one answered 0 — no
+        // second derivative, silently (a traced one is refused below)
+        let mut duals = BTreeSet::new();
+        for t in targets.iter().filter(|t| !tensor_targets.contains(*t)) {
+            duals.insert(t.clone());
+            duals.extend(reached_from(part, t));
+        }
+        for f in part.fns.iter().filter(|f| duals.contains(&f.name) && !traced.contains(&f.name)) {
+            let mut line = first_line(&f.body);
+            if let Some(at) = grad_called_in(&f.body, &mut line) {
+                refusals.push((f.name.clone(), format!("line {}: grad: {} calls grad, and a function grad differentiates cannot", at, f.name)));
+            }
+        }
         for f in &mut part.fns {
             if !traced.contains(&f.name) {
                 continue;
@@ -73,12 +89,44 @@ fn kind_word(t: &Ty) -> &'static str {
     }
 }
 
+/// Whether an expression is a call of `grad`.
+fn is_grad(e: &Expr) -> bool {
+    matches!(e, Expr::Call { .. }) && call_name(e).as_deref() == Some("grad")
+}
+
+/// The line of the first call of `grad` in a body, where it has one.
+fn grad_called_in(block: &[Stmt], line: &mut usize) -> Option<usize> {
+    for s in block {
+        if let Stmt::Line(n) = s {
+            *line = *n;
+            continue;
+        }
+        // (a nested block's own lines place the call inside it; the
+        // statement's own expressions are on its line)
+        let here = *line;
+        let inner = match s {
+            Stmt::If { then, els, .. } => grad_called_in(then, line).or_else(|| els.as_ref().and_then(|e| grad_called_in(e, line))),
+            Stmt::While { body, .. } | Stmt::For { body, .. } => grad_called_in(body, line),
+            _ => None,
+        };
+        if inner.is_some() {
+            return inner;
+        }
+        let mut found = false;
+        visit_stmt(s, &mut |e| found |= is_grad(e));
+        if found {
+            return Some(here);
+        }
+    }
+    None
+}
+
 /// The functions `grad` is handed, anywhere in the part.
 fn targets_of(part: &Part) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     let mut note = |e: &Expr| {
         if let Expr::Call { args, .. } = e {
-            if call_name(e).as_deref() == Some("grad") {
+            if is_grad(e) {
                 for a in args {
                     if let Expr::FnRef(f, _) = a {
                         out.insert(f.clone());
@@ -164,7 +212,7 @@ fn check_expr(fname: &str, e: &Expr, line: usize, refusals: &mut Vec<(String, St
             let traced_arg = args.iter().any(traced_value);
             match target {
                 Target::User(_) => {}
-                _ if name == "grad" => refuse("calls grad, and a function grad differentiates cannot".to_string()),
+                _ if is_grad(e) => refuse("calls grad, and a function grad differentiates cannot".to_string()),
                 // (the rows say which builtins a traced value may reach:
                 // differentiated, or read and never differentiated, and the
                 // constructors of the tape's constants)

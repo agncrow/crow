@@ -1,0 +1,3 @@
+j76_grad_inside_a_function_grad_differentiates.co:6:5: grad: df calls grad, and a function grad differentiates cannot
+  6 │     return grad[f][x]
+    │     ^^^^^^^^^^^^^^^^^
