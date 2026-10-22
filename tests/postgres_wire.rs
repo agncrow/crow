@@ -76,6 +76,10 @@ fn the_postgres_driver_written_in_crow_speaks_to_a_cluster_in_both_modes() {
             assert!(stdout.contains("d,e"), "a copied cell with a comma\n{} {:?}: {}", user, mode, stdout);
             assert!(stdout.contains("[4 rows x 3 cols]\n"), "the rows copied in beside the rows inserted\n{} {:?}: {}", user, mode, stdout);
             assert!(stdout.contains("datetime"), "describe types the server's columns\n{} {:?}: {}", user, mode, stdout);
+            // (and marks those that can hold NULL, as the compiler reads them:
+            // `k` and `w` are declared without NOT NULL — it had marked none)
+            let described = |name: &str, kind: &str| stdout.lines().any(|l| l.trim_start().starts_with(&format!("{} ", name)) && l.trim_end().ends_with(kind));
+            assert!(described("k", "str?") && described("w", "float?"), "describe marks the columns that can hold NULL\n{} {:?}: {}", user, mode, stdout);
             assert!(stdout.contains("\nfalse\npostgres query error: column \"nope\" does not exist\n"), "the server's words\n{} {:?}: {}", user, mode, stdout);
             // a: 2, b: 3, c: 3, d,e: 4, doubled by the transaction that committed; the one that failed rolled back
             assert!(stdout.contains("\nfalse\ntotal\n"), "the failed transaction's value\n{} {:?}: {}", user, mode, stdout);

@@ -147,8 +147,59 @@ pub fn writes(statement: Option<&str>) -> bool {
 /// prints, which `describe_by_process` reads for a driver written in Crow.
 pub fn of_url(url: &str, sql: &str) -> Result<Vec<(String, String)>, String> {
     let db = crate::connect(url, Some(1))?;
-    let mut cols = db.describe(sql)?;
-    mark_nullable(&db, url, sql, &mut cols);
+    described(&db, sql)
+}
+
+/// The columns a statement answers on a connection, without running it —
+/// the one answer the compiler asks for at build time and `describe[conn,
+/// sql]` gives as the program runs (`DbHandle::describe`): what the
+/// backend says, then, where SQLite types no computed column (stepped once
+/// with null parameters, no row came back), the statement's own reading
+/// (`sql_types::select_kinds`), each column that can hold NULL marked `?`
+/// (`mark_nullable`), and a column nothing types — a parameter alone —
+/// text, as the compiler reads it. (The program's `describe` had answered
+/// the backend's word alone: no `?` on SQLite or Postgres, and on SQLite
+/// `unknown` for a computed column the probe found no row for.) A replay's
+/// records are the compiler's answers already, and are answered as they
+/// are.
+pub fn described(db: &crate::DbHandle, sql: &str) -> Result<Vec<(String, String)>, String> {
+    if db.describes_fully() {
+        return db.described_by_backend(sql);
+    }
+    let listed = in_lists_as_one(sql);
+    let sql = listed.as_str();
+    let mut cols = db.described_by_backend(sql)?;
+    if db.backend_name() == "sqlite" && cols.iter().any(|(_, k)| k == "unknown") {
+        let columns_of = |table: &str| -> Vec<(String, String)> {
+            let frame = match db.query(&format!("PRAGMA table_info(\"{}\")", table.replace('"', "\"\"")), &[]) {
+                Ok(f) => f,
+                Err(_) => return Vec::new(),
+            };
+            let text = |name: &str| -> Vec<String> {
+                frame.columns.iter().position(|c| c == name)
+                    .and_then(|i| match frame.data[i].as_ref() { crow_runtime::frame::Column::Str(v) => Some(v.to_vec()), _ => None })
+                    .unwrap_or_default()
+            };
+            text("name").into_iter().zip(text("type")).collect()
+        };
+        if let Some(kinds) = crate::sql_types::select_kinds(sql, &columns_of)
+            && kinds.len() == cols.len()
+        {
+            for ((_, k), typed) in cols.iter_mut().zip(kinds) {
+                if k == "unknown"
+                    && let Some(t) = typed
+                {
+                    *k = t;
+                }
+            }
+        }
+    }
+    mark_nullable(db, sql, &mut cols);
+    for (_, k) in cols.iter_mut() {
+        if let Some(rest) = k.strip_prefix("unknown") {
+            *k = format!("str{}", rest);
+        }
+    }
     Ok(cols)
 }
 
@@ -239,39 +290,10 @@ pub fn describe_asking(key: &str, url: &str, ddl: &[String], sql: &str) -> Resul
             Ok(db)
         });
         match handle {
-            Ok(db) => {
-                let mut cols = db.describe(sql)?;
-                // SQLite types no computed column, and a statement whose
-                // parameters match no row shows none: type those from the
-                // statement and the tables' declared columns
-                if url.starts_with("sqlite://") && cols.iter().any(|(_, k)| k == "unknown") {
-                    let columns_of = |table: &str| -> Vec<(String, String)> {
-                        let frame = match db.query(&format!("PRAGMA table_info(\"{}\")", table.replace('"', "\"\"")), &[]) {
-                            Ok(f) => f,
-                            Err(_) => return Vec::new(),
-                        };
-                        let text = |name: &str| -> Vec<String> {
-                            frame.columns.iter().position(|c| c == name)
-                                .and_then(|i| match frame.data[i].as_ref() { crow_runtime::frame::Column::Str(v) => Some(v.to_vec()), _ => None })
-                                .unwrap_or_default()
-                        };
-                        text("name").into_iter().zip(text("type")).collect()
-                    };
-                    if let Some(kinds) = crate::sql_types::select_kinds(sql, &columns_of) {
-                        if kinds.len() == cols.len() {
-                            for ((_, k), typed) in cols.iter_mut().zip(kinds) {
-                                if k == "unknown" {
-                                    if let Some(t) = typed {
-                                        *k = t;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                mark_nullable(db, url, sql, &mut cols);
-                Ok(cols)
-            }
+            // (SQLite types no computed column, and a statement whose
+            // parameters match no row shows none: `described` types those
+            // from the statement and the tables' declared columns)
+            Ok(db) => described(db, sql),
             Err(e) => Err(e.clone()),
         }
     })
@@ -283,10 +305,10 @@ pub fn describe_asking(key: &str, url: &str, ddl: &[String], sql: &str) -> Resul
 /// describe no column's nullability, so each table's declared NOT NULLs
 /// are asked for; a statement that is not read that way can hold NULL in
 /// every column. ClickHouse's DESCRIBE says it itself (`Nullable(…)`).
-pub fn mark_nullable(db: &crate::DbHandle, url: &str, sql: &str, cols: &mut [(String, String)]) {
+pub fn mark_nullable(db: &crate::DbHandle, sql: &str, cols: &mut [(String, String)]) {
     use crow_runtime::frame::Column;
-    let postgres = url.starts_with("postgres");
-    if !postgres && !url.starts_with("sqlite://") {
+    let postgres = db.backend_name() == "postgres";
+    if !postgres && db.backend_name() != "sqlite" {
         return;
     }
     let read = |frame: &crow_runtime::frame::CrowFrame, name: &str| -> Vec<String> {
@@ -341,6 +363,33 @@ mod tests {
         // (no column is declared NOT NULL: each can hold NULL)
         assert_eq!(cols, vec![("shares".to_string(), "int?".to_string()), ("pnl".to_string(), "float?".to_string())]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// What a program's `describe[conn, sql]` answers on SQLite is what the
+    /// compiler reads (`DbHandle::describe`): a column that can hold NULL
+    /// marked `?`, a computed column of a statement no row answers typed
+    /// from the statement, `IN ?` described as a list of one, and a
+    /// parameter alone text — where it had answered the database's word
+    /// alone: no `?`, `unknown`, and an error for `IN ?`
+    #[test]
+    fn a_programs_describe_is_the_compilers() {
+        let db = crate::connect("sqlite://:memory:", None).unwrap();
+        db.exec("CREATE TABLE trades (id INTEGER PRIMARY KEY, sym TEXT NOT NULL, shares INTEGER, entry_px REAL, exit_px REAL)", &[]).unwrap();
+        let pairs = |v: &[(&str, &str)]| -> Vec<(String, String)> { v.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect() };
+        let cols = db.describe("SELECT id, sym, shares, round((exit_px - entry_px) * shares, 2) AS pnl FROM trades WHERE id = ?").unwrap();
+        assert_eq!(cols, pairs(&[("id", "int"), ("sym", "str"), ("shares", "int?"), ("pnl", "float?")]));
+        let cols = db.describe("SELECT count(*) AS n, sym FROM trades WHERE sym IN ? GROUP BY sym").unwrap();
+        assert_eq!(cols, pairs(&[("n", "int"), ("sym", "str")]));
+        let cols = db.describe("SELECT ? AS asked").unwrap();
+        assert_eq!(cols, pairs(&[("asked", "str?")]));
+        // (the compiler's own answer, asked through the provider, is the same)
+        let path = std::env::temp_dir().join(format!("crow_describe_program_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let url = format!("sqlite://{}", path.display());
+        crate::connect(&url, Some(1)).unwrap().exec("CREATE TABLE trades (id INTEGER PRIMARY KEY, sym TEXT NOT NULL, shares INTEGER, entry_px REAL, exit_px REAL)", &[]).unwrap();
+        let sql = "SELECT id, sym, shares, round((exit_px - entry_px) * shares, 2) AS pnl FROM trades WHERE id = ?";
+        assert_eq!(columns(&url, sql, &[]).unwrap(), crate::connect(&url, Some(1)).unwrap().describe(sql).unwrap());
+        let _ = std::fs::remove_file(&path);
     }
 
     /// A statement with a list parameter (`IN ?`) is asked about as the list

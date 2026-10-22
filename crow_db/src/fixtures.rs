@@ -305,6 +305,11 @@ impl crate::CrowDb for Replay {
     fn describe(&self, sql: &str) -> Result<Vec<(String, String)>, String> {
         columns_for(&self.records, sql).ok_or_else(|| "a replay: the statement was never described".to_string())
     }
+    /// (the records are what the compiler's describe answered, whole: read
+    /// for more, the statement would be asked of no database)
+    fn describes_fully(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]
@@ -341,6 +346,20 @@ mod tests {
         let back = db.query("INSERT INTO marks VALUES (?) RETURNING id", &[]).unwrap();
         assert_eq!((back.nrows(), back.columns.clone()), (1, vec!["id".to_string()]));
         assert_eq!(db.backend_name(), "postgres");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A replay's description is its record, the compiler's whole answer:
+    /// the statement is read for nothing more, which would ask the replay
+    /// for the tables' columns — a fixture no recording holds
+    #[cfg(feature = "sqlite")]
+    #[test]
+    fn a_replays_description_is_its_record() {
+        let dir = project("describe");
+        std::fs::write(dir.join("schema").join("b.json"), serde_json::json!({ "via": "book", "sql": "SELECT sym, px FROM marks WHERE sym IN ?", "columns": [["sym", "str"], ["px", "float?"]] }).to_string()).unwrap();
+        let db = crate::DbHandle::new(Replay::open("postgres://u@h/db", &dir));
+        let cols = db.describe("SELECT sym, px FROM marks WHERE sym IN ?").unwrap();
+        assert_eq!(cols, vec![("sym".to_string(), "str".to_string()), ("px".to_string(), "float?".to_string())]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

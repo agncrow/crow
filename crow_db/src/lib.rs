@@ -119,6 +119,15 @@ pub trait CrowDb: Send + Sync {
         Err(format!("{}: describe is not supported", self.backend_name()))
     }
 
+    /// Whether `describe` answers each column's kind as the compiler reads
+    /// it already — computed columns typed, those that can hold NULL marked
+    /// `?` — as a replay's records do, which are the compiler's answers;
+    /// otherwise the statement is read for what the backend leaves out
+    /// (`describe::described`).
+    fn describes_fully(&self) -> bool {
+        false
+    }
+
     /// Run `f` holding the database's lock for changing its schema, in one
     /// transaction where the database has them: two processes starting at
     /// once reconcile one after the other (crate::schema). A backend with
@@ -322,9 +331,32 @@ impl DbHandle {
         self.inner.query(&sql, &params)
     }
 
-    /// Column names and kinds of a statement's result, without running it.
+    /// Column names and kinds of a statement's result, without running it:
+    /// each column typed, a computed one too, and marked `?` where it can
+    /// hold NULL — one answer for the compiler and for `describe[conn,
+    /// sql]` (`describe::described`).
     pub fn describe(&self, sql: &str) -> Result<Vec<(String, String)>, String> {
+        #[cfg(feature = "sqlite")]
+        {
+            describe::described(self, sql)
+        }
+        #[cfg(not(feature = "sqlite"))]
+        {
+            self.inner.describe(sql)
+        }
+    }
+
+    /// What the backend itself says a statement answers, before the
+    /// statement is read for what it leaves out.
+    #[cfg(feature = "sqlite")]
+    pub(crate) fn described_by_backend(&self, sql: &str) -> Result<Vec<(String, String)>, String> {
         self.inner.describe(sql)
+    }
+
+    /// Whether the backend's own answer is the whole one (a replay's).
+    #[cfg(feature = "sqlite")]
+    pub(crate) fn describes_fully(&self) -> bool {
+        self.inner.describes_fully()
     }
 
     pub fn exec(&self, sql: &str, params: &[serde_json::Value]) -> Result<i64, String> {
