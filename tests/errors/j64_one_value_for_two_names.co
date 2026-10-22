@@ -1,0 +1,5 @@
+--- c, d = pair[] for r = pair[], then c = r[0], d = r[1]: Crow takes no list apart into names
+fn pair[]
+    return [3, 4]
+c, d = pair[]
+log[c + d]

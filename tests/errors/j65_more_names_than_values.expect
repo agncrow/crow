@@ -1,0 +1,3 @@
+j65_more_names_than_values.co:2:11: 3 names and 2 values — `a, b, c = x, y, z` gives each name a value of its own, as many values as names
+  2 │ a, b, c = 1, 2
+    │           ^

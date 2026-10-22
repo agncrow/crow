@@ -1,0 +1,3 @@
+j64_one_value_for_two_names.co:4:8: Crow takes no list apart into names — hold it, then read its items by position: r = pair[], then c = r[0], d = r[1]; `c, d = x, y` gives each name a value of its own
+  4 │ c, d = pair[]
+    │        ^^^^

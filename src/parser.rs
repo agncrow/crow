@@ -753,10 +753,14 @@ impl Parser {
                         names.push(self.expect_ident()?);
                     }
                     self.expect(&Token::Assign)?;
+                    let at = self.pos;
                     let mut values = vec![self.parse_expr()?];
                     while self.check(&Token::Comma) {
                         self.advance();
                         values.push(self.parse_expr()?);
+                    }
+                    if values.len() != names.len() {
+                        return Err(self.unpacked(&names, &values, at));
                     }
                     Ok(Stmt::MultiAssign { names, values })
                 }
@@ -770,6 +774,44 @@ impl Parser {
         } else {
             Ok(Stmt::ExprStmt(expr))
         }
+    }
+
+    /// `a, b = …` with other than a value for each name, refused where its
+    /// values begin. One value is a list taken apart into names, which
+    /// Crow does not do (spec, Design Note: No Destructuring): its items
+    /// are read by position, the list held first when it is computed —
+    /// `a, b = xs` and `c, d = pair[]` had run interpreted, and the first
+    /// had not built compiled. Values of another count had been dropped, or
+    /// left a name unset, with nothing said.
+    fn unpacked(&self, names: &[String], values: &[Expr], at: usize) -> String {
+        let place = self.tokens.get(at).map(|t| format!("line {}, col {}: ", t.line, t.col)).unwrap_or_default();
+        let given = if names.len() <= 3 { ["x", "y", "z"][..names.len()].join(", ") } else { "x, y, z, …".to_string() };
+        let each = format!("`{} = {}` gives each name a value of its own", names.join(", "), given);
+        if values.len() == 1 {
+            fn path(e: &Expr) -> Option<String> {
+                match e {
+                    Expr::Ident(n) => Some(n.clone()),
+                    Expr::FieldAccess { object, field } => Some(format!("{}.{}", path(object)?, field)),
+                    _ => None,
+                }
+            }
+            let reads = |list: &str| names.iter().enumerate().map(|(i, n)| format!("{} = {}[{}]", n, list, i)).collect::<Vec<_>>().join(", ");
+            return match &values[0] {
+                Expr::Call { callee, args } => {
+                    let call = match path(callee) {
+                        Some(f) if args.is_empty() => format!("{}[]", f),
+                        Some(f) => format!("{}[…]", f),
+                        None => "…".to_string(),
+                    };
+                    format!("{place}Crow takes no list apart into names — hold it, then read its items by position: r = {call}, then {}; {each}", reads("r"))
+                }
+                held => match path(held) {
+                    Some(list) => format!("{place}Crow takes no list apart into names — read its items by position: {}; {each}", reads(&list)),
+                    None => format!("{place}Crow takes no list apart into names — hold it, then read its items by position: r = …, then {}; {each}", reads("r")),
+                },
+            };
+        }
+        format!("{place}{} names and {} values — {each}, as many values as names", names.len(), values.len())
     }
 
     fn parse_for_expr(&mut self) -> Result<Expr, String> {
@@ -1478,5 +1520,46 @@ mod pyism_tests {
     #[test]
     fn ordinary_program_parses() {
         assert!(err("fn double[x]\n  return x * 2\nlog[double[5]]\n").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod destructuring_tests {
+    use super::*;
+    use crate::lexer::Lexer;
+
+    fn err(src: &str) -> String {
+        let tokens = match Lexer::new(src).tokenize() {
+            Ok(t) => t,
+            Err(e) => return e,
+        };
+        Parser::new(tokens).parse().err().unwrap_or_default()
+    }
+
+    /// `a, b = x, y` gives each name a value of its own; one value is a
+    /// list taken apart into names, which Crow does not do (spec, Design
+    /// Note: No Destructuring), and is refused where the value begins with
+    /// the spec's form in the program's names: the list held when it is
+    /// computed, its items read by position.
+    #[test]
+    fn one_value_for_several_names_is_refused_with_the_form() {
+        let e = err("fn pair[]\n    return [3, 4]\nc, d = pair[]\n");
+        assert_eq!(e, "line 3, col 8: Crow takes no list apart into names — hold it, then read its items by position: r = pair[], then c = r[0], d = r[1]; `c, d = x, y` gives each name a value of its own");
+        let e = err("xs = [1, 2, 3]\na, b, c = xs\n");
+        assert_eq!(e, "line 2, col 11: Crow takes no list apart into names — read its items by position: a = xs[0], b = xs[1], c = xs[2]; `a, b, c = x, y, z` gives each name a value of its own");
+        assert!(err("a, b = divmod[7, 3]\n").contains("r = divmod[…], then a = r[0], b = r[1]"));
+        assert!(err("a, b = p.pair\n").contains("a = p.pair[0], b = p.pair[1]"));
+        assert!(err("a, b = [1, 2]\n").contains("r = …, then a = r[0], b = r[1]; `a, b = x, y`"));
+    }
+
+    /// Values of another count than the names had been dropped, or left a
+    /// name unset, with nothing said.
+    #[test]
+    fn values_of_another_count_than_the_names_are_refused() {
+        assert_eq!(err("a, b, c = 1, 2\n"), "line 1, col 11: 3 names and 2 values — `a, b, c = x, y, z` gives each name a value of its own, as many values as names");
+        assert!(err("a, b = 1, 2, 3\n").starts_with("line 1, col 8: 2 names and 3 values"));
+        assert!(err("a, b, c, d, e = 1, 2\n").contains("`a, b, c, d, e = x, y, z, …`"));
+        // as many, in any form, stay the language's
+        assert!(err("a, b = 1, 2\nb, a = a, b\np, q, r = f[1], g[2], 3\n").is_empty());
     }
 }

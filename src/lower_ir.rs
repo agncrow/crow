@@ -2909,62 +2909,41 @@ impl<'a> Lowerer<'a> {
         })
     }
 
-    /// Several names assigned at once: one value unpacked into them, or a
-    /// value each, all read before any is written when they read each other.
+    /// Several names assigned at once, a value each (the parser refuses any
+    /// other count: Crow takes no list apart into names), all read before
+    /// any is written when they read each other.
     fn multi_assign(&mut self, names: &[String], values: &[A]) -> Result<Vec<Stmt>, String> {
         let mut out = Vec::new();
-        if values.len() == 1 && names.len() > 1 {
-            // one value unpacked into several names
-            let e = self.lower_expr(&values[0])?;
-            let t = self.fresh();
-            let ty = e.ty();
-            out.push(Stmt::Let { var: t.clone(), ty: ty.clone(), expr: e });
-            self.scopes.last_mut().unwrap().insert(t.clone());
-            for (i, n) in names.iter().enumerate() {
-                let item = Expr::Index {
-                    base: Box::new(Expr::Local(t.clone(), ty.clone())),
-                    indices: vec![Expr::Const(Const::Int(i as i64), Ty::Int)],
-                    ty: match &ty {
-                        Ty::List(inner) => (**inner).clone(),
-                        _ => Ty::Unknown,
-                    },
-                };
-                let stmt = self.assign(n, item);
+        let targets: BTreeSet<String> = names.iter().cloned().collect();
+        let mut reads = BTreeSet::new();
+        let mut clock = false;
+        for v in values {
+            let mut r = BTreeSet::new();
+            reads_of_expr(v, &mut r, &mut clock);
+            reads.extend(r);
+        }
+        if reads.is_disjoint(&targets) {
+            for (n, v) in names.iter().zip(values) {
+                let e = self.lower_expr(v)?;
+                let stmt = self.assign(n, e);
                 self.flush_pre_into(&mut out);
                 out.push(stmt);
             }
         } else {
-            let targets: BTreeSet<String> = names.iter().cloned().collect();
-            let mut reads = BTreeSet::new();
-            let mut clock = false;
+            let mut temps = Vec::new();
             for v in values {
-                let mut r = BTreeSet::new();
-                reads_of_expr(v, &mut r, &mut clock);
-                reads.extend(r);
+                let e = self.lower_expr(v)?;
+                let t = self.fresh();
+                let ty = e.ty();
+                self.flush_pre_into(&mut out);
+                out.push(Stmt::Let { var: t.clone(), ty: ty.clone(), expr: e });
+                self.scopes.last_mut().unwrap().insert(t.clone());
+                temps.push((t, ty));
             }
-            if reads.is_disjoint(&targets) {
-                for (n, v) in names.iter().zip(values) {
-                    let e = self.lower_expr(v)?;
-                    let stmt = self.assign(n, e);
-                    self.flush_pre_into(&mut out);
-                    out.push(stmt);
-                }
-            } else {
-                let mut temps = Vec::new();
-                for v in values {
-                    let e = self.lower_expr(v)?;
-                    let t = self.fresh();
-                    let ty = e.ty();
-                    self.flush_pre_into(&mut out);
-                    out.push(Stmt::Let { var: t.clone(), ty: ty.clone(), expr: e });
-                    self.scopes.last_mut().unwrap().insert(t.clone());
-                    temps.push((t, ty));
-                }
-                for (n, (t, ty)) in names.iter().zip(temps) {
-                    let stmt = self.assign(n, Expr::Local(t, ty));
-                    self.flush_pre_into(&mut out);
-                    out.push(stmt);
-                }
+            for (n, (t, ty)) in names.iter().zip(temps) {
+                let stmt = self.assign(n, Expr::Local(t, ty));
+                self.flush_pre_into(&mut out);
+                out.push(stmt);
             }
         }
         Ok(out)
@@ -3419,8 +3398,7 @@ impl<'a> Lowerer<'a> {
     }
 
     /// A provisional lowering's `a, b = x, y` (F5): each name settles with
-    /// its own value's type read as text, as inference's walk pairs them
-    /// (one value unpacked settles only the first name, with the whole),
+    /// its own value's type read as text, as inference's walk pairs them,
     /// and no name is a new binding there.
     fn settled_multi(&mut self, names: &[String], values: &[A]) -> Result<Vec<Stmt>, String> {
         let mut types = Vec::with_capacity(values.len());

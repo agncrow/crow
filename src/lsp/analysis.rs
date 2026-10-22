@@ -212,9 +212,23 @@ fn defined_by(line: &str) -> Vec<String> {
             return names.into_iter().filter(|n| !n.is_empty()).collect();
         }
     }
-    let n = word(t);
-    let after = t[n.len()..].trim_start();
-    if !n.is_empty() && after.starts_with('=') && !after.starts_with("==") { vec![n] } else { Vec::new() }
+    // the names before an assignment's `=`: one, or several (`c, d = …`,
+    // refused when its values are not one a name)
+    let mut names = Vec::new();
+    let mut rest = t;
+    loop {
+        let n = word(rest);
+        if n.is_empty() {
+            return Vec::new();
+        }
+        let after = rest[n.len()..].trim_start();
+        names.push(n);
+        match after.strip_prefix(',') {
+            Some(more) => rest = more.trim_start(),
+            None if after.starts_with('=') && !after.starts_with("==") => return names,
+            None => return Vec::new(),
+        }
+    }
 }
 
 /// The line of the import a part's error belongs to: the `use` naming the
@@ -385,6 +399,21 @@ mod tests {
         );
         assert_eq!(warn.range.start.line, 8); // fixture query line 9, 0-based
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    /// A refused assignment of several names (one value taken apart, or
+    /// values of another count) defines each of them for the lines after
+    /// it: a read of one is the same mistake, as the terminal says it once.
+    #[test]
+    fn a_refused_assignment_of_several_names_defines_each() {
+        let a = analyze("fn pair[]\n    return [3, 4]\nc, d = pair[]\nlog[c + d]\n", None, None, "t.co");
+        let said: Vec<&str> = a.diagnostics.iter().map(|d| d.message.as_str()).collect();
+        assert_eq!(said.len(), 1, "{:?}", said);
+        assert!(said[0].starts_with("Crow takes no list apart into names"), "{:?}", said);
+        assert_eq!(defined_by("a, b ,c = 1, 2"), vec!["a", "b", "c"]);
+        assert_eq!(defined_by("x = 1"), vec!["x"]);
+        assert!(defined_by("log[a], b").is_empty());
+        assert!(defined_by("a, b == c").is_empty());
     }
 
     #[test]

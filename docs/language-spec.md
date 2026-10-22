@@ -156,11 +156,13 @@ Rules:
 
 ### Multiple Assignment
 
-Multiple variables can be assigned in a single line.
+Multiple variables can be assigned in a single line, a value for each name.
 
 ```
 x, y, z = 1, 2, 3
 ```
+
+Values of another count are refused before the program runs, in both modes, and so is one value for several names: Crow takes no list apart into names (Design Note: No Destructuring). `c, d = pair[]` is refused with the form to write, `r = pair[]`, then `c = r[0]`, `d = r[1]`. (Each had run: one value had been taken apart interpreted and had not built compiled, a value past the names had been dropped, and a name past the values left unset.)
 
 
 ### Swap
@@ -4988,6 +4990,8 @@ result = divmod[7, 3]
 a = result[0]
 b = result[1]
 ```
+
+`a, b = f[]` and `a, b = xs` are refused before the program runs, in both modes, the message giving this form in the program's own names.
 
 
 ### No Ternary Expression
