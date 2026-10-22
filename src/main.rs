@@ -1711,9 +1711,11 @@ fn cmd_repl() {
                     continue;
                 }
 
-                // Multi-line block handling: a line indented, or an `else`
-                // under its `if`, goes on with the block
-                let goes_on = trimmed.starts_with(' ') || trimmed.starts_with('\t') || trimmed.starts_with("else") || trimmed.starts_with("elif");
+                // Multi-line block handling: a line indented, an `else`
+                // under its `if`, or a comment wherever it sits (a comment
+                // opens and closes no block: spec, Blocks) goes on with the
+                // block
+                let goes_on = trimmed.starts_with(' ') || trimmed.starts_with('\t') || trimmed.starts_with("else") || trimmed.starts_with("elif") || trimmed.starts_with("---");
                 if in_block {
                     if trimmed.is_empty() || !goes_on {
                         in_block = false;

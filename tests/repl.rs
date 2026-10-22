@@ -35,3 +35,13 @@ fn a_function_one_block_defines_the_next_line_calls() {
     assert!(said.lines().any(|l| l.trim() == "6"), "{}", said);
     assert!(!said.contains("error"), "{}", said);
 }
+
+/// A comment at the margin inside a block goes on with the block, as a
+/// file reads it (spec, Blocks): the console had ended the block there, and
+/// the function's last line was read alone, indented under nothing
+#[test]
+fn a_comment_at_the_margin_goes_on_with_the_block() {
+    let said = console("fn f[x]\n    y = x + 1\n--- a note at the margin\n    return y\n\nf[1]\n");
+    assert!(said.lines().any(|l| l.trim() == "2"), "{}", said);
+    assert!(!said.contains("error") && !said.contains("indented"), "{}", said);
+}
