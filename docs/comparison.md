@@ -77,7 +77,7 @@ results = for x in xs
 
 | Language | Model | Effort Required | Rating |
 |----------|-------|-----------------|--------|
-| **Crow** | Automatic — a `for` whose body only computes runs on every core; frame and tensor operations use every core inside themselves | Zero (default) | **9** |
+| **Crow** | Automatic — a `for` whose body only computes runs on every core; frame and tensor operations use every core inside themselves | Zero (default) | **8** |
 | Elixir | BEAM processes, OTP | Low (built-in) | 8 |
 | Go | Goroutines + channels | Low-moderate | 7 |
 | Julia | `@threads`, `@distributed`, tasks | Low | 7 |
@@ -91,7 +91,7 @@ results = for x in xs
 
 This is Crow's strongest differentiator. `for` loops are parallel by default, frame and tensor operations use every core inside themselves, and the search builtins (`any`, `all`, `find`) run in parallel with early exit. No annotations, no imports, no async/await. A loop runs in order only where its body could show the order — output, a file, the network or the database, a random draw, a write to a variable outside it — which the compiler decides once, the same in both modes. Statements themselves run in the order written (the spec's Design Note "Statements Run in Order" records why the earlier statement-level waves were dropped). `cpu[n]`/`gpu[n]` provide resource control.
 
-The gap: no async/await, no channels, no actor model. Crow's parallelism is data-parallel, not concurrent: requests do not overlap, and a loop whose body makes a request runs its requests one after another. Elixir and Go are far better for networked services, message passing, and fault-tolerant systems. Loses 1 point because automatic parallelism is ambitious and unproven at scale.
+The gap: no async/await, no channels, no actor model. Crow's parallelism is data-parallel, not concurrent: requests do not overlap, and a loop whose body makes a request runs its requests one after another. Elixir and Go are far better for networked services, message passing, and fault-tolerant systems. Loses 2 points: the parallelism is data-parallel only, and automatic parallelism is unproven at scale.
 
 ## 4. Performance
 
@@ -101,7 +101,7 @@ The gap: no async/await, no channels, no actor model. Crow's parallelism is data
 | **Crow** | Transpiles to Rust → native binary; `crow run -i` interprets | Near-Rust | **9** |
 | Zig | Compiled (LLVM) | Near-C | 9 |
 | Crystal | Compiled (LLVM), GC | ~1.5-3x slower | 8 |
-| Go | Compiled, GC | Near-Rust on the programs below | 8 |
+| Go | Compiled, GC | Near-Rust on the programs below | 9 |
 | Julia | JIT compiled (LLVM) | Near-C for numeric | 8 |
 | Swift | Compiled (LLVM), ARC | ~1.5-3x slower | 8 |
 | JS | V8 JIT | ~5-20x slower | 5 |
@@ -170,9 +170,9 @@ Crow's model is closest to Go and Elixir — errors are values, not exceptions. 
 | Julia | Int, Float, Bool, String | Array, Dict, Set, tuples | Structs, abstract types | 7 |
 | Go | int, float, bool, string | slices, maps | Structs, interfaces | 7 |
 | JS | number, string, boolean | Array, Object, Map, Set | Classes, prototypes | 7 |
-| **Crow** | int (any size), float, decimal, fraction, bool, str, moment | list (a tensor when numeric), map, frame | Structs (pure data) | **6** |
+| **Crow** | int (any size), float, decimal, fraction, bool, str, moment | list (a tensor when numeric), map, frame | Structs (pure data) | **7** |
 
-Crow is intentionally minimal: lists (numeric ones are tensors), maps, structs, and frames for tables. No tuples, no enums, no sets, no mixed-type collections. The tradeoff is consistency — but you'll feel the gap when you need `zip` or heterogeneous data. `range[len[list]]` works but is less elegant than `enumerate`.
+Crow is intentionally minimal: lists (numeric ones are tensors), maps, structs, and frames for tables. No tuples, no enums, no sets, no mixed-type collections. The tradeoff is consistency — but you'll feel the gap when you need `zip` or heterogeneous data. For data work the built-ins carry more than most languages': frames and tensors, ints of any size, exact decimals and fractions, and moments that keep their zone. `range[len[list]]` works but is less elegant than `enumerate`.
 
 ## 7. Modularity & Imports
 
@@ -293,9 +293,9 @@ Subjective scores from 1 (weakest) to 10 (strongest):
 | Syntax simplicity | **9** | 8 | 4 | 6 | 5 | 6 | 7 | 7 |
 | Type system | **7** | 4 | 9 | 6 | 3 | 8 | 6 | 5 |
 | Error handling | **9** | 5 | 7 | 5 | 5 | 7 | 5 | 7 |
-| Parallelism | **9** | 3 | 6 | 7 | 5 | 6 | 7 | 8 |
-| Performance | **9** | 3 | 10 | 8 | 5 | 8 | 8 | 4 |
-| Data structures | **6** | 8 | 9 | 7 | 7 | 8 | 7 | 6 |
+| Parallelism | **8** | 3 | 6 | 7 | 5 | 6 | 7 | 8 |
+| Performance | **9** | 3 | 10 | 9 | 5 | 8 | 8 | 4 |
+| Data structures | **7** | 8 | 9 | 7 | 7 | 8 | 7 | 6 |
 | Modules | **8** | 6 | 7 | 8 | 5 | 7 | 6 | 7 |
 | Tooling | **8** | 5 | 9 | 8 | 4 | 7 | 6 | 6 |
 | Expressiveness | **7** | 9 | 9 | 5 | 7 | 8 | 9 | 8 |
@@ -303,7 +303,7 @@ Subjective scores from 1 (weakest) to 10 (strongest):
 | Learnability | **9** | 9 | 4 | 7 | 6 | 6 | 6 | 5 |
 | Safety & verification | **8** | 3 | 8 | 5 | 3 | 6 | 4 | 5 |
 | Ecosystem | **1** | 10 | 8 | 8 | 10 | 7 | 5 | 5 |
-| **Average** | **7.7** | **6.1** | **7.3** | **6.7** | **5.2** | **6.8** | **6.3** | **6.1** |
+| **Average** | **7.7** | **6.1** | **7.3** | **6.8** | **5.2** | **6.8** | **6.3** | **6.1** |
 
 ## Summary
 

@@ -30,8 +30,10 @@ every AI assistant generating Crow.
 
 Four softenings keep it livable:
 
-- **Core is frozen** — the ~70 always-reserved names never grow, so code
-  that compiles today can't be broken by a future builtin.
+- **Core is held** — the ~75 always-reserved names grow only as a
+  breaking change the changelog lists first, until 1.0, and not at all
+  after it, so code that compiles on 1.0 can't be broken by a future
+  builtin.
 - **Fields are exempt** — `row.type`, `account.sum`, `df.mean` are always
   fine; reservation governs bare definitions, not the insides of your
   records. (Only `ok`/`reason`/`kind`/`trace` are off-limits as struct

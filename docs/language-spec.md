@@ -3753,7 +3753,7 @@ Running a program as several processes is the launch's, not the program's:
 crow launch <n> <file.co>
 ```
 
-builds the binary with `crow build`, then runs `n` processes of it, each with `CROW_RANK` (0 to n − 1), `CROW_WORLD_SIZE`, `CROW_MASTER_ADDR` and `CROW_MASTER_PORT` in its environment, all on `127.0.0.1` from base port `29500`, their output interleaved. A process reads its rank as it reads any variable of its environment — `rank = int[env['CROW_RANK', '0']]` — and takes its share of the work by it.
+builds the binary with `crow build`, then runs `n` processes of it, each with `CROW_RANK` (0 to n − 1), `CROW_WORLD_SIZE`, `CROW_MASTER_ADDR` and `CROW_MASTER_PORT` in its environment, all on `127.0.0.1` from base port `29500`, their output interleaved. A process reads its rank as it reads any variable of its environment — `my_rank = int[env['CROW_RANK', '0']]` (not `rank`, which is `use math`'s) — and takes its share of the work by it.
 
 ```
 crow launch 4 train.co     --- build + run on 4 processes
@@ -4614,7 +4614,7 @@ math = 5                 --- error: 'math' is a module name
 
 Every error names the source and both fixes: rename your definition, or import the module qualified (`use math as m`).
 
-**2. Three namespace tiers.** *Core* (~70 names: `log`, `len`, `range`, `map`, `set`, `type`…) is reserved in every file, frozen by the budget rule — core does not grow, so this reservation never breaks existing programs. *Stdlib modules* (`math`, `frame`, `io`, `db`, `web`, `ui`) reserve their exports only in files that import them bare. *Everything else* — user modules today, registry packages tomorrow — is **qualified-only**: the import reserves exactly one name (the prefix), and the module can export ten thousand names without taking any of yours. The language owns the bare namespace; packages get prefixes.
+**2. Three namespace tiers.** *Core* (~75 names: `log`, `len`, `range`, `map`, `set`, `type`…) is reserved in every file, held by the budget rule — until 1.0 a core name is added only as a breaking change the changelog lists first (a name it reserves may be one a program used), and from 1.0 the core does not grow, so this reservation never breaks existing programs. *Stdlib modules* (`math`, `frame`, `io`, `db`, `web`, `ui`) reserve their exports only in files that import them bare. *Everything else* — user modules today, registry packages tomorrow — is **qualified-only**: the import reserves exactly one name (the prefix), and the module can export ten thousand names without taking any of yours. The language owns the bare namespace; packages get prefixes.
 
 **3. Aliased imports are qualified-only** (`use math as m` — see Aliased Imports). This is the escape valve when you want a name a module owns: rename what you own, or alias what you don't.
 

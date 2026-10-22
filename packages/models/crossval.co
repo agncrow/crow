@@ -11,7 +11,7 @@ use math, prepare, ridge, metrics
 
 struct Held [x_train, y_train, x_test, y_test]
 struct Folds [scores, mean]
-struct Search [best, scorer, scores]
+struct Search [best, score, scores]
 
 --- the rows dealt to part `part` of `folds`, and the rest
 fn held_out[x, y, order, folds, part]

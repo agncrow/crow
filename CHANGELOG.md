@@ -186,6 +186,20 @@ history says the rest.
 
 ### Changed
 
+- The core's names are held, not frozen (spec, Three namespace tiers;
+  the book's chapter 8): until 1.0 a core name is added only as a
+  breaking change the changelog lists first, since a name it reserves
+  may be one a program used, and from 1.0 the core does not grow. The
+  spec had said the core never grows while `occurs`, `translate`,
+  `decimal`, `fraction`, `halt` and `bucket` joined it this month.
+- `packages/models`: `search` answers `Search[best, score, scores]`, the
+  best candidate's mean in `score`; the field had been `scorer`, a slip
+  of the rename of the function parameter beside it.
+- The comparison's ratings follow the measurements of 2026-10-21: Go's
+  performance is 9 beside Crow's (comparable on the seven programs),
+  Crow's parallelism 8 (data-parallel only: requests and queries never
+  overlap) and its data structures 7 (frames, tensors, exact numbers,
+  moments).
 - The documentation no test reads describes the language as it is
   (2026-10-21): `docs/crow-for-llms.md` (moments as a kind, `in`, ints
   that grow, and the modules a generator reaches for — frames, db, web,

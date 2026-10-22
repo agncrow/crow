@@ -54,7 +54,7 @@ holds a target (or a class) for each.
 | `agglomerative` | `fit[x, k, linkage]` → `Merged[labels]`, linkage `'single'`, `'complete'` or `'average'` | — |
 | `mixture` | `fit[x, k, rounds]` → `Mixture[weights, means, variances]`, by expectation–maximisation | `probability[m, r]` — a probability per curve; `classify[m, r]` — the likeliest curve |
 | `isolation` | `fit[x, trees, sample, seed]` → `Isolation[trees, sample]` | `score[f, r]` — an anomaly score, 0 to 1; `anomalies[f, x, threshold]` — the rows scoring at least it |
-| `crossval` | `crossval[x, y, folds, seed, fit, score]` → `Folds[scores, mean]`; `search[x, y, folds, seed, candidates, fit, score]` → `Search[best, scorer, scores]`, `scorer` the best candidate's mean score | `fit` a function of (x, y) — or (x, y, candidate) — answering a model, `score` one of (model, x, y) answering a number (`fit_ridge`, `score_ridge` show the shape) |
+| `crossval` | `crossval[x, y, folds, seed, fit, score]` → `Folds[scores, mean]`; `search[x, y, folds, seed, candidates, fit, score]` → `Search[best, score, scores]`, `score` the best candidate's mean score | `fit` a function of (x, y) — or (x, y, candidate) — answering a model, `score` one of (model, x, y) answering a number (`fit_ridge`, `score_ridge` show the shape) |
 
 - `regression` solves the centred inputs by least squares (`lstsq`), so the
   intercept is exact and `r2` says how much of `y`'s variance the fit explains.
