@@ -2,5 +2,5 @@ handler board_cards_set_stars (board/cards.co)
   inputs: $1
   called by: nobody
   always:
-    effect exec board_cards_book 'UPDATE cards SET stars = ? WHERE id = ?' [int[$1], board_cards_card_id]
+    effect query board_cards_book 'UPDATE cards SET stars = ? WHERE id = ?' [int[$1], board_cards_card_id]
     calls board_store_note[board_cards_book, __reader[].name, 'gave card `board_cards_card_id` `int[$1]` stars']

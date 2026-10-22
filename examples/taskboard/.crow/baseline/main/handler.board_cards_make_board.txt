@@ -6,5 +6,5 @@ handler board_cards_make_board (board/cards.co)
     nothing
   when (not (__reader[].role neq 'admin')) and (not (board_cards_new_board eq '')):
     board_cards_new_board := ''
-    effect exec board_cards_book 'INSERT INTO boards (name) VALUES (?)' [board_cards_new_board]
+    effect query board_cards_book 'INSERT INTO boards (name) VALUES (?)' [board_cards_new_board]
     calls board_store_note[board_cards_book, __reader[].name, 'made the board `board_cards_new_board`']

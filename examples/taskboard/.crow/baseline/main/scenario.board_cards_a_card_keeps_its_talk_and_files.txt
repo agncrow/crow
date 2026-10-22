@@ -19,6 +19,7 @@ scenario board_cards_a_card_keeps_its_talk_and_files (board/cards.co)
     sqlite://taskboard.db INSERT INTO comments (card, author, body) VALUES (?, ?, ?) [1,"ada","Numbers by Friday"]
     sqlite://taskboard.db INSERT INTO audit (who, what) VALUES (?, ?) ["ada","commented on card 1"]
     sqlite://taskboard.db INSERT INTO attachments (card, name, path) VALUES (?, ?, ?) RETURNING id [1,"budget.csv",""]
+    sqlite://taskboard.db INSERT INTO attachments (card, name, path) VALUES (?, ?, ?) RETURNING id [1,"budget.csv",""]
     mkdir["files"]
     cp["fixtures/budget.csv", "files/attachment-1"]
     sqlite://taskboard.db UPDATE attachments SET path = ? WHERE id = ? ["files/attachment-1",1]

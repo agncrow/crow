@@ -5,5 +5,8 @@ handler board_cards_attach (board/cards.co)
   when contains[board_cards_upload, 'path']:
     reads v1 = query[board_cards_book, 'INSERT INTO attachments (card, name, path) VALUES (?, ?, ?) RETURNING id', [board_cards_card_id, board_cards_upload.name, '']]
     board_cards_upload := map[]
-    effect exec board_cards_book 'UPDATE attachments SET path = ? WHERE id = ?' ['files/attachment-`v1.id[0]`', v1.id[0]]
+    effect query board_cards_book 'INSERT INTO attachments (card, name, path) VALUES (?, ?, ?) RETURNING id' [board_cards_card_id, board_cards_upload.name, '']
+    effect mkdir 'files'
+    effect cp board_cards_upload.path 'files/attachment-`v1.id[0]`'
+    effect query board_cards_book 'UPDATE attachments SET path = ? WHERE id = ?' ['files/attachment-`v1.id[0]`', v1.id[0]]
     calls board_store_note[board_cards_book, __reader[].name, 'attached `board_cards_upload.name` to card `board_cards_card_id`']

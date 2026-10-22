@@ -4,5 +4,5 @@ handler board_cards_add_card (board/cards.co)
     nothing
   when (not (board_cards_new_card eq '')):
     board_cards_new_card := ''
-    effect exec board_cards_book 'INSERT INTO cards (board, title, status, owner, stars) VALUES (?, ?, ?, ?, 0)' [board_cards_board_id, board_cards_new_card, 'todo', __reader[].name]
+    effect query board_cards_book 'INSERT INTO cards (board, title, status, owner, stars) VALUES (?, ?, ?, ?, 0)' [board_cards_board_id, board_cards_new_card, 'todo', __reader[].name]
     calls board_store_note[board_cards_book, __reader[].name, 'added `board_cards_new_card`']

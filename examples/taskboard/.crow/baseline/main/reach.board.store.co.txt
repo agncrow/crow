@@ -1,2 +1,3 @@
 reach board/store.co
-  database: connect, exec
+  db.read: connect
+  db.write: query

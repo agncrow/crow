@@ -1,3 +1,4 @@
 reach board/door.co
-  database: connect, exec, query
+  db.read: connect, query
+  db.write: query
   session: notice, sign_in, sign_out

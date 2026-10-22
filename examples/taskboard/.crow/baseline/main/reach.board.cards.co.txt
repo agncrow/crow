@@ -1,4 +1,5 @@
 reach board/cards.co
-  database: connect, exec, query
-  files: cp, mkdir
+  files.write: cp, mkdir
+  db.read: connect, query
+  db.write: query
   session: download, notice
