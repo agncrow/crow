@@ -4966,7 +4966,9 @@ pub(crate) fn expand_module_imports_checked(
                 if path == "sys" && !sys_allowed(source_dir) {
                     return Err(sys_refusal(line));
                 }
-                if path.starts_with("db.") && !sys_allowed(source_dir) {
+                // (a driver's module; a program's own `db/schema.co` is
+                // `use db.schema`, as `views/home.co` is `use views.home`)
+                if path.starts_with("db.") && modules::by_path(path).is_some() && !sys_allowed(source_dir) {
                     return Err(format!("line {}: `{}` is the driver's own, which `use db` carries — a program connects with connect[…]", line, path));
                 }
                 own_lines.entry(use_key(path, alias)).or_insert(line);

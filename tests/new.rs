@@ -82,3 +82,21 @@ fn every_flavour_scaffolds_a_project_that_works() {
     }
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// A program's own `db/schema.co` is imported by its dot path, as
+/// `views/home.co` is: every `use db.…` had been refused as a driver's own
+/// module, while a driver's (`db.postgres`) still is.
+#[test]
+fn a_programs_own_db_folder_is_imported_by_its_dot_path() {
+    let base = std::env::temp_dir().join(format!("crow_db_folder_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(base.join("db")).unwrap();
+    std::fs::write(base.join("db/schema.co"), "fn greeting[]\n    return 'tables declared'\n").unwrap();
+    std::fs::write(base.join("main.co"), "use db.schema\n\nlog[schema.greeting[]]\n").unwrap();
+    std::fs::write(base.join("driver.co"), "use db.postgres\n\nlog['no']\n").unwrap();
+    let (ok, said) = crow(&base, &["run", "-i", "main.co"]);
+    assert!(ok && said.contains("tables declared"), "{}", said);
+    let (ok, said) = crow(&base, &["run", "-i", "driver.co"]);
+    assert!(!ok && said.contains("the driver's own"), "{}", said);
+    let _ = std::fs::remove_dir_all(&base);
+}
