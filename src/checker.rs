@@ -26,15 +26,13 @@ pub enum Issue {
     UndefinedVariable { func: String, var: String, line: usize },
     EdgeCaseCrash { func: String, input_desc: String, error: String },
     RegressionChange { func: String, input_desc: String, was: String, now: String },
-    /// A view or event handler reaches a blocking builtin — it runs on the
-    /// live loop, so every connected client freezes while it runs.
-    BlockingInView { view: String, builtin: String, path: Vec<String>, line: usize },
+    /// An event handler reaches a builtin that waits: the session's other
+    /// clicks wait until it ends. (A view that waits, reads a file or
+    /// queries is refused by the compiler before the checker runs.)
+    BlockingInHandler { handler: String, builtin: String, path: Vec<String>, line: usize },
     /// A view/handler reads a variable captured from the database at startup —
     /// every render serves launch-time data, forever.
     StaleSnapshot { view: String, var: String, source_line: usize, line: usize },
-    /// A view/handler queries a remote database directly — a network round
-    /// trip per render, and every connected client waits on it.
-    RemoteQueryInView { view: String, conn: String, url: String, line: usize },
     /// A while+sleep poll loop reads a query result captured before the loop —
     /// every iteration decides on launch-time data.
     StaleLoopRead { var: String, source_line: usize, line: usize },
@@ -81,20 +79,15 @@ impl Issue {
             }
             Issue::UiRule { subject, file, detail, .. } =>
                 format!("{} ({}): {}", subject, file, detail),
-            Issue::BlockingInView { view, builtin, path, .. } =>
+            Issue::BlockingInHandler { handler, builtin, path, .. } =>
                 format!(
                     "'{}' holds the session's other clicks until it ends — {}[] blocks it ({})",
-                    view, builtin, path.join(" → ")
+                    handler, builtin, path.join(" → ")
                 ),
             Issue::StaleSnapshot { view, var, source_line, .. } =>
                 format!(
                     "'{}' serves launch-time data — '{}' was queried once at startup (line {}) and never refreshed",
                     view, var, source_line
-                ),
-            Issue::RemoteQueryInView { view, conn, url, .. } =>
-                format!(
-                    "'{}' waits on the network every render — query['{}', …] where '{}' is {}",
-                    view, conn, conn, url
                 ),
             Issue::StaleLoopRead { var, source_line, .. } =>
                 format!(
@@ -139,9 +132,8 @@ impl Issue {
             Issue::EdgeCaseCrash { .. } => 0,
             Issue::RegressionChange { .. } => 0,
             Issue::BaselineChange { .. } | Issue::UiRule { .. } => 0,
-            Issue::BlockingInView { line, .. } => *line,
+            Issue::BlockingInHandler { line, .. } => *line,
             Issue::StaleSnapshot { line, .. } => *line,
-            Issue::RemoteQueryInView { line, .. } => *line,
             Issue::StaleLoopRead { line, .. } => *line,
             Issue::TestFailure { line, .. } => *line,
             Issue::UnknownStyleToken { .. } => 0,
@@ -157,9 +149,8 @@ impl Issue {
             Issue::UnusedVariable { func, .. } => func,
             Issue::UnreachableCode { func, .. } => func,
             Issue::UndefinedVariable { func, .. } => func,
-            Issue::BlockingInView { view, .. } => view,
+            Issue::BlockingInHandler { handler, .. } => handler,
             Issue::StaleSnapshot { view, .. } => view,
-            Issue::RemoteQueryInView { view, .. } => view,
             Issue::StaleLoopRead { .. } => "<top-level>",
             Issue::TestFailure { block, .. } => block,
             Issue::UnknownStyleToken { .. } => "<css/app.css>",
@@ -173,11 +164,11 @@ impl Issue {
     }
 
     /// A finding whose cure the language has as a form is an error, not a
-    /// warning: a launch-time snapshot or a network query in the render
-    /// path is what `derive` exists for, and `d` in the check loop applies
-    /// it (crow-check.md, tier 2).
+    /// warning: a launch-time snapshot in the render path is what `derive`
+    /// exists for, and `d` in the check loop applies it (crow-check.md,
+    /// tier 2).
     pub fn is_error(&self) -> bool {
-        matches!(self, Issue::StaleSnapshot { .. } | Issue::RemoteQueryInView { .. })
+        matches!(self, Issue::StaleSnapshot { .. })
     }
 
     /// Get a "try" command the user can paste, if applicable.
@@ -211,7 +202,7 @@ impl Issue {
                 },
             Issue::UnreachableCode { .. } =>
                 "remove the dead code or move it before the return".to_string(),
-            Issue::BlockingInView { builtin, path, .. } =>
+            Issue::BlockingInHandler { builtin, path, .. } =>
                 if path.len() >= 3 {
                     format!(
                         "schedule it off the loop: later[{}] — the work runs in the background and its state writes re-render every client",
@@ -228,8 +219,6 @@ impl Issue {
                     "make '{}' a derivation: `derive {}` with the query as its body is read like a fact and recomputed when a fact it reads or a table this program writes changes — press d to rewrite",
                     var, var
                 ),
-            Issue::RemoteQueryInView { .. } =>
-                "move the query into a derivation with a freshness window: `derive rows[fresh = 60]` runs the network hop once per window, not per render, and the view reads `rows` — press d to rewrite the `name = query[…]` line, or a if this app means to query on every render (records --- crow: remote-render)".to_string(),
             Issue::StaleLoopRead { var, .. } =>
                 format!("re-query '{}' inside the loop so each poll sees the current database", var),
             Issue::TestFailure { .. } =>
@@ -523,16 +512,15 @@ pub fn run_determinism_probe(
     issues
 }
 
-// --- Blocking-in-view analysis ---
+// --- Blocking-in-a-handler analysis ---
 
-/// Builtins that stall the caller for arbitrary time. A view renders for
-/// every connected client and a handler runs on the live loop — reaching one
-/// of these freezes the whole app for everyone (the asyncio-event-loop bug
-/// class: slow work executed directly on the loop). Deliberately excludes
-/// `query`/`exec`: render-time database reads are the blessed derive idiom.
-
-/// For each view and event handler, find a call path to a blocking builtin.
-pub fn find_blocking_in_views(
+/// For each event handler, a call path to a builtin that waits (the row's
+/// `waits` kind: `sleep`, `input`, `shell`, a socket's `recv`): a handler
+/// holds the session's other clicks until it ends (the asyncio-event-loop
+/// bug class: slow work run directly on the loop). A view is no root: the
+/// compiler refuses a view, or a function a view calls, that waits, reads
+/// a file or queries, before the checker runs.
+pub fn find_blocking_in_handlers(
     ctx: &TypeContext,
     fn_lines: &BTreeMap<String, usize>,
 ) -> Vec<Issue> {
@@ -552,9 +540,8 @@ pub fn find_blocking_in_views(
     }
 
     let roots: BTreeSet<&String> = ctx
-        .views
+        .view_handlers
         .iter()
-        .chain(ctx.view_handlers.iter())
         .filter(|r| !later_targets.contains(*r))
         .collect();
     let mut issues = Vec::new();
@@ -564,8 +551,8 @@ pub fn find_blocking_in_views(
         if let Some((builtin, chain)) =
             reach_blocking(root, &call_graph, &mut path, &mut visited)
         {
-            issues.push(Issue::BlockingInView {
-                view: root.clone(),
+            issues.push(Issue::BlockingInHandler {
+                handler: root.clone(),
                 builtin,
                 path: chain,
                 line: fn_lines.get(root).copied().unwrap_or(0),
@@ -760,159 +747,6 @@ fn collect_query_assigns(body: &[Stmt], out: &mut BTreeSet<String>) {
             _ => {}
         }
     }
-}
-
-// --- Remote-query-in-view analysis ---
-
-/// Connections opened at top level with a literal url: conn name → url.
-fn top_level_connections(top_level_stmts: &[Stmt]) -> BTreeMap<String, String> {
-    let mut conns = BTreeMap::new();
-    for stmt in top_level_stmts {
-        if let Stmt::Assign { name, value } = stmt {
-            if let Expr::Call { callee, args } = value {
-                let is_connect = match callee.as_ref() {
-                    Expr::Ident(n) => n == "connect",
-                    Expr::FieldAccess { object, field } => {
-                        matches!(object.as_ref(), Expr::Ident(m) if m == "db")
-                            && field == "connect"
-                    }
-                    _ => false,
-                };
-                if is_connect {
-                    if let Some(Expr::Str(url)) = args.first() {
-                        conns.insert(name.clone(), url.clone());
-                    }
-                }
-            }
-        }
-    }
-    conns
-}
-
-/// A render-path query against a remote database is a network round trip
-/// per render, serialized on the live loop — every connected client waits.
-/// Local sqlite is the blessed render-time source and is not flagged.
-pub fn find_remote_queries_in_views(
-    ctx: &TypeContext,
-    top_level_stmts: &[Stmt],
-    fn_lines: &BTreeMap<String, usize>,
-) -> Vec<Issue> {
-    let remote: BTreeMap<String, String> = top_level_connections(top_level_stmts)
-        .into_iter()
-        .filter(|(_, url)| !url.starts_with("sqlite"))
-        .collect();
-    if remote.is_empty() {
-        return Vec::new();
-    }
-    let mut issues = Vec::new();
-    // The render path only: a handler that asks a remote database on a
-    // click is on-demand work, the blessed home for it (crow-check.md's
-    // matrix); a view that asks on every render is the hazard.
-    for root in ctx.views.iter() {
-        let Some(sig) = ctx.functions.get(root) else { continue };
-        let mut flagged: BTreeSet<String> = BTreeSet::new();
-        collect_query_conns(&sig.body, &mut flagged);
-        for conn in flagged {
-            if let Some(url) = remote.get(&conn) {
-                issues.push(Issue::RemoteQueryInView {
-                    view: root.clone(),
-                    conn: conn.clone(),
-                    url: url.clone(),
-                    line: fn_lines.get(root).copied().unwrap_or(0),
-                });
-            }
-        }
-    }
-    issues
-}
-
-/// Connection variables passed as first arg to query/exec anywhere in a body.
-fn collect_query_conns(body: &[Stmt], out: &mut BTreeSet<String>) {
-    fn walk_expr(e: &Expr, out: &mut BTreeSet<String>) {
-        if let Expr::Call { callee, args } = e {
-            let name = match callee.as_ref() {
-                Expr::Ident(n) => Some(n.as_str()),
-                Expr::FieldAccess { object, field } => {
-                    if matches!(object.as_ref(), Expr::Ident(m) if m == "db") {
-                        Some(field.as_str())
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            };
-            if matches!(name, Some("query")) {
-                if let Some(Expr::Ident(conn)) = args.first() {
-                    out.insert(conn.clone());
-                }
-            }
-        }
-        match e {
-            Expr::Call { callee, args } => {
-                walk_expr(callee, out);
-                for a in args {
-                    walk_expr(a, out);
-                }
-            }
-            Expr::BinOp { left, right, .. } => {
-                walk_expr(left, out);
-                walk_expr(right, out);
-            }
-            Expr::UnaryOp { expr, .. } => walk_expr(expr, out),
-            Expr::FieldAccess { object, .. } => walk_expr(object, out),
-            Expr::Array(items) => items.iter().for_each(|i| walk_expr(i, out)),
-            Expr::Map(pairs) => pairs.iter().for_each(|(k, v)| {
-                walk_expr(k, out);
-                walk_expr(v, out);
-            }),
-            Expr::Named { value, .. } => walk_expr(value, out),
-            Expr::ForExpr { iter, .. } => walk_expr(iter, out),
-            _ => {}
-        }
-    }
-    for stmt in body {
-        match stmt {
-            Stmt::Assign { value, .. } => walk_expr(value, out),
-            Stmt::ExprStmt(e) => walk_expr(e, out),
-            Stmt::Return(Some(e)) => walk_expr(e, out),
-            Stmt::If {
-                condition,
-                then_body,
-                else_body,
-            } => {
-                walk_expr(condition, out);
-                collect_query_conns(then_body, out);
-                if let Some(eb) = else_body {
-                    collect_query_conns(eb, out);
-                }
-            }
-            Stmt::For { iter, body, .. } => {
-                walk_expr(iter, out);
-                collect_query_conns(body, out);
-            }
-            Stmt::While { condition, body } => {
-                walk_expr(condition, out);
-                collect_query_conns(body, out);
-            }
-            _ => {}
-        }
-    }
-}
-
-/// Drop findings the code has explicitly accepted with a pragma comment
-/// on the line above the flagged declaration.
-pub fn suppress_acknowledged(issues: Vec<Issue>, source: &str) -> Vec<Issue> {
-    let lines: Vec<&str> = source.lines().collect();
-    issues
-        .into_iter()
-        .filter(|i| match i {
-            Issue::RemoteQueryInView { line, .. } => {
-                let above = line.checked_sub(2).and_then(|n| lines.get(n));
-                !matches!(above, Some(l) if l.trim().starts_with("--- crow: remote-render"))
-            }
-            _ => true,
-        })
-        .collect()
 }
 
 // --- Style-token check: css/app.css may override --crow-* tokens; a
@@ -1499,9 +1333,9 @@ pub(crate) fn declarations(stmts: &[Stmt]) -> Vec<Stmt> {
         }
     }
     // A connection is a declaration of a resource, not a computation: a
-    // view that reads at render (--- crow: remote-render) needs it to exist
-    // for app[] to render at all, exactly as it does for the served page.
-    // A mailer is one too: making it sends nothing.
+    // handler or a derivation that reads through it needs it to exist for
+    // app[] to run at all, exactly as it does for the served page. A
+    // mailer is one too: making it sends nothing.
     fn is_connect(e: &Expr) -> bool {
         match e {
             Expr::Call { callee, .. } => match callee.as_ref() {
@@ -2238,14 +2072,11 @@ pub fn run_check(
     let probed: BTreeSet<String> = pure_fns.iter().filter(|f| !reactive_for_probe.contains(*f)).cloned().collect();
     issues.extend(run_determinism_probe(ctx, stmts, &probed, &recursive_for_probe));
 
-    // 1b. Views/handlers reaching blocking builtins freeze the live loop.
-    issues.extend(find_blocking_in_views(ctx, &fn_lines));
+    // 1b. Handlers reaching builtins that wait hold the session's clicks.
+    issues.extend(find_blocking_in_handlers(ctx, &fn_lines));
 
     // 1c. Views/handlers serving launch-time query snapshots.
     issues.extend(find_stale_snapshots(ctx, stmts, &fn_lines));
-
-    // 1d. Render-path queries against remote databases.
-    issues.extend(find_remote_queries_in_views(ctx, stmts, &fn_lines));
 
     // 1e. Poll loops deciding on pre-loop snapshots.
     issues.extend(find_stale_loop_reads(stmts));
@@ -2376,33 +2207,11 @@ mod tests {
         let stmts = crate::build(src).unwrap();
         let mut ctx = TypeContext::new();
         ctx.infer_program(&stmts);
-        let issues = find_blocking_in_views(&ctx, &find_fn_lines(&stmts));
+        let issues = find_blocking_in_handlers(&ctx, &find_fn_lines(&stmts));
         assert!(
             issues.is_empty(),
             "later[]-scheduled work must not be flagged as blocking, got {:?}",
             issues
-        );
-    }
-
-    #[test]
-    fn remote_query_in_view_flagged_sqlite_not() {
-        let src = "use web, ui, db\n\npg = connect['postgres://prod/trading']\nlocal = connect['sqlite://cache.db']\n\nview render[]\n    live = query[pg, 'SELECT * FROM trades']\n    cached = query[local, 'SELECT * FROM summary']\n    return div[table[live], table[cached]]\n\nserve[3000]\n";
-        let stmts = crate::build(src).unwrap();
-        let mut ctx = TypeContext::new();
-        ctx.infer_program(&stmts);
-        let issues =
-            find_remote_queries_in_views(&ctx, &stmts, &find_fn_lines(&stmts));
-        assert!(
-            issues.iter().any(|i| matches!(i,
-                Issue::RemoteQueryInView { view, conn, .. }
-                    if view == "render" && conn == "pg")),
-            "expected remote-query finding for pg, got {:?}",
-            issues
-        );
-        assert!(
-            !issues.iter().any(|i| matches!(i,
-                Issue::RemoteQueryInView { conn, .. } if conn == "local")),
-            "sqlite render-time queries are blessed and must not be flagged"
         );
     }
 
@@ -2561,28 +2370,46 @@ mod tests {
     }
 
     #[test]
-    fn blocking_in_view_detected_transitively() {
+    fn blocking_in_a_handler_detected_transitively() {
         let src = "use web, ui\n\ncount = 0\n\nfn slow_fetch[]\n    sleep[2]\n\nfn refresh_data[]\n    slow_fetch[]\n\nview render[]\n    return div[p['count: `count`'], button['refresh', click = refresh_data]]\n\nserve[3000]\n";
         let stmts = crate::build(src).unwrap();
         let mut ctx = TypeContext::new();
         ctx.infer_program(&stmts);
         let fn_lines = find_fn_lines(&stmts);
-        let issues = find_blocking_in_views(&ctx, &fn_lines);
+        let issues = find_blocking_in_handlers(&ctx, &fn_lines);
         // The handler reaches sleep through a helper — flagged with the path.
         assert!(
             issues.iter().any(|i| matches!(i,
-                Issue::BlockingInView { view, builtin, path, .. }
-                    if view == "refresh_data" && builtin == "sleep"
+                Issue::BlockingInHandler { handler, builtin, path, .. }
+                    if handler == "refresh_data" && builtin == "sleep"
                        && path == &vec!["refresh_data".to_string(), "slow_fetch".to_string(), "sleep".to_string()])),
             "expected transitive blocking issue, got {:?}",
             issues
         );
-        // The view itself is clean — not flagged.
+        // A view is no root: one that waited would not have been lowered.
         assert!(
             !issues.iter().any(|i| matches!(i,
-                Issue::BlockingInView { view, .. } if view == "render")),
-            "render does not block and must not be flagged"
+                Issue::BlockingInHandler { handler, .. } if handler == "render")),
+            "render is a view, never a root"
         );
+    }
+
+    /// A view that waits, queries or reads a file never reaches the checker:
+    /// the compiler refuses it first, so the checker's own rules for one
+    /// (a view-rooted blocking finding, a remote query in a view and its
+    /// `--- crow: remote-render` acknowledgment) could never fire, and are
+    /// gone
+    #[test]
+    fn the_compiler_refuses_a_view_that_waits_or_queries_before_the_checker() {
+        for src in [
+            "use web, ui\nfn slow[]\n    sleep[1]\n    return 'done'\nview home[]\n    return p[slow[]]\npage['/', home]\n",
+            "use web, ui, db\npg = connect['postgres://prod/trading']\nview home[]\n    rows = query[pg, 'SELECT 1 AS a']\n    return p['`len[rows]`']\npage['/', home]\n",
+            "use web, ui\nview home[]\n    return p[read['notes.txt']]\npage['/', home]\n",
+        ] {
+            let stmts = crate::lower::lower_program(&crate::build(src).unwrap()).unwrap();
+            let refused = crate::infer_and_validate(&stmts, false).err().unwrap_or_default();
+            assert!(refused.contains("a view shows the page's state and does nothing else"), "{}\n{}", src, refused);
+        }
     }
 
     /// Helper: parse source, run type inference, return (stmts, ctx)

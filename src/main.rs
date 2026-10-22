@@ -2973,31 +2973,19 @@ impl Drop for HandedSignals {
     }
 }
 
-/// Record a deliberate render-time remote read: insert the acknowledgment
-/// comment above the flagged view so the finding stays visible in the code
-/// instead of in every check run.
-fn apply_remote_accept(filename: &str, view_line_1based: usize) -> Result<(), String> {
+/// Tier-2 applier for blocking in a handler: inside `handler`'s body,
+/// rewrite the bare call `helper[]` to `later[helper]` — the work moves off
+/// the live loop and its state writes re-render every client. Only fires
+/// on the exact zero-arg statement shape; anything else stays a manual
+/// edit.
+fn apply_later_fix(filename: &str, handler: &str, helper: &str) -> Result<(), String> {
     let source = read_file(filename);
     let mut lines: Vec<String> = source.lines().map(|s| s.to_string()).collect();
-    if view_line_1based == 0 || view_line_1based > lines.len() {
-        return Err("could not locate the view declaration".into());
-    }
-    lines.insert(view_line_1based - 1, "--- crow: remote-render".to_string());
-    std::fs::write(filename, lines.join("\n") + "\n").map_err(|e| e.to_string())
-}
-
-/// Tier-2 applier for blocking-in-view: inside `view`'s body, rewrite the
-/// bare call `helper[]` to `later[helper]` — the work moves off the live
-/// loop and its state writes re-render every client. Only fires on the
-/// exact zero-arg statement shape; anything else stays a manual edit.
-fn apply_later_fix(filename: &str, view: &str, helper: &str) -> Result<(), String> {
-    let source = read_file(filename);
-    let mut lines: Vec<String> = source.lines().map(|s| s.to_string()).collect();
-    let decl = format!("fn {}[", view);
+    let decl = format!("fn {}[", handler);
     let start = lines
         .iter()
         .position(|l| l.trim_start().starts_with(&decl))
-        .ok_or_else(|| format!("could not find fn {}", view))?;
+        .ok_or_else(|| format!("could not find fn {}", handler))?;
     let needle = format!("{}[]", helper);
     for line in lines.iter_mut().skip(start + 1) {
         let trimmed = line.trim_start();
@@ -3016,22 +3004,19 @@ fn apply_later_fix(filename: &str, view: &str, helper: &str) -> Result<(), Strin
     }
     Err(format!(
         "no bare `{}[]` call in {} — the call passes arguments or is part of an expression; move it into a zero-arg fn and call later[…] manually",
-        helper, view
+        helper, handler
     ))
 }
 
-/// Tier-2 applier for stale-snapshot and remote-query-in-view: the cure the
-/// language has is a derivation. A top-level `x = query[…]` becomes
-/// `derive x` with the query as its body; a `rows = query[remote, …]` line
-/// inside a view is hoisted above the view as `derive rows[fresh = 60]`,
-/// and the view keeps reading `rows`. Only the exact single-line shapes are
-/// rewritten; anything else gets the manual edit spelled out. The rewrite
-/// must parse before it is written.
+/// Tier-2 applier for a stale snapshot: the cure the language has is a
+/// derivation. A top-level `x = query[…]` becomes `derive x` with the query
+/// as its body. Only the exact single-line shape is rewritten; anything
+/// else gets the manual edit spelled out. The rewrite must parse before it
+/// is written.
 fn apply_derive_fix(filename: &str, issue: &checker::Issue) -> Result<String, String> {
     let source = read_file(filename);
     let (new_source, what) = match issue {
         checker::Issue::StaleSnapshot { var, source_line, .. } => derive_snapshot_rewrite(&source, var, *source_line)?,
-        checker::Issue::RemoteQueryInView { view, conn, .. } => derive_hoist_rewrite(&source, view, conn)?,
         _ => return Err("not a finding a derivation cures".into()),
     };
     build(&new_source).map_err(|e| format!("rewrite would not parse: {}", e))?;
@@ -3093,79 +3078,6 @@ fn derive_snapshot_rewrite(source: &str, var: &str, line_1based: usize) -> Resul
     Ok((lines.join("\n") + "\n", format!("{} = … → derive {}", var, var)))
 }
 
-/// A single-line `name = query[conn, …]` inside `view` is hoisted above the
-/// view as `derive name[fresh = 60]`; a `--- crow: remote-render` pragma
-/// directly above the view goes with it, since the view no longer queries.
-fn derive_hoist_rewrite(source: &str, view: &str, conn: &str) -> Result<(String, String), String> {
-    let mut lines: Vec<String> = source.lines().map(|s| s.to_string()).collect();
-    let start = lines.iter().position(|l| l.starts_with(&format!("view {}[", view)) || l.starts_with(&format!("fn {}[", view)))
-        .ok_or_else(|| format!("could not find view {}", view))?;
-    // the body: indented lines until the next top-level line
-    let mut end = start + 1;
-    while end < lines.len() && (lines[end].starts_with(' ') || lines[end].trim().is_empty()) { end += 1; }
-    let needle_a = format!("query[{},", conn);
-    let needle_b = format!("query[{} ", conn);
-    let mut found: Option<(usize, String, String)> = None;
-    for i in start + 1..end {
-        let l = &lines[i];
-        let t = l.trim_start();
-        if !(t.contains(&needle_a) || t.contains(&needle_b)) || !balanced(l) { continue; }
-        if let Some(eq) = t.find(" = ") {
-            let name = &t[..eq];
-            if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                found = Some((i, name.to_string(), t[eq + 3..].to_string()));
-                break;
-            }
-        }
-    }
-    let (at, name, rhs) = found.ok_or_else(|| format!(
-        "the query in '{}' is not a single-line `name = query[{}, …]` — name it on one line, or write `derive name[fresh = 60]` above the view by hand",
-        view, conn
-    ))?;
-    // what the expression names must live at the top level: the view's
-    // params and locals are not there for a derivation to read
-    let top_level: std::collections::BTreeSet<String> = lines.iter().filter_map(|l| {
-        let l = l.trim_end();
-        if l.starts_with(' ') || l.is_empty() { return None; }
-        for kw in ["fn ", "view ", "derive "] {
-            if let Some(rest) = l.strip_prefix(kw) {
-                return Some(rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect());
-            }
-        }
-        l.find(" = ").map(|eq| l[..eq].split(',').next().unwrap_or("").trim().to_string())
-    }).collect();
-    let tokens = lexer::Lexer::new(&rhs).tokenize().map_err(|e| format!("could not read the query line: {}", e))?;
-    let mut prev_dot = false;
-    for st in &tokens {
-        if let token::Token::Ident(id) = &st.token {
-            let known = prev_dot || id == "query" || id == conn || top_level.contains(id) || lower_ir::BUILTINS.contains(&id.as_str());
-            if !known {
-                return Err(format!(
-                    "the query reads '{}', which lives inside the view — make it a fact (a top-level variable a handler writes), then rewrite",
-                    id
-                ));
-            }
-        }
-        prev_dot = matches!(st.token, token::Token::Dot);
-    }
-    let indent = file_indent(&lines);
-    lines.remove(at);
-    let mut insert_at = start;
-    if start > 0 && lines[start - 1].trim() == "--- crow: remote-render" {
-        lines.remove(start - 1);
-        insert_at = start - 1;
-    }
-    lines.splice(insert_at..insert_at, [
-        format!("derive {}[fresh = 60]", name),
-        format!("{}return {}", indent, rhs),
-        String::new(),
-    ]);
-    Ok((lines.join("\n") + "\n", format!(
-        "{}: {} = query[…] → derive {}[fresh = 60] above the view — set fresh to how old the data may be",
-        view, name, name
-    )))
-}
-
 #[cfg(test)]
 mod derive_fix_tests {
     use super::*;
@@ -3186,22 +3098,6 @@ mod derive_fix_tests {
         assert!(err.contains("also assigned at line 7"), "{}", err);
     }
 
-    #[test]
-    fn a_remote_query_line_is_hoisted_above_the_view() {
-        let src = "use web, ui, db\n\npg = db.connect['postgres://prod/trading']\nsym = 'IMRN'\n\n--- crow: remote-render\nview render[]\n    live = query[pg, 'SELECT * FROM trades WHERE symbol = ?', [sym]]\n    return div[table[live]]\n\npage['/', render]\n";
-        let (out, what) = derive_hoist_rewrite(src, "render", "pg").unwrap();
-        assert!(out.contains("derive live[fresh = 60]\n    return query[pg, 'SELECT * FROM trades WHERE symbol = ?', [sym]]\n\nview render[]\n    return div[table[live]]\n"), "{}", out);
-        assert!(!out.contains("remote-render"), "the pragma goes with the query");
-        assert!(what.contains("fresh = 60"));
-        build(&out).unwrap();
-    }
-
-    #[test]
-    fn a_query_over_a_view_local_is_refused() {
-        let src = "use web, ui, db\n\npg = db.connect['postgres://prod/trading']\n\nview render[]\n    day = '2026-09-04'\n    live = query[pg, 'SELECT * FROM bars WHERE d = ?', [day]]\n    return div[table[live]]\n";
-        let err = derive_hoist_rewrite(src, "render", "pg").unwrap_err();
-        assert!(err.contains("'day'"), "{}", err);
-    }
 }
 
 /// `crow test` — run only the authored test blocks in a file.
@@ -3734,7 +3630,6 @@ fn run_check_pipeline(filename: &str) -> checker::CheckResult {
     let mut ctx = type_infer::TypeContext::new();
     ctx.infer_program(&stmts);
     let mut result = checker::run_check(&stmts, &ctx, false);
-    result.issues = checker::suppress_acknowledged(std::mem::take(&mut result.issues), &source);
 
     // The app baseline: what the program does, derived from the lowered
     // program and diffed against what was accepted (app-baseline-design.md)
@@ -4097,15 +3992,13 @@ fn cmd_check(filename: &str, verbose: bool, db_url: Option<String>, strict: bool
         let has_try = issue.try_input().is_some();
         let is_regression = matches!(issue, checker::Issue::RegressionChange { .. });
         let later_fixable = matches!(issue,
-            checker::Issue::BlockingInView { path, .. } if path.len() >= 3);
-        let remote_acceptable = matches!(issue, checker::Issue::RemoteQueryInView { .. });
-        let derive_fixable = matches!(issue, checker::Issue::StaleSnapshot { .. } | checker::Issue::RemoteQueryInView { .. });
+            checker::Issue::BlockingInHandler { path, .. } if path.len() >= 3);
+        let derive_fixable = matches!(issue, checker::Issue::StaleSnapshot { .. });
         let mut prompt_parts = vec!["enter = recheck", "s = skip"];
         if has_try { prompt_parts.push("t = try input"); }
         let is_baseline = matches!(issue, checker::Issue::BaselineChange { .. });
         if is_regression { prompt_parts.push("a = accept new"); }
         if is_baseline { prompt_parts.push("a = accept (the baseline moves)"); }
-        if remote_acceptable { prompt_parts.push("a = accept (deliberate)"); }
         if derive_fixable { prompt_parts.push("d = derive (rewrite)"); }
         if later_fixable { prompt_parts.push("f = fix (later[])"); }
         prompt_parts.push("q = quit");
@@ -4156,21 +4049,6 @@ fn cmd_check(filename: &str, verbose: bool, db_url: Option<String>, strict: bool
                     idx = 0;
                 }
             }
-            "a" if remote_acceptable => {
-                if let checker::Issue::RemoteQueryInView { line, view, .. } = issue {
-                    let (line, view) = (*line, view.clone());
-                    match apply_remote_accept(filename, line) {
-                        Ok(()) => {
-                            println!("\n  recorded: --- crow: remote-render above '{}' — rechecking...", view);
-                            result = run_check_pipeline(filename);
-                            print_check_summary(&result, false);
-                            if result.issues.is_empty() { break; }
-                            idx = 0;
-                        }
-                        Err(e) => println!("\n  could not apply: {}", e),
-                    }
-                }
-            }
             "d" if derive_fixable => {
                 match apply_derive_fix(filename, issue) {
                     Ok(what) => {
@@ -4184,10 +4062,10 @@ fn cmd_check(filename: &str, verbose: bool, db_url: Option<String>, strict: bool
                 }
             }
             "f" if later_fixable => {
-                if let checker::Issue::BlockingInView { view, path, .. } = issue {
+                if let checker::Issue::BlockingInHandler { handler, path, .. } = issue {
                     let helper = path[1].clone();
-                    let view = view.clone();
-                    match apply_later_fix(filename, &view, &helper) {
+                    let handler = handler.clone();
+                    match apply_later_fix(filename, &handler, &helper) {
                         Ok(()) => {
                             println!("
   rewrote {}: {}[] → later[{}] — rechecking...", filename, helper, helper);
