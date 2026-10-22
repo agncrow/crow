@@ -1,0 +1,5 @@
+--- a stop after a string written across lines names its own line
+note = 'first line
+second line'
+xs = [1]
+log[xs[5]]

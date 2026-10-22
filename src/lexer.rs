@@ -468,6 +468,7 @@ impl Lexer {
                             s.push('\\');
                             s.push(ch);
                             self.advance();
+                            self.held_line_break(ch);
                         }
                         None => {
                             return Err(format!(
@@ -480,6 +481,7 @@ impl Lexer {
                 Some(ch) => {
                     s.push(ch);
                     self.advance();
+                    self.held_line_break(ch);
                 }
             }
         }
@@ -489,6 +491,17 @@ impl Lexer {
             line,
             col,
         })
+    }
+
+    /// A line break a string holds as written is a line of the source: the
+    /// lines after the string are counted on, and its next line's columns
+    /// from its start (a stop after a three-line string had named a line
+    /// two short, in both modes).
+    fn held_line_break(&mut self, ch: char) {
+        if ch == '\n' {
+            self.line += 1;
+            self.col = 1;
+        }
     }
 
     fn lex_number(&mut self) -> Result<SpannedToken, String> {
@@ -698,6 +711,21 @@ mod tests {
     fn python_string_prefix_teaches_backticks() {
         assert!(err("x = f'hi'").contains("backticks"));
         assert!(err("x = r'raw'").contains("prefix"));
+    }
+
+    /// A string written across lines holds its line breaks, and the tokens
+    /// after it are on the lines they are on: a stop and a refusal after a
+    /// three-line string had named a line two short.
+    #[test]
+    fn the_lines_after_a_string_of_several_lines_are_counted() {
+        let tokens = Lexer::new("s = 'one\ntwo\nthree' + x\nxs = [1]\nlog[xs[5]]\n").tokenize().expect("lexes");
+        let at = |name: &str| tokens.iter().find(|t| t.token == Token::Ident(name.to_string())).map(|t| (t.line, t.col));
+        assert_eq!(at("x"), Some((3, 10)));
+        assert_eq!(at("xs"), Some((4, 1)));
+        assert_eq!(at("log"), Some((5, 1)));
+        // (an escaped character before the break, and a break escaped)
+        let tokens = Lexer::new("s = 'a\\t\nb\\\nc'\ny = 1\n").tokenize().expect("lexes");
+        assert_eq!(tokens.iter().find(|t| t.token == Token::Ident("y".into())).map(|t| t.line), Some(4));
     }
 
     #[test]

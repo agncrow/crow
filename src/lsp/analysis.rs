@@ -252,11 +252,12 @@ fn refusal(text: &str, entry: &str, fallback: usize) -> Vec<Diagnostic> {
     let line = d.line.unwrap_or(fallback).max(1);
     let line0 = (line - 1) as u32;
     let line_text = text.lines().nth(line0 as usize).unwrap_or("");
+    let at = crate::diagnostic::openings(text).get(line0 as usize).copied().unwrap_or_default();
     let message = match &d.file {
         Some(part) => format!("{}: {}", part, d.message),
         None => d.message.clone(),
     };
-    crate::diagnostic::underline(line_text, &d)
+    crate::diagnostic::underline(line_text, at, &d)
         .into_iter()
         .map(|(start, end)| Diagnostic {
             range: Range {
@@ -285,7 +286,8 @@ fn diag(
     let line_text = text.lines().nth(line0 as usize).unwrap_or("");
     let line_len = line_text.chars().count() as u32;
     let indent = line_text.chars().take_while(|c| c.is_whitespace()).count() as u32;
-    let (start, end) = crate::diagnostic::spans(line_text, &message)
+    let at = crate::diagnostic::openings(text).get(line0 as usize).copied().unwrap_or_default();
+    let (start, end) = crate::diagnostic::spans_from(line_text, at, &message)
         .first()
         .map(|&(s, e)| (s as u32, e as u32))
         .unwrap_or((col_0based.max(indent).min(line_len), line_len.max(col_0based + 1)));

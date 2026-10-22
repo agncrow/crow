@@ -1,0 +1,21 @@
+--- A string written across lines holds its line breaks, and the lines
+--- after it are counted on: an error's trace and a stop name the lines
+--- they are on. Both modes had named a line short by every break a string
+--- above it held: the stop below as line 17.
+poem = 'one
+two
+three'
+log[len[split[poem, '\n']]]
+
+fn verse[n]
+    lines = 'a
+b'
+    return int[lines] + n
+
+r = verse[1]
+log[r.trace]
+bad = int['x
+y']
+log[bad.trace]
+xs = [1]
+log[xs[5]]

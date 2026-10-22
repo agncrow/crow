@@ -157,11 +157,35 @@ pub fn subjects(message: &str) -> Vec<String> {
     quoted.into_iter().rfind(usable).map(|q| vec![q.to_string()]).unwrap_or_default()
 }
 
+/// Where a line begins: inside a string written across lines, and inside
+/// that string's interpolation. A line a string's text runs onto is read
+/// from inside the string, its code after the quote that closes it.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub struct Opening {
+    in_str: bool,
+    in_interp: bool,
+}
+
+/// Where each line of a source begins, in order (`Opening`).
+pub fn openings(source: &str) -> Vec<Opening> {
+    let mut at = Opening::default();
+    source
+        .lines()
+        .map(|line| {
+            let here = at;
+            at = code_from(line, here).1;
+            here
+        })
+        .collect()
+}
+
 /// A line with what is not code blanked: the text of its strings (a
-/// backtick's interpolation inside one stays, being code) and its comment.
-fn code_of(line: &str) -> Vec<char> {
+/// backtick's interpolation inside one stays, being code) and its comment;
+/// the line read from where `at` says it begins, and where the next line
+/// begins.
+pub fn code_from(line: &str, at: Opening) -> (Vec<char>, Opening) {
     let mut out = Vec::new();
-    let (mut in_str, mut in_interp, mut escaped) = (false, false, false);
+    let (mut in_str, mut in_interp, mut escaped) = (at.in_str, at.in_interp, false);
     let chars: Vec<char> = line.chars().collect();
     let mut i = 0;
     while i < chars.len() {
@@ -194,14 +218,23 @@ fn code_of(line: &str) -> Vec<char> {
         }
         i += 1;
     }
-    out
+    (out, Opening { in_str, in_interp })
+}
+
+/// `spans_from` of a line that begins outside any string, as a test
+/// writes one.
+#[cfg(test)]
+pub fn spans(line: &str, message: &str) -> Vec<(usize, usize)> {
+    spans_from(line, Opening::default(), message)
 }
 
 /// Where on its line a message points: every place the line's code holds
 /// one of the message's subjects as a whole word (or the operator), as
-/// 0-based character ranges, in order. Empty when the line holds none.
-pub fn spans(line: &str, message: &str) -> Vec<(usize, usize)> {
-    let code = code_of(line);
+/// 0-based character ranges, in order — the line read from where `at`
+/// says it begins (`openings`: the line a string written across lines
+/// closes on holds code after its quote). Empty when the line holds none.
+pub fn spans_from(line: &str, at: Opening, message: &str) -> Vec<(usize, usize)> {
+    let code = code_from(line, at).0;
     let word = |c: char| c.is_alphanumeric() || c == '_';
     let mut found = Vec::new();
     for subject in subjects(message) {
@@ -225,10 +258,11 @@ pub fn spans(line: &str, message: &str) -> Vec<(usize, usize)> {
     found
 }
 
-/// The ranges a diagnostic underlines on its line: its subjects, else the
-/// token at the producer's column, else the statement from its indentation.
-pub fn underline(line: &str, d: &Diagnostic) -> Vec<(usize, usize)> {
-    let found = spans(line, &d.message);
+/// The ranges a diagnostic underlines on its line, which begins where `at`
+/// says (`openings`): its subjects, else the token at the producer's
+/// column, else the statement from its indentation.
+pub fn underline(line: &str, at: Opening, d: &Diagnostic) -> Vec<(usize, usize)> {
+    let found = spans_from(line, at, &d.message);
     if !found.is_empty() {
         return found;
     }
@@ -261,9 +295,10 @@ pub fn render(file: &str, source: &str, text: &str, read: &dyn Fn(&str) -> Optio
         }
     }
     // in the order they are read: by file (the entry's first), line, column
+    let opens = openings(source);
     let place = |d: &Diagnostic| -> (bool, String, usize, usize) {
         let col = match (&d.file, d.line) {
-            (None, Some(l)) => source.lines().nth(l - 1).and_then(|t| underline(t, d).first().map(|m| m.0)).unwrap_or(0),
+            (None, Some(l)) => source.lines().nth(l - 1).and_then(|t| underline(t, opens.get(l - 1).copied().unwrap_or_default(), d).first().map(|m| m.0)).unwrap_or(0),
             _ => d.col.unwrap_or(0),
         };
         (d.file.is_some(), d.file.clone().unwrap_or_default(), d.line.unwrap_or(0), col)
@@ -286,7 +321,8 @@ pub fn render(file: &str, source: &str, text: &str, read: &dyn Fn(&str) -> Optio
             out.push_str(&format!("{}:{}: {}\n", name, line, d.message));
             continue;
         };
-        let marks = underline(line_text, d);
+        let at = text.as_deref().and_then(|t| openings(t).get(line - 1).copied()).unwrap_or_default();
+        let marks = underline(line_text, at, d);
         let col = marks.first().map(|m| m.0 + 1).or(d.col).unwrap_or(1);
         out.push_str(&format!("{}:{}:{}: {}\n", name, line, col, d.message));
         let width = line.to_string().len() + 2;
@@ -350,6 +386,7 @@ pub struct Fix {
 /// (`add `use frame` or `use math``) names no fix: that is the author's.
 pub fn fixes(source: &str, text: &str) -> Vec<Fix> {
     let lines: Vec<&str> = source.lines().collect();
+    let opens = openings(source);
     let mut out: Vec<Fix> = Vec::new();
     let mut imports: Vec<String> = Vec::new();
     for d in parse(text) {
@@ -365,7 +402,7 @@ pub fn fixes(source: &str, text: &str) -> Vec<Fix> {
 
         // a slip: the name written, every place on its line, the nearest
         if let Some(near) = m.split("did you mean '").nth(1).and_then(|r| r.split('\'').next()) {
-            for (start, end) in spans(line_text, m) {
+            for (start, end) in spans_from(line_text, opens.get(line - 1).copied().unwrap_or_default(), m) {
                 let written: String = chars[start..end].iter().collect();
                 fix(start, end, near.to_string(), format!("{} → {}", written, near));
             }
@@ -585,6 +622,28 @@ mod tests {
              ex1.co:2:19: undefined variable 'table'\n  2 │ both = join[ours, table, 'node']\n    │                   ^^^^^\n\
              3 mistakes · 1 fixed by adding a line: use frame"
         );
+    }
+
+    /// A string written across lines: the line it closes on is read from
+    /// inside it, its code after the closing quote, and the lines after it
+    /// from outside it — an interpolation's code stays code, a comment
+    /// after the string goes.
+    #[test]
+    fn a_line_a_string_closes_on_is_read_from_inside_it() {
+        let src = "log[join[['first\nsepp'], sepp]]\nlog['a `b\nc` d']\nx = 1 --- c'\ny = 2\n";
+        let opens = openings(src);
+        assert_eq!(opens.len(), 6);
+        assert_eq!(opens[0], Opening::default());
+        assert!(opens[1].in_str && !opens[1].in_interp);
+        assert_eq!(opens[2], Opening::default());
+        assert!(opens[3].in_str && opens[3].in_interp);
+        assert_eq!(opens[4], Opening::default());
+        assert_eq!(opens[5], Opening::default());
+        assert_eq!(spans_from("sepp'], sepp]]", opens[1], "undefined variable 'sepp'"), vec![(8, 12)]);
+        assert_eq!(spans_from("c` d']", opens[3], "undefined variable 'c'"), vec![(0, 1)]);
+        assert_eq!(spans("sepp'], sepp]]", "undefined variable 'sepp'"), vec![(0, 4)]);
+        let shown = render("ex.co", src, "line 2: undefined variable 'sepp'", &|_| None);
+        assert_eq!(shown, "ex.co:2:9: undefined variable 'sepp'\n  2 │ sepp'], sepp]]\n    │         ^^^^");
     }
 
     #[test]

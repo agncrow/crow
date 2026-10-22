@@ -4685,19 +4685,12 @@ pub fn refine_error_line(source: &str, line_1based: usize, msg: &str) -> usize {
         return line_1based;
     }
     let start = line_1based - 1;
+    // each line's code, its strings' text and its comment blanked — a
+    // string written across lines read from where each line begins in it
+    // (a name on the line it closes on had been read as its text)
+    let opens = diagnostic::openings(source);
+    let code = |idx: usize| -> String { diagnostic::code_from(lines[idx], opens.get(idx).copied().unwrap_or_default()).0.into_iter().collect() };
     let contains_word = |l: &str| -> bool {
-        // Mask string literals: a name inside '...' is text, not code.
-        let mut masked = String::with_capacity(l.len());
-        let mut in_str = false;
-        for c in l.chars() {
-            if c == '\'' {
-                in_str = !in_str;
-                masked.push(' ');
-            } else {
-                masked.push(if in_str { ' ' } else { c });
-            }
-        }
-        let l = masked.as_str();
         let bytes = l.as_bytes();
         let mut from = 0;
         while let Some(pos) = l[from..].find(name) {
@@ -4715,19 +4708,18 @@ pub fn refine_error_line(source: &str, line_1based: usize, msg: &str) -> usize {
         false
     };
     let mut depth = 0i32;
-    for (idx, l) in lines.iter().enumerate().skip(start) {
+    for idx in start..lines.len() {
         if idx > start && depth <= 0 {
             break;
         }
-        if contains_word(l) {
+        let l = code(idx);
+        if contains_word(&l) {
             return idx + 1;
         }
-        let mut in_str = false;
         for c in l.chars() {
             match c {
-                '\'' => in_str = !in_str,
-                '[' | '(' if !in_str => depth += 1,
-                ']' | ')' if !in_str => depth -= 1,
+                '[' | '(' => depth += 1,
+                ']' | ')' => depth -= 1,
                 _ => {}
             }
         }
@@ -4890,6 +4882,12 @@ mod refine_tests {
         assert_eq!(crate::refine_error_line(src2, 1, "undefined variable 'missing_name'"), 3);
         // Unquoted messages pass through.
         assert_eq!(crate::refine_error_line(src, 2, "some other error"), 2);
+        // A string written across lines: the line it closes on holds code
+        // after its quote, and a name in its text is no name.
+        let src3 = "log[join[['first\nsepp'], sepp]]\ny = 1\n";
+        assert_eq!(crate::refine_error_line(src3, 1, "undefined variable 'sepp'"), 2);
+        let src4 = "log[join[['first\nsepp'], x]]\n";
+        assert_eq!(crate::refine_error_line(src4, 1, "undefined variable 'sepp'"), 1);
     }
 }
 

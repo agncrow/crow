@@ -1,0 +1,7 @@
+j62_a_refusal_after_a_string_across_lines.co:4:16: undefined variable 'sepp'
+  4 │ second line'], sepp]
+    │                ^^^^
+j62_a_refusal_after_a_string_across_lines.co:6:9: undefined variable 'notte' — did you mean 'note'?
+  6 │ log[len[notte]]
+    │         ^^^^^
+2 mistakes

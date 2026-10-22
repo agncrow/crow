@@ -1,0 +1,6 @@
+--- a refusal on the line a string written across lines closes on, and after it, names its own line and column
+--- mistakes: 2
+note = join[['first line
+second line'], sepp]
+log[note]
+log[len[notte]]
