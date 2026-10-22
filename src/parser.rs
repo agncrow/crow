@@ -1,6 +1,16 @@
 use crate::ast::*;
 use crate::token::{SpannedToken, Token};
 
+/// The rows membership is: a collection's, which `x in xs` reaches with
+/// the collection first, and a map's. Written in source, each is refused
+/// for the operator (spec, Membership), as another language's method of
+/// either name is.
+const MEMBERSHIP: [&str; 2] = ["contains", "has"];
+
+/// The word a `use` names its alias with (`use math as m`): a word only
+/// there, so a variable named `as` stays legal everywhere else.
+const ALIAS: &str = "as";
+
 pub struct Parser {
     tokens: Vec<SpannedToken>,
     pos: usize,
@@ -229,12 +239,22 @@ impl Parser {
         let back = |n: usize| self.pos.checked_sub(n).and_then(|i| self.tokens.get(i)).map(|t| &t.token);
         let before = back(1);
         if let (Token::LParen, Some(Token::Ident(name))) = (got, before) {
-            // a value's method, as Python writes it: the value goes first
-            if let (Some(Token::Dot), Some(Token::Ident(of))) = (back(2), back(3)) {
-                if name == "append" {
-                    return format!("{}a list grows with push, which answers the longer list: {} = push[{}, …]", self.at(), of, of);
+            // a method, as another language calls one: through a value or a
+            // module, the names before the dot (`xs`, `p.items`, `os.path`)
+            if let Some(Token::Dot) = back(2) {
+                let mut of: Vec<&str> = Vec::new();
+                let mut k = 3;
+                while let Some(Token::Ident(part)) = back(k) {
+                    of.push(part);
+                    if !matches!(back(k + 1), Some(Token::Dot)) {
+                        break;
+                    }
+                    k += 2;
                 }
-                return format!("{}{}.{}(…) is {}[{}, …]: a function takes its value first, in square brackets", self.at(), of, name, name, of);
+                if !of.is_empty() {
+                    of.reverse();
+                    return self.method_said(&of.join("."), of[0], name);
+                }
             }
             return format!("{}calls use square brackets: {}[…], not {}(…)", self.at(), name, name);
         }
@@ -277,6 +297,134 @@ impl Parser {
             None if matches!(got, Token::Newline | Token::Eof | Token::Dedent) => format!("{}a value is missing before {}", self.at(), got.said()),
             None => format!("{}{} cannot start a value here", self.at(), got.said()),
         }
+    }
+
+    /// `of.name(…)`, a method as another language calls one, taught the
+    /// Crow form there is (spec, Error Messages), and never a function Crow
+    /// does not have: a module the program imports is called through in
+    /// square brackets; membership is `x in xs`; a value's method is the
+    /// function of its name with the value first, where the program or the
+    /// table has one that takes a value (`upper[s]`); else a call is a
+    /// function's name and square brackets — the builtin of the method's
+    /// name where there is one, its arguments as its rows take them
+    /// (`datetime.now()` is `now[]`, never `now[datetime, …]`), `f[x]`
+    /// where there is none (`xs.includes(1)` had been `includes[xs, …]`).
+    fn method_said(&self, of: &str, root: &str, name: &str) -> String {
+        let at = self.at();
+        if self.imports(root) {
+            return format!("{at}calls use square brackets: {of}.{name}[…], not {of}.{name}(…)");
+        }
+        if asks_membership(name) {
+            return format!("{at}{of}.{name}(…) is written `x in {of}` — and `x not in {of}` for its absence");
+        }
+        let value = self.binds(root);
+        if value && name == "append" {
+            return format!("{at}a list grows with push, which answers the longer list: {of} = push[{of}, …]");
+        }
+        let rows = callable_rows(name);
+        if value && (rows.iter().any(|r| !r.params.is_empty()) || self.declares(name)) {
+            let call = if matches!(self.peek_ahead(1), Token::RParen) { format!("{name}[{of}]") } else { format!("{name}[{of}, …]") };
+            return format!("{at}{of}.{name}(…) is {call}: a function takes its value first, in square brackets");
+        }
+        let crow = shown_call(name, &rows)
+            .or_else(|| self.declares(name).then(|| format!("{name}[…]")))
+            .unwrap_or_else(|| "f[x]".to_string());
+        format!("{at}{of}.{name}(…) is another language's call — Crow calls a function by its name, in square brackets: {crow}")
+    }
+
+    /// Whether the program makes `name` a value anywhere in its file: a
+    /// statement assigns it (`name = …`, one of `a, b = …`), a loop walks
+    /// it (`for name in`), a declaration takes it (`fn f[name]`) or makes
+    /// it (`fn name`, `view name`, `derive name`).
+    fn binds(&self, name: &str) -> bool {
+        let tok = |i: usize| self.tokens.get(i).map(|t| &t.token);
+        let mut depth = 0usize;
+        // (the depth a declaration's parameters are read at)
+        let mut params: Option<usize> = None;
+        for i in 0..self.tokens.len() {
+            match tok(i) {
+                Some(Token::LBracket) => {
+                    depth += 1;
+                    if params.is_none() && i >= 2 && matches!(tok(i - 2), Some(Token::Fn | Token::View)) {
+                        params = Some(depth);
+                    }
+                }
+                Some(Token::RBracket) => {
+                    if params == Some(depth) {
+                        params = None;
+                    }
+                    depth = depth.saturating_sub(1);
+                }
+                Some(Token::Ident(n)) if n == name => {
+                    let prev = i.checked_sub(1).and_then(tok);
+                    if matches!(prev, Some(Token::Fn | Token::View | Token::Derive | Token::For)) {
+                        return true;
+                    }
+                    if params == Some(depth) && matches!(prev, Some(Token::LBracket | Token::Comma)) {
+                        return true;
+                    }
+                    // the statement's first name, or one of several, before its `=`
+                    let mut j = i + 1;
+                    while matches!(tok(j), Some(Token::Comma)) && matches!(tok(j + 1), Some(Token::Ident(_))) {
+                        j += 2;
+                    }
+                    let mut k = i;
+                    while k >= 2 && matches!(tok(k - 1), Some(Token::Comma)) && matches!(tok(k - 2), Some(Token::Ident(_))) {
+                        k -= 2;
+                    }
+                    let starts = k == 0 || matches!(tok(k - 1), Some(Token::Newline | Token::Indent | Token::Dedent));
+                    if depth == 0 && starts && matches!(tok(j), Some(Token::Assign)) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Whether a `use` names `name`: a module's path, its last part, or its
+    /// alias (`use math`, `use views/home`, `use math as m`).
+    fn imports(&self, name: &str) -> bool {
+        let tok = |i: usize| self.tokens.get(i).map(|t| &t.token);
+        let mut i = 0;
+        while i < self.tokens.len() {
+            if !matches!(tok(i), Some(Token::Use)) {
+                i += 1;
+                continue;
+            }
+            i += 1;
+            loop {
+                let mut parts: Vec<&str> = Vec::new();
+                while let Some(Token::Ident(p)) = tok(i) {
+                    parts.push(p);
+                    i += 1;
+                    if !matches!(tok(i), Some(Token::Dot | Token::Slash)) {
+                        break;
+                    }
+                    i += 1;
+                }
+                if parts.first() == Some(&name) || parts.last() == Some(&name) {
+                    return true;
+                }
+                if matches!(tok(i), Some(Token::Ident(a)) if a == ALIAS) {
+                    if matches!(tok(i + 1), Some(Token::Ident(n)) if n == name) {
+                        return true;
+                    }
+                    i += 2;
+                }
+                if !matches!(tok(i), Some(Token::Comma)) {
+                    break;
+                }
+                i += 1;
+            }
+        }
+        false
+    }
+
+    /// Whether the program declares a function of the name.
+    fn declares(&self, name: &str) -> bool {
+        self.tokens.windows(2).any(|w| matches!(w[0].token, Token::Fn | Token::View) && matches!(&w[1].token, Token::Ident(n) if n == name))
     }
 
     /// A statement ends with its line. A second one on the line is refused
@@ -615,7 +763,7 @@ impl Parser {
     /// `as` stays legal everywhere else.
     fn parse_use_path_aliased(&mut self) -> Result<(String, Option<String>), String> {
         let path = self.parse_use_path()?;
-        if matches!(self.peek(), Token::Ident(n) if n == "as") {
+        if matches!(self.peek(), Token::Ident(n) if n == ALIAS) {
             self.advance(); // skip 'as'
             let alias = self.expect_ident()?;
             return Ok((path, Some(alias)));
@@ -899,7 +1047,7 @@ impl Parser {
                     self.advance();
                 }
                 let right = self.parse_then()?;
-                let call = Expr::Call { callee: Box::new(Expr::Ident("contains".to_string())), args: vec![right, left] };
+                let call = Expr::Call { callee: Box::new(Expr::Ident(MEMBERSHIP[0].to_string())), args: vec![right, left] };
                 left = if negated { Expr::UnaryOp { op: UnaryOp::Not, expr: Box::new(call) } } else { call };
                 continue;
             }
@@ -1041,13 +1189,13 @@ impl Parser {
                     Expr::FieldAccess { field, .. } => Some(field.as_str()),
                     _ => None,
                 };
-                if named == Some("contains") {
+                if named == Some(MEMBERSHIP[0]) {
                     return Err(format!(
                         "line {}: `contains[xs, x]` is written `x in xs` — and `x not in xs` for its absence",
                         self.current_line()
                     ));
                 }
-                if named == Some("has") {
+                if named == Some(MEMBERSHIP[1]) {
                     return Err(format!("line {}: `has[m, key]` is written `key in m`", self.current_line()));
                 }
                 expr = Expr::Call {
@@ -1300,6 +1448,43 @@ fn keyword_near(name: &str) -> Option<&'static str> {
         .map(|(_, k)| k)
 }
 
+/// Whether a method asks membership, as other languages spell it —
+/// `includes`, `contains`, `has`, `__contains__`, `containsKey`, `has_key`,
+/// `hasOwnProperty` — which Crow writes `x in xs` (spec, Membership).
+fn asks_membership(name: &str) -> bool {
+    let plain: String = name.chars().filter(|c| *c != '_').flat_map(char::to_lowercase).collect();
+    MEMBERSHIP.contains(&plain.as_str()) || matches!(plain.as_str(), "includes" | "containskey" | "haskey" | "hasownproperty")
+}
+
+/// The builtins a program can call by the name, read from the table: the
+/// core's and those of a module a program may import (never one only the
+/// standard library reaches, `sys`), none for a hidden name.
+fn callable_rows(name: &str) -> Vec<&'static crate::table::Row> {
+    if name.starts_with('_') {
+        return Vec::new();
+    }
+    crate::table::rows_named(name).filter(|r| !crate::modules::by_path(r.module).is_some_and(|m| m.internal)).collect()
+}
+
+/// A builtin's call as a program writes it, by the fewest arguments its
+/// rows take (a rest counting one, an option none): `now[]`, `sqrt[x]`,
+/// `split[x, …]`; none where no row has the name.
+fn shown_call(name: &str, rows: &[&'static crate::table::Row]) -> Option<String> {
+    let fewest = rows
+        .iter()
+        .map(|r| {
+            let rest = r.params.last().is_some_and(|k| k.is_rest());
+            let taken = r.params.len().saturating_sub(r.options.len() + usize::from(rest));
+            if taken == 0 && rest { 1 } else { taken }
+        })
+        .min()?;
+    Some(match fewest {
+        0 => format!("{}[]", name),
+        1 => format!("{}[x]", name),
+        _ => format!("{}[x, …]", name),
+    })
+}
+
 /// Python/JS literal keywords that appear in expression position. Called on
 /// every identifier reference, so it must stay a cheap match that returns None
 /// for ordinary names.
@@ -1520,6 +1705,52 @@ mod pyism_tests {
     #[test]
     fn ordinary_program_parses() {
         assert!(err("fn double[x]\n  return x * 2\nlog[double[5]]\n").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod method_tests {
+    use super::*;
+    use crate::lexer::Lexer;
+
+    fn err(src: &str) -> String {
+        let tokens = match Lexer::new(src).tokenize() {
+            Ok(t) => t,
+            Err(e) => return e,
+        };
+        Parser::new(tokens).parse().err().unwrap_or_default()
+    }
+
+    /// A method as another language calls one is taught the Crow form there
+    /// is, never a function Crow does not have (spec, Error Messages):
+    /// `datetime.now()` had been `now[datetime, …]`, `xs.includes(1)`
+    /// `includes[xs, …]`.
+    #[test]
+    fn a_method_call_names_a_form_crow_has() {
+        // another language's module: the builtin of the method's name, its
+        // arguments as its rows take them, the module never one of them
+        assert_eq!(err("t = datetime.now()\n"), "line 1, col 17: datetime.now(…) is another language's call — Crow calls a function by its name, in square brackets: now[]");
+        assert!(err("x = 9.0\nlog[math.sqrt(x)]\n").ends_with("in square brackets: sqrt[x]"));
+        assert!(err("p = os.path.join('a', 'b')\n").starts_with("line 1, col 17: os.path.join(…) is another language's call — Crow calls a function by its name, in square brackets: join[x"));
+        assert!(err("h = os.getenv('HOME')\n").ends_with("in square brackets: f[x]"));
+        // membership, however another language spells it
+        for m in ["includes", "contains", "has", "__contains__", "containsKey", "has_key"] {
+            let e = err(&format!("xs = [1]\nlog[xs.{}(1)]\n", m));
+            assert!(e.ends_with(&format!("xs.{}(…) is written `x in xs` — and `x not in xs` for its absence", m)), "{}", e);
+        }
+        assert!(err("fn f[p]\n    return p.items.includes(1)\n").contains("p.items.includes(…) is written `x in p.items`"));
+        // a value's method: the function of its name with the value first,
+        // a builtin's or the program's
+        assert_eq!(err("s = 'abc'\nlog[s.upper()]\n"), "line 2, col 12: s.upper(…) is upper[s]: a function takes its value first, in square brackets");
+        assert!(err("s = 'a,b'\nlog[s.split(',')]\n").contains("s.split(…) is split[s, …]: a function takes its value first"));
+        assert!(err("fn shout[s]\n    return upper[s]\nfor w in ['a']\n    log[w.shout()]\n").contains("w.shout(…) is shout[w]:"));
+        // one Crow has no function of: how Crow calls, inventing none
+        assert!(err("s = 'abc'\nlog[s.frobnicate()]\n").ends_with("s.frobnicate(…) is another language's call — Crow calls a function by its name, in square brackets: f[x]"));
+        // a list grows with push
+        assert!(err("xs = []\nxs.append(1)\n").ends_with("a list grows with push, which answers the longer list: xs = push[xs, …]"));
+        // a module the program imports: its function, in square brackets
+        assert_eq!(err("use math\nlog[math.sqrt(4.0)]\n"), "line 2, col 14: calls use square brackets: math.sqrt[…], not math.sqrt(…)");
+        assert!(err("use math as m\nlog[m.mean([1.0])]\n").contains("calls use square brackets: m.mean[…], not m.mean(…)"));
     }
 }
 

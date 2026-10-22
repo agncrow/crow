@@ -1,0 +1,3 @@
+j69_a_method_crow_has_no_function_of.co:2:17: os.getenv(…) is another language's call — Crow calls a function by its name, in square brackets: f[x]
+  2 │ home = os.getenv('HOME')
+    │                 ^

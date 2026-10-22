@@ -1,0 +1,3 @@
+j66_a_method_of_another_languages_module.co:2:17: datetime.now(…) is another language's call — Crow calls a function by its name, in square brackets: now[]
+  2 │ t = datetime.now()
+    │                 ^

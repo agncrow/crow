@@ -1,0 +1,3 @@
+j68_a_values_method_a_builtin_takes.co:3:12: s.upper(…) is upper[s]: a function takes its value first, in square brackets
+  3 │ log[s.upper()]
+    │            ^

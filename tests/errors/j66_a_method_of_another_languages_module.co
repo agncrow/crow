@@ -1,0 +1,3 @@
+--- datetime.now() for now[]: it had been taught as now[datetime, …]
+t = datetime.now()
+log[t]

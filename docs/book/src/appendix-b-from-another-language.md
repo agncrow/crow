@@ -86,7 +86,7 @@ tensor (`*` is matmul, `.*` is element-wise), and a table is a *frame*
 | `async/await`, Promises | none — `later[f]` runs work off the loop; `for` is parallel |
 | `xs.map(f)`, `.filter`, `.reduce` | `for`-as-expression; named reductions (`sum` …) |
 | `xs.find(p)`, `.some`, `.every` | `find[xs, p]`, `any[xs, p]`, `all[xs, p]` with a named `fn` |
-| `xs.includes(x)`, `'k' in obj` | `x in xs`, `'k' in m` |
+| `xs.includes(x)`, `m.has(k)`, `'k' in obj` | `x in xs`, `k in m`, `'k' in m` |
 | `xs.push(x)` | `xs = push[xs, x]` |
 | `{ k: v }` object | `map[k = v]` (one value type) or a `struct` |
 | `class` | `struct` + free functions |

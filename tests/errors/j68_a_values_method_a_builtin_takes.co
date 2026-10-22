@@ -1,0 +1,3 @@
+--- s.upper() for upper[s]: the builtin of the method's name takes the value first
+s = 'abc'
+log[s.upper()]

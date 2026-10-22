@@ -1,0 +1,3 @@
+j67_membership_as_a_method.co:3:16: xs.includes(…) is written `x in xs` — and `x not in xs` for its absence
+  3 │ log[xs.includes(1)]
+    │                ^

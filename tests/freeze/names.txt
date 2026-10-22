@@ -39,7 +39,7 @@ src/modules/math.rs	17	0
 src/modules/mod.rs	41	0
 src/ops.rs	28	5
 src/parallel.rs	0	0
-src/parser.rs	5	0
+src/parser.rs	4	0
 src/rust_names.rs	4	0
 src/served.rs	2	26
 src/table.rs	53	2
