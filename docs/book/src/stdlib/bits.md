@@ -12,7 +12,7 @@ Import with `use bits`. An int's bits and a character's code, for the algorithms
 | `bitxor[a, b]` | The bits one has and the other has not; `bitxor[a, -1]` flips every bit (`-a - 1`) | [Bits and character codes: `use bits`](../by-example/bits.md) |
 | `bitcount[a]` | How many ones the bits of `abs[a]` hold | [Bits and character codes: `use bits`](../by-example/bits.md) |
 | `shift[a, n]` | `a` times 2^n; for a negative `n`, `a` divided by 2^-n and rounded down (`shift[-7, -1]` is -4). A number past 2^32 bits stops | [Bits and character codes: `use bits`](../by-example/bits.md) |
-| `code[ch]` | The code of a one-character text, its Unicode scalar value (`code['A']` is 65); any other length stops: `code takes one character, got "ab" (2 characters)` | [Bits and character codes: `use bits`](../by-example/bits.md) · [JSON](../by-example/json.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [Web: responses and submodules](../by-example/web-more.md) |
+| `code[ch]` | The code of a one-character text, its Unicode scalar value (`code['A']` is 65); any other length stops: `code takes one character, got "ab" (2 characters)` | [Bits and character codes: `use bits`](../by-example/bits.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) |
 | `char[n]` | The character whose code is `n` (`char[233]` is `'é'`); a number that is no character's code stops | [Bits and character codes: `use bits`](../by-example/bits.md) |
 
 ```

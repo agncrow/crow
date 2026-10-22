@@ -874,6 +874,14 @@ fn reference_tables(h2: &str, h3: &str, h4: &str) -> Option<Vec<&'static str>> {
 ///   3. every module has a `use` in at least one verified book block, and
 ///      every core builtin is called in at least one
 ///   4. every examples/*.co is listed in examples/README.md
+/// Whether `text` calls `name`: `name[` where the character before it is
+/// no part of a name, so `area[` is no call of `a` and `greet[` none of
+/// `t`, while a module's prefix (`math.sum[`) still calls `sum`.
+fn calls_name(text: &str, name: &str) -> bool {
+    let call = format!("{}[", name);
+    text.match_indices(&call).any(|(i, _)| text[..i].chars().next_back().map_or(true, |c| !(c.is_alphanumeric() || c == '_')))
+}
+
 fn cmd_test_docs() {
     use std::collections::BTreeSet;
     let spec = std::fs::read_to_string("docs/language-spec.md").unwrap_or_else(|_| {
@@ -970,7 +978,7 @@ fn cmd_test_docs() {
     };
     for (table, names) in &tables {
         let uncalled: Vec<&str> = names.iter().copied()
-            .filter(|n| !SPEC_ONLY.contains(n) && !blocks.contains(&format!("{}[", n)) && !(READ_AS_VALUES.contains(n) && read_as_value(n)))
+            .filter(|n| !SPEC_ONLY.contains(n) && !calls_name(&blocks, n) && !(READ_AS_VALUES.contains(n) && read_as_value(n)))
             .collect();
         if uncalled.is_empty() {
             println!("  ok    {:10} every name is used in a verified block", table);
@@ -1023,8 +1031,7 @@ fn cmd_test_docs() {
         Some((start, end))
     };
     let hits_for = |name: &str| -> Vec<String> {
-        let call = format!("{}[", name);
-        page_blocks.iter().filter(|(_, _, b)| b.contains(&call)).map(|(path, title, _)| format!("[{}](../{})", title, path)).collect()
+        page_blocks.iter().filter(|(_, _, b)| calls_name(b, name)).map(|(path, title, _)| format!("[{}](../{})", title, path)).collect()
     };
     // a page from a slice of spec lines: headings demoted one level, tables
     // given an example column, the page's own title on top
@@ -6184,6 +6191,20 @@ mod book_port_tests {
 #[cfg(test)]
 mod docs_check_tests {
     use super::*;
+
+    /// a name is called where `name[` stands at the start of a name: the
+    /// standard library's pages had linked `area[…]` to the `a * b` row and
+    /// `greet[…]` to the moment's `t` rows, and the docs check had counted a
+    /// builtin as called inside a longer name
+    #[test]
+    fn a_name_is_called_only_at_the_start_of_a_name() {
+        assert!(calls_name("x = a[1]", "a"));
+        assert!(calls_name("sum[xs]", "sum"));
+        assert!(calls_name("t = math.sum[xs]", "sum"));
+        assert!(!calls_name("area[2, 3]", "a"));
+        assert!(!calls_name("greet['x']", "t"));
+        assert!(!calls_name("my_sum[xs]", "sum"));
+    }
 
     /// A reference row names a function of its own section's table: math's
     /// `rand[d1, d2, …]` had passed as core's `rand`, an int, checked

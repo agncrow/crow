@@ -1,6 +1,6 @@
 # db
 
-Databases as connections: query, exec, bulk insert, transactions, migrations, and pooling.
+Databases as connections: every statement through query, bulk insert, transactions, the tables a program declares, and pooling (migrations are the tool's: crow db apply).
 
 
 The `db` module provides database connectivity. Import with `use db`. Supports SQLite, PostgreSQL, and ClickHouse via URL-scheme dispatch. See `docs/db-module.md` for full architecture details.
@@ -41,8 +41,8 @@ A connection is not the program's lifetime. When the server closes it — a rest
 
 | Function | Description | Example |
 |---|---|---|
-| `query[conn, sql]` | Run a statement; the rows it answers, as a frame | [Databases: `use db`](../by-example/db.md) · [The standard library's layer: `use sys`](../by-example/sys.md) · [Web: responses and submodules](../by-example/web-more.md) · [Working with Databases](../ch11-00-databases.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [Derivations](../ch12-08-derive.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
-| `query[conn, sql, params]` | The same, with a list of bind values for its `?`s | [Databases: `use db`](../by-example/db.md) · [The standard library's layer: `use sys`](../by-example/sys.md) · [Web: responses and submodules](../by-example/web-more.md) · [Working with Databases](../ch11-00-databases.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [Derivations](../ch12-08-derive.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
+| `query[conn, sql]` | Run a statement; the rows it answers, as a frame | [Databases: `use db`](../by-example/db.md) · [Web: responses and submodules](../by-example/web-more.md) · [Working with Databases](../ch11-00-databases.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [Derivations](../ch12-08-derive.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
+| `query[conn, sql, params]` | The same, with a list of bind values for its `?`s | [Databases: `use db`](../by-example/db.md) · [Web: responses and submodules](../by-example/web-more.md) · [Working with Databases](../ch11-00-databases.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [Derivations](../ch12-08-derive.md) · [Loading and Shaping the Data](../ch13-01-data.md) · [The Database Layer](../ch13-02-database.md) · [Views and Live Updates](../ch13-03-views.md) |
 
 **One verb runs every statement.** `query` answers a frame: the rows a `SELECT` answers, the rows a `RETURNING` clause reads back, and an empty frame for a statement that answers none — a `CREATE`, an `UPDATE`, a `DELETE`. No count of rows affected is answered: a write that must say what it touched reads it back with `RETURNING`.
 

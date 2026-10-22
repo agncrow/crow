@@ -61,7 +61,7 @@ Top-level variables in a ui program are reactive state (see Function Scope). Thr
 |---|---|---|
 | `fetch[url]` | A frame loaded once by HTTP GET when the page connects — from a URL, or from a path of this app's own (`fetch['/api/rows']`) — held where it arrives to the columns the page reads of it (Frames: a frame loaded from a file has the columns the program reads) | [The standard library's layer: `use sys`](../by-example/sys.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) |
 | `poll[url, seconds]` | The same, re-fetched every `seconds`; every reader re-renders when it changes | [Views: the whole element vocabulary](../by-example/views-elements.md) |
-| `field[label, var, type = '', lines = 0]` | A labeled input two-way bound to reactive variable `var` (inside a view). `type` is the input's kind — `'text'`, `'number'`, `'date'`, `'time'`, `'password'`, `'file'` — and defaults to `'number'` for an int or float variable; `lines = 3` makes it a textarea | [The standard library's layer: `use sys`](../by-example/sys.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) · [Views and Live Updates](../ch13-03-views.md) |
+| `field[label, var, type = '', lines = 0]` | A labeled input two-way bound to reactive variable `var` (inside a view). `type` is the input's kind — `'text'`, `'number'`, `'date'`, `'time'`, `'password'`, `'file'` — and defaults to `'number'` for an int or float variable; `lines = 3` makes it a textarea | [Views: the whole element vocabulary](../by-example/views-elements.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) · [Views and Live Updates](../ch13-03-views.md) |
 | `slider[label, var, min = 0, max = 100, step = 1]` | A range input bound to a number | [Views: the whole element vocabulary](../by-example/views-elements.md) · [Reactive State and Events](../ch12-02-reactive-state.md) |
 | `checkbox[label, var]` | A checkbox bound to a bool | [The Element Vocabulary](../ch12-07-vocabulary.md) |
 | `toggle[label, var]` | A switch bound to a bool — the same binding as `checkbox`, drawn as a toggle | [The Element Vocabulary](../ch12-07-vocabulary.md) |
@@ -223,7 +223,7 @@ Pages are composed from layout primitives, never styled with CSS. Five container
 | Container | Rule | Example |
 |---|---|---|
 | `stack[a, b, ...]` | children top to bottom, each the container's full content width | [Frames: `use frame`](../by-example/frames.md) · [Math: tensors](../by-example/math.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [View Blocks](../ch12-01-views.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Slow Work and the Live Loop](../ch12-04-background-work.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) · [Derivations](../ch12-08-derive.md) |
-| `row[a, b, ...]` | children left to right on one line; overflow is a failure `fits[]` reports, never a silent wrap (`wrap = true` opts in) | [Views: the whole element vocabulary](../by-example/views-elements.md) · [Web: responses and submodules](../by-example/web-more.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) · [Derivations](../ch12-08-derive.md) |
+| `row[a, b, ...]` | children left to right on one line; overflow is a failure `fits[]` reports, never a silent wrap (`wrap = true` opts in) | [Views: the whole element vocabulary](../by-example/views-elements.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
 | `grid[a, b, ..., columns = 2]` | cells left-to-right, top-to-bottom, equal columns; `columns = '240px fill'` names tracks | [Views: the whole element vocabulary](../by-example/views-elements.md) · [Charts and Styling](../ch12-06-charts-and-style.md) |
 | `overlay[base, top]` | `top` positioned over `base` by `anchor = 'center' \| 'top_right' \| ...` | [Views: the whole element vocabulary](../by-example/views-elements.md) · [Charts and Styling](../ch12-06-charts-and-style.md) |
 | `scroll[child, height = '360px']` | a fixed-height viewport; the platform scrolls | [Views: the whole element vocabulary](../by-example/views-elements.md) · [Charts and Styling](../ch12-06-charts-and-style.md) |
@@ -237,7 +237,7 @@ Pages are composed from layout primitives, never styled with CSS. Five container
 | `size`, `weight`, `font` | the type scale `xs s m l xl xxl` = 12 14 16 20 24 32 px; `regular medium bold`; `font = 'mono'` sets the monospace face with tabular digits — a figure in a stat tile, a code-like value |  |
 | `surface = 'card'`, `radius`, `border = true`, `shadow` | surfaces: radius `none s m l round`, shadow `s m l` |  |
 | `color`, `background` | a colour token: `text muted accent up down surface bg` — never a literal colour |  |
-| `lines = 2` | clamp a wrapping paragraph | [Structured files: `use io`](../by-example/io.md) · [The standard library's layer: `use sys`](../by-example/sys.md) |
+| `lines = 2` | clamp a wrapping paragraph | [Structured files: `use io`](../by-example/io.md) |
 | `below = 'phone' \| 'tablet'`, `becomes = 'stack'`, `columns_then = 1`, `hidden_below` | responsive rules at named widths (phone < 600, tablet < 1024) — no media queries |  |
 | `open = true`, `side = 'left' \| 'right'` | a disclosure's or layer's state (any bool expression) and a drawer's or dropdown's side | [The standard library's layer: `use sys`](../by-example/sys.md) |
 | `tip = 'text'`, `fit = 'cover' \| 'contain'`, `active = '/path'` | a tooltip on anything; how an `img` fills its `aspect` box; the current page of a `nav` |  |
@@ -283,9 +283,9 @@ view render[]
 
 | Named argument | Default | Meaning | Example |
 |---|---|---|---|
-| `x` | `'ts'` | Column of moments for the x axis | [Frames: `use frame`](../by-example/frames.md) · [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) · [Neural-network building blocks: `use math.nn`](../by-example/nn.md) · [Numbers and conversion](../by-example/numbers.md) · [The standard library's layer: `use sys`](../by-example/sys.md) · [Views: the whole element vocabulary](../by-example/views-elements.md) · [Testing](../ch09-00-testing.md) · [Charts and Styling](../ch12-06-charts-and-style.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
+| `x` | `'ts'` | Column of moments for the x axis | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: tensors](../by-example/math.md) |
 | `candles` | `[]` | Four column names — open, high, low, close — drawn as candlesticks |  |
-| `lines` | `[]` | Column names drawn as line series | [Structured files: `use io`](../by-example/io.md) · [The standard library's layer: `use sys`](../by-example/sys.md) |
+| `lines` | `[]` | Column names drawn as line series | [Structured files: `use io`](../by-example/io.md) |
 | `bars_y` | `''` | Column drawn as a volume pane under the chart |  |
 | `marker` | `0` | A moment marked with a vertical play-head |  |
 | `tz` | `'UTC'` | Timezone for the axis ticks |  |

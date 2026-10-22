@@ -7,8 +7,8 @@ Import with `use io`. Provides structured file parsing beyond the built-in `read
 
 | Function | Description | Example |
 |----------|-------------|---|
-| `csv[path]` | Parse CSV — a file, a URL or an S3 object — into array of maps (error-value on failure) | [Structured files: `use io`](../by-example/io.md) · [The standard library's layer: `use sys`](../by-example/sys.md) |
-| `lines[path]` | Read a file, a URL or an S3 object as array of lines (error-value on failure); a file is read a block at a time (`sys.file_lines`), so its whole text is not held beside its lines | [Structured files: `use io`](../by-example/io.md) · [The standard library's layer: `use sys`](../by-example/sys.md) |
+| `csv[path]` | Parse CSV — a file, a URL or an S3 object — into array of maps (error-value on failure) | [Structured files: `use io`](../by-example/io.md) |
+| `lines[path]` | Read a file, a URL or an S3 object as array of lines (error-value on failure); a file is read a block at a time (`sys.file_lines`), so its whole text is not held beside its lines | [Structured files: `use io`](../by-example/io.md) |
 
 **Note:** Basic file I/O (`read[path]`, `write[path, content]`) are builtins available without any import. The io module adds structured parsing only.
 
