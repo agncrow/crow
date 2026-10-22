@@ -3,9 +3,9 @@
 //! database of its own: a query is answered from a fixture recorded once
 //! on purpose (`.crow/fixtures/<hash>.json`), else from rows generated
 //! from what the database answered at build time (`.crow/schema`); a write
-//! — `exec`, `insert`, a migration, a statement through `query` that
-//! changes rows — is recorded as an effect with its payload, and the
-//! program sees success. Nothing leaves the machine.
+//! — a statement through `query` that changes rows, a bulk `insert` — is
+//! recorded as an effect with its payload, and the program sees success.
+//! Nothing leaves the machine.
 //!
 //! A recording (`crow check --record-fixtures`) is a rehearsal whose reads
 //! go to the real databases: what each statement answers first is kept as

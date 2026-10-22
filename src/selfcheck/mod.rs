@@ -928,7 +928,7 @@ fn form_cases(all: &[Val]) -> Vec<Case> {
 /// The rows a program cannot call, and why: the language's own layer (its
 /// rows are reached through the standard modules written in Crow, which
 /// the cases call), and the database drivers' (reached through `use db`'s
-/// `connect`, `query` and `exec`, the `db` family).
+/// `connect`, `query` and `insert`, the `db` family).
 fn skipped_module(module: &str) -> Option<&'static str> {
     match module {
         "db.postgres" | "db.clickhouse" => Some("a driver's own row, reached through use db (the db family)"),

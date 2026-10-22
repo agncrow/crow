@@ -149,7 +149,7 @@ pub static MODULES: &[Module] = &[
     // in Crow are carried by its import
     Module {
         loads: &["db.clickhouse", "db.postgres"], needs: &[("crow_db", &["sqlite"]), RUNTIME], rows: false, known: true, typed: true,
-        docs: Some("Databases as connections: query, exec, bulk insert, transactions, migrations, and pooling."),
+        docs: Some("Databases as connections: every statement through query, bulk insert, transactions, the tables a program declares, and pooling (migrations are the tool's: crow db apply)."),
         module: Some(|| Arc::new(db::DbModule)),
         ..Module::plain("db", "_db")
     },

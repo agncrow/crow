@@ -2380,8 +2380,9 @@ fn a_route_reads_what_the_app_holds_and_lands_its_writes() {
     assert!(body.contains("let state: &CrowLiveState = crow_web::live::app();"), "{}", body);
     assert_eq!(body.matches("__derive_rows(state)").count(), 1, "read once, as the handler starts:\n{}", body);
     assert!(rust.contains("impl Drop for __CrowWrites {\n    fn drop(&mut self) { crow_web::live::publish_writes(crow_db::take_write_keys()); }"), "{}", rust);
-    // (the handler's bare `exec` is decided on — a failed insert stops the
-    // route — so its answer is checked as the guard holds the writes)
+    // (the handler's bare writing `query` is decided on — a failed insert
+    // stops the route — so its answer is checked as the guard holds the
+    // writes)
     assert!(rust.contains("move |__req: crow_web::core::CrowRequest| { let _w = __CrowWrites; let _r = add_h(__req); if _r.ok { _r.value } else { crow_web::server::route_stopped("), "a route's writes land as it ends, a stop included:\n{}", rust);
     let landed = rust.rfind("crow_web::live::publish_writes(crow_db::take_write_keys());\n").expect("the top level's writes landed");
     let served = rust.find(".serve(3998").expect("served");

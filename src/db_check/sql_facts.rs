@@ -1,4 +1,4 @@
-/// Extract database facts from a Crow program: every `query`/`exec` call with
+/// Extract database facts from a Crow program: every `query` call with
 /// a literal SQL string, parsed into which table it touches, which columns it
 /// reads/writes, and how its condition filters — plus the surrounding context
 /// (enclosing function, result variable, transact usage) that later detectors
@@ -218,7 +218,7 @@ fn walk_expr(
     }
 }
 
-/// `query` / `exec` / `db.query` / `db.exec` — bare or module-qualified.
+/// A call's name, bare or module-qualified (`query`, `db.query`).
 fn call_name(callee: &Expr) -> Option<&str> {
     match callee {
         Expr::Ident(n) => Some(n.as_str()),
