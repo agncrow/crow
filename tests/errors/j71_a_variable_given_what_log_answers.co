@@ -1,0 +1,4 @@
+--- log answers nothing, as its row declares: a variable given its answer is refused where it is written (after `y = 1.0` the lowered program had disagreed with itself, an internal error; a new variable had held `done`)
+y = 1.0
+y = log[3]
+log[y]

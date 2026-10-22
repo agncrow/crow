@@ -1471,7 +1471,9 @@ impl<'a> Lowerer<'a> {
                     // them to the session, where its answer arrives
                     let default = self.held_to_shape(name, default);
                     let held = if is_source_call(&default) { self.held_of(name) } else { Vec::new() };
-                    self.check_assign(name, &self.checked(&default));
+                    if !self.refuse_nothing_held(&format!("'{}'", crate::lower::shown(name)), &default) {
+                        self.check_assign(name, &self.checked(&default));
+                    }
                     self.flush_pre_into(&mut part.main);
                     // a fact holds no error: a declared value that can fail
                     // is refused where the facts are set, and the fact holds
@@ -2177,7 +2179,14 @@ impl<'a> Lowerer<'a> {
                     _ => expr,
                 };
                 if self.pass == Pass::Final {
-                    self.check_assign(name, &self.checked(&expr));
+                    // (a call that answers nothing gives the variable no
+                    // value: refused once, and what the variable was is not
+                    // judged against it)
+                    if self.refuse_nothing_held(&format!("'{}'", crate::lower::shown(name)), &expr) {
+                        self.v.contested.insert(name.clone());
+                    } else {
+                        self.check_assign(name, &self.checked(&expr));
+                    }
                 }
                 if self.pass == Pass::Scan {
                     // the call scan settles the variable once its value's
@@ -2280,6 +2289,9 @@ impl<'a> Lowerer<'a> {
                     self.check_top_write(&root);
                 }
                 let expr = self.lower_expr(value)?;
+                if self.pass == Pass::Final && self.refuse_nothing_held(&format!("the field '{}'", field), &expr) {
+                    return Ok(Vec::new());
+                }
                 let (var, mut path, _) = self.muted_target(object)?;
                 path.push(PathStep::Field(field.clone()));
                 self.forget_shape(&var);
@@ -2291,6 +2303,15 @@ impl<'a> Lowerer<'a> {
                     self.check_top_write(&root);
                 }
                 let expr = self.lower_expr(value)?;
+                if self.pass == Pass::Final {
+                    let place = match target_root(object) {
+                        Some(root) => format!("an item of '{}'", crate::lower::shown(&root)),
+                        None => "an item".to_string(),
+                    };
+                    if self.refuse_nothing_held(&place, &expr) {
+                        return Ok(Vec::new());
+                    }
+                }
                 if self.pass == Pass::Settle {
                     self.settled_entry(object, &expr);
                 }
@@ -2928,6 +2949,9 @@ impl<'a> Lowerer<'a> {
     /// any is written when they read each other.
     fn multi_assign(&mut self, names: &[String], values: &[A]) -> Result<Vec<Stmt>, String> {
         let mut out = Vec::new();
+        // (a value of a call that answers nothing is refused for its name,
+        // as an assignment's is)
+        let final_pass = self.pass == Pass::Final;
         let targets: BTreeSet<String> = names.iter().cloned().collect();
         let mut reads = BTreeSet::new();
         let mut clock = false;
@@ -2939,14 +2963,20 @@ impl<'a> Lowerer<'a> {
         if reads.is_disjoint(&targets) {
             for (n, v) in names.iter().zip(values) {
                 let e = self.lower_expr(v)?;
+                if final_pass {
+                    self.refuse_nothing_held(&format!("'{}'", crate::lower::shown(n)), &e);
+                }
                 let stmt = self.assign(n, e);
                 self.flush_pre_into(&mut out);
                 out.push(stmt);
             }
         } else {
             let mut temps = Vec::new();
-            for v in values {
+            for (i, v) in values.iter().enumerate() {
                 let e = self.lower_expr(v)?;
+                if final_pass && let Some(n) = names.get(i) {
+                    self.refuse_nothing_held(&format!("'{}'", crate::lower::shown(n)), &e);
+                }
                 let t = self.fresh();
                 let ty = e.ty();
                 self.flush_pre_into(&mut out);
@@ -8244,6 +8274,30 @@ if r.ok
         assert!(!refused.contains("__pick"), "{}", refused);
         let refused = refusal_of("xs = ['c', 'a']\npush[xs, 'b']\nlog[xs]\n");
         assert!(refused.contains("push[] answers a list, and this line drops it — keep it: xs = push[xs, …]"), "{}", refused);
+    }
+
+    /// A call that answers nothing — a row that declares no answer, or a
+    /// function whose returns hand on nothing — gives a variable, a field
+    /// or an item no value: refused where it is written, in one wording
+    /// (after `y = 1.0`, `y = log[3]` had been an internal error: the
+    /// lowered program disagreed with itself)
+    #[test]
+    fn what_answers_nothing_is_held_nowhere() {
+        let refused = refusal_of("y = 1.0\ny = log[3]\nlog[y]\n");
+        assert!(refused.contains("line 2: log[] answers nothing, which 'y' cannot hold — call it on a line of its own"), "{}", refused);
+        assert_eq!(refused.lines().count(), 1, "one mistake, one message: {}", refused);
+        let refused = refusal_of("struct P [x]\np = P[1.0]\np.x = log[2]\nnames = ['a']\nnames[0] = log[4]\na, b = log[5], 2\nlog[p.x, names, a, b]\n");
+        assert!(refused.contains("line 3: log[] answers nothing, which the field 'x' cannot hold"), "{}", refused);
+        assert!(refused.contains("line 5: log[] answers nothing, which an item of 'names' cannot hold"), "{}", refused);
+        assert!(refused.contains("line 6: log[] answers nothing, which 'a' cannot hold"), "{}", refused);
+        // (through the program's functions: the body's last call is its
+        // implicit return, of nothing no value)
+        let refused = refusal_of("fn shout[x]\n    log[x]\nfn twice[x]\n    shout[x]\n    return shout[x]\ny = twice[1]\nlog[y]\n");
+        assert!(refused.contains("line 6: twice[] answers nothing, which 'y' cannot hold"), "{}", refused);
+        // a function that answers a value is held, and one that answers
+        // nothing is called on its own line
+        let ir = ir_of("fn shout[x]\n    log[x]\n    return x\nfn quiet[x]\n    log[x]\ny = shout[1]\nquiet[2]\nlog[y]\n");
+        assert!(ir.contains("let y: Int = call shout(1)"), "{}", ir);
     }
 
     /// A test that builds a record the program only receives types the

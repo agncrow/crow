@@ -489,10 +489,13 @@ mod tests {
 
     #[test]
     fn test_log_no_propagation() {
-        // log should NOT propagate — it should print and return done
-        let val = get_var("x = int['bad']\ny = log[x]\n", "y");
-        assert!(val.is_ok());
-        assert!(matches!(val.value, Value::Done));
+        // log does NOT propagate — it shows the failure and the program goes
+        // on; what it answers is nothing, which no variable holds (`y =
+        // log[x]` is refused before the program runs)
+        let val = get_var("x = int['bad']\nlog[x]\ny = 1\n", "y");
+        assert!(matches!(val.value, Value::Int(1)));
+        let refused = run("x = int['bad']\ny = log[x]\n").err().unwrap_or_default();
+        assert!(refused.contains("log[] answers nothing, which 'y' cannot hold"), "{}", refused);
     }
 
     #[test]

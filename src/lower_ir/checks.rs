@@ -674,6 +674,79 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// The call a value is the answer of, where that call answers nothing:
+    /// a row whose answer its row declares as none (`Kind::Unit`; a form's
+    /// kinds are no contract), or a function of the program's that returns
+    /// no value. Its name as the program wrote it.
+    pub(super) fn answers_nothing(&self, x: &Expr) -> Option<String> {
+        match x {
+            Expr::Call { target: Target::Row(row), ty: Ty::Unit, .. } | Expr::Effect { row: Some(row), ty: Ty::Unit, .. } => {
+                (row.path != crate::table::IN_FORM && matches!(row.ret, crate::table::Kind::Unit)).then(|| crate::table::form(row.name))
+            }
+            Expr::Call { target: Target::User(f), ty: Ty::Unit, .. } => {
+                self.fn_answers_nothing(f, &mut BTreeSet::new()).then(|| format!("{}[]", crate::lower::shown(crate::ir::copy_base(f))))
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether a function of the program's answers nothing: its type is
+    /// none, and each of its returns hands on nothing — a call of a row
+    /// that answers none, or of a function of the program's that does (the
+    /// body's last call is its implicit return, and of nothing it is no
+    /// value). A return of anything else is a value whose type is not
+    /// known yet, never nothing.
+    fn fn_answers_nothing(&self, f: &str, seen: &mut BTreeSet<String>) -> bool {
+        let Some(sig) = self.ctx.functions.get(f) else { return false };
+        if !matches!(sig.return_type, Ty::Unit) {
+            return false;
+        }
+        // (a function returning its own call answers what its other
+        // returns do)
+        if !seen.insert(f.to_string()) {
+            return true;
+        }
+        fn returned<'a>(body: &'a [S], out: &mut Vec<&'a A>) {
+            for s in body {
+                match s {
+                    S::Return(Some(e)) => out.push(e),
+                    S::If { then_body, else_body, .. } => {
+                        returned(then_body, out);
+                        if let Some(b) = else_body {
+                            returned(b, out);
+                        }
+                    }
+                    S::For { body, .. } | S::While { body, .. } => returned(body, out),
+                    _ => {}
+                }
+            }
+        }
+        let mut values = Vec::new();
+        returned(&sig.body, &mut values);
+        values.into_iter().all(|e| match e {
+            A::Call { callee, .. } => match callee.as_ref() {
+                A::Ident(g) if self.ctx.functions.contains_key(g) => self.fn_answers_nothing(g, seen),
+                A::Ident(g) => {
+                    let mut rows = crate::table::rows_named(g).peekable();
+                    rows.peek().is_some() && rows.all(|r| r.path != crate::table::IN_FORM && matches!(r.ret, crate::table::Kind::Unit))
+                }
+                _ => false,
+            },
+            _ => false,
+        })
+    }
+
+    /// A value given to a place that holds one — a variable, a field, an
+    /// item — that is the answer of a call answering nothing: refused where
+    /// it is written, in both modes. (`y = log[3]` had held nothing a
+    /// program reads, shown as `done`; after `y = 1.0` the lowered program
+    /// had disagreed with itself, an internal error.) True when refused.
+    pub(super) fn refuse_nothing_held(&mut self, place: &str, x: &Expr) -> bool {
+        let Some(call) = self.answers_nothing(x) else { return false };
+        self.refuse(format!("{} answers nothing, which {} cannot hold — call it on a line of its own", call, place));
+        true
+    }
+
     /// A derivation reads facts and sources and returns a value: it is a
     /// computation, so it writes no fact, and it lives in a ui program.
     pub(super) fn check_derive(&mut self, name: &str, body: &[S]) {

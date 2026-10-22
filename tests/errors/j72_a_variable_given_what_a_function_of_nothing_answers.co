@@ -1,0 +1,6 @@
+--- a function whose every return hands on nothing answers nothing: a variable given its answer is refused as one given log's is (it had held `done`, and an internal error after a number)
+fn shout[x]
+    log['`x`!']
+
+loud = shout['hey']
+log[loud]
