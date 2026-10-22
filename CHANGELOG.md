@@ -380,6 +380,13 @@ history says the rest.
 
 ### Fixed
 
+- Ending a process `start` began signals its own group and nothing else
+  on Linux: the group had been written `kill -TERM -<pid>`, which
+  procps's `kill` (4.0.4, Ubuntu's) reads as a signal to every process
+  the user may signal when the pid begins with 1 — on CI it ended the
+  unit tests' step and a coverage runner, where macOS's `kill` had read
+  it right. The group is named after `--`, and a pid of 0 or 1 is
+  signalled not at all.
 - A line that holds only a comment opens and closes no block, whatever
   its indentation, as a blank line does (spec, Blocks), in a file and in
   the console. A trailing comment continued aligned under itself had

@@ -629,7 +629,20 @@ impl Drop for ProcessConn {
 /// (`process_group(0)`), so `sh -c` and the command it runs both get it.
 #[cfg(unix)]
 fn signal_group(pid: u32, name: &str) {
-    let _ = std::process::Command::new("kill").arg(format!("-{}", name)).arg(format!("-{}", pid)).output();
+    if let Some(args) = group_signal_args(pid, name) {
+        let _ = std::process::Command::new("kill").args(&args).output();
+    }
+}
+
+/// `kill`'s arguments for a signal to a child's group: the group named
+/// after `--`, as POSIX writes it — Linux's procps `kill` had read
+/// `-TERM -12345` as a signal to every process the user may signal, and on
+/// CI the unit tests' step was ended and a runner lost (2026-10-22) — and
+/// none for a pid that names no child's group (0 is the caller's own, 1
+/// every process).
+#[cfg_attr(not(unix), allow(dead_code))]
+fn group_signal_args(pid: u32, name: &str) -> Option<Vec<String>> {
+    (pid > 1).then(|| vec![format!("-{}", name), "--".to_string(), format!("-{}", pid)])
 }
 
 #[cfg(not(unix))]
@@ -1284,6 +1297,16 @@ mod tests {
         assert_eq!(text_of_bytes(&recv(&stream_of(&fresh), 64, 5.0).unwrap()).unwrap(), "z\n");
         close(&stream_of(&fresh));
         assert_eq!(start("  ").unwrap_err(), "a command is text, and '' is none");
+    }
+
+    /// A child's group is named after `--`, and a pid naming the caller's
+    /// group or every process is signalled not at all: Linux's procps `kill`
+    /// had read `-TERM -12345` as a signal to every process of the user
+    #[test]
+    fn a_group_signal_names_its_group_after_the_options() {
+        assert_eq!(group_signal_args(12345, "TERM"), Some(vec!["-TERM".to_string(), "--".to_string(), "-12345".to_string()]));
+        assert_eq!(group_signal_args(0, "TERM"), None);
+        assert_eq!(group_signal_args(1, "KILL"), None);
     }
 
     /// A command the shell does not find starts, says so on standard error

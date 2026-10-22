@@ -287,7 +287,7 @@ fn served_answers(mode: &[&str], port: u16) -> Vec<String> {
         answers.push(format!("{} | {}", status, shown));
     }
     // the whole group — crow and the program it started — then the port
-    let _ = Command::new("kill").args(["-TERM", &format!("-{}", child.id())]).status();
+    let _ = Command::new("kill").args(["-TERM", "--", &format!("-{}", child.id())]).status();
     let _ = child.kill();
     let _ = child.wait();
     let gone = std::time::Instant::now();

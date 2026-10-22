@@ -1328,3 +1328,11 @@ steps on every push and must be green.
   does (`writes_by_statement`), and the reach shows `table::shown_effect`.
   `crow test --docs` reads a call of a name only where `name[` begins a
   name (`calls_name`): `area[` had counted as a use of `a`.
+- A process group is signalled `kill -SIG -- -<pgid>`, never `kill -SIG
+  -<pgid>`: procps-ng 4.0.4's `kill`, Ubuntu's, reads a negative pid after
+  a signal by its first digit alone (`'0' - optopt`), so a group whose id
+  begins with 1 is `kill(-1)` — every process the user may signal. On CI
+  it ended the unit tests' step (exit 143) and lost a coverage runner
+  (2026-10-22); macOS's `kill` reads it right, so only CI shows it.
+  `sys::group_signal_args` builds the form (and signals no pid of 0 or 1);
+  main.rs and served_parity.rs already wrote it.
