@@ -25,3 +25,13 @@ fn a_program_that_serves_is_told_where_it_runs() {
     let said = console("use web, ui\nn = 0\nview home[]\n    return p['hello']\n\nserve[3459]\npage['/', home]\n");
     assert!(said.contains("the console serves no pages") && said.contains("crow run -i"), "{}", said);
 }
+
+/// A function a block defines is the next line's to call: the console's
+/// session had refused the call as an internal error ("calls 'double',
+/// which the program does not define") wherever the IR check runs
+#[test]
+fn a_function_one_block_defines_the_next_line_calls() {
+    let said = console("fn double[n]\n    n * 2\n\ndouble[3]\n");
+    assert!(said.lines().any(|l| l.trim() == "6"), "{}", said);
+    assert!(!said.contains("error"), "{}", said);
+}

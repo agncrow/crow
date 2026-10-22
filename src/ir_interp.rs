@@ -370,7 +370,12 @@ impl Session {
         let stmts = crate::lower::lower_program(stmts)?;
         self.ctx.infer_program(&stmts);
         let known: HashSet<String> = self.it.frames[0].scopes[0].keys().cloned().collect();
-        let program = crate::lower_ir::lower_fragment(&stmts, &mut self.ctx, "repl", &known)?;
+        // the functions the fragments before defined, which this one may
+        // call: the lowering knows them by the context, and the check of
+        // what it made by these (a call of one had been "a function the
+        // program does not define", an internal error, in every cell after)
+        let earlier: Vec<&Fn> = self.it.fns.values().map(|f| f.as_ref()).collect();
+        let program = crate::lower_ir::lower_fragment(&stmts, &mut self.ctx, "repl", &known, &earlier)?;
         // a `use` in the fragment loaded its module into the context's registry
         self.it.registry = self.ctx.registry.clone();
         self.it.load(&program);
@@ -614,6 +619,9 @@ impl IrInterp {
         for part in &program.parts {
             for f in &part.fns {
                 self.fns.insert(f.name.clone(), Arc::new(f.clone()));
+                // (a session's cell that defines a function again: the body
+                // prepared for the earlier one is let go, or it ran on)
+                self.prepared.remove(&f.name);
             }
             for d in &part.derives {
                 self.derives.insert(d.name.clone(), Arc::new(d.clone()));
@@ -4149,5 +4157,25 @@ mod session_tests {
         assert_eq!(feed(&mut s, "df = frame.new[price = prices]\nlen[df]"), Ok(Some("3".to_string())));
         assert_eq!(feed(&mut s, "df.price[0]"), Ok(Some("187.5".to_string())));
         assert!(feed(&mut s, "df").map(|v| v.unwrap_or_default().contains("price")).unwrap_or(false));
+    }
+
+    /// A function one cell defines is the next cells' to call, as a name
+    /// is — the lowering knew it, and the check of the IR it made had
+    /// refused the call as one of a function the program does not define,
+    /// an internal error (it ran only with CROW_IR_VERIFY=off); a record's
+    /// shape and a function calling an earlier one cross cells too, and a
+    /// cell that defines a function again calls its own
+    #[test]
+    fn a_cells_functions_are_the_next_cells() {
+        let mut s = Session::new();
+        assert_eq!(feed(&mut s, "fn double[n]\n    n * 2"), Ok(None));
+        assert_eq!(feed(&mut s, "double[3]"), Ok(Some("6".to_string())));
+        assert_eq!(feed(&mut s, "fn quad[n]\n    double[double[n]]"), Ok(None));
+        assert_eq!(feed(&mut s, "quad[2]"), Ok(Some("8".to_string())));
+        assert_eq!(feed(&mut s, "struct Point [x, y]"), Ok(None));
+        assert_eq!(feed(&mut s, "fn norm[p]\n    p.x * p.x + p.y * p.y"), Ok(None));
+        assert_eq!(feed(&mut s, "norm[Point[3, 4]]"), Ok(Some("25".to_string())));
+        assert_eq!(feed(&mut s, "fn double[n]\n    n * 3\ndouble[3]"), Ok(Some("9".to_string())));
+        assert_eq!(feed(&mut s, "double[2]"), Ok(Some("6".to_string())));
     }
 }

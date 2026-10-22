@@ -113,6 +113,21 @@ fn a_notebook_runs_its_cells_in_one_session() {
         assert_eq!(reply["execution_count"], 2);
         assert!(said.iter().any(|(k, c)| k == "stream" && c["text"] == "40\n"), "{:?}", said);
 
+        // a function a cell defines is the next cell's to call (the IR check
+        // had refused the call as one of a function the program does not
+        // define, an internal error)
+        let (id, cell) = request("execute_request", json!({"code": "fn double[n]\n    n * 2", "silent": false}));
+        shell.send(cell).await.unwrap();
+        let _ = broadcasts(&mut iopub, &id).await;
+        let (_, _, reply) = parts(shell.recv().await.unwrap());
+        assert_eq!(reply["status"], "ok", "{:?}", reply);
+        let (id, cell) = request("execute_request", json!({"code": "double[x]", "silent": false}));
+        shell.send(cell).await.unwrap();
+        let said = broadcasts(&mut iopub, &id).await;
+        let (_, _, reply) = parts(shell.recv().await.unwrap());
+        assert_eq!(reply["status"], "ok", "{:?}", reply);
+        assert!(said.iter().any(|(k, c)| k == "execute_result" && c["data"]["text/plain"] == "40"), "{:?}", said);
+
         // a frame's result is a table too
         let (id, cell) = request("execute_request", json!({"code": "use frame\nframe.new[a = [1, 2]]", "silent": false}));
         shell.send(cell).await.unwrap();

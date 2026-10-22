@@ -37,9 +37,10 @@ pub fn lower(stmts: &[S], ctx: &mut TypeContext, part_name: &str) -> Result<Prog
 /// `set`), and the fragment's own top-level names outlive it, so none is
 /// moved at its last read here, since a later fragment may read it. (A
 /// notebook cell that defined a list and read it lost the list: the next
-/// cell read `done`.)
-pub fn lower_fragment(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: &HashSet<String>) -> Result<Program, String> {
-    lower_checked_as(stmts, ctx, part_name, known, true).map_err(|r| r.message())
+/// cell read `done`.) The functions an earlier fragment defined (`earlier`)
+/// are the fragment's to call.
+pub fn lower_fragment(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: &HashSet<String>, earlier: &[&Fn]) -> Result<Program, String> {
+    lower_checked_as(stmts, ctx, part_name, known, earlier, true).map_err(|r| r.message())
 }
 
 /// Why a program was not lowered.
@@ -80,10 +81,10 @@ pub fn check(stmts: &[S], ctx: &TypeContext) -> Result<(), Refusal> {
 }
 
 fn lower_checked(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: &HashSet<String>) -> Result<Program, Refusal> {
-    lower_checked_as(stmts, ctx, part_name, known, false)
+    lower_checked_as(stmts, ctx, part_name, known, &[], false)
 }
 
-fn lower_checked_as(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: &HashSet<String>, fragment: bool) -> Result<Program, Refusal> {
+fn lower_checked_as(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: &HashSet<String>, earlier: &[&Fn], fragment: bool) -> Result<Program, Refusal> {
     let in_ui = stmts.iter().any(|s| matches!(s, S::Use { path, .. } if path == "ui" || path == "web.ui"));
     let mut l = Lowerer::new(ctx, in_ui);
     l.fragment = fragment;
@@ -131,12 +132,12 @@ fn lower_checked_as(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: 
     match crate::ir_verify::mode() {
         crate::ir_verify::Mode::Off => {}
         crate::ir_verify::Mode::Report => {
-            for f in crate::ir_verify::verify_in(&program, &known_types(ctx, known)) {
+            for f in crate::ir_verify::verify_in(&program, &known_types(ctx, known), earlier) {
                 eprintln!("ir-verify: {}", f);
             }
         }
         crate::ir_verify::Mode::Strict => {
-            let found = crate::ir_verify::verify_in(&program, &known_types(ctx, known));
+            let found = crate::ir_verify::verify_in(&program, &known_types(ctx, known), earlier);
             if let Some(first) = found.first() {
                 let more = if found.len() > 1 { format!(" (and {} more)", found.len() - 1) } else { String::new() };
                 return Err(Refusal::Unlowered(format!(

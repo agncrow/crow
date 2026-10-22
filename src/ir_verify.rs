@@ -44,13 +44,18 @@ pub fn mode() -> Mode {
 /// disagrees. Empty for a program whose parts agree.
 #[cfg(test)]
 pub fn verify(program: &Program) -> Vec<String> {
-    verify_in(program, &HashMap::new())
+    verify_in(program, &HashMap::new(), &[])
 }
 
 /// `verify`, for a session's fragment: the names earlier fragments bound
-/// are in scope for its main, with their types.
-pub fn verify_in(program: &Program, known: &HashMap<String, Ty>) -> Vec<String> {
+/// are in scope for its main, with their types, and the functions they
+/// defined (`earlier`) are the fragment's to call — one it defines again is
+/// its own.
+pub fn verify_in<'p>(program: &'p Program, known: &HashMap<String, Ty>, earlier: &[&'p Fn]) -> Vec<String> {
     let mut v = Verifier::new(program);
+    for f in earlier {
+        v.fns.entry(f.name.as_str()).or_insert(*f);
+    }
     for part in &program.parts {
         for f in &part.facts {
             v.body = format!("fact {}", f.name);
