@@ -1,0 +1,57 @@
+--- A loaded file's empty cell is missing, in a column the program's reads
+--- type as text or as numbers: read one at a time it is an error value of
+--- reason `missing`, which computes and cannot be decided on (spec,
+--- Frames). Both modes had answered the column's placeholder — '' for
+--- text, NaN for a number — with `.ok` true. A function collecting the
+--- cells answers a list of values that can fail: compiled, its call given
+--- a frame that can fail had not built, and an item read from what it
+--- answered had been typed plain, its `.ok` true where it held an error.
+use frame
+
+write['parity_290.csv', 'name,qty\nAAPL,10\n,\nmsft,30\n']
+df = frame.load['parity_290.csv']
+rm['parity_290.csv']
+
+--- text: the missing cell, and what computes from it
+n = df.name[1]
+log[n.ok]
+log[n.reason]
+loud = upper[n]
+log[loud.ok]
+log[loud.reason]
+log[upper[df.name[2]]]
+
+--- a number: the missing cell computes as an error
+q = df.qty[1] + 1
+log[q.ok]
+log[q.reason]
+log[df.qty[2] + 1]
+
+--- a guard reads the present cells
+total = 0.0
+for x in df.qty
+    if x.ok
+        total = total + x
+log[total]
+
+--- a function collecting the cells: a list of values that can fail
+fn labels[rows]
+    names = for s in rows.name
+        upper[s]
+    return names
+
+shown = labels[df]
+log[len[shown]]
+log[shown[0]]
+log[shown[1].ok]
+one = shown[1]
+log[one.ok]
+log[one.reason]
+
+--- the column's validity, and the column filled
+log[df.qty.ok]
+filled = fill[df, 'qty', 0.0]
+log[filled.qty[1] + 1]
+
+--- arithmetic over the whole column stops at the missing cell
+log[df.qty * 2]

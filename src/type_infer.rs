@@ -168,7 +168,9 @@ impl Ty {
             // rows in them (a page's data source before its answer arrives)
             Ty::Frame(Some(cols)) if !cols.cols.is_empty() => {
                 let names: Vec<String> = cols.cols.keys().map(|n| format!("{:?}.to_string()", n)).collect();
-                let kinds: Vec<String> = cols.cols.values().map(|t| format!("{:?}.to_string()", t.crow_name())).collect();
+                // (each column's cells by their kind: a cell that can be
+                // missing is of its column's kind)
+                let kinds: Vec<String> = cols.cols.values().map(|t| format!("{:?}.to_string()", t.payload().crow_name())).collect();
                 format!("crow_runtime::frames::empty_with(&[{}], &[{}])", names.join(", "), kinds.join(", "))
             }
             Ty::Frame(_) => "crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![])".into(),

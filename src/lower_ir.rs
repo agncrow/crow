@@ -3170,7 +3170,8 @@ impl<'a> Lowerer<'a> {
         let failing = expr.ty().is_result();
         let lit = |items: Vec<String>| Expr::ListLit(items.into_iter().map(|s| Expr::Const(Const::Str(s), Ty::Str)).collect(), Ty::List(Box::new(Ty::Str)));
         let names: Vec<String> = cols.cols.keys().cloned().collect();
-        let kinds: Vec<String> = cols.cols.values().map(|t| t.crow_name()).collect();
+        // (the kind of each column's cells, which can be missing)
+        let kinds: Vec<String> = cols.cols.values().map(|t| t.payload().crow_name()).collect();
         // the read that decided each column, for the stop's words
         let hows: Vec<String> = cols.cols.keys().map(|c| reasons.get(c).cloned().unwrap_or_default()).collect();
         let shaped = Ty::Frame(Some(cols));
@@ -3185,7 +3186,7 @@ impl<'a> Lowerer<'a> {
         let key = (uses::TOP.to_string(), name.to_string());
         let Some(cols) = self.ctx.frame_shapes.get(&key) else { return Vec::new() };
         let reasons = self.ctx.frame_reasons.get(&key).cloned().unwrap_or_default();
-        cols.cols.iter().map(|(c, t)| (c.clone(), t.crow_name(), reasons.get(c).cloned().unwrap_or_default())).collect()
+        cols.cols.iter().map(|(c, t)| (c.clone(), t.payload().crow_name(), reasons.get(c).cloned().unwrap_or_default())).collect()
     }
 
     fn assign(&mut self, name: &str, expr: Expr) -> Stmt {
@@ -4796,8 +4797,11 @@ impl<'a> Lowerer<'a> {
             // (an item of a refused value is the payload's item: the call's
             // type, read from the variable, still said it could fail — but
             // a parsed value's item can fail itself, JSON's null where it
-            // has none)
-            let ty = if refused && !matches!(base.ty(), Ty::Json) { ty.payload().clone() } else { ty };
+            // has none, and so can an item of a list of values that can
+            // fail: stripped, `one = names[1]` of such a list was typed
+            // plain, its `.ok` true where it held an error, and an int's
+            // "disagreed with itself")
+            let ty = if refused && !matches!(base.ty(), Ty::Json) && !self.ctx.index_type(base.ty(), arg_types.first().cloned()).is_result() { ty.payload().clone() } else { ty };
             // a gradient applied to a value that failed answers that failure,
             // the leftmost, and never runs, as any call does (spec,
             // Auto-Propagation): the interpreter had handed the failure in
@@ -6483,6 +6487,11 @@ fn apply_shapes(ctx: &mut TypeContext, stmts: &[S]) -> usize {
     let shapes = uses::shapes_from_use(stmts, ctx);
     ctx.shape_conflicts = shapes.conflicts;
     for (key, cols) in shapes.frames {
+        // a file's cell can be empty and a record's field null: a column the
+        // reads type holds cells that can be missing, each an error value of
+        // reason `missing` read one at a time (spec, Frames) — typed plain,
+        // a missing cell had been read as '' or NaN with `.ok` true
+        let cols: BTreeMap<String, Ty> = cols.into_iter().map(|(c, t)| (c, Ty::Result(Box::new(t)))).collect();
         let known: BTreeMap<String, Ty> = match ctx.frame_shapes.get(&key) {
             Some(had) => had.cols.iter().map(|(k, v)| (k.clone(), v.clone())).chain(cols).collect(),
             None => cols,

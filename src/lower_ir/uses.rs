@@ -713,7 +713,8 @@ mod tests {
         let program = crate::lower_ir::lower(&stmts, &mut ctx, "t").expect("lowers to the IR");
         let ir = crate::ir::print(&program);
         assert!(ir.contains("core.__expect_frame(unwrap frame.load!now(\"x.csv\"), [\"qty\", \"sym\"], [\"float\", \"str\"], [\"met in gt at line 9\", \"handed to label at line 6\"])"), "{}", ir);
-        assert!(ir.contains("let df: Result(Frame{qty: Float, sym: Str, …})"), "{}", ir);
+        // (a file's cell can be empty: each cell can be missing)
+        assert!(ir.contains("let df: Result(Frame{qty: Result(Float), sym: Result(Str), …})"), "{}", ir);
         assert!(ir.contains("pure label(t: Str) -> Str"), "{}", ir);
     }
 

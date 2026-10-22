@@ -2368,9 +2368,12 @@ impl Emitter {
                     self.unwrap_as.remove(&(&raw_args[*j] as *const Expr as usize));
                 }
                 let full = self.tt(e);
+                // (a list's items keep their kind: a call answering a list of
+                // values that can fail answers `Vec<CrowResult<…>>`, and its
+                // failure's placeholder had been a list of plain values — a
+                // function collecting a loaded column's cells did not build)
                 let inner_type = match Self::inner(&full) {
                     Ty::Map(k, v) => Ty::Map(k, Box::new(Self::inner(&v))),
-                    Ty::List(v) => Ty::List(Box::new(Self::inner(&v))),
                     o => o,
                 };
                 let already = self.base_is_result(&name, &target, &raw_args);
