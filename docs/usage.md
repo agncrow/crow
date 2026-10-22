@@ -65,6 +65,7 @@ crow run -i hello.co        # interpret (instant start)
 | `crow run file.co` | Transpile to Rust, compile, run. It is a dev build — the runtime crates at optimization level 1, the program at 0, no LTO — so the edit loop stays short. The build is cached in `.crow_build/` in the directory you run it from; a second run of an unchanged file starts immediately. Words after the file are the program's arguments (`args[]`). On a machine with no compiler yet, it says so and interprets. |
 | `crow run --opt N file.co` | The same, the program optimized at level N (0 to 3, 0 unless said; the runtime crates follow above 1): a program whose own loops are the work runs many times faster at 1. `crow build` is the shipped binary, level 3 with LTO. |
 | `crow run -i file.co` | Run in the interpreter — instant start, same output (both modes are held to identical behavior). |
+| `crow file.co` | The short form of `crow run file.co`: the words after the file are the program's arguments, and with no compiler yet it says so and interprets. |
 | `crow run` | Run the project in the current directory: the crowfile's `entry`, `main.co` by default. |
 | `crow run <job>` | Run a named job from the crowfile's `jobs` map, compiled, e.g. `crow run train` (`crow run -i train` interprets it). Jobs run and exit; `main.co` is the thing that stays running. |
 | `crow build [file.co]` | Compile without running: the release build, level 3 with LTO. The binary lands in the current directory, named after the file (`hello`; `main` for a project); for a file outside the directory the name is path-mangled (`examples_hello`). |
@@ -74,7 +75,7 @@ crow run -i hello.co        # interpret (instant start)
 | `crow` | The REPL: variables and functions persist between lines, expression results print automatically. A paste of several lines runs as one cell; a block (`fn`, `view`, `test`, `if` with its `else`) ends at a blank line. The console serves no pages: a program that serves is told to run from its file (`crow run -i app.co`, or `crow dev app.co`). |
 | `crow kernel install` | Make Crow a Jupyter kernel: notebooks, JupyterLab, VS Code's notebooks and `jupyter console` then offer *Crow*. Each notebook is one REPL session; a cell's logs stream under it, its last value is its result (a frame as a table), and interrupting stops a running cell. (`crow kernel <connection file>` is the kernel itself, as Jupyter starts it.) |
 | `crow book [--port N]` | In the Crow repository: render the book with `docs/book/site.co` and serve it with every code block runnable in place: ▶ Run interprets, ⚙ Compile builds the native binary, ✓ Test runs the block's test blocks, every block is editable in place with line numbers (Tab indents, Ctrl/Cmd-Enter runs, ↺ Reset restores the book's text), ■ Stop kills a served app. A run of the unedited example reports whether its output matches the book. The runner answers only the book's own page on this machine. Default port 3008; `--write` renders without serving. Inside an app, its own book (below). |
-| `crow help` | The commands, in brief. `crow -v` prints the version. |
+| `crow help` | Every command and flag, one line each. `crow -v` prints the version. |
 
 Every `crow` command loads a `.env` file from the current directory if one
 exists (`KEY=VALUE` lines, `#` comments, quotes around a value dropped;

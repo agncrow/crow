@@ -8,6 +8,7 @@ another.
 crow                             the REPL, interpreted
 crow new name [--web --ml --db]  scaffold a project (a crowfile, main.co, a .gitignore)
 crow run [-i] [file]             execute: compiled when the compiler is here, else interpreted and told; -i interprets
+crow file                        the short form of crow run file
 crow run --opt N file            the program at optimization level N (0 to 3; 0 unless said, crow build is 3 with LTO)
 crow dev [file]                  serve with the interpreter, reloading as files change (sessions kept)
 crow stop                        stop the app this project runs (crow run, crow run -i, crow dev)
@@ -28,8 +29,8 @@ crow test --parity | --book      in the crow repository: the two execution modes
 crow test --docs [--write]       in the crow repository: the documentation must cover the compiler
 ```
 
-`crow help` lists the commands, and the toolchain guide
-(`docs/usage.md`) has every flag.
+`crow help` lists every command and flag, one line each, and the
+toolchain guide (`docs/usage.md`) says what each does at length.
 
 Two execution modes, one behaviour. `crow run -i` interprets: instant
 start, the mode to use while you explore. `crow run` transpiles to Rust

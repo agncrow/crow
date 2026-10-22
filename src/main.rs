@@ -149,7 +149,7 @@ fn crow_main() {
         "-v" | "--version" => {
             println!("(o.o) crow {}", env!("CARGO_PKG_VERSION"));
         }
-        "help" | "--help" | "-h" => print_usage(),
+        "help" | "--help" | "-h" => print!("{}", usage()),
         "new" => cmd_new(),
         "install" => cmd_install(),
         // `crow setup`: the Rust toolchain and the runtime fetched for
@@ -448,56 +448,88 @@ fn crow_main() {
                 cmd_run_file(other, &extra_args, 0);
             } else {
                 eprintln!("unknown command: {}", other);
-                print_usage();
+                eprint!("{}", usage());
                 process::exit(1);
             }
         }
     }
 }
 
-fn print_usage() {
-    eprintln!("usage:");
-    eprintln!("  crow                   start interactive REPL");
-    eprintln!("  crow new myapp         create new project");
-    eprintln!("  crow new myapp --web   create web project (views, serve)");
-    eprintln!("  crow new myapp --ml    create ML project (jobs, lib)");
-    eprintln!("  crow new myapp --db    create DB project (schema, migrate)");
-    eprintln!("  crow install           install deps from crowfile into crow_modules/");
-    eprintln!("  crow setup             fetch the Rust toolchain and the runtime for compiled builds (--check: what is present)");
-    eprintln!("  crow upgrade           replace this crow with the latest release, verified (--version X: that release; --check: what is newer)");
-    eprintln!("  crow build             transpile to rust and compile to native binary");
-    eprintln!("  crow build file.co   transpile a specific file");
-    eprintln!("  crow run               transpile + compile + run main.co");
-    eprintln!("  crow run file.co     transpile + compile + run a specific file");
-    eprintln!("  crow run --opt 2 file.co  the same, the program optimized at level 2 (0 to 3; 0 unless said)");
-    eprintln!("  crow run train         run a named job from crowfile");
-    eprintln!("  crow run -i file.co  run with interpreter (slow, for debugging)");
-    eprintln!("  crow stop              stop the running app (pidfile, then project binary)");
-    eprintln!("  crow dev [file.co]     serve with the interpreter, reloading as files change (sessions kept)");
-    eprintln!("  crow book [--port N]   serve the book with every code block runnable in place (default port 3008)");
-    eprintln!("  crow check             auto-verify project (uses crowfile)");
-    eprintln!("  crow check file.co   auto-verify a specific file");
-    eprintln!("  crow check --db <url>  + schema-aware db checks (or db = '…' in crowfile)");
-    eprintln!("  crow check --record-fixtures  the scenarios read the real databases; keep what each statement answers");
-    eprintln!("  crow fix file.co --hazard N [--option M]   apply a fix from the check report");
-    eprintln!("  crow db diff [file.co] the SQL that makes each database hold the tables the program declares (a migration draft)");
-    eprintln!("  crow lsp               language server over stdio (see docs/crow-lsp.md)");
-    eprintln!("  crow kernel install    make Crow a Jupyter kernel (notebooks, JupyterLab, VS Code)");
-    eprintln!("  crow fmt               format project (uses crowfile)");
-    eprintln!("  crow fmt file.co     format a specific file");
-    eprintln!("  crow fmt --check       check formatting without changing files");
-    eprintln!("  crow fmt --fix-interpolation  migrate {{expr}} strings to `expr`");
-    eprintln!("  crow fmt --fix-views      migrate ui-building fns to view declarations");
-    eprintln!("  crow launch 4 file.co  build + run on 4 distributed processes");
-    eprintln!("  crow test --parity     run tests/parity/ in both modes, diff output (words after it pick programs by name)");
-    eprintln!("  crow test --packages   in the crow repository: each package's tests, and its example in both modes");
-    eprintln!("  crow test --fuzz [n]   n generated programs run in both modes; one they disagree on is kept (--seed s repeats a run)");
-    eprintln!("  crow test --served     serve tests/served/ and the example apps in both modes, drive each page, compare");
-    eprintln!("  crow test --compiled file.co  run the test blocks with the apps they open compiled");
-    eprintln!("  crow test --book       execute every code block of the book in both modes");
-    eprintln!("  crow test --docs       check the docs cover every compiler name (and nothing more)");
-    eprintln!("  crow check --verbose   verbose output with purity and snapshot details");
-    eprintln!("  crow -v                show version");
+/// Every command and flag the binary takes, one line each: what
+/// `crow help` prints (docs/usage.md says each at length; a test below
+/// holds the list to the flags this file reads).
+const USAGE: &[(&str, &str)] = &[
+    ("crow", "the REPL: variables and functions persist between lines"),
+    ("crow file.co [args]", "the short form of crow run file.co"),
+    ("crow run", "compile and run the project's entry: the crowfile's, main.co by default"),
+    ("crow run file.co [args]", "compile and run a file (a dev build); words after it are the program's arguments"),
+    ("crow run <job>", "compile and run a job the crowfile's jobs map names"),
+    ("crow run -i [file.co | job]", "the same, interpreted: instant start, the same output"),
+    ("crow run --opt N file.co", "the program optimized at level N, 0 to 3 (0 unless said)"),
+    ("crow build [file.co]", "compile a release binary into this directory (the project's entry without a file)"),
+    ("crow build --ir file.co", "print the program's IR, the typed form both modes run; nothing is compiled"),
+    ("crow build --rs file.co", "print the Rust the program compiles to; nothing is compiled"),
+    ("crow build --types file.co", "print every type inference settled; nothing is compiled"),
+    ("crow dev [file.co]", "serve with the interpreter, reloading as files change (sessions kept)"),
+    ("crow stop", "stop the app this project runs"),
+    ("crow stop book", "stop the book this project serves"),
+    ("crow launch N [file.co]", "build, then run as N processes, each reading its rank from CROW_RANK"),
+    ("crow test [file.co]", "run the test blocks (the project's entry without a file)"),
+    ("crow test --compiled file.co", "the test blocks, the apps they open compiled"),
+    ("crow test --fixtures [file.co]", "the tests, each read and request answered from what --record-fixtures kept"),
+    ("crow check [file.co]", "verify: tests, edge cases, contracts, live-loop hazards, the app baseline"),
+    ("crow check --db <url>", "+ the schema-aware database checks (or db = '…' in the crowfile)"),
+    ("crow check --strict", "exit 1 on any finding, a database finding included (CI)"),
+    ("crow check --verbose", "every finding with its fix, purity and snapshot details, without waiting"),
+    ("crow check --accept", "accept every baseline change at once"),
+    ("crow check --show [name]", "the app as a tree, or one declaration's artifact"),
+    ("crow check --record-fixtures", "the scenarios read the real databases and send their requests; keep what each answers"),
+    ("crow check --self", "in the crow repository: Crow held to itself (--only word, --lower-only, --bless, --clean, --memory GB)"),
+    ("crow fix file.co", "apply the fixes the program's refusal names, then list the database hazards"),
+    ("crow fix file.co --hazard N", "apply a fix from the check report (--option M, --db url)"),
+    ("crow fmt [file.co ...]", "format the files named, or the project's entry"),
+    ("crow fmt --check", "exit 1 if anything needs formatting; nothing is written"),
+    ("crow fmt --fix-interpolation", "migrate {expr} strings to `expr`"),
+    ("crow fmt --fix-views", "migrate ui-building fns to view declarations"),
+    ("crow book [--port N]", "the Crow Book with every block runnable (in the crow repository), or the app's own book"),
+    ("crow book --write", "build the book without serving it"),
+    ("crow new myapp", "scaffold a project: a crowfile, main.co, a .gitignore"),
+    ("crow new myapp --web", "+ views/home.co, served from main.co"),
+    ("crow new myapp --ml", "+ jobs/train.co (crow run train) and lib/model.co"),
+    ("crow new myapp --db", "+ db/schema.co, the tables main.co declares on a SQLite database"),
+    ("crow install", "install the crowfile's deps into crow_modules/, pinned by crow.lock"),
+    ("crow install --update [name]", "move the deps, or the one named, to what their versions name now"),
+    ("crow setup", "fetch the Rust toolchain and the runtime for compiled builds, verified"),
+    ("crow setup --check", "what is present, and whether compiled builds are ready"),
+    ("crow upgrade", "replace this crow with the latest release, verified"),
+    ("crow upgrade --version X", "that release instead, a downgrade too"),
+    ("crow upgrade --check", "whether a newer release is out"),
+    ("crow db diff [file.co]", "the SQL that makes each database hold the tables the program declares"),
+    ("crow db apply <dir> <url>", "run the migrations in dir that the database has not applied yet"),
+    ("crow db describe <url> <sql>", "the columns a statement answers on that database, as JSON"),
+    ("crow lsp", "the language server, over stdio"),
+    ("crow kernel install", "make Crow a Jupyter kernel"),
+    ("crow kernel <connection file>", "the kernel itself, as Jupyter starts it"),
+    ("crow test --parity [word ...]", "in the crow repository: tests/parity/ in both modes, compared"),
+    ("crow test --served [word ...]", "tests/served/ and the example apps served in both modes, driven alike, compared"),
+    ("crow test --fuzz [n] [--seed s] [--keep]", "n generated programs, each run in both modes"),
+    ("crow test --fuzz n --mistakes", "generated programs with a mistake planted in each, each refusal held to the rules"),
+    ("crow test --errors [--bless] [word ...]", "the wrong programs of tests/errors, held to their reviewed refusals"),
+    ("crow test --packages [name ...]", "each package's tests, and its example in both modes"),
+    ("crow test --modules [word ...]", "each standard module written in Crow, its own tests"),
+    ("crow test --book", "every code block of the book, in both modes"),
+    ("crow test --docs [--write]", "the docs cover every compiler name and nothing more (--write: the stdlib pages)"),
+    ("crow test --bench [--quick] [--write]", "tests/bench/ in both modes, each section's seconds side by side"),
+    ("crow help", "this list (--help and -h too)"),
+    ("crow -v", "the version (--version too)"),
+];
+
+fn usage() -> String {
+    let mut out = String::from("usage:\n");
+    for (command, what) in USAGE {
+        out.push_str(&format!("  {:<40} {}\n", command, what));
+    }
+    out
 }
 
 /// Run every tests/parity/*.co file through both execution modes and diff
@@ -3431,6 +3463,36 @@ mod fix_tests {
         assert_eq!(super::fix_refusals(&path), Some(1));
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "log[missing]\n");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod usage_tests {
+    /// `crow help` names every flag this file reads from the command line
+    /// (the flags it hands cargo and git aside): it had lacked `crow db
+    /// apply`, half of `crow test`'s and `crow check`'s flags, `crow stop
+    /// book` and `crow build`'s printing flags, and called `-i` slow
+    #[test]
+    fn crow_help_names_every_flag_the_binary_reads() {
+        let help = super::usage();
+        let source = include_str!("main.rs");
+        let mut missing: Vec<&str> = Vec::new();
+        let flag = regex::Regex::new(r#""--([a-z][a-z-]*)""#).unwrap();
+        for found in flag.captures_iter(source) {
+            let f = found.get(1).map_or("", |m| m.as_str());
+            // (cargo's and git's, which crow runs)
+            if matches!(f, "release" | "profile" | "short") {
+                continue;
+            }
+            if !help.contains(&format!("--{}", f)) && !missing.contains(&f) {
+                missing.push(f);
+            }
+        }
+        assert!(missing.is_empty(), "crow help lacks --{}", missing.join(", --"));
+        for command in ["crow file.co", "crow db apply", "crow stop book", "crow check --self", "crow kernel install", "crow -v"] {
+            assert!(help.contains(command), "{}", command);
+        }
+        assert!(!help.contains("slow") && !help.contains("schema, migrate"), "{}", help);
     }
 }
 

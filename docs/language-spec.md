@@ -4466,6 +4466,7 @@ jobs/train.co
 
 ```
 crow                        --- start interactive REPL
+crow file.co              --- the short form of crow run file.co
 crow new myapp              --- create new project (crowfile + main.co)
 crow new myapp --web        --- create web project (+ views/home.co)
 crow new myapp --ml         --- create ML project (+ jobs/train.co, lib/model.co)
@@ -4478,11 +4479,13 @@ crow build                  --- transpile to Rust and compile to native binary
 crow build file.co        --- transpile a specific file
 crow build --ir file.co   --- print the program's one typed form, the IR (docs/ir-design.md); nothing is compiled
 crow build --rs file.co   --- print the Rust the program compiles to, printed from the IR; nothing is compiled
+crow build --types file.co --- print every type inference settled, each body's locals included; nothing is compiled
 crow run                    --- transpile + compile + run main.co; with no compiler on the machine yet, interpreted and told so (crow setup fetches one)
 crow run file.co          --- transpile + compile + run a specific file (a dev build: the runtime crates at optimization level 1, the program at 0, no LTO)
 crow run --opt 1 file.co  --- the same, the program at level 1 (0 to 3, 0 unless said; the runtime crates follow above 1; crow build is 3 with LTO)
 crow run train              --- run a named job from the crowfile jobs map (crow run -i train interprets it)
 crow run -i file.co       --- run with interpreter (instant start, for exploring)
+crow dev [file.co]        --- serve with the interpreter, reloading as the program's files change (sessions kept)
 crow stop                   --- stop the running app (pidfile, then project binary, then a program the interpreter serves and crow dev's watcher), each found running in this project's directory
 crow stop book              --- stop the book this project is serving
 crow book [--port N]        --- in the crow repository: serve the Crow Book with every code block runnable in place;
@@ -4492,6 +4495,11 @@ crow book [--port N]        --- in the crow repository: serve the Crow Book with
                                 its runner answers only the book's own page on this machine
 crow test                   --- run the test blocks of the project (or: crow test file.co)
 crow test --parity          --- run tests/parity/ in both modes and diff output
+crow test --served          --- serve tests/served/ and the example apps in both modes, drive each page alike, and compare
+crow test --compiled file.co --- the test blocks, with every app they open compiled
+crow test --errors          --- in the crow repository: the wrong programs of tests/errors, each refusal held to its reviewed .expect (--bless writes them)
+crow test --modules         --- in the crow repository: each standard module written in Crow, its own tests
+crow test --fuzz n --mistakes --- generated programs with one mistake planted in each, each refusal held to the rules every message keeps
 crow test --packages        --- in the crow repository: each package's tests, and its example.co in both modes
 crow test --fuzz [n]        --- n programs generated from a seed, each run in both modes; one they disagree on is kept (--seed s repeats a run)
 crow test --fixtures        --- the tests where the database servers and the model are not: each read and each request is what crow check --record-fixtures kept
@@ -4504,12 +4512,17 @@ crow check --show [name]    --- the app as a tree: pages, views under their guar
 crow check --db <url>       --- + schema-aware database checks (or db = '…' in the crowfile)
 crow check --record-fixtures --- the tests read the real databases and send their requests, and what each statement and each request answers is kept in .crow/fixtures
 crow check --strict         --- exit 1 on any finding (CI)
+crow check --verbose        --- every finding with its fix, and the purity and snapshot details, without waiting
+crow check --self           --- in the crow repository: Crow held to itself (below; crow-check.md)
 crow fix file.co             --- apply the fixes the program's refusal names (a slip, an import, a habit), then list them
 crow fix file.co --hazard N [--option M]   --- apply a fix from the check report
 crow fmt                    --- format project (uses crowfile; or: crow fmt file.co)
 crow fmt --check            --- check if formatting needed (exit 1 if not)
 crow fmt --fix-interpolation  --- migrate {expr} strings to `expr`
 crow fmt --fix-views        --- migrate ui-building fns to view declarations
+crow db diff [file.co]      --- the SQL that makes each database hold the tables the program declares (db, The schema a program declares)
+crow db apply <dir> <url>   --- run the migrations in dir that the database has not applied yet, each recorded in _crow_migrations
+crow db describe <url> <sql> --- the columns a statement answers on that database, as JSON
 crow lsp                    --- language server over stdio (see crow-lsp.md)
 crow kernel install         --- make Crow a Jupyter kernel (notebooks, JupyterLab, VS Code, jupyter console)
 crow kernel <connection>    --- the kernel itself, as Jupyter starts it
