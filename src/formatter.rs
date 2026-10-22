@@ -7,17 +7,41 @@
 
 /// Format a Crow source string. Returns formatted source.
 /// Validates syntax first by parsing, then formats line-by-line.
+///
+/// A level is a block's: a statement line deeper than the line before
+/// opens one, a shallower one closes back to the level of its width, so
+/// any consistent nesting is read as it is meant whatever its widths. A
+/// line inside a bracket continues its statement and moves with it,
+/// keeping its alignment; a comment aligned under one does the same. The
+/// lines a string written across lines runs onto are its text, left as
+/// written — a unit taken from every line's width had multiplied every
+/// level by an odd-width continuation, and re-indented a string's text.
 pub fn format_source(source: &str) -> Result<String, String> {
     // Validate: parse to check syntax (we don't use the AST)
     crate::build(source)?;
 
-    let indent_size = detect_indent_size(source);
+    let lines: Vec<&str> = source.lines().collect();
+    let shape = shape_of(&lines);
     let mut output = String::new();
     let mut consecutive_blanks: usize = 0;
     let mut started = false; // track if we've emitted any content
+    // the widths of the open levels, the outermost first
+    let mut widths: Vec<usize> = vec![0];
+    // how far the last statement line moved: a continuation moves as far
+    let mut shift: isize = 0;
 
-    for line in source.lines() {
-        let content = line.trim_end();
+    for (line, at) in lines.iter().zip(&shape) {
+        // the text of a string written across lines: as written
+        if at.in_string {
+            output.push_str(line);
+            output.push('\n');
+            started = true;
+            consecutive_blanks = 0;
+            continue;
+        }
+        // a string the line opens and runs onto the next keeps its
+        // trailing spaces, which are the string's
+        let content = if at.runs_on { *line } else { line.trim_end() };
         let trimmed = content.trim_start();
 
         // Blank line
@@ -34,16 +58,31 @@ pub fn format_source(source: &str) -> Result<String, String> {
         // Strip cosmetic trailing --- closers on comments (comments end at
         // the newline; old paired closers are inert text)
         let content = strip_comment_closer(content);
-        let content = content.as_str();
         let trimmed = content.trim_start();
 
-        // Calculate indent level from original whitespace
         let leading = leading_whitespace_len(line);
-        let level = if indent_size > 0 { leading / indent_size } else { 0 };
+        let comment = trimmed.starts_with("---");
+        let indent = if at.in_brackets || (comment && !widths.contains(&leading)) {
+            (leading as isize + shift).max(0) as usize
+        } else if comment {
+            // a comment at a level's width is at that level, and opens and
+            // closes none (spec, Blocks)
+            widths.iter().position(|w| *w == leading).unwrap_or(0) * 4
+        } else {
+            while widths.len() > 1 && leading < widths[widths.len() - 1] {
+                widths.pop();
+            }
+            if leading > widths[widths.len() - 1] {
+                widths.push(leading);
+            }
+            let to = (widths.len() - 1) * 4;
+            shift = to as isize - leading as isize;
+            to
+        };
 
         // Emit with normalized 4-space indentation
-        for _ in 0..level {
-            output.push_str("    ");
+        for _ in 0..indent {
+            output.push(' ');
         }
         output.push_str(trimmed);
         output.push('\n');
@@ -60,28 +99,35 @@ pub fn format_source(source: &str) -> Result<String, String> {
     Ok(output)
 }
 
-/// Detect the indentation unit size used in the source.
-/// Returns the smallest non-zero leading whitespace count (in spaces, tabs=4).
-/// A line holding only a comment has no indentation of its own (spec,
-/// Blocks): one aligned under a trailing comment does not set the unit.
-fn detect_indent_size(source: &str) -> usize {
-    let mut min_indent: Option<usize> = None;
+/// Where a line begins, for the formatter: inside a string written across
+/// lines, inside a bracket another line opened, and whether a string it
+/// opens runs onto the next line.
+#[derive(Clone, Copy, Default)]
+struct Shape {
+    in_string: bool,
+    in_brackets: bool,
+    runs_on: bool,
+}
 
-    for line in source.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.is_empty() || trimmed.starts_with("---") {
-            continue;
+fn shape_of(lines: &[&str]) -> Vec<Shape> {
+    use crate::diagnostic::{code_from, Opening};
+    let mut at = Opening::default();
+    let mut depth: usize = 0;
+    let mut out = Vec::with_capacity(lines.len());
+    for line in lines {
+        let (code, next) = code_from(line, at);
+        let begins_inside = depth > 0;
+        for c in &code {
+            match c {
+                '[' | '(' | '{' => depth += 1,
+                ']' | ')' | '}' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
         }
-        let leading = leading_whitespace_len(line);
-        if leading > 0 {
-            min_indent = Some(match min_indent {
-                Some(current) => gcd(current, leading),
-                None => leading,
-            });
-        }
+        out.push(Shape { in_string: at != Opening::default(), in_brackets: begins_inside, runs_on: next != Opening::default() });
+        at = next;
     }
-
-    min_indent.unwrap_or(4)
+    out
 }
 
 /// Count leading whitespace as equivalent spaces (tab = 4 spaces).
@@ -95,11 +141,6 @@ fn leading_whitespace_len(line: &str) -> usize {
         }
     }
     count
-}
-
-/// Greatest common divisor.
-fn gcd(a: usize, b: usize) -> usize {
-    if b == 0 { a } else { gcd(b, a % b) }
 }
 
 #[cfg(test)]
@@ -226,6 +267,34 @@ mod tests {
         let code: Vec<&str> = with.lines().filter(|l| !l.trim_start().starts_with("---")).collect();
         assert_eq!(code, without.lines().collect::<Vec<_>>());
         assert_eq!(format_source(&with).unwrap(), with);
+    }
+
+    /// A continuation aligned at an odd width keeps the levels: the unit
+    /// had been every line's widths' common divisor, so one such line
+    /// multiplied every level of the file.
+    #[test]
+    fn test_an_odd_width_continuation_keeps_the_levels() {
+        let four = "fn f[a, b]\n    x = g[a,\n          b]\n    return x\n";
+        assert_eq!(format_source(four).unwrap(), four);
+        let two = "fn f[a, b]\n  x = g[a,\n        b]\n  return x\n";
+        assert_eq!(format_source(two).unwrap(), four);
+    }
+
+    /// The lines a string written across lines runs onto are its text: as
+    /// written, blank lines and leading spaces kept.
+    #[test]
+    fn test_a_strings_lines_are_left_as_written() {
+        let input = "fn f[]\n  s = 'one\n   two  \n\n\nthree'\n  return s\n";
+        let out = format_source(input).unwrap();
+        assert_eq!(out, "fn f[]\n    s = 'one\n   two  \n\n\nthree'\n    return s\n");
+        assert_eq!(format_source(&out).unwrap(), out);
+    }
+
+    /// Levels are the nesting's, whatever widths it was written at.
+    #[test]
+    fn test_levels_follow_the_nesting() {
+        let input = "fn f[]\n  if true\n     x = 1\n  return 2\n";
+        assert_eq!(format_source(input).unwrap(), "fn f[]\n    if true\n        x = 1\n    return 2\n");
     }
 
     #[test]
