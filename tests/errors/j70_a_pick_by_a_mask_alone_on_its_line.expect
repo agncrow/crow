@@ -1,0 +1,3 @@
+j70_a_pick_by_a_mask_alone_on_its_line.co:5:1: `f[mask]` answers a frame, and this line drops it — keep it: df = df[…]
+  5 │ df[df.age gt 50]
+    │ ^^^^^^^^^^^^^^^^

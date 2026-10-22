@@ -2837,18 +2837,32 @@ impl<'a> Lowerer<'a> {
                 {
                     let answers_anew = row.params.first() == Some(&row.ret) && !matches!(row.ret, crate::table::Kind::Unit);
                     if answers_anew && !crate::ir::is_effect(row.name) {
-                        let first = match e {
-                            A::Call { args, .. } => match args.first() {
-                                Some(A::Ident(v)) => Some(v.clone()),
-                                _ => None,
-                            },
-                            _ => None,
+                        // the call named as the program wrote it (table::form):
+                        // a hidden row by its form — the pick behind
+                        // `df[df.age gt 50]` is `f[mask]`, what it indexes kept
+                        // — never by its own name (`__pick_frame[]` had been)
+                        let called = if row.written.is_empty() { row.name } else { row.written };
+                        let form = crate::table::form(row.name);
+                        let (callee, first) = match e {
+                            A::Call { callee, args } => (
+                                match callee.as_ref() {
+                                    A::Ident(c) => Some(c.clone()),
+                                    _ => None,
+                                },
+                                match args.first() {
+                                    Some(A::Ident(v)) => Some(v.clone()),
+                                    _ => None,
+                                },
+                            ),
+                            _ => (None, None),
                         };
-                        let keep = match first {
-                            Some(v) => format!("{0} = {1}[{0}, …]", v, row.name),
-                            None => format!("x = {}[…]", row.name),
+                        let keep = match (form == format!("{}[]", called), callee, first) {
+                            (true, _, Some(v)) => format!("{0} = {1}[{0}, …]", v, called),
+                            (true, _, None) => format!("x = {}[…]", called),
+                            (false, Some(c), _) => format!("{0} = {0}[…]", c),
+                            (false, None, _) => format!("x = {}", form.trim_matches('`')),
                         };
-                        self.refuse(format!("{}[] answers {}, and this line drops it — keep it: {}", row.name, row.ret.words(), keep));
+                        self.refuse(format!("{} answers {}, and this line drops it — keep it: {}", form, row.ret.words(), keep));
                     }
                 }
                 // a value that can fail, dropped by its line, is decided on as
@@ -8218,6 +8232,18 @@ if r.ok
         refuses("use math\nfn f[w, k]\n    return sum[w] * k\nlog[grad[f][[1.0, 2.0], 3.0]]\n", "a function grad differentiates takes tensors, or numbers alone — f takes a tensor, a number");
         refuses("use math\nfn inner[x]\n    return x * x\nfn outer[w]\n    return sum[w] * grad[inner][2.0]\nlog[grad[outer][[1.0]]]\n", "grad: outer calls grad");
         refuses("use math\nfn f[w]\n    n = len[w gt 0.0]\n    return sum[w] * float[n]\nlog[grad[f][[3.0, 1.0]]]\n", "grad: f compares tensors with `gt`");
+    }
+
+    /// A builtin's answer a line drops is refused naming the call as the
+    /// program wrote it: an index by a mask by its form, what it indexes
+    /// kept — never the hidden row behind it (`__pick_frame[]` had been)
+    #[test]
+    fn a_dropped_pick_is_named_by_its_form() {
+        let refused = refusal_of("use frame\ndf = frame.new[age = [61, 34]]\ndf[df.age gt 50]\nlog[df]\n");
+        assert!(refused.contains("`f[mask]` answers a frame, and this line drops it — keep it: df = df[…]"), "{}", refused);
+        assert!(!refused.contains("__pick"), "{}", refused);
+        let refused = refusal_of("xs = ['c', 'a']\npush[xs, 'b']\nlog[xs]\n");
+        assert!(refused.contains("push[] answers a list, and this line drops it — keep it: xs = push[xs, …]"), "{}", refused);
     }
 
     /// A test that builds a record the program only receives types the

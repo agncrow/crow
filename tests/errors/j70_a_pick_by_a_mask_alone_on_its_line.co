@@ -1,0 +1,6 @@
+--- an index by a mask answers the rows it picks: alone on its line it drops them, and the refusal names the form the program wrote, never the hidden row behind it (`__pick_frame[]` had been named)
+use frame
+
+df = frame.new[name = ['ann', 'bob'], age = [61, 34]]
+df[df.age gt 50]
+log[df]

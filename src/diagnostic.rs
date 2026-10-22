@@ -561,6 +561,9 @@ mod tests {
         assert_eq!(f, "log[len[xs]]\n");
         let (f, _) = apply("    push[xs, 1]\n", &fixes("    push[xs, 1]\n", "line 1: push[] answers a list, and this line drops it — keep it: xs = push[xs, …]"));
         assert_eq!(f, "    xs = push[xs, 1]\n");
+        // (an index by a mask is named by its form, and keeps what it indexes)
+        let (f, _) = apply("df[df.age gt 50]\n", &fixes("df[df.age gt 50]\n", "line 1: `f[mask]` answers a frame, and this line drops it — keep it: df = df[…]"));
+        assert_eq!(f, "df = df[df.age gt 50]\n");
         let (f, _) = apply("x = 1 y = 2\n", &fixes("x = 1 y = 2\n", "line 1, col 7: a line holds one statement — 'y' starts a second one: put it on a line of its own"));
         assert_eq!(f, "x = 1\ny = 2\n");
         let (f, _) = apply("  x += 1\n", &fixes("  x += 1\n", "line 1, col 5: Crow has no augmented assignment ('+=') — write it out: x = x + 1."));
