@@ -45,7 +45,8 @@ blind = commit[d, frame.new[id = [5], name = ['elderberry'], qty = [50]], by = [
 log[blind]
 log[latest[d, ['id']].qty]
 log[batch[d, frame.new[], by = []].reason]
-log[batch['parity-294-no-such-log', frame.new[id = [1]]].kind]
+log[batch['/dev/null/no-log-here', frame.new[id = [1]]].kind]
+log[batch['`d`/made/here', frame.new[id = [1]]]]
 
 --- the oracle: the same rows into SQLite, each with its position
 book = db.connect['sqlite://:memory:']

@@ -2480,7 +2480,7 @@ pub static ROWS: &[Row] = &[
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], feature: Some(("crow_runtime", "parquet")), ..row!("sys.batch_read", "sys", "batch_read", crow_runtime::sys::batch_read, (Str) -> Frame, value "lake") },
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], feature: Some(("crow_runtime", "parquet")), ..row!("sys.batch_stats", "sys", "batch_stats", crow_runtime::sys::batch_stats, (Str) -> Str, value "lake") },
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], feature: Some(("crow_runtime", "parquet")), ..row!("sys.batch_admits", "sys", "batch_admits", crow_runtime::sys::batch_admits, (Str, Str, Str, Bool) -> Bool, value "lake") },
-    Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], feature: Some(("crow_runtime", "parquet")), ..row!("sys.batch_merge", "sys", "batch_merge", crow_runtime::sys::batch_merge, (Str, Texts, Texts) -> Str, value "lake") },
+    Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], feature: Some(("crow_runtime", "parquet")), ..row!("sys.batch_merge", "sys", "batch_merge", crow_runtime::sys::batch_merge, (Str, Texts, Texts, Bool) -> Str, value "lake") },
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], feature: Some(("crow_runtime", "parquet")), ..row!("sys.batch_find", "sys", "batch_find", crow_runtime::sys::batch_find, (Str, Str, Str) -> Frame, value "lake") },
     row!("sys.frame_of_postgres", "sys", "frame_of_postgres", crow_runtime::sys::frame_of_postgres, (Bytes) -> Frame, value "frame"),
     row!("sys.frame_csv", "sys", "frame_csv", crow_runtime::sys::frame_csv, (Frame) -> Str, value "frame"),

@@ -561,16 +561,18 @@ fn same_key(frame: &CrowFrame, cols: &[usize], i: usize, j: usize) -> bool {
     })
 }
 
-/// `sys.batch_merge[dir, paths, keys]`: the files (batches, segments)
-/// folded into one segment under `dir`, named by the batch numbers they
-/// cover, their rows sorted by `keys` then position, the latest version
-/// of each key kept where keys are given (every row otherwise), the
-/// statistics in its head as a batch's, the words of every column any
-/// input indexed indexed again. Answers the segment's path; the inputs
-/// are left for the caller to remove once the segment is in place.
-/// Refused: no files, a file that is neither, files of different columns.
+/// `sys.batch_merge[dir, paths, keys, every]`: the files (batches,
+/// segments) folded into one segment under `dir`, named by the batch
+/// numbers they cover, their rows sorted by `keys` then position, the
+/// latest version of each key kept where keys are given and `every` is
+/// false (every row kept otherwise: an append-only table sorted for
+/// pruning, its keys no identity), the statistics in its head as a
+/// batch's, the words of every column any input indexed indexed again.
+/// Answers the segment's path; the inputs are left for the caller to
+/// remove once the segment is in place. Refused: no files, a file that is
+/// neither, files of different columns.
 #[cfg(feature = "parquet")]
-pub fn merge(dir: &str, paths: &[String], keys: &[String]) -> Result<String, String> {
+pub fn merge(dir: &str, paths: &[String], keys: &[String], every: bool) -> Result<String, String> {
     use parquet::arrow::ArrowWriter;
     use parquet::basic::Compression;
     use parquet::file::metadata::KeyValue;
@@ -607,7 +609,7 @@ pub fn merge(dir: &str, paths: &[String], keys: &[String]) -> Result<String, Str
     order.push(POSITION);
     let sorted = whole.sort_keys(&order, &vec![false; order.len()])?;
     let n = sorted.nrows();
-    let merged = if keys.is_empty() {
+    let merged = if keys.is_empty() || every {
         sorted
     } else {
         // the last row of each run of one key is its latest version
@@ -791,7 +793,7 @@ mod tests {
         let b = CrowFrame::new(vec!["id".into(), "name".into()], vec![Column::Int(vec![2, 4]), Column::Str(t2)], vec![vec![true; 2], vec![true; 2]]);
         let pa = write(&dir, 0, 0, &a, &["id".to_string()], &["name".to_string()]).unwrap();
         let pb = write(&dir, 1, 3, &b, &["id".to_string()], &["name".to_string()]).unwrap();
-        let seg = merge(&dir, &[pa.clone(), pb.clone()], &["id".to_string()]).unwrap();
+        let seg = merge(&dir, &[pa.clone(), pb.clone()], &["id".to_string()], false).unwrap();
         assert!(seg.ends_with("000000000000-000000000001.segment"), "{}", seg);
         assert_eq!(covered("000000000000-000000000001.segment"), Some((0, 1)));
         let f = read(&seg).unwrap();
@@ -814,12 +816,22 @@ mod tests {
         t3.push("four again");
         let c = CrowFrame::new(vec!["id".into(), "name".into()], vec![Column::Int(vec![4]), Column::Str(t3)], vec![vec![true], vec![true]]);
         let pc = write(&dir, 2, 5, &c, &["id".to_string()], &[]).unwrap();
-        let seg2 = merge(&dir, &[seg.clone(), pc.clone()], &[]).unwrap();
+        let seg2 = merge(&dir, &[seg.clone(), pc.clone()], &[], false).unwrap();
         assert!(seg2.ends_with("000000000000-000000000002.segment"));
         assert_eq!(read(&seg2).unwrap().nrows(), 5);
-        assert!(merge(&dir, &[seg.clone(), pc.clone()], &[]).unwrap_err().contains("was written already"));
-        assert!(merge(&dir, &[], &[]).unwrap_err().contains("one file or more"));
-        assert!(merge(&dir, &[pa.clone()], &["nosuch".to_string()]).unwrap_err().contains("no column 'nosuch'"));
+        assert!(merge(&dir, &[seg.clone(), pc.clone()], &[], false).unwrap_err().contains("was written already"));
+        assert!(merge(&dir, &[], &[], false).unwrap_err().contains("one file or more"));
+        // every row kept, sorted by the key: all three versions of id 4 stay, in key order
+        let mut t4 = Text::new();
+        t4.push("four once more");
+        let d = CrowFrame::new(vec!["id".into(), "name".into()], vec![Column::Int(vec![4]), Column::Str(t4)], vec![vec![true], vec![true]]);
+        let pd = write(&dir, 3, 6, &d, &["id".to_string()], &[]).unwrap();
+        let kept = merge(&dir, &[seg2.clone(), pd], &["id".to_string()], true).unwrap();
+        assert!(kept.ends_with("000000000000-000000000003.segment"));
+        let k = read(&kept).unwrap();
+        assert_eq!(k.nrows(), 6);
+        assert_eq!(match k.data[0].as_ref() { Column::Int(v) => v.clone(), _ => panic!() }, vec![1, 2, 3, 4, 4, 4]);
+        assert!(merge(&dir, &[pa.clone()], &["nosuch".to_string()], false).unwrap_err().contains("no column 'nosuch'"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -844,7 +856,7 @@ mod tests {
         let none = find(&pa, "id", "-5").unwrap();
         assert_eq!(none.nrows(), 0);
         assert_eq!(none.columns, vec!["id", "name", POSITION]);
-        let seg = merge(&dir, &[pa.clone()], &["id".to_string()]).unwrap();
+        let seg = merge(&dir, &[pa.clone()], &["id".to_string()], false).unwrap();
         let hit = find(&seg, "id", "12345").unwrap();
         assert_eq!(hit.nrows(), 1);
         assert_eq!(match hit.data[1].as_ref() { Column::Str(t) => t.get(0).to_string(), _ => panic!() }, "row 12345");

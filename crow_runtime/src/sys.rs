@@ -246,8 +246,8 @@ pub fn batch_admits(path: &str, column: &str, value: &str, token: bool) -> Resul
 
 /// `sys.batch_merge[dir, paths, keys]`: the files folded into one segment
 /// (crate::batch::merge), its path answered.
-pub fn batch_merge(dir: &str, paths: Vec<String>, keys: Vec<String>) -> Result<String, String> {
-    crate::frames::batch_merge(dir, &paths, &keys)
+pub fn batch_merge(dir: &str, paths: Vec<String>, keys: Vec<String>, every: bool) -> Result<String, String> {
+    crate::frames::batch_merge(dir, &paths, &keys, every)
 }
 
 /// `sys.batch_find[path, column, value]`: the rows of the file whose

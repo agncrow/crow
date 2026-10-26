@@ -788,14 +788,14 @@ pub fn batch_admits(path: &str, column: &str, value: &str, token: bool) -> Resul
 
 /// `sys.batch_merge[dir, paths, keys]`, where the program was built with
 /// Parquet (the interpreter always is; a compiled program that merges).
-pub fn batch_merge(dir: &str, paths: &[String], keys: &[String]) -> Result<String, String> {
+pub fn batch_merge(dir: &str, paths: &[String], keys: &[String], every: bool) -> Result<String, String> {
     #[cfg(feature = "parquet")]
     {
-        crate::batch::merge(dir, paths, keys)
+        crate::batch::merge(dir, paths, keys, every)
     }
     #[cfg(not(feature = "parquet"))]
     {
-        let _ = (dir, paths, keys);
+        let _ = (dir, paths, keys, every);
         Err("batch: this program was built without Parquet".to_string())
     }
 }

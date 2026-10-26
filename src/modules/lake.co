@@ -126,6 +126,16 @@ fn _checked[f, by, texts]
     worded = select[f, texts]
     return len[keyed.columns] + len[worded.columns]
 
+--- a log's directory, made where it is not yet (a writer opens a log;
+--- a reader of one that does not exist is told so)
+fn _opened[dir]
+    if exists[dir]
+        return dir
+    made = mkdir[dir]
+    if not made.ok
+        return error['cannot open a log at \'`dir`\': `made.reason`', 'lake']
+    return dir
+
 --- `batch[dir, f, by = [], texts = []]`: the frame written as the log's
 --- next batch, sorted by the `by` columns, the words of `texts` indexed;
 --- answers the first position its rows got. Two writers that claim one
@@ -134,6 +144,9 @@ fn batch[dir, f, by = [], texts = []]
     checked = _checked[f, by, texts]
     if not checked.ok
         return checked
+    opened = _opened[dir]
+    if not opened.ok
+        return opened
     tries = 0
     while tries lt 100
         b = batches[dir]
@@ -255,6 +268,9 @@ fn commit[dir, f, by = [], texts = [], seen = -1, columns = [], equal = []]
     pairs = concat[columns, equal]
     if len[pairs] ne 2 * len[columns]
         return error['commit takes its reads as two lists of one length: columns and equal', 'lake']
+    opened = _opened[dir]
+    if not opened.ok
+        return opened
     tries = 0
     while tries lt 100
         b = batches[dir]
@@ -278,18 +294,25 @@ fn commit[dir, f, by = [], texts = [], seen = -1, columns = [], equal = []]
         tries = tries + 1
     return error['the log at \'`dir`\' is contended: 100 tries could not claim a batch number', 'lake']
 
---- `merge[dir, by = []]`: every batch file and segment of the log folded
---- into one segment (sys.batch_merge): the rows sorted by the `by`
---- columns, the latest version of each key kept (every row without
---- keys), the statistics and the word filters as a batch's. The inputs
---- are removed once the segment is in place, and a stale batch a crash
---- left behind with them. Answers the segment's path, or '' where the
---- log holds fewer than two files
-fn merge[dir, by = []]
+--- `merge[dir, by = [], every = false]`: every batch file and segment of
+--- the log folded into one segment (sys.batch_merge): the rows sorted by
+--- the `by` columns, the latest version of each key kept — or every row,
+--- with `every`, for an append-only table whose keys are its sort order
+--- and no identity — the statistics and the word filters as a batch's.
+--- The inputs are removed once the segment is in place, and a stale
+--- batch a crash left behind with them. Answers the segment's path, or ''
+--- where the log holds fewer than two files
+fn merge[dir, by = [], every = false]
     b = batches[dir]
     if not b.ok
         return b
     live = _live[b]
+    --- `every` keeps every row where the keys would fold them: without
+    --- keys every row is kept already, so saying so is a slip (and
+    --- `every` is a truth, compared with one here, so another kind handed
+    --- as it is refused before the program runs)
+    if every eq true and len[by] eq 0
+        return error['every keeps every row where keys would fold them: give merge its by columns', 'lake']
     if len[live] lt 2
         return ''
     inputs = []
@@ -306,7 +329,7 @@ fn merge[dir, by = []]
         return error['a key column has a name', 'lake']
     named = inputs
     cols = by
-    made = batch_merge[dir, named, cols]
+    made = batch_merge[dir, named, cols, every]
     if not made.ok
         return error[made.reason, 'lake']
     stale = b[b.form eq 'stale']
@@ -344,7 +367,9 @@ test a_log_grows_by_batches[]
     upto = scan[dir, 3]
     assert[upto._pos eq [0, 1, 2, 3]]
     assert[not batch[dir, frame.new[], by = []].ok]
-    assert[batch['lake-no-such-dir', frame.new[id = [1]]].kind eq 'lake']
+    opened = batch['lake-test-grows/made/here', frame.new[id = [1]]]
+    assert[opened eq 0 and exists['lake-test-grows/made/here']]
+    assert[batch['/dev/null/no-log-here', frame.new[id = [1]]].kind eq 'lake']
     gone = rm[dir]
 
 --- the latest version of each key is the table; a lookup reads only the
@@ -414,7 +439,11 @@ test a_merge_folds_the_files_into_a_segment[]
     assert[merge[dir, by = ['id']] eq '`dir`/000000000000-000000000002.segment']
     files = batches[dir]
     assert[len[files] eq 1 and files.high eq [2] and files.rows eq [4]]
-    assert[latest[dir, ['id']].qty eq [25, 30, 11, 40]]
+    e = batch[dir, frame.new[id = [1], qty = [13], name = ['one yet again']], by = ['id']]
+    assert[merge[dir, by = ['id'], every = true] eq '`dir`/000000000000-000000000003.segment']
+    assert[batches[dir].rows eq [5] and sort[scan[dir], 'id'].id eq [1, 1, 2, 3, 4]]
+    assert[latest[dir, ['id']].qty eq [25, 30, 40, 13]]
+    assert[merge['`dir`', every = true].kind eq 'lake']
     d = batch[dir, frame.new[id = [5], qty = [50], name = ['five']], by = ['id']]
-    assert[d eq 6 and batches[dir].number eq [0, 3]]
+    assert[d eq 7 and batches[dir].number eq [0, 4]]
     gone = rm[dir]
