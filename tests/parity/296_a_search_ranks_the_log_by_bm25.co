@@ -1,0 +1,46 @@
+--- A search over the log (spec, lake: `search`): the rows whose indexed
+--- column best match the words, BM25 as Lucene scores it over every file
+--- as one corpus — the files whose filters admit no word unread, a
+--- segment read as a batch is. The same in both modes, and held to the
+--- formula computed apart (tests/lake/reference.py: Lucene's
+--- BM25Similarity, k1 = 1.2, b = 0.75, exact lengths): the rankings and
+--- the scores to the ninth decimal, before and after a merge.
+use lake
+use frame
+use math
+
+d = 'parity-296-search'
+r = rm[d]
+m = mkdir[d]
+one = batch[d, frame.new[id = [1, 2, 3, 4], text = ['the quick brown fox', 'a lazy dog', 'the fox and the dog', 'brown bread and butter']], texts = ['text']]
+two = batch[d, frame.new[id = [5, 6, 7, 8], text = ['fox hunting is banned', 'the dog days of summer', 'quick quick slow', 'a brown dog and a brown fox']], texts = ['text']]
+three = batch[d, frame.new[id = [9, 10, 11, 12], text = ['nothing to see', 'the end', 'fox fox fox', 'summer bread']], texts = ['text']]
+
+fn close[got, want]
+    if len[got] ne len[want]
+        return false
+    for i in range[len[want]]
+        if abs[got[i] - want[i]] gt 0.000000001
+            return false
+    return true
+
+fn held[dir, words, ids, scores]
+    hits = search[dir, 'text', words, 5]
+    log[hits.id eq ids]
+    log[close[hits.score, scores]]
+    log[hits.columns]
+
+held[d, ['fox'], [11, 1, 5, 3, 8], [0.641941242704, 0.380620028860, 0.380620028860, 0.344080506089, 0.288658142692]]
+held[d, ['brown', 'dog'], [8, 1, 4, 2, 3], [1.015387447453, 0.580613446445, 0.580613446445, 0.525184138953, 0.424348784274]]
+held[d, ['the', 'fox'], [3, 1, 11, 10, 6], [0.950293055052, 0.850032400844, 0.641941242704, 0.595995483531, 0.424348784274]]
+held[d, ['Summer', 'bread, butter'], [12, 4, 6], [1.852425422008, 1.685018971213, 0.659463450235]]
+none = search[d, 'text', ['zebra']]
+log[len[none]]
+log[none.columns]
+log[search[d, 'nothing', ['fox']].reason]
+log[search[d, 'text', ['fox'], -1].reason]
+seg = merge[d]
+log[batches[d].form]
+held[d, ['fox'], [11, 1, 5, 3, 8], [0.641941242704, 0.380620028860, 0.380620028860, 0.344080506089, 0.288658142692]]
+held[d, ['the', 'fox'], [3, 1, 11, 10, 6], [0.950293055052, 0.850032400844, 0.641941242704, 0.595995483531, 0.424348784274]]
+r = rm[d]

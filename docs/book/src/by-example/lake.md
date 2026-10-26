@@ -46,3 +46,133 @@ holds, one row per key; `lookup` reads only the files whose filters admit
 the value; `commit` is the sequencer, refusing a write whose reads are
 stale; `merge` folds the files into one Parquet segment holding the latest
 version of each key, which the same readers read. Reference: spec section 13 (lake).
+
+## Search over the log
+
+```crow
+use lake
+use frame
+
+gone = rm['ex_search']
+made = mkdir['ex_search']
+a = batch['ex_search', frame.new[id = [1, 2, 3], text = ['the quick brown fox', 'a lazy dog', 'the fox and the dog']], texts = ['text']]
+b = batch['ex_search', frame.new[id = [4], text = ['brown bread']], texts = ['text']]
+hits = search['ex_search', 'text', ['brown', 'dog'], 3]
+log[hits.id]
+log[fmt[hits.score[0], decimals = 3]]
+log[len[search['ex_search', 'text', ['zebra']]]]
+gone = rm['ex_search']
+```
+
+```text
+[4, 2, 1]
+0.382
+0
+```
+
+A `texts` column is indexed as it is written: each file's head holds a
+filter of its words, and `search` reads only the files whose filters
+admit a word asked, scoring the rows as Lucene scores them (BM25) over
+the whole log as one corpus.
+
+## A view that follows the log
+
+```crow
+use lake
+use frame
+use math
+
+gone = rm['ex_tail']
+made = mkdir['ex_tail']
+first = batch['ex_tail', frame.new[sym = ['A', 'B'], qty = [10, 20]]]
+seen = -1
+total = 0
+rows = tail['ex_tail', seen, 0.2]
+total = total + sum[rows.qty]
+seen = max[rows._pos]
+second = batch['ex_tail', frame.new[sym = ['A'], qty = [5]]]
+rows = tail['ex_tail', seen, 0.2]
+total = total + sum[rows.qty]
+seen = max[rows._pos]
+log[total]
+log[seen]
+none = tail['ex_tail', seen, 0.05]
+log[len[none]]
+gone = rm['ex_tail']
+```
+
+```text
+35
+2
+0
+```
+
+`tail` answers the rows past a position, waiting up to the seconds for
+some to arrive: a view is a loop over it, each round a batch of new rows
+folded into the state the view keeps, the position of the last row read
+kept with it, and its results written back to a log with `batch` for
+other views and other nodes to read.
+
+## Operations: the figures, a backup, a restore
+
+```crow
+use lake
+use frame
+
+gone = rm['ex_ops']
+gone = rm['ex_ops_copy']
+made = mkdir['ex_ops']
+a = batch['ex_ops', frame.new[id = [1, 2], qty = [10, 20]], by = ['id']]
+b = batch['ex_ops', frame.new[id = [2, 3], qty = [25, 30]], by = ['id']]
+m = metrics['ex_ops']
+log[m.files]
+log[m.rows]
+log[m.head]
+log[m.bytes[0] gt 0]
+log[backup['ex_ops', 'ex_ops_copy']]
+gone = rm['ex_ops']
+log[restore['ex_ops_copy', 'ex_ops']]
+log[latest['ex_ops', ['id']].qty]
+gone = rm['ex_ops']
+gone = rm['ex_ops_copy']
+```
+
+```text
+[2]
+[4]
+[3]
+true
+2
+2
+[10, 25, 30]
+```
+
+`metrics` is the log's figures as a frame of one row, a table a program
+keeps by writing it to a log of its own. `backup` copies the live files
+under a directory or an `s3://` prefix and writes the manifest last, so a
+backup is whole only when its manifest is; `restore` copies them back,
+and the batches written since are the rest of the log.
+
+## A second node
+
+```crow,norun
+use lake
+
+--- the leader: its log served to followers, forever
+served = share['orders', 3700]
+```
+
+```crow,norun
+use lake
+
+--- a follower, on another machine: the files it lacks, fetched; then
+--- the log read by position as any log is, and the pass run again
+seen = -1
+came = follow['orders', 'leader.local', 3700]
+rows = since['orders', seen + 1]
+```
+
+A second node follows the log: it holds the same files and reads them
+with the same verbs. A table too large for one node is split into logs
+by a key, one on each node, and a query runs the same verbs on each and
+stacks the answers.

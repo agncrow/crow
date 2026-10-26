@@ -58,14 +58,21 @@ frame.window_one	frames: held to pandas by tests/parity/185, no reference per ca
 io.csv_asked	the batch's cases share their directory, so an answer depends on the cases before it: an io family with a directory per case is the plan
 io.lines_asked	the batch's cases share their directory, so an answer depends on the cases before it: an io family with a directory per case is the plan
 io.read_asked	the batch's cases share their directory, so an answer depends on the cases before it: an io family with a directory per case is the plan
+lake.backup	the module's tests restore a backup and read the log as it was; the reference script models no files
 lake.batch	held to SQLite in parity 294 and 295 (the latest version of each key is what MAX(pos) GROUP BY picks); the reference script models no log
 lake.batches	held to SQLite in parity 294 and 295 (the latest version of each key is what MAX(pos) GROUP BY picks); the reference script models no log
+lake.follow	held across two processes in tests/lake_share.rs (the leader and the follower each in both modes); the reference script models no server
 lake.head	held to SQLite in parity 294 and 295 (the latest version of each key is what MAX(pos) GROUP BY picks); the reference script models no log
 lake.latest	held to SQLite in parity 294 and 295 (the latest version of each key is what MAX(pos) GROUP BY picks); the reference script models no log
 lake.lookup	held to SQLite in parity 294 and 295 (the latest version of each key is what MAX(pos) GROUP BY picks); the reference script models no log
 lake.merge	held to SQLite in parity 294 and 295 (the latest version of each key is what MAX(pos) GROUP BY picks); the reference script models no log
+lake.metrics	the module's tests hold the figures to the files written; the reference script models no log
+lake.restore	the module's tests restore a backup and read the log as it was; the reference script models no files
 lake.scan	held to SQLite in parity 294 and 295 (the latest version of each key is what MAX(pos) GROUP BY picks); the reference script models no log
+lake.search	held to Lucene's BM25 formula computed apart in tests/lake/reference.py through parity 296, rankings and scores to the ninth decimal; the self-check's reference script models no corpus
+lake.share	held across two processes in tests/lake_share.rs (the leader and the follower each in both modes); the reference script models no server
 lake.since	held to SQLite in parity 294 and 295 (the latest version of each key is what MAX(pos) GROUP BY picks); the reference script models no log
+lake.tail	the module's tests and the book hold it to the rows written while it waits; the reference script models no log
 llm.asked	a model's reply: the empty replay answers here; tests/llm_server.rs holds the module to a server speaking both wire formats, in both modes
 math.atan2	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.bandpass	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
@@ -109,6 +116,7 @@ sys.alive	the standard library's own layer: bytes, streams and protocols no refe
 sys.answer	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.batch_admits	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.batch_find	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.batch_search	the standard library's own layer: bytes, streams and protocols no reference models yet; the scoring is held to Lucene's formula by parity 296
 sys.batch_merge	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.batch_read	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.batch_stats	the standard library's own layer: bytes, streams and protocols no reference models yet
@@ -166,6 +174,7 @@ sys.send	the standard library's own layer: bytes, streams and protocols no refer
 sys.shaped	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.socket_of	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.start	the standard library's own layer: a process started as a command shows as its socket in every configuration; tests/parity/279 and tests/mcp.rs hold what it carries in both modes
+sys.filesize	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.store	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.stream_of	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.tensor_of_frame	the standard library's own layer: bytes, streams and protocols no reference models yet

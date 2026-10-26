@@ -7,6 +7,10 @@ edition = "2024"
 [dependencies]
 regex = "1.12.3"
 serde_json = "1"
+# the Kafka door reads compressed message sets: gzip and snappy, the two
+# codecs clients turn on (kafka.rs)
+flate2 = "1.1.10"
+snap = "1.1.2"
 # only what writes an IPC stream: arrow's csv and json readers are not used
 arrow = { version = "60.0.0", default-features = false, features = ["ipc"], optional = true }
 bytemuck = { version = "1.25.0", features = ["derive"], optional = true }

@@ -372,6 +372,9 @@ log[seg]
 log[batch_read[seg].name]
 log[batch_find[seg, 'id', '2'].name]
 log[len[batch_find[seg, 'id', '9']]]
+log[batch_search[['ex_batches/000000000000-000000000001.segment'], 'name', ['apple'], 5].id]
+log[int[json[batch_stats[seg]].tokens.name.docs]]
+log[filesize[seg] gt 100]
 gone = rm['ex_batches']
 ```
 
@@ -389,6 +392,9 @@ ex_batches/000000000000-000000000001.segment
 ['apple crumble', 'cherry tart', 'Apple pie']
 ['cherry tart']
 0
+[3, 1]
+3
+true
 ```
 
 A program listens too: `listen` binds a port (0 for one the system picks,

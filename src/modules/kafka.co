@@ -159,7 +159,7 @@ fn _landed[dir, recs]
         if not h.ok
             return -1
         return h + 1
-    first = lake.batch[dir, select[recs, ['at', 'key', 'value']]]
+    first = lake.batch[dir, recs]
     if not first.ok
         return -1
     return first
@@ -214,7 +214,9 @@ fn _fetched[dir, offset, most]
     if len[rows] eq 0
         return bytes['']
     taken = frame.head[rows, most]
-    out = select[taken, ['at', 'key', 'value']]
+    --- the rows as the log holds them, the offset the log's position (the
+    --- producer's own offset column, kept as written, overwritten here)
+    out = taken
     out.offset = taken._pos
     encoded = records_of[out]
     if not encoded.ok
@@ -265,6 +267,34 @@ fn _answer_fetch[root, version, body]
     if version gte 1
         return concat[pack[0, 4], out]
     return out
+
+--- whether a fetch has nothing to answer yet: every partition asked is at
+--- its high watermark (a client asks to wait up to `max_wait_ms` then)
+fn _fetch_waits[root, version, body]
+    at = 12
+    if version gte 3
+        at = 16
+    count = unpack[body, at, 4]
+    at = at + 4
+    for i in range[count]
+        topic = _str_at[body, at]
+        at = _after_str[body, at]
+        parts = unpack[body, at, 4]
+        at = at + 4
+        for j in range[parts]
+            index = unpack[body, at, 4]
+            offset = unpack[body, at + 4, 8]
+            at = at + 16
+            dir = _topic_dir[root, topic]
+            if index ne 0 or not exists[dir]
+                return false
+            if offset lt _watermark[dir]
+                return false
+    return true
+
+--- a fetch's wait, in seconds
+fn _fetch_wait[body]
+    return float[unpack[body, 4, 4]] / 1000.0
 
 --- ListOffsets: the latest offset is the position past the last row, the
 --- earliest the first a file still holds
@@ -317,7 +347,7 @@ fn _answer_find_coordinator[host, port]
 --- a group's members as the door last saw them: the latest row per member
 --- a group with no members: the columns a group's rows have, no row
 fn _no_members[]
-    none = frame.new[gid = ['-'], generation = [0], member = ['-'], leader = ['-'], protocol = ['-'], meta = ['-'], assignment = ['-']]
+    none = frame.new[_pos = [0], gid = ['-'], generation = [0], member = ['-'], leader = ['-'], protocol = ['-'], meta = ['-'], assignment = ['-']]
     return none[none.gid eq '']
 
 fn _group_rows[root, gid]
@@ -329,7 +359,7 @@ fn _group_rows[root, gid]
         return _no_members[]
     if len[every] eq 0
         return _no_members[]
-    return every[every.gid eq gid]
+    return every[every.gid eq gid and every.generation gte 0]
 
 fn _generation[rows]
     if len[rows] eq 0
@@ -343,9 +373,20 @@ fn _group_write[root, gid, generation, member, leader, protocol, meta, assignmen
     row = frame.new[gid = [gid], generation = [generation], member = [member], leader = [leader], protocol = [protocol], meta = [meta], assignment = [assignment]]
     return lake.batch[dir, row]
 
---- JoinGroup: the member joins a new generation of its group as its
---- leader, with the first protocol it offers; a member with no id is
---- given one
+--- the members of a group's current generation, earliest first
+fn _current[rows]
+    if len[rows] eq 0
+        return rows
+    gen = _generation[rows]
+    return sort[rows[rows.generation eq gen], '_pos']
+
+--- JoinGroup: a member joins its group. A member the current generation
+--- knows joins it again (a rebalance it was told of); a new member opens
+--- the next generation and carries the others forward, each with no
+--- assignment yet, so every member hears of the rebalance at its heartbeat
+--- and joins again; the leader is the earliest member present. The answer
+--- lists every member of the generation with its metadata, which the
+--- leader assigns from; a member with no id is given one
 fn _answer_join_group[root, version, body]
     gid = _str_at[body, 0]
     at = _after_str[body, 0]
@@ -365,12 +406,29 @@ fn _answer_join_group[root, version, body]
         meta = _bytes_at[body, at]
     if member eq ''
         member = 'crow-`hex[random[6]]`'
-    generation = _generation[_group_rows[root, gid]] + 1
-    wrote = _group_write[root, gid, generation, member, member, protocol, base64[meta], '']
+    rows = _group_rows[root, gid]
+    present = _current[rows]
+    known = len[present[present.member eq member]] gt 0
+    generation = _generation[rows]
+    if not known
+        generation = generation + 1
+    leader = member
+    if len[present] gt 0
+        leader = str[present.leader[0]]
+        if len[present[present.member eq leader]] eq 0
+            leader = str[present.member[0]]
+    if not known
+        for i in range[len[present]]
+            carried = _group_write[root, gid, generation, str[present.member[i]], leader, str[present.protocol[i]], str[present.meta[i]], '']
+    wrote = _group_write[root, gid, generation, member, leader, protocol, base64[meta], '']
     if not wrote.ok
         return concat[[pack[2, 2], pack[-1, 4], _wstr[''], _wstr[''], _wstr[member], _warray[[]]]]
-    members = _array[1, concat[_wstr[member], _wbytes[meta]]]
-    return concat[[pack[0, 2], pack[generation, 4], _wstr[protocol], _wstr[member], _wstr[member], members]]
+    now_rows = _current[_group_rows[root, gid]]
+    members = bytes['']
+    for i in range[len[now_rows]]
+        decoded = unbase64[str[now_rows.meta[i]]]
+        members = concat[members, concat[_wstr[str[now_rows.member[i]]], _wbytes[decoded]]]
+    return concat[[pack[0, 2], pack[generation, 4], _wstr[protocol], _wstr[leader], _wstr[member], _array[len[now_rows], members]]]
 
 --- SyncGroup: the leader's assignments kept, each member answered its own
 fn _answer_sync_group[root, body]
@@ -400,6 +458,8 @@ fn _answer_sync_group[root, body]
         wrote = _group_write[root, gid, generation, who, member, protocol, meta, base64[given]]
     if len[mine] eq 0
         mine = _kept_assignment[root, gid, member]
+    if len[mine] eq 0 and count eq 0
+        return concat[pack[27, 2], _wbytes[bytes['']]]
     return concat[pack[0, 2], _wbytes[mine]]
 
 --- the assignment the leader stored for a member, or no bytes
@@ -425,6 +485,25 @@ fn _answer_heartbeat[root, body]
         return pack[25, 2]
     if generation ne _generation[rows]
         return pack[27, 2]
+    return pack[0, 2]
+
+--- LeaveGroup: the member's row is written as left (generation -1), and
+--- the others move to the next generation, to hear of it at their
+--- heartbeats and join again
+fn _answer_leave_group[root, body]
+    gid = _str_at[body, 0]
+    member = _str_at[body, _after_str[body, 0]]
+    rows = _group_rows[root, gid]
+    present = _current[rows]
+    if len[present[present.member eq member]] eq 0
+        return pack[25, 2]
+    gone = _group_write[root, gid, -1, member, '', '', '', '']
+    staying = present[present.member ne member]
+    if len[staying] gt 0
+        generation = _generation[rows] + 1
+        leader = str[staying.member[0]]
+        for i in range[len[staying]]
+            carried = _group_write[root, gid, generation, str[staying.member[i]], leader, str[staying.protocol[i]], str[staying.meta[i]], '']
     return pack[0, 2]
 
 --- OffsetCommit: each offset a row of the offsets log
@@ -537,7 +616,7 @@ fn _answer[root, req, host, port]
                                         out = _answer_heartbeat[root, body]
                                     else
                                         if api eq 13
-                                            out = pack[0, 2]
+                                            out = _answer_leave_group[root, body]
                                         else
                                             if api eq 8
                                                 out = _answer_offset_commit[root, version, body]
@@ -595,6 +674,9 @@ fn serve[root, port = 9092, host = '127.0.0.1', rounds = 0]
         return error[l.reason, 'kafka']
     made = mkdir[root]
     conns = []
+    waiting = []
+    waiting_reqs = []
+    waiting_until = []
     served = 0
     round = 0
     while rounds eq 0 or round lt rounds
@@ -609,17 +691,44 @@ fn serve[root, port = 9092, host = '127.0.0.1', rounds = 0]
                 sys.close[stream_of[c]]
             else
                 if len[req] gt 0
-                    answer = _answer[root, req, host, port]
-                    if not answer.ok
-                        sys.close[stream_of[c]]
+                    --- a fetch with nothing to answer yet waits in the loop
+                    --- up to its max_wait, as a broker lets a consumer wait
+                    at = _after_str[req, 8]
+                    if unpack[req, 0, 2] eq 1 and _fetch_wait[slice[req, at, len[req]]] gt 0.0 and _fetch_waits[root, unpack[req, 2, 2], slice[req, at, len[req]]]
+                        waiting = push[waiting, c]
+                        waiting_reqs = push[waiting_reqs, req]
+                        waiting_until = push[waiting_until, float[now[]] + _fetch_wait[slice[req, at, len[req]]]]
                     else
-                        served = served + 1
-                        if len[answer] gt 0
-                            sent = send[stream_of[c], answer]
-                        kept = push[kept, c]
+                        answer = _answer[root, req, host, port]
+                        if not answer.ok
+                            sys.close[stream_of[c]]
+                        else
+                            served = served + 1
+                            if len[answer] gt 0
+                                sent = send[stream_of[c], answer]
+                    kept = push[kept, c]
                 else
                     kept = push[kept, c]
         conns = kept
+        --- the fetches waiting: answered when rows arrived or the wait ended
+        still = []
+        still_reqs = []
+        still_until = []
+        for i in range[len[waiting]]
+            req = waiting_reqs[i]
+            at = _after_str[req, 8]
+            if float[now[]] gte waiting_until[i] or not _fetch_waits[root, unpack[req, 2, 2], slice[req, at, len[req]]]
+                answer = _answer[root, req, host, port]
+                if answer.ok
+                    served = served + 1
+                    sent = send[stream_of[waiting[i]], answer]
+            else
+                still = push[still, waiting[i]]
+                still_reqs = push[still_reqs, req]
+                still_until = push[still_until, waiting_until[i]]
+        waiting = still
+        waiting_reqs = still_reqs
+        waiting_until = still_until
     sys.close[l]
     return served
 

@@ -67,15 +67,12 @@ pub fn records(bytes: &[u8]) -> Result<CrowFrame, String> {
         }
         let magic = msg[4];
         let attributes = msg[5];
-        if attributes & 0x07 != 0 {
-            return Err(format!("records: message {} is compressed (codec {}) — the door takes uncompressed message sets", n, attributes & 0x07));
-        }
         let (at, mut p) = match magic {
             0 => (-1i64, 6usize),
             1 => (be_i64(msg, 6).ok_or_else(|| format!("records: message {} is cut inside its timestamp", n))?, 14usize),
             m => return Err(format!("records: message {} has magic {} — the door reads 0 and 1", n, m)),
         };
-        let field = |p: &mut usize, what: &str| -> Result<Option<String>, String> {
+        let raw = |p: &mut usize, what: &str| -> Result<Option<Vec<u8>>, String> {
             let size = be_i32(msg, *p).ok_or_else(|| format!("records: message {} is cut inside its {}'s length", n, what))?;
             *p += 4;
             if size < 0 {
@@ -84,10 +81,49 @@ pub fn records(bytes: &[u8]) -> Result<CrowFrame, String> {
             let size = size as usize;
             let data = msg.get(*p..*p + size).ok_or_else(|| format!("records: message {} is cut inside its {}", n, what))?;
             *p += size;
-            String::from_utf8(data.to_vec()).map(Some).map_err(|_| format!("records: message {}'s {} is no UTF-8 text", n, what))
+            Ok(Some(data.to_vec()))
         };
-        let key = field(&mut p, "key")?;
-        let value = field(&mut p, "value")?;
+        let key = raw(&mut p, "key")?;
+        let value = raw(&mut p, "value")?;
+        let codec = attributes & 0x07;
+        if codec != 0 {
+            // a wrapper: its value is an inner message set, compressed — the
+            // inner messages are the records, their offsets the producer's
+            let inner = match (codec, value) {
+                (_, None) => return Err(format!("records: message {} is compressed and holds nothing", n)),
+                (1, Some(v)) => {
+                    use std::io::Read;
+                    let mut out = Vec::new();
+                    flate2::read::GzDecoder::new(&v[..]).read_to_end(&mut out).map_err(|e| format!("records: message {} does not unzip: {}", n, e))?;
+                    out
+                }
+                (2, Some(v)) => snappy_kafka(&v).map_err(|e| format!("records: message {}: {}", n, e))?,
+                (c, Some(_)) => return Err(format!("records: message {} is compressed with codec {} — the door reads gzip and snappy", n, c)),
+            };
+            let frame = records(&inner)?;
+            let m = frame.nrows();
+            if let (Column::Int(o), Column::Int(a), Column::Str(k), Column::Str(v)) = (frame.data[0].as_ref(), frame.data[1].as_ref(), frame.data[2].as_ref(), frame.data[3].as_ref()) {
+                for r in 0..m {
+                    offsets.push(o[r]);
+                    ats.push(a[r]);
+                    key_present.push(frame.validity[2][r]);
+                    keys.push(k.get(r));
+                    value_present.push(frame.validity[3][r]);
+                    values.push(v.get(r));
+                }
+            }
+            pos = start + len;
+            n += m;
+            continue;
+        }
+        let text = |field: Option<Vec<u8>>, what: &str| -> Result<Option<String>, String> {
+            match field {
+                None => Ok(None),
+                Some(data) => String::from_utf8(data).map(Some).map_err(|_| format!("records: message {}'s {} is no UTF-8 text", n, what)),
+            }
+        };
+        let key = text(key, "key")?;
+        let value = text(value, "value")?;
         offsets.push(offset);
         ats.push(at);
         key_present.push(key.is_some());
@@ -103,6 +139,26 @@ pub fn records(bytes: &[u8]) -> Result<CrowFrame, String> {
         vec![Column::Int(offsets), Column::Int(ats), Column::Str(keys), Column::Str(values)],
         vec![all.clone(), all, key_present, value_present],
     ))
+}
+
+/// Snappy as Kafka clients write it: xerial's framing — the magic
+/// `\x82SNAPPY\x00`, two ints of version, then blocks each led by its
+/// compressed length — or one raw block.
+fn snappy_kafka(v: &[u8]) -> Result<Vec<u8>, String> {
+    const MAGIC: &[u8] = b"\x82SNAPPY\x00";
+    let mut out = Vec::new();
+    if v.len() >= 16 && &v[..8] == MAGIC {
+        let mut p = 16;
+        while p + 4 <= v.len() {
+            let size = u32::from_be_bytes([v[p], v[p + 1], v[p + 2], v[p + 3]]) as usize;
+            p += 4;
+            let block = v.get(p..p + size).ok_or_else(|| "a snappy block is cut short".to_string())?;
+            out.extend(snap::raw::Decoder::new().decompress_vec(block).map_err(|e| format!("snappy: {}", e))?);
+            p += size;
+        }
+        return Ok(out);
+    }
+    snap::raw::Decoder::new().decompress_vec(v).map_err(|e| format!("snappy: {}", e))
 }
 
 /// `sys.records_of[frame]`: a frame's rows as a message set of magic 1,
@@ -217,6 +273,59 @@ mod tests {
         let known: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 24, 0x2f, 0x1e, 0x36, 0x3e, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 0, 0, 0, 2, b'h', b'i'];
         let got = records(&known);
         assert!(got.is_ok() || got.unwrap_err().contains("checksum"));
+    }
+
+    /// A compressed wrapper message (gzip, as a client with
+    /// compression_type='gzip' writes one; snappy in xerial's framing) is
+    /// read as the records it holds
+    #[test]
+    fn a_compressed_set_is_read_as_its_records() {
+        use std::io::Write;
+        let mut keys = Text::new();
+        keys.push("a");
+        keys.push("b");
+        let mut values = Text::new();
+        values.push("one");
+        values.push("two");
+        let f = CrowFrame::new(
+            vec!["offset".into(), "at".into(), "key".into(), "value".into()],
+            vec![Column::Int(vec![0, 1]), Column::Int(vec![5, 6]), Column::Str(keys), Column::Str(values)],
+            vec![vec![true; 2], vec![true; 2], vec![true; 2], vec![true; 2]],
+        );
+        let inner = records_of(&f).unwrap();
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gz.write_all(&inner).unwrap();
+        let zipped = gz.finish().unwrap();
+        // the wrapper: magic 1, attributes gzip, no key, the zipped set as its value
+        let mut msg = vec![1u8, 1u8];
+        msg.extend_from_slice(&7i64.to_be_bytes());
+        msg.extend_from_slice(&(-1i32).to_be_bytes());
+        msg.extend_from_slice(&(zipped.len() as i32).to_be_bytes());
+        msg.extend_from_slice(&zipped);
+        let crc = crc32(&msg);
+        let mut set = Vec::new();
+        set.extend_from_slice(&1i64.to_be_bytes());
+        set.extend_from_slice(&((msg.len() + 4) as i32).to_be_bytes());
+        set.extend_from_slice(&crc.to_be_bytes());
+        set.extend_from_slice(&msg);
+        let back = records(&set).unwrap();
+        assert_eq!(back.nrows(), 2);
+        assert_eq!(match back.data[3].as_ref() { Column::Str(t) => t.to_vec(), _ => panic!() }, vec!["one", "two"]);
+        assert_eq!(match back.data[1].as_ref() { Column::Int(v) => v.clone(), _ => panic!() }, vec![5, 6]);
+        // snappy, raw block
+        let snapped = snap::raw::Encoder::new().compress_vec(&inner).unwrap();
+        let mut msg = vec![1u8, 2u8];
+        msg.extend_from_slice(&7i64.to_be_bytes());
+        msg.extend_from_slice(&(-1i32).to_be_bytes());
+        msg.extend_from_slice(&(snapped.len() as i32).to_be_bytes());
+        msg.extend_from_slice(&snapped);
+        let crc = crc32(&msg);
+        let mut set = Vec::new();
+        set.extend_from_slice(&1i64.to_be_bytes());
+        set.extend_from_slice(&((msg.len() + 4) as i32).to_be_bytes());
+        set.extend_from_slice(&crc.to_be_bytes());
+        set.extend_from_slice(&msg);
+        assert_eq!(records(&set).unwrap().nrows(), 2);
     }
 
     #[test]

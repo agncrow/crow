@@ -32,6 +32,24 @@ const EXTENSION: &str = ".batch";
 /// A merged segment's rows per row group.
 pub const ROW_GROUP: usize = 8192;
 
+/// The version of what a file's statistics hold and how its rows are laid
+/// out: written into every file's head, so a reader of an older Crow
+/// refuses a file a newer one wrote (naming both versions) instead of
+/// misreading it, and a newer Crow reads every older file. A change to
+/// the layout raises it; a field added to the statistics, read as absent
+/// by an older reader, need not.
+pub const FORMAT: u64 = 1;
+
+/// A file's statistics checked against the format this Crow reads.
+fn format_ok(path: &str, stats: &str) -> Result<(), String> {
+    let head: serde_json::Value = serde_json::from_str(stats).map_err(|e| format!("batch: '{}' has unreadable statistics: {}", path, e))?;
+    let written = head["format"].as_u64().unwrap_or(1);
+    if written > FORMAT {
+        return Err(format!("batch: '{}' was written in format {}, and this Crow reads format {} — read it with the Crow that wrote it, or a newer one", path, written, FORMAT));
+    }
+    Ok(())
+}
+
 /// A batch file's name by its number, so the names list in order.
 pub fn file_name(number: i64) -> String {
     format!("{:012}{}", number, EXTENSION)
@@ -248,7 +266,7 @@ fn column_stats(col: &Column, valid: &crate::validity::Validity) -> serde_json::
         }
         Column::Str(t) => {
             let it = present.iter().map(|&i| t.get(i));
-            (it.clone().min().map_or(Value::Null, |s| Value::from(s)), it.max().map_or(Value::Null, |s| Value::from(s)))
+            (it.clone().min().map_or(Value::Null, Value::from), it.max().map_or(Value::Null, Value::from))
         }
     };
     json!({ "kind": kind_word(col), "min": min, "max": max, "missing": n - present.len(), "bloom": bloom })
@@ -272,9 +290,13 @@ fn statistics(frame: &CrowFrame, first: i64, last: i64, keys: &[String], texts: 
         };
         let valid = frame.validity[i].as_ref();
         let mut words: Vec<String> = Vec::new();
+        let (mut docs, mut length) = (0usize, 0usize);
         for r in 0..n {
             if valid[r] {
-                words.extend(tokens(t.get(r)));
+                let toks = tokens(t.get(r));
+                docs += 1;
+                length += toks.len();
+                words.extend(toks);
             }
         }
         words.sort();
@@ -283,9 +305,13 @@ fn statistics(frame: &CrowFrame, first: i64, last: i64, keys: &[String], texts: 
         for w in &words {
             bloom.add(w.as_bytes());
         }
-        token_filters.insert(name.clone(), Value::from(bloom.encode()));
+        // the filter, and what a search's scoring needs of the file
+        // without reading it: how many documents it holds and how many
+        // words they have between them
+        token_filters.insert(name.clone(), json!({ "bloom": bloom.encode(), "docs": docs, "words": length }));
     }
     let stats = json!({
+        "format": FORMAT,
         "rows": n,
         "first": first,
         "last": last,
@@ -481,6 +507,12 @@ fn read_groups(path: &str, groups: &[usize]) -> Result<CrowFrame, String> {
 
 /// The frame a file holds and the statistics in its head, by its kind.
 fn read_with_stats(path: &str) -> Result<(CrowFrame, String), String> {
+    let (frame, stats) = read_with_stats_unchecked(path)?;
+    format_ok(path, &stats)?;
+    Ok((frame, stats))
+}
+
+fn read_with_stats_unchecked(path: &str) -> Result<(CrowFrame, String), String> {
     if is_segment(path)? {
         #[cfg(feature = "parquet")]
         {
@@ -519,6 +551,12 @@ pub fn read(path: &str) -> Result<CrowFrame, String> {
 /// `first`, `last`, `keys`, `columns` (each `kind`, `min`, `max`,
 /// `missing`, `bloom`) and `tokens` — read from the file's head alone.
 pub fn stats(path: &str) -> Result<String, String> {
+    let stats = stats_unchecked(path)?;
+    format_ok(path, &stats)?;
+    Ok(stats)
+}
+
+fn stats_unchecked(path: &str) -> Result<String, String> {
     if is_segment(path)? {
         #[cfg(feature = "parquet")]
         {
@@ -636,6 +674,161 @@ pub fn find(path: &str, column: &str, value: &str) -> Result<CrowFrame, String> 
     rows_holding(&frame, column, &want)
 }
 
+/// What one file contributes to a search: how many documents its indexed
+/// column holds and how many words they have between them (read from the
+/// file's head), and — where the file's filter admits a word asked — the
+/// rows holding one, each with its length in words and its count of each
+/// word asked.
+struct Searched {
+    docs: usize,
+    words: usize,
+    rows: Option<CrowFrame>,
+    lengths: Vec<f64>,
+    counts: Vec<Vec<f64>>,
+}
+
+fn searched(path: &str, column: &str, asked: &[String]) -> Result<Searched, String> {
+    let head: serde_json::Value = serde_json::from_str(&stats(path)?).map_err(|e| format!("batch: '{}' has unreadable statistics: {}", path, e))?;
+    let Some(indexed) = head["tokens"].get(column) else {
+        return Err(format!("batch: '{}' indexes no words of column '{}'", path, column));
+    };
+    let docs = indexed["docs"].as_u64().unwrap_or(0) as usize;
+    let words = indexed["words"].as_u64().unwrap_or(0) as usize;
+    let none = Searched { docs, words, rows: None, lengths: Vec::new(), counts: Vec::new() };
+    let Some(encoded) = indexed["bloom"].as_str() else {
+        return Err(format!("batch: '{}' indexes no words of column '{}'", path, column));
+    };
+    let bloom = Bloom::decode(encoded).map_err(|e| format!("batch: '{}': {}", path, e))?;
+    if docs == 0 || !asked.iter().any(|w| bloom.has(w.as_bytes())) {
+        return Ok(none);
+    }
+    let (frame, _) = read_with_stats(path)?;
+    let c = frame.col_index(column).ok_or_else(|| format!("batch: '{}' holds no column '{}'", path, column))?;
+    let Column::Str(t) = frame.data[c].as_ref() else {
+        return Err(format!("batch: column '{}' holds no text to search", column));
+    };
+    let valid = frame.validity[c].as_ref();
+    let position: std::collections::HashMap<&str, usize> = asked.iter().enumerate().map(|(i, w)| (w.as_str(), i)).collect();
+    let n = frame.nrows();
+    let mut mask = vec![false; n];
+    let (mut lengths, mut counts) = (Vec::new(), Vec::new());
+    for r in 0..n {
+        if !valid[r] {
+            continue;
+        }
+        let toks = tokens(t.get(r));
+        let mut count = vec![0.0; asked.len()];
+        let mut hit = false;
+        for tok in &toks {
+            if let Some(&i) = position.get(tok.as_str()) {
+                count[i] += 1.0;
+                hit = true;
+            }
+        }
+        if hit {
+            mask[r] = true;
+            lengths.push(toks.len() as f64);
+            counts.push(count);
+        }
+    }
+    if lengths.is_empty() {
+        return Ok(none);
+    }
+    Ok(Searched { docs, words, rows: Some(frame.pick_rows(&mask)?), lengths, counts })
+}
+
+/// An empty frame with a file's columns and a score.
+fn empty_scored(path: Option<&String>) -> Result<CrowFrame, String> {
+    let Some(path) = path else {
+        return Ok(CrowFrame::new(vec!["score".to_string()], vec![Column::Float(Vec::new())], vec![Vec::new()]));
+    };
+    let empty = if is_segment(path)? {
+        #[cfg(feature = "parquet")]
+        {
+            let builder = segment_builder(path)?;
+            let schema = builder.schema().clone();
+            crate::frame::frame_of_batches(&schema, std::iter::empty(), "batch")?
+        }
+        #[cfg(not(feature = "parquet"))]
+        {
+            return Err(format!("batch: '{}' is a segment, and this program was built without Parquet", path));
+        }
+    } else {
+        let reader = open(path)?;
+        let schema = reader.schema();
+        crate::frame::frame_of_batches(&schema, std::iter::empty(), "batch")?
+    };
+    empty.with_column("score", Column::Float(Vec::new()))
+}
+
+/// `sys.batch_search[paths, column, words, k]`: the `k` rows of the files
+/// whose indexed `column` best match the words — BM25 as Lucene scores it
+/// (k1 = 1.2, b = 0.75; an idf of `ln[1 + (n - df + 0.5) / (df + 0.5)]`,
+/// a term's weight `tf / (tf + k1 * (1 - b + b * dl / avgdl))`, the score
+/// their sum over the words the row holds; lengths exact, where Lucene
+/// keeps a byte of them), over the files as one corpus: `n` and the
+/// average length from every file's head, the document frequencies from
+/// the rows read. Each word asked is read as its tokens, lowercased, a
+/// word asked twice counting once; a file whose filter admits no word is
+/// not read. The rows come with the files' columns and a `score`, the
+/// best first and an earlier position first between equals; the files'
+/// columns and a `score` alone where no row matches.
+pub fn search(paths: &[String], column: &str, words: &[String], k: i64) -> Result<CrowFrame, String> {
+    if k < 0 {
+        return Err(format!("batch: a search answers at most k rows, and k is {}", k));
+    }
+    let mut asked: Vec<String> = words.iter().flat_map(|w| tokens(w)).collect();
+    let mut seen = std::collections::HashSet::new();
+    asked.retain(|w| seen.insert(w.clone()));
+    if asked.is_empty() || paths.is_empty() {
+        return empty_scored(paths.first());
+    }
+    let parts = crate::cores::map_items(paths, paths.len() * ROW_GROUP, |p| searched(p, column, &asked));
+    let parts: Vec<Searched> = parts.into_iter().collect::<Result<_, _>>()?;
+    let n: usize = parts.iter().map(|p| p.docs).sum();
+    let total: usize = parts.iter().map(|p| p.words).sum();
+    let mut df = vec![0.0; asked.len()];
+    for p in &parts {
+        for count in &p.counts {
+            for (i, c) in count.iter().enumerate() {
+                if *c > 0.0 {
+                    df[i] += 1.0;
+                }
+            }
+        }
+    }
+    if n == 0 || df.iter().all(|d| *d == 0.0) {
+        return empty_scored(paths.first());
+    }
+    let avgdl = total as f64 / n as f64;
+    let idf: Vec<f64> = df.iter().map(|d| (1.0 + (n as f64 - d + 0.5) / (d + 0.5)).ln()).collect();
+    let (k1, b) = (1.2, 0.75);
+    let mut whole: Option<CrowFrame> = None;
+    let mut scores: Vec<f64> = Vec::new();
+    for p in parts {
+        let Some(rows) = p.rows else { continue };
+        for (dl, count) in p.lengths.iter().zip(&p.counts) {
+            let mut s = 0.0;
+            for (i, tf) in count.iter().enumerate() {
+                if *tf > 0.0 {
+                    s += idf[i] * (tf / (tf + k1 * (1.0 - b + b * dl / avgdl)));
+                }
+            }
+            scores.push(s);
+        }
+        whole = Some(match whole {
+            None => rows,
+            Some(w) => w.stack(&rows)?,
+        });
+    }
+    let Some(whole) = whole else { return empty_scored(paths.first()) };
+    let scored = whole.with_column("score", Column::Float(scores))?;
+    let by_position = if scored.col_index("_pos").is_some() { scored.sort("_pos", false)? } else { scored };
+    let ranked = by_position.sort("score", true)?;
+    let keep: Vec<bool> = (0..ranked.nrows()).map(|i| i < k as usize).collect();
+    ranked.pick_rows(&keep)
+}
+
 /// Whether two rows hold the same cells in the columns.
 fn same_key(frame: &CrowFrame, cols: &[usize], i: usize, j: usize) -> bool {
     cols.iter().all(|&c| {
@@ -743,7 +936,7 @@ pub fn merge(dir: &str, paths: &[String], keys: &[String], every: bool) -> Resul
 pub fn admits(path: &str, column: &str, value: &str, token: bool) -> Result<bool, String> {
     let stats: serde_json::Value = serde_json::from_str(&stats(path)?).map_err(|e| format!("batch: '{}' has unreadable statistics: {}", path, e))?;
     if token {
-        let Some(filter) = stats["tokens"][column].as_str() else {
+        let Some(filter) = stats["tokens"][column]["bloom"].as_str() else {
             return Err(format!("batch: '{}' indexes no words of column '{}'", path, column));
         };
         let bloom = Bloom::decode(filter).map_err(|e| format!("batch: '{}': {}", path, e))?;

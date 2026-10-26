@@ -117,6 +117,35 @@ history says the rest.
 
 ### Added
 
+- The log as batch files, `use lake` (spec, lake): each `batch` one file
+  written once by the kernel (sys, `batch_write`) — the log entry, the
+  sorted level-0 segment with its statistics and the word index at once —
+  `head`, `since`, `tail` (a view that follows the log), `scan`, `latest`
+  (the table the log holds), `lookup` (files pruned by their filters),
+  `commit` (the sequencer: a stale read refused), `merge` (the files
+  folded into one Parquet segment of 8192-row groups, the latest version
+  of each key kept, or every row with `every = true`), `batches` (the
+  catalog's state), `search` (BM25 as Lucene scores it, over the whole
+  log as one corpus, the files whose filters admit no word unread; held
+  to the formula computed apart, parity 296), `metrics`, `backup` and
+  `restore` (a directory or an `s3://` prefix, the manifest written
+  last), `share` and `follow` (replication by log shipping, two
+  processes in tests/lake_share.rs). Every file's head carries the
+  format's version, so an older Crow refuses a newer file by name. Held
+  to SQLite (parity 294, 295), to a month of finch's ClickHouse and
+  Postgres rows, and to the self-check. The fifth reference app,
+  `examples/lake`, is a page over a log.
+- The Kafka door, `use kafka` (spec, kafka): `serve[root, port]` answers
+  a 0.10.1 broker's protocol in Crow over the sys layer's listener
+  (`listen`, `accept`, `address`), a topic a log under the root, a
+  producer's set one batch, a consumer's fetch `since` its offset, groups
+  of several members and committed offsets two logs of the door's own,
+  a fetch with nothing to answer waiting up to the client's `max_wait_ms`;
+  legacy message sets with their CRC-32 read and written by a kernel
+  (sys, `records`, `records_of`, `unpack`), gzip and snappy sets decoded.
+  Held to the pure-Python client in both modes (tests/kafka.rs).
+- `sys.filesize[path]`: a file's bytes from its metadata.
+
 - MCP over stdio (spec, mcp: The stdio transport): `server[command =
   'npx -y @modelcontextprotocol/server-filesystem /tmp']` names a server
   by the command that runs it, as `shell` takes a command; the process

@@ -250,6 +250,13 @@ pub fn batch_merge(dir: &str, paths: Vec<String>, keys: Vec<String>, every: bool
     crate::frames::batch_merge(dir, &paths, &keys, every)
 }
 
+/// `sys.batch_search[paths, column, words, k]`: the k rows of the files
+/// whose indexed column best match the words, BM25 as Lucene scores it,
+/// with a `score` column.
+pub fn batch_search(paths: Vec<String>, column: &str, words: Vec<String>, k: i64) -> Result<crate::frame::CrowFrame, String> {
+    crate::frames::batch_search(&paths, column, &words, k)
+}
+
 /// `sys.batch_find[path, column, value]`: the rows of the file whose
 /// column holds the value, the file's filter and its row groups'
 /// statistics asked first.
@@ -302,6 +309,16 @@ pub fn tensor_of_frame(f: &crate::frame::CrowFrame) -> Result<crate::tensor::Cro
 /// `sys.store[path, bytes]`: the bytes written to a file, as they are.
 pub fn store(path: &str, b: &Bytes) -> Result<(), String> {
     std::fs::write(path, &b.0).map_err(|e| format!("cannot write '{}': {}", path, e))
+}
+
+/// `sys.filesize[path]`: how many bytes a file holds, read from its
+/// metadata, the file itself unread.
+pub fn filesize(path: &str) -> Result<i64, String> {
+    let meta = std::fs::metadata(path).map_err(|e| format!("cannot read '{}': {}", path, e))?;
+    if meta.is_dir() {
+        return Err(format!("'{}' is a directory, not a file", path));
+    }
+    i64::try_from(meta.len()).map_err(|_| format!("'{}' is too large to size", path))
 }
 
 /// `sys.random[n]`: n bytes from the operating system's randomness.

@@ -800,6 +800,19 @@ pub fn batch_merge(dir: &str, paths: &[String], keys: &[String], every: bool) ->
     }
 }
 
+/// `sys.batch_search[paths, column, words, k]`, likewise.
+pub fn batch_search(paths: &[String], column: &str, words: &[String], k: i64) -> Result<CrowFrame, String> {
+    #[cfg(feature = "arrow")]
+    {
+        crate::batch::search(paths, column, words, k)
+    }
+    #[cfg(not(feature = "arrow"))]
+    {
+        let _ = (paths, column, words, k);
+        Err("batch: this program was built without Arrow".to_string())
+    }
+}
+
 /// `sys.batch_find[path, column, value]`, likewise.
 pub fn batch_find(path: &str, column: &str, value: &str) -> Result<CrowFrame, String> {
     #[cfg(feature = "arrow")]

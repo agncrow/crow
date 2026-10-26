@@ -83,3 +83,4 @@ editors/vscode/node_modules/
 !tests/self/agreement-only.txt
 !tests/self/forms.txt
 !tests/freeze/names.txt
+examples/lake/orders/

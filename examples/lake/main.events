@@ -1,0 +1,16 @@
+[
+  {"expect": "Orders"},
+  {"expect": "apples"},
+  {"expect": "2 rows in 1 files, head at 1"},
+  {"event": "__field:new_item", "value": "plums"},
+  {"event": "__field:new_note", "value": "plums for the kitchen table"},
+  {"event": "add"},
+  {"expect": "plums"},
+  {"expect": "3 rows in 2 files, head at 2"},
+  {"event": "__field:search_words", "value": "kitchen"},
+  {"expect": "2 hits"},
+  {"event": "__field:search_words", "value": "shop"},
+  {"expect": "1 hits"},
+  {"event": "__field:search_words", "value": "zebra"},
+  {"expect": "0 hits"}
+]
