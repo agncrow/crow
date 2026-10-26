@@ -193,19 +193,42 @@ fn kind_word(col: &Column) -> &'static str {
     }
 }
 
+/// How many distinct values a column's filter covers at most: past it
+/// the column is left to its min and max (a timestamp, a position, a
+/// price — every cell its own value — had been given a filter sized by
+/// the rows, 130 MB of filters in a month's segment and 180 ms to open it).
+pub const DISTINCT_MOST: usize = 1 << 16;
+
 /// The statistics of one column: its kind, min and max over the present
 /// cells (none where every cell is missing; a NaN is no min or max), how
-/// many cells are missing, and a filter over the present cells.
+/// many cells are missing, and a filter over the distinct present values
+/// where they are few enough (none otherwise).
 fn column_stats(col: &Column, valid: &crate::validity::Validity) -> serde_json::Value {
     use serde_json::{json, Value};
     let n = col.len();
     let present: Vec<usize> = (0..n).filter(|&i| valid[i]).collect();
-    let mut bloom = Bloom::sized(present.len());
+    let mut distinct: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
     let mut bytes = Vec::new();
+    let mut filtered = true;
     for &i in &present {
         cell_bytes(col, i, &mut bytes);
-        bloom.add(&bytes);
+        if !distinct.contains(&bytes) {
+            if distinct.len() >= DISTINCT_MOST {
+                filtered = false;
+                break;
+            }
+            distinct.insert(bytes.clone());
+        }
     }
+    let bloom = if filtered {
+        let mut b = Bloom::sized(distinct.len());
+        for v in &distinct {
+            b.add(v);
+        }
+        Value::from(b.encode())
+    } else {
+        Value::Null
+    };
     let (min, max): (Value, Value) = match col {
         Column::Int(v) => {
             let it = present.iter().map(|&i| v[i]);
@@ -228,7 +251,7 @@ fn column_stats(col: &Column, valid: &crate::validity::Validity) -> serde_json::
             (it.clone().min().map_or(Value::Null, |s| Value::from(s)), it.max().map_or(Value::Null, |s| Value::from(s)))
         }
     };
-    json!({ "kind": kind_word(col), "min": min, "max": max, "missing": n - present.len(), "bloom": bloom.encode() })
+    json!({ "kind": kind_word(col), "min": min, "max": max, "missing": n - present.len(), "bloom": bloom })
 }
 
 /// The statistics of a frame about to be written: its row count and
@@ -367,13 +390,39 @@ fn is_segment(path: &str) -> Result<bool, String> {
     Ok(n == 4 && &head == b"PAR1")
 }
 
-/// A segment's reader over its file: the footer read, the rows not until
-/// asked (reading the whole file for its statistics had cost a lookup
-/// ten milliseconds).
+/// A segment's parsed footer, kept per process by the file's path, size
+/// and modification time: a segment is immutable, and parsing a month's
+/// footer had cost each call 180 ms.
+#[cfg(feature = "parquet")]
+fn segment_metadata(path: &str) -> Result<(std::fs::File, parquet::arrow::arrow_reader::ArrowReaderMetadata), String> {
+    use parquet::arrow::arrow_reader::{ArrowReaderMetadata, ArrowReaderOptions};
+    use std::sync::{Mutex, OnceLock};
+    type Key = (String, u64, Option<std::time::SystemTime>);
+    static FOOTERS: OnceLock<Mutex<std::collections::HashMap<Key, ArrowReaderMetadata>>> = OnceLock::new();
+    let file = std::fs::File::open(path).map_err(|e| format!("batch: cannot read '{}': {}", path, e))?;
+    let meta = file.metadata().map_err(|e| format!("batch: cannot read '{}': {}", path, e))?;
+    let key: Key = (path.to_string(), meta.len(), meta.modified().ok());
+    let footers = FOOTERS.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    if let Some(found) = footers.lock().ok().and_then(|m| m.get(&key).cloned()) {
+        return Ok((file, found));
+    }
+    let parsed = ArrowReaderMetadata::load(&file, ArrowReaderOptions::new()).map_err(|e| format!("batch: '{}' is no segment: {}", path, e))?;
+    if let Ok(mut m) = footers.lock() {
+        if m.len() > 1024 {
+            m.clear();
+        }
+        m.insert(key, parsed.clone());
+    }
+    Ok((file, parsed))
+}
+
+/// A segment's reader over its file: the footer read once per process,
+/// the rows not until asked (reading the whole file for its statistics
+/// had cost a lookup ten milliseconds).
 #[cfg(feature = "parquet")]
 fn segment_builder(path: &str) -> Result<parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder<std::fs::File>, String> {
-    let file = std::fs::File::open(path).map_err(|e| format!("batch: cannot read '{}': {}", path, e))?;
-    parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(file).map_err(|e| format!("batch: '{}' is no segment: {}", path, e))
+    let (file, metadata) = segment_metadata(path)?;
+    Ok(parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::new_with_metadata(file, metadata))
 }
 
 /// The statistics a Parquet segment carries: in its Arrow schema, or in
@@ -386,6 +435,50 @@ fn segment_stats<T: parquet::file::reader::ChunkReader + 'static>(builder: &parq
     builder.metadata().file_metadata().key_value_metadata()?.iter().find(|kv| kv.key == META).and_then(|kv| kv.value.clone())
 }
 
+/// A segment's row groups decoded a column at a time across the cores:
+/// each column its own reader over the file (the footer parsed once and
+/// shared), its row groups in one pass, and the columns gathered into the
+/// frame with no row copied (decoding the groups across the cores and
+/// joining the pieces had been slower than one reader: the join copied
+/// every row; a column's decode is a third of a day's cost, and twelve
+/// columns run at once).
+#[cfg(feature = "parquet")]
+fn read_groups(path: &str, groups: &[usize]) -> Result<CrowFrame, String> {
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+    use parquet::arrow::ProjectionMask;
+    let (file, metadata) = segment_metadata(path)?;
+    let schema = metadata.schema().clone();
+    if groups.is_empty() {
+        return crate::frame::frame_of_batches(&schema, std::iter::empty(), "batch");
+    }
+    let n = schema.fields().len();
+    let rows: usize = groups.iter().map(|&g| metadata.metadata().row_group(g).num_rows() as usize).sum();
+    // (one column, or few rows: one reader does it)
+    if n <= 1 || rows < ROW_GROUP {
+        let reader = ParquetRecordBatchReaderBuilder::new_with_metadata(file, metadata).with_row_groups(groups.to_vec()).with_batch_size(ROW_GROUP).build().map_err(|e| format!("batch: '{}': {}", path, e))?;
+        return crate::frame::frame_of_batches(&schema, reader, "batch");
+    }
+    drop(file);
+    let columns: Vec<usize> = (0..n).collect();
+    let parts: Vec<Result<CrowFrame, String>> = crate::cores::map_items(&columns, rows * n, |&i| {
+        let file = std::fs::File::open(path).map_err(|e| format!("batch: cannot read '{}': {}", path, e))?;
+        let mask = ProjectionMask::leaves(metadata.parquet_schema(), [i]);
+        let one = std::sync::Arc::new(arrow::datatypes::Schema::new(vec![schema.field(i).clone()]));
+        let reader = ParquetRecordBatchReaderBuilder::new_with_metadata(file, metadata.clone()).with_projection(mask).with_row_groups(groups.to_vec()).with_batch_size(ROW_GROUP).build().map_err(|e| format!("batch: '{}': {}", path, e))?;
+        crate::frame::frame_of_batches(&one, reader, "batch")
+    });
+    let mut names = Vec::with_capacity(n);
+    let mut data = Vec::with_capacity(n);
+    let mut validity = Vec::with_capacity(n);
+    for part in parts {
+        let part = part?;
+        names.extend(part.columns.into_iter());
+        data.extend(part.data.into_iter());
+        validity.extend(part.validity.into_iter());
+    }
+    Ok(CrowFrame { columns: names, data, validity })
+}
+
 /// The frame a file holds and the statistics in its head, by its kind.
 fn read_with_stats(path: &str) -> Result<(CrowFrame, String), String> {
     if is_segment(path)? {
@@ -393,9 +486,8 @@ fn read_with_stats(path: &str) -> Result<(CrowFrame, String), String> {
         {
             let builder = segment_builder(path)?;
             let stats = segment_stats(&builder).ok_or_else(|| format!("batch: '{}' is no segment: it carries no statistics", path))?;
-            let schema = builder.schema().clone();
-            let reader = builder.build().map_err(|e| format!("batch: '{}': {}", path, e))?;
-            let frame = crate::frame::frame_of_batches(&schema, reader, "batch")?;
+            let groups: Vec<usize> = (0..builder.metadata().num_row_groups()).collect();
+            let frame = read_groups(path, &groups)?;
             return Ok((frame, stats));
         }
         #[cfg(not(feature = "parquet"))]
@@ -509,13 +601,17 @@ pub fn find(path: &str, column: &str, value: &str) -> Result<CrowFrame, String> 
     let kind = col["kind"].as_str().unwrap_or("");
     let want = parsed(kind, value).map_err(|e| format!("batch: column '{}': {}", column, e))?;
     let bytes = value_bytes(kind, value).map_err(|e| format!("batch: column '{}': {}", column, e))?;
-    let bloom = Bloom::decode(col["bloom"].as_str().unwrap_or("")).map_err(|e| format!("batch: '{}': {}", path, e))?;
+    let bloom = match col["bloom"].as_str() {
+        Some(encoded) => Some(Bloom::decode(encoded).map_err(|e| format!("batch: '{}': {}", path, e))?),
+        None => None,
+    };
+    let admitted = |b: &[u8]| bloom.as_ref().is_none_or(|f| f.has(b));
     if is_segment(path)? {
         #[cfg(feature = "parquet")]
         {
             let builder = segment_builder(path)?;
             let schema = builder.schema().clone();
-            if !bloom.has(&bytes) {
+            if !admitted(&bytes) {
                 return crate::frame::frame_of_batches(&schema, std::iter::empty(), "batch");
             }
             let leaf = schema.fields().iter().position(|f| f.name() == column).ok_or_else(|| format!("batch: '{}' holds no column '{}'", path, column))?;
@@ -523,8 +619,7 @@ pub fn find(path: &str, column: &str, value: &str) -> Result<CrowFrame, String> 
             if groups.is_empty() {
                 return crate::frame::frame_of_batches(&schema, std::iter::empty(), "batch");
             }
-            let reader = builder.with_row_groups(groups).build().map_err(|e| format!("batch: '{}': {}", path, e))?;
-            let frame = crate::frame::frame_of_batches(&schema, reader, "batch")?;
+            let frame = read_groups(path, &groups)?;
             return rows_holding(&frame, column, &want);
         }
         #[cfg(not(feature = "parquet"))]
@@ -534,7 +629,7 @@ pub fn find(path: &str, column: &str, value: &str) -> Result<CrowFrame, String> 
     }
     let reader = open(path)?;
     let schema = reader.schema();
-    if !bloom.has(&bytes) {
+    if !admitted(&bytes) {
         return crate::frame::frame_of_batches(&schema, std::iter::empty(), "batch");
     }
     let frame = crate::frame::frame_of_batches(&schema, reader, "batch")?;
@@ -660,7 +755,9 @@ pub fn admits(path: &str, column: &str, value: &str, token: bool) -> Result<bool
     };
     let kind = col["kind"].as_str().unwrap_or("");
     let bytes = value_bytes(kind, value).map_err(|e| format!("batch: column '{}': {}", column, e))?;
-    let bloom = Bloom::decode(col["bloom"].as_str().unwrap_or("")).map_err(|e| format!("batch: '{}': {}", path, e))?;
+    // a column of too many distinct values has no filter: it may hold anything
+    let Some(encoded) = col["bloom"].as_str() else { return Ok(true) };
+    let bloom = Bloom::decode(encoded).map_err(|e| format!("batch: '{}': {}", path, e))?;
     Ok(bloom.has(&bytes))
 }
 
@@ -882,5 +979,53 @@ mod tests {
         let again = Bloom::decode(&b.encode()).unwrap();
         assert!(again.has(b"x"));
         assert!(!again.has(b"y"));
+    }
+}
+
+#[cfg(all(test, feature = "parquet"))]
+mod profile {
+    //! Where a day's read goes: run by hand on a real segment,
+    //! `CROW_SEGMENT=path cargo test --release -p crow_runtime --features parquet profile -- --ignored --nocapture`
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn stages_of_a_days_read() {
+        use parquet::arrow::arrow_reader::{ArrowReaderMetadata, ArrowReaderOptions, ParquetRecordBatchReaderBuilder};
+        let Ok(path) = std::env::var("CROW_SEGMENT") else { return };
+        let day = std::env::var("CROW_DAY").unwrap_or("2026-09-17".to_string());
+        let t = std::time::Instant::now();
+        let file = std::fs::File::open(&path).unwrap();
+        let metadata = ArrowReaderMetadata::load(&file, ArrowReaderOptions::new()).unwrap();
+        println!("footer: {:?} ({} groups)", t.elapsed(), metadata.metadata().num_row_groups());
+        let want = Parsed::Text(day.clone());
+        let leaf = metadata.schema().fields().iter().position(|f| f.name() == "day").unwrap();
+        let groups: Vec<usize> = (0..metadata.metadata().num_row_groups()).filter(|&g| group_admits(metadata.metadata().row_group(g).column(leaf).statistics(), &want)).collect();
+        println!("groups admitted: {}", groups.len());
+        // a: decode to record batches only, one reader
+        let t = std::time::Instant::now();
+        let file = std::fs::File::open(&path).unwrap();
+        let reader = ParquetRecordBatchReaderBuilder::new_with_metadata(file, metadata.clone()).with_row_groups(groups.clone()).with_batch_size(ROW_GROUP).build().unwrap();
+        let batches: Vec<_> = reader.map(|b| b.unwrap()).collect();
+        let rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        println!("decode to arrow, one reader: {:?} ({} rows, {} batches)", t.elapsed(), rows, batches.len());
+        // b: conversion of those batches
+        let t = std::time::Instant::now();
+        let schema = metadata.schema().clone();
+        let f = crate::frame::frame_of_batches(&schema, batches.into_iter().map(Ok), "batch").unwrap();
+        println!("arrow to frame: {:?} ({} rows)", t.elapsed(), f.nrows());
+        // c: the parallel reader as built
+        let t = std::time::Instant::now();
+        let f = read_groups(&path, &groups).unwrap();
+        println!("read_groups across the cores: {:?} ({} rows)", t.elapsed(), f.nrows());
+        // d: per column decode cost: projection of one column at a time
+        for (i, field) in schema.fields().iter().enumerate() {
+            let t = std::time::Instant::now();
+            let file = std::fs::File::open(&path).unwrap();
+            let mask = parquet::arrow::ProjectionMask::leaves(metadata.parquet_schema(), [i]);
+            let reader = ParquetRecordBatchReaderBuilder::new_with_metadata(file, metadata.clone()).with_projection(mask).with_row_groups(groups.clone()).with_batch_size(ROW_GROUP).build().unwrap();
+            let n: usize = reader.map(|b| b.unwrap().num_rows()).sum();
+            println!("  column {} ({:?}): {:?} ({} rows)", field.name(), field.data_type(), t.elapsed(), n);
+        }
     }
 }

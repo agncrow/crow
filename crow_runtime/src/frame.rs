@@ -2525,14 +2525,27 @@ where
         };
         kinds.push(kind);
     }
-    let mut columns: Vec<Column> = kinds
+    // each column as it is built: a text column through the builder that
+    // codes it while its values stay few (a symbol, a day) and holds it
+    // plain otherwise; a column already of the kind read without a cast;
+    // the validity from the array's own bitmap (a cell at a time, each
+    // cast and each `is_valid` a call, had cost a segment's row group nine
+    // milliseconds — a day of finch's bars half a second)
+    enum Built {
+        Int(Vec<i64>),
+        Float(Vec<f64>),
+        Bool(Vec<bool>),
+        Str(crate::textcol::TextBuilder),
+        Moment(Vec<i64>),
+    }
+    let mut built: Vec<Built> = kinds
         .iter()
         .map(|(k, _)| match *k {
-            "int" => Column::Int(Vec::new()),
-            "float" => Column::Float(Vec::new()),
-            "bool" => Column::Bool(Vec::new()),
-            "text" => Column::Str(Text::new()),
-            _ => Column::DateTime(Vec::new(), Vec::new()),
+            "int" => Built::Int(Vec::new()),
+            "float" => Built::Float(Vec::new()),
+            "bool" => Built::Bool(Vec::new()),
+            "text" => Built::Str(crate::textcol::TextBuilder::with_capacity(0)),
+            _ => Built::Moment(Vec::new()),
         })
         .collect();
     let mut validity: Vec<Vec<bool>> = vec![Vec::new(); kinds.len()];
@@ -2541,29 +2554,54 @@ where
         let batch = batch.map_err(|e| format!("{}: {}", what, e))?;
         for (i, array) in batch.columns().iter().enumerate() {
             let name = schema.field(i).name();
-            let cast = arrow::compute::cast_with_options(array, &kinds[i].1, &options).map_err(|e| format!("{}: column '{}': {}", what, name, e))?;
-            validity[i].extend((0..cast.len()).map(|r| cast.is_valid(r)));
-            match &mut columns[i] {
-                Column::Int(v) => v.extend(cast.as_primitive::<Int64Type>().values().iter().copied()),
-                Column::Float(v) => v.extend(cast.as_primitive::<Float64Type>().values().iter().copied()),
-                Column::Bool(v) => {
+            let cast = if array.data_type() == &kinds[i].1 {
+                array.clone()
+            } else {
+                arrow::compute::cast_with_options(array, &kinds[i].1, &options).map_err(|e| format!("{}: column '{}': {}", what, name, e))?
+            };
+            match cast.nulls() {
+                None => validity[i].extend(std::iter::repeat(true).take(cast.len())),
+                Some(nulls) => validity[i].extend(nulls.iter()),
+            }
+            match &mut built[i] {
+                Built::Int(v) => v.extend_from_slice(cast.as_primitive::<Int64Type>().values()),
+                Built::Float(v) => v.extend_from_slice(cast.as_primitive::<Float64Type>().values()),
+                Built::Bool(v) => {
                     let b = cast.as_boolean();
-                    v.extend((0..b.len()).map(|r| b.value(r)));
+                    v.extend(b.values().iter());
                 }
-                Column::Str(v) => {
+                Built::Str(t) => {
                     let s = cast.as_string::<i32>();
-                    for r in 0..s.len() {
-                        v.push(if s.is_valid(r) { s.value(r) } else { "" });
+                    match s.nulls() {
+                        None => {
+                            for r in 0..s.len() {
+                                t.push(s.value(r));
+                            }
+                        }
+                        Some(nulls) => {
+                            for (r, present) in nulls.iter().enumerate() {
+                                t.push(if present { s.value(r) } else { "" });
+                            }
+                        }
                     }
                 }
-                Column::DateTime(ms, offsets) => {
-                    let t = cast.as_primitive::<TimestampMillisecondType>();
-                    ms.extend(t.values().iter().copied());
-                    offsets.extend(std::iter::repeat(0).take(t.len()));
-                }
+                Built::Moment(ms) => ms.extend_from_slice(cast.as_primitive::<TimestampMillisecondType>().values()),
             }
         }
     }
+    let columns: Vec<Column> = built
+        .into_iter()
+        .map(|b| match b {
+            Built::Int(v) => Column::Int(v),
+            Built::Float(v) => Column::Float(v),
+            Built::Bool(v) => Column::Bool(v),
+            Built::Str(t) => Column::Str(t.finish()),
+            Built::Moment(ms) => {
+                let n = ms.len();
+                Column::DateTime(ms, vec![0; n])
+            }
+        })
+        .collect();
     let names: Vec<String> = schema.fields().iter().map(|f| f.name().clone()).collect();
     Ok(CrowFrame::new(names, columns, validity))
 }
