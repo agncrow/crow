@@ -413,6 +413,28 @@ history says the rest.
 
 ### Fixed
 
+- Five shapes over a log's open frames that one mode had accepted and
+  the other refused (parity 297, found by the lake's benchmark): a frame
+  literal built from an open frame's cells — `frame.new[last =
+  [rows.close[i]]]` — builds compiled (the runtime's `Cells` takes a
+  list of parsed values: whole numbers as ints, numbers as floats,
+  bools, texts, a null a missing cell); a mask conjunction over a frame
+  that can fail (`ds[ds.day eq day and ds.status eq 'ready']` of a
+  `latest`) is joined truth by truth where the emitter had printed `&`
+  of two lists; `sum[where[mask, column, 0.0]]` over a column that can
+  fail converts the marked column for math's sum (the verifier had
+  refused the call); a helper handed a frame begun as `frame.new[]` and
+  filled in a branch is one copy with the open frame's (a frame of no
+  known columns is no signature of its own, and the recorded frames are
+  joined); and a fallible local assigned in a branch under its own
+  guard (`if hit.ok` then `out = hit`) copies its payload out where the
+  local is read again (compiled, the frame had been moved: E0382).
+- The interpreter compares a column of one kind with a value in one
+  loop — numbers, moments or text — where it had asked `holds` of each
+  cell: a day's 871,527 timestamps against an instant 12 → 7 ms. A
+  column is still read into its cells first (6 ns a row); a column
+  value kind in the interpreter is the fix behind this one.
+
 - Ending a process `start` began signals its own group and nothing else
   on Linux: the group had been written `kill -TERM -<pid>`, which
   procps's `kill` (4.0.4, Ubuntu's) reads as a signal to every process

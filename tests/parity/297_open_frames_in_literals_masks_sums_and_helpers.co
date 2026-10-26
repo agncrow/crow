@@ -1,0 +1,68 @@
+--- Five shapes over a log's open frames (spec, lake; Frames) that one
+--- mode had accepted and the other refused, found by the lake's
+--- benchmark: a frame literal built from an open frame's cells (compiled,
+--- `Cells` took no list of parsed values); a mask conjunction over a
+--- frame that can fail (compiled, printed as `&` of two lists); the sum
+--- of a `where` over a column that can fail (the verifier: the marked
+--- column reached math's sum unconverted); a helper handed a frame begun
+--- as `frame.new[]` and filled in a branch (a copy typed by the empty
+--- literal refused the sort); and a fallible local assigned in a branch
+--- under its own guard, then read again (compiled, moved out: E0382).
+--- The same in both modes.
+use lake
+use frame
+use math
+
+d = 'parity-297-open'
+gone = rm[d]
+f = frame.new[sym = ['A', 'B', 'A'], close = [1.5, 2.5, 3.5], status = ['ready', 'late', 'ready'], day = ['d1', 'd1', 'd1'], when = ['2026-09-17T10:00:00Z', '2026-09-17T10:01:00Z', '2026-09-17T10:02:00Z']]
+f.ts = moment[f.when]
+first = batch[d, f, by = ['sym']]
+log[first]
+
+--- a frame literal from an open frame's cells, in a function whose
+--- parameter is typed by the calls
+fn answer[rows, cut]
+    mine = sort[rows[rows.ts lte cut], 'ts']
+    return frame.new[last = [mine.close[len[mine] - 1]], n = [len[mine]]]
+cut = moment['2026-09-17T10:05:00Z']
+rows = lookup[d, ['sym'], ['A']]
+log[answer[rows, cut].last]
+held = lookup[d, ['sym'], ['B']]
+log[answer[held, cut].last]
+log[answer[held, cut].n]
+
+--- a mask conjunction over a frame that can fail
+day = env['PARITY_297_DAY', 'd1']
+ds = latest[d, ['sym']]
+dd = ds[ds.day eq day and ds.status eq 'ready' and ds.sym eq 'A']
+log[dd.close]
+log[len[ds[ds.day eq day or ds.sym eq 'nobody']]]
+
+--- the sum of a where over a column that can fail
+near = moment['2026-09-17T10:01:30Z']
+r = rows[rows.ts lte near]
+total = 0.0
+for i in range[2]
+    v = float[r.close]
+    pv = r.close .* v
+    in60 = r.ts gte moment[near] - 60.0
+    pv60 = where[in60, pv, 0.0]
+    total = total + sum[pv60]
+log[total]
+
+--- a helper handed a frame begun empty and filled in a branch, after a
+--- call with the open frame itself
+fn ordered[frame_rows]
+    return sort[frame_rows, '_pos']
+hit = lookup[d, ['sym'], ['A']]
+out = frame.new[]
+if hit.ok
+    out = hit
+log[ordered[hit]._pos]
+log[ordered[out]._pos]
+
+--- a fallible local assigned in a branch under its guard, read again
+log[len[hit]]
+log[len[out]]
+gone = rm[d]

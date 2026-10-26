@@ -198,10 +198,21 @@ impl Emitter {
                         return bound.clone();
                     }
                     let inner = self.expr(expr);
-                    if matches!(self.tt(expr), Ty::Result(_)) {
-                        format!("({}).value", inner)
-                    } else {
-                        inner
+                    match self.tt(expr) {
+                        Ty::Result(p) => {
+                            // the payload, copied out of a local read again
+                            // later, as a guard's `known` read copies it: a
+                            // branch's `out = hit` under `if hit.ok` had moved
+                            // the frame out of `hit`, which the line after
+                            // the branch read (E0382)
+                            let reread = matches!(expr.as_ref(), Expr::Local(..) | Expr::Derived(..) | Expr::Load(..)) || (matches!(expr.as_ref(), Expr::Move(..)) && !self.moved_local(expr));
+                            if reread && !Self::is_copy_type(&p) {
+                                format!("({}).value.clone()", inner)
+                            } else {
+                                format!("({}).value", inner)
+                            }
+                        }
+                        _ => inner,
                     }
                 }
                 // a value a guard made known good: its payload, copied out
@@ -694,8 +705,27 @@ impl Emitter {
                 _ => lti.unify(&rti),
             };
             let default_val = result_type.default_rust_value();
+            let bool_list = |t: &Ty| matches!(t, Ty::List(i) if matches!(i.as_ref(), Ty::Bool));
             let inner_expr = match (&lti, &rti) {
                 _ if compared.is_some() => compared.unwrap_or_default(),
+                // masks joined truth by truth, as the plain path joins them:
+                // `ds[ds.day eq day and ds.status eq 'ready']` over a frame
+                // that can fail had printed `Vec<bool> & Vec<bool>`, which
+                // Rust refuses
+                _ if matches!(op, "and" | "or") && (lti.truths_depth() >= 2 || rti.truths_depth() >= 2) => {
+                    self.needs_crow_runtime = true;
+                    let both = op == "and";
+                    if lti.is_truths() && rti.is_truths() {
+                        format!("crow_runtime::mask::joined(&({}), &({}), {}).unwrap_or_else(|e| crow_stop({}, e))", l_val, r_val, both, self.line_now())
+                    } else if lti.is_truths() {
+                        format!("{{ let _m = &({}); let _s: bool = {}; crow_runtime::mask::joined_with(_m, _s, {}) }}", l_val, r_val, both)
+                    } else {
+                        format!("{{ let _s: bool = {}; crow_runtime::mask::joined_with(&({}), _s, {}) }}", l_val, r_val, both)
+                    }
+                }
+                _ if matches!(op, "and" | "or") && bool_list(&lti) && bool_list(&rti) => format!("({}).iter().zip(({}).iter()).map(|(_a, _b)| *_a {} *_b).collect::<Vec<bool>>()", l_val, r_val, op_str),
+                _ if matches!(op, "and" | "or") && lti == Ty::Bool && bool_list(&rti) => format!("{{ let _s: bool = {}; ({}).iter().map(|_b| _s {} *_b).collect::<Vec<bool>>() }}", l_val, r_val, op_str),
+                _ if matches!(op, "and" | "or") && bool_list(&lti) && rti == Ty::Bool => format!("{{ let _m = &({}); let _s: bool = {}; _m.iter().map(|_a| *_a {} _s).collect::<Vec<bool>>() }}", l_val, r_val, op_str),
                 _ if matches!(op, "eq" | "ne") && Self::numbers_mix(&lti, &rti) => {
                     let not = if op == "ne" { "!" } else { "" };
                     format!("{}crow_runtime::tensor::numbers_equal(&{}, &{})", not, l_val, r_val)

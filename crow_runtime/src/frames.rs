@@ -100,6 +100,32 @@ impl From<crate::moments::Moment> for Cells {
         Cells::One(Cell::Moment(m))
     }
 }
+/// A list of parsed values as a column: numbers that are all whole as
+/// ints, numbers as floats, bools, texts; a null a missing cell; a list
+/// of several kinds as each value's own text. What a frame literal built
+/// from the cells of an open frame (`frame.new[last = [rows.close[i]]]`)
+/// hands over compiled, where the interpreter holds the cells themselves.
+impl From<Vec<serde_json::Value>> for Cells {
+    fn from(items: Vec<serde_json::Value>) -> Self {
+        use serde_json::Value as J;
+        let valid: Vec<bool> = items.iter().map(|v| !v.is_null()).collect();
+        let present = || items.iter().filter(|v| !v.is_null());
+        let any = present().next().is_some();
+        let column = if any && present().all(|v| v.as_i64().is_some()) {
+            Column::Int(items.iter().map(|v| v.as_i64().unwrap_or(0)).collect())
+        } else if any && present().all(|v| v.is_number()) {
+            Column::Float(items.iter().map(|v| v.as_f64().unwrap_or(f64::NAN)).collect())
+        } else if any && present().all(|v| v.is_boolean()) {
+            Column::Bool(items.iter().map(|v| v.as_bool().unwrap_or(false)).collect())
+        } else if present().all(|v| v.is_string()) {
+            Column::Str(items.iter().map(|v| v.as_str().unwrap_or("").to_string()).collect())
+        } else {
+            Column::Str(items.iter().map(|v| match v { J::String(s) => s.clone(), J::Null => String::new(), other => other.to_string() }).collect())
+        };
+        Cells::Column(column, Validity::from(valid))
+    }
+}
+
 impl From<CrowTensor> for Cells {
     fn from(t: CrowTensor) -> Self {
         Cells::all(Column::Float(t.to_vec()))

@@ -427,6 +427,53 @@ fn mask_cell(v: &Value) -> crow_runtime::mask::Cell<'_> {
 /// missing cell false for every operator, `ne` included.
 fn mask(items: &[CrowValue], cmp: Cmp, value: &Value) -> Result<CrowValue, String> {
     let value = mask_cell(value);
+    // a column's cells are of one kind: numbers, moments or text against
+    // a value of their kind compare in one loop, each item's kind checked
+    // by a match and nothing else (the general path asks `holds` per item,
+    // which checks the kinds compare and builds a result each time — a
+    // day's 871,527 timestamps against an instant had taken twice the
+    // kernel's time). A kind the loop does not expect falls to the general
+    // path, which refuses it with the reason.
+    let truth = |b: bool| CrowValue::ok(Value::Bool(b));
+    let fast: Option<Vec<CrowValue>> = match value {
+        crow_runtime::mask::Cell::Number(y) => {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items {
+                let x = match item.value {
+                    Value::Float(x) => x,
+                    Value::Int(n) => n as f64,
+                    _ => return mask_slow(items, cmp, value),
+                };
+                out.push(truth(item.is_ok() && cmp.of(x.partial_cmp(&y))));
+            }
+            Some(out)
+        }
+        crow_runtime::mask::Cell::Moment(y) => {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items {
+                let Value::Moment(m) = item.value else { return mask_slow(items, cmp, value) };
+                out.push(truth(item.is_ok() && cmp.of(Some(m.ms.cmp(&y)))));
+            }
+            Some(out)
+        }
+        crow_runtime::mask::Cell::Text(y) => {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items {
+                let Value::Str(t) = &item.value else { return mask_slow(items, cmp, value) };
+                out.push(truth(item.is_ok() && cmp.of(Some(t.as_str().cmp(y)))));
+            }
+            Some(out)
+        }
+        _ => None,
+    };
+    match fast {
+        Some(out) => Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(out)))),
+        None => mask_slow(items, cmp, value),
+    }
+}
+
+/// `mask`, item by item through the one function both backends call.
+fn mask_slow(items: &[CrowValue], cmp: Cmp, value: crow_runtime::mask::Cell) -> Result<CrowValue, String> {
     let out = items
         .iter()
         .map(|item| crow_runtime::mask::holds(cmp, mask_cell(&item.value), item.is_ok(), value).map(|b| CrowValue::ok(Value::Bool(b))))

@@ -67,7 +67,7 @@ impl Cmp {
         !matches!(self, Cmp::Eq | Cmp::Ne)
     }
 
-    fn of(self, ord: Option<Ordering>) -> bool {
+    pub fn of(self, ord: Option<Ordering>) -> bool {
         match self {
             Cmp::Eq => ord == Some(Ordering::Equal),
             Cmp::Ne => ord != Some(Ordering::Equal),

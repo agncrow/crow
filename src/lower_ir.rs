@@ -6112,7 +6112,10 @@ impl<'a> Lowerer<'a> {
                     // which both backends read through — the call hands its
                     // failure on, and a list of ints that could fail had
                     // reached a tensor's parameter as it was)
-                    _ if matches!(&x, Expr::Convert { how: Convert::Unwrap, expr, .. } if !matches!(expr.ty().payload(), Ty::List(_))) => false,
+                    // (a column that can fail too — `sum[where[m, c, 0.0]]`
+                    // had handed the marked column to math's sum as it was,
+                    // and the verifier refused it)
+                    _ if matches!(&x, Expr::Convert { how: Convert::Unwrap, expr, .. } if !matches!(expr.ty().payload(), Ty::List(_) | Ty::Column(_))) => false,
                     // numbers that can fail are numbers too, a failed one
                     // stopping where they are read (as a column's missing
                     // cell does)

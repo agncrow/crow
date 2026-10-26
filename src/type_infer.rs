@@ -926,6 +926,9 @@ impl TypeContext {
                     } else if Self::empty_collection(held) && given.is_concrete() {
                         // (an empty collection's items, once a call says them)
                         *held = given.clone();
+                    } else if matches!((&*held, given), (Ty::Frame(_), Ty::Frame(_))) {
+                        // (a frame's columns, joined: open where the calls differ)
+                        *held = held.unify(given);
                     }
                 }
             }
@@ -1158,7 +1161,17 @@ impl TypeContext {
                 !(Self::empty_collection(x) && matrix(y) || Self::empty_collection(y) && matrix(x))
             }
         };
-        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.compatible(y) && ranks_agree(x, y) && x.has_markup() == y.has_markup() && x.frame_cols() == y.frame_cols())
+        // (two frames of different known columns are two signatures, each
+        // copy checked at its own columns; a frame of no columns known —
+        // open, or the empty literal a frame is built from — says nothing
+        // of them, and is the other's: `ordered[out]` with `out` begun as
+        // `frame.new[]` and filled in a branch had made a copy typed by the
+        // empty literal, which refused the sort the open copy allowed)
+        let frames_alike = |x: &Ty, y: &Ty| match (x.frame_cols(), y.frame_cols()) {
+            (Some(Some(a)), Some(Some(b))) => a.open || b.open || a.cols.is_empty() || b.cols.is_empty() || a == b,
+            _ => true,
+        };
+        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.compatible(y) && ranks_agree(x, y) && x.has_markup() == y.has_markup() && frames_alike(x, y))
     }
 
     /// The specialization of `name` a call reaches, given its arguments'
