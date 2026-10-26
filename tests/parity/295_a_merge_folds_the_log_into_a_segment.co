@@ -1,0 +1,54 @@
+--- A merge folds the log's files into one segment (spec, lake: `merge`),
+--- a Parquet file the same readers read: the latest version of each key
+--- kept, sorted by key, the positions as they were, the word filters
+--- carried over. The same in both modes, and held to SQLite: the table
+--- after a merge is the table before it, and a lookup through the segment
+--- answers what the rows say.
+use lake
+use frame
+use db
+
+d = 'parity-295-lake'
+r = rm[d]
+m = mkdir[d]
+a = batch[d, frame.new[id = [3, 1, 2], name = ['Apple pie', 'banana split', 'cherry tart'], qty = [1, 2, 3]], by = ['id'], texts = ['name']]
+b = batch[d, frame.new[id = [1, 4], name = ['apple crumble', 'durian'], qty = [20, 40]], by = ['id'], texts = ['name']]
+c = batch[d, frame.new[id = [2], name = ['cherry crumble'], qty = [30]], by = ['id'], texts = ['name']]
+before = latest[d, ['id']]
+log[before]
+log[merge[d]]
+log[batches[d]]
+log[merge[d, by = ['id']]]
+log[batches[d]]
+log[head[d]]
+after = latest[d, ['id']]
+log[after]
+log[str[after.qty] eq str[before.qty]]
+log[scan[d]]
+log[lookup[d, 'id', '2']]
+log[lookup[d, 'name', 'cherry crumble'].id]
+log[len[lookup[d, 'id', '9']]]
+log[since[d, 4]]
+e = batch[d, frame.new[id = [4, 5], name = ['durian split', 'elderberry'], qty = [41, 50]], by = ['id'], texts = ['name']]
+log[e]
+log[batches[d].form]
+stale = commit[d, frame.new[id = [4], name = ['durian tart'], qty = [42]], by = ['id'], seen = 5, columns = ['id'], equal = ['4']]
+log[stale.reason]
+log[merge[d, by = ['id']]]
+log[batches[d]]
+log[latest[d, ['id']]]
+log[merge['parity-295-no-such-log'].kind]
+
+--- the oracle: every version into SQLite with its position; the segment
+--- holds the rows MAX(pos) GROUP BY id picks
+book = db.connect['sqlite://:memory:']
+query[book, 'CREATE TABLE t (pos INTEGER PRIMARY KEY, id INTEGER NOT NULL, name TEXT NOT NULL, qty INTEGER NOT NULL)']
+versions = frame.new[pos = [0, 1, 2, 3, 4, 5, 6, 7], id = [3, 1, 2, 1, 4, 2, 4, 5], name = ['Apple pie', 'banana split', 'cherry tart', 'apple crumble', 'durian', 'cherry crumble', 'durian split', 'elderberry'], qty = [1, 2, 3, 20, 40, 30, 41, 50]]
+for i in range[len[versions]]
+    query[book, 'INSERT INTO t (pos, id, name, qty) VALUES (?, ?, ?, ?)', [versions.pos[i], versions.id[i], versions.name[i], versions.qty[i]]]
+oracle = query[book, 'SELECT id, qty, pos FROM t WHERE pos IN (SELECT MAX(pos) FROM t GROUP BY id) ORDER BY pos']
+mine = latest[d, ['id']]
+log[str[mine.id] eq str[oracle.id]]
+log[str[mine.qty] eq str[oracle.qty]]
+log[str[mine._pos] eq str[oracle.pos]]
+r = rm[d]

@@ -2490,11 +2490,23 @@ pub fn records(frame: &CrowFrame) -> serde_json::Value {
 /// column of another kind (a list, a struct, bytes) is refused, named.
 #[cfg(feature = "parquet")]
 pub fn from_parquet(bytes: Vec<u8>) -> Result<CrowFrame, String> {
-    use arrow::array::{Array, AsArray};
-    use arrow::datatypes::{DataType, Float64Type, Int64Type, TimeUnit, TimestampMillisecondType};
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     let builder = ParquetRecordBatchReaderBuilder::try_new(bytes::Bytes::from(bytes)).map_err(|e| format!("load: not a Parquet file: {}", e))?;
     let schema = builder.schema().clone();
+    let reader = builder.build().map_err(|e| format!("load: {}", e))?;
+    frame_of_batches(&schema, reader, "load")
+}
+
+/// A frame from Arrow record batches of one schema (a Parquet file's, a
+/// batch file's): the column mapping `from_parquet` states, `what` the
+/// word a reason begins with.
+#[cfg(feature = "arrow")]
+pub(crate) fn frame_of_batches<I>(schema: &arrow::datatypes::Schema, batches: I, what: &str) -> Result<CrowFrame, String>
+where
+    I: Iterator<Item = Result<arrow::record_batch::RecordBatch, arrow::error::ArrowError>>,
+{
+    use arrow::array::{Array, AsArray};
+    use arrow::datatypes::{DataType, Float64Type, Int64Type, TimeUnit, TimestampMillisecondType};
     // each column's kind, and the Arrow type it is read as
     let mut kinds: Vec<(&'static str, DataType)> = Vec::new();
     for field in schema.fields() {
@@ -2509,11 +2521,10 @@ pub fn from_parquet(bytes: Vec<u8>) -> Result<CrowFrame, String> {
             // the zone's wall clock), and a date is its midnight in UTC
             DataType::Timestamp(_, tz) => ("moment", DataType::Timestamp(TimeUnit::Millisecond, tz.clone())),
             DataType::Date32 | DataType::Date64 => ("moment", DataType::Timestamp(TimeUnit::Millisecond, None)),
-            other => return Err(format!("load: column '{}' is {} — a frame's cells are numbers, text, bools and moments", field.name(), other)),
+            other => return Err(format!("{}: column '{}' is {} — a frame's cells are numbers, text, bools and moments", what, field.name(), other)),
         };
         kinds.push(kind);
     }
-    let reader = builder.build().map_err(|e| format!("load: {}", e))?;
     let mut columns: Vec<Column> = kinds
         .iter()
         .map(|(k, _)| match *k {
@@ -2526,11 +2537,11 @@ pub fn from_parquet(bytes: Vec<u8>) -> Result<CrowFrame, String> {
         .collect();
     let mut validity: Vec<Vec<bool>> = vec![Vec::new(); kinds.len()];
     let options = arrow::compute::CastOptions { safe: false, ..Default::default() };
-    for batch in reader {
-        let batch = batch.map_err(|e| format!("load: {}", e))?;
+    for batch in batches {
+        let batch = batch.map_err(|e| format!("{}: {}", what, e))?;
         for (i, array) in batch.columns().iter().enumerate() {
             let name = schema.field(i).name();
-            let cast = arrow::compute::cast_with_options(array, &kinds[i].1, &options).map_err(|e| format!("load: column '{}': {}", name, e))?;
+            let cast = arrow::compute::cast_with_options(array, &kinds[i].1, &options).map_err(|e| format!("{}: column '{}': {}", what, name, e))?;
             validity[i].extend((0..cast.len()).map(|r| cast.is_valid(r)));
             match &mut columns[i] {
                 Column::Int(v) => v.extend(cast.as_primitive::<Int64Type>().values().iter().copied()),

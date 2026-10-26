@@ -95,6 +95,8 @@
   - [The standard library's layer: `use sys`](by-example/sys.md)
   - [A language model as a connection: `use llm`](by-example/llm.md)
   - [Tools from other programs: `use mcp`](by-example/mcp.md)
+  - [The log as batch files: `use lake`](by-example/lake.md)
+  - [The Kafka door: `use kafka`](by-example/kafka.md)
 
 - [Appendix A: The Language at a Glance](appendix-a-language-at-a-glance.md)
 - [Appendix B: Coming from Another Language](appendix-b-from-another-language.md)

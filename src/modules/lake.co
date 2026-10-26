@@ -1,0 +1,420 @@
+--- `use lake`: the log as a directory of batch files (spec, lake). Each
+--- commit is one file, written once by the kernel (sys.batch_write): a
+--- frame given a position per row, sorted by its keys, with the statistics
+--- a reader prunes by in its head. Everything else is here, in Crow: the
+--- next number and position (`batch`), the sequencer (`commit`: a write
+--- set and the keys its reads saw, refused where a key was written since
+--- the snapshot), reading from a position (`read`), the rows up to a
+--- snapshot (`scan`), the latest version of each key (`latest`), the rows
+--- holding a value (`lookup`, the files pruned by their filters), and the
+--- catalog's state (`batches`). One process writes a log; two writers on
+--- one machine claim numbers through the kernel, which links a file into
+--- place only where no file of the number exists, so a slip is a retry.
+--- The tests are the module's own: `crow test src/modules/lake.co`.
+use sys
+use frame
+use math
+
+--- the log's files in a directory, in order: batch files
+--- (`000000000017.batch`) and segments, each named by the batch numbers
+--- it covers (`000000000003-000000000017.segment`)
+fn _names[dir]
+    entries = ls[dir]
+    if not entries.ok
+        return error['no log at \'`dir`\': `entries.reason`', 'lake']
+    names = []
+    for n in entries
+        if (ends[n, '.batch'] and len[n] eq 18) or (ends[n, '.segment'] and len[n] eq 33)
+            names = push[names, n]
+    return names
+
+--- the batch numbers a file's name covers, as [low, high]
+fn _covers[name]
+    if ends[name, '.batch']
+        n = int[slice[name, 0, 12]]
+        return [n, n]
+    return [int[slice[name, 0, 12]], int[slice[name, 13, 25]]]
+
+--- whether a batch's number lies inside one of the segments' ranges: a
+--- segment holds its rows, so the batch is stale (left by a merge that
+--- did not get to remove it)
+fn _inside[c, segments]
+    for s in segments
+        if c[0] gte s[0] and c[0] lte s[1]
+            return true
+    return false
+
+--- `batches[dir]`: the catalog's state — a frame of the log's files, a
+--- row each: `number` and `high` (the batch numbers it covers), `form`
+--- (`batch`, `segment`, or `stale` for a batch a segment already holds),
+--- `path`, `rows`, `first` and `last` (positions); an empty log is one
+--- row with an empty path and `last` -1
+fn batches[dir]
+    names = _names[dir]
+    if not names.ok
+        return names
+    segments = []
+    for n in names
+        if ends[n, '.segment']
+            segments = push[segments, _covers[n]]
+    numbers = []
+    highs = []
+    forms = []
+    paths = []
+    counts = []
+    firsts = []
+    lasts = []
+    for n in names
+        c = _covers[n]
+        p = '`dir`/`n`'
+        head = batch_stats[p]
+        if not head.ok
+            return error[head.reason, 'lake']
+        s = json[head]
+        form = 'segment'
+        if ends[n, '.batch']
+            form = 'batch'
+            if _inside[c, segments]
+                form = 'stale'
+        numbers = push[numbers, c[0]]
+        highs = push[highs, c[1]]
+        forms = push[forms, form]
+        paths = push[paths, p]
+        counts = push[counts, int[s.rows]]
+        firsts = push[firsts, int[s.first]]
+        lasts = push[lasts, int[s.last]]
+    if len[names] eq 0
+        return frame.new[number = [0], high = [-1], form = ['none'], path = [''], rows = [0], first = [0], last = [-1]]
+    return frame.new[number = numbers, high = highs, form = forms, path = paths, rows = counts, first = firsts, last = lasts]
+
+--- the files a reader reads: the batches no segment holds, and the segments
+fn _live[b]
+    return b[b.form eq 'batch' or b.form eq 'segment']
+
+--- `head[dir]`: the log's last position, -1 for an empty log
+fn head[dir]
+    b = batches[dir]
+    if not b.ok
+        return b
+    return max[b.last]
+
+--- the next batch's number and first position, as [number, first]: past
+--- every number any file covers, and every position any file holds
+fn _next[b]
+    return [max[b.high] + 1, max[b.last] + 1]
+
+--- one batch file written: the kernel's row called from its own function,
+--- outside any loop, so the kinds it takes reach every caller before the
+--- program runs (a row called inside a loop had typed nothing of its
+--- caller's parameters, and a frame handed an int did not build compiled),
+--- the lists copied for it (a row takes its list of text as a value, and a
+--- parameter the body only reads is lent: `(*by)` had not built)
+fn _written[dir, number, first, f, by, texts]
+    cols = by
+    words = texts
+    return batch_write[dir, number, first, f, cols, words]
+
+--- a frame about to be written, its key and text columns checked to
+--- exist: refused here, before the kernel is reached, and in both modes
+--- before the program runs where the kinds are known (the frame's, the
+--- lists') — a parameter typed only inside the loop below had reached no
+--- caller, and a frame handed an int ran interpreted and did not build
+fn _checked[f, by, texts]
+    if len[f.columns] eq 0
+        return error['a batch holds a frame with columns', 'lake']
+    keyed = select[f, by]
+    worded = select[f, texts]
+    return len[keyed.columns] + len[worded.columns]
+
+--- `batch[dir, f, by = [], texts = []]`: the frame written as the log's
+--- next batch, sorted by the `by` columns, the words of `texts` indexed;
+--- answers the first position its rows got. Two writers that claim one
+--- number: the second's write is refused by the kernel and claims the next
+fn batch[dir, f, by = [], texts = []]
+    checked = _checked[f, by, texts]
+    if not checked.ok
+        return checked
+    tries = 0
+    while tries lt 100
+        b = batches[dir]
+        if not b.ok
+            return b
+        at = _next[b]
+        made = _written[dir, at[0], at[1], f, by, texts]
+        if made.ok
+            return at[1]
+        if not ('was written already' in made.reason)
+            return error[made.reason, 'lake']
+        tries = tries + 1
+    return error['the log at \'`dir`\' is contended: 100 tries could not claim a batch number', 'lake']
+
+--- the batch files whose positions reach past `after`, stacked, the rows
+--- past it kept
+fn _rows_after[b, after]
+    out = frame.new[]
+    for i in range[len[b]]
+        if b.last[i] gt after and (b.form[i] eq 'batch' or b.form[i] eq 'segment')
+            part = batch_read[b.path[i]]
+            if not part.ok
+                return error[part.reason, 'lake']
+            kept = part[part._pos gt after]
+            if len[out] eq 0
+                out = kept
+            else
+                out = frame.stack[out, kept]
+    return out
+
+--- `since[dir, from]`: every row at position `from` or later, in position
+--- order (a consumer's read: its offset is the last position it saw)
+fn since[dir, from]
+    b = batches[dir]
+    if not b.ok
+        return b
+    if max[b.last] lt 0
+        return frame.new[]
+    rows = _rows_after[b, from - 1]
+    if not rows.ok
+        return rows
+    if len[rows] eq 0
+        return rows
+    return sort[rows, '_pos']
+
+--- `scan[dir, upto = -1]`: every row of the log up to position `upto`
+--- (every row with -1), in position order: each version of each key
+fn scan[dir, upto = -1]
+    rows = since[dir, 0]
+    if not rows.ok
+        return rows
+    --- the snapshot is one position, an int (said of `upto` itself, so a
+    --- list handed as one is refused before the program runs); -1 is every row
+    snapshot = pack[upto, 8]
+    if upto eq -1 or len[rows] eq 0
+        return rows
+    return rows[rows._pos lte upto]
+
+--- `latest[dir, by, upto = -1]`: the newest version of each key (the `by`
+--- columns) up to
+--- the snapshot — the table the log holds, one row per key
+fn latest[dir, by, upto = -1]
+    rows = scan[dir, upto]
+    if not rows.ok
+        return rows
+    if len[rows] eq 0
+        return rows
+    keyed = select[rows, by]
+    if len[keyed.columns] eq 0
+        return rows
+    newest = sort[rows, '_pos', desc = true]
+    return sort[unique[newest, by], '_pos']
+
+--- the rows of one file holding a value: the kernel's row in its own
+--- function, as `_written` is, so `column` and `value` are text to the caller
+fn _found[path, column, value]
+    return batch_find[path, column, value]
+
+--- `lookup[dir, column, value]`: the rows whose `column` holds the value,
+--- written as text (`'3'`, `'2.5'`, `'true'`), in position order — each
+--- file asked through its filter and, a segment, its row groups'
+--- statistics, so a key the segment is sorted by reads one group
+fn lookup[dir, column, value]
+    --- the column's name and the value are text (typed here, outside the
+    --- loop below, so a caller handing another kind is refused before the
+    --- program runs); a value may be empty text, a name may not
+    if len[bytes[column]] eq 0
+        return error['lookup needs a column name', 'lake']
+    asked = bytes[value]
+    b = batches[dir]
+    if not b.ok
+        return b
+    out = frame.new[]
+    for i in range[len[b]]
+        if b.form[i] eq 'batch' or b.form[i] eq 'segment'
+            hit = _found[b.path[i], column, value]
+            if not hit.ok
+                return error[hit.reason, 'lake']
+            if len[out] eq 0
+                out = hit
+            else
+                out = frame.stack[out, hit]
+    if len[out] eq 0
+        return out
+    return sort[out, '_pos']
+
+--- `commit[dir, f, by = [], texts = [], seen = -1, columns = [], equal = []]`:
+--- the sequencer. A transaction read at snapshot `seen` the keys
+--- `columns[i] = equal[i]` (each value as text); the write set `f` is
+--- appended where none of those keys was written after `seen`, and
+--- refused, naming the key and the position, where one was. Validation
+--- covers every file before the number the write claims; a number another
+--- writer took first means the files are read again
+fn commit[dir, f, by = [], texts = [], seen = -1, columns = [], equal = []]
+    checked = _checked[f, by, texts]
+    if not checked.ok
+        return checked
+    --- the reads are pairs: a column each, a value each, as text
+    pairs = concat[columns, equal]
+    if len[pairs] ne 2 * len[columns]
+        return error['commit takes its reads as two lists of one length: columns and equal', 'lake']
+    tries = 0
+    while tries lt 100
+        b = batches[dir]
+        if not b.ok
+            return b
+        for i in range[len[b]]
+            if b.last[i] gt seen and (b.form[i] eq 'batch' or b.form[i] eq 'segment')
+                for j in range[len[columns]]
+                    held = _found[b.path[i], columns[j], equal[j]]
+                    if not held.ok
+                        return error[held.reason, 'lake']
+                    hit = held[held._pos gt seen]
+                    if len[hit] gt 0
+                        return error['conflict: `columns[j]` = `equal[j]` was written at position `hit._pos[0]`, after snapshot `seen`', 'lake']
+        at = _next[b]
+        made = _written[dir, at[0], at[1], f, by, texts]
+        if made.ok
+            return at[1]
+        if not ('was written already' in made.reason)
+            return error[made.reason, 'lake']
+        tries = tries + 1
+    return error['the log at \'`dir`\' is contended: 100 tries could not claim a batch number', 'lake']
+
+--- `merge[dir, by = []]`: every batch file and segment of the log folded
+--- into one segment (sys.batch_merge): the rows sorted by the `by`
+--- columns, the latest version of each key kept (every row without
+--- keys), the statistics and the word filters as a batch's. The inputs
+--- are removed once the segment is in place, and a stale batch a crash
+--- left behind with them. Answers the segment's path, or '' where the
+--- log holds fewer than two files
+fn merge[dir, by = []]
+    b = batches[dir]
+    if not b.ok
+        return b
+    live = _live[b]
+    if len[live] lt 2
+        return ''
+    inputs = []
+    for p in live.path
+        inputs = push[inputs, p]
+    --- the key columns are a list of names, none empty: asked of `by`
+    --- itself (a list a name is pushed onto, which holds no empty one), so
+    --- a caller handing another kind is refused before the program runs —
+    --- the copy below says nothing of it; the paths copied for the row
+    --- (it takes its lists as values, and `inputs` is read again below:
+    --- compiled, the row had moved it)
+    keyed = push[by, '']
+    if '' in by
+        return error['a key column has a name', 'lake']
+    named = inputs
+    cols = by
+    made = batch_merge[dir, named, cols]
+    if not made.ok
+        return error[made.reason, 'lake']
+    stale = b[b.form eq 'stale']
+    for p in inputs
+        gone = rm[p]
+    for p in stale.path
+        gone = rm[p]
+    return made
+
+--- a scratch log for the tests, emptied first
+fn _scratch[name]
+    gone = rm[name]
+    made = mkdir[name]
+    return name
+
+--- an empty log has no positions; each append claims the next; a read
+--- from a position answers the rows at and past it in order
+test a_log_grows_by_batches[]
+    dir = _scratch['lake-test-grows']
+    assert[head[dir] eq -1]
+    assert[len[since[dir, 0]] eq 0]
+    assert[len[scan[dir]] eq 0]
+    first = batch[dir, frame.new[id = [3, 1, 2], name = ['Apple pie', 'banana split', 'cherry tart']], by = ['id'], texts = ['name']]
+    assert[first eq 0]
+    assert[head[dir] eq 2]
+    second = batch[dir, frame.new[id = [1, 4], name = ['apple crumble', 'durian']], by = ['id']]
+    assert[second eq 3]
+    assert[head[dir] eq 4]
+    b = batches[dir]
+    assert[len[b] eq 2 and b.number eq [0, 1] and b.high eq [0, 1] and b.form eq ['batch', 'batch'] and b.first eq [0, 3] and b.last eq [2, 4] and b.rows eq [3, 2]]
+    every = scan[dir]
+    assert[len[every] eq 5 and every._pos eq [0, 1, 2, 3, 4] and every.id eq [3, 1, 2, 1, 4]]
+    tail = since[dir, 2]
+    assert[tail._pos eq [2, 3, 4] and tail.name eq ['cherry tart', 'apple crumble', 'durian']]
+    upto = scan[dir, 3]
+    assert[upto._pos eq [0, 1, 2, 3]]
+    assert[not batch[dir, frame.new[], by = []].ok]
+    assert[batch['lake-no-such-dir', frame.new[id = [1]]].kind eq 'lake']
+    gone = rm[dir]
+
+--- the latest version of each key is the table; a lookup reads only the
+--- files whose filters admit the value, and answers every version
+test the_table_is_the_latest_version_of_each_key[]
+    dir = _scratch['lake-test-latest']
+    a = batch[dir, frame.new[id = [1, 2], qty = [10, 20]], by = ['id']]
+    b = batch[dir, frame.new[id = [2, 3], qty = [25, 30]], by = ['id']]
+    c = batch[dir, frame.new[id = [1], qty = [15]], by = ['id']]
+    t = latest[dir, ['id']]
+    assert[t.id eq [2, 3, 1] and t.qty eq [25, 30, 15] and t._pos eq [2, 3, 4]]
+    earlier = latest[dir, ['id'], upto = 2]
+    assert[earlier.id eq [1, 2] and earlier.qty eq [10, 25]]
+    two = lookup[dir, 'id', '2']
+    assert[two.qty eq [20, 25] and two._pos eq [1, 2]]
+    none = lookup[dir, 'id', '9']
+    assert[len[none] eq 0]
+    assert[lookup[dir, 'nosuch', '1'].kind eq 'lake']
+    assert[lookup[dir, 'id', 'x'].kind eq 'lake']
+    gone = rm[dir]
+
+--- a commit's reads are validated against what was written after its
+--- snapshot: a key written since refuses the write, naming the position;
+--- a commit that read nothing, or whose keys are untouched, appends
+test the_sequencer_refuses_a_stale_read[]
+    dir = _scratch['lake-test-commit']
+    a = batch[dir, frame.new[id = [1, 2], qty = [10, 20]], by = ['id']]
+    snapshot = head[dir]
+    assert[snapshot eq 1]
+    other = commit[dir, frame.new[id = [2], qty = [21]], by = ['id'], seen = snapshot, columns = ['id'], equal = ['2']]
+    assert[other eq 2]
+    stale = commit[dir, frame.new[id = [2], qty = [22]], by = ['id'], seen = snapshot, columns = ['id'], equal = ['2']]
+    assert[stale.kind eq 'lake']
+    assert[stale.reason eq 'conflict: id = 2 was written at position 2, after snapshot 1']
+    fine = commit[dir, frame.new[id = [1], qty = [11]], by = ['id'], seen = snapshot, columns = ['id'], equal = ['1']]
+    assert[fine eq 3]
+    blind = commit[dir, frame.new[id = [5], qty = [50]], by = ['id']]
+    assert[blind eq 4]
+    t = latest[dir, ['id']]
+    assert[t.id eq [2, 1, 5] and t.qty eq [21, 11, 50]]
+    gone = rm[dir]
+
+--- a merge folds every file into one segment holding the latest version
+--- of each key; the readers answer the same table through the segment,
+--- the next batch takes the next number and position, and a second merge
+--- folds the segment with the new batches
+test a_merge_folds_the_files_into_a_segment[]
+    dir = _scratch['lake-test-merge']
+    a = batch[dir, frame.new[id = [1, 2], qty = [10, 20], name = ['one', 'two']], by = ['id'], texts = ['name']]
+    b = batch[dir, frame.new[id = [2, 3], qty = [25, 30], name = ['two again', 'three']], by = ['id'], texts = ['name']]
+    before = latest[dir, ['id']]
+    assert[merge[dir, by = ['id']] eq '`dir`/000000000000-000000000001.segment']
+    files = batches[dir]
+    assert[len[files] eq 1 and files.form eq ['segment'] and files.number eq [0] and files.high eq [1] and files.rows eq [3] and files.first eq [0] and files.last eq [3]]
+    assert[head[dir] eq 3]
+    after = latest[dir, ['id']]
+    assert[after.id eq before.id and after.qty eq before.qty and after._pos eq before._pos]
+    assert[scan[dir].qty eq [10, 25, 30]]
+    assert[lookup[dir, 'id', '2'].qty eq [25]]
+    assert[lookup[dir, 'name', 'two again'].id eq [2]]
+    assert[merge[dir] eq '']
+    c = batch[dir, frame.new[id = [1, 4], qty = [11, 40], name = ['one again', 'four']], by = ['id'], texts = ['name']]
+    assert[c eq 4]
+    assert[since[dir, 4].qty eq [11, 40]]
+    stale = commit[dir, frame.new[id = [1], qty = [12], name = ['one more']], by = ['id'], seen = 3, columns = ['id'], equal = ['1']]
+    assert[stale.reason eq 'conflict: id = 1 was written at position 4, after snapshot 3']
+    assert[merge[dir, by = ['id']] eq '`dir`/000000000000-000000000002.segment']
+    files = batches[dir]
+    assert[len[files] eq 1 and files.high eq [2] and files.rows eq [4]]
+    assert[latest[dir, ['id']].qty eq [25, 30, 11, 40]]
+    d = batch[dir, frame.new[id = [5], qty = [50], name = ['five']], by = ['id']]
+    assert[d eq 6 and batches[dir].number eq [0, 3]]
+    gone = rm[dir]

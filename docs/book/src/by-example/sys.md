@@ -343,3 +343,111 @@ forecast
 clock
 "noon in ROME"
 ```
+
+A batch file is the log's unit (`use lake` stands on these four rows): a
+frame written once with its rows' positions, sorted by key, and the
+statistics a reader prunes by in its head.
+
+```crow
+use sys
+use frame
+
+gone = rm['ex_batches']
+made = mkdir['ex_batches']
+f = frame.new[id = [3, 1, 2], name = ['Apple pie', 'banana split', 'cherry tart']]
+path = batch_write['ex_batches', 0, 100, f, ['id'], ['name']]
+log[path]
+log[batch_read[path].id]
+log[batch_read[path]._pos]
+s = json[batch_stats[path]]
+log[int[s.rows]]
+log[int[s.columns.id.max]]
+log[batch_admits[path, 'id', '2', false]]
+log[batch_admits[path, 'id', '9', false]]
+log[batch_admits[path, 'name', 'APPLE', true]]
+log[batch_write['ex_batches', 0, 100, f, [], []].kind]
+more = batch_write['ex_batches', 1, 103, frame.new[id = [1], name = ['apple crumble']], ['id'], ['name']]
+seg = batch_merge['ex_batches', ['ex_batches/000000000000.batch', 'ex_batches/000000000001.batch'], ['id']]
+log[seg]
+log[batch_read[seg].name]
+log[batch_find[seg, 'id', '2'].name]
+log[len[batch_find[seg, 'id', '9']]]
+gone = rm['ex_batches']
+```
+
+```text
+ex_batches/000000000000.batch
+[1, 2, 3]
+[101, 102, 100]
+3
+3
+true
+false
+true
+lake
+ex_batches/000000000000-000000000001.segment
+['apple crumble', 'cherry tart', 'Apple pie']
+['cherry tart']
+0
+```
+
+A program listens too: `listen` binds a port (0 for one the system picks,
+`address` says which), and `accept` answers each connection that arrives
+as a stream of its own. A server written in Crow over the sys layer, as
+the Kafka door is, stands on these.
+
+```crow
+use sys
+
+l = listen['127.0.0.1', 0]
+port = int[split[address[l], ':'][1]]
+client = open['127.0.0.1', port, false, 2.0]
+server = accept[l, 2.0]
+sent = send[client, bytes['ping']]
+log[text[recv[server, 100, 2.0]]]
+sent = send[server, bytes['pong']]
+log[text[recv[client, 100, 2.0]]]
+log['is a listener: it is accepted on, not read' in recv[l, 10, 0.1].reason]
+log[accept[client, 0.1].kind]
+late = listen['127.0.0.1', 0]
+log[accept[late, 0.05].kind]
+```
+
+```text
+ping
+pong
+true
+sys
+sys
+```
+
+The Kafka door's per-byte half is two rows: a message set, the legacy
+format every client still writes when told to, as a frame and back, each
+message's checksum checked and written; `unpack` reads the wire's
+big-endian ints as `pack` writes them.
+
+```crow
+use sys
+use frame
+
+recs = frame.new[offset = [0, 1], at = [1700000000000, -1], key = ['k', 'k2'], value = ['one', 'two']]
+encoded = records_of[recs]
+log[len[encoded]]
+back = records[encoded]
+log[back.value]
+log[back.at]
+log[unpack[encoded, 0, 8]]
+log[unpack[pack[-2, 4], 0, 4]]
+log[records[slice[encoded, 0, 20]].ok]
+log[records_of[frame.new[a = [1]]].reason]
+```
+
+```text
+77
+['one', 'two']
+[1700000000000, -1]
+0
+-2
+true
+records: the frame holds no column 'offset'
+```

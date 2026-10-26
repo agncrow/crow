@@ -2377,6 +2377,9 @@ pub static ROWS: &[Row] = &[
     // `use sys`: the standard library's own layer (crow_runtime::sys) — a
     // program may not import it (spec, The standard library's layer)
     row!("sys.open", "sys", "open", crow_runtime::sys::open, (Str, Int, Bool, Float) -> Stream, value "sys"),
+    Row { props: &[Prop::Does(crate::effects::Effect::Network)], ..row!("sys.listen", "sys", "listen", crow_runtime::sys::listen, (Str, Int) -> Stream, value "sys") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Network), Prop::Does(crate::effects::Effect::Waits)], ..row!("sys.accept", "sys", "accept", crow_runtime::sys::accept, (Stream, Float) -> Stream, value "sys") },
+    row!("sys.address", "sys", "address", crow_runtime::sys::address, (Stream) -> Str, never),
     // a process the program talks to: started as `shell` runs a command,
     // its input and output the socket's stream, what a read took past a
     // message kept by the socket (the MCP stdio transport stands on it);
@@ -2416,6 +2419,9 @@ pub static ROWS: &[Row] = &[
     row!("sys.unbase64", "sys", "unbase64", crow_runtime::sys::unbase64, (Str) -> Bytes, value "parse"),
     row!("sys.same", "sys", "same", crow_runtime::sys::same, (Bytes, Bytes) -> Bool, never),
     row!("sys.pack", "sys", "pack", crow_runtime::sys::pack, (Int, Int) -> Bytes, stops),
+    row!("sys.unpack", "sys", "unpack", crow_runtime::sys::unpack, (Bytes, Int, Int) -> Int, stops),
+    row!("sys.records", "sys", "records", crow_runtime::sys::records, (Bytes) -> Frame, value "kafka"),
+    row!("sys.records_of", "sys", "records_of", crow_runtime::sys::records_of, (Frame) -> Bytes, value "kafka"),
     row!("sys.ieee", "sys", "ieee", crow_runtime::sys::ieee, (Float) -> Bytes, never),
     row!("sys.binary", "sys", "binary", crow_web::core::response::binary_of, (Bytes, Str) -> Response, never),
     // a socket: the stream it talks over, what it holds unread, a frame's
@@ -2469,6 +2475,13 @@ pub static ROWS: &[Row] = &[
     row!("sys.frame_of_json", "sys", "frame_of_json", crow_runtime::sys::frame_of_json, (Str) -> Frame, value "frame"),
     Row { feature: Some(("crow_runtime", "parquet")), ..row!("sys.frame_of_parquet", "sys", "frame_of_parquet", crow_runtime::sys::frame_of_parquet, (Bytes) -> Frame, value "frame") },
     row!("sys.frame_of_rowbinary", "sys", "frame_of_rowbinary", crow_runtime::sys::frame_of_rowbinary, (Bytes) -> Frame, value "frame"),
+    // the log's batch files (crow_runtime::batch; the lake module stands on them)
+    Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], feature: Some(("crow_runtime", "parquet")), ..row!("sys.batch_write", "sys", "batch_write", crow_runtime::sys::batch_write, (Str, Int, Int, Frame, Texts, Texts) -> Str, value "lake") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Files)], feature: Some(("crow_runtime", "parquet")), ..row!("sys.batch_read", "sys", "batch_read", crow_runtime::sys::batch_read, (Str) -> Frame, value "lake") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Files)], feature: Some(("crow_runtime", "parquet")), ..row!("sys.batch_stats", "sys", "batch_stats", crow_runtime::sys::batch_stats, (Str) -> Str, value "lake") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Files)], feature: Some(("crow_runtime", "parquet")), ..row!("sys.batch_admits", "sys", "batch_admits", crow_runtime::sys::batch_admits, (Str, Str, Str, Bool) -> Bool, value "lake") },
+    Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], feature: Some(("crow_runtime", "parquet")), ..row!("sys.batch_merge", "sys", "batch_merge", crow_runtime::sys::batch_merge, (Str, Texts, Texts) -> Str, value "lake") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Files)], feature: Some(("crow_runtime", "parquet")), ..row!("sys.batch_find", "sys", "batch_find", crow_runtime::sys::batch_find, (Str, Str, Str) -> Frame, value "lake") },
     row!("sys.frame_of_postgres", "sys", "frame_of_postgres", crow_runtime::sys::frame_of_postgres, (Bytes) -> Frame, value "frame"),
     row!("sys.frame_csv", "sys", "frame_csv", crow_runtime::sys::frame_csv, (Frame) -> Str, value "frame"),
     row!("sys.frame_json", "sys", "frame_json", crow_runtime::sys::frame_json, (Frame) -> Str, never),

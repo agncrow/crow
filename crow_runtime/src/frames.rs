@@ -729,3 +729,86 @@ mod expect_tests {
         assert!(matches!(held.col_native("qty").expect("qty").data.as_ref(), Column::Float(v) if v.is_empty()));
     }
 }
+
+// ── batch files: the log's unit (crate::batch) ──────────────────────────
+
+/// `sys.batch_write[dir, number, first, frame, keys, texts]` where the
+/// program was built with Arrow (the interpreter always is; a compiled
+/// program that writes batches).
+pub fn batch_write(dir: &str, number: i64, first: i64, f: &CrowFrame, keys: &[String], texts: &[String]) -> Result<String, String> {
+    #[cfg(feature = "arrow")]
+    {
+        crate::batch::write(dir, number, first, f, keys, texts)
+    }
+    #[cfg(not(feature = "arrow"))]
+    {
+        let _ = (dir, number, first, f, keys, texts);
+        Err("batch: this program was built without Arrow".to_string())
+    }
+}
+
+/// `sys.batch_read[path]`, likewise.
+pub fn batch_read(path: &str) -> Result<CrowFrame, String> {
+    #[cfg(feature = "arrow")]
+    {
+        crate::batch::read(path)
+    }
+    #[cfg(not(feature = "arrow"))]
+    {
+        let _ = path;
+        Err("batch: this program was built without Arrow".to_string())
+    }
+}
+
+/// `sys.batch_stats[path]`, likewise.
+pub fn batch_stats(path: &str) -> Result<String, String> {
+    #[cfg(feature = "arrow")]
+    {
+        crate::batch::stats(path)
+    }
+    #[cfg(not(feature = "arrow"))]
+    {
+        let _ = path;
+        Err("batch: this program was built without Arrow".to_string())
+    }
+}
+
+/// `sys.batch_admits[path, column, value, token]`, likewise.
+pub fn batch_admits(path: &str, column: &str, value: &str, token: bool) -> Result<bool, String> {
+    #[cfg(feature = "arrow")]
+    {
+        crate::batch::admits(path, column, value, token)
+    }
+    #[cfg(not(feature = "arrow"))]
+    {
+        let _ = (path, column, value, token);
+        Err("batch: this program was built without Arrow".to_string())
+    }
+}
+
+/// `sys.batch_merge[dir, paths, keys]`, where the program was built with
+/// Parquet (the interpreter always is; a compiled program that merges).
+pub fn batch_merge(dir: &str, paths: &[String], keys: &[String]) -> Result<String, String> {
+    #[cfg(feature = "parquet")]
+    {
+        crate::batch::merge(dir, paths, keys)
+    }
+    #[cfg(not(feature = "parquet"))]
+    {
+        let _ = (dir, paths, keys);
+        Err("batch: this program was built without Parquet".to_string())
+    }
+}
+
+/// `sys.batch_find[path, column, value]`, likewise.
+pub fn batch_find(path: &str, column: &str, value: &str) -> Result<CrowFrame, String> {
+    #[cfg(feature = "arrow")]
+    {
+        crate::batch::find(path, column, value)
+    }
+    #[cfg(not(feature = "arrow"))]
+    {
+        let _ = (path, column, value);
+        Err("batch: this program was built without Arrow".to_string())
+    }
+}

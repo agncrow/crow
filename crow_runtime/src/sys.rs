@@ -222,6 +222,56 @@ pub fn frame_of_parquet(bytes: &Bytes) -> Result<crate::frame::CrowFrame, String
     crate::frames::parquet_frame(bytes.0.clone())
 }
 
+/// `sys.batch_write[dir, number, first, frame, keys, texts]`: the frame
+/// as the log's next batch file (crate::batch), its path answered.
+pub fn batch_write(dir: &str, number: i64, first: i64, f: &crate::frame::CrowFrame, keys: Vec<String>, texts: Vec<String>) -> Result<String, String> {
+    crate::frames::batch_write(dir, number, first, f, &keys, &texts)
+}
+
+/// `sys.batch_read[path]`: a batch file as the frame it holds.
+pub fn batch_read(path: &str) -> Result<crate::frame::CrowFrame, String> {
+    crate::frames::batch_read(path)
+}
+
+/// `sys.batch_stats[path]`: a batch file's statistics as JSON text.
+pub fn batch_stats(path: &str) -> Result<String, String> {
+    crate::frames::batch_stats(path)
+}
+
+/// `sys.batch_admits[path, column, value, token]`: whether the file may
+/// hold the value (or, with `token`, the word) in the column.
+pub fn batch_admits(path: &str, column: &str, value: &str, token: bool) -> Result<bool, String> {
+    crate::frames::batch_admits(path, column, value, token)
+}
+
+/// `sys.batch_merge[dir, paths, keys]`: the files folded into one segment
+/// (crate::batch::merge), its path answered.
+pub fn batch_merge(dir: &str, paths: Vec<String>, keys: Vec<String>) -> Result<String, String> {
+    crate::frames::batch_merge(dir, &paths, &keys)
+}
+
+/// `sys.batch_find[path, column, value]`: the rows of the file whose
+/// column holds the value, the file's filter and its row groups'
+/// statistics asked first.
+pub fn batch_find(path: &str, column: &str, value: &str) -> Result<crate::frame::CrowFrame, String> {
+    crate::frames::batch_find(path, column, value)
+}
+
+/// `sys.records[bytes]`: a Kafka message set as a frame (crate::kafka).
+pub fn records(b: &Bytes) -> Result<crate::frame::CrowFrame, String> {
+    crate::kafka::records(&b.0)
+}
+
+/// `sys.records_of[frame]`: a frame as a Kafka message set.
+pub fn records_of(f: &crate::frame::CrowFrame) -> Result<Bytes, String> {
+    crate::kafka::records_of(f).map(Bytes)
+}
+
+/// `sys.unpack[bytes, at, width]`: the big-endian int at a position.
+pub fn unpack(b: &Bytes, at: i64, width: i64) -> Result<i64, String> {
+    crate::kafka::unpack(&b.0, at, width)
+}
+
 /// `sys.frame_csv[frame]`: a frame as CSV text.
 pub fn frame_csv(f: &crate::frame::CrowFrame) -> Result<String, String> {
     f.to_csv()
@@ -483,6 +533,10 @@ pub fn secure(s: &CrowStream, host: &str) -> Result<CrowStream, String> {
             *guard = Some(Conn::Process(p));
             return Err("a process is not put behind TLS: a host is".to_string());
         }
+        Some(Conn::Listener(l)) => {
+            *guard = Some(Conn::Listener(l));
+            return Err("a listener is not put behind TLS: a connection is".to_string());
+        }
         Some(Conn::Net(Net::Tls(t))) => {
             *guard = Some(Conn::Net(Net::Tls(t)));
             return Err("the stream is already behind TLS".to_string());
@@ -541,6 +595,8 @@ const READ_AHEAD: usize = 64 * 1024;
 enum Conn {
     Net(Net),
     Process(Box<ProcessConn>),
+    /// A listening socket (`sys.listen`): accepted on, never read or written.
+    Listener(std::net::TcpListener),
 }
 
 enum Net {
@@ -665,7 +721,7 @@ fn running(s: &Socket) -> bool {
     let Ok(mut guard) = s.0.stream.0.conn.lock() else { return false };
     match guard.as_mut() {
         Some(Conn::Process(p)) => !p.ended(),
-        Some(Conn::Net(_)) | None => false,
+        Some(Conn::Net(_)) | Some(Conn::Listener(_)) | None => false,
     }
 }
 
@@ -879,6 +935,57 @@ pub fn open(host: &str, port: i64, tls: bool, seconds: f64) -> Result<CrowStream
     Ok(CrowStream(Arc::new(StreamInner { conn: Mutex::new(Some(conn)), name: format!("{}:{}", host, port), wait: timeout, notes: Mutex::new(std::collections::HashMap::new()), timeout_us: std::sync::atomic::AtomicU64::new(micros(timeout)) })))
 }
 
+/// `sys.listen[host, port]`: a socket listening on the host's port (port 0
+/// for one the system picks; `address` says which), as a stream that is
+/// accepted on: `accept` answers each connection that arrives as a stream
+/// of its own. The reason where the port cannot be bound.
+pub fn listen(host: &str, port: i64) -> Result<CrowStream, String> {
+    if !(0..=65535).contains(&port) {
+        return Err(format!("port {} is outside 0 to 65535", port));
+    }
+    let listener = std::net::TcpListener::bind((host, port as u16)).map_err(|e| format!("cannot listen on {}:{}: {}", host, port, e))?;
+    listener.set_nonblocking(true).map_err(|e| e.to_string())?;
+    let name = listener.local_addr().map(|a| a.to_string()).unwrap_or_else(|_| format!("{}:{}", host, port));
+    Ok(CrowStream(Arc::new(StreamInner { conn: Mutex::new(Some(Conn::Listener(listener))), name, wait: None, notes: Mutex::new(std::collections::HashMap::new()), timeout_us: std::sync::atomic::AtomicU64::new(0) })))
+}
+
+/// `sys.accept[listener, seconds]`: the next connection that arrives, as a
+/// stream named by the peer's address, waiting at most the seconds (as
+/// long as it takes when 0), or the reason: no connection in time, a
+/// stream that is no listener or is closed. The wait ends early with a
+/// stop of the work this is in, as a read's does.
+pub fn accept(s: &CrowStream, seconds: f64) -> Result<CrowStream, String> {
+    let guard = s.0.conn.lock().map_err(|_| "the stream is held by a thread that stopped".to_string())?;
+    let Some(conn) = guard.as_ref() else { return Err("the stream is closed".to_string()) };
+    let Conn::Listener(listener) = conn else { return Err(format!("{} is no listener: listen[host, port] makes one", s.0.name)) };
+    let deadline = wait_of(seconds).and_then(|w| std::time::Instant::now().checked_add(w));
+    loop {
+        match listener.accept() {
+            Ok((tcp, peer)) => {
+                tcp.set_nonblocking(false).map_err(|e| e.to_string())?;
+                return Ok(CrowStream(Arc::new(StreamInner { conn: Mutex::new(Some(Conn::plain(tcp))), name: peer.to_string(), wait: None, notes: Mutex::new(std::collections::HashMap::new()), timeout_us: std::sync::atomic::AtomicU64::new(0) })));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if crate::cancel::current_stopped() {
+                    return Err("cancelled: nobody waits for this connection any more".to_string());
+                }
+                if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+                    return Err(format!("no connection on {} in {} s", s.0.name, seconds));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            Err(e) => return Err(format!("cannot accept on {}: {}", s.0.name, e)),
+        }
+    }
+}
+
+/// `sys.address[stream]`: the address a stream is named by — a listener's
+/// own (`127.0.0.1:54321`, the port the system picked for port 0), an
+/// accepted connection's peer, an opened connection's host and port.
+pub fn address(s: &CrowStream) -> String {
+    s.0.name.clone()
+}
+
 /// `sys.send[stream, bytes]`: the bytes written, all of them, or the reason.
 pub fn send(s: &CrowStream, b: &Bytes) -> Result<i64, String> {
     let mut guard = s.0.conn.lock().map_err(|_| "the stream is held by a thread that stopped".to_string())?;
@@ -894,6 +1001,7 @@ pub fn send(s: &CrowStream, b: &Bytes) -> Result<i64, String> {
             },
             None => return Err("the process's input is closed".to_string()),
         },
+        Conn::Listener(_) => return Err(format!("{} is a listener: it is accepted on, not written", s.0.name)),
     };
     r.map_err(|e| format!("cannot send to {}: {}", s.0.name, e))?;
     Ok(b.len())
@@ -914,6 +1022,7 @@ pub fn recv(s: &CrowStream, most: i64, seconds: f64) -> Result<Bytes, String> {
     let wait = if seconds > 0.0 { wait_of(seconds) } else { s.0.wait };
     let conn = match conn {
         Conn::Process(p) => return recv_process(p, &s.0.name, most, seconds, wait),
+        Conn::Listener(_) => return Err(format!("{} is a listener: it is accepted on, not read", s.0.name)),
         Conn::Net(n) => n,
     };
     // the wait is taken in slices, and ends with a stop: of the work this
@@ -1075,6 +1184,37 @@ pub fn rowbinary_of_frame(frame: &crate::frame::CrowFrame, types: Vec<String>) -
 pub fn close(s: &CrowStream) {
     if let Ok(mut guard) = s.0.conn.lock() {
         *guard = None;
+    }
+}
+
+#[cfg(test)]
+mod listener_tests {
+    use super::*;
+
+    /// A listener on a port the system picks is named by it; a client that
+    /// opens it is accepted as a stream the two sides talk over; a listener
+    /// is neither read nor written; a wait with nobody arriving ends with
+    /// its reason
+    #[test]
+    fn a_listener_accepts_a_connection() {
+        let l = listen("127.0.0.1", 0).expect("a listener");
+        let addr = address(&l);
+        let port: i64 = addr.rsplit(':').next().unwrap().parse().unwrap();
+        assert!(port > 0);
+        assert!(accept(&l, 0.05).unwrap_err().contains("no connection on"));
+        let client = open("127.0.0.1", port, false, 2.0).expect("a client");
+        let server = accept(&l, 2.0).expect("accepted");
+        assert!(address(&server).starts_with("127.0.0.1:"));
+        assert_eq!(send(&client, &Bytes(b"ping".to_vec())).unwrap(), 4);
+        assert_eq!(recv(&server, 100, 2.0).unwrap(), Bytes(b"ping".to_vec()));
+        assert_eq!(send(&server, &Bytes(b"pong".to_vec())).unwrap(), 4);
+        assert_eq!(recv(&client, 100, 2.0).unwrap(), Bytes(b"pong".to_vec()));
+        assert!(send(&l, &Bytes(b"x".to_vec())).unwrap_err().contains("accepted on, not written"));
+        assert!(recv(&l, 10, 0.1).unwrap_err().contains("accepted on, not read"));
+        assert!(accept(&client, 0.1).unwrap_err().contains("no listener"));
+        close(&l);
+        assert_eq!(accept(&l, 0.1).unwrap_err(), "the stream is closed");
+        assert!(listen("127.0.0.1", 70000).unwrap_err().contains("outside 0 to 65535"));
     }
 }
 

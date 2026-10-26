@@ -3,6 +3,8 @@
 # listed one the cases reach fails it until it is struck (--bless rewrites the list).
 db.clickhouse.ch_cancel	a driver's own row, reached through use db (the db family): a stop abandoning a statement in flight calls it, which tests/query_cancel.rs holds in both modes
 db.postgres.pg_cancel	a driver's own row, reached through use db (the db family): a stop abandoning a statement in flight calls it, which tests/query_cancel.rs holds in both modes
+kafka.serve	runs until it is stopped: its loop is driven by tests/kafka.rs with the Python client in both modes, its answers by the module's own tests through _answer
+lake.commit	its option texts is a list of column names no module test hands it (the default [] types nothing); the module's tests and parity 294 drive it with every other argument
 llm.act	the loop against a model: tests/llm_server.rs scripts its runs (a tool called and answered, the limits, the failures, keep, compact, skills, an MCP server's tools) in both modes, the llm family's live cases run it against the check's model, parity 274 its refusals
 llm.chat	its parameter 'm' is typed by nothing the module's tests hand it (?), or takes what no kind names
 llm.embed	its parameter 'm' is typed by nothing the module's tests hand it (?), or takes what no kind names
@@ -11,6 +13,7 @@ llm.next	its parameter 's' is typed by nothing the module's tests hand it (?), o
 llm.reply	its parameter 's' is typed by nothing the module's tests hand it (?), or takes what no kind names
 mcp.answer	a route's request: tests/mcp.rs drives a stand-in client against a Crow program serving /mcp in both modes (discovery, the list, calls, every error the protocol names)
 mcp.listen	serves over the program's own standard streams until its input ends, over a group of tools: tests/mcp.rs and tests/llm_server.rs drive a Crow client against a Crow program serving so, in both modes
+sys.listen	binds a port the system picks; the listener is driven by accept in the runtime's test, the sys book block and tests/kafka.rs
 sys.put	its parameter 'path' is typed by nothing the module's tests hand it (?), or takes what no kind names
 sys.upgrade	its parameter 'url' is typed by nothing the module's tests hand it (?), or takes what no kind names
 web.ws.close	its parameter 's' is typed by nothing the module's tests hand it (?), or takes what no kind names

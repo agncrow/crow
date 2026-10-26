@@ -1,0 +1,64 @@
+--- The log is a directory of batch files (spec, lake): each `batch` one
+--- file written once by the kernel, with its rows' positions, sorted by
+--- key, with the statistics a reader prunes by; `latest` the table the
+--- log holds, `lookup` the rows holding a value (the files its filters
+--- exclude unread), `since` a consumer's rows from a position, `commit` the
+--- sequencer refusing a stale read. The same in both modes, and held to
+--- SQLite on the same rows: the latest version of each key is what
+--- `MAX(pos) GROUP BY id` picks.
+use lake
+use frame
+use db
+
+d = 'parity-294-lake'
+r = rm[d]
+m = mkdir[d]
+log[head[d]]
+first = batch[d, frame.new[id = [3, 1, 2], name = ['Apple pie', 'banana split', 'cherry tart'], qty = [1, 2, 3]], by = ['id'], texts = ['name']]
+log[first]
+second = batch[d, frame.new[id = [1, 4], name = ['apple crumble', 'durian'], qty = [20, 40]], by = ['id'], texts = ['name']]
+log[second]
+log[head[d]]
+b = batches[d]
+log[b.number]
+log[b.first]
+log[b.last]
+log[b.rows]
+every = scan[d]
+log[every]
+log[since[d, 2]]
+log[scan[d, 3]._pos]
+table = latest[d, ['id']]
+log[table]
+log[lookup[d, 'id', '1']]
+log[len[lookup[d, 'id', '9']]]
+log[lookup[d, 'name', 'durian'].qty]
+log[lookup[d, 'nosuch', '1'].reason]
+log[lookup[d, 'id', 'x'].reason]
+seen = head[d]
+ok = commit[d, frame.new[id = [4], name = ['durian split'], qty = [41]], by = ['id'], seen = seen, columns = ['id'], equal = ['4']]
+log[ok]
+stale = commit[d, frame.new[id = [4], name = ['durian tart'], qty = [42]], by = ['id'], seen = seen, columns = ['id'], equal = ['4']]
+log[stale.kind]
+log[stale.reason]
+blind = commit[d, frame.new[id = [5], name = ['elderberry'], qty = [50]], by = ['id']]
+log[blind]
+log[latest[d, ['id']].qty]
+log[batch[d, frame.new[], by = []].reason]
+log[batch['parity-294-no-such-log', frame.new[id = [1]]].kind]
+
+--- the oracle: the same rows into SQLite, each with its position
+book = db.connect['sqlite://:memory:']
+query[book, 'CREATE TABLE t (pos INTEGER PRIMARY KEY, id INTEGER NOT NULL, name TEXT NOT NULL, qty INTEGER NOT NULL)']
+rows = scan[d]
+for i in range[len[rows]]
+    query[book, 'INSERT INTO t (pos, id, name, qty) VALUES (?, ?, ?, ?)', [rows._pos[i], rows.id[i], rows.name[i], rows.qty[i]]]
+oracle = query[book, 'SELECT id, qty, pos FROM t WHERE pos IN (SELECT MAX(pos) FROM t GROUP BY id) ORDER BY pos']
+mine = latest[d, ['id']]
+log[oracle]
+log[str[mine.id] eq str[oracle.id]]
+log[str[mine.qty] eq str[oracle.qty]]
+log[str[mine._pos] eq str[oracle.pos]]
+one = query[book, 'SELECT pos FROM t WHERE id = ? ORDER BY pos', [1]]
+log[str[lookup[d, 'id', '1']._pos] eq str[one.pos]]
+r = rm[d]
