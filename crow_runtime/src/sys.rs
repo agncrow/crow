@@ -224,13 +224,13 @@ pub fn frame_of_parquet(bytes: &Bytes) -> Result<crate::frame::CrowFrame, String
 
 /// `sys.batch_write[dir, number, first, frame, keys, texts]`: the frame
 /// as the log's next batch file (crate::batch), its path answered.
-pub fn batch_write(dir: &str, number: i64, first: i64, f: &crate::frame::CrowFrame, keys: Vec<String>, texts: Vec<String>) -> Result<String, String> {
-    crate::frames::batch_write(dir, number, first, f, &keys, &texts)
+pub fn batch_write(dir: &str, number: i64, first: i64, f: &crate::frame::CrowFrame, keys: Vec<String>, texts: Vec<String>, flush: bool) -> Result<String, String> {
+    crate::frames::batch_write(dir, number, first, f, &keys, &texts, flush)
 }
 
 /// `sys.batch_read[path]`: a batch file as the frame it holds.
-pub fn batch_read(path: &str) -> Result<crate::frame::CrowFrame, String> {
-    crate::frames::batch_read(path)
+pub fn batch_read(path: &str, wanted: Vec<String>) -> Result<crate::frame::CrowFrame, String> {
+    crate::frames::batch_read(path, &wanted)
 }
 
 /// `sys.batch_stats[path]`: a batch file's statistics as JSON text.
@@ -260,8 +260,20 @@ pub fn batch_search(paths: Vec<String>, column: &str, words: Vec<String>, k: i64
 /// `sys.batch_find[path, column, value]`: the rows of the file whose
 /// column holds the value, the file's filter and its row groups'
 /// statistics asked first.
-pub fn batch_find(path: &str, column: &str, value: &str) -> Result<crate::frame::CrowFrame, String> {
-    crate::frames::batch_find(path, column, value)
+pub fn batch_find(paths: Vec<String>, columns: Vec<String>, values: Vec<String>, wanted: Vec<String>) -> Result<crate::frame::CrowFrame, String> {
+    crate::frames::batch_find(&paths, &columns, &values, &wanted)
+}
+
+/// `sys.batch_since[paths, after, wanted]`: the files' rows past a
+/// position, in position order, with the columns wanted.
+pub fn batch_since(paths: Vec<String>, after: i64, wanted: Vec<String>) -> Result<crate::frame::CrowFrame, String> {
+    crate::frames::batch_since(&paths, after, &wanted)
+}
+
+/// `sys.batch_sync[dir]`: every file of a log flushed to the disk, then
+/// the directory; how many files.
+pub fn batch_sync(dir: &str) -> Result<i64, String> {
+    crate::frames::batch_sync(dir)
 }
 
 /// `sys.records[bytes]`: a Kafka message set as a frame (crate::kafka).

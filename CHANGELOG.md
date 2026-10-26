@@ -121,7 +121,11 @@ history says the rest.
   written once by the kernel (sys, `batch_write`) — the log entry, the
   sorted level-0 segment with its statistics and the word index at once —
   `head`, `since`, `tail` (a view that follows the log), `scan`, `latest`
-  (the table the log holds), `lookup` (files pruned by their filters),
+  (the table the log holds), `lookup` (every key at once, so a segment
+  sorted by day then symbol reads one row group for one symbol's day;
+  files pruned by their filters), `columns` on every reader (a segment
+  decodes only the columns asked), `batch[…, flush = false]` and
+  `sync[dir]` (Redis's default durability, when asked for),
   `commit` (the sequencer: a stale read refused), `merge` (the files
   folded into one Parquet segment of 8192-row groups, the latest version
   of each key kept, or every row with `every = true`), `batches` (the

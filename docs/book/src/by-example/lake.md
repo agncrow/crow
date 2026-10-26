@@ -12,7 +12,7 @@ second = batch['ex_lake', frame.new[id = [2, 3], qty = [25, 30]], by = ['id']]
 log[second]
 log[head['ex_lake']]
 log[latest['ex_lake', ['id']].qty]
-log[lookup['ex_lake', 'id', '2'].qty]
+log[lookup['ex_lake', ['id'], ['2']].qty]
 stale = commit['ex_lake', frame.new[id = [2], qty = [26]], by = ['id'], seen = 1, columns = ['id'], equal = ['2']]
 log[stale.reason]
 log[since['ex_lake', 3].qty]
@@ -46,6 +46,64 @@ holds, one row per key; `lookup` reads only the files whose filters admit
 the value; `commit` is the sequencer, refusing a write whose reads are
 stale; `merge` folds the files into one Parquet segment holding the latest
 version of each key, which the same readers read. Reference: spec section 13 (lake).
+
+## A batch without the flush, and a sync
+
+```crow
+use lake
+use frame
+
+gone = rm['ex_flush']
+made = mkdir['ex_flush']
+a = batch['ex_flush', frame.new[id = [1, 2], qty = [10, 20]], by = ['id'], flush = false]
+b = batch['ex_flush', frame.new[id = [3], qty = [30]], by = ['id'], flush = false]
+log[latest['ex_flush', ['id']].qty]
+log[sync['ex_flush']]
+gone = rm['ex_flush']
+```
+
+```text
+[10, 20, 30]
+2
+```
+
+With `flush = false` a batch is written but not flushed to the disk, so
+a crash may lose the batches since the last `sync`: Redis's default
+durability, for a log that chooses it; `sync` flushes every file of the
+log and its directory, and a program calls it on a timer.
+
+## A point read by two keys, and only the columns asked
+
+```crow
+use lake
+use frame
+
+gone = rm['ex_keys']
+made = mkdir['ex_keys']
+a = batch['ex_keys', frame.new[day = [1, 1, 2, 2], sym = ['A', 'B', 'A', 'B'], px = [10, 11, 12, 13], qty = [1, 2, 3, 4]], by = ['day', 'sym']]
+log[lookup['ex_keys', ['day', 'sym'], ['2', 'A']].px]
+log[lookup['ex_keys', ['day'], ['1'], ['sym', 'px']].columns]
+log[scan['ex_keys', -1, ['qty']].qty]
+log[since['ex_keys', 2, ['sym', '_pos']].sym]
+gone = rm['ex_keys']
+```
+
+```text
+[12]
+['sym', 'px']
+[1, 2, 3, 4]
+['A', 'B']
+```
+
+`lookup` takes every key at once, so a segment sorted by day then
+symbol reads one row group for one symbol's day instead of the symbol's
+whole month; `columns` on `lookup`, `scan`, `since` and `latest` names
+the columns to read, and a segment decodes only those, which is what a
+month's scan pays for two columns and not ten. A lookup by a column the
+log is not sorted by scans the files its filters admit: where that
+recurs, keep a second log of the same rows sorted by that column, fed
+from the first with `tail` (a sorted projection: one more write per row,
+and the point read reads one group again).
 
 ## Search over the log
 

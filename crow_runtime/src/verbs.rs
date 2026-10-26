@@ -739,6 +739,10 @@ fn shared_codes<'a>(l: &'a Column, lv: &Validity, r: &'a Column, rv: &Validity) 
         (Column::Int(a), Column::Int(b)) => both(a.iter().copied(), lv, b.iter().copied(), rv),
         (Column::DateTime(a, _), Column::DateTime(b, _)) => both(a.iter().copied(), lv, b.iter().copied(), rv),
         (Column::Float(a), Column::Float(b)) => both(a.iter().map(|x| x.to_bits()), lv, b.iter().map(|x| x.to_bits()), rv),
+        // a number is a number: an int side and a float side match where
+        // their values are equal (coded as text, they had not)
+        (Column::Int(a), Column::Float(b)) => both(a.iter().map(|&x| (x as f64).to_bits()), lv, b.iter().map(|x| (*x + 0.0).to_bits()), rv),
+        (Column::Float(a), Column::Int(b)) => both(a.iter().map(|x| (*x + 0.0).to_bits()), lv, b.iter().map(|&x| (x as f64).to_bits()), rv),
         (Column::Bool(a), Column::Bool(b)) => both(a.iter().copied(), lv, b.iter().copied(), rv),
         (Column::Str(a), Column::Str(b)) => {
             // a side held by a dictionary is coded once per distinct value
@@ -791,16 +795,44 @@ impl CrowFrame {
         let ri: Vec<usize> = keys.iter().map(|k| other.col_index(k).ok_or_else(|| format!("join: column '{}' not found in right frame", k))).collect::<Result<_, _>>()?;
         let asof = how == "asof";
         let exact = if asof { keys.len() - 1 } else { keys.len() };
-        let coded: Vec<(Vec<u32>, Vec<u32>)> = (0..exact).map(|k| shared_codes(self.data[li[k]].as_ref(), self.validity[li[k]].as_ref(), other.data[ri[k]].as_ref(), other.validity[ri[k]].as_ref())).collect();
+        // one key of whole numbers (an id, an instant) on both sides: the
+        // right side's rows by value, the left probed by value, no codes
+        // built and no hash of the left side's rows beyond the probe —
+        // a day of 871,527 rows joined to a 40-row universe had spent
+        // most of its time coding both sides first
+        // (a number is a number: an int and a float of one value match, as
+        // two values do, so both sides are read as the bits of a float —
+        // exact for every int below 2^53, and a NaN matches nothing)
+        fn whole(c: &Column) -> Option<Vec<u64>> {
+            match c {
+                Column::Int(v) => Some(v.iter().map(|&x| (x as f64).to_bits()).collect()),
+                Column::DateTime(ms, _) => Some(ms.iter().map(|&x| (x as f64).to_bits()).collect()),
+                Column::Float(v) => Some(v.iter().map(|x| if x.is_nan() { u64::MAX } else { (*x + 0.0).to_bits() }).collect()),
+                _ => None,
+            }
+        }
+        let by_value = !asof && exact == 1 && matches!(self.data[li[0]].as_ref(), Column::Int(_) | Column::DateTime(..) | Column::Float(_)) && matches!(other.data[ri[0]].as_ref(), Column::Int(_) | Column::DateTime(..) | Column::Float(_));
+        let coded: Vec<(Vec<u32>, Vec<u32>)> = if by_value { Vec::new() } else { (0..exact).map(|k| shared_codes(self.data[li[k]].as_ref(), self.validity[li[k]].as_ref(), other.data[ri[k]].as_ref(), other.validity[ri[k]].as_ref())).collect() };
         let lcodes: Vec<Vec<u32>> = coded.iter().map(|(l, _)| l.clone()).collect();
         let rcodes: Vec<Vec<u32>> = coded.iter().map(|(_, r)| r.clone()).collect();
         let (left_indices, right_indices): (Vec<Option<usize>>, Vec<Option<usize>>) = if asof {
             self.asof_pairs(other, li[exact], ri[exact], &lcodes, &rcodes)?
         } else {
             let mut right_map: HashMap<Key, Vec<usize>> = HashMap::new();
-            for row in 0..other.nrows() {
-                if let Some(k) = key_of(&rcodes, row) {
-                    right_map.entry(k).or_default().push(row);
+            let mut right_by_value: HashMap<u64, Vec<usize>> = HashMap::new();
+            let (lvals, rvals) = if by_value { (whole(self.data[li[0]].as_ref()), whole(other.data[ri[0]].as_ref())) } else { (None, None) };
+            let (lvalid, rvalid) = (self.validity[li[0]].as_ref(), other.validity[ri[0]].as_ref());
+            if let Some(rvals) = &rvals {
+                for (row, &v) in rvals.iter().enumerate() {
+                    if rvalid[row] && v != u64::MAX {
+                        right_by_value.entry(v).or_default().push(row);
+                    }
+                }
+            } else {
+                for row in 0..other.nrows() {
+                    if let Some(k) = key_of(&rcodes, row) {
+                        right_map.entry(k).or_default().push(row);
+                    }
                 }
             }
             let (is_left, is_right) = (matches!(how, "left" | "outer"), matches!(how, "right" | "outer"));
@@ -808,7 +840,10 @@ impl CrowFrame {
             let mut right_indices = Vec::new();
             let mut matched_right: Vec<bool> = vec![false; other.nrows()];
             for row in 0..self.nrows() {
-                let hit = key_of(&lcodes, row).and_then(|k| right_map.get(&k));
+                let hit = match &lvals {
+                    Some(lvals) => if lvalid[row] && lvals[row] != u64::MAX { right_by_value.get(&lvals[row]) } else { None },
+                    None => key_of(&lcodes, row).and_then(|k| right_map.get(&k)),
+                };
                 match how {
                     "semi" => {
                         if hit.is_some() {
@@ -841,7 +876,8 @@ impl CrowFrame {
             }
             if is_right {
                 for (row, hit) in matched_right.iter().enumerate() {
-                    if !hit && key_of(&rcodes, row).is_some() {
+                    let keyed = if rvals.is_some() { rvalid[row] } else { key_of(&rcodes, row).is_some() };
+                    if !hit && keyed {
                         left_indices.push(None);
                         right_indices.push(Some(row));
                     }

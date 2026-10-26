@@ -70,8 +70,8 @@ lake.metrics	the module's tests hold the figures to the files written; the refer
 lake.restore	the module's tests restore a backup and read the log as it was; the reference script models no files
 lake.scan	held to SQLite in parity 294 and 295 (the latest version of each key is what MAX(pos) GROUP BY picks); the reference script models no log
 lake.search	held to Lucene's BM25 formula computed apart in tests/lake/reference.py through parity 296, rankings and scores to the ninth decimal; the self-check's reference script models no corpus
-lake.share	held across two processes in tests/lake_share.rs (the leader and the follower each in both modes); the reference script models no server
 lake.since	held to SQLite in parity 294 and 295 (the latest version of each key is what MAX(pos) GROUP BY picks); the reference script models no log
+lake.sync	the module's tests flush a log written without the flush; the reference script models no files
 lake.tail	the module's tests and the book hold it to the rows written while it waits; the reference script models no log
 llm.asked	a model's reply: the empty replay answers here; tests/llm_server.rs holds the module to a server speaking both wire formats, in both modes
 math.atan2	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
@@ -117,6 +117,8 @@ sys.answer	the standard library's own layer: bytes, streams and protocols no ref
 sys.batch_admits	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.batch_find	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.batch_search	the standard library's own layer: bytes, streams and protocols no reference models yet; the scoring is held to Lucene's formula by parity 296
+sys.batch_since	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.batch_sync	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.batch_merge	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.batch_read	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.batch_stats	the standard library's own layer: bytes, streams and protocols no reference models yet

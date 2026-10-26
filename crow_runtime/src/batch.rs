@@ -329,7 +329,7 @@ fn statistics(frame: &CrowFrame, first: i64, last: i64, keys: &[String], texts: 
 /// Answers the file's path. Refused: a frame with no rows, a key or a text
 /// column the frame lacks, a column already named `_pos`, a number whose
 /// file exists.
-pub fn write(dir: &str, number: i64, first: i64, frame: &CrowFrame, keys: &[String], texts: &[String]) -> Result<String, String> {
+pub fn write(dir: &str, number: i64, first: i64, frame: &CrowFrame, keys: &[String], texts: &[String], flush: bool) -> Result<String, String> {
     use arrow::ipc::writer::StreamWriter;
     use arrow::record_batch::RecordBatch;
     if number < 0 || first < 0 {
@@ -371,7 +371,7 @@ pub fn write(dir: &str, number: i64, first: i64, frame: &CrowFrame, keys: &[Stri
         writer.write(&batch).map_err(|e| format!("batch: {}", e))?;
         writer.finish().map_err(|e| format!("batch: {}", e))?;
     }
-    place(dir, &file_name(number), &buf)
+    place(dir, &file_name(number), &buf, flush)
 }
 
 /// The bytes written as a file of the directory: to a temporary name,
@@ -379,13 +379,15 @@ pub fn write(dir: &str, number: i64, first: i64, frame: &CrowFrame, keys: &[Stri
 /// file of the name that appeared meanwhile is not overwritten and the
 /// writer learns it lost the number — then the directory flushed, or a
 /// crash could forget the name of a file whose bytes it kept.
-fn place(dir: &str, name: &str, bytes: &[u8]) -> Result<String, String> {
+fn place(dir: &str, name: &str, bytes: &[u8], flush: bool) -> Result<String, String> {
     let path = std::path::Path::new(dir).join(name);
     let part = std::path::Path::new(dir).join(format!(".{}.part", name));
     let cannot = |what: &str, e: std::io::Error| format!("batch: cannot {} '{}': {}", what, path.display(), e);
     let mut file = std::fs::File::create(&part).map_err(|e| cannot("write", e))?;
     file.write_all(bytes).map_err(|e| cannot("write", e))?;
-    file.sync_all().map_err(|e| cannot("flush", e))?;
+    if flush {
+        file.sync_all().map_err(|e| cannot("flush", e))?;
+    }
     drop(file);
     let linked = std::fs::hard_link(&part, &path);
     let _ = std::fs::remove_file(&part);
@@ -395,7 +397,7 @@ fn place(dir: &str, name: &str, bytes: &[u8]) -> Result<String, String> {
         }
         return Err(cannot("place", e));
     }
-    if let Ok(d) = std::fs::File::open(dir) {
+    if flush && let Ok(d) = std::fs::File::open(dir) {
         let _ = d.sync_all();
     }
     Ok(path.to_string_lossy().to_string())
@@ -469,27 +471,45 @@ fn segment_stats<T: parquet::file::reader::ChunkReader + 'static>(builder: &parq
 /// every row; a column's decode is a third of a day's cost, and twelve
 /// columns run at once).
 #[cfg(feature = "parquet")]
-fn read_groups(path: &str, groups: &[usize]) -> Result<CrowFrame, String> {
+fn read_groups(path: &str, groups: &[usize], wanted: &[String]) -> Result<CrowFrame, String> {
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use parquet::arrow::ProjectionMask;
     let (file, metadata) = segment_metadata(path)?;
-    let schema = metadata.schema().clone();
+    let full = metadata.schema().clone();
+    // the columns wanted, as leaf indices in the file's order (every
+    // column when none is named)
+    let columns: Vec<usize> = if wanted.is_empty() {
+        (0..full.fields().len()).collect()
+    } else {
+        wanted.iter().map(|w| full.fields().iter().position(|f| f.name() == w).ok_or_else(|| format!("batch: '{}' holds no column '{}'", path, w))).collect::<Result<_, _>>()?
+    };
+    let schema = std::sync::Arc::new(arrow::datatypes::Schema::new(columns.iter().map(|&i| full.field(i).clone()).collect::<Vec<_>>()));
     if groups.is_empty() {
         return crate::frame::frame_of_batches(&schema, std::iter::empty(), "batch");
     }
-    let n = schema.fields().len();
+    let n = columns.len();
     let rows: usize = groups.iter().map(|&g| metadata.metadata().row_group(g).num_rows() as usize).sum();
-    // (one column, or few rows: one reader does it)
+    // (one column, or few rows: one reader does it; it answers the columns
+    // in the file's order whatever the mask's, so they are put in the
+    // order asked after)
     if n <= 1 || rows < ROW_GROUP {
-        let reader = ParquetRecordBatchReaderBuilder::new_with_metadata(file, metadata).with_row_groups(groups.to_vec()).with_batch_size(ROW_GROUP).build().map_err(|e| format!("batch: '{}': {}", path, e))?;
-        return crate::frame::frame_of_batches(&schema, reader, "batch");
+        let mut in_file_order = columns.clone();
+        in_file_order.sort_unstable();
+        let read_schema = std::sync::Arc::new(arrow::datatypes::Schema::new(in_file_order.iter().map(|&i| full.field(i).clone()).collect::<Vec<_>>()));
+        let mask = ProjectionMask::leaves(metadata.parquet_schema(), in_file_order.iter().copied());
+        let reader = ParquetRecordBatchReaderBuilder::new_with_metadata(file, metadata).with_projection(mask).with_row_groups(groups.to_vec()).with_batch_size(ROW_GROUP).build().map_err(|e| format!("batch: '{}': {}", path, e))?;
+        let frame = crate::frame::frame_of_batches(&read_schema, reader, "batch")?;
+        if in_file_order == columns {
+            return Ok(frame);
+        }
+        let names: Vec<&str> = columns.iter().map(|&i| full.field(i).name().as_str()).collect();
+        return frame.select(&names);
     }
     drop(file);
-    let columns: Vec<usize> = (0..n).collect();
     let parts: Vec<Result<CrowFrame, String>> = crate::cores::map_items(&columns, rows * n, |&i| {
         let file = std::fs::File::open(path).map_err(|e| format!("batch: cannot read '{}': {}", path, e))?;
         let mask = ProjectionMask::leaves(metadata.parquet_schema(), [i]);
-        let one = std::sync::Arc::new(arrow::datatypes::Schema::new(vec![schema.field(i).clone()]));
+        let one = std::sync::Arc::new(arrow::datatypes::Schema::new(vec![full.field(i).clone()]));
         let reader = ParquetRecordBatchReaderBuilder::new_with_metadata(file, metadata.clone()).with_projection(mask).with_row_groups(groups.to_vec()).with_batch_size(ROW_GROUP).build().map_err(|e| format!("batch: '{}': {}", path, e))?;
         crate::frame::frame_of_batches(&one, reader, "batch")
     });
@@ -519,7 +539,7 @@ fn read_with_stats_unchecked(path: &str) -> Result<(CrowFrame, String), String> 
             let builder = segment_builder(path)?;
             let stats = segment_stats(&builder).ok_or_else(|| format!("batch: '{}' is no segment: it carries no statistics", path))?;
             let groups: Vec<usize> = (0..builder.metadata().num_row_groups()).collect();
-            let frame = read_groups(path, &groups)?;
+            let frame = read_groups(path, &groups, &[])?;
             return Ok((frame, stats));
         }
         #[cfg(not(feature = "parquet"))]
@@ -543,8 +563,39 @@ fn read_with_stats_unchecked(path: &str) -> Result<(CrowFrame, String), String> 
 /// `sys.batch_read[path]`: the batch file, or the segment, as the frame
 /// it holds, its position column included. A file cut short is refused
 /// with its reason.
-pub fn read(path: &str) -> Result<CrowFrame, String> {
-    read_with_stats(path).map(|(f, _)| f)
+pub fn read(path: &str, wanted: &[String]) -> Result<CrowFrame, String> {
+    if wanted.is_empty() {
+        return read_with_stats(path).map(|(f, _)| f);
+    }
+    if is_segment(path)? {
+        #[cfg(feature = "parquet")]
+        {
+            let (_, metadata) = segment_metadata(path)?;
+            let groups: Vec<usize> = (0..metadata.metadata().num_row_groups()).collect();
+            return read_groups(path, &groups, wanted);
+        }
+        #[cfg(not(feature = "parquet"))]
+        {
+            return Err(format!("batch: '{}' is a segment, and this program was built without Parquet", path));
+        }
+    }
+    let (frame, _) = read_with_stats(path)?;
+    only(frame, wanted, path)
+}
+
+/// A frame's columns named, in the order named; a name the frame lacks is
+/// refused.
+fn only(frame: CrowFrame, wanted: &[String], path: &str) -> Result<CrowFrame, String> {
+    if wanted.is_empty() {
+        return Ok(frame);
+    }
+    for w in wanted {
+        if frame.col_index(w).is_none() {
+            return Err(format!("batch: '{}' holds no column '{}'", path, w));
+        }
+    }
+    let names: Vec<&str> = wanted.iter().map(String::as_str).collect();
+    frame.select(&names)
 }
 
 /// `sys.batch_stats[path]`: the file's statistics as JSON text — `rows`,
@@ -595,19 +646,22 @@ fn parsed(kind: &str, value: &str) -> Result<Parsed, String> {
     })
 }
 
-/// The rows of a frame whose column holds the value.
-fn rows_holding(frame: &CrowFrame, column: &str, want: &Parsed) -> Result<CrowFrame, String> {
-    let c = frame.col_index(column).ok_or_else(|| format!("batch: no column '{}'", column))?;
-    let valid = frame.validity[c].as_ref();
+/// The rows of a frame whose columns hold the values, every pair at once.
+fn rows_holding(frame: &CrowFrame, columns: &[String], wants: &[Parsed]) -> Result<CrowFrame, String> {
     let n = frame.nrows();
-    let mask: Vec<bool> = match (frame.data[c].as_ref(), want) {
-        (Column::Int(v), Parsed::Int(w)) => (0..n).map(|i| valid[i] && v[i] == *w).collect(),
-        (Column::DateTime(ms, _), Parsed::Int(w)) => (0..n).map(|i| valid[i] && ms[i] == *w).collect(),
-        (Column::Float(v), Parsed::Float(w)) => (0..n).map(|i| valid[i] && v[i] == *w).collect(),
-        (Column::Bool(v), Parsed::Bool(w)) => (0..n).map(|i| valid[i] && v[i] == *w).collect(),
-        (Column::Str(t), Parsed::Text(w)) => (0..n).map(|i| valid[i] && t.get(i) == w).collect(),
-        _ => return Err(format!("batch: column '{}' holds another kind than the value", column)),
-    };
+    let mut mask = vec![true; n];
+    for (column, want) in columns.iter().zip(wants) {
+        let c = frame.col_index(column).ok_or_else(|| format!("batch: no column '{}'", column))?;
+        let valid = frame.validity[c].as_ref();
+        match (frame.data[c].as_ref(), want) {
+            (Column::Int(v), Parsed::Int(w)) => (0..n).for_each(|i| mask[i] &= valid[i] && v[i] == *w),
+            (Column::DateTime(ms, _), Parsed::Int(w)) => (0..n).for_each(|i| mask[i] &= valid[i] && ms[i] == *w),
+            (Column::Float(v), Parsed::Float(w)) => (0..n).for_each(|i| mask[i] &= valid[i] && v[i] == *w),
+            (Column::Bool(v), Parsed::Bool(w)) => (0..n).for_each(|i| mask[i] &= valid[i] && v[i] == *w),
+            (Column::Str(t), Parsed::Text(w)) => (0..n).for_each(|i| mask[i] &= valid[i] && t.get(i) == w),
+            _ => return Err(format!("batch: column '{}' holds another kind than the value", column)),
+        }
+    }
     frame.pick_rows(&mask)
 }
 
@@ -626,39 +680,68 @@ fn group_admits(stats: Option<&parquet::file::statistics::Statistics>, want: &Pa
     }
 }
 
-/// `sys.batch_find[path, column, value]`: the rows of the file whose
-/// `column` holds the value (written as text, read as the column's kind),
-/// with the file's own columns. The file's filter is asked first; a
-/// segment is read row group by row group, only the groups whose
-/// statistics admit the value — one, for a key the segment is sorted by.
-pub fn find(path: &str, column: &str, value: &str) -> Result<CrowFrame, String> {
+/// `sys.batch_find[path, columns, values, wanted]`: the rows of the file
+/// whose `columns` hold the `values`, every pair at once (each value
+/// written as text, read as its column's kind), with the columns
+/// `wanted` (every column when none is named), `_pos` among them where
+/// wanted or when every column is. The file's filter is asked for each
+/// pair first; a segment is read row group by row group, only the groups
+/// whose statistics admit every value — one, for keys the segment is
+/// sorted by, which is how a question about one key on one day reads
+/// one group of 8192 rows and not the key's whole month.
+pub fn find(path: &str, columns: &[String], values: &[String], wanted: &[String]) -> Result<CrowFrame, String> {
+    if columns.is_empty() {
+        return Err("batch: a find names at least one column".to_string());
+    }
+    if columns.len() != values.len() {
+        return Err(format!("batch: {} columns and {} values — a find takes one value per column", columns.len(), values.len()));
+    }
     let head: serde_json::Value = serde_json::from_str(&stats(path)?).map_err(|e| format!("batch: '{}' has unreadable statistics: {}", path, e))?;
-    let Some(col) = head["columns"].get(column) else {
-        return Err(format!("batch: '{}' holds no column '{}'", path, column));
-    };
-    let kind = col["kind"].as_str().unwrap_or("");
-    let want = parsed(kind, value).map_err(|e| format!("batch: column '{}': {}", column, e))?;
-    let bytes = value_bytes(kind, value).map_err(|e| format!("batch: column '{}': {}", column, e))?;
-    let bloom = match col["bloom"].as_str() {
-        Some(encoded) => Some(Bloom::decode(encoded).map_err(|e| format!("batch: '{}': {}", path, e))?),
-        None => None,
-    };
-    let admitted = |b: &[u8]| bloom.as_ref().is_none_or(|f| f.has(b));
+    let mut wants: Vec<Parsed> = Vec::with_capacity(columns.len());
+    let mut admitted = true;
+    for (column, value) in columns.iter().zip(values) {
+        let Some(col) = head["columns"].get(column) else {
+            return Err(format!("batch: '{}' holds no column '{}'", path, column));
+        };
+        let kind = col["kind"].as_str().unwrap_or("");
+        let want = parsed(kind, value).map_err(|e| format!("batch: column '{}': {}", column, e))?;
+        let bytes = value_bytes(kind, value).map_err(|e| format!("batch: column '{}': {}", column, e))?;
+        if let Some(encoded) = col["bloom"].as_str() {
+            let bloom = Bloom::decode(encoded).map_err(|e| format!("batch: '{}': {}", path, e))?;
+            if !bloom.has(&bytes) {
+                admitted = false;
+            }
+        }
+        wants.push(want);
+    }
+    // the columns a read must hold: the ones wanted, plus the keys, which
+    // the rows are picked by; the keys are dropped again where not wanted
+    let mut needed: Vec<String> = wanted.to_vec();
+    if !wanted.is_empty() {
+        for c in columns {
+            if !needed.contains(c) {
+                needed.push(c.clone());
+            }
+        }
+    }
     if is_segment(path)? {
         #[cfg(feature = "parquet")]
         {
             let builder = segment_builder(path)?;
             let schema = builder.schema().clone();
-            if !admitted(&bytes) {
-                return crate::frame::frame_of_batches(&schema, std::iter::empty(), "batch");
+            if !admitted {
+                let empty = crate::frame::frame_of_batches(&schema, std::iter::empty(), "batch")?;
+                return only(empty, wanted, path);
             }
-            let leaf = schema.fields().iter().position(|f| f.name() == column).ok_or_else(|| format!("batch: '{}' holds no column '{}'", path, column))?;
-            let groups: Vec<usize> = (0..builder.metadata().num_row_groups()).filter(|&g| group_admits(builder.metadata().row_group(g).column(leaf).statistics(), &want)).collect();
+            let leaves: Vec<usize> = columns.iter().map(|c| schema.fields().iter().position(|f| f.name() == c).ok_or_else(|| format!("batch: '{}' holds no column '{}'", path, c))).collect::<Result<_, _>>()?;
+            let groups: Vec<usize> = (0..builder.metadata().num_row_groups()).filter(|&g| leaves.iter().zip(&wants).all(|(&leaf, want)| group_admits(builder.metadata().row_group(g).column(leaf).statistics(), want))).collect();
             if groups.is_empty() {
-                return crate::frame::frame_of_batches(&schema, std::iter::empty(), "batch");
+                let empty = crate::frame::frame_of_batches(&schema, std::iter::empty(), "batch")?;
+                return only(empty, wanted, path);
             }
-            let frame = read_groups(path, &groups)?;
-            return rows_holding(&frame, column, &want);
+            let frame = read_groups(path, &groups, &needed)?;
+            let held = rows_holding(&frame, columns, &wants)?;
+            return only(held, wanted, path);
         }
         #[cfg(not(feature = "parquet"))]
         {
@@ -667,11 +750,13 @@ pub fn find(path: &str, column: &str, value: &str) -> Result<CrowFrame, String> 
     }
     let reader = open(path)?;
     let schema = reader.schema();
-    if !admitted(&bytes) {
-        return crate::frame::frame_of_batches(&schema, std::iter::empty(), "batch");
+    if !admitted {
+        let empty = crate::frame::frame_of_batches(&schema, std::iter::empty(), "batch")?;
+        return only(empty, wanted, path);
     }
     let frame = crate::frame::frame_of_batches(&schema, reader, "batch")?;
-    rows_holding(&frame, column, &want)
+    let held = rows_holding(&frame, columns, &wants)?;
+    only(held, wanted, path)
 }
 
 /// What one file contributes to a search: how many documents its indexed
@@ -829,6 +914,68 @@ pub fn search(paths: &[String], column: &str, words: &[String], k: i64) -> Resul
     ranked.pick_rows(&keep)
 }
 
+/// The frames of several files stacked, sorted by position, `_pos` dropped
+/// where it was not asked for.
+fn gathered(parts: Vec<CrowFrame>, wanted: &[String]) -> Result<CrowFrame, String> {
+    let mut whole: Option<CrowFrame> = None;
+    for part in parts {
+        if part.nrows() == 0 && whole.is_some() {
+            continue;
+        }
+        whole = Some(match whole {
+            None => part,
+            Some(w) => w.stack(&part).map_err(|e| format!("batch: the files hold different columns: {}", e))?,
+        });
+    }
+    let Some(whole) = whole else { return Ok(CrowFrame::new(Vec::new(), Vec::new(), Vec::new())) };
+    let ordered = if whole.nrows() > 1 && whole.col_index(POSITION).is_some() { whole.sort(POSITION, false)? } else { whole };
+    if wanted.is_empty() || wanted.iter().any(|w| w == POSITION) {
+        return Ok(ordered);
+    }
+    let names: Vec<&str> = wanted.iter().map(String::as_str).collect();
+    ordered.select(&names)
+}
+
+/// The columns a read must hold for a pick by position: the ones wanted
+/// and `_pos` (every column when none is named).
+fn with_position(wanted: &[String]) -> Vec<String> {
+    if wanted.is_empty() || wanted.iter().any(|w| w == POSITION) {
+        return wanted.to_vec();
+    }
+    let mut needed = wanted.to_vec();
+    needed.push(POSITION.to_string());
+    needed
+}
+
+/// `sys.batch_since[paths, after, wanted]`: the rows of the files at a
+/// position past `after`, in position order, with the columns `wanted`
+/// (every column when none is named; `_pos` read for the picking and
+/// dropped where not asked). The files are read across the cores.
+pub fn since(paths: &[String], after: i64, wanted: &[String]) -> Result<CrowFrame, String> {
+    let needed = with_position(wanted);
+    let parts: Vec<Result<CrowFrame, String>> = crate::cores::map_items(paths, paths.len() * ROW_GROUP, |p| {
+        let frame = read(p, &needed)?;
+        let c = frame.col_index(POSITION).ok_or_else(|| format!("batch: '{}' holds no column '{}'", p, POSITION))?;
+        let Column::Int(pos) = frame.data[c].as_ref() else {
+            return Err(format!("batch: '{}' holds no positions", p));
+        };
+        if pos.iter().all(|&x| x > after) {
+            return Ok(frame);
+        }
+        let mask: Vec<bool> = pos.iter().map(|&x| x > after).collect();
+        frame.pick_rows(&mask)
+    });
+    gathered(parts.into_iter().collect::<Result<_, _>>()?, wanted)
+}
+
+/// `sys.batch_find[paths, columns, values, wanted]`: `find` over several
+/// files, the rows in position order, `_pos` dropped where not asked.
+pub fn find_in(paths: &[String], columns: &[String], values: &[String], wanted: &[String]) -> Result<CrowFrame, String> {
+    let needed = with_position(wanted);
+    let parts: Vec<Result<CrowFrame, String>> = crate::cores::map_items(paths, paths.len() * ROW_GROUP, |p| find(p, columns, values, &needed));
+    gathered(parts.into_iter().collect::<Result<_, _>>()?, wanted)
+}
+
 /// Whether two rows hold the same cells in the columns.
 fn same_key(frame: &CrowFrame, cols: &[usize], i: usize, j: usize) -> bool {
     cols.iter().all(|&c| {
@@ -925,7 +1072,27 @@ pub fn merge(dir: &str, paths: &[String], keys: &[String], every: bool) -> Resul
         writer.write(&batch).map_err(|e| format!("batch: {}", e))?;
         writer.close().map_err(|e| format!("batch: {}", e))?;
     }
-    place(dir, &segment_name(lo, hi), &buf)
+    place(dir, &segment_name(lo, hi), &buf, true)
+}
+
+/// `sys.batch_sync[dir]`: every batch and segment under `dir` flushed to
+/// the disk, then the directory — what a batch written with `flush`
+/// false had skipped. Answers how many files were flushed.
+pub fn sync(dir: &str) -> Result<i64, String> {
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("batch: cannot read '{}': {}", dir, e))?;
+    let mut n = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if covered(&name).is_none() {
+            continue;
+        }
+        let f = std::fs::File::open(entry.path()).map_err(|e| format!("batch: cannot open '{}': {}", entry.path().display(), e))?;
+        f.sync_all().map_err(|e| format!("batch: cannot flush '{}': {}", entry.path().display(), e))?;
+        n += 1;
+    }
+    let d = std::fs::File::open(dir).map_err(|e| format!("batch: cannot open '{}': {}", dir, e))?;
+    d.sync_all().map_err(|e| format!("batch: cannot flush '{}': {}", dir, e))?;
+    Ok(n)
 }
 
 /// `sys.batch_admits[path, column, value, token]`: whether the file may
@@ -984,9 +1151,9 @@ mod tests {
     #[test]
     fn a_frame_round_trips_sorted_by_its_keys() {
         let dir = scratch("round");
-        let path = write(&dir, 7, 100, &frame(), &["id".to_string()], &["name".to_string()]).expect("written");
+        let path = write(&dir, 7, 100, &frame(), &["id".to_string()], &["name".to_string()], true).expect("written");
         assert!(path.ends_with("000000000007.batch"));
-        let back = read(&path).expect("read back");
+        let back = read(&path, &[]).expect("read back");
         assert_eq!(back.columns, vec!["id", "price", "name", "ok", POSITION]);
         let ids = match back.data[0].as_ref() { Column::Int(v) => v.clone(), _ => panic!("ints") };
         assert_eq!(ids, vec![1, 1, 2, 3]);
@@ -1017,7 +1184,7 @@ mod tests {
     #[test]
     fn a_filter_admits_what_is_there() {
         let dir = scratch("admits");
-        let path = write(&dir, 1, 0, &frame(), &[], &["name".to_string()]).expect("written");
+        let path = write(&dir, 1, 0, &frame(), &[], &["name".to_string()], true).expect("written");
         assert!(admits(&path, "id", "3", false).unwrap());
         assert!(admits(&path, "id", " 1 ", false).unwrap());
         assert!(admits(&path, "price", "2.5", false).unwrap());
@@ -1041,26 +1208,26 @@ mod tests {
     #[test]
     fn a_torn_file_is_refused_and_a_number_is_written_once() {
         let dir = scratch("torn");
-        let path = write(&dir, 2, 0, &frame(), &["id".to_string()], &[]).expect("written");
+        let path = write(&dir, 2, 0, &frame(), &["id".to_string()], &[], true).expect("written");
         let whole = std::fs::read(&path).unwrap();
         // the last eight bytes are the stream's end marker: a file cut
         // inside its rows is refused, one cut only there holds every row
         for cut in (0..whole.len() - 8).step_by(7) {
             let torn = std::path::Path::new(&dir).join("torn.batch");
             std::fs::write(&torn, &whole[..cut]).unwrap();
-            let r = read(&torn.to_string_lossy());
+            let r = read(&torn.to_string_lossy(), &[]);
             assert!(r.is_err(), "a file cut at {} of {} bytes read", cut, whole.len());
             assert!(stats(&torn.to_string_lossy()).is_err() || cut > 0);
         }
         let torn = std::path::Path::new(&dir).join("torn.batch");
         std::fs::write(&torn, &whole[..whole.len() - 8]).unwrap();
-        assert_eq!(read(&torn.to_string_lossy()).unwrap().nrows(), 4);
-        assert!(write(&dir, 2, 0, &frame(), &[], &[]).unwrap_err().contains("was written already"));
-        assert!(write(&dir, 3, 0, &frame(), &["nosuch".to_string()], &[]).unwrap_err().contains("no column 'nosuch' to sort by"));
-        assert!(write(&dir, 3, 0, &frame(), &[], &["id".to_string()]).unwrap_err().contains("holds no text"));
+        assert_eq!(read(&torn.to_string_lossy(), &[]).unwrap().nrows(), 4);
+        assert!(write(&dir, 2, 0, &frame(), &[], &[], true).unwrap_err().contains("was written already"));
+        assert!(write(&dir, 3, 0, &frame(), &["nosuch".to_string()], &[], true).unwrap_err().contains("no column 'nosuch' to sort by"));
+        assert!(write(&dir, 3, 0, &frame(), &[], &["id".to_string()], true).unwrap_err().contains("holds no text"));
         assert!(!std::path::Path::new(&dir).join(file_name(3)).exists());
         let empty = CrowFrame::new(vec!["a".into()], vec![Column::Int(vec![])], vec![vec![]]);
-        assert!(write(&dir, 3, 0, &empty, &[], &[]).unwrap_err().contains("at least one row"));
+        assert!(write(&dir, 3, 0, &empty, &[], &[], true).unwrap_err().contains("at least one row"));
         assert!(!std::fs::read_dir(&dir).unwrap().flatten().any(|e| e.file_name().to_string_lossy().ends_with(".part")));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1081,12 +1248,12 @@ mod tests {
         t2.push("TWO again");
         t2.push("four");
         let b = CrowFrame::new(vec!["id".into(), "name".into()], vec![Column::Int(vec![2, 4]), Column::Str(t2)], vec![vec![true; 2], vec![true; 2]]);
-        let pa = write(&dir, 0, 0, &a, &["id".to_string()], &["name".to_string()]).unwrap();
-        let pb = write(&dir, 1, 3, &b, &["id".to_string()], &["name".to_string()]).unwrap();
+        let pa = write(&dir, 0, 0, &a, &["id".to_string()], &["name".to_string()], true).unwrap();
+        let pb = write(&dir, 1, 3, &b, &["id".to_string()], &["name".to_string()], true).unwrap();
         let seg = merge(&dir, &[pa.clone(), pb.clone()], &["id".to_string()], false).unwrap();
         assert!(seg.ends_with("000000000000-000000000001.segment"), "{}", seg);
         assert_eq!(covered("000000000000-000000000001.segment"), Some((0, 1)));
-        let f = read(&seg).unwrap();
+        let f = read(&seg, &[]).unwrap();
         let ids = match f.data[0].as_ref() { Column::Int(v) => v.clone(), _ => panic!() };
         assert_eq!(ids, vec![1, 2, 3, 4]);
         let names = match f.data[1].as_ref() { Column::Str(t) => t.to_vec(), _ => panic!() };
@@ -1105,20 +1272,20 @@ mod tests {
         let mut t3 = Text::new();
         t3.push("four again");
         let c = CrowFrame::new(vec!["id".into(), "name".into()], vec![Column::Int(vec![4]), Column::Str(t3)], vec![vec![true], vec![true]]);
-        let pc = write(&dir, 2, 5, &c, &["id".to_string()], &[]).unwrap();
+        let pc = write(&dir, 2, 5, &c, &["id".to_string()], &[], true).unwrap();
         let seg2 = merge(&dir, &[seg.clone(), pc.clone()], &[], false).unwrap();
         assert!(seg2.ends_with("000000000000-000000000002.segment"));
-        assert_eq!(read(&seg2).unwrap().nrows(), 5);
+        assert_eq!(read(&seg2, &[]).unwrap().nrows(), 5);
         assert!(merge(&dir, &[seg.clone(), pc.clone()], &[], false).unwrap_err().contains("was written already"));
         assert!(merge(&dir, &[], &[], false).unwrap_err().contains("one file or more"));
         // every row kept, sorted by the key: all three versions of id 4 stay, in key order
         let mut t4 = Text::new();
         t4.push("four once more");
         let d = CrowFrame::new(vec!["id".into(), "name".into()], vec![Column::Int(vec![4]), Column::Str(t4)], vec![vec![true], vec![true]]);
-        let pd = write(&dir, 3, 6, &d, &["id".to_string()], &[]).unwrap();
+        let pd = write(&dir, 3, 6, &d, &["id".to_string()], &[], true).unwrap();
         let kept = merge(&dir, &[seg2.clone(), pd], &["id".to_string()], true).unwrap();
         assert!(kept.ends_with("000000000000-000000000003.segment"));
-        let k = read(&kept).unwrap();
+        let k = read(&kept, &[]).unwrap();
         assert_eq!(k.nrows(), 6);
         assert_eq!(match k.data[0].as_ref() { Column::Int(v) => v.clone(), _ => panic!() }, vec![1, 2, 3, 4, 4, 4]);
         assert!(merge(&dir, &[pa.clone()], &["nosuch".to_string()], false).unwrap_err().contains("no column 'nosuch'"));
@@ -1139,21 +1306,21 @@ mod tests {
             names.push(&format!("row {}", i));
         }
         let f = CrowFrame::new(vec!["id".into(), "name".into()], vec![Column::Int(ids), Column::Str(names)], vec![vec![true; n as usize], vec![true; n as usize]]);
-        let pa = write(&dir, 0, 0, &f, &["id".to_string()], &[]).unwrap();
-        let hit = find(&pa, "id", "12345").unwrap();
+        let pa = write(&dir, 0, 0, &f, &["id".to_string()], &[], true).unwrap();
+        let hit = find(&pa, &["id".to_string()], &["12345".to_string()], &[]).unwrap();
         assert_eq!(hit.nrows(), 1);
         assert_eq!(match hit.data[2].as_ref() { Column::Int(v) => v[0], _ => panic!() }, n - 1 - 12345);
-        let none = find(&pa, "id", "-5").unwrap();
+        let none = find(&pa, &["id".to_string()], &["-5".to_string()], &[]).unwrap();
         assert_eq!(none.nrows(), 0);
         assert_eq!(none.columns, vec!["id", "name", POSITION]);
         let seg = merge(&dir, &[pa.clone()], &["id".to_string()], false).unwrap();
-        let hit = find(&seg, "id", "12345").unwrap();
+        let hit = find(&seg, &["id".to_string()], &["12345".to_string()], &[]).unwrap();
         assert_eq!(hit.nrows(), 1);
         assert_eq!(match hit.data[1].as_ref() { Column::Str(t) => t.get(0).to_string(), _ => panic!() }, "row 12345");
-        assert_eq!(find(&seg, "name", "row 7").unwrap().nrows(), 1);
-        assert_eq!(find(&seg, "id", "99999999").unwrap().nrows(), 0);
-        assert_eq!(find(&seg, "id", "x").unwrap_err(), "batch: column 'id': 'x' is no int");
-        assert!(find(&seg, "nosuch", "1").unwrap_err().contains("holds no column 'nosuch'"));
+        assert_eq!(find(&seg, &["name".to_string()], &["row 7".to_string()], &[]).unwrap().nrows(), 1);
+        assert_eq!(find(&seg, &["id".to_string()], &["99999999".to_string()], &[]).unwrap().nrows(), 0);
+        assert_eq!(find(&seg, &["id".to_string()], &["x".to_string()], &[]).unwrap_err(), "batch: column 'id': 'x' is no int");
+        assert!(find(&seg, &["nosuch".to_string()], &["1".to_string()], &[]).unwrap_err().contains("holds no column 'nosuch'"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1209,7 +1376,7 @@ mod profile {
         println!("arrow to frame: {:?} ({} rows)", t.elapsed(), f.nrows());
         // c: the parallel reader as built
         let t = std::time::Instant::now();
-        let f = read_groups(&path, &groups).unwrap();
+        let f = read_groups(&path, &groups, &[]).unwrap();
         println!("read_groups across the cores: {:?} ({} rows)", t.elapsed(), f.nrows());
         // d: per column decode cost: projection of one column at a time
         for (i, field) in schema.fields().iter().enumerate() {
@@ -1220,5 +1387,91 @@ mod profile {
             let n: usize = reader.map(|b| b.unwrap().num_rows()).sum();
             println!("  column {} ({:?}): {:?} ({} rows)", field.name(), field.data_type(), t.elapsed(), n);
         }
+    }
+}
+
+#[cfg(all(test, feature = "parquet"))]
+mod keys_and_columns {
+    use super::*;
+    use crate::textcol::Text;
+    fn frame() -> CrowFrame {
+        let ids: Vec<i64> = (0..20000).map(|i| i % 1000).collect();
+        let days: Vec<i64> = (0..20000).map(|i| i / 1000).collect();
+        let mut names = Text::new();
+        for i in 0..20000 {
+            names.push(&format!("row {}", i));
+        }
+        CrowFrame::new(vec!["id".into(), "day".into(), "name".into()], vec![Column::Int(ids), Column::Int(days), Column::Str(names)], vec![vec![true; 20000]; 3])
+    }
+    /// Two keys prune to the rows holding both; the columns wanted are the
+    /// ones read, the keys dropped again where not wanted.
+    #[test]
+    fn a_find_by_two_keys_reads_the_rows_holding_both() {
+        let dir = std::env::temp_dir().join(format!("crow-batch-keys-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir = dir.to_string_lossy().to_string();
+        let pa = write(&dir, 0, 0, &frame(), &["day".to_string(), "id".to_string()], &[], true).unwrap();
+        let seg = merge(&dir, &[pa.clone()], &["day".to_string(), "id".to_string()], true).unwrap();
+        for path in [&pa, &seg] {
+            let hit = find(path, &["day".to_string(), "id".to_string()], &["7".to_string(), "42".to_string()], &[]).unwrap();
+            assert_eq!(hit.nrows(), 1);
+            assert_eq!(hit.columns, vec!["id", "day", "name", POSITION]);
+            let named = find(path, &["day".to_string(), "id".to_string()], &["7".to_string(), "42".to_string()], &["name".to_string()]).unwrap();
+            assert_eq!(named.columns, vec!["name"]);
+            assert_eq!(named.nrows(), 1);
+            let none = find(path, &["day".to_string(), "id".to_string()], &["7".to_string(), "4200".to_string()], &[]).unwrap();
+            assert_eq!(none.nrows(), 0);
+            let two = read(path, &["day".to_string(), "name".to_string()]).unwrap();
+            assert_eq!(two.columns, vec!["day", "name"]);
+            let back = find(path, &["day".to_string()], &["3".to_string()], &["name".to_string(), "id".to_string()]).unwrap();
+            assert_eq!(back.columns, vec!["name", "id"]);
+            assert_eq!(back.nrows(), 1000);
+            if let Column::Int(ids) = back.data[1].as_ref() { assert_eq!(ids[0], 0) } else { panic!("ids") }
+            assert_eq!(two.nrows(), 20000);
+            assert!(read(path, &["nosuch".to_string()]).unwrap_err().contains("holds no column 'nosuch'"));
+        }
+        assert!(find(&seg, &["day".to_string()], &["7".to_string(), "1".to_string()], &[]).unwrap_err().contains("one value per column"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    /// Several files read past a position come in position order, and a
+    /// find over several files too, each with the columns asked
+    #[test]
+    fn several_files_are_read_in_position_order() {
+        let dir = std::env::temp_dir().join(format!("crow-batch-since-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir = dir.to_string_lossy().to_string();
+        let pa = write(&dir, 0, 0, &frame(), &["id".to_string()], &[], true).unwrap();
+        let pb = write(&dir, 1, 20000, &frame(), &["id".to_string()], &[], true).unwrap();
+        let paths = vec![pb.clone(), pa.clone()];
+        let all = since(&paths, -1, &[]).unwrap();
+        assert_eq!(all.nrows(), 40000);
+        let Column::Int(pos) = all.data[all.col_index(POSITION).unwrap()].as_ref() else { panic!("positions") };
+        assert!(pos.windows(2).all(|w| w[0] < w[1]));
+        let late = since(&paths, 39990, &["name".to_string()]).unwrap();
+        assert_eq!(late.nrows(), 9);
+        assert_eq!(late.columns, vec!["name"]);
+        let none = since(&paths, 40000, &[]).unwrap();
+        assert_eq!(none.nrows(), 0);
+        let both = find_in(&paths, &["id".to_string()], &["7".to_string()], &["day".to_string()]).unwrap();
+        assert_eq!(both.nrows(), 40);
+        assert_eq!(both.columns, vec!["day"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    /// A batch written without a flush is read as any batch, and a sync
+    /// flushes every file of the log.
+    #[test]
+    fn a_batch_written_without_a_flush_is_synced_later() {
+        let dir = std::env::temp_dir().join(format!("crow-batch-flush-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir = dir.to_string_lossy().to_string();
+        let pa = write(&dir, 0, 0, &frame(), &["id".to_string()], &[], false).unwrap();
+        assert_eq!(read(&pa, &[]).unwrap().nrows(), 20000);
+        assert!(!std::fs::read_dir(&dir).unwrap().flatten().any(|e| e.file_name().to_string_lossy().ends_with(".part")));
+        assert_eq!(sync(&dir).unwrap(), 1);
+        assert!(sync("/nonexistent/crow-log").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

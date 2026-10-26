@@ -735,27 +735,27 @@ mod expect_tests {
 /// `sys.batch_write[dir, number, first, frame, keys, texts]` where the
 /// program was built with Arrow (the interpreter always is; a compiled
 /// program that writes batches).
-pub fn batch_write(dir: &str, number: i64, first: i64, f: &CrowFrame, keys: &[String], texts: &[String]) -> Result<String, String> {
+pub fn batch_write(dir: &str, number: i64, first: i64, f: &CrowFrame, keys: &[String], texts: &[String], flush: bool) -> Result<String, String> {
     #[cfg(feature = "arrow")]
     {
-        crate::batch::write(dir, number, first, f, keys, texts)
+        crate::batch::write(dir, number, first, f, keys, texts, flush)
     }
     #[cfg(not(feature = "arrow"))]
     {
-        let _ = (dir, number, first, f, keys, texts);
+        let _ = (dir, number, first, f, keys, texts, flush);
         Err("batch: this program was built without Arrow".to_string())
     }
 }
 
 /// `sys.batch_read[path]`, likewise.
-pub fn batch_read(path: &str) -> Result<CrowFrame, String> {
+pub fn batch_read(path: &str, wanted: &[String]) -> Result<CrowFrame, String> {
     #[cfg(feature = "arrow")]
     {
-        crate::batch::read(path)
+        crate::batch::read(path, wanted)
     }
     #[cfg(not(feature = "arrow"))]
     {
-        let _ = path;
+        let _ = (path, wanted);
         Err("batch: this program was built without Arrow".to_string())
     }
 }
@@ -813,15 +813,41 @@ pub fn batch_search(paths: &[String], column: &str, words: &[String], k: i64) ->
     }
 }
 
-/// `sys.batch_find[path, column, value]`, likewise.
-pub fn batch_find(path: &str, column: &str, value: &str) -> Result<CrowFrame, String> {
+/// `sys.batch_since[paths, after, wanted]`, likewise.
+pub fn batch_since(paths: &[String], after: i64, wanted: &[String]) -> Result<CrowFrame, String> {
     #[cfg(feature = "arrow")]
     {
-        crate::batch::find(path, column, value)
+        crate::batch::since(paths, after, wanted)
     }
     #[cfg(not(feature = "arrow"))]
     {
-        let _ = (path, column, value);
+        let _ = (paths, after, wanted);
+        Err("batch: this program was built without Arrow".to_string())
+    }
+}
+
+/// `sys.batch_sync[dir]`, likewise.
+pub fn batch_sync(dir: &str) -> Result<i64, String> {
+    #[cfg(feature = "arrow")]
+    {
+        crate::batch::sync(dir)
+    }
+    #[cfg(not(feature = "arrow"))]
+    {
+        let _ = dir;
+        Err("batch: this program was built without Arrow".to_string())
+    }
+}
+
+/// `sys.batch_find[path, columns, values, wanted]`, likewise.
+pub fn batch_find(paths: &[String], columns: &[String], values: &[String], wanted: &[String]) -> Result<CrowFrame, String> {
+    #[cfg(feature = "arrow")]
+    {
+        crate::batch::find_in(paths, columns, values, wanted)
+    }
+    #[cfg(not(feature = "arrow"))]
+    {
+        let _ = (paths, columns, values, wanted);
         Err("batch: this program was built without Arrow".to_string())
     }
 }

@@ -117,10 +117,10 @@ fn _next[b]
 --- caller's parameters, and a frame handed an int did not build compiled),
 --- the lists copied for it (a row takes its list of text as a value, and a
 --- parameter the body only reads is lent: `(*by)` had not built)
-fn _written[dir, number, first, f, by, texts]
+fn _written[dir, number, first, f, by, texts, flush]
     cols = by
     words = texts
-    return batch_write[dir, number, first, f, cols, words]
+    return batch_write[dir, number, first, f, cols, words, flush]
 
 --- a frame about to be written, its key and text columns checked to
 --- exist: refused here, before the kernel is reached, and in both modes
@@ -158,12 +158,19 @@ fn _opened[dir]
         return error['cannot open a log at \'`dir`\': `made.reason`', 'lake']
     return dir
 
---- `batch[dir, f, by = [], texts = []]`: the frame written as the log's
---- next batch, sorted by the `by` columns, the words of `texts` indexed;
---- answers the first position its rows got. Two writers that claim one
+--- `batch[dir, f, by = [], texts = [], flush = true]`: the frame written as
+--- the log's next batch, sorted by the `by` columns, the words of `texts`
+--- indexed; answers the first position its rows got. With `flush` false
+--- the file is written but not flushed to the disk — Redis's default
+--- durability: a crash may lose the batches since the last `sync` — and a
+--- later `sync[dir]` flushes them all. Two writers that claim one
 --- number: the second's write is refused by the kernel and claims the next
-fn batch[dir, f, by = [], texts = []]
+fn batch[dir, f, by = [], texts = [], flush = true]
     checked = _checked[f, by, texts]
+    --- `flush` pinned as a bool (a list of bools had passed as a mask)
+    flushed = 0
+    if flush
+        flushed = 1
     if not checked.ok
         return checked
     opened = _opened[dir]
@@ -175,7 +182,7 @@ fn batch[dir, f, by = [], texts = []]
         if not b.ok
             return b
         at = _next[b]
-        made = _written[dir, at[0], at[1], f, by, texts]
+        made = _written[dir, at[0], at[1], f, by, texts, flush]
         if made.ok
             return at[1]
         if not ('was written already' in made.reason)
@@ -183,36 +190,48 @@ fn batch[dir, f, by = [], texts = []]
         tries = tries + 1
     return error['the log at \'`dir`\' is contended: 100 tries could not claim a batch number', 'lake']
 
---- the batch files whose positions reach past `after`, stacked, the rows
---- past it kept
-fn _rows_after[b, after]
-    out = frame.new[]
+--- `sync[dir]`: every file of the log flushed to the disk, then its
+--- directory — what batches written with `flush = false` had skipped;
+--- answers how many files were flushed
+fn sync[dir]
+    if len[bytes[dir]] eq 0
+        return error['sync needs a log directory', 'lake']
+    return batch_sync[dir]
+
+--- the kernel's reader of several files in its own function, the lists
+--- copied where the row takes them (a lent list had not built): the rows
+--- past `after`, in position order, with the columns asked
+fn _since[paths, after, columns]
+    named = paths
+    wanted = columns
+    return batch_since[named, after, wanted]
+
+--- the live files whose positions reach past `after`
+fn _reaching[b, after]
+    paths = []
     for i in range[len[b]]
         if b.last[i] gt after and (b.form[i] eq 'batch' or b.form[i] eq 'segment')
-            part = batch_read[b.path[i]]
-            if not part.ok
-                return error[part.reason, 'lake']
-            kept = part[part._pos gt after]
-            if len[out] eq 0
-                out = kept
-            else
-                out = frame.stack[out, kept]
-    return out
+            paths = push[paths, b.path[i]]
+    return paths
 
---- `since[dir, from]`: every row at position `from` or later, in position
---- order (a consumer's read: its offset is the last position it saw)
-fn since[dir, from]
+--- `since[dir, from, columns = []]`: every row at position `from` or
+--- later, in position order (a consumer's read: its offset is the last
+--- position it saw); `columns` names the ones to read, every column when
+--- empty — a segment decodes only the columns asked
+fn since[dir, from, columns = []]
+    named = push[columns, '']
     b = batches[dir]
     if not b.ok
         return b
     if max[b.last] lt 0
         return frame.new[]
-    rows = _rows_after[b, from - 1]
+    paths = _reaching[b, from - 1]
+    if len[paths] eq 0
+        return frame.new[]
+    rows = _since[paths, from - 1, columns]
     if not rows.ok
-        return rows
-    if len[rows] eq 0
-        return rows
-    return sort[rows, '_pos']
+        return error[rows.reason, 'lake']
+    return rows
 
 --- `tail[dir, after, seconds]`: the rows past position `after`, waiting up
 --- to the seconds for some to arrive (a view that follows the log: each
@@ -222,18 +241,19 @@ fn tail[dir, after, seconds]
     --- the wait is counted in rounds of 20 ms, not read off the clock: a
     --- replay's clock stands still, and a loop on it never ended
     rounds = int[seconds * 50.0]
-    rows = since[dir, after + 1]
+    rows = since[dir, after + 1, []]
     waited = 0
     while rows.ok and len[rows] eq 0 and waited lt rounds
         sleep[20]
         waited = waited + 1
-        rows = since[dir, after + 1]
+        rows = since[dir, after + 1, []]
     return rows
 
---- `scan[dir, upto = -1]`: every row of the log up to position `upto`
---- (every row with -1), in position order: each version of each key
-fn scan[dir, upto = -1]
-    rows = since[dir, 0]
+--- `scan[dir, upto = -1, columns = []]`: every row of the log up to
+--- position `upto` (every row with -1), in position order: each version
+--- of each key, with the columns asked (every column when empty)
+fn scan[dir, upto = -1, columns = []]
+    rows = since[dir, 0, columns]
     if not rows.ok
         return rows
     --- the snapshot is one position, an int (said of `upto` itself, so a
@@ -241,13 +261,20 @@ fn scan[dir, upto = -1]
     snapshot = pack[upto, 8]
     if upto eq -1 or len[rows] eq 0
         return rows
+    if '_pos' not in rows.columns
+        return error['a snapshot picks rows by _pos: ask for it among the columns', 'lake']
     return rows[rows._pos lte upto]
 
 --- `latest[dir, by, upto = -1]`: the newest version of each key (the `by`
 --- columns) up to
---- the snapshot — the table the log holds, one row per key
-fn latest[dir, by, upto = -1]
-    rows = scan[dir, upto]
+--- `latest[dir, by, upto = -1, columns = []]`: the newest version of each
+--- key (the `by` columns) up to the snapshot — the table the log holds,
+--- one row per key; `columns` names the ones to read (the keys and `_pos`
+--- among them, or every column when empty)
+fn latest[dir, by, upto = -1, columns = []]
+    --- `columns` pinned as a list of text, as `by` is below
+    named = push[columns, '']
+    rows = scan[dir, upto, columns]
     if not rows.ok
         return rows
     if len[rows] eq 0
@@ -262,36 +289,45 @@ fn latest[dir, by, upto = -1]
 
 --- the rows of one file holding a value: the kernel's row in its own
 --- function, as `_written` is, so `column` and `value` are text to the caller
-fn _found[path, column, value]
-    return batch_find[path, column, value]
+fn _found[paths, on, equal, columns]
+    files = paths
+    named = on
+    asked = equal
+    wanted = columns
+    return batch_find[files, named, asked, wanted]
 
 --- `lookup[dir, column, value]`: the rows whose `column` holds the value,
 --- written as text (`'3'`, `'2.5'`, `'true'`), in position order — each
 --- file asked through its filter and, a segment, its row groups'
---- statistics, so a key the segment is sorted by reads one group
-fn lookup[dir, column, value]
-    --- the column's name and the value are text (typed here, outside the
-    --- loop below, so a caller handing another kind is refused before the
-    --- program runs); a value may be empty text, a name may not
-    if len[bytes[column]] eq 0
-        return error['lookup needs a column name', 'lake']
-    asked = bytes[value]
+--- `lookup[dir, on, equal, columns = []]`: the rows whose `on`
+--- columns hold the values `equal`, every pair at once, each value written as
+--- text (`'3'`, `'2.5'`, `'true'`), in position order — each file asked
+--- through its filters and, a segment, its row groups' statistics, so
+--- keys the segment is sorted by read one group of 8192 rows; `columns`
+--- names the ones to read, every column when empty
+fn lookup[dir, on, equal, columns = []]
+    --- the lists pinned as lists of text here, outside the loop below, so
+    --- a caller handing another kind is refused before the program runs;
+    --- a value may be empty text, a name may not, and the lists pair up
+    keyed = push[on, '']
+    valued = push[equal, '']
+    if '' in on
+        return error['lookup needs column names', 'lake']
+    if len[on] eq 0
+        return error['lookup needs at least one key column', 'lake']
+    if len[on] ne len[equal]
+        return error['lookup takes one value per key column: `len[on]` columns, `len[equal]` values', 'lake']
+    named = push[columns, '']
     b = batches[dir]
     if not b.ok
         return b
-    out = frame.new[]
-    for i in range[len[b]]
-        if b.form[i] eq 'batch' or b.form[i] eq 'segment'
-            hit = _found[b.path[i], column, value]
-            if not hit.ok
-                return error[hit.reason, 'lake']
-            if len[out] eq 0
-                out = hit
-            else
-                out = frame.stack[out, hit]
-    if len[out] eq 0
-        return out
-    return sort[out, '_pos']
+    paths = _reaching[b, -1]
+    if len[paths] eq 0
+        return frame.new[]
+    hit = _found[paths, on, equal, columns]
+    if not hit.ok
+        return error[hit.reason, 'lake']
+    return hit
 
 --- the kernel's row in its own function, as `_found` is: the lists copied
 --- where the row takes them
@@ -351,14 +387,14 @@ fn commit[dir, f, by = [], texts = [], seen = -1, columns = [], equal = []]
         for i in range[len[b]]
             if b.last[i] gt seen and (b.form[i] eq 'batch' or b.form[i] eq 'segment')
                 for j in range[len[columns]]
-                    held = _found[b.path[i], columns[j], equal[j]]
+                    held = _found[[b.path[i]], [columns[j]], [equal[j]], ['_pos']]
                     if not held.ok
                         return error[held.reason, 'lake']
                     hit = held[held._pos gt seen]
                     if len[hit] gt 0
                         return error['conflict: `columns[j]` = `equal[j]` was written at position `hit._pos[0]`, after snapshot `seen`', 'lake']
         at = _next[b]
-        made = _written[dir, at[0], at[1], f, by, texts]
+        made = _written[dir, at[0], at[1], f, by, texts, true]
         if made.ok
             return at[1]
         if not ('was written already' in made.reason)
@@ -770,12 +806,18 @@ test the_table_is_the_latest_version_of_each_key[]
     assert[t.id eq [2, 3, 1] and t.qty eq [25, 30, 15] and t._pos eq [2, 3, 4]]
     earlier = latest[dir, ['id'], upto = 2]
     assert[earlier.id eq [1, 2] and earlier.qty eq [10, 25]]
-    two = lookup[dir, 'id', '2']
+    two = lookup[dir, ['id'], ['2']]
     assert[two.qty eq [20, 25] and two._pos eq [1, 2]]
-    none = lookup[dir, 'id', '9']
+    none = lookup[dir, ['id'], ['9']]
     assert[len[none] eq 0]
-    assert[lookup[dir, 'nosuch', '1'].kind eq 'lake']
-    assert[lookup[dir, 'id', 'x'].kind eq 'lake']
+    assert[lookup[dir, ['nosuch'], ['1']].kind eq 'lake']
+    assert[lookup[dir, ['id'], ['x']].kind eq 'lake']
+    assert[lookup[dir, ['id'], ['1', '2']].kind eq 'lake']
+    assert[lookup[dir, ['id'], ['2'], ['qty']].columns eq ['qty']]
+    assert[lookup[dir, ['id', 'qty'], ['2', '25']].id eq [2]]
+    assert[since[dir, 0, ['qty']].columns eq ['qty']]
+    assert[len[scan[dir, 1, ['qty', '_pos']]] eq 2]
+    assert[latest[dir, ['id'], -1, ['id', 'qty', '_pos']].columns eq ['id', 'qty', '_pos']]
     gone = rm[dir]
 
 --- a commit's reads are validated against what was written after its
@@ -815,8 +857,8 @@ test a_merge_folds_the_files_into_a_segment[]
     after = latest[dir, ['id']]
     assert[after.id eq before.id and after.qty eq before.qty and after._pos eq before._pos]
     assert[scan[dir].qty eq [10, 25, 30]]
-    assert[lookup[dir, 'id', '2'].qty eq [25]]
-    assert[lookup[dir, 'name', 'two again'].id eq [2]]
+    assert[lookup[dir, ['id'], ['2']].qty eq [25]]
+    assert[lookup[dir, ['name'], ['two again']].id eq [2]]
     assert[merge[dir] eq '']
     c = batch[dir, frame.new[id = [1, 4], qty = [11, 40], name = ['one again', 'four']], by = ['id'], texts = ['name']]
     assert[c eq 4]
@@ -903,4 +945,15 @@ test a_shared_log_answers_its_followers[]
     assert[not _shared[dir, 'steal'].ok]
     assert[not follow['lake-test-share-copy', '127.0.0.1', 1, 0.2].ok]
     gone = rm['lake-test-share-copy']
+    gone = rm[dir]
+
+--- a batch written without a flush is read as any batch, and sync flushes
+--- the log's files
+test a_batch_can_skip_the_flush_until_a_sync[]
+    dir = _scratch['lake-test-flush']
+    a = batch[dir, frame.new[id = [1, 2], qty = [10, 20]], by = ['id'], flush = false]
+    assert[a eq 0]
+    assert[latest[dir, ['id']].qty eq [10, 20]]
+    assert[sync[dir] eq 1]
+    assert[not sync['lake-test-nowhere'].ok]
     gone = rm[dir]
