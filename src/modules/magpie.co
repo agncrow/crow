@@ -796,11 +796,11 @@ fn summary[dir, by, of, how, on = [], ops = [], equal = [], lo = '', hi = '', up
     return got
 
 --- the kernel's as-of join in its own function
-fn _asof[paths, labels, by, time, columns]
+fn _asof[paths, labels, by, time, columns, upto]
     named = paths
     fixed = by
     wanted = columns
-    return batch_asof[named, labels, fixed, time, wanted]
+    return batch_asof[named, labels, fixed, time, wanted, upto]
 
 --- the log's time column, as its manifest declares it; empty where none
 fn _time[dir]
@@ -815,7 +815,7 @@ fn _time[dir]
         return str[had]
     return ''
 
---- `prior[dir, f, columns = []]`: the as-of join over the log — for each
+--- `prior[dir, f, columns = [], upto = -1]`: the as-of join over the log — for each
 --- row of `f`, which holds the log's keys and a moment in the log's time
 --- column (declared at the first batch), the newest row of the log with
 --- the same keys at or before that moment, by time then by position,
@@ -823,12 +823,18 @@ fn _time[dir]
 --- named) beside the label's, missing cells where none precedes: the
 --- frame module's `join[…, 'asof']` with the log as the right side, read
 --- from each key's run in the key-sorted segments and the tail, the log
---- never held as one frame — a training set of labels against a history
-fn prior[dir, f, columns = []]
+--- never held as one frame — a training set of labels against a history.
+--- `upto` is the position the join is as of (-1 is now): a row past it
+--- is no candidate, so a training set a position names is the same at
+--- every run
+fn prior[dir, f, columns = [], upto = -1]
     if _remote[dir]
         q_cols = _joined['columns', columns]
-        return _sent_frame[dir, 'prior', 'x=1`q_cols`', f]
+        return _sent_frame[dir, 'prior', 'x=1`q_cols`&upto=`upto`', f]
     probe = frame.head[f, 1]
+    --- the position is an int (said of it, so a list handed as it is
+    --- refused before the program runs)
+    cut = pack[upto, 8]
     named = push[columns, '']
     fixed = _keys[dir]
     if not fixed.ok
@@ -844,14 +850,14 @@ fn prior[dir, f, columns = []]
     b = batches[dir]
     if not b.ok
         return b
-    paths = _reaching[b, -1, -1]
-    got = _asof[paths, f, fixed, time, columns]
+    paths = _reaching[b, -1, upto]
+    got = _asof[paths, f, fixed, time, columns, upto]
     if not got.ok and _gone[got.reason]
         again = batches[dir]
         if not again.ok
             return again
-        paths = _reaching[again, -1, -1]
-        got = _asof[paths, f, fixed, time, columns]
+        paths = _reaching[again, -1, upto]
+        got = _asof[paths, f, fixed, time, columns, upto]
     if not got.ok
         return error[got.reason, 'magpie']
     return got
@@ -1480,7 +1486,7 @@ fn _http_answer[root, r]
         rows = _body_frame[payload]
         if not rows.ok
             return _http_reply[400, encode[map[error = rows.reason]]]
-        return _framed[prior[dir, rows, _params[q, 'columns']]]
+        return _framed[prior[dir, rows, _params[q, 'columns'], _param_int[q, 'upto', -1]]]
     if verb eq 'merge'
         made = merge[dir]
         if not made.ok
@@ -2048,9 +2054,15 @@ test an_asof_join_reads_each_keys_run[]
     assert[j.columns eq ['sym', 't', 'tag', 'px']]
     assert[j.px[0] eq 2.0 and j.px[2] eq 6.0 and j.px[4] eq 2.0]
     assert[not j.px[1].ok and not j.px[3].ok]
+    cut = prior[dir, labels, ['px'], 2]
+    assert[cut.px[0] eq 2.0 and cut.px[2] eq 5.0]
+    first = prior[dir, labels, ['px'], 0]
+    assert[first.px[0] eq 1.0]
+    assert[not first.px[2].ok]
     m = merge[dir]
     again = prior[dir, labels, ['px']]
     assert[again.px[0] eq 2.0 and again.px[2] eq 6.0]
+    assert[prior[dir, labels, ['px'], 2].px[2] eq 5.0]
     unkeyed = _scratch['magpie-test-asof-unkeyed']
     u = batch[unkeyed, frame.new[sym = ['A'], t = [1]]]
     assert[prior[unkeyed, labels].kind eq 'magpie']

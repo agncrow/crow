@@ -1,0 +1,22 @@
+--- The left side of an operator runs before the right side's own
+--- statements: `put[d, f] eq 1 and latest[d].id eq ['a', 'b']` had read
+--- the log before the put, because the read of a value that can fail is
+--- hoisted ahead of the statement while the put stayed in the expression
+--- — wherever both sides are computed (a mask's `and`, a comparison,
+--- arithmetic). And a column compared with a list, a column or a tensor
+--- is one truth, not a mask, so such an `and` decides from the left and
+--- builds compiled.
+use magpie, frame
+d = 'parity-302'
+gone = rm[d]
+made = mkdir[d]
+p0 = put[d, frame.new[id = ['a'], v = [1]], by = ['id']]
+log[put[d, frame.new[id = ['b'], v = [2]]] eq 1 and latest[d].id eq ['a', 'b']]
+log[put[d, frame.new[id = ['c'], v = [3]]] eq 2 and latest[d].v gt 0]
+log[put[d, frame.new[id = ['d'], v = [4]]] eq 3 and latest[d].v eq latest[d].v]
+log[put[d, frame.new[id = ['e'], v = [5]]] eq len[latest[d].v] - 1]
+log[put[d, frame.new[id = ['f'], v = [6]]] eq 5 or latest[d].v gt 5]
+log[['a', 'b'] eq ['a', 'b'] and true]
+log[true and ['x'] eq ['x']]
+log[(latest[d].v gt 2) eq (latest[d].v gt 2)]
+gone = rm[d]

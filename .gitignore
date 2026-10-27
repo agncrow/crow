@@ -84,3 +84,5 @@ editors/vscode/node_modules/
 !tests/self/forms.txt
 !tests/freeze/names.txt
 examples/magpie/orders/
+!packages/features/reference/data/*.csv
+!packages/features/reference/expected/*.csv

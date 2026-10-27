@@ -3396,16 +3396,19 @@ fn module_files() -> Vec<PathBuf> {
     files
 }
 
-/// The test-block family: every standard module's own tests run by `crow
-/// test` under each interpreted configuration — the walker, no fusion, no
-/// moves — as the gate runs them interpreted: each run passes, and all
-/// say the same. A run that fails, or says otherwise than the interpreted
-/// one, is a finding (`tests`). Answers the findings and how many runs.
+/// The test-block family: every standard module's and every package's
+/// own tests run by `crow test` under each interpreted configuration —
+/// the walker, no fusion, no moves — as the gate runs them interpreted,
+/// each run in a directory of its own: each run passes, and all say the
+/// same. A run that fails, or says otherwise than the interpreted one, is
+/// a finding (`tests`). Answers the findings and how many runs.
 fn module_tests(exe: &Path) -> (Vec<Finding>, usize) {
     let files = module_files();
     let interpreted: Vec<&Config> = CONFIGS.iter().filter(|c| !c.compiled).collect();
     let jobs: Vec<(&PathBuf, &Config)> = files.iter().flat_map(|f| interpreted.iter().map(move |c| (f, *c))).collect();
-    let results: Mutex<Vec<(String, &str, Option<i32>, String)>> = Mutex::new(Vec::new());
+    // (a run: the file's name, the configuration, the exit code, the last line)
+    type Run = (String, &'static str, Option<i32>, String);
+    let results: Mutex<Vec<Run>> = Mutex::new(Vec::new());
     let next = AtomicUsize::new(0);
     let workers = std::thread::available_parallelism().map(|c| c.get()).unwrap_or(4).clamp(1, 8);
     std::thread::scope(|scope| {
@@ -3421,13 +3424,22 @@ fn module_tests(exe: &Path) -> (Vec<Finding>, usize) {
                 let _ = std::fs::remove_dir_all(&run_dir);
                 let _ = std::fs::create_dir_all(&run_dir);
                 let absolute = std::fs::canonicalize(file).unwrap_or_else(|_| file.to_path_buf());
+                // (a package's tests read their references by paths from the
+                // repository's root — `packages/gpt/reference/…` — and some
+                // write logs where they run, as a module's may: the run's
+                // directory holds a link named `packages` to the
+                // repository's, so the reads resolve there and the writes
+                // stay apart — kg's four runs at once in the root had
+                // removed each other's logs)
+                #[cfg(unix)]
+                if file.starts_with("packages")
+                    && let Ok(packages) = std::fs::canonicalize("packages")
+                {
+                    let _ = std::os::unix::fs::symlink(&packages, run_dir.join("packages"));
+                }
                 let mut cmd = Command::new(exe);
                 cmd.arg("test").arg(&absolute);
-                // (a package's tests read their references by paths from the
-                // repository's root, and write nothing; a module's may write)
-                if !file.starts_with("packages") {
-                    cmd.current_dir(&run_dir);
-                }
+                cmd.current_dir(&run_dir);
                 for (k, v) in config.env {
                     cmd.env(k, v);
                 }
@@ -3449,7 +3461,7 @@ fn module_tests(exe: &Path) -> (Vec<Finding>, usize) {
     let mut findings = Vec::new();
     for file in &files {
         let name = test_name(file);
-        let runs: Vec<&(String, &str, Option<i32>, String)> = results.iter().filter(|r| r.0 == name).collect();
+        let runs: Vec<&Run> = results.iter().filter(|r| r.0 == name).collect();
         let first = runs.iter().find(|r| r.1 == "interpreted").map(|r| r.3.clone()).unwrap_or_default();
         for (_, config, code, summary) in runs {
             if *code != Some(0) || *summary != first {

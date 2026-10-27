@@ -834,8 +834,8 @@ pub fn summary(paths: &[String], by: &[String], of: &[String], how: &[String], o
 }
 
 /// `sys.batch_asof[…]`: the as-of join over the files (exec.rs).
-pub fn asof(paths: &[String], labels: &CrowFrame, keys: &[String], time: &str, wanted: &[String]) -> Result<CrowFrame, String> {
-    exec::asof(paths, labels, keys, time, wanted)
+pub fn asof(paths: &[String], labels: &CrowFrame, keys: &[String], time: &str, wanted: &[String], upto: i64) -> Result<CrowFrame, String> {
+    exec::asof(paths, labels, keys, time, wanted, upto)
 }
 
 /// `sys.batch_declared[dir]`: what the log declares of itself, as JSON
@@ -1392,12 +1392,18 @@ mod tests {
         }
         let f2 = CrowFrame::new(vec!["sym".into(), "t".into(), "px".into()], vec![Column::Str(names2), Column::Int(times), Column::Float(px_of(n))], vec![vec![true; n]; 3]);
         let p2 = write(&tlog, 0, 0, &f2, &["sym".to_string()], &[], true).unwrap();
-        let joined = asof(&[p2], &labels, &["sym".to_string()], "t", &[]).unwrap();
+        let joined = asof(&[p2.clone()], &labels, &["sym".to_string()], "t", &[], -1).unwrap();
         assert_eq!(joined.columns, vec!["sym", "t", "tag", "px"]);
         assert_eq!(joined.validity[3].to_vec(), vec![true, true, true, false], "MSFT has rows at t 1, 4, 7 before 10; ZZZ has none");
         let joined_px = match joined.data[3].as_ref() { Column::Float(v) => v.clone(), _ => panic!("floats") };
         assert_eq!(joined_px[0], px_of(n)[1500], "AAPL at t 1500 is row 1500");
         assert_eq!(joined_px[2], px_of(n)[10], "MSFT's newest row at or before 10 is the one at 10");
+        // as of a position: a row past it is no candidate
+        let cut = asof(&[p2], &labels, &["sym".to_string()], "t", &[], 9).unwrap();
+        assert_eq!(cut.validity[3].to_vec(), vec![true, true, true, false], "GOOG's row 8 is within position 9; ZZZ still has none");
+        let cut_px = match cut.data[3].as_ref() { Column::Float(v) => v.clone(), _ => panic!("floats") };
+        assert_eq!(cut_px[0], px_of(n)[9], "as of position 9, AAPL's newest row at or before t 1500 is row 9");
+        assert_eq!(cut_px[2], px_of(n)[7], "as of position 9, MSFT's newest row at or before t 10 is row 7");
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&tlog);
     }

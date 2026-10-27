@@ -293,6 +293,7 @@ j = prior['ex_asof', labels]
 log[j.columns]
 log[j.px[0]]
 log[j.px[1].ok]
+log[prior['ex_asof', labels, [], 0].px[0]]
 gone = rm['ex_asof']
 ```
 
@@ -305,6 +306,7 @@ gone = rm['ex_asof']
 ['sym', 't', 'px']
 2
 false
+1
 ```
 
 `summary` is the aggregate pushed below the reader: each row group is
@@ -313,7 +315,8 @@ by the predicates, grouped and reduced on its own core, and the partials
 are combined, so the rows are never held as one frame. It answers what
 `group` answers over `scan` of the same rows. `prior` is the as-of join
 over the log: for each label's keys and moment, the newest row at or
-before it, from the key's run.
+before it, from the key's run; with `upto`, as of that position, so a
+training set a position names comes out the same at every run.
 
 ## A view that follows the log
 

@@ -2483,7 +2483,7 @@ pub static ROWS: &[Row] = &[
     Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("sys.batch_merge", "sys", "batch_merge", crow_runtime::sys::batch_merge, (Str, Texts, Bool) -> Str, value "magpie") },
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_declared", "sys", "batch_declared", crow_runtime::sys::batch_declared, (Str) -> Str, value "magpie") },
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_summary", "sys", "batch_summary", crow_runtime::sys::batch_summary, (Texts, Texts, Texts, Texts, Texts, Texts, Texts, Str, Str, Int) -> Frame, value "magpie") },
-    Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_asof", "sys", "batch_asof", crow_runtime::sys::batch_asof, (Texts, Frame, Texts, Str, Texts) -> Frame, value "magpie") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_asof", "sys", "batch_asof", crow_runtime::sys::batch_asof, (Texts, Frame, Texts, Str, Texts, Int) -> Frame, value "magpie") },
     Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("sys.tail_put", "sys", "tail_put", crow_runtime::sys::tail_put, (Str, Frame) -> Int, value "magpie") },
     Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("sys.tail_flush", "sys", "tail_flush", crow_runtime::sys::tail_flush, (Str) -> Int, value "magpie") },
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.tail_pending", "sys", "tail_pending", crow_runtime::sys::tail_pending, (Str) -> Ints, value "magpie") },

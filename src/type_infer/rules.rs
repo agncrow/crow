@@ -540,6 +540,23 @@ impl TypeContext {
                 } else if matches!(op, BinOp::And | BinOp::Or) && (lt_inner.truths_depth() > 1 || rt_inner.truths_depth() > 1) {
                     // (two masks of a matrix's shape joined: that shape)
                     if lt_inner.truths_depth() >= rt_inner.truths_depth() { lt_inner.clone() } else { rt_inner.clone() }
+                } else if matches!(op, BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte) {
+                    // a column (or a list of text, or a mask) compared with
+                    // one value is a mask, a cell at a time (spec, Boolean
+                    // Masks); compared with a list, a column or a tensor it is
+                    // one truth, as two lists compare (spec, Comparison), and
+                    // so are two masks compared whole. Typed as masks, `true
+                    // and df.id eq ['a', 'b']` had joined item by item: the
+                    // lowering ran the right side's statements before the
+                    // left side, and the emitter printed a mask's `and` over a
+                    // bool (no method `iter` for `bool`) — parity 302
+                    let cells = |t: &Ty| is_frame_col(t) || is_bool_mask(t);
+                    let one_value = |t: &Ty| matches!(t, Ty::Int | Ty::Float | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Str | Ty::Bool | Ty::Moment | Ty::Json);
+                    if (cells(&lt_inner) && one_value(&rt_inner)) || (cells(&rt_inner) && one_value(&lt_inner)) {
+                        Ty::List(Box::new(Ty::Bool))
+                    } else {
+                        Ty::Bool
+                    }
                 } else if is_frame_col(&lt_inner) || is_frame_col(&rt_inner)
                     || is_bool_mask(&lt_inner) || is_bool_mask(&rt_inner)
                 {

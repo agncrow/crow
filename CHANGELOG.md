@@ -122,6 +122,28 @@ history says the rest.
   and this store holds its state and runs its own engines — the magpie is
   the corvid that gathers everything into one nest). Its second
   architecture is docs/magpie-design.md, built phase by phase below.
+- `packages/kg` (phase 10 of the design, without its vector index, which
+  waits on the column of vectors): a knowledge graph over Magpie — nodes
+  and edges as logs under a root, the edges again in reverse so a node's
+  in-edges are one key's run; `node`, `retire`, `link`, `unlink` stamped
+  with their moment, tombstones every read skips; the graph as of a
+  position (`upto` on every read), a node's `history`, `neighbors` and
+  `inbound`, `walk` and `path` (breadth first, a node at a time), `match`
+  (a pattern's triples read as edges and joined on their shared
+  variables), `subgraph` (what `packages/graph`'s `of_edges` takes),
+  `rule` (a function deriving edges, linked back with their provenance),
+  `asof` (Magpie's `prior` over the edges).
+- `packages/features` (phase 11, without embeddings as features, which
+  wait on the column of vectors): a feature store over Magpie — a group is
+  a log keyed by its entity with its time column (`declare`), one `append`
+  is both stores (`online` from the sequencer's image, `history` by
+  windows), one feature function for the `backfill` (windows of a source
+  log) and the `stream` (its tail), `training` as the labels joined
+  against each group as of their moments and of a position (held to
+  pandas's `merge_asof` cell for cell, packages/features/held.co),
+  `freshness`, and a registry log (`define`, `defined`). The design's
+  `group`, `write` and `serve` are not names a program function may have
+  (two core builtins and the web form): `declare`, `append`, `online`.
 - The doors (phase 9 of the design): `magpie.door[root, port]` serves
   every log under the root over HTTP as JSON, a request's path naming the
   log and the verb (`/orders/latest`), and every verb given a URL
@@ -133,8 +155,9 @@ history says the rest.
   by, of, how, on, ops, equal, lo, hi, upto]` runs filter, group and
   reduce as operators over each row group on its own core and combines
   the partials, answering what `group` answers over `scan` with the rows
-  never held as one frame; `prior[dir, f, columns]` is the as-of join
-  over the log, each label's newest row at or before its moment, from
+  never held as one frame; `prior[dir, f, columns, upto]` is the as-of join
+  over the log, each label's newest row at or before its moment (and at
+  or before the position `upto`: the training set a position names), from
   each key's run. Sys rows `batch_summary`, `batch_asof`.
 - Search's long tail (phase 7 of the design): the merge builds postings
   with positions and a sorted dictionary per text column per row group
@@ -511,6 +534,26 @@ history says the rest.
 
 ### Fixed
 
+- The left side of an operator runs before the right side's own
+  statements: `put[d, f] eq 1 and latest[d].id eq ['a', 'b']` had read
+  the log before the put — the read of a value that can fail is hoisted
+  ahead of the statement, and the put had stayed in the expression —
+  wherever both sides are computed (a mask's `and`, a comparison,
+  arithmetic; `and`/`or` of two truths had already waited). A left side
+  that acts is bound first; a quiet one (a name, a literal, a field) is
+  not (parity 302). And a column compared with a list, a column or a
+  tensor is one truth, as the runtime answers it, not a mask — typed as
+  a mask, such an `and` had joined item by item and the compiled program
+  had not built (`no method iter for bool`); a column compared with one
+  value is a mask as before.
+- `crow check --self` runs every package's test file in a directory of
+  its own, as it runs a module's, the run holding a link to the
+  repository's `packages` for the references the tests read: kg's four
+  runs at once in the repository's root had removed each other's logs.
+  And `prior` says in its own body that `upto` is an int, as `since`
+  does of its window's ends: inside a standard module a helper's call of
+  a row is not held to the row's kinds, so a list handed as the position
+  had reached `batch_asof` — a stop interpreted, no build compiled.
 - Five shapes over a log's open frames that one mode had accepted and
   the other refused (parity 297, found by the magpie's benchmark): a frame
   literal built from an open frame's cells — `frame.new[last =

@@ -763,6 +763,20 @@ steps on every push and must be green.
   An int handed where a record or none is held (a field only ever given
   0) goes through the hidden row `core.__none` (`none_of` in lower_ir.rs),
   then as the literal 0 both backends read as none.
+- An operand's hoisted statements (`self.pre`: a failed value's refusal
+  before a field read, a position's check) ran before the OTHER operand:
+  `put[d, f] eq 1 and latest[d].id eq ['a', 'b']` read the log before the
+  put, since the put stayed inside the expression (parity 302,
+  2026-10-27). Two rules in lower_ir.rs: `right_side_waits` (`and`/`or`
+  of two truths: the right's statements under the left's decision) and
+  `left_first` (every operator that computes both sides: a left side that
+  acts goes into a temporary ahead of the right's statements; `ir::quiet`
+  says which need none — the emitter's argument binding reads the same
+  rule). A new operator, or a new site that hoists a statement, goes
+  through them. And a column compared with a list, a column or a tensor
+  is ONE truth (`binop_type`), a mask only against one value: typed a
+  mask, the `and` had taken the item-wise path and the emitter printed
+  `&` over a bool.
 - `and`/`or` decide from the left (2026-10-11): the right side runs only
   where the left does not decide — `ir::short_circuits` (neither side a
   list, a tensor, a column or a frame: a mask joins item by item, both
@@ -1037,6 +1051,19 @@ steps on every push and must be green.
   the cases before it. It found a field asked of a value that can fail
   holding a list (`csv[…].b`) refused nowhere — a runtime stop
   interpreted, no build compiled: `check_field` reads the payload now.
+  The tests family (`module_tests`) runs every standard module's and
+  every package's test file under the four interpreted configurations,
+  each run in a directory of its own, a package's holding a link
+  `packages` to the repository's (its references are read by paths from
+  the root): kg's four runs at once in the root had removed each other's
+  logs (2026-10-27). And a standard module's exported function says the
+  kind of a parameter it only hands to helpers (`since`'s `opening =
+  pack[from, 8]`, `prior`'s `cut = pack[upto, 8]`): inside a standard
+  module a helper's call of a row is not held to the row's kinds, so a
+  list the program handed as the position reached `batch_asof`'s Int (a
+  stop interpreted, E0605 compiled), as `latest`'s `lo` had reached
+  `batch_between`'s Str (`str[lo]` there; E0614) — a program's own helper
+  is refused in both modes, so the gap is the module scope's.
 - A page's `later[f]` runs f on the page's state (`spawn_later` takes a
   plain `fn(&mut CrowLiveState)`), so `later[f, a]` in a page's handler
   is refused in both modes (errors j45); a script's carries its arguments

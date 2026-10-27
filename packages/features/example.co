@@ -1,0 +1,60 @@
+--- A clickstream's features: a group written once and read as both
+--- stores, one feature function run as a backfill and as a stream, a
+--- training set cut against the labels' moments, the group's freshness
+--- and a registry — with the same answers in both modes (CI runs this
+--- interpreted and compiled and compares the two). The moments are
+--- handed in, so the output is the same at every run.
+use math
+use magpie, frame
+use features
+
+source = 'features-example-source'
+store = 'features-example'
+registry = 'features-example-registry'
+gone = rm[source]
+gone = rm[store]
+gone = rm[registry]
+
+--- the source: events, as the Kafka door or a put would fill a log
+events = frame.new[user = ['ann', 'bo', 'ann', 'cy', 'bo', 'ann', 'cy', 'bo'], at = [1000, 1500, 2000, 2500, 3000, 3500, 4000, 4500], amount = [12.0, 80.0, 7.5, 95.0, 3.0, 60.0, 20.0, 45.0]]
+p = put[source, events, by = ['user'], time = 'at']
+
+--- the feature function, row by row: the same for the backfill and
+--- the stream
+fn spend[rows]
+    out = select[rows, ['user', 'at']]
+    out.big = rows.amount gt 50.0
+    out.cents = rows.amount * 100.0
+    return out
+
+g = features.declare[store, ['user'], 'at']
+wrote = features.backfill[g, source, spend, 0, 3, 2]
+log['backfilled `wrote` rows over windows of two']
+after = 3
+while after lt 7
+    after = features.stream[g, source, spend, after, 0.5]
+log['streamed to position `after`']
+h = features.history[g]
+log['history: `len[h]` rows']
+log[h.big]
+ann = features.online[g, ['ann']]
+log[ann.cents]
+
+--- a training set: each label with the features as they stood at its
+--- moment; a label before the user's first row takes none
+labels = frame.new[user = ['ann', 'bo', 'cy', 'cy'], at = [1200, 4600, 2400, 9000], label = [0, 1, 1, 0]]
+t = features.training[labels, [g], ['big', 'cents']]
+log[t]
+
+fr = features.freshness[g]
+log['freshness: head `fr.head[0]`, rows `fr.rows[0]`, newest `fr.newest[0]`']
+
+r = features.define[registry, 'big', g, 'the amount passed 50', 'spend', 5000]
+r = features.define[registry, 'cents', g, 'the amount in cents', 'spend', 5001]
+d = features.defined[registry]
+names = join[d.feature, ', ']
+log['registry: `names`']
+
+gone = rm[source]
+gone = rm[store]
+gone = rm[registry]

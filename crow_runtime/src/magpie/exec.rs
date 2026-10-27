@@ -575,14 +575,16 @@ fn column_of(cells: &[Option<Cell>], kind: super::encode::Kind) -> (Column, Vec<
 /// position, the row itself and a spare.
 type Candidates = HashMap<Vec<u8>, Vec<(i64, i64, CrowFrame, usize)>>;
 
-/// `sys.batch_asof[paths, labels, keys, time, wanted]`: for each row of
+/// `sys.batch_asof[paths, labels, keys, time, wanted, upto]`: for each row of
 /// `labels` — the log's keys and a moment in its time column — the
 /// newest row of the files with the same keys at or before the moment
 /// (by time, then by position), its `wanted` columns (every column of
 /// the log not among the labels' when none is named) beside the label's;
 /// missing cells where none precedes. The labels' columns come first,
-/// in their order.
-pub fn asof(paths: &[String], labels: &CrowFrame, keys: &[String], time: &str, wanted: &[String]) -> Result<CrowFrame, String> {
+/// in their order. A row past the position `upto` (-1 for no bound) is
+/// no candidate: the join as of a position, the training set a position
+/// names.
+pub fn asof(paths: &[String], labels: &CrowFrame, keys: &[String], time: &str, wanted: &[String], upto: i64) -> Result<CrowFrame, String> {
     if keys.is_empty() {
         return Err("batch: an as-of join needs the log's keys".to_string());
     }
@@ -652,6 +654,9 @@ pub fn asof(paths: &[String], labels: &CrowFrame, keys: &[String], time: &str, w
             let Column::Int(positions) = frame.data[pc].as_ref() else { return Err("batch: no positions".to_string()) };
             for i in 0..frame.nrows() {
                 if kcols.iter().any(|&c| !frame.validity[c][i]) || !frame.validity[tc][i] {
+                    continue;
+                }
+                if upto >= 0 && positions[i] > upto {
                     continue;
                 }
                 let kb = key_bytes(&frame, &kcols, i);

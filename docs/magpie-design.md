@@ -433,7 +433,7 @@ nothing in phase 8 and keeps any later door a translator into existing
 operators rather than an engine of its own; the frame verbs (join, sort,
 window, pivot) are the in-memory operators beside them.
 
-**The as-of join over the log**, `prior[dir, f, columns = []]` (named `asof` in the plan; the frame join's `'asof'` kind is a literal of the lowering, which the freeze ratchet then counted against the export — and `before` was a variable's name in parity 295, which a module's export shadows): for each
+**The as-of join over the log**, `prior[dir, f, columns = [], upto = -1]` (named `asof` in the plan; the frame join's `'asof'` kind is a literal of the lowering, which the freeze ratchet then counted against the export — and `before` was a variable's name in parity 295, which a module's export shadows): for each
 row of `f` — the log's keys and a moment in the log's time column — the
 newest row of the log with the same keys at or before that moment,
 read from the key's run in the key-sorted segments and from the tail,
@@ -458,7 +458,9 @@ per key and aggregate (count, the int and float sums, Welford's mean
 and squared deviations, the least and most, the first and last by
 position), Chan's merge for the variance, the predicates and bounds
 pruning by each group's entries before a decode; the as-of join as
-candidates per key over the groups the labels' keys reach. The kernel
+candidates per key over the groups the labels' keys reach; `upto`
+(2026-10-27) cuts the candidates at a position, so the feature store's
+training sets name one. The kernel
 test holds every aggregate to `group_by` over the merged rows, and the
 module and parity 301 hold both verbs in both modes. The measure
 against ClickHouse waits for the quiet machine.
@@ -530,6 +532,16 @@ Gets: a property graph and a triple store with history, text and vector
 search over entities, traversal at disk or memory speed, analytics over
 subgraphs in memory.
 
+Built 2026-10-27 as `packages/kg` (the name provisional, open item 4),
+in Crow over `magpie`'s exports: the three logs (`nodes`, `edges`,
+`back`), the writes with their moments and tombstones, every read as
+of a position, `walk`/`path` a node at a time (the frontier kernel is
+not written: measure a hop over thousands of nodes first), `match` as
+joins over the triples' edges, `subgraph` for `packages/graph`,
+`rule`, `asof`. Not built: the vector index — it waits on the column
+of vectors (the section above); until then an entity is found by
+`search` over its text, and the edges expand it.
+
 ## Phase 11 — a feature store
 
 A feature store today is three systems and a job: an offline store of
@@ -568,6 +580,18 @@ Holds: `training` against pandas's `merge_asof` over the same labels
 and history; a backfill and a streaming run of one feature function
 answering the same rows; a served app reading `serve` while a writer
 runs.
+
+Built 2026-10-27 as `packages/features` (name provisional): `declare`
+(the design's `group`: a core builtin's name), `append` (`write`,
+likewise), `online` (`serve`, the web form's), `history`, `training`
+(held to pandas's `merge_asof` cell for cell: packages/features/
+held.co, reference/reference.py; `upto` names the position the set is
+as of, through `prior`'s), `backfill` and `stream` over one function
+(held to answer the same rows), `freshness`, `define`/`defined`. Not
+built: embeddings as features (the column of vectors); expiry through
+phase 6's column is the log's own. The served-app hold (a reader of
+`online` while a writer runs) is the module test's loop of appends read
+back between writes, in one process.
 
 ## What Magpie is not doing
 
@@ -634,12 +658,14 @@ ours.
    row is `latest[dir, equal = […]]`, not `get`; the as-of join is
    `prior`, not `asof` (nor `before`, a variable's name in parity 295). Both can be the plan's names again if the
    ratchet is taught to ignore a literal that predates the export.
-4. The graph package's name, and the feature store package's.
+4. The graph package's name, and the feature store package's. Chosen
+   provisionally (2026-10-27): `kg` and `features`.
 5. Measure after phase 5 before phases 6–11, as written. Phases 6–9 were
    built first (the measures need a quiet machine, which the gate holds);
    the measures run before the release.
 6. The column of vectors: a language feature, built before phase 10 when
    Vijay says so; the feature store and the vector index wait on it,
-   nothing before them does.
+   nothing before them does. Phases 10 and 11 are built without them
+   (2026-10-27): the vector index and embeddings as features wait.
 7. `narrow` (32-bit floats on disk, opt-in at the first batch), as
    written in phase 2. Built so.

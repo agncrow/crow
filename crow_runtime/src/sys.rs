@@ -256,9 +256,9 @@ pub fn batch_summary(paths: Vec<String>, by: Vec<String>, of: Vec<String>, how: 
     crate::magpie::summary(&paths, &by, &of, &how, &on, &ops, &equal, lo, hi, upto)
 }
 
-/// `sys.batch_asof[paths, labels, keys, time, wanted]`: the as-of join over the files.
-pub fn batch_asof(paths: Vec<String>, labels: &crate::frame::CrowFrame, keys: Vec<String>, time: &str, wanted: Vec<String>) -> Result<crate::frame::CrowFrame, String> {
-    crate::magpie::asof(&paths, labels, &keys, time, &wanted)
+/// `sys.batch_asof[paths, labels, keys, time, wanted, upto]`: the as-of join over the files, as of the position `upto` (-1 for now).
+pub fn batch_asof(paths: Vec<String>, labels: &crate::frame::CrowFrame, keys: Vec<String>, time: &str, wanted: Vec<String>, upto: i64) -> Result<crate::frame::CrowFrame, String> {
+    crate::magpie::asof(&paths, labels, &keys, time, &wanted, upto)
 }
 
 /// `sys.batch_declared[dir]`: what the log declares of itself (its keys

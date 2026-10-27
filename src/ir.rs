@@ -1132,6 +1132,24 @@ pub fn short_circuits(l: &Expr, r: &Expr) -> bool {
     truth(l) && truth(r)
 }
 
+/// An expression that neither acts nor can stop — a name, a literal, a
+/// field or a conversion of one — so nothing it does could be observed
+/// and nothing done beside it could change what it reads: the one rule
+/// the emitter reads to bind a call's arguments in their order, and the
+/// lowering to run an operator's left side ahead of the right side's
+/// statements (a narrowing to 64 bits can stop, so it is not quiet).
+pub fn quiet(e: &Expr) -> bool {
+    match e {
+        Expr::Const(..) | Expr::Local(..) | Expr::Move(..) | Expr::Load(..) | Expr::Derived(..) | Expr::Constant(..) | Expr::FnRef(..) => true,
+        Expr::Field { base, .. } | Expr::Meta { base, .. } => quiet(base),
+        Expr::Convert { how, expr, .. } => !matches!(how, Convert::ToSmall(_)) && quiet(expr),
+        Expr::ListLit(items, _) => items.iter().all(quiet),
+        Expr::MapLit(items, _) => items.iter().all(|(_, v)| quiet(v)),
+        Expr::RecordLit { fields, .. } => fields.iter().all(quiet),
+        _ => false,
+    }
+}
+
 pub fn lendable_params<'a>(fns: &[&'a Fn]) -> HashMap<String, Vec<bool>> {
     let mut lend: HashMap<String, Vec<bool>> = fns.iter().map(|f| (f.name.clone(), f.params.iter().map(|(p, _)| never_rebound(&f.body, p)).collect())).collect();
     loop {

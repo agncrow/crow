@@ -84,6 +84,8 @@ Filtering uses ordinary Crow expressions that evaluate to boolean arrays. These 
 - `and` / `or` — two boolean arrays → boolean array; a bool and a boolean array → each item joined with the bool
 - `not` — boolean array → boolean array
 
+A column compared with a list, a column or a tensor is one truth, as two lists compare (see Comparison), and so are two masks compared whole: `df.id eq ['a', 'b']` says whether the column holds those cells, `df.id eq 'a'` which rows hold it.
+
 A tensor compared with a number is a mask of the tensor's shape, as numpy's
 is: a vector's is a list of bools, a matrix's its rows of bools —
 `[[1.0, 2.0], [3.0, 4.0]] gt 2.0` is `[[false, false], [true, true]]` — and

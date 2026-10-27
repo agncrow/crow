@@ -3027,12 +3027,12 @@ impl<'a> Lowerer<'a> {
     /// left into a temporary, then — only where it does not decide — the
     /// right side's statements and the right side into it (spec, Operators:
     /// the right side runs only where the left does not decide). A mask's
-    /// `and`, which joins item by item, keeps them in front.
+    /// `and`, which joins item by item, and every other operator compute
+    /// both sides, the left first (`left_first`).
     fn right_side_waits(&mut self, joined: Expr, right_pre: Vec<Stmt>) -> Expr {
         let Expr::Binary { op, l, r, ty } = joined else { return joined };
-        if !crate::ir::short_circuits(&l, &r) {
-            self.pre.extend(right_pre);
-            return Expr::Binary { op, l, r, ty };
+        if !matches!(op.as_str(), "and" | "or") || !crate::ir::short_circuits(&l, &r) {
+            return self.left_first(op, l, r, ty, right_pre);
         }
         let t = self.fresh();
         if let Some(scope) = self.scopes.last_mut() {
@@ -3058,6 +3058,30 @@ impl<'a> Lowerer<'a> {
         then.push(Stmt::Set { var: t.clone(), expr: *r });
         self.pre.push(Stmt::If { cond, then, els: None });
         held
+    }
+
+    /// `l op r` whose right side needs statements first, where the operator
+    /// computes both sides (a mask's `and`, a comparison, arithmetic): the
+    /// left side runs first (spec, Operators) — into a temporary ahead of
+    /// the right side's statements, unless it is quiet (`ir::quiet`: nothing
+    /// it does could be observed, nothing could change what it reads).
+    /// `put[d, f] eq 1 and latest[d].id eq ['a', 'b']` had read the log
+    /// before the put: the read of the value that can fail was hoisted
+    /// ahead of the statement, and the put stayed in the expression
+    /// (parity 302).
+    fn left_first(&mut self, op: String, l: Box<Expr>, r: Box<Expr>, ty: Ty, right_pre: Vec<Stmt>) -> Expr {
+        if crate::ir::quiet(&l) {
+            self.pre.extend(right_pre);
+            return Expr::Binary { op, l, r, ty };
+        }
+        let t = self.fresh();
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(t.clone());
+        }
+        let left_ty = l.ty();
+        self.pre.push(Stmt::Let { var: t.clone(), ty: left_ty.clone(), expr: *l });
+        self.pre.extend(right_pre);
+        Expr::Binary { op, l: Box::new(Expr::Local(t, left_ty)), r, ty }
     }
 
     /// A position or a key that can fail, refused first when it failed —
@@ -3798,15 +3822,17 @@ impl<'a> Lowerer<'a> {
                 if joins && is_bool_column(&l, false) {
                     l = self.lower_expr(&as_mask(left))?;
                 }
-                // (what the right side of `and`/`or` needs done first — a
-                // failed value's refusal — waits for the left's decision:
-                // `r.ok and r.x gt 0` must not refuse `r` when it failed)
-                let outer = if joins { std::mem::take(&mut self.pre) } else { Vec::new() };
+                // (what the right side needs done first — a failed value's
+                // refusal — waits for the left: under its decision for `and`/
+                // `or` of two truths (`r.ok and r.x gt 0` must not refuse `r`
+                // when it failed), behind its value for an operator that
+                // computes both sides)
+                let outer = std::mem::take(&mut self.pre);
                 let mut r = self.lower_expr(right)?;
                 if joins && is_bool_column(&r, false) {
                     r = self.lower_expr(&as_mask(right))?;
                 }
-                let right_pre = if joins { std::mem::replace(&mut self.pre, outer) } else { Vec::new() };
+                let right_pre = std::mem::replace(&mut self.pre, outer);
                 // `[]` compared is a list of the other side's kind, or of ints
                 // where nothing says (`[] eq []` had left the compiled program
                 // no type to give it — crow check --self)
@@ -7820,6 +7846,43 @@ if r.ok
         let refusal = ir.find("propagate r (reading x)").unwrap_or_else(|| panic!("the refusal: {}", ir));
         let decision = ir[left..refusal].find("if ");
         assert!(decision.is_some(), "the refusal waits under the left's decision: {}", ir);
+    }
+
+    /// An operator that computes both sides runs the left first: what the
+    /// right side needs done ahead of the statement — the refusal of a
+    /// failed value whose field it reads — comes after the left side's
+    /// value is taken. `put[d, f] eq 1 and latest[d].id eq ['a', 'b']` had
+    /// read the log before the put (parity 302).
+    #[test]
+    fn the_left_side_runs_before_the_right_sides_statements() {
+        let maybe = "struct P [x]\nfn maybe[s]\n    if s eq 'bad'\n        return error['no', 'p']\n    return P[1]\nfn tally[]\n    return 1\n";
+        let ir = ir_of(&format!("{}n = tally[] + maybe['ok'].x\nlog[n]\n", maybe));
+        let left = ir.find("= call tally()").unwrap_or_else(|| panic!("the left into a temporary: {}", ir));
+        let refusal = ir.find("propagate").unwrap_or_else(|| panic!("the refusal: {}", ir));
+        assert!(left < refusal, "the left side first: {}", ir);
+        // a quiet left side needs no temporary
+        let ir = ir_of(&format!("{}k = 2\nn = k + maybe['ok'].x\nlog[n]\n", maybe));
+        assert!(ir.contains("(k add unwrap"), "{}", ir);
+        // a mask's `and` computes both sides, the left first
+        let ir = ir_of("use frame\nfn table_of[s]\n    if s eq 'bad'\n        return error['no', 'p']\n    return frame.new[v = [1, 2]]\nfn tally[]\n    return 1\nm = tally[] eq 1 and table_of['ok'].v gt 0\nlog[m]\n");
+        let left = ir.find("= (call tally() eq 1)").unwrap_or_else(|| panic!("the left into a temporary: {}", ir));
+        let refusal = ir.find("propagate").unwrap_or_else(|| panic!("the refusal: {}", ir));
+        assert!(left < refusal, "the left side first: {}", ir);
+        assert!(ir.contains("let m: List(Bool)"), "a mask: {}", ir);
+    }
+
+    /// A column compared with one value is a mask; with a list, a column
+    /// or a tensor it is one truth, as two lists compare — so `true and
+    /// df.id eq ['a', 'b']` decides from the left and builds compiled.
+    #[test]
+    fn a_column_compared_with_a_list_is_one_truth() {
+        let ir = ir_of("use frame\ndf = frame.new[id = ['a', 'b'], v = [1, 2]]\na = df.id eq 'a'\nb = df.id eq ['a', 'b']\nc = df.v eq df.v\nd = df.v eq [1, 2]\ne = ['a', 'b'] eq ['a', 'b']\nf = (df.v gt 1) eq (df.v gt 1)\ng = true and df.id eq ['a', 'b']\nh = (df.v gt 1) eq true\nlog[a]\nlog[b]\nlog[c]\nlog[d]\nlog[e]\nlog[f]\nlog[g]\nlog[h]\n");
+        for v in ["a", "h"] {
+            assert!(ir.contains(&format!("let {}: List(Bool)", v)), "{} is a mask: {}", v, ir);
+        }
+        for v in ["b", "c", "d", "e", "f", "g"] {
+            assert!(ir.contains(&format!("let {}: Bool", v)), "{} is one truth: {}", v, ir);
+        }
     }
 
     #[test]

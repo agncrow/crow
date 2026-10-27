@@ -2393,7 +2393,7 @@ impl Emitter {
                 // stopped on reading `j`
                 let mut hoisted: Vec<(usize, String)> = Vec::new();
                 for (j, a) in raw_args.iter().enumerate() {
-                    if !result_idx.contains(&j) && !Self::quiet(a) {
+                    if !result_idx.contains(&j) && !crate::ir::quiet(a) {
                         let name = format!("_pa_{}", j);
                         hoisted.push((j, std::mem::replace(&mut unwrapped[j], name.clone())));
                         self.unwrap_as.insert(a as *const Expr as usize, name);
@@ -2459,21 +2459,6 @@ impl Emitter {
         let printed = self.expr(a);
         self.unwrap_as.remove(&node);
         printed
-    }
-
-    /// An argument whose evaluation can neither stop nor act — a value a
-    /// name holds, a literal of such — whose place among a call's arguments
-    /// does not matter.
-    fn quiet(e: &Expr) -> bool {
-        match e {
-            Expr::Const(..) | Expr::Local(..) | Expr::Move(..) | Expr::Load(..) | Expr::Derived(..) | Expr::Constant(..) | Expr::FnRef(..) => true,
-            Expr::Field { base, .. } | Expr::Meta { base, .. } => Self::quiet(base),
-            Expr::Convert { how, expr, .. } => !matches!(how, Convert::ToSmall(_)) && Self::quiet(expr),
-            Expr::ListLit(items, _) => items.iter().all(Self::quiet),
-            Expr::MapLit(items, _) => items.iter().all(|(_, v)| Self::quiet(v)),
-            Expr::RecordLit { fields, .. } => fields.iter().all(Self::quiet),
-            _ => false,
-        }
     }
 
     #[allow(clippy::too_many_arguments)]
