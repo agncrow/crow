@@ -1305,6 +1305,87 @@ impl CrowFrame {
         let (new_data, new_valid): (Vec<_>, Vec<_>) = results.into_iter().unzip();
         Ok(CrowFrame::assembled(self.columns.clone(), new_data, new_valid))
     }
+
+    /// Many frames of one shape stacked in one pass, each column built
+    /// once (stacking them in turn copies the growing frame each time:
+    /// seventy groups of a month's scan had cost 16 s against 0.2).
+    pub fn stack_all(parts: &[CrowFrame]) -> Result<CrowFrame, String> {
+        let Some(first) = parts.first() else {
+            return Ok(CrowFrame::new(Vec::new(), Vec::new(), Vec::new()));
+        };
+        if parts.len() == 1 {
+            return Ok(first.clone());
+        }
+        if parts.iter().any(|p| p.columns != first.columns) {
+            return Err("stack: column names don't match".to_string());
+        }
+        let total: usize = parts.iter().map(|p| p.nrows()).sum();
+        let results: Result<Vec<(Column, Validity)>, String> = crate::cores::map_range(first.ncols(), total, |i| {
+            let valid: Validity = parts.iter().flat_map(|p| p.validity[i].iter().copied()).collect();
+            let other = |p: &CrowFrame| format!("stack: column '{}' holds another kind in one of the frames than in the first", p.columns[i]);
+            let col = match first.data[i].as_ref() {
+                Column::Int(_) => {
+                    let mut out = Vec::with_capacity(total);
+                    for p in parts {
+                        match p.data[i].as_ref() {
+                            Column::Int(v) => out.extend_from_slice(v),
+                            _ => return Err(other(p)),
+                        }
+                    }
+                    Column::Int(out)
+                }
+                Column::Float(_) => {
+                    let mut out = Vec::with_capacity(total);
+                    for p in parts {
+                        match p.data[i].as_ref() {
+                            Column::Float(v) => out.extend_from_slice(v),
+                            _ => return Err(other(p)),
+                        }
+                    }
+                    Column::Float(out)
+                }
+                Column::Bool(_) => {
+                    let mut out = Vec::with_capacity(total);
+                    for p in parts {
+                        match p.data[i].as_ref() {
+                            Column::Bool(v) => out.extend_from_slice(v),
+                            _ => return Err(other(p)),
+                        }
+                    }
+                    Column::Bool(out)
+                }
+                Column::DateTime(..) => {
+                    let mut ms = Vec::with_capacity(total);
+                    let mut off = Vec::with_capacity(total);
+                    for p in parts {
+                        match p.data[i].as_ref() {
+                            Column::DateTime(m, o) => {
+                                ms.extend_from_slice(m);
+                                off.extend_from_slice(o);
+                            }
+                            _ => return Err(other(p)),
+                        }
+                    }
+                    Column::DateTime(ms, off)
+                }
+                Column::Str(_) => {
+                    let mut texts = Vec::with_capacity(parts.len());
+                    for p in parts {
+                        match p.data[i].as_ref() {
+                            Column::Str(t) => texts.push(t),
+                            _ => return Err(other(p)),
+                        }
+                    }
+                    Column::Str(crate::textcol::Text::joined_refs(&texts))
+                }
+            };
+            Ok((col, valid))
+        })
+        .into_iter()
+        .collect();
+        let (new_data, new_valid): (Vec<_>, Vec<_>) = results?.into_iter().unzip();
+        Ok(CrowFrame::assembled(first.columns.clone(), new_data, new_valid))
+    }
 }
 
 // ===== Helper functions =====

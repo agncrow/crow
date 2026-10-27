@@ -44,7 +44,7 @@ the next positions, sorted by the `by` columns, with the statistics a
 reader prunes by in the file's head. `latest` is the table the log
 holds, one row per key; `lookup` reads only the files whose filters admit
 the value; `commit` is the sequencer, refusing a write whose reads are
-stale; `merge` folds the files into one Parquet segment holding the latest
+stale; `merge` folds the files into one segment holding the latest
 version of each key, which the same readers read. Reference: spec section 13 (magpie).
 
 ## A batch without the flush, and a sync

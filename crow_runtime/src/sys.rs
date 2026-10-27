@@ -223,7 +223,7 @@ pub fn frame_of_parquet(bytes: &Bytes) -> Result<crate::frame::CrowFrame, String
 }
 
 /// `sys.batch_write[dir, number, first, frame, keys, texts]`: the frame
-/// as the log's next batch file (crate::batch), its path answered.
+/// as the log's next batch file (crate::magpie), its path answered.
 pub fn batch_write(dir: &str, number: i64, first: i64, f: &crate::frame::CrowFrame, keys: Vec<String>, texts: Vec<String>, flush: bool) -> Result<String, String> {
     crate::frames::batch_write(dir, number, first, f, &keys, &texts, flush)
 }
@@ -245,7 +245,7 @@ pub fn batch_admits(path: &str, column: &str, value: &str, token: bool) -> Resul
 }
 
 /// `sys.batch_merge[dir, paths, keys]`: the files folded into one segment
-/// (crate::batch::merge), its path answered.
+/// (crate::magpie::merge), its path answered.
 pub fn batch_merge(dir: &str, paths: Vec<String>, keys: Vec<String>, every: bool) -> Result<String, String> {
     crate::frames::batch_merge(dir, &paths, &keys, every)
 }

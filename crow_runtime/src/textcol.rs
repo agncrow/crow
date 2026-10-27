@@ -242,13 +242,19 @@ impl Text {
     /// them all (each one's codes renumbered); any plain, or a joined
     /// dictionary past the limit, a plain column.
     pub fn joined(parts: &[Text]) -> Text {
-        let total: usize = parts.iter().map(Text::len).sum();
+        let refs: Vec<&Text> = parts.iter().collect();
+        Self::joined_refs(&refs)
+    }
+
+    /// `joined`, over borrowed parts: nothing copied before the join.
+    pub fn joined_refs(parts: &[&Text]) -> Text {
+        let total: usize = parts.iter().map(|p| p.len()).sum();
         if parts.iter().all(|p| matches!(p, Text::Dict { .. })) {
             let mut values = Text::new();
             let mut index: HashMap<String, u32> = HashMap::new();
             let mut codes: Vec<u32> = Vec::with_capacity(total);
             for part in parts {
-                if let Text::Dict { codes: pc, values: pv } = part {
+                if let Text::Dict { codes: pc, values: pv } = *part {
                     let map: Vec<u32> = pv
                         .iter()
                         .map(|v| match index.get(v) {
@@ -268,7 +274,7 @@ impl Text {
                 return Text::Dict { codes, values: Box::new(values) };
             }
         }
-        let bytes: usize = parts.iter().map(|p| match p { Text::Plain { bytes, .. } => bytes.len(), Text::Dict { codes, values } => codes.len() * (values.bytes_held() / values.len().max(1)) }).sum();
+        let bytes: usize = parts.iter().map(|p| match *p { Text::Plain { bytes, .. } => bytes.len(), Text::Dict { codes, values } => codes.len() * (values.bytes_held() / values.len().max(1)) }).sum();
         let mut out = Text::with_capacity(total, bytes);
         for part in parts {
             for s in part.iter() {

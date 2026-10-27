@@ -361,7 +361,7 @@ log[batch_read[path, []].id]
 log[batch_read[path, ['_pos']]._pos]
 s = json[batch_stats[path]]
 log[int[s.rows]]
-log[int[s.columns.id.max]]
+log[s.columns.id.cells]
 log[batch_admits[path, 'id', '2', false]]
 log[batch_admits[path, 'id', '9', false]]
 log[batch_admits[path, 'name', 'APPLE', true]]
@@ -385,7 +385,7 @@ ex_batches/000000000000.batch
 [1, 2, 3]
 [101, 102, 100]
 3
-3
+int
 true
 false
 true

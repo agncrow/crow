@@ -91,12 +91,7 @@ pub fn records(bytes: &[u8]) -> Result<CrowFrame, String> {
             // inner messages are the records, their offsets the producer's
             let inner = match (codec, value) {
                 (_, None) => return Err(format!("records: message {} is compressed and holds nothing", n)),
-                (1, Some(v)) => {
-                    use std::io::Read;
-                    let mut out = Vec::new();
-                    flate2::read::GzDecoder::new(&v[..]).read_to_end(&mut out).map_err(|e| format!("records: message {} does not unzip: {}", n, e))?;
-                    out
-                }
+                (1, Some(v)) => crate::magpie::inflate::gunzip(&v).map_err(|e| format!("records: message {} does not unzip: {}", n, e))?,
                 (2, Some(v)) => snappy_kafka(&v).map_err(|e| format!("records: message {}: {}", n, e))?,
                 (c, Some(_)) => return Err(format!("records: message {} is compressed with codec {} — the door reads gzip and snappy", n, c)),
             };
@@ -153,12 +148,12 @@ fn snappy_kafka(v: &[u8]) -> Result<Vec<u8>, String> {
             let size = u32::from_be_bytes([v[p], v[p + 1], v[p + 2], v[p + 3]]) as usize;
             p += 4;
             let block = v.get(p..p + size).ok_or_else(|| "a snappy block is cut short".to_string())?;
-            out.extend(snap::raw::Decoder::new().decompress_vec(block).map_err(|e| format!("snappy: {}", e))?);
+            out.extend(crate::magpie::snappy::decompress(block).map_err(|e| format!("snappy: {}", e))?);
             p += size;
         }
         return Ok(out);
     }
-    snap::raw::Decoder::new().decompress_vec(v).map_err(|e| format!("snappy: {}", e))
+    crate::magpie::snappy::decompress(v).map_err(|e| format!("snappy: {}", e))
 }
 
 /// `sys.records_of[frame]`: a frame's rows as a message set of magic 1,
@@ -280,7 +275,6 @@ mod tests {
     /// read as the records it holds
     #[test]
     fn a_compressed_set_is_read_as_its_records() {
-        use std::io::Write;
         let mut keys = Text::new();
         keys.push("a");
         keys.push("b");
@@ -293,9 +287,7 @@ mod tests {
             vec![vec![true; 2], vec![true; 2], vec![true; 2], vec![true; 2]],
         );
         let inner = records_of(&f).unwrap();
-        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-        gz.write_all(&inner).unwrap();
-        let zipped = gz.finish().unwrap();
+        let zipped = crate::magpie::inflate::gzip_stored(&inner);
         // the wrapper: magic 1, attributes gzip, no key, the zipped set as its value
         let mut msg = vec![1u8, 1u8];
         msg.extend_from_slice(&7i64.to_be_bytes());
@@ -313,7 +305,7 @@ mod tests {
         assert_eq!(match back.data[3].as_ref() { Column::Str(t) => t.to_vec(), _ => panic!() }, vec!["one", "two"]);
         assert_eq!(match back.data[1].as_ref() { Column::Int(v) => v.clone(), _ => panic!() }, vec![5, 6]);
         // snappy, raw block
-        let snapped = snap::raw::Encoder::new().compress_vec(&inner).unwrap();
+        let snapped = crate::magpie::snappy::literal(&inner);
         let mut msg = vec![1u8, 2u8];
         msg.extend_from_slice(&7i64.to_be_bytes());
         msg.extend_from_slice(&(-1i32).to_be_bytes());

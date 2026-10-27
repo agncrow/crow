@@ -303,7 +303,7 @@ fn _found[paths, on, equal, columns]
 --- columns hold the values `equal`, every pair at once, each value written as
 --- text (`'3'`, `'2.5'`, `'true'`), in position order — each file asked
 --- through its filters and, a segment, its row groups' statistics, so
---- keys the segment is sorted by read one group of 8192 rows; `columns`
+--- keys the segment is sorted by read one group of a few megabytes; `columns`
 --- names the ones to read, every column when empty
 fn lookup[dir, on, equal, columns = []]
     --- the lists pinned as lists of text here, outside the loop below, so

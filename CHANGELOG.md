@@ -122,6 +122,21 @@ history says the rest.
   and this store holds its state and runs its own engines — the magpie is
   the corvid that gathers everything into one nest). Its second
   architecture is docs/magpie-design.md, built phase by phase below.
+- Magpie's own file format (phase 2 of the design): a batch, a segment
+  and, later, the manifest are one format of our own — row groups of
+  about 4 MB, each column chunk encoded by its kind (ints by frame of
+  reference or delta, text by dictionary or lengths and bytes, bools as a
+  bitmap, floats as their bits) and compressed by Magpie's own LZ codec
+  where that pays, the statistics per column per group (min, max,
+  missing, distinct, a bloom filter; a token filter and counts per
+  indexed text column) behind a two-level footer read per column. No
+  Arrow, no Parquet and no conversion between the frame and the disk;
+  `flate2` and `snap` leave the runtime, the Kafka door's gzip and snappy
+  decoding written as our own (`crow_runtime/src/magpie/inflate.rs`,
+  `snappy.rs`). Format 2; format 1 is not read (nothing was released).
+  `batch_stats` answers the footer's facts (rows, positions, keys,
+  groups, each column's kind and whether it is indexed, the token
+  counts), not every column's bounds.
 - The log as batch files, `use magpie` (spec, magpie): each `batch` one file
   written once by the kernel (sys, `batch_write`) — the log entry, the
   sorted level-0 segment with its statistics and the word index at once —

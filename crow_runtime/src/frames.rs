@@ -756,124 +756,50 @@ mod expect_tests {
     }
 }
 
-// ── batch files: the log's unit (crate::batch) ──────────────────────────
+// ── the log's files: Magpie's kernel (crate::magpie) ───────────────────
 
-/// `sys.batch_write[dir, number, first, frame, keys, texts]` where the
-/// program was built with Arrow (the interpreter always is; a compiled
-/// program that writes batches).
+/// `sys.batch_write[dir, number, first, frame, keys, texts, flush]`: the
+/// frame written as the log's batch file `number` (crate::magpie::write).
 pub fn batch_write(dir: &str, number: i64, first: i64, f: &CrowFrame, keys: &[String], texts: &[String], flush: bool) -> Result<String, String> {
-    #[cfg(feature = "arrow")]
-    {
-        crate::batch::write(dir, number, first, f, keys, texts, flush)
-    }
-    #[cfg(not(feature = "arrow"))]
-    {
-        let _ = (dir, number, first, f, keys, texts, flush);
-        Err("batch: this program was built without Arrow".to_string())
-    }
+    crate::magpie::write(dir, number, first, f, keys, texts, flush)
 }
 
-/// `sys.batch_read[path]`, likewise.
+/// `sys.batch_read[path, wanted]`: a batch file or a segment as the frame it holds.
 pub fn batch_read(path: &str, wanted: &[String]) -> Result<CrowFrame, String> {
-    #[cfg(feature = "arrow")]
-    {
-        crate::batch::read(path, wanted)
-    }
-    #[cfg(not(feature = "arrow"))]
-    {
-        let _ = (path, wanted);
-        Err("batch: this program was built without Arrow".to_string())
-    }
+    crate::magpie::read(path, wanted)
 }
 
-/// `sys.batch_stats[path]`, likewise.
+/// `sys.batch_stats[path]`: the file's facts as JSON text.
 pub fn batch_stats(path: &str) -> Result<String, String> {
-    #[cfg(feature = "arrow")]
-    {
-        crate::batch::stats(path)
-    }
-    #[cfg(not(feature = "arrow"))]
-    {
-        let _ = path;
-        Err("batch: this program was built without Arrow".to_string())
-    }
+    crate::magpie::stats(path)
 }
 
-/// `sys.batch_admits[path, column, value, token]`, likewise.
+/// `sys.batch_admits[path, column, value, token]`: whether the file may hold the value.
 pub fn batch_admits(path: &str, column: &str, value: &str, token: bool) -> Result<bool, String> {
-    #[cfg(feature = "arrow")]
-    {
-        crate::batch::admits(path, column, value, token)
-    }
-    #[cfg(not(feature = "arrow"))]
-    {
-        let _ = (path, column, value, token);
-        Err("batch: this program was built without Arrow".to_string())
-    }
+    crate::magpie::admits(path, column, value, token)
 }
 
-/// `sys.batch_merge[dir, paths, keys]`, where the program was built with
-/// Parquet (the interpreter always is; a compiled program that merges).
+/// `sys.batch_merge[dir, paths, keys, every]`: the files folded into one segment.
 pub fn batch_merge(dir: &str, paths: &[String], keys: &[String], every: bool) -> Result<String, String> {
-    #[cfg(feature = "parquet")]
-    {
-        crate::batch::merge(dir, paths, keys, every)
-    }
-    #[cfg(not(feature = "parquet"))]
-    {
-        let _ = (dir, paths, keys, every);
-        Err("batch: this program was built without Parquet".to_string())
-    }
+    crate::magpie::merge(dir, paths, keys, every)
 }
 
-/// `sys.batch_search[paths, column, words, k]`, likewise.
+/// `sys.batch_search[paths, column, words, k]`: the files searched as one corpus.
 pub fn batch_search(paths: &[String], column: &str, words: &[String], k: i64) -> Result<CrowFrame, String> {
-    #[cfg(feature = "arrow")]
-    {
-        crate::batch::search(paths, column, words, k)
-    }
-    #[cfg(not(feature = "arrow"))]
-    {
-        let _ = (paths, column, words, k);
-        Err("batch: this program was built without Arrow".to_string())
-    }
+    crate::magpie::search(paths, column, words, k)
 }
 
-/// `sys.batch_since[paths, after, wanted]`, likewise.
+/// `sys.batch_since[paths, after, wanted]`: the files' rows past a position.
 pub fn batch_since(paths: &[String], after: i64, wanted: &[String]) -> Result<CrowFrame, String> {
-    #[cfg(feature = "arrow")]
-    {
-        crate::batch::since(paths, after, wanted)
-    }
-    #[cfg(not(feature = "arrow"))]
-    {
-        let _ = (paths, after, wanted);
-        Err("batch: this program was built without Arrow".to_string())
-    }
+    crate::magpie::since(paths, after, wanted)
 }
 
-/// `sys.batch_sync[dir]`, likewise.
+/// `sys.batch_sync[dir]`: the log's files flushed to the disk.
 pub fn batch_sync(dir: &str) -> Result<i64, String> {
-    #[cfg(feature = "arrow")]
-    {
-        crate::batch::sync(dir)
-    }
-    #[cfg(not(feature = "arrow"))]
-    {
-        let _ = dir;
-        Err("batch: this program was built without Arrow".to_string())
-    }
+    crate::magpie::sync(dir)
 }
 
-/// `sys.batch_find[path, columns, values, wanted]`, likewise.
+/// `sys.batch_find[paths, columns, values, wanted]`: the files' rows holding the values.
 pub fn batch_find(paths: &[String], columns: &[String], values: &[String], wanted: &[String]) -> Result<CrowFrame, String> {
-    #[cfg(feature = "arrow")]
-    {
-        crate::batch::find_in(paths, columns, values, wanted)
-    }
-    #[cfg(not(feature = "arrow"))]
-    {
-        let _ = (paths, columns, values, wanted);
-        Err("batch: this program was built without Arrow".to_string())
-    }
+    crate::magpie::find_in(paths, columns, values, wanted)
 }

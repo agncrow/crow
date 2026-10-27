@@ -7,8 +7,7 @@
 pub mod display;
 pub mod distributed;
 pub mod frame;
-#[cfg(feature = "arrow")]
-pub mod batch;
+pub mod magpie;
 pub mod fixtures;
 pub mod int;
 pub mod bits;

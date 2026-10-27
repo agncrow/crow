@@ -157,8 +157,11 @@ One format for batches, segments and the manifest. A file is:
 A reader reads the last bytes, the footer, then only what it asks for. A
 batch is written whole to a temporary name and linked into place, as
 now; a segment is written by the merge group by group (phase 3). Row
-groups are sized by bytes, `GROUP_BYTES` (64 MB to start, settled by the
-phase 5 measure); the 8,192-row constant goes.
+groups are sized by bytes, `GROUP_BYTES` (4 MB: a lookup decodes one
+group, so a group is small, and the index is read per column, so many
+groups cost a reader of two columns nothing; settled by the phase 5
+measure); the 8,192-row constant goes. Built 2026-10-26, before phase 1,
+so the manifest is a Magpie file from its first version.
 
 **The frame is the unit on both sides.** A write takes the frame's
 columns as they lie — an int or float column is its vector, bit-packed
@@ -191,6 +194,13 @@ cells; the codec against its own decoder on random and on real bytes; a
 segment's size within 1.2× of the Parquet-with-snappy segment of the
 same month (336 MB) and its decode no slower, measured; the door's
 decoders against gzip's and snappy's reference vectors.
+
+Measured 2026-10-26: the bars' segment 287 MB against Parquet's 336, the
+quotes' 248 against 325; the five questions from the files, interpreted,
+8 → 6, 7 → 4, 27 → 18, 220 → 73 and 80 → 76 ms against the first
+architecture. The first run found the reader stacking each group onto
+the growing frame (16 s for the month's scan): `CrowFrame::stack_all`
+builds each column once.
 
 ## Phase 3 — a streaming merge, bounded segments, levels
 

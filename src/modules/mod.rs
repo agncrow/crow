@@ -139,7 +139,7 @@ pub static MODULES: &[Module] = &[
     // the log as a directory of batch files: one commit, one file, written
     // once by the kernel; the sequencer, the reads and the catalog in Crow
     Module {
-        source: Some(MAGPIE_SOURCE), needs: &[("crow_runtime", &["parquet"])], registry: true,
+        source: Some(MAGPIE_SOURCE), needs: &[], registry: true,
         docs: Some("The log as a directory of batch files: each commit one file written once, holding its rows' positions, sorted by key, with the statistics a reader prunes by; appends, reads from a position, the latest version of each key, lookups, and a sequencer that refuses a stale read."),
         module: Some(|| Arc::new(Named::new("magpie"))),
         ..Module::plain("magpie", "_magpie")
@@ -147,7 +147,7 @@ pub static MODULES: &[Module] = &[
     // the Kafka door of the magpie: the 0.10.1 protocol in Crow over the sys
     // layer's listener, the message sets the kernel's
     Module {
-        source: Some(KAFKA_SOURCE), needs: &[("crow_runtime", &["parquet"])], registry: true,
+        source: Some(KAFKA_SOURCE), needs: &[], registry: true,
         docs: Some("The Kafka door of the magpie: a topic a log, a producer's records appended as a batch, a consumer's fetch a read from its offset, groups and their commits two logs of their own — the protocol a 0.10.1 broker speaks, served from one loop."),
         module: Some(|| Arc::new(Named::new("kafka"))),
         ..Module::plain("kafka", "_kafka")
