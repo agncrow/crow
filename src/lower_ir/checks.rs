@@ -271,6 +271,9 @@ impl<'a> Lowerer<'a> {
     /// behind its prefix, the refusal names the function the program
     /// called (`in relu: clip[] takes numbers, got an int`): the line is
     /// the program's, and the formula's innards are not what it wrote.
+    /// Inside a module's own helper, which no program calls, it names the
+    /// module function the program called whose body reaches the helper
+    /// (`in prior: batch_asof[] takes … an int, got … a list of ints`).
     pub(super) fn refuse(&mut self, msg: String) {
         if self.v.mute > 0 {
             return;
@@ -283,9 +286,27 @@ impl<'a> Lowerer<'a> {
             // (the module's functions are inlined after the program's
             // statements, so the program's call of this one is lowered
             // first: its line is on record; the scan's note is the fallback)
-            let called_at = self.call_lines.iter().find(|((_, callee), _)| crate::ir::copy_base(callee) == base).map(|(_, l)| *l);
-            let line = called_at.or_else(|| self.ctx.first_call_line.get(&base).copied()).unwrap_or(self.v.line);
-            (format!("in {}: {}", crate::modules::written_as(&self.current_fn), msg), line)
+            // (a call from inside a module's function carries no line of
+            // the program's: only the program's own calls place it)
+            let called_at = self.call_lines.iter().find(|((caller, callee), _)| !crate::modules::is_crow_fn(caller) && crate::ir::copy_base(callee) == base).map(|(_, l)| *l);
+            let (named, line) = match called_at.or_else(|| self.ctx.first_call_line.get(&base).copied()) {
+                Some(line) => (base, line),
+                // (a helper the program never calls: the module function the
+                // program did call whose body reaches the helper, at the
+                // earliest such call's line — the helper's own name is the
+                // module's, and its line none of the program's)
+                None => {
+                    let mut reaching: Vec<(String, usize)> = self
+                        .call_lines
+                        .iter()
+                        .filter(|((caller, callee), _)| !crate::modules::is_crow_fn(caller) && crate::modules::is_crow_fn(callee))
+                        .map(|((_, callee), l)| (crate::ir::copy_base(callee).to_string(), *l))
+                        .collect();
+                    reaching.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+                    reaching.into_iter().find(|(f, _)| self.ctx.reaches(f, &base)).unwrap_or((base, self.v.line))
+                }
+            };
+            (format!("in {}: {}", crate::modules::written_as(&named), msg), line)
         } else {
             (msg, self.v.line)
         };
@@ -666,6 +687,12 @@ impl<'a> Lowerer<'a> {
     /// An assignment: a derivation is not assigned, and a variable keeps the
     /// type it was first given.
     pub(super) fn check_assign(&mut self, name: &str, new_ty: &Ty) {
+        // (a variable whose value's making was refused — an undefined
+        // function's answer — is not judged against what it was, nor a
+        // later value against it: that mistake's echo, told once)
+        if self.v.contested.contains(name) {
+            return;
+        }
         let in_local_scope = self.in_fn().is_some() && !(self.v.reactive && self.v.module_vars.contains(name));
         let existing = if in_local_scope { self.v.local_types.get(name).cloned() } else { self.ctx.vars.get(name).cloned() };
         if in_local_scope && !matches!(new_ty, Ty::Unknown) {
@@ -1678,7 +1705,15 @@ impl<'a> Lowerer<'a> {
                 return;
             }
             if let Some(module) = self.ctx.registry.module_name_of(name) {
-                if self.ctx.bare_modules.contains(module) {
+                // (inside a standard module's function written in Crow, the
+                // registry's scope is the module's own imports, every one
+                // bare: a row it reaches is held to its kinds as the
+                // program's bare imports' rows are — read by the program's
+                // imports, a helper's call of sys's batch_asof had taken a
+                // list where the row takes an int, a stop interpreted and
+                // no build compiled, while the program's own helper chain
+                // was refused)
+                if self.ctx.bare_modules.contains(module) || crate::modules::is_crow_fn(&self.current_fn) {
                     // (a ui control named like a module's function — `select`
                     // of options, not of a frame — is the control's, as the
                     // lowering reads it: checked as frame's select, a page's

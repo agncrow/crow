@@ -1056,14 +1056,21 @@ steps on every push and must be green.
   each run in a directory of its own, a package's holding a link
   `packages` to the repository's (its references are read by paths from
   the root): kg's four runs at once in the root had removed each other's
-  logs (2026-10-27). And a standard module's exported function says the
-  kind of a parameter it only hands to helpers (`since`'s `opening =
-  pack[from, 8]`, `prior`'s `cut = pack[upto, 8]`): inside a standard
-  module a helper's call of a row is not held to the row's kinds, so a
-  list the program handed as the position reached `batch_asof`'s Int (a
-  stop interpreted, E0605 compiled), as `latest`'s `lo` had reached
-  `batch_between`'s Str (`str[lo]` there; E0614) — a program's own helper
-  is refused in both modes, so the gap is the module scope's.
+  logs (2026-10-27). A bare call inside a standard module's function is
+  held to its rows' kinds by the module's own imports (`check_call` in
+  checks.rs: the registry's scope is the module's there, every import
+  bare) — read by the program's imports, a helper's call of sys's
+  `batch_asof` had taken a list where the row takes an int (a stop
+  interpreted, E0605 compiled), as `latest`'s `lo` had reached
+  `batch_between`'s Str (E0614), while a program's own helper chain was
+  refused. A refusal inside a helper names the module function the
+  program called whose body reaches it (`TypeContext::reaches` over the
+  inlined bodies), at the program's call line from `call_lines`: a call
+  made inside a module's body records no line of the program's. And a
+  variable whose value's making was refused (`v.contested`) is not
+  judged at a write into it: `relu`, copied per signature, had typed
+  `relu[nosuch[…]]` as its matrix copy, and `v[2] = 4.2` was refused a
+  second time as a matrix write (errors j78, j79; 2026-10-27).
 - A page's `later[f]` runs f on the page's state (`spawn_later` takes a
   plain `fn(&mut CrowLiveState)`), so `later[f, a]` in a page's handler
   is refused in both modes (errors j45); a script's carries its arguments

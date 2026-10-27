@@ -331,9 +331,12 @@ same way; the stages below it see a program function. The `Encoded`
 hand-off and the `json[…]` doors are gone from the migrated modules: a
 function takes the value the program holds and reads it as its JSON where
 it needs to (`encode[claims]`). A refusal inside such a function names it
-and the program's line (`in relu: clip[] takes numbers, got an int`),
-and every message names the function as the program writes it
-(`modules::unprefixed`, `written_as`). Options are the functions'
+and the program's line (`in relu: clip[] takes numbers, got an int`) —
+inside a helper, which no program calls, the export whose body reaches
+it (`in prior: batch_asof[] takes … an int, got … a list of ints`), the
+helper's calls of rows held to the rows' kinds under the module's own
+imports as the export's are — and every message names the function as
+the program writes it (`modules::unprefixed`, `written_as`). Options are the functions'
 defaults, `[]` and `map[]` allowed (the parser's one change); the
 language gained nothing else.
 

@@ -1,0 +1,9 @@
+--- inside a standard module, a helper's call of a row is held to the row's
+--- kinds as the program's own calls are, and the refusal names the function
+--- the program called: a list handed as prior's position had reached
+--- batch_asof's int through the helper — a stop interpreted, no build compiled
+use magpie, frame
+
+labels = frame.new[user = ['ann', 'bob'], at = [10, 20]]
+rows = prior['no-such-log', labels, ['score'], push[[], 5]]
+log[rows]

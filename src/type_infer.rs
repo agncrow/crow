@@ -991,6 +991,28 @@ impl TypeContext {
         new_clones
     }
 
+    /// Whether `from`'s body calls `to`, through the bodies of the standard
+    /// modules' functions it calls: a refusal inside a module's own helper,
+    /// which no program calls, names the module function the program
+    /// called that reaches it (lower_ir/checks.rs, `refuse`).
+    pub(crate) fn reaches(&self, from: &str, to: &str) -> bool {
+        let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        let mut todo = vec![from.to_string()];
+        while let Some(f) = todo.pop() {
+            if !seen.insert(f.clone()) {
+                continue;
+            }
+            let Some(sig) = self.functions.get(&f) else { continue };
+            let mut called = std::collections::BTreeSet::new();
+            Self::collect_called_fns_stmts(&sig.body, &mut called);
+            if called.contains(to) {
+                return true;
+            }
+            todo.extend(called.into_iter().filter(|c| crate::modules::is_crow_fn(c)));
+        }
+        false
+    }
+
     /// Every clone the monomorphization pass made.
     pub(crate) fn clone_names(&self) -> Vec<String> {
         self.specializations.values().flat_map(|v| v.iter().map(|(_, m)| m.clone())).collect()

@@ -832,9 +832,6 @@ fn prior[dir, f, columns = [], upto = -1]
         q_cols = _joined['columns', columns]
         return _sent_frame[dir, 'prior', 'x=1`q_cols`&upto=`upto`', f]
     probe = frame.head[f, 1]
-    --- the position is an int (said of it, so a list handed as it is
-    --- refused before the program runs)
-    cut = pack[upto, 8]
     named = push[columns, '']
     fixed = _keys[dir]
     if not fixed.ok

@@ -546,14 +546,27 @@ history says the rest.
   a mask, such an `and` had joined item by item and the compiled program
   had not built (`no method iter for bool`); a column compared with one
   value is a mask as before.
+- Inside a standard module written in Crow, a helper's call of a row is
+  held to the row's kinds as the program's own calls are: the check had
+  read the program's imports, where the module's own imports answer, so
+  a list the program handed as `prior`'s position reached `batch_asof`
+  through the helper `_asof` — a stop interpreted, no build compiled —
+  while a program's own helper chain was refused. The refusal inside a
+  helper, which no program calls, names the module function the program
+  called whose body reaches it, at the program's line (`in prior:
+  batch_asof[] takes … an int, got … a list of ints`); the exported
+  functions no longer need to say a parameter's kind in their own bodies
+  for the helper's sake (`prior`'s `pack[upto, 8]` is gone).
+- A value whose making was refused — an undefined function's answer
+  handed to a function copied per signature, typed as the copy a call
+  with nothing known reaches — is not judged at a write into it either:
+  `v = relu[nosuch[…]]` beside a `relu` of a matrix, then `v[2] = 4.2`,
+  had been refused twice, the second time as a matrix write (the
+  mistakes fuzzer's seed 1793066246). One mistake, one message.
 - `crow check --self` runs every package's test file in a directory of
   its own, as it runs a module's, the run holding a link to the
   repository's `packages` for the references the tests read: kg's four
   runs at once in the repository's root had removed each other's logs.
-  And `prior` says in its own body that `upto` is an int, as `since`
-  does of its window's ends: inside a standard module a helper's call of
-  a row is not held to the row's kinds, so a list handed as the position
-  had reached `batch_asof` — a stop interpreted, no build compiled.
 - Five shapes over a log's open frames that one mode had accepted and
   the other refused (parity 297, found by the magpie's benchmark): a frame
   literal built from an open frame's cells — `frame.new[last =

@@ -1,0 +1,3 @@
+j78_a_refused_calls_answer_is_not_judged_by_a_copys_shape.co:9:10: undefined function 'nosuch'
+  9 │ v = relu[nosuch[linspace[0.0, 1.0, 3]]]
+    │          ^^^^^^

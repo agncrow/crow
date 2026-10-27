@@ -1,0 +1,14 @@
+--- a call whose argument's making was refused (an undefined function's) is
+--- typed as the copy a call with nothing known reaches — relu's, copied per
+--- signature, had been the matrix's — and what is written into its answer
+--- (an item, a field, the variable again) had each been judged by that
+--- copy's kind: the mistake is told once (fuzz seed 1793066246)
+use math, math.nn
+
+g = relu[zeros[2, 3]]
+v = relu[nosuch[linspace[0.0, 1.0, 3]]]
+v[2] = 4.2
+v.x = 1
+v = 3
+log[g]
+log[v]

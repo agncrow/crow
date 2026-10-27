@@ -2285,7 +2285,10 @@ impl<'a> Lowerer<'a> {
                 // `xs.k = …` had stopped the interpreter as it ran, and the
                 // compiled program had not built — refused as a read of the
                 // field is, in its words)
-                if self.pass == Pass::Final && !matches!(held.payload(), Ty::Record(_) | Ty::Map(..) | Ty::Json | Ty::Unknown) {
+                // (a value whose making was refused has no fields to judge
+                // a write by: that mistake is told once, as its reads are)
+                let contested = target_root(object).is_some_and(|root| self.v.contested.contains(&root));
+                if self.pass == Pass::Final && !contested && !matches!(held.payload(), Ty::Record(_) | Ty::Map(..) | Ty::Json | Ty::Unknown) {
                     self.check_field(&held, field);
                 }
                 // the target is checked before its value, then lowered after
@@ -2445,7 +2448,13 @@ impl<'a> Lowerer<'a> {
                 // target that holds one (`g.cells[i] = row`, `ms[k][i] = row`:
                 // both modes had failed there, differently).
                 let var_ty = self.ctx.vars.get(&var).cloned().unwrap_or(Ty::Unknown);
+                // (a tensor whose making was refused — an undefined
+                // function's answer handed to a function copied per
+                // signature, typed as the copy a call with nothing known
+                // reaches — has no shape to judge a write by: that mistake
+                // is told once, as its reads are)
                 let lead = match &var_ty {
+                    _ if self.v.contested.contains(&var) => None,
                     Ty::Tensor(..) => Some((0, Vec::new())),
                     _ if path.is_empty() => None,
                     _ => self.tensor_lead(object, &var_ty),
