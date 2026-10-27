@@ -52,6 +52,9 @@ pub fn ls(path: &str) -> Result<Vec<String>, String> {
 
 /// `rm[path]`: a file, or a directory and what it holds.
 pub fn rm(path: &str) -> Result<String, String> {
+    // a log's tail goes with its directory: the rows pending in memory
+    // are dropped, not written into the directory ten milliseconds later
+    crate::magpie::tail::forget_under(path);
     fs_rm(path).map(|_| String::new())
 }
 

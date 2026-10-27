@@ -780,18 +780,18 @@ pub fn batch_admits(path: &str, column: &str, value: &str, token: bool) -> Resul
 }
 
 /// `sys.batch_merge[dir, paths, keys, every]`: the files folded into one segment.
-pub fn batch_merge(dir: &str, paths: &[String], keys: &[String], every: bool) -> Result<String, String> {
-    crate::magpie::merge(dir, paths, keys, every)
+pub fn batch_merge(dir: &str, paths: &[String], every: bool) -> Result<String, String> {
+    crate::magpie::merge(dir, paths, every)
 }
 
 /// `sys.batch_search[paths, column, words, k]`: the files searched as one corpus.
-pub fn batch_search(paths: &[String], column: &str, words: &[String], k: i64) -> Result<CrowFrame, String> {
-    crate::magpie::search(paths, column, words, k)
+pub fn batch_search(paths: &[String], column: &str, words: &[String], k: i64, stems: bool, snippet: i64) -> Result<CrowFrame, String> {
+    crate::magpie::search(paths, column, words, k, stems, snippet)
 }
 
 /// `sys.batch_since[paths, after, wanted]`: the files' rows past a position.
-pub fn batch_since(paths: &[String], after: i64, wanted: &[String]) -> Result<CrowFrame, String> {
-    crate::magpie::since(paths, after, wanted)
+pub fn batch_since(paths: &[String], after: i64, upto: i64, wanted: &[String]) -> Result<CrowFrame, String> {
+    crate::magpie::since(paths, after, upto, wanted)
 }
 
 /// `sys.batch_sync[dir]`: the log's files flushed to the disk.

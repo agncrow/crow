@@ -78,6 +78,9 @@ const ENC_TEXT_PLAIN: u8 = 3;
 const ENC_TEXT_DICT: u8 = 4;
 const ENC_BOOL: u8 = 5;
 const ENC_MOMENT: u8 = 6;
+/// A float column the log declared narrow: 32 bits on disk, lossy, and
+/// read back as 64.
+const ENC_FLOAT32: u8 = 7;
 
 const FLAG_VALIDITY: u8 = 1;
 const FLAG_CODEC: u8 = 2;
@@ -273,13 +276,22 @@ fn decode_text(enc: u8, c: &mut Cursor, n: usize) -> Result<Text, String> {
     }
 }
 
-/// The chunk of rows `start..end` of the column, as the file's bytes.
-pub fn encode(col: &Column, valid: &Validity, start: usize, end: usize) -> Vec<u8> {
+/// The chunk of rows `start..end` of the column, as the file's bytes; a
+/// float column with `narrow` is written in 32 bits.
+pub fn encode(col: &Column, valid: &Validity, start: usize, end: usize, narrow: bool) -> Vec<u8> {
     let n = end - start;
     let present: Vec<bool> = valid.slice(start, end);
     let all_present = present.iter().all(|&v| v);
     let (enc, payload): (u8, Vec<u8>) = match col {
         Column::Int(v) => encode_ints(&filled_ints(&v[start..end], &present)),
+        Column::Float(v) if narrow => {
+            let mut out = Vec::with_capacity(n * 4);
+            for i in start..end {
+                let x = if present[i - start] { v[i] as f32 } else { 0.0 };
+                out.extend_from_slice(&x.to_bits().to_le_bytes());
+            }
+            (ENC_FLOAT32, out)
+        }
         Column::Float(v) => {
             let mut out = Vec::with_capacity(n * 8);
             for i in start..end {
@@ -380,13 +392,17 @@ pub fn decode(bytes: &[u8], kind: Kind) -> Result<(Column, Validity), String> {
     let mut p = Cursor::new(payload);
     let col = match kind {
         Kind::Int => Column::Int(decode_ints(enc, &mut p, n)?),
-        Kind::Float => {
-            if enc != ENC_FLOAT {
-                return Err(format!("a float chunk is not encoding {}", enc));
+        Kind::Float => match enc {
+            ENC_FLOAT => {
+                let b = p.take(n * 8)?;
+                Column::Float(b.chunks_exact(8).map(|x| f64::from_bits(u64::from_le_bytes(x.try_into().unwrap_or([0; 8])))).collect())
             }
-            let b = p.take(n * 8)?;
-            Column::Float(b.chunks_exact(8).map(|x| f64::from_bits(u64::from_le_bytes(x.try_into().unwrap_or([0; 8])))).collect())
-        }
+            ENC_FLOAT32 => {
+                let b = p.take(n * 4)?;
+                Column::Float(b.chunks_exact(4).map(|x| f32::from_bits(u32::from_le_bytes(x.try_into().unwrap_or([0; 4]))) as f64).collect())
+            }
+            other => return Err(format!("a float chunk is not encoding {}", other)),
+        },
         Kind::Text => Column::Str(decode_text(enc, &mut p, n)?),
         Kind::Bool => {
             if enc != ENC_BOOL {
@@ -419,7 +435,7 @@ mod tests {
     fn round_trip(col: Column, valid: Vec<bool>) {
         let n = col.len();
         let v = Validity::from(valid.clone());
-        let bytes = encode(&col, &v, 0, n);
+        let bytes = encode(&col, &v, 0, n, false);
         let (back, bv) = decode(&bytes, Kind::of(&col)).expect("decodes");
         assert_eq!(bv.to_vec(), valid);
         for i in 0..n {
@@ -440,7 +456,7 @@ mod tests {
         }
         // a part of the column round-trips too
         if n > 3 {
-            let bytes = encode(&col, &v, 1, n - 1);
+            let bytes = encode(&col, &v, 1, n - 1, false);
             let (back, _) = decode(&bytes, Kind::of(&col)).expect("decodes");
             assert_eq!(back.len(), n - 2);
         }
@@ -471,19 +487,31 @@ mod tests {
     #[test]
     fn a_monotone_column_packs_to_a_few_bits_and_a_dictionary_pays_once() {
         let positions: Vec<i64> = (0..100_000).collect();
-        let bytes = encode(&Column::Int(positions), &Validity::all(100_000), 0, 100_000);
+        let bytes = encode(&Column::Int(positions), &Validity::all(100_000), 0, 100_000, false);
         assert!(bytes.len() < 200, "{}", bytes.len());
         let mut t = Text::new();
         for i in 0..50_000 {
             t.push(["AAPL", "MSFT", "GOOG"][i % 3]);
         }
-        let bytes = encode(&Column::Str(t), &Validity::all(50_000), 0, 50_000);
+        let bytes = encode(&Column::Str(t), &Validity::all(50_000), 0, 50_000, false);
         assert!(bytes.len() < 13_000, "{}", bytes.len());
     }
 
     #[test]
+    fn a_narrow_float_column_keeps_32_bits() {
+        let col = Column::Float(vec![1.5, 0.1, -2.0e30, f64::NAN]);
+        let bytes = encode(&col, &Validity::all(4), 0, 4, true);
+        let (back, _) = decode(&bytes, Kind::Float).unwrap();
+        let Column::Float(v) = back else { panic!("floats") };
+        assert_eq!(v[0], 1.5);
+        assert_eq!(v[1], 0.1f32 as f64);
+        assert_eq!(v[2], -2.0e30f32 as f64);
+        assert!(v[3].is_nan());
+    }
+
+    #[test]
     fn a_corrupt_chunk_is_refused() {
-        let bytes = encode(&Column::Int(vec![1, 2, 3]), &Validity::all(3), 0, 3);
+        let bytes = encode(&Column::Int(vec![1, 2, 3]), &Validity::all(3), 0, 3, false);
         assert!(decode(&bytes[..bytes.len() - 1], Kind::Int).is_err());
         assert!(decode(&bytes, Kind::Float).is_err());
         assert!(decode(&[], Kind::Int).is_err());

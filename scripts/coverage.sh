@@ -67,7 +67,7 @@ if [ $quick = 0 ]; then
   unset LLVM_PROFILE_FILE
 fi
 report=$(mktemp "${TMPDIR:-/tmp}/crow_coverage.XXXXXX")
-cargo llvm-cov report --release --workspace > "$report"
+cargo llvm-cov report --failure-mode all --release --workspace > "$report"
 tail -1 "$report" | awk '{ printf "workspace: %s lines, %s covered\n", $8, $10 }'
 fail=0
 for crate in crow crow_runtime crow_web crow_db; do
@@ -88,8 +88,8 @@ done
 rm -f "$report"
 if [ $arms = 1 ]; then
   mkdir -p target/coverage
-  cargo llvm-cov report --release --workspace --json --output-path target/coverage/coverage.json > /dev/null 2>&1
-  cargo llvm-cov report --release --workspace --show-missing-lines > target/coverage/missing.txt 2> /dev/null
+  cargo llvm-cov report --failure-mode all --release --workspace --json --output-path target/coverage/coverage.json > /dev/null 2>&1
+  cargo llvm-cov report --failure-mode all --release --workspace --show-missing-lines > target/coverage/missing.txt 2> /dev/null
   python3 scripts/coverage_arms.py target/coverage/coverage.json target/coverage/missing.txt > target/coverage/arms.txt
   echo "arms: target/coverage/arms.txt ($(grep -c '' target/coverage/arms.txt) lines)"
 fi

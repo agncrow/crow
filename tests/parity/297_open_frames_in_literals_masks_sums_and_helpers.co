@@ -34,7 +34,7 @@ log[answer[held, cut].n]
 
 --- a mask conjunction over a frame that can fail
 day = env['PARITY_297_DAY', 'd1']
-ds = latest[d, ['sym']]
+ds = latest[d]
 dd = ds[ds.day eq day and ds.status eq 'ready' and ds.sym eq 'A']
 log[dd.close]
 log[len[ds[ds.day eq day or ds.sym eq 'nobody']]]

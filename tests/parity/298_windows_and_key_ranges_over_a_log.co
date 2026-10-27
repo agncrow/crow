@@ -1,0 +1,49 @@
+--- a read of a log is bounded (docs/magpie-design.md, phase 5): `since`
+--- and `scan` take a position window, `latest` a range of the first key;
+--- the whole log is walked in windows, and the windows add up to the
+--- whole, in both modes
+use magpie
+use frame
+use math
+
+d = 'parity-298-log'
+gone = rm[d]
+made = mkdir[d]
+a = batch[d, frame.new[day = ['d1', 'd1', 'd2', 'd2'], sym = ['A', 'B', 'A', 'B'], px = [1, 2, 3, 4]], by = ['day', 'sym']]
+b = batch[d, frame.new[day = ['d2', 'd3', 'd3'], sym = ['A', 'A', 'B'], px = [5, 6, 7]]]
+c = batch[d, frame.new[day = ['d1'], sym = ['A'], px = [8]]]
+log[head[d]]
+log[since[d, 2, 4].px]
+log[since[d, 6].px]
+log[len[since[d, 9]]]
+log[scan[d, 1, 2, ['px']].px]
+log[scan[d, 0, 3].sym]
+log[scan[d, 5].day]
+log[latest[d].px]
+log[latest[d, lo = 'd2', hi = 'd2'].px]
+log[latest[d, hi = 'd1'].px]
+log[latest[d, lo = 'd3', columns = ['day', 'sym', 'px', '_pos']].columns]
+log[latest[d, upto = 3, lo = 'd2'].px]
+log[len[latest[d, lo = 'd9']]]
+log[latest[d, lo = '0'].kind]
+total = 0
+at = 0
+last = head[d]
+while at lte last
+    window = since[d, at, at + 2, ['px']]
+    total = total + int[sum[window.px]]
+    at = at + 3
+log[total]
+log[int[sum[scan[d].px]] eq total]
+m = merge[d]
+log[since[d, 2, 4].px]
+log[latest[d, lo = 'd2', hi = 'd2'].px]
+log[latest[d, hi = 'd1'].px]
+seen = 0
+at = 0
+while at lte last
+    window = scan[d, at, at + 1]
+    seen = seen + len[window]
+    at = at + 2
+log[seen]
+gone = rm[d]

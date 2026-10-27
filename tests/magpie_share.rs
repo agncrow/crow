@@ -52,13 +52,14 @@ fn drive(leader_interpreted: bool) {
         std::fs::create_dir_all(&follower).unwrap();
         std::fs::write(
             follower.join("follow.co"),
-            format!("use magpie\nuse frame\n\ngot = follow['copy', '127.0.0.1', {port}]\nlog[got]\nlog[latest['copy', ['id']].qty]\nlog[head['copy']]\nagain = follow['copy', '127.0.0.1', {port}]\nlog[again]\n"),
+            format!("use magpie\nuse frame\n\ngot = follow['copy', '127.0.0.1', {port}]\nlog[got]\nlog[latest['copy'].qty]\nlog[head['copy']]\nagain = follow['copy', '127.0.0.1', {port}]\nlog[again]\n"),
         )
         .unwrap();
         let out = run_in(&follower, follower_interpreted, "follow.co").output().expect("the follower runs");
         let stdout = String::from_utf8_lossy(&out.stdout);
         let stderr = String::from_utf8_lossy(&out.stderr);
-        assert_eq!(stdout, "2\n[10, 25, 30]\n3\n0\n", "follower (interpreted: {follower_interpreted}) against leader (interpreted: {leader_interpreted}): {stderr}");
+        // two batches and the manifest come first; the manifest alone comes again
+        assert_eq!(stdout, "3\n[10, 25, 30]\n3\n1\n", "follower (interpreted: {follower_interpreted}) against leader (interpreted: {leader_interpreted}): {stderr}");
     }
     let _ = Command::new("kill").args(["-KILL", "--", &format!("-{}", door.id())]).status();
     let _ = door.kill();

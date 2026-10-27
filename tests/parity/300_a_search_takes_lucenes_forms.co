@@ -1,0 +1,38 @@
+--- the query forms of a search (docs/magpie-design.md, phase 7): a
+--- phrase, a prefix, a fuzzy word, a snippet, a stemmed log — the same
+--- ranking from a batch read whole and from the segment the merge
+--- indexed, in both modes
+use magpie
+use frame
+
+d = 'parity-300-log'
+gone = rm[d]
+made = mkdir[d]
+a = batch[d, frame.new[id = [1, 2, 3, 4, 5], text = ['the kitchen table is set', 'a table in the garden', 'kitchens of the world', 'running the kitchen', 'tables and chairs']]]
+log[search[d, 'text', ['kitchen table']].id]
+log[search[d, 'text', ['kitchen table']].score]
+log[search[d, 'text', ['kit*']].id]
+log[search[d, 'text', ['kitchn~']].id]
+log[search[d, 'text', ['tabel~', 'kitchen']].id]
+log[search[d, 'text', ['table', 'garden']].score]
+w = search[d, 'text', ['table'], 2, snippet = 6]
+log[w.columns]
+log[w.snippet]
+log[search[d, 'text', ['table'], snippet = -1].kind]
+log[search[d, 'text', ['']].columns]
+m = merge[d]
+log[search[d, 'text', ['kitchen table']].score]
+log[search[d, 'text', ['kit*']].id]
+log[search[d, 'text', ['tabel~', 'kitchen']].id]
+log[search[d, 'text', ['table', 'garden']].score]
+log[search[d, 'text', ['table'], 2, snippet = 6].snippet]
+s = 'parity-300-stemmed'
+gone = rm[s]
+made = mkdir[s]
+b = batch[s, frame.new[id = [1, 2, 3], text = ['the tables', 'a table', 'no chairs']], stem = true]
+log[search[s, 'text', ['tabling']].id]
+log[search[s, 'text', ['table']].score]
+m = merge[s]
+log[search[s, 'text', ['table']].score]
+gone = rm[s]
+gone = rm[d]

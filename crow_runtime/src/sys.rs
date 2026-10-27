@@ -246,15 +246,79 @@ pub fn batch_admits(path: &str, column: &str, value: &str, token: bool) -> Resul
 
 /// `sys.batch_merge[dir, paths, keys]`: the files folded into one segment
 /// (crate::magpie::merge), its path answered.
-pub fn batch_merge(dir: &str, paths: Vec<String>, keys: Vec<String>, every: bool) -> Result<String, String> {
-    crate::frames::batch_merge(dir, &paths, &keys, every)
+pub fn batch_merge(dir: &str, paths: Vec<String>, every: bool) -> Result<String, String> {
+    crate::frames::batch_merge(dir, &paths, every)
+}
+
+/// `sys.batch_summary[paths, by, of, how, on, ops, equal, lo, hi, upto]`:
+/// aggregates over the files, pushed below the reader.
+pub fn batch_summary(paths: Vec<String>, by: Vec<String>, of: Vec<String>, how: Vec<String>, on: Vec<String>, ops: Vec<String>, equal: Vec<String>, lo: &str, hi: &str, upto: i64) -> Result<crate::frame::CrowFrame, String> {
+    crate::magpie::summary(&paths, &by, &of, &how, &on, &ops, &equal, lo, hi, upto)
+}
+
+/// `sys.batch_asof[paths, labels, keys, time, wanted]`: the as-of join over the files.
+pub fn batch_asof(paths: Vec<String>, labels: &crate::frame::CrowFrame, keys: Vec<String>, time: &str, wanted: Vec<String>) -> Result<crate::frame::CrowFrame, String> {
+    crate::magpie::asof(&paths, labels, &keys, time, &wanted)
+}
+
+/// `sys.batch_declared[dir]`: what the log declares of itself (its keys
+/// and notes) as JSON text, or empty text where it has no manifest.
+pub fn batch_declared(dir: &str) -> Result<String, String> {
+    crate::magpie::declared(dir)
+}
+
+/// `sys.batch_declare[dir, keys, notes]`: the log's manifest written with
+/// its keys and notes; refused where one exists with other keys.
+pub fn batch_declare(dir: &str, keys: Vec<String>, notes: &str) -> Result<String, String> {
+    crate::magpie::declare(dir, &keys, notes)
+}
+
+/// `sys.tail_put[dir, frame]`: the rows appended to the log's pending
+/// rows, visible to this process at once; answers the first position.
+pub fn tail_put(dir: &str, f: &crate::frame::CrowFrame) -> Result<i64, String> {
+    let first = crate::magpie::tail::put(dir, f)?;
+    crate::magpie::crash_at("pending");
+    Ok(first)
+}
+
+/// `sys.tail_flush[dir]`: what is pending written as one batch file and
+/// flushed to the disk; its first position, -1 for nothing.
+pub fn tail_flush(dir: &str) -> Result<i64, String> {
+    crate::magpie::tail::flush(dir)
+}
+
+/// `sys.tail_pending[dir]`: `[rows, first, last]` of the pending rows.
+pub fn tail_pending(dir: &str) -> Result<Vec<i64>, String> {
+    crate::magpie::tail::pending(dir)
+}
+
+/// `sys.tail_get[dir, values]`: the newest row of the key, from the image.
+pub fn tail_get(dir: &str, values: Vec<String>) -> Result<crate::frame::CrowFrame, String> {
+    crate::magpie::tail::get(dir, &values)
+}
+
+/// `sys.tail_last[dir, values]`: the last position the key was written at, -1 for none.
+pub fn tail_last(dir: &str, values: Vec<String>) -> Result<i64, String> {
+    crate::magpie::tail::last(dir, &values)
+}
+
+/// `sys.tail_forget[dir]`: the log's tail forgotten by this process, its
+/// pending rows dropped, never written.
+pub fn tail_forget(dir: &str) -> Result<i64, String> {
+    crate::magpie::tail::forget(dir);
+    Ok(0)
+}
+
+/// `sys.batch_catalog[dir]`: the manifest's segments as a frame.
+pub fn batch_catalog(dir: &str) -> Result<crate::frame::CrowFrame, String> {
+    crate::magpie::catalog(dir)
 }
 
 /// `sys.batch_search[paths, column, words, k]`: the k rows of the files
 /// whose indexed column best match the words, BM25 as Lucene scores it,
 /// with a `score` column.
-pub fn batch_search(paths: Vec<String>, column: &str, words: Vec<String>, k: i64) -> Result<crate::frame::CrowFrame, String> {
-    crate::frames::batch_search(&paths, column, &words, k)
+pub fn batch_search(paths: Vec<String>, column: &str, words: Vec<String>, k: i64, stems: bool, snippet: i64) -> Result<crate::frame::CrowFrame, String> {
+    crate::frames::batch_search(&paths, column, &words, k, stems, snippet)
 }
 
 /// `sys.batch_find[path, column, value]`: the rows of the file whose
@@ -266,8 +330,14 @@ pub fn batch_find(paths: Vec<String>, columns: Vec<String>, values: Vec<String>,
 
 /// `sys.batch_since[paths, after, wanted]`: the files' rows past a
 /// position, in position order, with the columns wanted.
-pub fn batch_since(paths: Vec<String>, after: i64, wanted: Vec<String>) -> Result<crate::frame::CrowFrame, String> {
-    crate::frames::batch_since(&paths, after, &wanted)
+pub fn batch_since(paths: Vec<String>, after: i64, upto: i64, wanted: Vec<String>) -> Result<crate::frame::CrowFrame, String> {
+    crate::frames::batch_since(&paths, after, upto, &wanted)
+}
+
+/// `sys.batch_between[paths, column, lo, hi, upto, wanted]`: the files'
+/// rows whose column lies within the bounds, at or before the position.
+pub fn batch_between(paths: Vec<String>, column: &str, lo: &str, hi: &str, upto: i64, wanted: Vec<String>) -> Result<crate::frame::CrowFrame, String> {
+    crate::magpie::between(&paths, column, lo, hi, upto, &wanted)
 }
 
 /// `sys.batch_sync[dir]`: every file of a log flushed to the disk, then

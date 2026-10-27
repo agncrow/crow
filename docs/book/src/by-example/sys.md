@@ -367,14 +367,28 @@ log[batch_admits[path, 'id', '9', false]]
 log[batch_admits[path, 'name', 'APPLE', true]]
 log[batch_write['ex_batches', 0, 100, f, [], [], true].kind]
 more = batch_write['ex_batches', 1, 103, frame.new[id = [1], name = ['apple crumble']], ['id'], ['name'], true]
-seg = batch_merge['ex_batches', ['ex_batches/000000000000.batch', 'ex_batches/000000000001.batch'], ['id'], false]
+declared = batch_declare['ex_batches', ['id'], '{}']
+log[declared]
+log[batch_declared['ex_batches'] eq declared]
+seg = batch_merge['ex_batches', ['ex_batches/000000000000.batch', 'ex_batches/000000000001.batch'], false]
 log[seg]
+log[batch_catalog['ex_batches'].name]
 log[batch_read[seg, []].name]
-log[batch_find[['ex_batches/000000000000-000000000001.segment'], ['id'], ['2'], ['name']].name]
-log[len[batch_find[['ex_batches/000000000000-000000000001.segment'], ['id'], ['9'], []]]]
-log[batch_since[['ex_batches/000000000000.batch'], 101, ['name']].name]
+log[batch_find[['ex_batches/S000000000001.segment'], ['id'], ['2'], ['name']].name]
+log[len[batch_find[['ex_batches/S000000000001.segment'], ['id'], ['9'], []]]]
+log[batch_since[['ex_batches/000000000000.batch'], 101, -1, ['name']].name]
+log[batch_between[['ex_batches/S000000000001.segment'], 'id', '2', '3', -1, ['name']].name]
 log[batch_sync['ex_batches']]
-log[batch_search[['ex_batches/000000000000-000000000001.segment'], 'name', ['apple'], 5].id]
+log[tail_put['ex_batches', frame.new[id = [9], name = ['elderberry']]]]
+log[tail_pending['ex_batches']]
+log[tail_get['ex_batches', ['9']].name]
+log[tail_last['ex_batches', ['9']]]
+log[tail_flush['ex_batches']]
+log[tail_pending['ex_batches']]
+log[tail_forget['ex_batches']]
+log[batch_search[['ex_batches/S000000000001.segment'], 'name', ['apple'], 5, false, 0].id]
+log[batch_summary[['ex_batches/S000000000001.segment'], [], ['id'], ['sum'], [], [], [], '', '', -1].id_sum]
+log[batch_asof[['ex_batches/S000000000001.segment'], frame.new[id = [2], t = [5]], ['id'], 't', []].kind]
 log[int[json[batch_stats[seg]].tokens.name.docs]]
 log[filesize[seg] gt 100]
 gone = rm['ex_batches']
@@ -390,13 +404,26 @@ true
 false
 true
 magpie
-ex_batches/000000000000-000000000001.segment
+{"keys":["id"],"notes":{}}
+true
+ex_batches/S000000000001.segment
+['S000000000001.segment']
 ['apple crumble', 'cherry tart', 'Apple pie']
 ['cherry tart']
 0
 ['cherry tart']
-3
+['Apple pie', 'cherry tart']
+4
+104
+[1, 104, 104]
+['elderberry']
+104
+104
+[0, -1, -1]
+0
 [3, 1]
+[6]
+magpie
 3
 true
 ```

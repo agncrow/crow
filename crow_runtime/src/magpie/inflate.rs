@@ -73,9 +73,9 @@ impl Huffman {
         counts[0] = 0;
         // an over-subscribed set of lengths is no code
         let mut left: i32 = 1;
-        for len in 1..16 {
+        for &count in counts.iter().take(16).skip(1) {
             left <<= 1;
-            left -= counts[len] as i32;
+            left -= count as i32;
             if left < 0 {
                 return Err("a Huffman code is over-subscribed".to_string());
             }

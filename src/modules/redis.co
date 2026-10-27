@@ -1,0 +1,393 @@
+--- `use redis`: the RESP door of Magpie (spec, redis): a Redis client
+--- speaks to a log. Keys and values live in one log under the door's
+--- root, `<root>/_kv`, keyed by `key`, a row per write with a `dead`
+--- flag for a deleted key; the sequencer's image answers a GET in
+--- memory and a SET is a put, flushed by the sequencer's thread. A
+--- stream is a log of its own, `<root>/<name>`: XADD a put, the entry's
+--- id its position, XRANGE and XREAD reads by position. The protocol is
+--- RESP2 as redis-cli and every client library write it: a request an
+--- array of bulk strings, a reply a simple string, a bulk string, an
+--- int, an array or an error. One loop serves every connection, each
+--- polled in turn, as the Kafka door does. The tests are the module's
+--- own and tests/redis_door.rs, which drives the door with a client.
+use sys
+use frame
+use magpie
+
+--- a RESP simple string, bulk string, nil, int, error and array
+fn _simple[s]
+    return bytes['+`s`\r\n']
+
+fn _bulk[s]
+    nl = '\r\n'
+    n = len[bytes[s]]
+    return concat[bytes['$`n``nl`'], concat[bytes[s], bytes[nl]]]
+
+fn _nil[]
+    return bytes['$-1\r\n']
+
+fn _int[n]
+    return bytes[':`n`\r\n']
+
+fn _err[s]
+    return bytes['-ERR `s`\r\n']
+
+fn _array[parts]
+    nl = '\r\n'
+    n = len[parts]
+    out = bytes['*`n``nl`']
+    for p in parts
+        out = concat[out, p]
+    return out
+
+--- one request read from what the connection holds, without waiting:
+--- the command's words, nothing_yet where none has arrived whole yet; an
+--- inline command (`PING`) read as its words too
+fn _request[c]
+    have = leftover[c]
+    got = recv[stream_of[c], 65536, 0.002]
+    if not got.ok
+        if not starts[got.reason, 'no data']
+            unread[c, have]
+            return error[got.reason, 'redis']
+    else
+        if len[got] eq 0
+            return error['closed', 'redis']
+        have = concat[have, got]
+    parsed = _words_of[have]
+    if not parsed.ok
+        unread[c, have]
+        return error[parsed.reason, 'redis']
+    taken = int[parsed.taken]
+    if taken eq 0
+        unread[c, have]
+        blank = []
+        pinned = push[blank, '']
+        return blank
+    unread[c, slice[have, taken, len[have]]]
+    out = []
+    for w in parsed.words
+        out = push[out, str[w]]
+    return out
+
+--- the words of the first whole request in the bytes, and how many
+--- bytes it took (0 where it is not whole yet), as a parsed value
+fn _words_of[have]
+    n = len[have]
+    nothing_yet = '{"taken": 0, "words": []}'
+    if n eq 0
+        return json[nothing_yet]
+    lead = text[slice[have, 0, 1], '?']
+    nl = bytes['\r\n']
+    if lead ne '*'
+        --- an inline command: one line of words
+        at = find[have, nl]
+        if at lt 0
+            return json[nothing_yet]
+        cmd_line = text[slice[have, 0, at], '?']
+        inline_words = split[trim[cmd_line], ' ']
+        taken = at + 2
+        packed = encode[inline_words]
+        return json['{"taken": `taken`, "words": `packed`}']
+    at = find[have, nl]
+    if at lt 0
+        return json[nothing_yet]
+    count = int[text[slice[have, 1, at], '?']]
+    if not count.ok
+        return error['a request begins with its word count', 'redis']
+    total = count + 0
+    pos = at + 2
+    words = []
+    for i in range[total]
+        rest = slice[have, pos, n]
+        dollar = find[rest, nl]
+        if dollar lt 0
+            return json[nothing_yet]
+        sz = int[text[slice[rest, 1, dollar], '?']]
+        if not sz.ok
+            return error['a word begins with its size', 'redis']
+        wlen = sz + 0
+        begin = pos + dollar + 2
+        if begin + wlen + 2 gt n
+            return json[nothing_yet]
+        words = push[words, text[slice[have, begin, begin + wlen], '?']]
+        pos = begin + wlen + 2
+    taken = pos
+    packed = encode[words]
+    return json['{"taken": `taken`, "words": `packed`}']
+
+--- the key-value log's row for a key, as the image holds it; none for
+--- a key never set or deleted
+fn _row[root, key]
+    dir = '`root`/_kv'
+    if not exists[dir]
+        return frame.new[]
+    row = magpie.latest[dir, equal = [key]]
+    if not row.ok
+        return frame.new[]
+    if len[row] eq 0
+        return row
+    if row.dead[0]
+        return frame.new[]
+    return row
+
+--- a key set to a value, or deleted
+fn _set[root, key, value, dead]
+    dir = '`root`/_kv'
+    return magpie.put[dir, frame.new[key = [key], value = [value], dead = [dead]], by = ['key']]
+
+--- whether the words from a position pair up (field value field value …)
+fn _paired[n, lo_pos]
+    i = lo_pos
+    while i + 1 lt n
+        i = i + 2
+    return i eq n
+
+--- the reply to one request
+fn _answer[root, words]
+    if len[words] eq 0
+        return _err['nothing_yet request']
+    command = upper[words[0]]
+    n = len[words]
+    if command eq 'PING'
+        if n gt 1
+            return _bulk[words[1]]
+        return _simple['PONG']
+    if command eq 'ECHO' and n eq 2
+        return _bulk[words[1]]
+    if command eq 'SET' and n gte 3
+        written = _set[root, words[1], words[2], false]
+        if not written.ok
+            return _err[written.reason]
+        return _simple['OK']
+    if command eq 'GET' and n eq 2
+        row = _row[root, words[1]]
+        if len[row] eq 0
+            return _nil[]
+        return _bulk[str[row.value[0]]]
+    if command eq 'EXISTS' and n gte 2
+        found = 0
+        for i in range[1, n]
+            if len[_row[root, words[i]]] gt 0
+                found = found + 1
+        return _int[found]
+    if command eq 'DEL' and n gte 2
+        gone = 0
+        for i in range[1, n]
+            if len[_row[root, words[i]]] gt 0
+                written = _set[root, words[i], '', true]
+                if written.ok
+                    gone = gone + 1
+        return _int[gone]
+    if (command eq 'INCR' and n eq 2) or (command eq 'INCRBY' and n eq 3)
+        by = 1
+        if n eq 3
+            delta = int[words[2]]
+            if not delta.ok
+                return _err['value is not an integer or out of range']
+            by = delta + 0
+        row = _row[root, words[1]]
+        current = 0
+        if len[row] gt 0
+            held = int[str[row.value[0]]]
+            if not held.ok
+                return _err['value is not an integer or out of range']
+            current = held + 0
+        bumped = current + by
+        written = _set[root, words[1], '`bumped`', false]
+        if not written.ok
+            return _err[written.reason]
+        return _int[bumped]
+    if command eq 'MGET' and n gte 2
+        parts = []
+        for i in range[1, n]
+            row = _row[root, words[i]]
+            if len[row] eq 0
+                parts = push[parts, _nil[]]
+            else
+                parts = push[parts, _bulk[str[row.value[0]]]]
+        return _array[parts]
+    if command eq 'MSET' and n gte 3
+        if not _paired[n, 1]
+            return _err['wrong number of arguments for MSET']
+        i = 1
+        while i lt n
+            written = _set[root, words[i], words[i + 1], false]
+            if not written.ok
+                return _err[written.reason]
+            i = i + 2
+        return _simple['OK']
+    if command eq 'KEYS' and n eq 2
+        dir = '`root`/_kv'
+        parts = []
+        if exists[dir]
+            table = magpie.latest[dir]
+            if table.ok
+                live = table[table.dead eq false]
+                if live.ok
+                    for i in range[len[live]]
+                        if words[1] eq '*' or words[1] eq live.key[i]
+                            parts = push[parts, _bulk[str[live.key[i]]]]
+        return _array[parts]
+    if command eq 'DBSIZE' and n eq 1
+        dir = '`root`/_kv'
+        if not exists[dir]
+            return _int[0]
+        table = magpie.latest[dir]
+        if not table.ok
+            return _int[0]
+        live = table[table.dead eq false]
+        if not live.ok
+            return _int[0]
+        return _int[len[live]]
+    if command eq 'XADD' and n gte 5
+        --- XADD stream * field value [field value …]: the entry a row of
+        --- its fields as a JSON list, its id the position
+        if not _paired[n, 3]
+            return _err['wrong number of arguments for XADD']
+        attrs = []
+        for i in range[3, n]
+            attrs = push[attrs, words[i]]
+        dir = '`root`/`words[1]`'
+        at = magpie.put[dir, frame.new[entry = [encode[attrs]]]]
+        if not at.ok
+            return _err[at.reason]
+        return _bulk['`at`-0']
+    if command eq 'XLEN' and n eq 2
+        dir = '`root`/`words[1]`'
+        if not exists[dir]
+            return _int[0]
+        return _int[magpie.head[dir] + 1]
+    if (command eq 'XRANGE' and n gte 4) or (command eq 'XREAD' and n gte 4)
+        return _stream_read[root, command, words]
+    return _err['unknown command `words[0]`, or wrong number of arguments']
+
+--- an entry's id read as a position: `-` is the start, `+` the end, `$`
+--- past the end, `12-0` or `12` position 12
+fn _position[id, end_pos]
+    if id eq '-'
+        return 0
+    if id eq '+'
+        return end_pos
+    if id eq '$'
+        return end_pos + 1
+    pieces = split[id, '-']
+    n = int[pieces[0]]
+    if not n.ok
+        return -1
+    return n + 0
+
+--- the entries of a stream lo_pos a position to a position, each its id
+--- and its fields, as RESP arrays
+fn _entries[dir, lo_pos, upto]
+    rows = magpie.since[dir, lo_pos, upto, []]
+    parts = []
+    if not rows.ok
+        return parts
+    for i in range[len[rows]]
+        attrs = json[str[rows.entry[i]]]
+        flat = []
+        for a in attrs
+            flat = push[flat, _bulk[str[a]]]
+        id = '`rows._pos[i]`-0'
+        parts = push[parts, _array[[_bulk[id], _array[flat]]]]
+    return parts
+
+--- XRANGE stream start end [COUNT n]; XREAD [COUNT n] STREAMS stream id
+--- (the entries past the id; a blocking read is not waited for)
+fn _stream_read[root, command, words]
+    n = len[words]
+    if command eq 'XRANGE'
+        dir = '`root`/`words[1]`'
+        if not exists[dir]
+            return _array[[]]
+        end_pos = magpie.head[dir]
+        lo_pos = _position[words[2], end_pos]
+        upto = _position[words[3], end_pos]
+        if lo_pos lt 0 or upto lt 0
+            return _err['invalid stream ID']
+        return _array[_entries[dir, lo_pos, upto]]
+    at = 1
+    while at lt n and upper[words[at]] ne 'STREAMS'
+        at = at + 1
+    if at + 2 gt n - 1
+        return _err['wrong number of arguments for XREAD']
+    label = words[at + 1]
+    dir = '`root`/`label`'
+    if not exists[dir]
+        return _nil[]
+    end_pos = magpie.head[dir]
+    lo_pos = _position[words[at + 2], end_pos]
+    if lo_pos lt 0
+        return _err['invalid stream ID']
+    entries = _entries[dir, lo_pos + 1, -1]
+    if len[entries] eq 0
+        return _nil[]
+    return _array[[_array[[_bulk[label], _array[entries]]]]]
+
+--- `serve[root, port = 6379, host = '127.0.0.1', rounds = 0]`: the door
+--- listens on the host's port and serves every connection lo_pos one loop
+--- until `rounds` loops have run (forever with 0), answering how many
+--- requests it served; an error value of kind `'redis'` where the port
+--- cannot be bound. Answered: PING, ECHO, SET, GET, EXISTS, DEL, INCR,
+--- INCRBY, MGET, MSET, KEYS, DBSIZE, XADD, XLEN, XRANGE, XREAD
+fn serve[root, port = 6379, host = '127.0.0.1', rounds = 0]
+    opened = mkdir[root]
+    l = listen[host, port]
+    if not l.ok
+        return error[l.reason, 'redis']
+    conns = []
+    answered = 0
+    turn = 0
+    while rounds eq 0 or turn lt rounds
+        turn = turn + 1
+        arrived = accept[l, 0.005]
+        if arrived.ok
+            conns = push[conns, socket_of[arrived, address[arrived], bytes['']]]
+        kept = []
+        for c in conns
+            words = _request[c]
+            if not words.ok
+                sys.close[stream_of[c]]
+            else
+                if len[words] gt 0
+                    wire = _answer[root, words]
+                    sent = send[stream_of[c], wire]
+                    answered = answered + 1
+                kept = push[kept, c]
+        conns = kept
+    sys.close[l]
+    return answered
+
+--- the replies to the commands, at known values
+test the_door_answers_the_commands[]
+    root = 'redis-test-root'
+    gone = rm[root]
+    made = mkdir[root]
+    assert[text[_answer[root, ['PING']], '?'] eq '+PONG\r\n']
+    assert[text[_answer[root, ['GET', 'a']], '?'] eq '$-1\r\n']
+    assert[text[_answer[root, ['SET', 'a', 'hello']], '?'] eq '+OK\r\n']
+    assert[text[_answer[root, ['GET', 'a']], '?'] eq '$5\r\nhello\r\n']
+    assert[text[_answer[root, ['EXISTS', 'a', 'b']], '?'] eq ':1\r\n']
+    assert[text[_answer[root, ['INCR', 'n']], '?'] eq ':1\r\n']
+    assert[text[_answer[root, ['INCRBY', 'n', '5']], '?'] eq ':6\r\n']
+    assert[text[_answer[root, ['INCR', 'a']], '?'] eq '-ERR value is not an integer or out of range\r\n']
+    assert[text[_answer[root, ['MSET', 'x', '1', 'y', '2']], '?'] eq '+OK\r\n']
+    assert[text[_answer[root, ['MSET', 'x', '1', 'y']], '?'] eq '-ERR wrong number of arguments for MSET\r\n']
+    assert[text[_answer[root, ['MGET', 'x', 'z', 'y']], '?'] eq '*3\r\n$1\r\n1\r\n$-1\r\n$1\r\n2\r\n']
+    assert[text[_answer[root, ['DEL', 'x', 'z']], '?'] eq ':1\r\n']
+    assert[text[_answer[root, ['GET', 'x']], '?'] eq '$-1\r\n']
+    assert[text[_answer[root, ['DBSIZE']], '?'] eq ':3\r\n']
+    assert[text[_answer[root, ['KEYS', 'y']], '?'] eq '*1\r\n$1\r\ny\r\n']
+    assert[text[_answer[root, ['XADD', 's', '*', 'f', 'v', 'g', 'w']], '?'] eq '$3\r\n0-0\r\n']
+    assert[text[_answer[root, ['XADD', 's', '*', 'f', 'v2']], '?'] eq '$3\r\n1-0\r\n']
+    assert[text[_answer[root, ['XLEN', 's']], '?'] eq ':2\r\n']
+    assert[text[_answer[root, ['XRANGE', 's', '-', '+']], '?'] eq '*2\r\n*2\r\n$3\r\n0-0\r\n*4\r\n$1\r\nf\r\n$1\r\nv\r\n$1\r\ng\r\n$1\r\nw\r\n*2\r\n$3\r\n1-0\r\n*2\r\n$1\r\nf\r\n$2\r\nv2\r\n']
+    assert[text[_answer[root, ['XREAD', 'COUNT', '10', 'STREAMS', 's', '0']], '?'] eq '*1\r\n*2\r\n$1\r\ns\r\n*1\r\n*2\r\n$3\r\n1-0\r\n*2\r\n$1\r\nf\r\n$2\r\nv2\r\n']
+    assert[text[_answer[root, ['XREAD', 'STREAMS', 's', '1']], '?'] eq '$-1\r\n']
+    assert[text[_answer[root, ['NOPE']], '?'] eq '-ERR unknown command NOPE, or wrong number of arguments\r\n']
+    parsed = _words_of[bytes['*2\r\n$3\r\nGET\r\n$1\r\na\r\n']]
+    assert[int[parsed.taken] eq 20]
+    assert[int[_words_of[bytes['*2\r\n$3\r\nGET\r\n$1\r\n']].taken] eq 0]
+    assert[int[_words_of[bytes['PING\r\n']].taken] eq 6]
+    gone = rm[root]

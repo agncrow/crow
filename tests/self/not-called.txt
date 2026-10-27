@@ -4,8 +4,9 @@
 db.clickhouse.ch_cancel	a driver's own row, reached through use db (the db family): a stop abandoning a statement in flight calls it, which tests/query_cancel.rs holds in both modes
 db.postgres.pg_cancel	a driver's own row, reached through use db (the db family): a stop abandoning a statement in flight calls it, which tests/query_cancel.rs holds in both modes
 kafka.serve	runs until it is stopped: its loop is driven by tests/kafka.rs with the Python client in both modes, its answers by the module's own tests through _answer
+redis.serve	runs until it is stopped: its loop is driven by tests/redis_door.rs with a RESP client in both modes, its answers by the module's own tests through _answer
+magpie.door	runs until it is stopped: its loop is driven by tests/magpie_door.rs with a client in both modes, its answers by the module's own tests through _http_answer
 magpie.share	runs until it is stopped: its loop is driven by tests/magpie_share.rs with a follower in both modes, its answers by the module's own tests through _shared
-magpie.commit	its option texts is a list of column names no module test hands it (the default [] types nothing); the module's tests and parity 294 drive it with every other argument
 llm.act	the loop against a model: tests/llm_server.rs scripts its runs (a tool called and answered, the limits, the failures, keep, compact, skills, an MCP server's tools) in both modes, the llm family's live cases run it against the check's model, parity 274 its refusals
 llm.chat	its parameter 'm' is typed by nothing the module's tests hand it (?), or takes what no kind names
 llm.embed	its parameter 'm' is typed by nothing the module's tests hand it (?), or takes what no kind names

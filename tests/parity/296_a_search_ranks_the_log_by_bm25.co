@@ -12,9 +12,9 @@ use math
 d = 'parity-296-search'
 r = rm[d]
 m = mkdir[d]
-one = batch[d, frame.new[id = [1, 2, 3, 4], text = ['the quick brown fox', 'a lazy dog', 'the fox and the dog', 'brown bread and butter']], texts = ['text']]
-two = batch[d, frame.new[id = [5, 6, 7, 8], text = ['fox hunting is banned', 'the dog days of summer', 'quick quick slow', 'a brown dog and a brown fox']], texts = ['text']]
-three = batch[d, frame.new[id = [9, 10, 11, 12], text = ['nothing to see', 'the end', 'fox fox fox', 'summer bread']], texts = ['text']]
+one = batch[d, frame.new[id = [1, 2, 3, 4], text = ['the quick brown fox', 'a lazy dog', 'the fox and the dog', 'brown bread and butter']]]
+two = batch[d, frame.new[id = [5, 6, 7, 8], text = ['fox hunting is banned', 'the dog days of summer', 'quick quick slow', 'a brown dog and a brown fox']]]
+three = batch[d, frame.new[id = [9, 10, 11, 12], text = ['nothing to see', 'the end', 'fox fox fox', 'summer bread']]]
 
 fn close[got, want]
     if len[got] ne len[want]

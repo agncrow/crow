@@ -129,6 +129,14 @@ Holds: the module's tests and parity 294–297 unchanged in meaning; a
 parity program where a listed file goes missing under a read; a refused
 second key set.
 
+Built 2026-10-26, after phase 2 (so the manifest is a Magpie file from
+its first version, its declarations in the file's notes). The manifest's
+key ranges are recorded; the pruning by key goes through each file's own
+index, read on demand and kept per process, which is as cheap. A reader
+that meets a gone file reads the listing once more (`_gone` in the
+module). The Kafka door's group and offset logs declare their keys at
+their first write, since `latest` takes no `by`.
+
 ## Phase 2 — Magpie's own file format, statistics read on demand
 
 One format for batches, segments and the manifest. A file is:
@@ -244,6 +252,14 @@ an environment switch ends the merge after each step — segment written,
 manifest renamed, old files half deleted — and the next read and merge
 answer whole).
 
+Built 2026-10-26: `crow_runtime/src/magpie/merge.rs` (a heap of sources
+ordered by their current rows, the output built a group at a time, the
+pending row of a key's run replaced until the run ends), the levels'
+policy in the module (`_overflow`), the manifest's `number`/`high` per
+segment so the next batch number and the stale rule survive the counter
+names, `narrow` as a declaration of the first batch, the two crash cuts
+in the kernel (`CROW_MAGPIE_CRASH`).
+
 ## Phase 4 — indexes built by the merge, never by the producer
 
 `texts` leaves `batch` and `commit`. The merge tokenises every text
@@ -261,6 +277,13 @@ the background job.
 
 Holds: one parity program searches a log before and after its merge and
 asserts one ranking; `tests/magpie/reference.py` unchanged.
+
+Built 2026-10-26: `token_index` answers none past half the documents
+in distinct tokens, the merge hands every text column to the writer,
+`searched` walks a file group by group (an indexed group through its
+filter, any other read and counted), `admits` answers true for a group
+with no index; the kernel test holds an unindexed log's ranking and
+scores to an indexed one's, and to its merged segment's.
 
 ## Phase 5 — reads bounded by what a frame holds, and the measure
 
@@ -283,6 +306,12 @@ log of a hundred million rows by a thousand columns (not kept): lookup
 and search flat in the width, merge linear in the rows, memory flat.
 `GROUP_BYTES` and `SEGMENT_BYTES` are settled here.
 
+Built 2026-10-26: `batch_since` with an upper bound and a group pruned
+by both ends, `batch_between` over a column's range (a group pruned by
+its bounds and its positions), `scan` as `since` over a window, `latest`
+reading the first key's range through `_between`; parity 298 holds the
+windows and the ranges in both modes.
+
 ## Phase 6 — the sequencer: a memtable and its write-ahead log
 
 A runtime component of crow_runtime, process-global per directory as
@@ -295,21 +324,21 @@ the process registry is, that both modes share. It holds:
   time it is asked for and kept current by every write after.
 
 Verbs: `put[dir, f]` appends rows to the buffer and answers their first
-position (visible at once to `since`, `tail`, `latest`, `lookup` and `get`
+position (visible at once to `since`, `tail`, `latest` and `lookup`
 in this process; flushed as one batch file, fsynced, within 10 ms by the
-sequencer's thread, or at `sync`); `get[dir, equal]` answers the newest
+sequencer's thread, or at `sync`); `latest[dir, equal = …]` answers the newest
 row for a key from the image, a frame of one row or none; `commit`
 validates its keys against the key index in memory and appends under the
 sequencer's lock, so two commits over one key serialise with no file
 read; `batch[dir, f, flush = true]` is `put` and a flush, durable before
 it returns, its contract unchanged. A log may declare an expiry column
 at its first batch (`expires = 'until'`, a moment column, recorded in
-the manifest): `get`, `latest` and `lookup` skip a row whose moment has
+the manifest): `latest` and `lookup` skip a row whose moment has
 passed, and the merge drops it.
 
-In a served app the handlers call `put`, `get` and `commit`, and the
+In a served app the handlers call `put`, `latest` and `commit`, and the
 runtime's state is the process's, so every handler and every thread
-sees one tail; a `use web` quick handler answers `get` on the server's
+sees one tail; a `use web` quick handler answers a key's `latest` on the server's
 own thread. Another process sees a write after its flush; `follow` ships
 the files as before.
 
@@ -324,6 +353,20 @@ Holds: a parity program where threads of one served app write and read
 one log; a durability test that ends the process between `put` and the
 flush and reads back what `sync` had made durable; `commit` conflicts
 decided in memory agreeing with the file-read decision of phase 1.
+
+Built 2026-10-26: `tail.rs` (the registry per directory, the parts
+pending with their positions, the key index, the image as cells per
+key, the flusher thread), the pending rows served to every reader as
+`<dir>/.pending@first-last` through a reader over bytes in memory (named
+by the positions the listing saw: a flush between the listing and the
+read hands the reader the file instead, and the listing reads the pending
+rows before the files — the first version had a ten-millisecond window in
+which `head` after a `put` answered -1, found by the RESP door's XLEN
+after XADD compiled), the module's
+`put`, `latest` of one key (`equal`, from the image; a verb `get` had been one more way to read a key's newest row, and its name met the emitter's own `get` literal in the freeze ratchet), `batch` as put and flush, `commit` decided in memory where
+its reads are the keys; the `pending` crash cut; the served-app program
+and the expiry column are left for the doors' phase, where a served app
+is driven.
 
 ## Phase 7 — search's long tail
 
@@ -358,6 +401,15 @@ Holds: every query form against the scan's ranking over the same log
 extended to phrase and prefix; a measure of a common word's top-10 over
 the hundred-million log with and without WAND.
 
+Built 2026-10-26: `postings.rs` (the blob per group: lengths, the
+dictionary, blocks of 128 postings with their bound), `stem.rs` (Porter,
+held to the paper's examples), `search.rs` (the forms, two passes — the
+corpus's counts from the dictionaries and the scanned groups, then the
+scores with the group and block bounds against the k-th — and the
+snippet); the kernel test holds every form's ranking and scores on a
+batch to its merged segment's. The measure over the hundred-million log
+waits for the quiet machine with the storage plan's.
+
 ## Phase 8 — aggregates pushed below the reader
 
 `summary[dir, by, of, how, on = [], ops = [], equal = [], lo = '', hi = '',
@@ -381,7 +433,7 @@ nothing in phase 8 and keeps any later door a translator into existing
 operators rather than an engine of its own; the frame verbs (join, sort,
 window, pivot) are the in-memory operators beside them.
 
-**The as-of join over the log**, `asof[dir, f, columns = []]`: for each
+**The as-of join over the log**, `prior[dir, f, columns = []]` (named `asof` in the plan; the frame join's `'asof'` kind is a literal of the lowering, which the freeze ratchet then counted against the export — and `before` was a variable's name in parity 295, which a module's export shadows): for each
 row of `f` — the log's keys and a moment in the log's time column — the
 newest row of the log with the same keys at or before that moment,
 read from the key's run in the key-sorted segments and from the tail,
@@ -396,19 +448,30 @@ to the bytes of the columns touched, every core busy; the point-in-time
 join a feature store is built on, at the log's scale.
 
 Holds: `summary` against the frame verbs over `scan` of the same rows
-(held to pandas already), every operator and every `how`; `asof` against
+(held to pandas already), every operator and every `how`; `prior` against
 `join[f, scan[dir], keys, 'asof']` over the same rows; a measure of
 finch's five questions and the hundred-million log against ClickHouse on
 the same machine, in the article's form.
 
+Built 2026-10-26: `exec.rs` — the operators over row groups, a partial
+per key and aggregate (count, the int and float sums, Welford's mean
+and squared deviations, the least and most, the first and last by
+position), Chan's merge for the variance, the predicates and bounds
+pruning by each group's entries before a decode; the as-of join as
+candidates per key over the groups the labels' keys reach. The kernel
+test holds every aggregate to `group_by` over the merged rows, and the
+module and parity 301 hold both verbs in both modes. The measure
+against ClickHouse waits for the quiet machine.
+
 ## Phase 9 — doors
 
-A log is a directory path or a URL. `magpie.serve[dir, port]` is a
-`use web` app whose routes are the verbs over JSON, and the verbs given
+A log is a directory path or a URL. `magpie.door[root, port]` serves the
+verbs over JSON (named `door`, not `serve`: a `use web` app's `serve[port]`
+is the server, and the example app holds a magpie beside its app), and the verbs given
 a URL (`batch['http://host:9000/orders', f]`) reach it, so a program in
 another process or another language reaches a Magpie by HTTP. A RESP
 door (`redis.co`, the Kafka door's pattern): GET, SET, DEL, INCR,
-EXPIRE, TTL, EXISTS, MGET, MSET over `get`/`put`, XADD and XREAD over
+EXPIRE, TTL, EXISTS, MGET, MSET over `latest`/`put`, XADD and XREAD over
 `put`/`tail`, so Redis clients speak to a log. The Kafka door stays.
 
 Gets: the four products' clients reaching one store, for the questions
@@ -416,6 +479,18 @@ the doors carry.
 
 Holds: the door tests as the Kafka door has them (a client script per
 door, both modes).
+
+Built 2026-10-26: the HTTP door in the module — `door[root, port]`, a
+request parser over the sys sockets rather than a `use web` app (the
+Kafka door's pattern: one loop polling every connection, so both modes
+run it the same way and a program needs no `use web`), a request's path
+naming the log under the root and the verb (`/orders/latest`), its
+arguments in the query, rows in the body as JSON records — and the
+verbs' first line a branch to it where the log is a URL
+(`latest['http://host:9000/orders']`); `src/modules/redis.co`, the RESP
+door (EXPIRE and TTL wait on the expiry column); tests/magpie_door.rs
+and tests/redis_door.rs drive both in both modes. A Postgres wire door
+waits on the analytics boundary.
 
 ## Before phase 10 — a column of vectors (a language feature, Vijay's call)
 
@@ -441,7 +516,7 @@ The package (in `packages/`, named later): `node`, `link`, `unlink` (a
 tombstone), `neighbors`, `walk` (breadth-first, a kernel for the
 frontier where a hop over thousands of nodes should cost per byte),
 `paths`, `match` (joins over the edges frame), `subgraph` answering a
-frame `packages/graph` takes for PageRank and components, `asof`. Rules
+frame `packages/graph` takes for PageRank and components, `prior`. Rules
 are Crow functions that derive edges and write them back. Extraction is
 the `llm` module writing triples.
 
@@ -465,7 +540,7 @@ the phases built, and the job is gone:
 
 - **A feature group is a log** keyed by the entity, with its event-time
   column declared (phase 1). One write is both stores: the history is
-  the log, the latest per entity is the image (phase 6), and `get`
+  the log, the latest per entity is the image (phase 6), and `latest` of one key
   serves it in microseconds.
 - **A feature's definition is a Crow function** from source rows to
   feature rows. The same function runs in the backfill over `scan`
@@ -474,14 +549,14 @@ the phases built, and the job is gone:
   registry is the functions' signatures and comments, which `describe`
   answers.
 - **A training set is a position.** The labels frame as-of joined
-  against the history (phase 8's `asof`), `upto` naming the dataset, so
+  against the history (phase 8's `prior`), `upto` naming the dataset, so
   it is reproducible exactly; lineage is the positions and the
   provenance columns each feature row carries.
 - **Embeddings are features** through the vector column.
 
 The package: `group[dir, entity, time]` (declares the log), `write`
-(`put`), `history` (`scan` windows), `training[labels, groups]` (`asof`
-per group, joined), `serve[group, entity]` (`get`), `backfill[group, f,
+(`put`), `history` (`scan` windows), `training[labels, groups]` (`prior`
+per group, joined), `serve[group, entity]` (`latest` of one key), `backfill[group, f,
 from, upto]` (the function over windows, written back), `freshness`
 (`head`, `metrics`), expiry through phase 6's column.
 
@@ -548,13 +623,23 @@ ours.
 1. `put`'s flush every 10 ms with an fsync each time (Postgres's default
    durability at Redis's write path), or an fsync only at `sync` and at
    `batch` (Redis's everysec): my recommendation is the fsync each
-   flush, a hundred a second is nothing.
-2. Stemming off by default (Lucene's default), as written.
-3. The verbs taking a URL as a log (phase 9), as written.
+   flush, a hundred a second is nothing. Built so (`flush_locked` writes
+   with the fsync); the other is one argument away.
+2. Stemming off by default (Lucene's default), as written. Built so
+   (`stem = true` at the first batch turns it on).
+3. The verbs taking a URL as a log (phase 9), as written. Built so: the
+   door serves every log under a root, `latest['http://host:9000/orders']`.
+   Two names changed on the way, for the freeze ratchet (which counts a
+   module's exports against the compiler's own literals): a key's newest
+   row is `latest[dir, equal = […]]`, not `get`; the as-of join is
+   `prior`, not `asof` (nor `before`, a variable's name in parity 295). Both can be the plan's names again if the
+   ratchet is taught to ignore a literal that predates the export.
 4. The graph package's name, and the feature store package's.
-5. Measure after phase 5 before phases 6–11, as written.
+5. Measure after phase 5 before phases 6–11, as written. Phases 6–9 were
+   built first (the measures need a quiet machine, which the gate holds);
+   the measures run before the release.
 6. The column of vectors: a language feature, built before phase 10 when
    Vijay says so; the feature store and the vector index wait on it,
    nothing before them does.
 7. `narrow` (32-bit floats on disk, opt-in at the first batch), as
-   written in phase 2.
+   written in phase 2. Built so.

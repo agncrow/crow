@@ -13,12 +13,12 @@ search_words = ''
 
 fn setup[]
     if not exists['orders']
-        first = batch['orders', frame.new[id = [1, 2], item = ['apples', 'pears'], note = ['a crate of apples for the shop', 'pears for the kitchen']], by = ['id'], texts = ['note']]
+        first = batch['orders', frame.new[id = [1, 2], item = ['apples', 'pears'], note = ['a crate of apples for the shop', 'pears for the kitchen']], by = ['id']]
 
 --- the derivations read `written`, so each write re-derives them
 derive orders
     seen = written
-    return latest['orders', ['id']]
+    return latest['orders']
 
 derive figures
     seen = written
@@ -36,7 +36,7 @@ fn add[]
     if not h.ok
         notice[h.reason]
         return
-    wrote = batch['orders', frame.new[id = [h + 2], item = [new_item], note = [new_note]], by = ['id'], texts = ['note']]
+    wrote = batch['orders', frame.new[id = [h + 2], item = [new_item], note = [new_note]], by = ['id']]
     if not wrote.ok
         notice[wrote.reason]
         return

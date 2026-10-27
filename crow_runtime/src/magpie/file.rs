@@ -51,13 +51,17 @@ pub enum Bound {
     Text(String),
 }
 
-/// A text column's search index over one group.
+/// A text column's search index over one group: where its token filter
+/// lies, where its dictionary and postings lie (postings.rs), and the
+/// group's document and word counts.
 #[derive(Clone, Debug, Default)]
 pub struct Tokens {
     pub off: u64,
     pub len: u32,
     pub docs: u32,
     pub words: u32,
+    pub index_off: u64,
+    pub index_len: u32,
 }
 
 /// One column over one group.
@@ -91,6 +95,10 @@ pub struct Footer {
     pub first: i64,
     pub last: i64,
     pub keys: Vec<String>,
+    /// What the file says of itself beyond its rows: the manifest's
+    /// declarations (the log's time column, its narrow columns), each a
+    /// name and a text.
+    pub notes: Vec<(String, String)>,
     /// Rows per group.
     pub groups: Vec<u32>,
     pub columns: Vec<ColumnMeta>,
@@ -182,26 +190,32 @@ fn statistics(col: &Column, valid: &Validity, start: usize, end: usize) -> (u32,
     ((end - start - present.len()) as u32, count, min, max, bloom)
 }
 
-/// A text column's token index over a group: a filter over its distinct
-/// tokens, its document count and its word count.
-fn token_index(t: &crate::textcol::Text, valid: &Validity, start: usize, end: usize) -> (Bloom, u32, u32) {
+/// A text column's index over a group: a filter over its distinct
+/// tokens, its dictionary and postings (postings.rs), its document count
+/// and its word count — none where the distinct tokens exceed half the
+/// documents (an identifier column: an index of every value prunes
+/// nothing and costs more than the column). The stemmer applied where
+/// the log stems.
+fn token_index(t: &crate::textcol::Text, valid: &Validity, start: usize, end: usize, stems: bool) -> Option<(Bloom, Vec<u8>, u32, u32)> {
+    let docs_in: Vec<Option<&str>> = (start..end).map(|i| if valid[i] { Some(t.get(i)) } else { None }).collect();
     let mut words: Vec<String> = Vec::new();
-    let (mut docs, mut length) = (0u32, 0u32);
-    for i in start..end {
-        if valid[i] {
-            let toks = tokens(t.get(i));
-            docs += 1;
-            length += toks.len() as u32;
-            words.extend(toks);
-        }
+    let mut docs = 0u32;
+    for d in docs_in.iter().flatten() {
+        docs += 1;
+        words.extend(tokens(d).into_iter().map(|w| if stems { super::stem::stem(&w) } else { w }));
     }
     words.sort();
     words.dedup();
+    if docs >= 16 && words.len() as u32 > docs / 2 {
+        return None;
+    }
     let mut bloom = Bloom::sized(words.len());
     for w in &words {
         bloom.add(w.as_bytes());
     }
-    (bloom, docs, length)
+    let (blob, ndocs, length) = super::postings::build(&docs_in, stems);
+    debug_assert_eq!(ndocs, docs);
+    Some((bloom, blob, docs, length))
 }
 
 /// A file being written: its groups appended one at a time, the column
@@ -209,6 +223,9 @@ fn token_index(t: &crate::textcol::Text, valid: &Validity, start: usize, end: us
 pub struct Writer {
     out: Vec<u8>,
     columns: Vec<(String, Kind, bool)>,
+    narrow: Vec<bool>,
+    /// Whether the indexed columns' tokens are stemmed.
+    pub stems: bool,
     entries: Vec<Vec<Entry>>,
     groups: Vec<u32>,
 }
@@ -217,10 +234,16 @@ impl Writer {
     /// The columns the file will hold, in order, each with whether its
     /// words are indexed (a text column only).
     pub fn new(columns: Vec<(String, Kind, bool)>) -> Writer {
+        let n = columns.len();
+        Self::with_narrow(columns, vec![false; n])
+    }
+
+    /// `new`, with the float columns written in 32 bits marked.
+    pub fn with_narrow(columns: Vec<(String, Kind, bool)>, narrow: Vec<bool>) -> Writer {
         let mut out = Vec::with_capacity(1 << 16);
         out.extend_from_slice(MAGIC);
         let n = columns.len();
-        Writer { out, columns, entries: vec![Vec::new(); n], groups: Vec::new() }
+        Writer { out, columns, narrow, stems: false, entries: vec![Vec::new(); n], groups: Vec::new() }
     }
 
     /// The bytes written so far.
@@ -242,7 +265,7 @@ impl Writer {
             }
             let col = frame.data[c].as_ref();
             let valid = frame.validity[c].as_ref();
-            let chunk = encode::encode(col, valid, start, end);
+            let chunk = encode::encode(col, valid, start, end, self.narrow.get(c).copied().unwrap_or(false));
             let chunk_off = self.out.len() as u64;
             self.out.extend_from_slice(&chunk);
             let (missing, distinct, min, max, bloom) = statistics(col, valid, start, end);
@@ -252,12 +275,13 @@ impl Writer {
                 self.out.extend_from_slice(&bytes);
                 (off, bytes.len() as u32)
             });
-            let tokens = if *indexed && let Column::Str(t) = col {
-                let (filter, docs, words) = token_index(t, valid, start, end);
+            let tokens = if *indexed && let Column::Str(t) = col && let Some((filter, blob, docs, words)) = token_index(t, valid, start, end, self.stems) {
                 let bytes = filter.to_bytes();
                 let off = self.out.len() as u64;
                 self.out.extend_from_slice(&bytes);
-                Some(Tokens { off, len: bytes.len() as u32, docs, words })
+                let index_off = self.out.len() as u64;
+                self.out.extend_from_slice(&blob);
+                Some(Tokens { off, len: bytes.len() as u32, docs, words, index_off, index_len: blob.len() as u32 })
             } else {
                 None
             };
@@ -271,7 +295,7 @@ impl Writer {
     }
 
     /// The column blocks and the footer written; the file's bytes.
-    pub fn finish(mut self, first: i64, last: i64, keys: &[String]) -> Vec<u8> {
+    pub fn finish(mut self, first: i64, last: i64, keys: &[String], notes: &[(String, String)]) -> Vec<u8> {
         use super::pack::{put_blob, put_string, put_var};
         let rows: u64 = self.groups.iter().map(|&g| g as u64).sum();
         let mut metas: Vec<(u64, u32)> = Vec::with_capacity(self.columns.len());
@@ -295,6 +319,8 @@ impl Writer {
                         block.extend_from_slice(&t.len.to_le_bytes());
                         block.extend_from_slice(&t.docs.to_le_bytes());
                         block.extend_from_slice(&t.words.to_le_bytes());
+                        block.extend_from_slice(&t.index_off.to_le_bytes());
+                        block.extend_from_slice(&t.index_len.to_le_bytes());
                     }
                     None => block.push(0),
                 }
@@ -311,6 +337,11 @@ impl Writer {
         put_var(&mut footer, keys.len() as u64);
         for k in keys {
             put_string(&mut footer, k);
+        }
+        put_var(&mut footer, notes.len() as u64);
+        for (name, text) in notes {
+            put_string(&mut footer, name);
+            put_string(&mut footer, text);
         }
         put_var(&mut footer, self.groups.len() as u64);
         for g in &self.groups {
@@ -405,24 +436,83 @@ pub fn read_at(file: &std::fs::File, off: u64, buf: &mut [u8]) -> std::io::Resul
     }
 }
 
+/// What a reader reads from: a file on disk, or the pending rows of a
+/// log as the bytes of a Magpie file in memory.
+enum Backing {
+    File(std::fs::File),
+    Bytes(Arc<Vec<u8>>),
+}
+
+impl Backing {
+    fn read_at(&self, off: u64, buf: &mut [u8]) -> std::io::Result<()> {
+        match self {
+            Backing::File(f) => read_at(f, off, buf),
+            Backing::Bytes(b) => {
+                let (start, end) = (off as usize, off as usize + buf.len());
+                if end > b.len() {
+                    return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "the bytes end early"));
+                }
+                buf.copy_from_slice(&b[start..end]);
+                Ok(())
+            }
+        }
+    }
+
+    fn len(&self) -> std::io::Result<u64> {
+        match self {
+            Backing::File(f) => f.metadata().map(|m| m.len()),
+            Backing::Bytes(b) => Ok(b.len() as u64),
+        }
+    }
+}
+
+/// The directory and the positions a pending path names:
+/// `<dir>/.pending@first-last` (the positions a listing saw), or
+/// `<dir>/.pending` for whatever is pending now.
+fn pending_path(path: &str) -> Option<(&str, Option<(i64, i64)>)> {
+    let (dir, name) = path.rsplit_once('/')?;
+    let rest = name.strip_prefix(super::tail::PENDING)?;
+    if rest.is_empty() {
+        return Some((dir, None));
+    }
+    let (first, last) = rest.strip_prefix('@')?.split_once('-')?;
+    Some((dir, Some((first.parse().ok()?, last.parse().ok()?))))
+}
+
 /// A file open for reading, its footer parsed (or found in the process's
-/// cache).
+/// cache); `<dir>/.pending@first-last` opens the log's pending rows in
+/// memory, or the file a flush moved them to (`tail::pending_source`).
 pub struct Reader {
     pub path: String,
-    file: std::fs::File,
+    backing: Backing,
     pub meta: Arc<Meta>,
 }
 
 impl Reader {
     pub fn open(path: &str) -> Result<Reader, String> {
+        if let Some((dir, range)) = pending_path(path) {
+            let source = match range {
+                Some((first, last)) => super::tail::pending_source(dir, first, last)?,
+                None => super::tail::PendingSource::Bytes(super::tail::pending_bytes(dir)?.ok_or_else(|| format!("magpie: cannot read '{}': nothing is pending", path))?),
+            };
+            let bytes = match source {
+                super::tail::PendingSource::File(p) => return Reader::open(&p),
+                super::tail::PendingSource::Bytes(b) => b,
+            };
+            let backing = Backing::Bytes(bytes);
+            let footer = read_footer(&backing, backing.len().unwrap_or(0), path)?;
+            let n = footer.columns.len();
+            return Ok(Reader { path: path.to_string(), backing, meta: Arc::new(Meta { footer, blocks: Mutex::new(vec![None; n]) }) });
+        }
         let cannot = |e: std::io::Error| format!("magpie: cannot read '{}': {}", path, e);
         let file = std::fs::File::open(path).map_err(cannot)?;
         let stat = file.metadata().map_err(cannot)?;
         let key: Key = (path.to_string(), stat.len(), stat.modified().ok());
         if let Some(found) = metas().lock().ok().and_then(|m| m.get(&key).cloned()) {
-            return Ok(Reader { path: path.to_string(), file, meta: found });
+            return Ok(Reader { path: path.to_string(), backing: Backing::File(file), meta: found });
         }
-        let footer = read_footer(&file, stat.len(), path)?;
+        let backing = Backing::File(file);
+        let footer = read_footer(&backing, stat.len(), path)?;
         let n = footer.columns.len();
         let meta = Arc::new(Meta { footer, blocks: Mutex::new(vec![None; n]) });
         if let Ok(mut m) = metas().lock() {
@@ -431,7 +521,7 @@ impl Reader {
             }
             m.insert(key, meta.clone());
         }
-        Ok(Reader { path: path.to_string(), file, meta })
+        Ok(Reader { path: path.to_string(), backing, meta })
     }
 
     pub fn footer(&self) -> &Footer {
@@ -440,7 +530,7 @@ impl Reader {
 
     fn bytes(&self, off: u64, len: usize) -> Result<Vec<u8>, String> {
         let mut buf = vec![0u8; len];
-        read_at(&self.file, off, &mut buf).map_err(|e| format!("magpie: cannot read '{}' at {}: {}", self.path, off, e))?;
+        self.backing.read_at(off, &mut buf).map_err(|e| format!("magpie: cannot read '{}' at {}: {}", self.path, off, e))?;
         Ok(buf)
     }
 
@@ -468,7 +558,7 @@ impl Reader {
             let blen = c.u32()?;
             let bloom = if blen == 0 { None } else { Some((boff, blen)) };
             let tokens = if c.u8()? == 1 {
-                Some(Tokens { off: c.u64()?, len: c.u32()?, docs: c.u32()?, words: c.u32()? })
+                Some(Tokens { off: c.u64()?, len: c.u32()?, docs: c.u32()?, words: c.u32()?, index_off: c.u64()?, index_len: c.u32()? })
             } else {
                 None
             };
@@ -495,6 +585,11 @@ impl Reader {
     pub fn token_bloom(&self, t: &Tokens) -> Result<Bloom, String> {
         let bytes = self.bytes(t.off, t.len as usize)?;
         Bloom::from_bytes(&bytes).map_err(|r| format!("magpie: '{}': {}", self.path, r))
+    }
+
+    /// The dictionary and postings of a text column over a group, as bytes.
+    pub fn index_bytes(&self, t: &Tokens) -> Result<Vec<u8>, String> {
+        self.bytes(t.index_off, t.index_len as usize)
     }
 
     /// One column's chunk over one group, decoded.
@@ -566,16 +661,16 @@ impl Reader {
 }
 
 /// The footer read from the end of the file.
-fn read_footer(file: &std::fs::File, size: u64, path: &str) -> Result<Footer, String> {
+fn read_footer(file: &Backing, size: u64, path: &str) -> Result<Footer, String> {
     let no = |why: &str| format!("magpie: '{}' is no Magpie file: {}", path, why);
     if size < 8 + 12 {
         return Err(no("it is too short"));
     }
     let mut tail = [0u8; 12];
-    read_at(file, size - 12, &mut tail).map_err(|e| format!("magpie: cannot read '{}': {}", path, e))?;
+    file.read_at(size - 12, &mut tail).map_err(|e| format!("magpie: cannot read '{}': {}", path, e))?;
     if &tail[4..] != MAGIC {
         let mut head = [0u8; 8];
-        let _ = read_at(file, 0, &mut head);
+        let _ = file.read_at(0, &mut head);
         if &head == MAGIC {
             return Err(format!("magpie: '{}' is cut short: its end carries no footer", path));
         }
@@ -589,7 +684,7 @@ fn read_footer(file: &std::fs::File, size: u64, path: &str) -> Result<Footer, St
         return Err(no("its footer is longer than the file"));
     }
     let mut footer = vec![0u8; flen as usize];
-    read_at(file, size - 12 - flen, &mut footer).map_err(|e| format!("magpie: cannot read '{}': {}", path, e))?;
+    file.read_at(size - 12 - flen, &mut footer).map_err(|e| format!("magpie: cannot read '{}': {}", path, e))?;
     let mut c = super::pack::Cursor::new(&footer);
     let bad = |e: String| format!("magpie: '{}' has an unreadable footer: {}", path, e);
     let version = c.u8().map_err(bad)?;
@@ -603,6 +698,13 @@ fn read_footer(file: &std::fs::File, size: u64, path: &str) -> Result<Footer, St
     let mut keys = Vec::with_capacity(nk);
     for _ in 0..nk {
         keys.push(c.string().map_err(bad)?);
+    }
+    let nn = c.var().map_err(bad)? as usize;
+    let mut notes = Vec::with_capacity(nn);
+    for _ in 0..nn {
+        let name = c.string().map_err(bad)?;
+        let text = c.string().map_err(bad)?;
+        notes.push((name, text));
     }
     let ng = c.var().map_err(bad)? as usize;
     let mut groups = Vec::with_capacity(ng);
@@ -622,7 +724,7 @@ fn read_footer(file: &std::fs::File, size: u64, path: &str) -> Result<Footer, St
     if groups.iter().map(|&g| g as u64).sum::<u64>() != rows {
         return Err(no("its groups do not add up to its rows"));
     }
-    Ok(Footer { rows, first, last, keys, groups, columns })
+    Ok(Footer { rows, first, last, keys, notes, groups, columns })
 }
 
 #[cfg(test)]
@@ -656,7 +758,7 @@ mod tests {
         let mut w = Writer::new(columns);
         w.group(&f, 0, 3).unwrap();
         w.group(&f, 3, 5).unwrap();
-        let bytes = w.finish(0, 4, &["id".to_string()]);
+        let bytes = w.finish(0, 4, &["id".to_string()], &[("time".to_string(), "at".to_string())]);
         let dir = scratch("two-groups");
         let path = format!("{}/a.batch", dir);
         std::fs::write(&path, &bytes).unwrap();
@@ -664,6 +766,7 @@ mod tests {
         let footer = r.footer();
         assert_eq!((footer.rows, footer.first, footer.last), (5, 0, 4));
         assert_eq!(footer.keys, vec!["id".to_string()]);
+        assert_eq!(footer.notes, vec![("time".to_string(), "at".to_string())]);
         assert_eq!(footer.groups, vec![3, 2]);
         assert_eq!(footer.columns.len(), 5);
         assert!(footer.columns[2].indexed && !footer.columns[0].indexed);
@@ -703,7 +806,7 @@ mod tests {
         let columns: Vec<(String, Kind, bool)> = f.columns.iter().enumerate().map(|(i, n)| (n.clone(), Kind::of(f.data[i].as_ref()), false)).collect();
         let mut w = Writer::new(columns);
         w.group(&f, 0, 5).unwrap();
-        let bytes = w.finish(0, 4, &[]);
+        let bytes = w.finish(0, 4, &[], &[]);
         let dir = scratch("torn");
         let cut = format!("{}/cut.batch", dir);
         std::fs::write(&cut, &bytes[..bytes.len() - 20]).unwrap();

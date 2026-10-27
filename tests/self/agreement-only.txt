@@ -68,6 +68,10 @@ magpie.lookup	held to SQLite in parity 294 and 295 (the latest version of each k
 magpie.merge	held to SQLite in parity 294 and 295 (the latest version of each key is what MAX(pos) GROUP BY picks); the reference script models no log
 magpie.metrics	the module's tests hold the figures to the files written; the reference script models no log
 magpie.restore	the module's tests restore a backup and read the log as it was; the reference script models no files
+magpie.put	the sequencer's write, held to its own reads in both modes (parity 299: put, get, commit; the module's tail tests; the kernel's flush and listing-race tests); the reference script models no log
+magpie.commit	decided against the key index in memory, held to the positions the log answers in the module's tests and parity 299 (a stale snapshot refused, a fresh one written); the reference script models no log
+magpie.summary	held to `group` over `scan` of the same rows on every aggregate, predicate and bound in the module's test and in the kernel's, and in both modes by parity 301; the reference script models no log
+magpie.prior	held to a hand-written answer in the kernel's test and in the module's, and in both modes by parity 301; the reference script models no log
 magpie.scan	held to SQLite in parity 294 and 295 (the latest version of each key is what MAX(pos) GROUP BY picks); the reference script models no log
 magpie.search	held to Lucene's BM25 formula computed apart in tests/magpie/reference.py through parity 296, rankings and scores to the ninth decimal; the self-check's reference script models no corpus
 magpie.since	held to SQLite in parity 294 and 295 (the latest version of each key is what MAX(pos) GROUP BY picks); the reference script models no log
@@ -118,8 +122,20 @@ sys.batch_admits	the standard library's own layer: bytes, streams and protocols 
 sys.batch_find	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.batch_search	the standard library's own layer: bytes, streams and protocols no reference models yet; the scoring is held to Lucene's formula by parity 296
 sys.batch_since	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.batch_between	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.tail_put	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.tail_flush	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.tail_pending	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.tail_get	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.tail_last	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.tail_forget	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.batch_summary	the standard library's own layer: bytes, streams and protocols no reference models yet; held to the frame's group by the kernel's test and parity 301
+sys.batch_asof	the standard library's own layer: bytes, streams and protocols no reference models yet; held to the frame's asof join by the kernel's test and parity 301
 sys.batch_sync	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.batch_merge	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.batch_declared	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.batch_declare	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.batch_catalog	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.batch_read	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.batch_stats	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.batch_write	the standard library's own layer: bytes, streams and protocols no reference models yet

@@ -152,6 +152,14 @@ pub static MODULES: &[Module] = &[
         module: Some(|| Arc::new(Named::new("kafka"))),
         ..Module::plain("kafka", "_kafka")
     },
+    // the RESP door of Magpie: Redis's protocol in Crow over the sys
+    // layer's listener, the keys and the streams logs of Magpie's
+    Module {
+        source: Some(REDIS_SOURCE), needs: &[], registry: true,
+        docs: Some("The RESP door of Magpie: a Redis client's SET and GET a put and a read of the image, INCR and MGET and DEL over a log keyed by the key, a stream a log of its own with XADD and XREAD by position — RESP2 as redis-cli and every client write it, served from one loop."),
+        module: Some(|| Arc::new(Named::new("redis"))),
+        ..Module::plain("redis", "_redis")
+    },
     // tools from other programs, and a program as one: the client on
     // request, the server a function a route calls (it answers responses,
     // so crow_web comes with the import)
@@ -290,6 +298,8 @@ pub(crate) const MCP_SOURCE: &str = include_str!("mcp.co");
 pub(crate) const MAGPIE_SOURCE: &str = include_str!("magpie.co");
 /// The Kafka door, written in Crow over the magpie and the sys layer.
 pub(crate) const KAFKA_SOURCE: &str = include_str!("kafka.co");
+/// The RESP door, written in Crow over Magpie and the sys layer.
+pub(crate) const REDIS_SOURCE: &str = include_str!("redis.co");
 /// `io.lines`, `io.csv`: readers written in Crow.
 pub(crate) const IO_SOURCE: &str = include_str!("io.co");
 /// `frame.load`, `frame.save`: written in Crow.

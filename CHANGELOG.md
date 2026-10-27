@@ -122,6 +122,84 @@ history says the rest.
   and this store holds its state and runs its own engines — the magpie is
   the corvid that gathers everything into one nest). Its second
   architecture is docs/magpie-design.md, built phase by phase below.
+- The doors (phase 9 of the design): `magpie.door[root, port]` serves
+  every log under the root over HTTP as JSON, a request's path naming the
+  log and the verb (`/orders/latest`), and every verb given a URL
+  (`since['http://host:9000/orders', 3]`) reaches it, so another process
+  or language reaches a log; `use redis` is the RESP door — SET, GET, INCR, MGET, DEL, KEYS, DBSIZE over
+  a log keyed by the key, XADD, XLEN, XRANGE and XREAD over a stream's
+  log — so Redis clients speak to Magpie, beside the Kafka door.
+- Aggregates pushed below the reader (phase 8 of the design): `summary[dir,
+  by, of, how, on, ops, equal, lo, hi, upto]` runs filter, group and
+  reduce as operators over each row group on its own core and combines
+  the partials, answering what `group` answers over `scan` with the rows
+  never held as one frame; `prior[dir, f, columns]` is the as-of join
+  over the log, each label's newest row at or before its moment, from
+  each key's run. Sys rows `batch_summary`, `batch_asof`.
+- Search's long tail (phase 7 of the design): the merge builds postings
+  with positions and a sorted dictionary per text column per row group
+  beside the token filter; `search` takes Lucene's forms inside the words
+  (a phrase as a word with a space, a prefix `kit*`, a fuzzy word
+  `kitchn~` within two edits), skips the blocks whose bound cannot reach
+  the k-th score, stems where the log declared `stem = true` at its first
+  batch (the Porter stemmer, English), and answers a `snippet` column of
+  `snippet` characters around the first hit when asked. A batch, read
+  whole, ranks and scores exactly as the merged segment does.
+- The sequencer (phase 6 of the design): a memtable and its write-ahead
+  log per log directory in the process (`crow_runtime::magpie::tail`).
+  `put[dir, f]` appends rows visible to the process at once and flushed
+  as a batch file by a thread every ten milliseconds; `batch` is a put
+  and a flush; `latest[dir, equal = …]` answers the newest row of a key from
+  the image in memory; `commit` over the log's keys is validated against
+  the key index in memory; `sync`, `merge`, `backup` and `share` flush
+  first. The pending rows are the catalog's `pending` row, a Magpie file
+  in memory every reader opens as `<dir>/.pending@first-last` (the
+  positions the listing saw; flushed in between, the file they went to is
+  read instead, and a listing reads the pending rows before the files, so
+  a flush between the two hides nothing); `rm` of a log's directory
+  drops the rows pending in its tail with it (the thread had written
+  them into the directory ten milliseconds after the rm). Sys rows `tail_put`,
+  `tail_flush`, `tail_pending`, `tail_get`, `tail_last`, `tail_forget`;
+  a third crash cut, `pending`, after a put.
+- Reads bounded by what a frame holds (phase 5 of the design): `since[dir,
+  from, upto, columns]` and `scan[dir, from, upto, columns]` take a
+  position window, `latest[dir, upto, columns, lo, hi]` a range of the
+  log's first key (through the groups the range covers; sys row
+  `batch_between`), and `batch_since` an upper bound; a read over the
+  whole log is a loop over windows the program writes.
+- Indexes built by the merge (phase 4 of the design): `texts` leaves
+  `batch` and `commit`; the merge indexes every text column of every
+  segment per row group (an identifier-like column given up), and a
+  search reads a batch, or an unindexed group, whole and scores it the
+  same, so any text column is searchable the moment it lands and cheap
+  once merged, and no producer declares what will be asked.
+- The streaming merge with levels (phase 3 of the design): a k-way merge
+  over the inputs, one row group per input in memory, segments cut at a
+  gigabyte and named by a counter (`S000000000017.segment`), the newest
+  version of each key the last of its run; `merge[dir, every]` folds the
+  tail into level 1 and, while a level holds more than eight segments,
+  its oldest eight into the next; a merge of a log larger than memory
+  runs in constant memory. `narrow = [...]` on the first batch keeps the
+  named float columns in 32 bits on disk. `sync` flushes the manifest
+  too. The crash harness (tests/magpie_crash.rs) ends a merge after the
+  segments are placed and after the manifest is switched, and the next
+  read and merge answer whole either way.
+- A manifest, and keys declared once (phase 1 of the design): `dir/manifest`,
+  a Magpie file naming the log's live segments (level, position range,
+  rows, bytes, key ranges) with the log's keys and its time column,
+  replaced whole by a rename, so a merge is one atomic switch and a
+  reader sees the old list or the new; the batches stay the tail the
+  directory lists, and a segment the manifest does not name is a
+  leftover the next merge removes. The first `batch` fixes the log's
+  keys (`by`) and its time column (`time = 'ts'`); a later batch names
+  the same keys or none, another set is refused naming both. `merge[dir,
+  every]`, `latest[dir, upto, columns]` and `commit[dir, f, texts, seen,
+  columns, equal]` take no `by`; `batches` gains `level`; a backup
+  copies the manifest and writes a `listing`; `share` serves the
+  manifest and `follow` takes it every time. New sys rows
+  `batch_declared`, `batch_declare`, `batch_catalog`; `batch_merge[dir,
+  paths, every]`. The Kafka door's group and offset logs declare their
+  keys at their first write.
 - Magpie's own file format (phase 2 of the design): a batch, a segment
   and, later, the manifest are one format of our own — row groups of
   about 4 MB, each column chunk encoded by its kind (ints by frame of

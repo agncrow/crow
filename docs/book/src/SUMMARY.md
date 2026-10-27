@@ -97,6 +97,7 @@
   - [Tools from other programs: `use mcp`](by-example/mcp.md)
   - [The log as batch files: `use magpie`](by-example/magpie.md)
   - [The Kafka door: `use kafka`](by-example/kafka.md)
+  - [The RESP door: `use redis`](by-example/redis.md)
 
 - [Appendix A: The Language at a Glance](appendix-a-language-at-a-glance.md)
 - [Appendix B: Coming from Another Language](appendix-b-from-another-language.md)

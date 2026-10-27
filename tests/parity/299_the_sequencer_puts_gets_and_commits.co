@@ -1,0 +1,42 @@
+--- every write of a process goes through the log's sequencer
+--- (docs/magpie-design.md, phase 6): a put is visible at once and
+--- durable at the flush, a get reads the image, a commit over the keys
+--- is decided in memory — the same in both modes
+use magpie
+use frame
+use math
+
+d = 'parity-299-log'
+gone = rm[d]
+made = mkdir[d]
+log[put[d, frame.new[id = [1, 2], qty = [10, 20]], by = ['id']]]
+log[int[sum[batches[d].rows]]]
+log[head[d]]
+log[since[d, 0].qty]
+log[latest[d].qty]
+log[lookup[d, ['id'], ['2']].qty]
+log[put[d, frame.new[id = [2, 3], qty = [25, 30]]]]
+log[latest[d, equal = ['2']].qty]
+log[latest[d, equal = ['3']].qty]
+log[len[latest[d, equal = ['9']]]]
+log[latest[d, equal = ['x']].kind]
+log[sync[d] gte 1]
+log[int[sum[batches[d].rows]]]
+log[batch[d, frame.new[id = [1], qty = [11]]]]
+log[int[sum[batches[d].rows]]]
+log[latest[d, equal = ['1']].qty]
+stale = commit[d, frame.new[id = [1], qty = [12]], seen = 3, columns = ['id'], equal = ['1']]
+log[stale.reason]
+log[commit[d, frame.new[id = [1], qty = [13]], seen = 4, columns = ['id'], equal = ['1']]]
+log[latest[d, equal = ['1']].qty]
+other = commit[d, frame.new[id = [7], qty = [70]], seen = 4, columns = ['qty'], equal = ['13']]
+log[other.reason]
+log[commit[d, frame.new[id = [7], qty = [70]], seen = 5, columns = ['qty'], equal = ['13']]]
+m = merge[d]
+log[batches[d].form]
+log[latest[d, equal = ['2']].qty]
+log[latest[d].qty]
+log[put[d, frame.new[id = [8], qty = [80]]]]
+log[latest[d].qty]
+log[scan[d, 7].id]
+gone = rm[d]
