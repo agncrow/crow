@@ -1,14 +1,14 @@
---- A merge folds the log's files into one segment (spec, lake: `merge`),
+--- A merge folds the log's files into one segment (spec, magpie: `merge`),
 --- a Parquet file the same readers read: the latest version of each key
 --- kept, sorted by key, the positions as they were, the word filters
 --- carried over. The same in both modes, and held to SQLite: the table
 --- after a merge is the table before it, and a lookup through the segment
 --- answers what the rows say.
-use lake
+use magpie
 use frame
 use db
 
-d = 'parity-295-lake'
+d = 'parity-295-magpie'
 r = rm[d]
 m = mkdir[d]
 a = batch[d, frame.new[id = [3, 1, 2], name = ['Apple pie', 'banana split', 'cherry tart'], qty = [1, 2, 3]], by = ['id'], texts = ['name']]

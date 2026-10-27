@@ -1,5 +1,5 @@
---- Five shapes over a log's open frames (spec, lake; Frames) that one
---- mode had accepted and the other refused, found by the lake's
+--- Five shapes over a log's open frames (spec, magpie; Frames) that one
+--- mode had accepted and the other refused, found by the magpie's
 --- benchmark: a frame literal built from an open frame's cells (compiled,
 --- `Cells` took no list of parsed values); a mask conjunction over a
 --- frame that can fail (compiled, printed as `&` of two lists); the sum
@@ -9,7 +9,7 @@
 --- literal refused the sort); and a fallible local assigned in a branch
 --- under its own guard, then read again (compiled, moved out: E0382).
 --- The same in both modes.
-use lake
+use magpie
 use frame
 use math
 

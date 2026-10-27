@@ -1,4 +1,4 @@
---- `use lake`: the log as a directory of batch files (spec, lake). Each
+--- `use magpie`: the log as a directory of batch files (spec, magpie). Each
 --- commit is one file, written once by the kernel (sys.batch_write): a
 --- frame given a position per row, sorted by its keys, with the statistics
 --- a reader prunes by in its head. Everything else is here, in Crow: the
@@ -10,7 +10,7 @@
 --- catalog's state (`batches`). One process writes a log; two writers on
 --- one machine claim numbers through the kernel, which links a file into
 --- place only where no file of the number exists, so a slip is a retry.
---- The tests are the module's own: `crow test src/modules/lake.co`.
+--- The tests are the module's own: `crow test src/modules/magpie.co`.
 use sys
 use frame
 use math
@@ -21,7 +21,7 @@ use math
 fn _names[dir]
     entries = ls[dir]
     if not entries.ok
-        return error['no log at \'`dir`\': `entries.reason`', 'lake']
+        return error['no log at \'`dir`\': `entries.reason`', 'magpie']
     names = []
     for n in entries
         if (ends[n, '.batch'] and len[n] eq 18) or (ends[n, '.segment'] and len[n] eq 33)
@@ -69,7 +69,7 @@ fn batches[dir]
         p = '`dir`/`n`'
         head = batch_stats[p]
         if not head.ok
-            return error[head.reason, 'lake']
+            return error[head.reason, 'magpie']
         s = json[head]
         form = 'segment'
         if ends[n, '.batch']
@@ -86,7 +86,7 @@ fn batches[dir]
         first = int[s.first]
         last = int[s.last]
         if not rows.ok or not first.ok or not last.ok
-            return error['`p` has no row count or positions in its head', 'lake']
+            return error['`p` has no row count or positions in its head', 'magpie']
         counts = push[counts, rows + 0]
         firsts = push[firsts, first + 0]
         lasts = push[lasts, last + 0]
@@ -133,19 +133,19 @@ fn _checked[f, by, texts]
     probe = frame.head[f, 1]
     names = f.columns
     if len[names] eq 0
-        return error['a batch holds a frame with columns', 'lake']
+        return error['a batch holds a frame with columns', 'magpie']
     --- the lists' kinds pinned here, outside the loops (`select` had done
     --- it, and a `use ui` program reads `select` as its control)
     keyed = push[by, '']
     worded = push[texts, '']
     if '' in by or '' in texts
-        return error['a column name is empty', 'lake']
+        return error['a column name is empty', 'magpie']
     for c in by
         if c not in names
-            return error['no column \'`c`\' to sort by', 'lake']
+            return error['no column \'`c`\' to sort by', 'magpie']
     for c in texts
         if c not in names
-            return error['no column \'`c`\' to index the words of', 'lake']
+            return error['no column \'`c`\' to index the words of', 'magpie']
     return len[by] + len[texts]
 
 --- a log's directory, made where it is not yet (a writer opens a log;
@@ -155,7 +155,7 @@ fn _opened[dir]
         return dir
     made = mkdir[dir]
     if not made.ok
-        return error['cannot open a log at \'`dir`\': `made.reason`', 'lake']
+        return error['cannot open a log at \'`dir`\': `made.reason`', 'magpie']
     return dir
 
 --- `batch[dir, f, by = [], texts = [], flush = true]`: the frame written as
@@ -186,16 +186,16 @@ fn batch[dir, f, by = [], texts = [], flush = true]
         if made.ok
             return at[1]
         if not ('was written already' in made.reason)
-            return error[made.reason, 'lake']
+            return error[made.reason, 'magpie']
         tries = tries + 1
-    return error['the log at \'`dir`\' is contended: 100 tries could not claim a batch number', 'lake']
+    return error['the log at \'`dir`\' is contended: 100 tries could not claim a batch number', 'magpie']
 
 --- `sync[dir]`: every file of the log flushed to the disk, then its
 --- directory — what batches written with `flush = false` had skipped;
 --- answers how many files were flushed
 fn sync[dir]
     if len[bytes[dir]] eq 0
-        return error['sync needs a log directory', 'lake']
+        return error['sync needs a log directory', 'magpie']
     return batch_sync[dir]
 
 --- the kernel's reader of several files in its own function, the lists
@@ -230,7 +230,7 @@ fn since[dir, from, columns = []]
         return frame.new[]
     rows = _since[paths, from - 1, columns]
     if not rows.ok
-        return error[rows.reason, 'lake']
+        return error[rows.reason, 'magpie']
     return rows
 
 --- `tail[dir, after, seconds]`: the rows past position `after`, waiting up
@@ -262,7 +262,7 @@ fn scan[dir, upto = -1, columns = []]
     if upto eq -1 or len[rows] eq 0
         return rows
     if '_pos' not in rows.columns
-        return error['a snapshot picks rows by _pos: ask for it among the columns', 'lake']
+        return error['a snapshot picks rows by _pos: ask for it among the columns', 'magpie']
     return rows[rows._pos lte upto]
 
 --- `latest[dir, by, upto = -1]`: the newest version of each key (the `by`
@@ -312,11 +312,11 @@ fn lookup[dir, on, equal, columns = []]
     keyed = push[on, '']
     valued = push[equal, '']
     if '' in on
-        return error['lookup needs column names', 'lake']
+        return error['lookup needs column names', 'magpie']
     if len[on] eq 0
-        return error['lookup needs at least one key column', 'lake']
+        return error['lookup needs at least one key column', 'magpie']
     if len[on] ne len[equal]
-        return error['lookup takes one value per key column: `len[on]` columns, `len[equal]` values', 'lake']
+        return error['lookup takes one value per key column: `len[on]` columns, `len[equal]` values', 'magpie']
     named = push[columns, '']
     b = batches[dir]
     if not b.ok
@@ -326,7 +326,7 @@ fn lookup[dir, on, equal, columns = []]
         return frame.new[]
     hit = _found[paths, on, equal, columns]
     if not hit.ok
-        return error[hit.reason, 'lake']
+        return error[hit.reason, 'magpie']
     return hit
 
 --- the kernel's row in its own function, as `_found` is: the lists copied
@@ -345,13 +345,13 @@ fn _searched[paths, column, words, k]
 fn search[dir, column, words, k = 10]
     --- the kinds pinned here, outside the helper: a list of text, an int
     if len[bytes[column]] eq 0
-        return error['search needs a column name', 'lake']
+        return error['search needs a column name', 'magpie']
     --- the words pinned as a list of text (an empty word is no token, and
     --- the kernel reads each word as its tokens), k as an int
     pinned = push[words, '']
     wanted = pack[k, 8]
     if k lt 0
-        return error['a search answers at most k rows, and k is `k`', 'lake']
+        return error['a search answers at most k rows, and k is `k`', 'magpie']
     b = batches[dir]
     if not b.ok
         return b
@@ -375,7 +375,7 @@ fn commit[dir, f, by = [], texts = [], seen = -1, columns = [], equal = []]
     --- the reads are pairs: a column each, a value each, as text
     pairs = concat[columns, equal]
     if len[pairs] ne 2 * len[columns]
-        return error['commit takes its reads as two lists of one length: columns and equal', 'lake']
+        return error['commit takes its reads as two lists of one length: columns and equal', 'magpie']
     opened = _opened[dir]
     if not opened.ok
         return opened
@@ -389,18 +389,18 @@ fn commit[dir, f, by = [], texts = [], seen = -1, columns = [], equal = []]
                 for j in range[len[columns]]
                     held = _found[[b.path[i]], [columns[j]], [equal[j]], ['_pos']]
                     if not held.ok
-                        return error[held.reason, 'lake']
+                        return error[held.reason, 'magpie']
                     hit = held[held._pos gt seen]
                     if len[hit] gt 0
-                        return error['conflict: `columns[j]` = `equal[j]` was written at position `hit._pos[0]`, after snapshot `seen`', 'lake']
+                        return error['conflict: `columns[j]` = `equal[j]` was written at position `hit._pos[0]`, after snapshot `seen`', 'magpie']
         at = _next[b]
         made = _written[dir, at[0], at[1], f, by, texts, true]
         if made.ok
             return at[1]
         if not ('was written already' in made.reason)
-            return error[made.reason, 'lake']
+            return error[made.reason, 'magpie']
         tries = tries + 1
-    return error['the log at \'`dir`\' is contended: 100 tries could not claim a batch number', 'lake']
+    return error['the log at \'`dir`\' is contended: 100 tries could not claim a batch number', 'magpie']
 
 --- `merge[dir, by = [], every = false]`: every batch file and segment of
 --- the log folded into one segment (sys.batch_merge): the rows sorted by
@@ -420,7 +420,7 @@ fn merge[dir, by = [], every = false]
     --- `every` is a truth, compared with one here, so another kind handed
     --- as it is refused before the program runs)
     if every eq true and len[by] eq 0
-        return error['every keeps every row where keys would fold them: give merge its by columns', 'lake']
+        return error['every keeps every row where keys would fold them: give merge its by columns', 'magpie']
     if len[live] lt 2
         return ''
     inputs = []
@@ -434,12 +434,12 @@ fn merge[dir, by = [], every = false]
     --- compiled, the row had moved it)
     keyed = push[by, '']
     if '' in by
-        return error['a key column has a name', 'lake']
+        return error['a key column has a name', 'magpie']
     named = inputs
     cols = by
     made = batch_merge[dir, named, cols, every]
     if not made.ok
-        return error[made.reason, 'lake']
+        return error[made.reason, 'magpie']
     stale = b[b.form eq 'stale']
     for p in inputs
         gone = rm[p]
@@ -492,12 +492,12 @@ fn _base[path]
 --- a place a backup goes: a directory, or an s3:// prefix
 fn _place[to]
     if starts[to, 'http://'] or starts[to, 'https://']
-        return error['a backup is a directory or an s3:// prefix, not \'`to`\'', 'lake']
+        return error['a backup is a directory or an s3:// prefix, not \'`to`\'', 'magpie']
     if starts[to, 's3://']
         return ''
     made = mkdir[to]
     if not made.ok
-        return error[made.reason, 'lake']
+        return error[made.reason, 'magpie']
     return ''
 
 --- bytes kept under a place: an S3 object, or a file
@@ -505,11 +505,11 @@ fn _kept[path, data]
     if starts[path, 's3://']
         sent = put[path, data]
         if not sent.ok
-            return error[sent.reason, 'lake']
+            return error[sent.reason, 'magpie']
         return ''
     kept = store[path, data]
     if not kept.ok
-        return error[kept.reason, 'lake']
+        return error[kept.reason, 'magpie']
     return ''
 
 --- bytes read from a place: an S3 object, or a file
@@ -517,11 +517,11 @@ fn _fetched[path]
     if starts[path, 's3://']
         got = fetch[path, map[], map[], 0.0]
         if not got.ok
-            return error[got.reason, 'lake']
+            return error[got.reason, 'magpie']
         return got.body
     data = file[path]
     if not data.ok
-        return error[data.reason, 'lake']
+        return error[data.reason, 'magpie']
     return data
 
 --- `backup[dir, to]`: the log's live files copied under `to` — a directory,
@@ -542,7 +542,7 @@ fn backup[dir, to]
     for i in range[len[live]]
         data = file[live.path[i]]
         if not data.ok
-            return error[data.reason, 'lake']
+            return error[data.reason, 'magpie']
         name = _base[live.path[i]]
         kept = _kept['`to`/`name`', data]
         if not kept.ok
@@ -551,7 +551,7 @@ fn backup[dir, to]
         copied = copied + 1
     written = write['`to`/manifest', listing]
     if not written.ok
-        return error[written.reason, 'lake']
+        return error[written.reason, 'magpie']
     return copied
 
 --- `restore[saved, dir]`: the files a backup's manifest names copied into
@@ -561,10 +561,10 @@ fn backup[dir, to]
 --- batches written since is the log as it was
 fn restore[saved, dir]
     if starts[saved, 'http://'] or starts[saved, 'https://']
-        return error['a backup is a directory or an s3:// prefix, not \'`saved`\'', 'lake']
+        return error['a backup is a directory or an s3:// prefix, not \'`saved`\'', 'magpie']
     listing = read['`saved`/manifest']
     if not listing.ok
-        return error['no backup at \'`saved`\': `listing.reason`', 'lake']
+        return error['no backup at \'`saved`\': `listing.reason`', 'magpie']
     opened = _opened[dir]
     if not opened.ok
         return opened
@@ -576,7 +576,7 @@ fn restore[saved, dir]
                 return data
             kept = store['`dir`/`name`', data]
             if not kept.ok
-                return error[kept.reason, 'lake']
+                return error[kept.reason, 'magpie']
             restored = restored + 1
     return restored
 
@@ -592,9 +592,9 @@ fn _line_of[c]
             unread[c, have]
             if starts[got.reason, 'no data']
                 return ''
-            return error[got.reason, 'lake']
+            return error[got.reason, 'magpie']
         if len[got] eq 0
-            return error['closed', 'lake']
+            return error['closed', 'magpie']
         have = concat[have, got]
         at = find[have, nl]
     unread[c, slice[have, at + 1, len[have]]]
@@ -608,10 +608,10 @@ fn _shared[dir, line]
     if line eq 'list'
         b = batches[dir]
         if not b.ok
-            return error[b.reason, 'lake']
+            return error[b.reason, 'magpie']
         live = _live[b]
         if not live.ok
-            return error[live.reason, 'lake']
+            return error[live.reason, 'magpie']
         out = '`len[live]``nl`'
         for i in range[len[live]]
             name = _base[live.path[i]]
@@ -621,12 +621,12 @@ fn _shared[dir, line]
     if starts[line, 'get ']
         name = slice[line, 4, len[line]]
         if '/' in name or not (ends[name, '.batch'] or ends[name, '.segment'])
-            return error['\'`name`\' is no file of a log', 'lake']
+            return error['\'`name`\' is no file of a log', 'magpie']
         data = file['`dir`/`name`']
         if not data.ok
-            return error[data.reason, 'lake']
+            return error[data.reason, 'magpie']
         return concat[bytes['`len[data]``nl`'], data]
-    return error['\'`line`\' is no request of a log', 'lake']
+    return error['\'`line`\' is no request of a log', 'magpie']
 
 --- `share[dir, port, host = '127.0.0.1', rounds = 0]`: the log served to
 --- its followers — replication by log shipping. A follower connects and
@@ -639,7 +639,7 @@ fn _shared[dir, line]
 fn share[dir, port, host = '127.0.0.1', rounds = 0]
     l = listen[host, port]
     if not l.ok
-        return error[l.reason, 'lake']
+        return error[l.reason, 'magpie']
     conns = []
     answered = 0
     round = 0
@@ -676,9 +676,9 @@ fn _line_waited[c]
     while at lt 0
         got = recv[stream_of[c], 65536, 0.0]
         if not got.ok
-            return error[got.reason, 'lake']
+            return error[got.reason, 'magpie']
         if len[got] eq 0
-            return error['the log\'s server closed', 'lake']
+            return error['the log\'s server closed', 'magpie']
         have = concat[have, got]
         at = find[have, nl]
     unread[c, slice[have, at + 1, len[have]]]
@@ -690,9 +690,9 @@ fn _exact[c, n]
     while len[have] lt n
         got = recv[stream_of[c], n - len[have], 0.0]
         if not got.ok
-            return error[got.reason, 'lake']
+            return error[got.reason, 'magpie']
         if len[got] eq 0
-            return error['the log\'s server closed', 'lake']
+            return error['the log\'s server closed', 'magpie']
         have = concat[have, got]
     unread[c, slice[have, n, len[have]]]
     return slice[have, 0, n]
@@ -702,57 +702,57 @@ fn _exact[c, n]
 --- written whole; the batches a fetched segment covers let go, as the
 --- leader's merge let them go. One pass: a follower that keeps up calls
 --- it again, and reads the log by position between calls, as any log is
---- read. Answers how many files came. An error value of kind `'lake'`
+--- read. Answers how many files came. An error value of kind `'magpie'`
 --- where the server cannot be reached within the seconds, or answers
 --- other than a log's server does
 fn follow[dir, host, port, seconds = 5.0]
     opened = _opened[dir]
     if not opened.ok
-        return error[opened.reason, 'lake']
+        return error[opened.reason, 'magpie']
     s = open[host, port, false, seconds]
     if not s.ok
-        return error[s.reason, 'lake']
+        return error[s.reason, 'magpie']
     c = socket_of[s, '`host`:`port`', bytes['']]
     nl = '\n'
     asked = send[s, bytes['list`nl`']]
     if not asked.ok
-        return error[asked.reason, 'lake']
+        return error[asked.reason, 'magpie']
     count_line = _line_waited[c]
     if not count_line.ok
-        return error[count_line.reason, 'lake']
+        return error[count_line.reason, 'magpie']
     n = int[count_line]
     if not n.ok
-        return error['\'`host`:`port`\' answered no listing of a log', 'lake']
+        return error['\'`host`:`port`\' answered no listing of a log', 'magpie']
     listed = n + 0
     have = ls[dir]
     if not have.ok
-        return error[have.reason, 'lake']
+        return error[have.reason, 'magpie']
     --- every entry of the listing is read before a file is asked for:
     --- the entries still queued had been read as a file's size
     names = []
     for i in range[listed]
         entry = _line_waited[c]
         if not entry.ok
-            return error[entry.reason, 'lake']
+            return error[entry.reason, 'magpie']
         names = push[names, split[entry, ' '][0]]
     fetched = 0
     for name in names
         if name not in have
             wanted = send[s, bytes['get `name``nl`']]
             if not wanted.ok
-                return error[wanted.reason, 'lake']
+                return error[wanted.reason, 'magpie']
             size_line = _line_waited[c]
             if not size_line.ok
-                return error[size_line.reason, 'lake']
+                return error[size_line.reason, 'magpie']
             m = int[size_line]
             if not m.ok
-                return error['\'`host`:`port`\' answered no file for \'`name`\'', 'lake']
+                return error['\'`host`:`port`\' answered no file for \'`name`\'', 'magpie']
             data = _exact[c, m + 0]
             if not data.ok
-                return error[data.reason, 'lake']
+                return error[data.reason, 'magpie']
             kept = store['`dir`/`name`', data]
             if not kept.ok
-                return error[kept.reason, 'lake']
+                return error[kept.reason, 'magpie']
             fetched = fetched + 1
     sys.close[s]
     b = batches[dir]
@@ -771,7 +771,7 @@ fn _scratch[name]
 --- an empty log has no positions; each append claims the next; a read
 --- from a position answers the rows at and past it in order
 test a_log_grows_by_batches[]
-    dir = _scratch['lake-test-grows']
+    dir = _scratch['magpie-test-grows']
     assert[head[dir] eq -1]
     assert[len[since[dir, 0]] eq 0]
     assert[len[scan[dir]] eq 0]
@@ -790,15 +790,15 @@ test a_log_grows_by_batches[]
     upto = scan[dir, 3]
     assert[upto._pos eq [0, 1, 2, 3]]
     assert[not batch[dir, frame.new[], by = []].ok]
-    opened = batch['lake-test-grows/made/here', frame.new[id = [1]]]
-    assert[opened eq 0 and exists['lake-test-grows/made/here']]
-    assert[batch['/dev/null/no-log-here', frame.new[id = [1]]].kind eq 'lake']
+    opened = batch['magpie-test-grows/made/here', frame.new[id = [1]]]
+    assert[opened eq 0 and exists['magpie-test-grows/made/here']]
+    assert[batch['/dev/null/no-log-here', frame.new[id = [1]]].kind eq 'magpie']
     gone = rm[dir]
 
 --- the latest version of each key is the table; a lookup reads only the
 --- files whose filters admit the value, and answers every version
 test the_table_is_the_latest_version_of_each_key[]
-    dir = _scratch['lake-test-latest']
+    dir = _scratch['magpie-test-latest']
     a = batch[dir, frame.new[id = [1, 2], qty = [10, 20]], by = ['id']]
     b = batch[dir, frame.new[id = [2, 3], qty = [25, 30]], by = ['id']]
     c = batch[dir, frame.new[id = [1], qty = [15]], by = ['id']]
@@ -810,9 +810,9 @@ test the_table_is_the_latest_version_of_each_key[]
     assert[two.qty eq [20, 25] and two._pos eq [1, 2]]
     none = lookup[dir, ['id'], ['9']]
     assert[len[none] eq 0]
-    assert[lookup[dir, ['nosuch'], ['1']].kind eq 'lake']
-    assert[lookup[dir, ['id'], ['x']].kind eq 'lake']
-    assert[lookup[dir, ['id'], ['1', '2']].kind eq 'lake']
+    assert[lookup[dir, ['nosuch'], ['1']].kind eq 'magpie']
+    assert[lookup[dir, ['id'], ['x']].kind eq 'magpie']
+    assert[lookup[dir, ['id'], ['1', '2']].kind eq 'magpie']
     assert[lookup[dir, ['id'], ['2'], ['qty']].columns eq ['qty']]
     assert[lookup[dir, ['id', 'qty'], ['2', '25']].id eq [2]]
     assert[since[dir, 0, ['qty']].columns eq ['qty']]
@@ -824,14 +824,14 @@ test the_table_is_the_latest_version_of_each_key[]
 --- snapshot: a key written since refuses the write, naming the position;
 --- a commit that read nothing, or whose keys are untouched, appends
 test the_sequencer_refuses_a_stale_read[]
-    dir = _scratch['lake-test-commit']
+    dir = _scratch['magpie-test-commit']
     a = batch[dir, frame.new[id = [1, 2], qty = [10, 20]], by = ['id']]
     snapshot = head[dir]
     assert[snapshot eq 1]
     other = commit[dir, frame.new[id = [2], qty = [21]], by = ['id'], seen = snapshot, columns = ['id'], equal = ['2']]
     assert[other eq 2]
     stale = commit[dir, frame.new[id = [2], qty = [22]], by = ['id'], seen = snapshot, columns = ['id'], equal = ['2']]
-    assert[stale.kind eq 'lake']
+    assert[stale.kind eq 'magpie']
     assert[stale.reason eq 'conflict: id = 2 was written at position 2, after snapshot 1']
     fine = commit[dir, frame.new[id = [1], qty = [11]], by = ['id'], seen = snapshot, columns = ['id'], equal = ['1']]
     assert[fine eq 3]
@@ -846,7 +846,7 @@ test the_sequencer_refuses_a_stale_read[]
 --- the next batch takes the next number and position, and a second merge
 --- folds the segment with the new batches
 test a_merge_folds_the_files_into_a_segment[]
-    dir = _scratch['lake-test-merge']
+    dir = _scratch['magpie-test-merge']
     a = batch[dir, frame.new[id = [1, 2], qty = [10, 20], name = ['one', 'two']], by = ['id'], texts = ['name']]
     b = batch[dir, frame.new[id = [2, 3], qty = [25, 30], name = ['two again', 'three']], by = ['id'], texts = ['name']]
     before = latest[dir, ['id']]
@@ -872,7 +872,7 @@ test a_merge_folds_the_files_into_a_segment[]
     assert[merge[dir, by = ['id'], every = true] eq '`dir`/000000000000-000000000003.segment']
     assert[batches[dir].rows eq [5] and sort[scan[dir], 'id'].id eq [1, 1, 2, 3, 4]]
     assert[latest[dir, ['id']].qty eq [25, 30, 40, 13]]
-    assert[merge['`dir`', every = true].kind eq 'lake']
+    assert[merge['`dir`', every = true].kind eq 'magpie']
     d = batch[dir, frame.new[id = [5], qty = [50], name = ['five']], by = ['id']]
     assert[d eq 7 and batches[dir].number eq [0, 4]]
     gone = rm[dir]
@@ -880,7 +880,7 @@ test a_merge_folds_the_files_into_a_segment[]
 --- a view follows the log: `tail` answers the rows past a position as
 --- they come, and an empty frame when none come in time
 test a_view_follows_the_log[]
-    dir = _scratch['lake-test-tail']
+    dir = _scratch['magpie-test-tail']
     a = batch[dir, frame.new[id = [1, 2], qty = [10, 20]]]
     got = tail[dir, -1, 0.2]
     assert[got.qty eq [10, 20]]
@@ -893,7 +893,7 @@ test a_view_follows_the_log[]
 
 --- a search ranks the rows of every file by BM25 over the words asked
 test a_search_ranks_the_log[]
-    dir = _scratch['lake-test-search']
+    dir = _scratch['magpie-test-search']
     a = batch[dir, frame.new[id = [1, 2, 3], text = ['the quick brown fox', 'a lazy dog', 'the fox and the dog']], texts = ['text']]
     b = batch[dir, frame.new[id = [4], text = ['brown bread']], texts = ['text']]
     hits = search[dir, 'text', ['fox'], 10]
@@ -911,29 +911,29 @@ test a_search_ranks_the_log[]
 --- the figures, a backup and its restore: the restored log answers as the
 --- log did
 test a_backup_is_restored[]
-    dir = _scratch['lake-test-backup']
+    dir = _scratch['magpie-test-backup']
     a = batch[dir, frame.new[id = [1, 2], qty = [10, 20]], by = ['id']]
     b = batch[dir, frame.new[id = [2, 3], qty = [25, 30]], by = ['id']]
     m = metrics[dir]
     assert[m.files eq [2] and m.batches eq [2] and m.rows eq [4] and m.head eq [3]]
     assert[m.bytes[0] gt 0]
-    copied = backup[dir, 'lake-test-backup-copy']
+    copied = backup[dir, 'magpie-test-backup-copy']
     assert[copied eq 2]
     gone = rm[dir]
-    back = restore['lake-test-backup-copy', dir]
+    back = restore['magpie-test-backup-copy', dir]
     assert[back eq 2]
     assert[latest[dir, ['id']].qty eq [10, 25, 30]]
     assert[head[dir] eq 3]
     fourth = batch[dir, frame.new[id = [4], qty = [40]], by = ['id']]
     assert[fourth eq 4]
-    assert[not restore['lake-test-nowhere', dir].ok]
+    assert[not restore['magpie-test-nowhere', dir].ok]
     assert[not backup[dir, 'http://127.0.0.1:1/x'].ok]
-    gone = rm['lake-test-backup-copy']
+    gone = rm['magpie-test-backup-copy']
     gone = rm[dir]
 
 --- the server's answers to a follower's requests, at known values
 test a_shared_log_answers_its_followers[]
-    dir = _scratch['lake-test-share']
+    dir = _scratch['magpie-test-share']
     a = batch[dir, frame.new[id = [1, 2], qty = [10, 20]], by = ['id']]
     listing = text[_shared[dir, 'list'], '?']
     lines = split[listing, '\n']
@@ -943,17 +943,17 @@ test a_shared_log_answers_its_followers[]
     assert[got.ok and len[got] gt 10]
     assert[not _shared[dir, 'get ../secret'].ok]
     assert[not _shared[dir, 'steal'].ok]
-    assert[not follow['lake-test-share-copy', '127.0.0.1', 1, 0.2].ok]
-    gone = rm['lake-test-share-copy']
+    assert[not follow['magpie-test-share-copy', '127.0.0.1', 1, 0.2].ok]
+    gone = rm['magpie-test-share-copy']
     gone = rm[dir]
 
 --- a batch written without a flush is read as any batch, and sync flushes
 --- the log's files
 test a_batch_can_skip_the_flush_until_a_sync[]
-    dir = _scratch['lake-test-flush']
+    dir = _scratch['magpie-test-flush']
     a = batch[dir, frame.new[id = [1, 2], qty = [10, 20]], by = ['id'], flush = false]
     assert[a eq 0]
     assert[latest[dir, ['id']].qty eq [10, 20]]
     assert[sync[dir] eq 1]
-    assert[not sync['lake-test-nowhere'].ok]
+    assert[not sync['magpie-test-nowhere'].ok]
     gone = rm[dir]

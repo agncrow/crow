@@ -40,7 +40,7 @@ fn drive(interpreted: bool, script: &str) {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let port = free_port();
-    std::fs::write(dir.join("door.co"), format!("use kafka\n\nserved = serve['lake', {port}]\nlog[served]\n")).unwrap();
+    std::fs::write(dir.join("door.co"), format!("use kafka\n\nserved = serve['magpie', {port}]\nlog[served]\n")).unwrap();
     let crow = env!("CARGO_BIN_EXE_crow");
     let mut cmd = Command::new(crow);
     cmd.arg("run");

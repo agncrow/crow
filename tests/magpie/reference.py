@@ -5,10 +5,10 @@ the formula Lucene's BM25Similarity states (Lucene 8 and later: no
 weight tf / (tf + k1 * (1 - b + b * dl / avgdl)) with k1 = 1.2 and
 b = 0.75, a document's score the sum over the query's distinct words it
 holds; lengths exact (Lucene keeps a byte of them, so Elasticsearch's
-numbers differ past the second digit). Words are the tokens the lake
+numbers differ past the second digit). Words are the tokens the magpie
 indexes: runs of letters or digits, lowercased. Prints the ranking and
-the scores the parity program holds the lake to; no dependencies.
-    python3 -I tests/lake/reference.py
+the scores the parity program holds the magpie to; no dependencies.
+    python3 -I tests/magpie/reference.py
 """
 import math, re
 

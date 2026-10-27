@@ -1,11 +1,11 @@
---- A search over the log (spec, lake: `search`): the rows whose indexed
+--- A search over the log (spec, magpie: `search`): the rows whose indexed
 --- column best match the words, BM25 as Lucene scores it over every file
 --- as one corpus — the files whose filters admit no word unread, a
 --- segment read as a batch is. The same in both modes, and held to the
---- formula computed apart (tests/lake/reference.py: Lucene's
+--- formula computed apart (tests/magpie/reference.py: Lucene's
 --- BM25Similarity, k1 = 1.2, b = 0.75, exact lengths): the rankings and
 --- the scores to the ninth decimal, before and after a merge.
-use lake
+use magpie
 use frame
 use math
 

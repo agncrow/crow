@@ -1,5 +1,5 @@
 //! A batch file: one commit of a log as one file, written once (spec,
-//! lake: The log). The file is an Arrow IPC stream holding a frame with a
+//! magpie: The log). The file is an Arrow IPC stream holding a frame with a
 //! position column added in arrival order, its rows sorted by the key
 //! columns, and, in the stream's own metadata, the statistics a reader
 //! prunes by: per column its kind, min, max, the count of missing cells
@@ -14,7 +14,7 @@
 //! the batch numbers it covers (`000000000003-000000000017.segment`),
 //! the latest version of each key kept where keys are given. One reader
 //! serves both kinds, told apart by the file's first bytes. Both backends
-//! call these functions; the Crow-written module over them is `lake`.
+//! call these functions; the Crow-written module over them is `magpie`.
 
 use crate::frame::{Column, CrowFrame};
 use std::collections::HashMap;

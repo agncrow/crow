@@ -1,5 +1,5 @@
 //! A log shared and followed across two processes (spec, section 13:
-//! lake: `share`, `follow`): a leader program writes two batches and
+//! magpie: `share`, `follow`): a leader program writes two batches and
 //! serves its log; a follower program in another directory fetches the
 //! files, reads the table the log holds and its head, and a second pass
 //! fetches nothing. The leader runs interpreted and compiled; the
@@ -41,7 +41,7 @@ fn drive(leader_interpreted: bool) {
     let port = free_port();
     std::fs::write(
         leader.join("share.co"),
-        format!("use lake\nuse frame\n\nfirst = batch['log', frame.new[id = [1, 2], qty = [10, 20]], by = ['id']]\nsecond = batch['log', frame.new[id = [2, 3], qty = [25, 30]], by = ['id']]\nserved = share['log', {port}]\nlog[served]\n"),
+        format!("use magpie\nuse frame\n\nfirst = batch['log', frame.new[id = [1, 2], qty = [10, 20]], by = ['id']]\nsecond = batch['log', frame.new[id = [2, 3], qty = [25, 30]], by = ['id']]\nserved = share['log', {port}]\nlog[served]\n"),
     )
     .unwrap();
     // the leader in a process group of its own, ended with its build child
@@ -52,7 +52,7 @@ fn drive(leader_interpreted: bool) {
         std::fs::create_dir_all(&follower).unwrap();
         std::fs::write(
             follower.join("follow.co"),
-            format!("use lake\nuse frame\n\ngot = follow['copy', '127.0.0.1', {port}]\nlog[got]\nlog[latest['copy', ['id']].qty]\nlog[head['copy']]\nagain = follow['copy', '127.0.0.1', {port}]\nlog[again]\n"),
+            format!("use magpie\nuse frame\n\ngot = follow['copy', '127.0.0.1', {port}]\nlog[got]\nlog[latest['copy', ['id']].qty]\nlog[head['copy']]\nagain = follow['copy', '127.0.0.1', {port}]\nlog[again]\n"),
         )
         .unwrap();
         let out = run_in(&follower, follower_interpreted, "follow.co").output().expect("the follower runs");

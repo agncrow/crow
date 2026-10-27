@@ -1,27 +1,27 @@
-# The log as batch files: `use lake`
+# The log as batch files: `use magpie`
 
 ```crow
-use lake
+use magpie
 use frame
 
-gone = rm['ex_lake']
-made = mkdir['ex_lake']
-first = batch['ex_lake', frame.new[id = [1, 2], qty = [10, 20]], by = ['id']]
+gone = rm['ex_magpie']
+made = mkdir['ex_magpie']
+first = batch['ex_magpie', frame.new[id = [1, 2], qty = [10, 20]], by = ['id']]
 log[first]
-second = batch['ex_lake', frame.new[id = [2, 3], qty = [25, 30]], by = ['id']]
+second = batch['ex_magpie', frame.new[id = [2, 3], qty = [25, 30]], by = ['id']]
 log[second]
-log[head['ex_lake']]
-log[latest['ex_lake', ['id']].qty]
-log[lookup['ex_lake', ['id'], ['2']].qty]
-stale = commit['ex_lake', frame.new[id = [2], qty = [26]], by = ['id'], seen = 1, columns = ['id'], equal = ['2']]
+log[head['ex_magpie']]
+log[latest['ex_magpie', ['id']].qty]
+log[lookup['ex_magpie', ['id'], ['2']].qty]
+stale = commit['ex_magpie', frame.new[id = [2], qty = [26]], by = ['id'], seen = 1, columns = ['id'], equal = ['2']]
 log[stale.reason]
-log[since['ex_lake', 3].qty]
-log[scan['ex_lake', 1].id]
-log[len[batches['ex_lake']]]
-log[merge['ex_lake', by = ['id']]]
-log[batches['ex_lake'].form]
-log[latest['ex_lake', ['id']].qty]
-gone = rm['ex_lake']
+log[since['ex_magpie', 3].qty]
+log[scan['ex_magpie', 1].id]
+log[len[batches['ex_magpie']]]
+log[merge['ex_magpie', by = ['id']]]
+log[batches['ex_magpie'].form]
+log[latest['ex_magpie', ['id']].qty]
+gone = rm['ex_magpie']
 ```
 
 ```text
@@ -34,7 +34,7 @@ conflict: id = 2 was written at position 2, after snapshot 1
 [30]
 [1, 2]
 2
-ex_lake/000000000000-000000000001.segment
+ex_magpie/000000000000-000000000001.segment
 ['segment']
 [10, 25, 30]
 ```
@@ -45,12 +45,12 @@ reader prunes by in the file's head. `latest` is the table the log
 holds, one row per key; `lookup` reads only the files whose filters admit
 the value; `commit` is the sequencer, refusing a write whose reads are
 stale; `merge` folds the files into one Parquet segment holding the latest
-version of each key, which the same readers read. Reference: spec section 13 (lake).
+version of each key, which the same readers read. Reference: spec section 13 (magpie).
 
 ## A batch without the flush, and a sync
 
 ```crow
-use lake
+use magpie
 use frame
 
 gone = rm['ex_flush']
@@ -75,7 +75,7 @@ log and its directory, and a program calls it on a timer.
 ## A point read by two keys, and only the columns asked
 
 ```crow
-use lake
+use magpie
 use frame
 
 gone = rm['ex_keys']
@@ -108,7 +108,7 @@ and the point read reads one group again).
 ## Search over the log
 
 ```crow
-use lake
+use magpie
 use frame
 
 gone = rm['ex_search']
@@ -136,7 +136,7 @@ the whole log as one corpus.
 ## A view that follows the log
 
 ```crow
-use lake
+use magpie
 use frame
 use math
 
@@ -174,7 +174,7 @@ other views and other nodes to read.
 ## Operations: the figures, a backup, a restore
 
 ```crow
-use lake
+use magpie
 use frame
 
 gone = rm['ex_ops']
@@ -214,14 +214,14 @@ and the batches written since are the rest of the log.
 ## A second node
 
 ```crow,norun
-use lake
+use magpie
 
 --- the leader: its log served to followers, forever
 served = share['orders', 3700]
 ```
 
 ```crow,norun
-use lake
+use magpie
 
 --- a follower, on another machine: the files it lacks, fetched; then
 --- the log read by position as any log is, and the pass run again

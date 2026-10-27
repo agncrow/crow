@@ -117,7 +117,12 @@ history says the rest.
 
 ### Added
 
-- The log as batch files, `use lake` (spec, lake): each `batch` one file
+- Magpie, the data platform (`use magpie`; first built as `lake`, renamed
+  2026-10-26 before any release: a lake is raw files other engines query,
+  and this store holds its state and runs its own engines — the magpie is
+  the corvid that gathers everything into one nest). Its second
+  architecture is docs/magpie-design.md, built phase by phase below.
+- The log as batch files, `use magpie` (spec, magpie): each `batch` one file
   written once by the kernel (sys, `batch_write`) — the log entry, the
   sorted level-0 segment with its statistics and the word index at once —
   `head`, `since`, `tail` (a view that follows the log), `scan`, `latest`
@@ -134,11 +139,11 @@ history says the rest.
   to the formula computed apart, parity 296), `metrics`, `backup` and
   `restore` (a directory or an `s3://` prefix, the manifest written
   last), `share` and `follow` (replication by log shipping, two
-  processes in tests/lake_share.rs). Every file's head carries the
+  processes in tests/magpie_share.rs). Every file's head carries the
   format's version, so an older Crow refuses a newer file by name. Held
   to SQLite (parity 294, 295), to a month of finch's ClickHouse and
   Postgres rows, and to the self-check. The fifth reference app,
-  `examples/lake`, is a page over a log.
+  `examples/magpie`, is a page over a log.
 - The Kafka door, `use kafka` (spec, kafka): `serve[root, port]` answers
   a 0.10.1 broker's protocol in Crow over the sys layer's listener
   (`listen`, `accept`, `address`), a topic a log under the root, a
@@ -414,7 +419,7 @@ history says the rest.
 ### Fixed
 
 - Five shapes over a log's open frames that one mode had accepted and
-  the other refused (parity 297, found by the lake's benchmark): a frame
+  the other refused (parity 297, found by the magpie's benchmark): a frame
   literal built from an open frame's cells — `frame.new[last =
   [rows.close[i]]]` — builds compiled (the runtime's `Cells` takes a
   list of parsed values: whole numbers as ints, numbers as floats,

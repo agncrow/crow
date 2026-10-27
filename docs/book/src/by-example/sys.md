@@ -344,7 +344,7 @@ clock
 "noon in ROME"
 ```
 
-A batch file is the log's unit (`use lake` stands on these four rows): a
+A batch file is the log's unit (`use magpie` stands on these four rows): a
 frame written once with its rows' positions, sorted by key, and the
 statistics a reader prunes by in its head.
 
@@ -389,7 +389,7 @@ ex_batches/000000000000.batch
 true
 false
 true
-lake
+magpie
 ex_batches/000000000000-000000000001.segment
 ['apple crumble', 'cherry tart', 'Apple pie']
 ['cherry tart']

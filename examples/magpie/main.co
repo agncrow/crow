@@ -1,10 +1,10 @@
---- The fifth reference app: a page over a log (`use lake`). Orders land
+--- The fifth reference app: a page over a log (`use magpie`). Orders land
 --- as batches — the form writes one — and the page reads the table the
 --- log holds, a search over the notes and the log's figures, each a
 --- derivation that follows the writes. From its folder, `crow run main.co`
---- serves it on port 3600; `crow test --served lake` from the repository
+--- serves it on port 3600; `crow test --served magpie` from the repository
 --- root drives it in both modes.
-use web, ui, frame, lake
+use web, ui, frame, magpie
 
 written = 0
 new_item = ''

@@ -15,7 +15,7 @@ Every module ships with the compiler: `use` it and its names are there in both e
 | chart | `use chart` | 7 | [chart](chart.md) |
 | bits | `use bits` | 7 | [bits](bits.md) |
 | llm | `use llm` | 11 | [llm](llm.md) |
-| lake | `use lake` | 17 | [lake](lake.md) |
+| magpie | `use magpie` | 17 | [magpie](magpie.md) |
 | kafka | `use kafka` | 1 | [kafka](kafka.md) |
 | mcp | `use mcp` | 6 | [mcp](mcp.md) |
 | db | `use db` | 5 | [db](db.md) |

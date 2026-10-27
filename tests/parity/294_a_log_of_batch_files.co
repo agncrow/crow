@@ -1,4 +1,4 @@
---- The log is a directory of batch files (spec, lake): each `batch` one
+--- The log is a directory of batch files (spec, magpie): each `batch` one
 --- file written once by the kernel, with its rows' positions, sorted by
 --- key, with the statistics a reader prunes by; `latest` the table the
 --- log holds, `lookup` the rows holding a value (the files its filters
@@ -6,11 +6,11 @@
 --- sequencer refusing a stale read. The same in both modes, and held to
 --- SQLite on the same rows: the latest version of each key is what
 --- `MAX(pos) GROUP BY id` picks.
-use lake
+use magpie
 use frame
 use db
 
-d = 'parity-294-lake'
+d = 'parity-294-magpie'
 r = rm[d]
 m = mkdir[d]
 log[head[d]]
