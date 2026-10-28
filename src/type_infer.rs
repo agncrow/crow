@@ -1238,7 +1238,20 @@ impl TypeContext {
             (Some(Some(a)), Some(Some(b))) => a.open || b.open || a.cols.is_empty() || b.cols.is_empty() || a == b,
             _ => true,
         };
-        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.compatible(y) && ranks_agree(x, y) && x.has_markup() == y.has_markup() && frames_alike(x, y))
+        // (an int column and a float column are two signatures: the runtime
+        // holds them apart — `ints_of` reads one, `floats_of` the other —
+        // where an int beside a float is one number; one copy for both had
+        // been typed by the first call's cells, and the second call
+        // disagreed with itself: `kind_of[df.id]` then `kind_of[df.price]`,
+        // parity 305. A column whose cells are not known yet is the other's)
+        let cells_alike = |x: &Ty, y: &Ty| match (x.payload(), y.payload()) {
+            (Ty::Column(a), Ty::Column(b)) => {
+                let open = |c: &Ty| matches!(c.payload(), Ty::Unknown | Ty::Json);
+                open(a) || open(b) || a.payload() == b.payload()
+            }
+            _ => true,
+        };
+        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.compatible(y) && ranks_agree(x, y) && x.has_markup() == y.has_markup() && frames_alike(x, y) && cells_alike(x, y))
     }
 
     /// The specialization of `name` a call reaches, given its arguments'

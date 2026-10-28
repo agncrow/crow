@@ -433,7 +433,7 @@ impl Emitter {
             if Emitter::place_read(base) {
                 let t = self.tt(e);
                 let non_copy = matches!(t, Ty::Result(_))
-                    || matches!(Self::inner(&t), Ty::Tensor(..) | Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Fns(_) | Ty::Markup | Ty::Frame(_) | Ty::Record(_) | Ty::OptRecord(_) | Ty::Json | Ty::Big | Ty::Decimal | Ty::Fraction);
+                    || matches!(Self::inner(&t), Ty::Tensor(..) | Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Fns(_) | Ty::Markup | Ty::Frame(_) | Ty::Record(_) | Ty::OptRecord(_) | Ty::Json | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Bytes | Ty::Column(_));
                 if non_copy && !s.ends_with(".clone()") {
                     return format!("{}.clone()", s);
                 }
@@ -2644,7 +2644,7 @@ impl Emitter {
                 }
             }
             Target::Row(row) if row.module.is_empty() => self.table_call(row, args, arg_strs, whole),
-            Target::Row(row) => self.module_row_call(row, args, arg_strs),
+            Target::Row(row) => self.module_row_call(row, args, arg_strs, whole),
             Target::User(n) => self.user_call(n, args, arg_strs.to_vec()),
             Target::Module(m, f) => self.module_call(m, f, args, arg_strs, whole),
             // (math on the dual numbers a function grad differentiates is
@@ -2844,7 +2844,7 @@ impl Emitter {
         })
     }
 
-    fn module_row_call(&mut self, row: &crate::table::Row, args: &[Expr], arg_strs: &[String]) -> String {
+    fn module_row_call(&mut self, row: &crate::table::Row, args: &[Expr], arg_strs: &[String], whole: &Expr) -> String {
         let mut strs = arg_strs.to_vec();
         for (i, a) in args.iter().enumerate() {
             if let Expr::Call { target: Target::User(v), .. } = a {
@@ -2854,6 +2854,7 @@ impl Emitter {
             }
         }
         self.needs_crow_runtime = true;
+        self.args_by_kind(row, args, &mut strs, whole);
         if let Some(call) = self.taken_call(row, args, &strs) {
             return call;
         }
@@ -2862,28 +2863,18 @@ impl Emitter {
             .unwrap_or_else(|e| format!("compile_error!({:?})", e))
     }
 
-    /// A builtin with a row: its runtime function, each argument printed as
-    /// its kind takes it, its failure as the row says (crate::table). The
-    /// interpreter calls the same function through the same row. A
-    /// collection the function makes its answer of is moved when it is the
-    /// variable the statement assigns (`xs = push[xs, x]` grows it in place)
-    /// and copied otherwise; an item it keeps is copied from a variable, and
-    /// into a list or a map whose items can fail it is an item that did not
-    /// (a gathering push, a collecting loop's, keeps it as it was yielded).
-    fn table_call(&mut self, row: &crate::table::Row, args: &[Expr], arg_strs: &[String], whole: &Expr) -> String {
+    /// A row's arguments printed as its kinds take them, for a core row's
+    /// call and a module row's alike: a local read for the last time,
+    /// handed where the row only reads it, goes into a temporary the
+    /// statement frees (`&({rows})[..]`: a list of a file's lines had lived
+    /// on to the end of the program after its last slice); a kind the row
+    /// takes whole is moved where the statement assigns the variable it
+    /// reads and cloned otherwise (a module row's list had been moved at
+    /// every call — `float_bytes[xs, …]` twice did not build); an item
+    /// kept is copied from a variable, and into a list whose items can
+    /// fail it is an item that did not.
+    fn args_by_kind(&mut self, row: &crate::table::Row, args: &[Expr], strs: &mut Vec<String>, whole: &Expr) {
         use crate::table::Kind;
-        self.needs_crow_runtime = true;
-        if row.ret == Kind::Shell {
-            self.needs_shell_struct = true;
-        }
-        if row.ret == Kind::Reply {
-            self.needs_reply_struct = true;
-        }
-        // a parsed JSON value is serde's, which the program then names
-        if row.ret == Kind::Json || row.ret == Kind::JsonList || row.params.contains(&Kind::Json) {
-            self.needs_serde_json = true;
-        }
-        let mut strs = arg_strs.to_vec();
         // a local read for the last time, handed where the row only reads
         // it, goes into a temporary the statement frees (`&({rows})[..]`):
         // a list of a file's lines had lived on to the end of the program
@@ -2933,6 +2924,31 @@ impl Emitter {
                 };
             }
         }
+    }
+
+    /// A builtin with a row: its runtime function, each argument printed as
+    /// its kind takes it, its failure as the row says (crate::table). The
+    /// interpreter calls the same function through the same row. A
+    /// collection the function makes its answer of is moved when it is the
+    /// variable the statement assigns (`xs = push[xs, x]` grows it in place)
+    /// and copied otherwise; an item it keeps is copied from a variable, and
+    /// into a list or a map whose items can fail it is an item that did not
+    /// (a gathering push, a collecting loop's, keeps it as it was yielded).
+    fn table_call(&mut self, row: &crate::table::Row, args: &[Expr], arg_strs: &[String], whole: &Expr) -> String {
+        use crate::table::Kind;
+        self.needs_crow_runtime = true;
+        if row.ret == Kind::Shell {
+            self.needs_shell_struct = true;
+        }
+        if row.ret == Kind::Reply {
+            self.needs_reply_struct = true;
+        }
+        // a parsed JSON value is serde's, which the program then names
+        if row.ret == Kind::Json || row.ret == Kind::JsonList || row.params.contains(&Kind::Json) {
+            self.needs_serde_json = true;
+        }
+        let mut strs = arg_strs.to_vec();
+        self.args_by_kind(row, args, &mut strs, whole);
         if let Some(call) = self.taken_call(row, args, &strs) {
             return call;
         }

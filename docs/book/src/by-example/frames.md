@@ -19,6 +19,10 @@ log[tail[t, 1].symbol]
 log[frame.unique[t, 'symbol']]
 log[rename[t, 'qty', 'shares'].columns]
 log[len[frame.stack[t, t]]]
+parts = []
+parts = push[parts, t]
+parts = push[parts, head[t, 1]]
+log[len[stack[parts]]]
 log[len[stats[t]] gt 0]
 filled = fill[t, 'qty', 0]
 log[len[filled]]
@@ -67,6 +71,7 @@ rm['ex_copy.csv']
 ['AAPL', 'MSFT']
 ['symbol', 'shares', 'price']
 6
+4
 true
 3
 3

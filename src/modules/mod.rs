@@ -174,6 +174,36 @@ pub static MODULES: &[Module] = &[
         module: Some(|| Arc::new(Named::new("magpie.packing"))),
         ..Module::plain("magpie.packing", "_magpie_packing")
     },
+    Module {
+        source: Some(ENCODE_SOURCE), needs: &[], registry: true, under: Some("magpie"),
+        docs: Some("A column chunk, in Crow: the cells of one column over one row group as a Magpie file writes them — ints by frame of reference or delta, floats as their bits, text plain or as a dictionary, bools as a bitmap, moments, vectors — through the codec where it shrinks them, the kernel's bytes byte for byte."),
+        module: Some(|| Arc::new(Named::new("magpie.encode"))),
+        ..Module::plain("magpie.encode", "_magpie_encode")
+    },
+    Module {
+        source: Some(BLOOM_SOURCE), needs: &[], registry: true, under: Some("magpie"),
+        docs: Some("A bloom filter over byte strings, in Crow: k hashes into m bits, FNV-1a and a mix of it, the kernel's bits bit for bit — what a file keeps per column chunk, and per indexed text column over its tokens."),
+        module: Some(|| Arc::new(Named::new("magpie.bloom"))),
+        ..Module::plain("magpie.bloom", "_magpie_bloom")
+    },
+    Module {
+        source: Some(STEM_SOURCE), needs: &[], registry: true, under: Some("magpie"),
+        docs: Some("The Porter stemmer, in Crow: a word's stem as the paper gives it, for a log that declares `stem` — running, runs and runner all run — the kernel's answer word for word."),
+        module: Some(|| Arc::new(Named::new("magpie.stem"))),
+        ..Module::plain("magpie.stem", "_magpie_stem")
+    },
+    Module {
+        source: Some(POSTINGS_SOURCE), needs: &[], registry: true, under: Some("magpie"),
+        docs: Some("A text column's index over one row group, in Crow: the documents' lengths, a sorted dictionary of terms, and each term's postings in blocks with their bounds — the kernel's bytes byte for byte; terms found by word, by prefix and within an edit distance."),
+        module: Some(|| Arc::new(Named::new("magpie.postings"))),
+        ..Module::plain("magpie.postings", "_magpie_postings")
+    },
+    Module {
+        source: Some(FILE_SOURCE), needs: &[], registry: true, under: Some("magpie"),
+        docs: Some("A Magpie file, in Crow: a frame written as row groups of column chunks with their statistics and filters, column blocks and a footer, and read back by region — a footer, one column's block, one group's chunk — the kernel's bytes byte for byte."),
+        module: Some(|| Arc::new(Named::new("magpie.file"))),
+        ..Module::plain("magpie.file", "_magpie_file")
+    },
     // tools from other programs, and a program as one: the client on
     // request, the server a function a route calls (it answers responses,
     // so crow_web comes with the import)
@@ -316,6 +346,11 @@ pub(crate) const KAFKA_SOURCE: &str = include_str!("kafka.co");
 pub(crate) const REDIS_SOURCE: &str = include_str!("redis.co");
 pub(crate) const CODEC_SOURCE: &str = include_str!("codec.co");
 pub(crate) const PACKING_SOURCE: &str = include_str!("packing.co");
+pub(crate) const ENCODE_SOURCE: &str = include_str!("encode.co");
+pub(crate) const BLOOM_SOURCE: &str = include_str!("bloom.co");
+pub(crate) const STEM_SOURCE: &str = include_str!("stem.co");
+pub(crate) const POSTINGS_SOURCE: &str = include_str!("postings.co");
+pub(crate) const FILE_SOURCE: &str = include_str!("file.co");
 /// `io.lines`, `io.csv`: readers written in Crow.
 pub(crate) const IO_SOURCE: &str = include_str!("io.co");
 /// `frame.load`, `frame.save`: written in Crow.

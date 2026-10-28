@@ -42,7 +42,7 @@ pub(crate) fn every_arg() -> Vec<Arg> {
     vec![
         Arg::Int, Arg::Float, Arg::Decimal, Arg::Fraction, Arg::Moment, Arg::Moments, Arg::Bytes, Arg::Handle(&crate::table::STREAM), Arg::Handle(&crate::table::SOCKET), Arg::Handle(&crate::table::MAILER), Arg::Handle(&crate::table::DB), Arg::Handle(&crate::table::RESPONSE), Arg::Chunks,
         Arg::Json, Arg::Tensor, Arg::Ints, Arg::Floats, Arg::Tensors, Arg::Rows, Arg::Text, Arg::Texts, Arg::Truth, Arg::Truths,
-        Arg::Records, Arg::Maps, Arg::Items, Arg::FallibleNumbers, Arg::Fallible, Arg::Column, Arg::Map, Arg::Record,
+        Arg::Records, Arg::Maps, Arg::Items, Arg::Frames, Arg::FallibleNumbers, Arg::Fallible, Arg::Column, Arg::Map, Arg::Record,
         Arg::Sparse, Arg::Frame, Arg::Fn, Arg::Fns, Arg::AnyList, Arg::Unknown,
     ]
 }
@@ -52,7 +52,7 @@ pub(crate) fn every_arg() -> Vec<Arg> {
 fn arg_variant(a: Arg) -> &'static str {
     match a {
         Arg::Int => "Int", Arg::Float => "Float", Arg::Decimal => "Decimal", Arg::Fraction => "Fraction", Arg::Moment => "Moment", Arg::Moments => "Moments", Arg::Bytes => "Bytes",
-        Arg::Handle(h) => h.name, Arg::Chunks => "Chunks", Arg::Json => "Json",
+        Arg::Handle(h) => h.name, Arg::Chunks => "Chunks", Arg::Frames => "Frames", Arg::Json => "Json",
         Arg::Tensor => "Tensor", Arg::Ints => "Ints", Arg::Floats => "Floats", Arg::Tensors => "Tensors", Arg::Rows => "Rows", Arg::Text => "Text",
         Arg::Texts => "Texts", Arg::Truth => "Truth", Arg::Truths => "Truths", Arg::Records => "Records", Arg::Maps => "Maps",
         Arg::Items => "Items", Arg::FallibleNumbers => "FallibleNumbers", Arg::Fallible => "Fallible", Arg::Column => "Column",

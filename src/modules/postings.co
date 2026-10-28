@@ -1,0 +1,399 @@
+--- `use magpie.postings`: a text column's index over one row group, in
+--- Crow — the lengths of its documents, a sorted dictionary of its terms,
+--- and for each term its postings: the rows holding it with the count and
+--- the positions, so a query costs the postings of its words and not the
+--- column. The blob a group keeps, the Rust kernel's byte for byte
+--- (docs/magpie-in-crow.md, section 3): the document count (four bytes
+--- little-endian), the lengths bit-packed (one per row, 0 for a missing
+--- cell), a varint count of terms, per term its text (a varint length and
+--- the UTF-8), its document frequency (four bytes), and where its
+--- postings lie in the blob after (eight bytes and four); then the
+--- postings blob, per term in blocks of up to 128 postings — a count
+--- byte, the block's largest term frequency and shortest document (four
+--- bytes each: the bound the best score of the block can reach), then
+--- per posting a varint row delta, a varint count, the same count again
+--- and varint position deltas. The same counts a scan of the column
+--- yields, so a group with an index and one without score alike. The
+--- tests are the module's own: `crow test src/modules/postings.co`, held
+--- to the kernel through its test-only row until the kernel goes.
+use sys
+use bits
+use frame
+use magpie.packing
+use magpie.stem
+
+--- a posting: the row, the term's count in it, its positions
+struct Post [row, tf, positions]
+
+--- a term's postings in one block, with its bound
+struct Block [max_tf, min_len, posts]
+
+--- an index built: its bytes, its document count and its word count
+struct Built [blob, docs, words]
+
+--- an index parsed: the documents' lengths, the dictionary (the terms in
+--- order, each with its document frequency and where its postings lie)
+--- and the postings blob
+struct Index [lengths, terms, dfs, offs, lens, blob]
+
+--- a row's postings gathered as the index is built
+struct Gathered [row, positions]
+
+--- `built[col, from, to, stems]`: the index of rows `from` to `to`
+--- (excluded) of a text column, each cell a document (a missing cell is
+--- none), the tokens stemmed where `stems` is true
+fn built[col, from, to, stems]
+    n = to - from
+    present = present_of[col, from, to]
+    cell_bytes = text_bytes_of[col, from, to]
+    cuts = text_ends_of[col, from, to]
+    lengths = []
+    by_term = map[]
+    ndocs = 0
+    total = 0
+    start = 0
+    for row in range[n]
+        stop = cuts[row]
+        if _present[present, row]
+            toks = terms[text[slice[cell_bytes, start, stop], '']]
+            ndocs = ndocs + 1
+            total = total + len[toks]
+            lengths = push[lengths, len[toks]]
+            here = map[]
+            for p in range[len[toks]]
+                t = toks[p]
+                if stems
+                    t = stem[t]
+                if t in here
+                    here[t] = push[here[t], p]
+                else
+                    one = []
+                    one = push[one, p]
+                    here = set[here, t, one]
+            for t in keys[here]
+                if t in by_term
+                    --- (written at the key, the list grows where it lies:
+                    --- `set[by_term, t, push[by_term[t], …]]` had copied a
+                    --- common word's postings at every row)
+                    by_term[t] = push[by_term[t], Gathered[row, here[t]]]
+                else
+                    rows = []
+                    rows = push[rows, Gathered[row, here[t]]]
+                    by_term = set[by_term, t, rows]
+        else
+            lengths = push[lengths, 0]
+        start = stop
+    out = pack[n, 4, little = true]
+    longest = 0
+    for l in lengths
+        if l gt longest
+            longest = l
+    width = width_of[longest]
+    out = push[out, width]
+    out = concat[out, packed[lengths, width]]
+    --- the postings blob first, so each term's offsets are known
+    blob = bytes[0]
+    dict = keys[by_term]
+    dfs = []
+    offs = []
+    lens = []
+    for term in dict
+        gathered = by_term[term]
+        off = len[blob]
+        last_row = 0
+        count = len[gathered]
+        at = 0
+        while at lt count
+            stop = at + 128
+            if stop gt count
+                stop = count
+            blob = push[blob, stop - at]
+            max_tf = 0
+            min_len = 0
+            for i in range[at, stop]
+                g = gathered[i]
+                if len[g.positions] gt max_tf
+                    max_tf = len[g.positions]
+                l = lengths[g.row]
+                if i eq at or l lt min_len
+                    min_len = l
+            blob = concat[blob, pack[max_tf, 4, little = true]]
+            blob = concat[blob, pack[min_len, 4, little = true]]
+            for i in range[at, stop]
+                g = gathered[i]
+                blob = put_var[blob, g.row - last_row]
+                last_row = g.row
+                blob = put_var[blob, len[g.positions]]
+                blob = put_var[blob, len[g.positions]]
+                last_p = 0
+                for p in g.positions
+                    blob = put_var[blob, p - last_p]
+                    last_p = p
+            at = stop
+        dfs = push[dfs, count]
+        offs = push[offs, off]
+        lens = push[lens, len[blob] - off]
+    out = put_var[out, len[dict]]
+    for i in range[len[dict]]
+        out = put_var[out, len[bytes[dict[i]]]]
+        out = concat[out, bytes[dict[i]]]
+        out = concat[out, pack[dfs[i], 4, little = true]]
+        out = concat[out, pack[offs[i], 8, little = true]]
+        out = concat[out, pack[lens[i], 4, little = true]]
+    out = concat[out, blob]
+    return Built[out, ndocs, total]
+
+--- whether cell `i` is present, by the bitmap
+fn _present[present, i]
+    if len[present] eq 0
+        return true
+    return bitand[byte[present, shift[i, -3]], shift[1, bitand[i, 7]]] ne 0
+
+--- `parsed[data]`: an index read back from its bytes; an error value of
+--- kind `'magpie'` where they are cut short
+fn parsed[data]
+    total = len[data]
+    if total lt 5
+        return error['the file ends `5 - total` bytes early', 'magpie']
+    n = unpack[data, 0, 4, little = true, signed = false]
+    width = byte[data, 4]
+    count = shift[n * width + 7, -3]
+    lengths = unpacked[data, 5, n, width]
+    if not lengths.ok
+        return error[lengths.reason, 'magpie']
+    at = 5 + count
+    nt = read_var[data, at]
+    if not nt.ok
+        return nt
+    at = nt[1]
+    dict = []
+    dfs = []
+    offs = []
+    lens = []
+    for i in range[nt[0]]
+        size = read_var[data, at]
+        if not size.ok
+            return size
+        at = size[1]
+        if at + size[0] + 16 gt total
+            return error['the file ends `at + size[0] + 16 - total` bytes early', 'magpie']
+        term = text[slice[data, at, at + size[0]]]
+        if not term.ok
+            return error['a name is no UTF-8', 'magpie']
+        dict = push[dict, term]
+        at = at + size[0]
+        dfs = push[dfs, unpack[data, at, 4, little = true, signed = false]]
+        offs = push[offs, unpack[data, at + 4, 8, little = true]]
+        lens = push[lens, unpack[data, at + 12, 4, little = true, signed = false]]
+        at = at + 16
+    return Index[lengths, dict, dfs, offs, lens, slice[data, at, total]]
+
+--- `term_of[ix, word]`: the word's place in the dictionary, or -1
+fn term_of[ix, word]
+    lo = 0
+    hi = len[ix.terms]
+    while lo lt hi
+        mid = (lo + hi) / 2
+        if ix.terms[mid] lt word
+            lo = mid + 1
+        else
+            hi = mid
+    if lo lt len[ix.terms] and ix.terms[lo] eq word
+        return lo
+    return -1
+
+--- `with_prefix[ix, prefix]`: the places of the terms with the prefix,
+--- in order
+fn with_prefix[ix, prefix]
+    lo = 0
+    hi = len[ix.terms]
+    while lo lt hi
+        mid = (lo + hi) / 2
+        if ix.terms[mid] lt prefix
+            lo = mid + 1
+        else
+            hi = mid
+    out = []
+    i = lo
+    while i lt len[ix.terms] and starts[ix.terms[i], prefix]
+        out = push[out, i]
+        i = i + 1
+    return out
+
+--- `levenshtein[a, b, most]`: the edit distance of two words, cut at
+--- `most` (an answer past it is `most + 1`)
+fn levenshtein[a, b, most]
+    ac = split[a, '']
+    bc = split[b, '']
+    prev = range[len[bc] + 1]
+    cur = []
+    for j in range[len[bc] + 1]
+        cur = push[cur, 0]
+    for i in range[1, len[ac] + 1]
+        cur[0] = i
+        row_min = i
+        for j in range[1, len[bc] + 1]
+            cost = 1
+            if ac[i - 1] eq bc[j - 1]
+                cost = 0
+            best = prev[j] + 1
+            if cur[j - 1] + 1 lt best
+                best = cur[j - 1] + 1
+            if prev[j - 1] + cost lt best
+                best = prev[j - 1] + cost
+            cur[j] = best
+            if best lt row_min
+                row_min = best
+        if row_min gt most
+            return most + 1
+        swapped = prev
+        prev = cur
+        cur = swapped
+    return prev[len[bc]]
+
+--- `within[ix, word, edits]`: the places of the terms within the edit
+--- distance of the word (at most 2, as Lucene's fuzzy query takes it),
+--- the nearest first and the word itself before any other
+fn within[ix, word, edits]
+    n = len[split[word, '']]
+    keyed = []
+    for i in range[len[ix.terms]]
+        t = ix.terms[i]
+        tn = len[split[t, '']]
+        gap = tn - n
+        if gap lt 0
+            gap = 0 - gap
+        if gap lte edits
+            d = levenshtein[word, t, edits]
+            if d lte edits
+                keyed = push[keyed, d * 16777216 + i]
+    keyed = sort[keyed]
+    out = []
+    for k in keyed
+        out = push[out, bitand[k, 16777215]]
+    return out
+
+--- `blocks_of[ix, term]`: a term's postings, block by block; an error
+--- value of kind `'magpie'` where the blob ends early
+fn blocks_of[ix, term]
+    off = ix.offs[term]
+    stop = off + ix.lens[term]
+    if stop gt len[ix.blob]
+        return error['the index postings end early', 'magpie']
+    df = ix.dfs[term]
+    at = off
+    blocks = []
+    last_row = 0
+    seen = 0
+    while seen lt df
+        if at + 9 gt stop
+            return error['the index postings end early', 'magpie']
+        count = byte[ix.blob, at]
+        max_tf = unpack[ix.blob, at + 1, 4, little = true, signed = false]
+        min_len = unpack[ix.blob, at + 5, 4, little = true, signed = false]
+        at = at + 9
+        posts = []
+        for i in range[count]
+            delta = read_var[ix.blob, at]
+            if not delta.ok
+                return delta
+            row = last_row + delta[0]
+            last_row = row
+            tf = read_var[ix.blob, delta[1]]
+            if not tf.ok
+                return tf
+            np = read_var[ix.blob, tf[1]]
+            if not np.ok
+                return np
+            at = np[1]
+            positions = []
+            last_p = 0
+            for j in range[np[0]]
+                step = read_var[ix.blob, at]
+                if not step.ok
+                    return step
+                p = last_p + step[0]
+                last_p = p
+                positions = push[positions, p]
+                at = step[1]
+            posts = push[posts, Post[row, tf[0], positions]]
+        seen = seen + count
+        blocks = push[blocks, Block[max_tf, min_len, posts]]
+    return blocks
+
+--- an index round-trips, is the kernel's byte for byte, and answers
+--- terms, prefixes and edits as the kernel's tests say
+test an_index_round_trips_and_answers_terms_prefixes_and_edits[]
+    docs = text_column[bytes['the quick brown foxthe fox and the dogbrown bread'], _cuts[19, 19, 38, 49, 49], _gap[]]
+    made = built[docs, 0, 5, false]
+    assert[made.docs eq 4 and made.words eq 11]
+    assert[same[made.blob, index_rs[docs, 0, 5, false]]]
+    ix = parsed[made.blob]
+    assert[ix.lengths eq [4, 0, 5, 2, 0]]
+    assert[ix.terms eq ['and', 'bread', 'brown', 'dog', 'fox', 'quick', 'the']]
+    the = term_of[ix, 'the']
+    assert[ix.dfs[the] eq 2]
+    blocks = blocks_of[ix, the]
+    assert[len[blocks] eq 1]
+    first = blocks[0]
+    assert[first.max_tf eq 2 and first.min_len eq 4]
+    assert[len[first.posts] eq 2]
+    assert[first.posts[0].row eq 0 and first.posts[0].tf eq 1 and first.posts[0].positions eq [0]]
+    assert[first.posts[1].row eq 2 and first.posts[1].tf eq 2 and first.posts[1].positions eq [0, 3]]
+    assert[with_prefix[ix, 'br'] eq [1, 2]]
+    assert[len[with_prefix[ix, 'zz']] eq 0]
+    assert[within[ix, 'fix', 1] eq [term_of[ix, 'fox']]]
+    assert[within[ix, 'brwn', 2] eq [term_of[ix, 'brown']]]
+    assert[term_of[ix, 'cat'] eq -1]
+    --- stemmed, the index is the kernel's too
+    stemmed = built[docs, 0, 5, true]
+    assert[same[stemmed.blob, index_rs[docs, 0, 5, true]]]
+    assert[parsed[stemmed.blob].terms eq ['and', 'bread', 'brown', 'dog', 'fox', 'quick', 'the']]
+    assert[not parsed[bytes[3]].ok]
+
+--- five ends, as a list of ints (a literal of numbers is a tensor)
+fn _cuts[a, b, c, d, e]
+    out = []
+    out = push[out, a]
+    out = push[out, b]
+    out = push[out, c]
+    out = push[out, d]
+    out = push[out, e]
+    return out
+
+--- a bitmap with the second of five cells missing (the fifth is present
+--- and empty)
+fn _gap[]
+    present = bytes[1]
+    present = set[present, 0, 29]
+    return present
+
+--- many postings make several blocks, as the kernel's
+test many_postings_make_several_blocks[]
+    texts = []
+    for i in range[300]
+        if i - 3 * (i / 3) eq 0
+            texts = push[texts, 'word `i` and word']
+        else
+            texts = push[texts, 'other']
+    df = frame.new[t = texts]
+    made = built[df.t, 0, 300, false]
+    assert[same[made.blob, index_rs[df.t, 0, 300, false]]]
+    ix = parsed[made.blob]
+    word = term_of[ix, 'word']
+    assert[ix.dfs[word] eq 100]
+    blocks = blocks_of[ix, word]
+    total = 0
+    for b in blocks
+        total = total + len[b.posts]
+    assert[total eq 100]
+    assert[blocks[0].posts[1].row eq 3]
+    assert[blocks[0].posts[1].positions eq [0, 3]]
+    assert[blocks[0].max_tf eq 2]
+
+--- the edit distance is cut at its limit
+test edit_distance_is_cut_at_the_limit[]
+    assert[levenshtein['kitchen', 'kitchn', 2] eq 1]
+    assert[levenshtein['kitchen', 'kitten', 2] eq 2]
+    assert[levenshtein['kitchen', 'kittens', 2] eq 3]
+    assert[levenshtein['kitchen', 'garden', 2] eq 3]

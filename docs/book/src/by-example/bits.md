@@ -78,3 +78,37 @@ crow
 ```
 
 Reference: spec section 13 (bits).
+
+Arithmetic wrapped to 64 bits, for a hash whose multiply wraps, a linear
+congruence or an offset from a base — what ints that grow have no other
+way to say: the exact product of two ints past 2^32 is a growing int.
+`wrapmul`, `wrapadd` and `wrapsub` answer the low 64 bits of the exact
+answer, as the int of those bits.
+
+```crow
+use bits
+
+--- FNV-1a of 64 bits: a hash whose multiply wraps, written as it is
+fn fnv64[s]
+    h = -3750763034362895579
+    for c in split[s, '']
+        h = bitxor[h, code[c]]
+        h = wrapmul[h, 1099511628211]
+    return h
+
+log[fnv64['crow']]
+log[wrapadd[9223372036854775807, 1]]
+log[wrapsub[-9223372036854775808, 1]]
+log[wrapmul[4294967296, 4294967296]]
+log[wrap[18446744073709551615]]
+log[wrap[2 ^ 64 + 5]]
+```
+
+```text
+1330361311932775454
+-9223372036854775808
+9223372036854775807
+0
+-1
+5
+```

@@ -9,6 +9,34 @@ history says the rest.
 
 ### Fixed
 
+- A list held in a list, under a map's key or in a record's field grows
+  where it lies: `xs[i] = push[xs[i], v]`, `m[k] = push[m[k], v]` and
+  `r.items = push[r.items, v]` take the value out, push onto it and put
+  it back, in both modes, where reading it had copied the list at every
+  push (200,000 pushes under eight keys: 650 ms compiled and 14 s
+  interpreted, 5 ms and 72 ms now; the postings builder of magpie.file
+  had run 100× the kernel's time — parity 306).
+- A record's field given `[]` where the record is made takes the kind of
+  what is written into it (`b.items = push[b.items, i]`), and a map of
+  maps nothing has written into yet is declared one: both had run
+  interpreted and not built compiled (parity 307).
+- A function taking a column is copied once per kind of cell: an int
+  column and a float column handed to one function had shared a copy
+  typed by the first, and the second call disagreed with itself
+  (parity 305).
+- A list of numbers compared with one number is a mask in both modes'
+  types (`3 gte ys`), so a condition of it is refused as a tensor's is:
+  it had run interpreted and not built compiled.
+- `bytes[n]` of a count the machine cannot hold is refused, where it had
+  aborted the interpreter; a shift by a count past 100 bits no longer
+  stops the width pass (both found by `crow check --self`).
+- A function's branches bind their own locals whatever the program
+  names its variables: with `x` at the top level, a function's `x = 1`
+  in one branch and `x = 'a'` in the other had been refused ("cannot
+  reassign 'x' from int to str — variable type cannot change"), since
+  the scoping pass kept the function's `x` as the program's; a ui
+  program's functions still write its facts (parity 304, found by
+  magpie.file's `plain` beside the encoder's).
 - A nested literal of numbers holding an int past 2^53 is refused as the
   rule says (a matrix holds its numbers as floats; a list of ints is built
   with push[…]), in both modes: the row with the big int had been typed a
@@ -29,6 +57,14 @@ history says the rest.
   of a 32-bit int is 16 bits, not 32, so a hash's multiply of it stays in
   64 bits (it had gone to the growing form, and a codec written in Crow
   ran its hash on big ints).
+- A record's bytes field read into a variable is copied out of the
+  record, as a text field is: it had been moved, and a record read again
+  after did not build (E0382).
+- A module row taking a list whole (`float_bytes[xs, …]`) clones the
+  variable where it is read again and moves it at its last read, as a core
+  row's call does: the module row's arguments had been printed without the
+  owned-kind rule, and the compiled program did not build (E0382);
+  `args_by_kind` is the one rule both paths read.
 - A bytes parameter a function only reads is lent (`&Bytes`, read where
   the caller holds it), as a list's, a map's or a text's is: it had been
   passed by value, so a hash of four bytes called once per byte of a 50 MB
@@ -43,6 +79,43 @@ history says the rest.
 
 ### Added
 
+- `use magpie.encode` (`chunk`, `unchunk`, `header`): a column chunk in
+  Crow, every kind the kernel writes — ints by frame of reference or
+  delta, floats at 64 and 32 bits, text plain or as a dictionary, bools,
+  moments, vectors — through the codec where it shrinks, the kernel's
+  bytes byte for byte (docs/magpie-in-crow.md, the third kernel). A
+  missing cell reads as one placeholder through the column rows in both
+  modes (0, 0.0, false, empty text, zeros), where the interpreter had
+  handed a float back as NaN and the compiled program as what was
+  written.
+- `use magpie.file` (`file_of`, `rows_per_group`, `columns_of`,
+  `group_bytes`, `finish`, `opened`, `entries`, `wanted`, `groups_of`,
+  `group_of`, `empty_of`, `chunk_of`, `value_filter`, `token_filter`,
+  `index_bytes`, `about`): the Magpie file in Crow — row groups of chunks
+  with their statistics and filters, a block per column, the footer —
+  written as the kernel writes it byte for byte and read back by region,
+  the groups decoded across the cores (the seventh kernel). With it,
+  `stack[frames]` of a list of frames (the form `stack[tensors]` has: a
+  file's groups stacked in one pass, where two at a time copied the
+  whole each time) and `filled[filter, items]` in `use magpie.bloom` (a
+  list added in one pass over the bits).
+- `use magpie.postings` (`built`, `parsed`, `term_of`, `with_prefix`,
+  `within`, `blocks_of`, `levenshtein`): a text column's search index
+  over one row group in Crow, the kernel's bytes byte for byte (the
+  sixth kernel).
+- `use magpie.stem` (`stem`): the Porter stemmer in Crow, the kernel's
+  answer word for word (the fifth kernel); and `terms[text]` on the sys
+  layer, the words of a text as an index and a query split them.
+- `use magpie.bloom` (`sized`, `add`, `admits`, `filter_bytes`,
+  `filter_of`): the bloom filter in Crow, the kernel's bits bit for bit
+  (the fourth kernel).
+- `wrap[x]` in `use bits`: a whole number's low 64 bits as the int of
+  those bits, with a growing form.
+- `wrapmul`, `wrapadd` and `wrapsub` in `use bits`: arithmetic wrapped to
+  64 bits — a hash's multiply per byte, a linear congruence, a checksum,
+  an offset from a base — which ints that grow had no way to say; and
+  `float_bytes`/`float_values` on the sys layer, a chunk's floats as their
+  bits at once.
 - Bytes written in place, on the sys layer (docs/magpie-in-crow.md, the
   plan to rewrite Magpie's kernels in Crow): `bytes[n]` (zero bytes to
   write into), `set[bytes, i, v]`, `push[bytes, v]`, and `concat[a, b]`
@@ -51,6 +124,19 @@ history says the rest.
   path the tensors and texts already use; the lowering's split of a
   self-reading write (`taken_in_place`) applies to any module's in-place
   row now, not the core's alone.
+- Numbers in bytes, files by region and columns as their parts, on the
+  sys layer (docs/magpie-in-crow.md, 2.2, 2.3 and 2.5): `pack[n, width,
+  little]` and `unpack[bytes, at, width, little, signed]` (an int as its
+  1, 2, 4 or 8 bytes and back), `ieee[x, width, little]` and its reader
+  `ieee[bytes, at, width, little]`, `digest[bytes, 'crc32']` and `hash[…,
+  'crc32']`; `file[path, from, n]` (a region read without the rest),
+  `modified[path]`, `flushed[path]` (written through to the disk),
+  `link[from, to]` (a name claimed once) and `move[from, to]`; and a
+  column as its parts — `cell_kind`, `ints_of`, `floats_of`, `bools_of`,
+  `millis_of`, `zones_of`, `vectors_of`, `vector_width`, `text_bytes_of`,
+  `text_ends_of`, `present_of`, `missing_in` — and back, `ints_column`,
+  `floats_column`, `bools_column`, `moments_column`, `vectors_column`,
+  `text_column`, `text_dict_column`, with no value per cell.
 
 ### Breaking
 

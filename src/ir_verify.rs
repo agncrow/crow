@@ -245,7 +245,7 @@ impl<'p> Verifier<'p> {
                     }
                 }
             }
-            Stmt::SetPath { var, path, expr } => {
+            Stmt::SetPath { var, path, expr, .. } => {
                 let t = self.expr(expr);
                 for step in path {
                     if let PathStep::Index(i) = step {
@@ -780,6 +780,7 @@ fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
             Kind::Tensors => items(t, &|e| matches!(e, Ty::Tensor(..))),
             Kind::Strs => items(t, &|e| matches!(e, Ty::Str | Ty::Markup)),
             Kind::Chunks => items(t, &|e| *e == Ty::Bytes),
+            Kind::Frames => items(t, &|e| matches!(e, Ty::Frame(_))),
             Kind::Bools => items(t, &|e| *e == Ty::Bool),
             Kind::Sparse => matches!(t, Ty::Sparse),
             Kind::Frame => matches!(t, Ty::Frame(_)),

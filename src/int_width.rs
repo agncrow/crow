@@ -901,7 +901,7 @@ impl Walk {
                     self.bounds.remove(var);
                 }
             }
-            Stmt::SetPath { var, path, expr } => {
+            Stmt::SetPath { var, path, expr, .. } => {
                 self.calls_in(expr);
                 for p in path {
                     if let PathStep::Index(i) = p {
@@ -1956,7 +1956,10 @@ fn row_iv(row: &crate::table::Row, ivs: &[Iv]) -> Iv {
                 // right one moves toward 0 (or -1), rounding down
                 let mut r = Iv::EMPTY;
                 if n.hi > 0 {
-                    let (k0, k1) = (1i128 << n.lo.max(0), 1i128 << n.hi);
+                    // (a count past the ends is held at 100 bits: `shift[1,
+                    // 2 ^ 63 - 1]` had overflowed the shift here, a panic
+                    // in the lowering — crow check --self)
+                    let (k0, k1) = (1i128 << n.lo.clamp(0, 100), 1i128 << n.hi.clamp(0, 100));
                     let ends = [a.lo.saturating_mul(k0), a.lo.saturating_mul(k1), a.hi.saturating_mul(k0), a.hi.saturating_mul(k1)];
                     r = r.join(Iv::new(ends.iter().copied().min().unwrap_or(0), ends.iter().copied().max().unwrap_or(0)));
                 }
@@ -2263,7 +2266,7 @@ impl<'a> Retype<'a> {
                     *expr = to_type(take(expr), &want);
                 }
             }
-            Stmt::SetPath { var, path, expr } => {
+            Stmt::SetPath { var, path, expr, .. } => {
                 for p in path.iter_mut() {
                     if let PathStep::Index(i) = p {
                         self.expr(i);

@@ -422,8 +422,14 @@ pub enum Stmt {
     Let { var: String, ty: Ty, expr: Expr },
     /// Rebinding a local.
     Set { var: String, expr: Expr },
-    /// A field or an index of a local, assigned in place.
-    SetPath { var: String, path: Vec<PathStep>, expr: Expr },
+    /// A field or an index of a local, assigned in place. `taken`: the
+    /// value is a call of an in-place row given this very place first
+    /// (`xs[i] = push[xs[i], v]`, `m[k] = push[m[k], v]`, `r.items =
+    /// push[r.items, v]`): both backends take the place's value out, hand
+    /// it to the row moved and write the answer back, so a list held in a
+    /// list, under a map's key or in a record's field grows where it lies
+    /// (spec, Arrays) — decided once, by the lowering's `grown_in_place`.
+    SetPath { var: String, path: Vec<PathStep>, expr: Expr, taken: bool },
     /// The only write to a fact.
     Store { fact: String, expr: Expr },
     If { cond: Expr, then: Block, els: Option<Block> },
@@ -1520,7 +1526,7 @@ fn block(out: &mut String, b: &Block, depth: usize) {
             Stmt::Set { var, expr: e } => {
                 let _ = writeln!(out, "{}{} = {}", pad, var, expr(e));
             }
-            Stmt::SetPath { var, path, expr: e } => {
+            Stmt::SetPath { var, path, expr: e, .. } => {
                 let mut p = var.clone();
                 for step in path {
                     match step {

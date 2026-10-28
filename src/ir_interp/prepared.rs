@@ -769,7 +769,13 @@ impl Comp {
                     None => self.exec(s),
                 }
             }
-            Stmt::SetPath { var, path, expr } => {
+            Stmt::SetPath { var, path, expr, taken } => {
+                // (a place grown where it lies is the walker's: the slot
+                // taken out, the row given it moved, the answer written back)
+                if *taken {
+                    self.exec(s);
+                    return;
+                }
                 // `xs[i] = ys[j]`: the item read and written by one
                 // instruction, the value's index first as the walker reads it
                 // (the destination's index a local or a constant, so nothing

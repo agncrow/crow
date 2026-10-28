@@ -1,0 +1,24 @@
+--- A function's branches bind their own locals whatever the program names
+--- its variables: `x` at the top level, and `x` an int in one branch and
+--- text in the other inside a function (the lowering had kept the
+--- function's `x` as the global and judged the second branch a
+--- reassignment, "variable type cannot change" — found by magpie.file's
+--- `plain`, a program's frame beside the encoder's two `plain`s).
+x = 2.5
+
+fn f[k]
+    if k eq 1
+        x = 1
+        return str[x]
+    else
+        x = 'a'
+        return x
+
+fn g[]
+    x = 7
+    return x
+
+log[f[1]]
+log[f[2]]
+log[g[]]
+log[x]

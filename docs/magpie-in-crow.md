@@ -127,7 +127,7 @@ keyed by path, size and modification time.
 - `file[path, from, n]`: the bytes of a region (a third `file` row,
   by arity).
 - `modified[path]`: when the file was last written, a moment.
-- `flush[path]`: the file, or the directory, written through to the
+- `flushed[path]`: the file, or the directory, written through to the
   disk (`F_FULLFSYNC` on macOS, `fsync` elsewhere); answers the path.
 - `link[from, to]`: a hard link, refused with the system's reason
   where `to` exists; answers `to`.
@@ -265,6 +265,71 @@ file module: a month's segment written and read by both. At the end:
 every number of docs/magpie-design.md's measured section, compiled,
 beside the Rust numbers it replaces, and the interpreted numbers
 beside them as the case for assembly. The article is revised then.
+
+### 3.1 Ported so far (2026-10-27)
+
+`magpie.codec`, `magpie.packing`, `magpie.encode` (the chunk: every
+column kind, the kernel's bytes byte for byte, tested in both modes,
+the long columns through the codec), `magpie.bloom` (the filter, bit
+for bit, its positions held to the kernel's over ten thousand probes),
+`magpie.stem` (word for word) and `magpie.postings` (the index of a
+row group, byte for byte, blocks included). Two traps a kernel in Crow meets, recorded for the next ones:
+a list literal of ints (`[h, g]`) is a tensor, which holds a 64-bit
+pattern as a float and rounds it — two hashes travel in a record; and
+`%` keeps the sign of its left side, so a pattern read as unsigned is
+`x % m`, made non-negative, plus 2^64 modulo m, modulo m again. What the port added to the
+language beyond section 2: `wrap[x]` (a growing int's low 64 bits),
+`float_bytes`/`float_values` (a chunk's floats at once), and
+`text_dict_column` (a text column kept as its dictionary, as the chunk
+holds it). What it found: a module row's call printed without the
+owned-kind rule (a list moved at every call, E0382), `encode` and
+`decode` being the core's names (the exports are `chunk` and `unchunk`),
+and the interpreter's placeholder for a missing float cell (NaN) differing
+from the compiled program's (what was written) — the column rows read a
+missing cell as one placeholder now, in both modes.
+
+`magpie.file` (2026-10-28): the file — the writer in parts
+(`columns_of`, `group_bytes`, `finish`, and `file_of` over them, so a
+merge can stream groups), the statistics and the token index with the
+kernel's rules, the reader by region (`opened`, `entries`, `groups_of`,
+the filters, `about`) — held to the kernel through `file_rs` byte for
+byte (plain, narrow and stemmed) and to `batch_read`/`batch_stats` on
+the way back, the torn and foreign files refused in the kernel's words,
+the same program run in both modes. What it added to the language:
+`stack[frames]` of a list of frames (a `Frames` kind beside `Chunks`,
+as `stack[tensors]` takes a list: the groups a reader decodes apart are
+stacked in one pass, where `stack[a, b]` in a loop copied the whole each
+round), `filled[filter, items]` in `magpie.bloom` (a group's distinct
+values added in one pass; `add` per item copied the bits each time),
+and `filesize` read for the file's tail. Traps: a record's field may
+not be named `kind` (reserved with `ok`, `reason` and `trace` on every
+value) — a `lo.kind eq 0` had compared an error's kind, text, with a
+number, and `push[out, b.kind]` had typed the bytes as a list of text;
+`split['', ',']` is `['']`, not an empty list — an empty list of text
+is `slice[['x'], 0, 0]`; `set[xs, i, v]` is a map's and bytes' form,
+a list's write is `xs[i] = v`; `reader` is a web form's name; the
+rows-per-group rule is written by the frame's bytes as a plain text
+column holds them (the kernel read the column's in-memory size, which a
+program cannot see), so the oracle takes `per`. What it found in the compiler: a program's top-level
+name made a function's branch-local of that name the program's in the
+scoping pass (lower.rs `scoped`), so two sibling branches binding
+`plain` to two kinds — the encoder's — were refused as a reassignment
+only in programs holding a `plain`; a function's body now binds its own
+locals whatever the program names, unless the program holds state
+(parity 304); a list under a map's key grew by a copy of
+the whole list at every push (`m[k] = push[m[k], v]`, and the `set` form
+the builder had used): the postings of a 200,000-row column took 9.7 s,
+the kernel's 0.1 s — a place now grows where it lies, in both modes
+(parity 306), and the builder writes at the key; a record's field given
+`[]` was never typed by what was pushed onto it, and a map of empty maps
+was declared a map of text (both did not build compiled — parity 307); a
+function taking a column shared one copy between an int column and a
+float column (parity 305). Measured on 200,000 rows of five columns, one
+indexed, compiled: the writer 265 ms against the kernel's 90, the reader
+13 ms against 3 — the rest is per-cell work (a bound, a distinct value
+looked up) the kernel does in a tight loop. Still the kernel's: the
+footer cache per process (2.4, process memory) and the pending rows read
+as a file in memory (the tail's).
 
 ## 4.1 Measured: the codec, 2026-10-27
 

@@ -9,6 +9,7 @@
 //! digit.
 use crate::int::Int;
 use dashu_int::ops::{BitTest, UnsignedAbs};
+use dashu_int::IBig;
 
 /// The most bits a shift may make a number take: past it the number is
 /// none a program could hold (2^32 bits is half a gigabyte).
@@ -27,6 +28,42 @@ pub fn or(a: i64, b: i64) -> i64 {
 /// `bitxor[a, b]`: the bits one has and the other has not.
 pub fn xor(a: i64, b: i64) -> i64 {
     a ^ b
+}
+
+/// `wrapmul[a, b]`, `wrapadd[a, b]`, `wrapsub[a, b]`: the product, the sum
+/// and the difference of two 64-bit patterns wrapped to 64 bits, the int
+/// of the low bits — a hash's multiply per byte, a linear congruence, a
+/// checksum, an offset from a base — which ints that grow have no other
+/// way to say (docs/magpie-in-crow.md, 2.2).
+pub fn wrapmul(a: i64, b: i64) -> i64 {
+    a.wrapping_mul(b)
+}
+
+pub fn wrapadd(a: i64, b: i64) -> i64 {
+    a.wrapping_add(b)
+}
+
+pub fn wrapsub(a: i64, b: i64) -> i64 {
+    a.wrapping_sub(b)
+}
+
+/// `wrap[x]`: a whole number's low 64 bits as the int of those bits — a
+/// growing int wrapped to 64, where `wrapmul` and its kin wrap as they
+/// compute; one that fits is itself.
+pub fn wrap(a: i64) -> i64 {
+    a
+}
+
+/// `wrap[x]` of a number of any size (`core.__wrap_big`): its low 64 bits,
+/// two's complement for a negative one.
+pub fn wrap_big(a: &Int) -> i64 {
+    match a {
+        Int::Small(n) => *n,
+        Int::Big(_) => {
+            let low = a.big() & IBig::from(u64::MAX);
+            u64::try_from(low).map(|u| u as i64).unwrap_or(0)
+        }
+    }
 }
 
 /// `bitcount[a]`: the ones among the bits of the number's size, `|a|`.

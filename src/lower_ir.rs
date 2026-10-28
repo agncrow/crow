@@ -184,7 +184,7 @@ fn written_names(program: &mut Program) {
                 name(var);
                 expr_(expr);
             }
-            Stmt::SetPath { var, path, expr } => {
+            Stmt::SetPath { var, path, expr, .. } => {
                 name(var);
                 for p in path.iter_mut() {
                     if let PathStep::Index(i) = p {
@@ -2061,19 +2061,83 @@ impl<'a> Lowerer<'a> {
     /// local's: the interpreter stopped, "undefined variable", and the
     /// compiled page changed it — crow check --self's state family).
     fn path_write(&mut self, var: String, path: Vec<PathStep>, expr: Expr) -> Vec<Stmt> {
+        let (mut out, expr, taken) = self.grown_in_place(&var, &path, expr);
         if !(self.is_fact(&var) && self.sees_facts()) {
-            return vec![Stmt::SetPath { var, path, expr }];
+            out.push(Stmt::SetPath { var, path, expr, taken });
+            return out;
         }
         let ty = self.ctx.vars.get(&var).cloned().unwrap_or(Ty::Unknown);
         let t = self.fresh();
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(t.clone());
         }
-        vec![
+        out.extend([
             Stmt::Let { var: t.clone(), ty: ty.clone(), expr: Expr::Load(var.clone(), ty.clone()) },
-            Stmt::SetPath { var: t.clone(), path, expr },
+            Stmt::SetPath { var: t.clone(), path, expr, taken },
             Stmt::Store { fact: var, expr: Expr::Local(t, ty) },
-        ]
+        ]);
+        out
+    }
+
+    /// A place that grows where it lies: `xs[i] = push[xs[i], v]`, `m[k] =
+    /// push[m[k], v]`, `r.items = push[r.items, v]` — a write at a path
+    /// whose value is a call of an in-place row given that very place
+    /// first (spec, Arrays). Marked `taken` for both backends
+    /// (ir::Stmt::SetPath): the place's value is taken out, handed to the
+    /// row moved and written back, where reading it had copied the list
+    /// at every push — 200,000 pushes under eight keys took 650 ms
+    /// compiled and 14 s interpreted, against 1 ms (found by the postings
+    /// builder of magpie.file, 100× the kernel's time). The place holds a
+    /// list, a map, text or bytes (a tensor has its own rows, `__set_at`);
+    /// the path's positions are quiet, so computing each once is computing
+    /// it as written; any other argument reading the variable is computed
+    /// first, into a temporary, as `taken_in_place` does for a whole
+    /// variable.
+    fn grown_in_place(&mut self, var: &str, path: &[PathStep], expr: Expr) -> (Vec<Stmt>, Expr, bool) {
+        let found = match &expr {
+            Expr::Call { target: Target::Row(row), args, ty, propagates }
+                if row.takes_in_place()
+                    && args.first().is_some_and(|first| {
+                        let place = first.ty();
+                        !place.is_result()
+                            && matches!(place.payload(), Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Bytes)
+                            && reads_place(first, var, path)
+                    })
+                    && path.iter().all(|p| match p {
+                        PathStep::Index(i) => crate::ir::quiet(i),
+                        PathStep::Field(_) => true,
+                    }) =>
+            {
+                Some((*row, args.clone(), ty.clone(), *propagates))
+            }
+            _ => None,
+        };
+        let Some((row, args, ty, propagates)) = found else { return (Vec::new(), expr, false) };
+        // (every other argument a plain read where the write runs: one that
+        // computes — or reads the variable — is computed first, into a
+        // temporary, so the place is taken only once nothing is left to run
+        // and nothing reads it while it is out)
+        let reads_var = |e: &Expr| {
+            let mut found = false;
+            crate::ir::visit_expr(e, &mut |x| found |= matches!(x, Expr::Local(n, _) | Expr::Move(n, _) if n == var));
+            found
+        };
+        let mut out = Vec::new();
+        let mut kept = vec![args[0].clone()];
+        for a in &args[1..] {
+            if crate::ir::quiet(a) && !reads_var(a) {
+                kept.push(a.clone());
+                continue;
+            }
+            let t = self.fresh();
+            let at = a.ty();
+            out.push(Stmt::Let { var: t.clone(), ty: at.clone(), expr: a.clone() });
+            if let Some(scope) = self.scopes.last_mut() {
+                scope.insert(t.clone());
+            }
+            kept.push(Expr::Local(t, at));
+        }
+        (out, Expr::Call { target: Target::Row(row), args: kept, ty, propagates }, true)
     }
 
     /// The frame a path holds — a variable's (`xs`), or a record's field's
@@ -2300,6 +2364,9 @@ impl<'a> Lowerer<'a> {
                 let expr = self.lower_expr(value)?;
                 if self.pass == Pass::Final && self.refuse_nothing_held(&format!("the field '{}'", field), &expr) {
                     return Ok(Vec::new());
+                }
+                if self.pass != Pass::Final {
+                    self.settled_field(object, field, &expr);
                 }
                 let (var, mut path, _) = self.muted_target(object)?;
                 path.push(PathStep::Field(field.clone()));
@@ -3562,6 +3629,31 @@ impl<'a> Lowerer<'a> {
                     self.ctx.vars.insert(var.clone(), Ty::List(Box::new(Ty::Float)));
                 }
                 _ => {}
+            }
+        }
+    }
+
+    /// A provisional lowering's `r.f = v`: a record's field that holds
+    /// something not known yet — one given `[]` or `map[]` where the record
+    /// was made — takes what the value written knows, as a variable first
+    /// given `[]` takes its pushes' kind; every later pass reads it, and the
+    /// record is declared so (`b.items = push[b.items, i]` after `Bag[[],
+    /// 0]` had left the field a list of nothing, declared a list of text
+    /// compiled, and the program did not build; interpreted it ran).
+    fn settled_field(&mut self, object: &A, field: &str, value: &Expr) {
+        let rec = match self.target_type(object).payload() {
+            Ty::Record(r) | Ty::OptRecord(r) => r.clone(),
+            _ => return,
+        };
+        let given = read(value).payload().clone();
+        if let Some(sig) = self.ctx.structs.get_mut(&rec)
+            && let Some((_, held)) = sig.fields.iter_mut().find(|(n, _)| n == field)
+            && held.has_unknown()
+            && held.compatible(&given)
+        {
+            let joined = held.unify(&given);
+            if joined != *held {
+                *held = joined;
             }
         }
     }
@@ -5700,6 +5792,7 @@ impl<'a> Lowerer<'a> {
             Some(Kind::Floats) => Ty::Float,
             Some(Kind::Bools) => Ty::Bool,
             Some(Kind::Chunks) => Ty::Bytes,
+            Some(Kind::Frames) => Ty::Frame(None),
             Some(Kind::Tensors) => Ty::tensor(Ty::Float),
             _ => Ty::Int,
         };
@@ -5988,6 +6081,7 @@ impl<'a> Lowerer<'a> {
                     Some(Kind::Floats) => Ty::Float,
                     Some(Kind::Bools) => Ty::Bool,
                     Some(Kind::Chunks) => Ty::Bytes,
+                    Some(Kind::Frames) => Ty::Frame(None),
                     Some(Kind::Tensors) => Ty::tensor(Ty::Float),
                     Some(Kind::Tensor) => Ty::Float,
                     _ => return x,
@@ -7275,6 +7369,24 @@ fn place_moves_in(block: &mut Block, live_after: &HashSet<String>, allowed: Opti
     }
 }
 
+/// Whether an expression reads exactly the place a path write names: the
+/// local at the path's root, then each step — an index by the same
+/// expression, a field of the same name (`grown_in_place`).
+fn reads_place(e: &Expr, var: &str, path: &[PathStep]) -> bool {
+    match (path.split_last(), e) {
+        (None, Expr::Local(v, _) | Expr::Move(v, _)) => v == var,
+        (Some((PathStep::Index(k), front)), Expr::Index { base, indices, .. }) => indices.len() == 1 && same_expr(&indices[0], k) && reads_place(base, var, front),
+        (Some((PathStep::Field(f), front)), Expr::Field { base, name, .. }) => name == f && reads_place(base, var, front),
+        _ => false,
+    }
+}
+
+/// Two quiet expressions written the same — a local, a constant, a field
+/// of those — which both backends evaluate to one value.
+fn same_expr(a: &Expr, b: &Expr) -> bool {
+    crate::ir::quiet(a) && crate::ir::quiet(b) && format!("{:?}", a) == format!("{:?}", b)
+}
+
 /// The names a statement reads a field of, anywhere in it.
 fn stmt_field_bases(s: &Stmt, out: &mut HashSet<String>) {
     crate::ir::visit_block(std::slice::from_ref(s), &mut |e| {
@@ -7544,7 +7656,7 @@ fn note_reads(e: &Expr, seen: &mut HashSet<String>) {
 fn stmt_reads(s: &Stmt, out: &mut HashSet<String>) {
     match s {
         Stmt::Let { expr, .. } | Stmt::Set { expr, .. } | Stmt::Store { expr, .. } | Stmt::Do(expr) => expr_reads(expr, out),
-        Stmt::SetPath { var, path, expr } => {
+        Stmt::SetPath { var, path, expr, .. } => {
             out.insert(var.clone());
             for p in path {
                 if let PathStep::Index(i) = p {
@@ -8003,6 +8115,10 @@ if r.ok
         refused("log[now[] eq 'x']\n", "eq compares values of one kind, not a moment with text");
         refused("log[now[] * 2]\n", "a moment adds or subtracts seconds (t + 60), subtracts a moment (t2 - t1, the seconds between), and compares with a moment");
         assert_eq!(refusal_of("t = now[]\nlog[t gt t - 5]\nlog[(t - 60) - t]\nlog[t + 1.5]\nlog[min[t, t + 1] eq t]\n"), "");
+        // (a list of numbers beside one number is a mask, so a condition
+        // of it is refused as a tensor's is: it had run interpreted and
+        // not built compiled)
+        refused("ys = []\nys = push[ys, 1.0]\nif 3 gte ys\n    log[1]\n", "this is a list of bools, and a condition is true or false");
         refused("log[true gt false]\n", "gt compares numbers with numbers or text with text, not a bool with a bool");
         refused("log['a' lte 1]\n", "lte compares numbers with numbers or text with text, not text with a number");
         let df = "use frame\ndf = frame.new[name = ['ada', 'bob']]\n";

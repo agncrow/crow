@@ -1,0 +1,21 @@
+--- A function taking a column is copied once per kind of cell: an int
+--- column and a float column are two signatures, as the runtime holds
+--- them apart (one copy for both had been typed by the first call's
+--- cells, and the second call disagreed with itself — found by timing
+--- magpie.file's writer column by column).
+use frame
+
+fn width[col]
+    return len[str[col]] gt 0
+
+fn first_text[col]
+    return str[col[0]]
+
+df = frame.new[id = [1, 2], price = [1.5, 2.5], name = ['a', 'b'], flag = [true, false]]
+log[width[df.id]]
+log[width[df.price]]
+log[width[df.name]]
+log[first_text[df.id]]
+log[first_text[df.price]]
+log[first_text[df.name]]
+log[first_text[df.flag]]

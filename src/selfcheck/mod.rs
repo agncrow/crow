@@ -159,6 +159,7 @@ fn values() -> Vec<Val> {
         plain("record", "SelfP[1, 2]"),
         plain("fn", "self_double"),
         framed("frame", "sf"),
+        framed("frames", "push[push[[], sf], head[sf, 1]]"),
         framed("colint", "sf.a"),
         framed("coltext", "sf.b"),
         framed("colbool", "sf.on"),
@@ -227,6 +228,7 @@ fn tried_first(k: Kind) -> &'static [&'static str] {
         Kind::Column => &["colint", "colfloat", "coltext", "colbool", "colvec"],
         Kind::Bytes => &["sysbytes", "bytes"],
         Kind::Chunks => &["chunks"],
+        Kind::Frames => &["frames"],
         Kind::Stream => &["stream"],
         Kind::Shown | Kind::ShownDyn | Kind::Shows => &["int", "text", "ints"],
         Kind::Encoded => &["map", "json"],
@@ -1564,15 +1566,32 @@ fn spawn_within(mut cmd: Command, limit: Duration) -> (Option<i32>, String, Stri
     (code, out, err, ended)
 }
 
+/// The clock every case runs under (`CROW_CLOCK`), and the moment the
+/// files it reads were written.
+const FIXED_CLOCK: u64 = 1767225600;
+
 /// The run's files — a text, a CSV, a JSON document, a directory — copied
 /// into a case's own directory.
 fn copy_files(from: &Path, to: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(to.join("self_dir"))?;
     for f in ["self_text.txt", "self_data.csv", "self_data.json"] {
         std::fs::copy(from.join(f), to.join(f))?;
+        written_at_the_clock(&to.join(f))?;
     }
     std::fs::copy(from.join("self_dir").join("inside.txt"), to.join("self_dir").join("inside.txt"))?;
+    written_at_the_clock(&to.join("self_dir").join("inside.txt"))?;
+    written_at_the_clock(&to.join("self_dir"))?;
     Ok(())
+}
+
+/// The file's (or directory's) modification time set to the run's fixed
+/// clock, so `modified[path]` answers one moment under every
+/// configuration (each copies the files at its own time, and the walked,
+/// unfused, unmoved and compiled runs had all disagreed with the
+/// interpreted one).
+fn written_at_the_clock(path: &Path) -> std::io::Result<()> {
+    let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(FIXED_CLOCK);
+    std::fs::File::open(path)?.set_modified(at)
 }
 
 /// The directory a batch runs in under one configuration, made anew: the
@@ -1605,7 +1624,7 @@ fn case_command(program: &Path, run_dir: &Path, config: &Config, live: bool) -> 
             cmd.env(keep, v);
         }
     }
-    cmd.current_dir(run_dir).env("CROW_SEED", "1").env("CROW_CLOCK", "1767225600").env("CROW_SYS", "1");
+    cmd.current_dir(run_dir).env("CROW_SEED", "1").env("CROW_CLOCK", FIXED_CLOCK.to_string()).env("CROW_SYS", "1");
     cmd.env("CROW_REPLAY", if live { Path::new("") } else { run_dir });
     for (k, v) in SERVED.get().map(|s| s.as_slice()).unwrap_or(&[]) {
         cmd.env(k, v);

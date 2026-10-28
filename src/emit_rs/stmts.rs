@@ -556,7 +556,7 @@ impl Emitter {
                     self.line(&format!("{} = {};", fact, v));
                 }
             }
-            Stmt::SetPath { var, path, expr } => self.emit_set_path(var, path, expr),
+            Stmt::SetPath { var, path, expr, taken } => self.emit_set_path(var, path, expr, *taken),
             Stmt::If { cond, then, els } => {
                 let c = self.expr(cond);
                 let c = self.guard_condition(cond, c);
@@ -699,6 +699,12 @@ impl Emitter {
             let declared = if matches!(t, Ty::Result(_)) { declared } else { Self::inner(&declared) };
             if !declared.has_unknown() || matches!(t, Ty::Unknown) {
                 t = declared;
+            } else if declared.compatible(&t) {
+                // (each partly known — a map of maps nothing is written into
+                // yet, `Map(Map(?))` declared and `Map(?)` made — what each
+                // knows, joined: the value's alone had declared a map of
+                // text, and the program did not build)
+                t = declared.unify(&t);
             }
         }
         if matches!(t, Ty::Int) && matches!(as_inferred(ty), Ty::Float) {
@@ -847,7 +853,17 @@ impl Emitter {
         }
     }
 
-    fn emit_set_path(&mut self, var: &str, path: &[PathStep], expr: &Expr) {
+    fn emit_set_path(&mut self, var: &str, path: &[PathStep], expr: &Expr, taken: bool) {
+        if taken
+            && !(self.facts_in_state && self.reactive_vars.contains_key(var))
+            && !self.static_handle_vars.contains(var)
+            && !self.plain_vecs.contains(var)
+            && !self.text_builders.contains_key(var)
+            && !self.ref_params.contains(var)
+            && self.emit_grown_in_place(var, path, expr)
+        {
+            return;
+        }
         if self.plain_vecs.contains(var)
             && let [PathStep::Index(i)] = path
         {
@@ -950,56 +966,10 @@ impl Emitter {
                 ty = inner.as_ref().clone();
             }
         }
-        let mut found: Vec<String> = Vec::new();
-        // a link written through is the record it holds, copied first where
-        // another value holds it too (crow_runtime::link::make_mut): values
-        // stay values; none stops, as the interpreter stops assigning a
-        // field of 0
-        let through = |me: &Self, obj: String, ty: &Ty, f: &str| -> (String, Ty) {
-            match ty {
-                Ty::OptRecord(s) => (
-                    format!("(*crow_runtime::link::make_mut({}.as_mut().unwrap_or_else(|| crow_stop({}, \"cannot assign field '{}' on int\".to_string()))))", obj, me.line_now(), f),
-                    Ty::Record(s.clone()),
-                ),
-                _ => (obj, ty.clone()),
-            }
-        };
-        for step in &path[..path.len().saturating_sub(1)] {
-            match step {
-                PathStep::Field(f) => {
-                    (obj, ty) = through(self, obj, &ty, f);
-                    let next = match &ty {
-                        Ty::Record(s) => self.structs.get(s).and_then(|d| d.fields.iter().find(|(n, _)| n == f).map(|(_, t)| as_inferred(t))).unwrap_or(Ty::Unknown),
-                        Ty::Map(_, inner) => inner.as_ref().clone(),
-                        _ => Ty::Unknown,
-                    };
-                    obj = if matches!(ty, Ty::Map(..)) {
-                        format!("(*{}.get_mut(\"{}\").unwrap_or_else(|| crow_stop({}, crow_runtime::stops::no_key(\"{}\"))))", obj, f, self.line_now(), f)
-                    } else {
-                        format!("{}.{}", obj, Self::rust_field(f))
-                    };
-                    ty = next;
-                }
-                PathStep::Index(i) => {
-                    let idx = self.expr(i);
-                    let next = match &ty {
-                        Ty::List(inner) | Ty::Map(_, inner) => inner.as_ref().clone(),
-                        _ => Ty::Unknown,
-                    };
-                    obj = if matches!(ty, Ty::Map(..)) {
-                        format!("(*{{ let _k = {i}; {o}.get_mut(&_k).unwrap_or_else(|| crow_stop({l}, crow_runtime::stops::no_key(&_k))) }})", i = idx, o = obj, l = self.line_now())
-                    } else {
-                        let k = found.len();
-                        found.push(format!("let _at{k} = {at};", k = k, at = self.index_at(&idx, &format!("{}.len()", obj))));
-                        format!("{}[_at{}]", obj, k)
-                    };
-                    ty = next;
-                }
-            }
-        }
+        let (mut found, mut obj, mut ty) = self.path_prefix(obj, ty, &path[..path.len().saturating_sub(1)]);
         match path.last() {
             Some(PathStep::Field(f)) => {
-                (obj, ty) = through(self, obj, &ty, f);
+                (obj, ty) = self.through_link(obj, &ty, f);
                 if matches!(ty, Ty::Map(..)) {
                     self.line_after(&found, &format!("{}.insert(\"{}\".to_string(), {});", obj, f, val));
                 } else {
@@ -1045,6 +1015,131 @@ impl Emitter {
             }
             None => self.line_after(&found, &format!("{} = {};", obj, val)),
         }
+    }
+
+    /// A link written through is the record it holds, copied first where
+    /// another value holds it too (crow_runtime::link::make_mut): values
+    /// stay values; none stops, as the interpreter stops assigning a field
+    /// of 0.
+    fn through_link(&self, obj: String, ty: &Ty, f: &str) -> (String, Ty) {
+        match ty {
+            Ty::OptRecord(s) => (
+                format!("(*crow_runtime::link::make_mut({}.as_mut().unwrap_or_else(|| crow_stop({}, \"cannot assign field '{}' on int\".to_string()))))", obj, self.line_now(), f),
+                Ty::Record(s.clone()),
+            ),
+            _ => (obj, ty.clone()),
+        }
+    }
+
+    /// The object a path's steps reach, written into: each list index found
+    /// before the write (`out[m].status = …` read `out.len()` inside the
+    /// element it was writing, which Rust's borrows refuse) — the index
+    /// lines, the object's text and its type.
+    fn path_prefix(&mut self, mut obj: String, mut ty: Ty, steps: &[PathStep]) -> (Vec<String>, String, Ty) {
+        let mut found: Vec<String> = Vec::new();
+        for step in steps {
+            match step {
+                PathStep::Field(f) => {
+                    (obj, ty) = self.through_link(obj, &ty, f);
+                    let next = match &ty {
+                        Ty::Record(s) => self.structs.get(s).and_then(|d| d.fields.iter().find(|(n, _)| n == f).map(|(_, t)| as_inferred(t))).unwrap_or(Ty::Unknown),
+                        Ty::Map(_, inner) => inner.as_ref().clone(),
+                        _ => Ty::Unknown,
+                    };
+                    obj = if matches!(ty, Ty::Map(..)) {
+                        format!("(*{}.get_mut(\"{}\").unwrap_or_else(|| crow_stop({}, crow_runtime::stops::no_key(\"{}\"))))", obj, f, self.line_now(), f)
+                    } else {
+                        format!("{}.{}", obj, Self::rust_field(f))
+                    };
+                    ty = next;
+                }
+                PathStep::Index(i) => {
+                    let idx = self.expr(i);
+                    let next = match &ty {
+                        Ty::List(inner) | Ty::Map(_, inner) => inner.as_ref().clone(),
+                        _ => Ty::Unknown,
+                    };
+                    obj = if matches!(ty, Ty::Map(..)) {
+                        format!("(*{{ let _k = {i}; {o}.get_mut(&_k).unwrap_or_else(|| crow_stop({l}, crow_runtime::stops::no_key(&_k))) }})", i = idx, o = obj, l = self.line_now())
+                    } else {
+                        let k = found.len();
+                        found.push(format!("let _at{k} = {at};", k = k, at = self.index_at(&idx, &format!("{}.len()", obj))));
+                        format!("{}[_at{}]", obj, k)
+                    };
+                    ty = next;
+                }
+            }
+        }
+        (found, obj, ty)
+    }
+
+    /// `xs[i] = push[xs[i], v]` (ir::Stmt::SetPath, `taken`): the place's
+    /// value taken out of its slot — a list's item, a map's value, a
+    /// record's field, by `std::mem::take` — handed to the row moved, the
+    /// in-place path a local takes, and the answer written back into the
+    /// slot: the list under the key grows where it lies. False where the
+    /// place is of a shape this does not print, which then copies as
+    /// before.
+    fn emit_grown_in_place(&mut self, var: &str, path: &[PathStep], expr: &Expr) -> bool {
+        let Expr::Call { target: Target::Row(row), args, ty: call_ty, propagates } = expr else { return false };
+        let (Some(first), Some(last)) = (args.first(), path.last()) else { return false };
+        let root_ty = self.local_ty(var).unwrap_or(Ty::Unknown).text();
+        if matches!(root_ty, Ty::Result(_) | Ty::Unknown) {
+            return false;
+        }
+        let first_ty = Self::inner(&self.tt(first));
+        if !matches!(first_ty, Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Bytes) {
+            return false;
+        }
+        let (found, obj, ty) = self.path_prefix(var.to_string(), root_ty, &path[..path.len() - 1]);
+        // the slot: its key or position computed once, the take and the write
+        let (head, take, write) = match (last, &ty) {
+            (PathStep::Index(i), Ty::Map(key, _)) => {
+                let idx = self.expr(i);
+                let k = match key {
+                    crate::ir::Key::Int => format!("({}) as i64", idx),
+                    _ => format!("({}).to_string()", idx),
+                };
+                self.needs_crow_runtime = true;
+                (
+                    format!("let _k = {};", k),
+                    format!("let _slot = {}.get_mut(&_k).unwrap_or_else(|| crow_stop({}, crow_runtime::stops::no_key(&_k))); let _tk = std::mem::take(_slot);", obj, self.line_now()),
+                    "*_slot = _nv;".to_string(),
+                )
+            }
+            (PathStep::Index(i), Ty::List(_)) => {
+                let idx = self.expr(i);
+                (
+                    format!("let _i = {}; let _idx = {};", idx, self.index_at("_i", &format!("{}.len()", obj))),
+                    format!("let _tk = std::mem::take(&mut {}[_idx]);", obj),
+                    format!("{}[_idx] = _nv;", obj),
+                )
+            }
+            (PathStep::Field(f), Ty::Record(_)) => {
+                let field = Self::rust_field(f);
+                (String::new(), format!("let _tk = std::mem::take(&mut {}.{});", obj, field), format!("{}.{} = _nv;", obj, field))
+            }
+            (PathStep::Field(f), Ty::Map(..)) => {
+                self.needs_crow_runtime = true;
+                (
+                    format!("let _k = \"{}\".to_string();", f),
+                    format!("let _slot = {}.get_mut(&_k).unwrap_or_else(|| crow_stop({}, crow_runtime::stops::no_key(&_k))); let _tk = std::mem::take(_slot);", obj, self.line_now()),
+                    "*_slot = _nv;".to_string(),
+                )
+            }
+            _ => return false,
+        };
+        // the call, its first argument the taken value: a moved local, so
+        // the row's taken path prints
+        let mut rest: Vec<Expr> = vec![Expr::Move("_tk".to_string(), first.ty())];
+        rest.extend(args[1..].iter().cloned());
+        let call = Expr::Call { target: Target::Row(row), args: rest, ty: call_ty.clone(), propagates: *propagates };
+        self.scopes.push(Default::default());
+        self.declare("_tk", first_ty);
+        let val = self.owned_expr(&call);
+        self.scopes.pop();
+        self.line_after(&found, &format!("{{ {} {} let _nv = {}; {} }}", head, take, val, write));
+        true
     }
 
     fn emit_return(&mut self, e: &Expr) {

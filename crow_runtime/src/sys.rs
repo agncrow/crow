@@ -91,7 +91,12 @@ pub fn len_bytes(b: &Bytes) -> i64 {
 /// (docs/magpie-in-crow.md, 2.1).
 pub fn bytes_zeroed(n: i64) -> Result<Bytes, String> {
     let n = usize::try_from(n).map_err(|_| format!("bytes: a count is 0 or more, got {}", n))?;
-    Ok(Bytes(vec![0u8; n]))
+    // (a count the machine cannot hold is refused, not an abort: `bytes[2
+    // ^ 63 - 1]` had taken the interpreter down — crow check --self)
+    let mut out = Vec::new();
+    out.try_reserve_exact(n).map_err(|_| format!("bytes: {} bytes are more than can be held", n))?;
+    out.resize(n, 0);
+    Ok(Bytes(out))
 }
 
 fn byte_value(v: i64) -> Result<u8, String> {
@@ -141,6 +146,90 @@ pub fn compress_rs(b: &Bytes) -> Bytes {
 pub fn decompress_rs(b: &Bytes, n: i64) -> Result<Bytes, String> {
     let n = usize::try_from(n).map_err(|_| format!("a length is 0 or more, got {}", n))?;
     crate::magpie::codec::decompress(&b.0, n).map(Bytes)
+}
+
+/// `sys.encode_rs[column, from, to, narrow]`: the kernel's chunk encoder,
+/// for `magpie.encode`'s tests alone.
+pub fn encode_rs(c: &crate::frame::CrowColumn, from: i64, to: i64, narrow: bool) -> Result<Bytes, String> {
+    let (from, to) = column_rows(c, from, to, "encode_rs")?;
+    Ok(Bytes(crate::magpie::encode::encode(&c.data, &c.valid, from, to, narrow)))
+}
+
+/// `sys.decode_rs[chunk, kind]`: the kernel's chunk decoder, for the tests.
+pub fn decode_rs(chunk: &Bytes, kind: &str) -> Result<crate::frame::CrowColumn, String> {
+    let kind = match kind {
+        "int" => crate::magpie::encode::Kind::Int,
+        "float" => crate::magpie::encode::Kind::Float,
+        "text" => crate::magpie::encode::Kind::Text,
+        "bool" => crate::magpie::encode::Kind::Bool,
+        "moment" => crate::magpie::encode::Kind::Moment,
+        "vector" => crate::magpie::encode::Kind::Vector,
+        other => return Err(format!("no column kind is named {}", other)),
+    };
+    let (col, valid) = crate::magpie::encode::decode(&chunk.0, kind)?;
+    Ok(column_of(col, valid))
+}
+
+/// `sys.tokens[text]`: the words of a text — each run of letters and
+/// digits (Unicode's), lowercased — in order, as a search index and a
+/// query split them (a table of which characters are letters is the
+/// runtime's, as it is for `lower`).
+pub fn tokens(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(|w| w.to_lowercase()).collect()
+}
+
+/// `sys.index_rs[column, from, to, stems]`: the kernel's postings index
+/// over a text column's rows, for `magpie.postings`'s tests alone.
+pub fn index_rs(c: &crate::frame::CrowColumn, from: i64, to: i64, stems: bool) -> Result<Bytes, String> {
+    let (from, to) = column_rows(c, from, to, "index_rs")?;
+    let crate::frame::Column::Str(t) = &*c.data else { return Err(not_a("index_rs", "a text", &c.data)) };
+    let docs: Vec<Option<&str>> = (from..to).map(|i| if c.valid[i] { Some(t.get(i)) } else { None }).collect();
+    let (blob, _, _) = crate::magpie::postings::build(&docs, stems);
+    Ok(Bytes(blob))
+}
+
+/// `sys.file_rs[frame, first, last, keys, texts, narrow, stems, per]`: the
+/// kernel's file of a frame in groups of `per` rows, for `magpie.file`'s
+/// tests (the Crow writer sizes its groups by its own rule).
+#[allow(clippy::too_many_arguments)]
+pub fn file_rs(f: &crate::frame::CrowFrame, first: i64, last: i64, keys: Vec<String>, texts: Vec<String>, narrow: Vec<String>, stems: bool, per: i64) -> Result<Bytes, String> {
+    use crate::magpie::{encode::Kind, file::Writer};
+    let columns: Vec<(String, Kind, bool)> = f.columns.iter().enumerate().map(|(i, name)| (name.clone(), Kind::of(f.data[i].as_ref()), texts.contains(name))).collect();
+    let narrowed: Vec<bool> = columns.iter().map(|(n, k, _)| *k == Kind::Float && narrow.contains(n)).collect();
+    let mut w = Writer::with_narrow(columns, narrowed);
+    w.stems = stems;
+    let per = usize::try_from(per).ok().filter(|p| *p > 0).ok_or_else(|| "file_rs: rows per group are 1 or more".to_string())?;
+    let n = f.nrows();
+    let mut start = 0;
+    while start < n {
+        let end = (start + per).min(n);
+        w.group(f, start, end)?;
+        start = end;
+    }
+    Ok(Bytes(w.finish(first, last, &keys, &[])))
+}
+
+/// `sys.stem_rs[word]`: the kernel's Porter stemmer, for `magpie.stem`'s
+/// tests alone.
+pub fn stem_rs(word: &str) -> String {
+    crate::magpie::stem::stem(word)
+}
+
+/// `sys.bloom_rs[items]`: the kernel's bloom filter over the byte strings,
+/// sized by their count, as a file holds it — for `magpie.bloom`'s tests
+/// alone.
+pub fn bloom_rs(items: &[Bytes]) -> Bytes {
+    let mut b = crate::magpie::bloom::Bloom::sized(items.len());
+    for it in items {
+        b.add(&it.0);
+    }
+    Bytes(b.to_bytes())
+}
+
+/// `sys.bloom_has_rs[filter, item]`: whether the kernel's filter, read
+/// from its bytes, may hold the byte string — for the tests.
+pub fn bloom_has_rs(raw: &Bytes, item: &Bytes) -> Result<bool, String> {
+    Ok(crate::magpie::bloom::Bloom::from_bytes(&raw.0)?.has(&item.0))
 }
 
 /// `sys.pack_rs[values, width]`: the kernel's bit packing, for
@@ -519,6 +608,44 @@ pub fn ieee_at(b: &Bytes, at: i64, width: i64, little: bool) -> Result<f64, Stri
     Ok(if w == 8 { f64::from_be_bytes(bytes.try_into().unwrap_or([0; 8])) } else { f32::from_be_bytes(bytes.try_into().unwrap_or([0; 4])) as f64 })
 }
 
+/// `sys.float_bytes[floats, width, little]`: the floats' bits one after
+/// another, 8 bytes each or 4 of single precision — a chunk's worth at
+/// once, where `ieee` writes one.
+pub fn float_bytes(floats: Vec<f64>, width: i64, little: bool) -> Result<Bytes, String> {
+    let mut out = Vec::with_capacity(floats.len() * width.clamp(0, 8) as usize);
+    match (width, little) {
+        (8, false) => floats.iter().for_each(|x| out.extend_from_slice(&x.to_be_bytes())),
+        (8, true) => floats.iter().for_each(|x| out.extend_from_slice(&x.to_le_bytes())),
+        (4, false) => floats.iter().for_each(|x| out.extend_from_slice(&(*x as f32).to_be_bytes())),
+        (4, true) => floats.iter().for_each(|x| out.extend_from_slice(&(*x as f32).to_le_bytes())),
+        (other, _) => return Err(format!("float_bytes: a float's width is 8 bytes, or 4 for single precision, not {}", other)),
+    }
+    Ok(Bytes(out))
+}
+
+/// `sys.float_values[bytes, at, n, width, little]`: `n` floats read from
+/// the bytes at `at`, the inverse of `float_bytes`.
+pub fn float_values(b: &Bytes, at: i64, n: i64, width: i64, little: bool) -> Result<Vec<f64>, String> {
+    let at = usize::try_from(at).map_err(|_| format!("float_values: a position is 0 or more, got {}", at))?;
+    let n = usize::try_from(n).map_err(|_| format!("float_values: a count is 0 or more, got {}", n))?;
+    let w = match width {
+        8 | 4 => width as usize,
+        other => return Err(format!("float_values: a float's width is 8 bytes, or 4 for single precision, not {}", other)),
+    };
+    let s = b.0.get(at..at + n * w).ok_or_else(|| format!("float_values: {} floats of {} bytes at {} lie outside {} bytes", n, w, at, b.0.len()))?;
+    Ok(s.chunks_exact(w)
+        .map(|c| {
+            if w == 8 {
+                let a: [u8; 8] = c.try_into().unwrap_or([0; 8]);
+                if little { f64::from_le_bytes(a) } else { f64::from_be_bytes(a) }
+            } else {
+                let a: [u8; 4] = c.try_into().unwrap_or([0; 4]);
+                (if little { f32::from_le_bytes(a) } else { f32::from_be_bytes(a) }) as f64
+            }
+        })
+        .collect())
+}
+
 /// `sys.file[path, from, n]`: the bytes of a region of a file, read
 /// without the rest (a footer, one chunk).
 pub fn file_region(path: &str, from: i64, n: i64) -> Result<Bytes, String> {
@@ -605,61 +732,83 @@ pub fn cell_kind(c: &crate::frame::CrowColumn) -> String {
     column_word(&c.data).to_string()
 }
 
+/// The values of rows `from..to` with each missing cell as `zero`: a
+/// missing cell's value is one placeholder in both modes (the interpreter
+/// holds a column as its cells, and a missing float had come back as NaN
+/// where the compiled program kept what was written).
+fn present_or<T: Copy>(v: &[T], valid: &crate::validity::Validity, from: usize, to: usize, zero: T) -> Vec<T> {
+    (from..to).map(|i| if valid[i] { v[i] } else { zero }).collect()
+}
+
 /// `sys.ints_of[column, from, to]`: an int column's values of rows `from`
-/// to `to` (excluded), a moment column's milliseconds; a missing cell's
-/// value is whatever the column holds there (`present_of` says which).
+/// to `to` (excluded), a moment column's milliseconds; a missing cell
+/// reads as 0 (`present_of` says which).
 pub fn ints_of(c: &crate::frame::CrowColumn, from: i64, to: i64) -> Result<Vec<i64>, String> {
     let (from, to) = column_rows(c, from, to, "ints_of")?;
     match &*c.data {
-        crate::frame::Column::Int(v) => Ok(v[from..to].to_vec()),
-        crate::frame::Column::DateTime(ms, _) => Ok(ms[from..to].to_vec()),
+        crate::frame::Column::Int(v) => Ok(present_or(v, &c.valid, from, to, 0)),
+        crate::frame::Column::DateTime(ms, _) => Ok(present_or(ms, &c.valid, from, to, 0)),
         other => Err(not_a("ints_of", "an int or a moment", other)),
     }
 }
 
 /// `sys.floats_of[column, from, to]`: a float column's values, or a vector
-/// column's rows laid flat.
+/// column's rows laid flat; a missing cell reads as 0.
 pub fn floats_of(c: &crate::frame::CrowColumn, from: i64, to: i64) -> Result<Vec<f64>, String> {
     let (from, to) = column_rows(c, from, to, "floats_of")?;
     match &*c.data {
-        crate::frame::Column::Float(v) => Ok(v[from..to].to_vec()),
-        crate::frame::Column::Vectors(w, v) => Ok(v[from * w..to * w].to_vec()),
+        crate::frame::Column::Float(v) => Ok(present_or(v, &c.valid, from, to, 0.0)),
+        crate::frame::Column::Vectors(..) => vectors_of(c, from as i64, to as i64),
         other => Err(not_a("floats_of", "a float or a vector", other)),
     }
 }
 
-/// `sys.bools_of[column, from, to]`: a bool column's values.
+/// `sys.bools_of[column, from, to]`: a bool column's values; a missing
+/// cell reads as false.
 pub fn bools_of(c: &crate::frame::CrowColumn, from: i64, to: i64) -> Result<Vec<bool>, String> {
     let (from, to) = column_rows(c, from, to, "bools_of")?;
     match &*c.data {
-        crate::frame::Column::Bool(v) => Ok(v[from..to].to_vec()),
+        crate::frame::Column::Bool(v) => Ok(present_or(v, &c.valid, from, to, false)),
         other => Err(not_a("bools_of", "a bool", other)),
     }
 }
 
-/// `sys.millis_of[column, from, to]`: a moment column's milliseconds.
+/// `sys.millis_of[column, from, to]`: a moment column's milliseconds; a
+/// missing cell reads as 0.
 pub fn millis_of(c: &crate::frame::CrowColumn, from: i64, to: i64) -> Result<Vec<i64>, String> {
     let (from, to) = column_rows(c, from, to, "millis_of")?;
     match &*c.data {
-        crate::frame::Column::DateTime(ms, _) => Ok(ms[from..to].to_vec()),
+        crate::frame::Column::DateTime(ms, _) => Ok(present_or(ms, &c.valid, from, to, 0)),
         other => Err(not_a("millis_of", "a moment", other)),
     }
 }
 
-/// `sys.zones_of[column, from, to]`: a moment column's offsets, minutes.
+/// `sys.zones_of[column, from, to]`: a moment column's offsets, minutes;
+/// a missing cell reads as 0.
 pub fn zones_of(c: &crate::frame::CrowColumn, from: i64, to: i64) -> Result<Vec<i64>, String> {
     let (from, to) = column_rows(c, from, to, "zones_of")?;
     match &*c.data {
-        crate::frame::Column::DateTime(_, off) => Ok(off[from..to].iter().map(|o| *o as i64).collect()),
+        crate::frame::Column::DateTime(_, off) => Ok(present_or(off, &c.valid, from, to, 0).into_iter().map(|o| o as i64).collect()),
         other => Err(not_a("zones_of", "a moment", other)),
     }
 }
 
-/// `sys.vectors_of[column, from, to]`: a vector column's rows laid flat.
+/// `sys.vectors_of[column, from, to]`: a vector column's rows laid flat;
+/// a missing row reads as zeros.
 pub fn vectors_of(c: &crate::frame::CrowColumn, from: i64, to: i64) -> Result<Vec<f64>, String> {
     let (from, to) = column_rows(c, from, to, "vectors_of")?;
     match &*c.data {
-        crate::frame::Column::Vectors(w, v) => Ok(v[from * w..to * w].to_vec()),
+        crate::frame::Column::Vectors(w, v) => {
+            let mut out = Vec::with_capacity((to - from) * w);
+            for i in from..to {
+                if c.valid[i] {
+                    out.extend_from_slice(&v[i * w..(i + 1) * w]);
+                } else {
+                    out.extend(std::iter::repeat_n(0.0, *w));
+                }
+            }
+            Ok(out)
+        }
         other => Err(not_a("vectors_of", "a vector", other)),
     }
 }
@@ -805,6 +954,25 @@ pub fn vectors_column(width: i64, floats: Vec<f64>, present: &Bytes) -> Result<c
     };
     let valid = validity_of(present, n, "vectors_column")?;
     Ok(column_of(crate::frame::Column::Vectors(w, floats), valid))
+}
+
+/// `sys.text_dict_column[bytes, ends, codes, present]`: a text column
+/// kept as a dictionary — the distinct values as `text_column` takes
+/// them, and each cell the code of its value — as a chunk encodes it and
+/// the frame holds it; refused where a code names no value.
+pub fn text_dict_column(bytes: &Bytes, ends: Vec<i64>, codes: Vec<i64>, present: &Bytes) -> Result<crate::frame::CrowColumn, String> {
+    let values = text_column(bytes, ends, &Bytes(Vec::new()))?;
+    let n = values.len();
+    let mut out = Vec::with_capacity(codes.len());
+    for c in codes {
+        if c < 0 || c as usize >= n {
+            return Err(format!("text_dict_column: a code of {} names no value of {}", c, n));
+        }
+        out.push(c as u32);
+    }
+    let crate::frame::Column::Str(values) = std::sync::Arc::unwrap_or_clone(values.data) else { return Err("a bug in Crow: text_column made no text".to_string()) };
+    let valid = validity_of(present, out.len(), "text_dict_column")?;
+    Ok(column_of(crate::frame::Column::Str(crate::textcol::Text::Dict { codes: out, values: Box::new(values) }), valid))
 }
 
 /// `sys.text_column[bytes, ends, present]`: a text column from its cells'
@@ -1863,8 +2031,8 @@ mod tests {
         use crate::frame::{Column, CrowColumn};
         let col = CrowColumn { data: Arc::new(Column::Int(vec![3, 1, 2])), valid: Arc::new(crate::validity::Validity::from(vec![true, false, true])) };
         assert_eq!(cell_kind(&col), "int");
-        assert_eq!(ints_of(&col, 0, 3).unwrap(), vec![3, 1, 2]);
-        assert_eq!(ints_of(&col, 1, 2).unwrap(), vec![1]);
+        assert_eq!(ints_of(&col, 0, 3).unwrap(), vec![3, 0, 2], "a missing cell reads as 0");
+        assert_eq!(ints_of(&col, 1, 2).unwrap(), vec![0]);
         assert_eq!(missing_in(&col, 0, 3).unwrap(), 1);
         assert_eq!(present_of(&col, 0, 3).unwrap().0, vec![0b101]);
         assert!(present_of(&col, 0, 1).unwrap().0.is_empty());

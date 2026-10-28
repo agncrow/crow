@@ -125,6 +125,27 @@ fn a_last_read_moves_into_the_collection_and_out_of_the_function() {
     assert!(!rust.contains("return out.clone()"), "{}", rust);
 }
 
+/// A record's bytes field read into a variable is copied out of the
+/// record, as a text field is: it had been moved, and a record read again
+/// after (`stored = part.payload`, then `compress[part.payload]`) did not
+/// build (E0382)
+#[test]
+fn a_bytes_field_is_copied_out_of_its_record() {
+    let rust = transpile("use sys\nstruct Part [enc, payload]\np = Part[1, bytes['abc']]\nstored = p.payload\nlog[len[stored] + len[p.payload] + p.enc]\n");
+    assert!(rust.contains("p.payload.clone()"), "{}", rust);
+}
+
+/// A module row taking a list whole clones the variable where it is read
+/// again and moves it at its last read, as a core row's call does: a
+/// module row's arguments had been printed without the owned-kind rule,
+/// and `float_bytes[xs, …]` twice did not build (E0382)
+#[test]
+fn a_module_rows_owned_argument_is_cloned_until_its_last_read() {
+    let rust = transpile("use sys\nxs = []\nxs = push[xs, 1.5]\na = float_bytes[xs, 8, false]\nb = float_bytes[xs, 4, true]\nlog[len[a] + len[b]]\n");
+    assert!(rust.contains("float_bytes((xs.clone())"), "{}", rust);
+    assert!(rust.contains("float_bytes((xs)"), "{}", rust);
+}
+
 /// A bytes parameter a function only reads is lent, as a list's or a
 /// text's is: a hash of four bytes called once per byte of a 50 MB input
 /// had taken its bytes by value and cloned the input at every call
@@ -2582,4 +2603,19 @@ fn a_loop_item_from_a_column_with_missing_cells_can_fail_in_the_width_pass() {
     );
     assert!(out.contains("let _t1: CrowResult<String> ="), "{}", out);
     assert!(out.contains("let _c = &_t1; if !_c.ok"), "{}", out);
+}
+
+/// A list held in a list, under a map's key or in a record's field grows
+/// where it lies: `xs[i] = push[xs[i], v]` takes the item out of its slot,
+/// pushes onto it moved and writes it back (ir::Stmt::SetPath, `taken`),
+/// where reading it had copied the list at every push — 200,000 pushes
+/// under eight keys took 650 ms (found by magpie.file's postings builder)
+#[test]
+fn a_list_held_in_a_place_grows_where_it_lies() {
+    let rust = transpile("struct Bag [items, count]\n\nxs = []\nxs = push[xs, []]\nm = map[]\nm = set[m, 'a', []]\nb = Bag[[], 0]\nfor i in range[3]\n    xs[0] = push[xs[0], i]\n    m['a'] = push[m['a'], i]\n    b.items = push[b.items, i]\nlog[xs]\nlog[m]\nlog[b.items]\n");
+    assert_eq!(rust.matches("std::mem::take(").count(), 3, "{}", rust);
+    assert!(rust.contains("std::mem::take(&mut xs[_idx])"), "{}", rust);
+    assert!(rust.contains("std::mem::take(&mut b.items)"), "{}", rust);
+    assert!(rust.contains(".get_mut(&_k)"), "{}", rust);
+    assert!(!rust.contains("_v[crow_runtime::stops::at(_i, _v.len(), 9)].clone()"), "{}", rust);
 }

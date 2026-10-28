@@ -437,6 +437,12 @@ pub fn stack(top: &CrowFrame, bottom: &CrowFrame) -> Result<CrowFrame, String> {
     top.stack(bottom)
 }
 
+/// `stack[frames]`: the rows of every frame in the list, in order, the
+/// columns alike; the empty frame of no frames.
+pub fn stack_all(parts: &[CrowFrame]) -> Result<CrowFrame, String> {
+    CrowFrame::stack_all(parts)
+}
+
 /// `head[frame, n]`: the first `n` rows, all of them when there are fewer.
 pub fn head(f: &CrowFrame, n: i64) -> Result<CrowFrame, String> {
     Ok(f.head(crate::stops::size("head", n)?))

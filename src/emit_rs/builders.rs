@@ -134,7 +134,7 @@ impl Walk {
                 self.rule_out(var);
                 self.expr(expr);
             }
-            Stmt::SetPath { var, path, expr } => {
+            Stmt::SetPath { var, path, expr, .. } => {
                 self.rule_out(var);
                 for p in path {
                     if let PathStep::Index(i) = p {

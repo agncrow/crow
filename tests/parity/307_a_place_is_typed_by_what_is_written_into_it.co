@@ -1,0 +1,20 @@
+--- A record's field given `[]` where the record is made takes the kind of
+--- what is written into it (`b.items = push[b.items, i]`), and a map of
+--- maps nothing has written into yet is declared one: both had run
+--- interpreted and not built compiled, the field declared a list of text
+--- and the map a map of text (found beside parity 306).
+struct Bag [items, count]
+
+fn grown[n]
+    b = Bag[[], 0]
+    for i in range[n]
+        b.items = push[b.items, i * 2]
+    return b
+
+b = grown[3]
+log[b.items]
+log[b.count]
+nested = map[]
+nested = set[nested, 'a', map[]]
+log[len[nested]]
+log[len[nested['a']]]

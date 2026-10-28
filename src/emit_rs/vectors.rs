@@ -193,7 +193,7 @@ impl Walk {
                 }
             }
             Stmt::Let { expr, .. } | Stmt::Set { expr, .. } | Stmt::Store { expr, .. } | Stmt::Do(expr) => self.expr(expr, depth),
-            Stmt::SetPath { var, path, expr } => {
+            Stmt::SetPath { var, path, expr, .. } => {
                 if self.kept(var) && !matches!(path.as_slice(), [PathStep::Index(_)]) {
                     self.ok.insert(var.clone(), false);
                 }

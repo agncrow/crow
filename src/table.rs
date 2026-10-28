@@ -213,6 +213,8 @@ pub enum Kind {
     Stream,
     /// A list of bytes: a connection's chunks, gathered.
     Chunks,
+    /// `&[CrowFrame]` taken: a list of frames, stacked.
+    Frames,
     /// `Answer` given (crow_runtime::sys): a connection's answer, the
     /// record `sys.exchange` and `sys.fetch` make.
     Answer,
@@ -659,6 +661,7 @@ impl Kind {
             Kind::Frame => Ty::Frame(None),
             Kind::Strs => Ty::List(Box::new(Ty::Str)),
             Kind::Chunks => Ty::List(Box::new(Ty::Bytes)),
+            Kind::Frames => Ty::List(Box::new(Ty::Frame(None))),
             Kind::Bools => Ty::List(Box::new(Ty::Bool)),
             Kind::Cell | Kind::Cells => Ty::Unknown,
             Kind::Lists => Ty::List(Box::new(Ty::List(Box::new(Ty::Str)))),
@@ -738,7 +741,7 @@ impl Kind {
             },
             Kind::Keys => format!("&({})[..]", borrowed_index(arg).unwrap_or_else(|| arg.to_string())),
             Kind::Unit => format!("({})", arg),
-            Kind::Strs | Kind::Bools | Kind::Chunks => format!("&({})[..]", borrowed_index(arg).unwrap_or_else(|| arg.to_string())),
+            Kind::Strs | Kind::Bools | Kind::Chunks | Kind::Frames => format!("&({})[..]", borrowed_index(arg).unwrap_or_else(|| arg.to_string())),
             Kind::Cell => format!("&crow_runtime::cell::Cell::from(({}).clone())", arg),
             Kind::Words => format!("&crow_runtime::cell::words(&({})).unwrap_or_else(|e| crow_stop({}, e))[..]", arg, line),
             Kind::Cells => format!("crow_runtime::frames::Cells::from(({}).clone())", arg),
@@ -821,6 +824,7 @@ impl Kind {
             Kind::Frame => "crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![])",
             Kind::Strs => "Vec::<String>::new()",
             Kind::Chunks => "Vec::<crow_runtime::sys::Bytes>::new()",
+            Kind::Frames => "Vec::<crow_runtime::frame::CrowFrame>::new()",
             Kind::Bools => "Vec::<bool>::new()",
             Kind::Cell => "crow_runtime::cell::Cell::Int(0)",
             Kind::Cells => "crow_runtime::frames::Cells::One(crow_runtime::cell::Cell::Int(0))",
@@ -1470,6 +1474,15 @@ pub fn read_chunks(v: &CrowValue) -> Result<Vec<crow_runtime::sys::Bytes>, Strin
     }
 }
 
+/// A list of frames (each shared with the list: a frame's columns are
+/// counted, never copied).
+pub fn read_frames(v: &CrowValue) -> Result<Vec<crow_runtime::frame::CrowFrame>, String> {
+    match &v.value {
+        Value::Array(items) => items.iter().map(|i| read_frame(i).cloned()).collect(),
+        _ => Err(format!("expected a list of frames, got {}", named(v))),
+    }
+}
+
 pub fn write_bytes(b: crow_runtime::sys::Bytes) -> CrowValue {
     CrowValue::ok(Value::Bytes(b))
 }
@@ -1673,6 +1686,7 @@ macro_rules! read {
     (Frame, $g:expr) => { read_frame(one($g)?)? };
     (Strs, $g:expr) => { &read_strs(one($g)?)? };
     (Chunks, $g:expr) => { &read_chunks(one($g)?)? };
+    (Frames, $g:expr) => { &read_frames(one($g)?)? };
     (Sizes, $g:expr) => { &read_sizes($g)? };
     (Groups, $g:expr) => { &read_groups($g)?.iter().map(|t| t.as_ref()).collect::<Vec<&CrowTensor>>() };
     (Bools, $g:expr) => { &read_bools(one($g)?)? };
@@ -1833,6 +1847,7 @@ pub fn value_as(kind: Kind, v: &CrowValue) -> Result<CrowValue, String> {
         Kind::Bool => CrowValue::ok(Value::Bool(read_bool(v)?)),
         Kind::Bytes => CrowValue::ok(Value::Bytes(read_bytes(v)?)),
         Kind::Chunks => CrowValue::ok(Value::Array(std::sync::Arc::new(read_chunks(v)?.into_iter().map(write_bytes).collect()))),
+        Kind::Frames => CrowValue::ok(Value::Array(std::sync::Arc::new(read_frames(v)?.into_iter().map(|f| CrowValue::ok(Value::Frame(Box::new(f)))).collect()))),
         Kind::TextMap => CrowValue::ok(Value::map(read_text_map(v)?.into_iter().map(|(k, t)| (k, CrowValue::ok(Value::Str(t)))).collect())),
         Kind::Frame => CrowValue::ok(Value::Frame(Box::new(read_frame(v)?.clone()))),
         Kind::Strs => CrowValue::ok(Value::Array(std::sync::Arc::new(read_strs(v)?.into_iter().map(|t| CrowValue::ok(Value::Str(t))).collect()))),
@@ -2170,6 +2185,7 @@ pub static ROWS: &[Row] = &[
     Row { range: IntRange::Keeps, ..row!("core.__whole_big", "", "__whole_big", crow_runtime::int::itself, (Big) -> Big, never) },
     Row { range: IntRange::Min, ..row!("core.__min_big", "", "__min_big", crow_runtime::int::min, (Big, Big) -> Big, never) },
     Row { range: IntRange::And, ..row!("core.__bitand_big", "", "__bitand_big", crow_runtime::bits::and_big, (Big, Big) -> Big, never) },
+    Row { range: IntRange::I64, ..row!("core.__wrap_big", "", "__wrap_big", crow_runtime::bits::wrap_big, (Big) -> Int, never) },
     Row { range: IntRange::OrXor, ..row!("core.__bitor_big", "", "__bitor_big", crow_runtime::bits::or_big, (Big, Big) -> Big, never) },
     Row { range: IntRange::OrXor, ..row!("core.__bitxor_big", "", "__bitxor_big", crow_runtime::bits::xor_big, (Big, Big) -> Big, never) },
     Row { range: IntRange::Count, ..row!("core.__bitcount_big", "", "__bitcount_big", crow_runtime::bits::count_big, (Big) -> Int, never) },
@@ -2474,6 +2490,9 @@ pub static ROWS: &[Row] = &[
     // of the writer's name whose options may be given by position would
     // take `ieee[b, at, 8]` as a float with a width and a byte order)
     row!("sys.ieee_at", "sys", "ieee", crow_runtime::sys::ieee_at, (Bytes, Int, Int, Bool) -> Float, stops),
+    // a chunk's floats at once (a call per cell is the per-cell price)
+    row!("sys.float_bytes", "sys", "float_bytes", crow_runtime::sys::float_bytes, (Floats, Int, Bool) -> Bytes, stops),
+    row!("sys.float_values", "sys", "float_values", crow_runtime::sys::float_values, (Bytes, Int, Int, Int, Bool) -> Floats, stops),
     // Magpie's Rust codec, for the Crow codec's tests alone
     // (docs/magpie-in-crow.md, section 3): gone with the kernel
     Row { props: &[Prop::TestOnly], ..row!("sys.compress_rs", "sys", "compress_rs", crow_runtime::sys::compress_rs, (Bytes) -> Bytes, never) },
@@ -2482,6 +2501,15 @@ pub static ROWS: &[Row] = &[
     Row { props: &[Prop::TestOnly], ..row!("sys.unpack_rs", "sys", "unpack_rs", crow_runtime::sys::unpack_rs, (Bytes, Int, Int) -> Ints, value "magpie") },
     Row { props: &[Prop::TestOnly], ..row!("sys.put_var_rs", "sys", "put_var_rs", crow_runtime::sys::put_var_rs, (Int) -> Bytes, never) },
     Row { props: &[Prop::TestOnly], ..row!("sys.read_var_rs", "sys", "read_var_rs", crow_runtime::sys::read_var_rs, (Bytes, Int) -> Ints, value "magpie") },
+    Row { props: &[Prop::TestOnly], ..row!("sys.encode_rs", "sys", "encode_rs", crow_runtime::sys::encode_rs, (Column, Int, Int, Bool) -> Bytes, stops) },
+    Row { props: &[Prop::TestOnly], ..row!("sys.decode_rs", "sys", "decode_rs", crow_runtime::sys::decode_rs, (Bytes, Str) -> Column, value "magpie") },
+    Row { props: &[Prop::TestOnly], ..row!("sys.bloom_rs", "sys", "bloom_rs", crow_runtime::sys::bloom_rs, (Chunks) -> Bytes, never) },
+    Row { props: &[Prop::TestOnly], ..row!("sys.stem_rs", "sys", "stem_rs", crow_runtime::sys::stem_rs, (Str) -> Str, never) },
+    Row { props: &[Prop::TestOnly], ..row!("sys.index_rs", "sys", "index_rs", crow_runtime::sys::index_rs, (Column, Int, Int, Bool) -> Bytes, stops) },
+    Row { props: &[Prop::TestOnly], ..row!("sys.file_rs", "sys", "file_rs", crow_runtime::sys::file_rs, (Frame, Int, Int, Texts, Texts, Texts, Bool, Int) -> Bytes, value "magpie") },
+    // the words of a text, as an index and a query split them
+    row!("sys.terms", "sys", "terms", crow_runtime::sys::tokens, (Str) -> Strs, never),
+    Row { props: &[Prop::TestOnly], ..row!("sys.bloom_has_rs", "sys", "bloom_has_rs", crow_runtime::sys::bloom_has_rs, (Bytes, Bytes) -> Bool, value "magpie") },
     row!("sys.binary", "sys", "binary", crow_web::core::response::binary_of, (Bytes, Str) -> Response, never),
     // a socket: the stream it talks over, what it holds unread, a frame's
     // mask, a digest as bytes (the handshake's accept key)
@@ -2561,7 +2589,7 @@ pub static ROWS: &[Row] = &[
     // moved over another (docs/magpie-in-crow.md, 2.3)
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.file_region", "sys", "file", crow_runtime::sys::file_region, (Str, Int, Int) -> Bytes, value "sys") },
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.modified", "sys", "modified", crow_runtime::sys::modified, (Str) -> Moment, value "sys") },
-    Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("sys.flush", "sys", "flush", crow_runtime::sys::flush, (Str) -> Str, value "sys") },
+    Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("sys.flushed", "sys", "flushed", crow_runtime::sys::flush, (Str) -> Str, value "sys") },
     Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("sys.link", "sys", "link", crow_runtime::sys::link, (Str, Str) -> Str, value "sys") },
     Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("sys.move", "sys", "move", crow_runtime::sys::move_path, (Str, Str) -> Str, value "sys") },
     // a column as its parts, and from them (docs/magpie-in-crow.md, 2.5):
@@ -2584,6 +2612,7 @@ pub static ROWS: &[Row] = &[
     row!("sys.moments_column", "sys", "moments_column", crow_runtime::sys::moments_column, (Ints, Ints, Bytes) -> Column, stops),
     row!("sys.vectors_column", "sys", "vectors_column", crow_runtime::sys::vectors_column, (Int, Floats, Bytes) -> Column, stops),
     row!("sys.text_column", "sys", "text_column", crow_runtime::sys::text_column, (Bytes, Ints, Bytes) -> Column, stops),
+    row!("sys.text_dict_column", "sys", "text_dict_column", crow_runtime::sys::text_dict_column, (Bytes, Ints, Ints, Bytes) -> Column, stops),
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_search", "sys", "batch_search", crow_runtime::sys::batch_search, (Texts, Str, Texts, Int, Bool, Int) -> Frame, value "magpie") },
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_nearest", "sys", "batch_nearest", crow_runtime::sys::batch_nearest, (Texts, Str, Tensor, Int) -> Frame, value "magpie") },
     row!("sys.frame_of_postgres", "sys", "frame_of_postgres", crow_runtime::sys::frame_of_postgres, (Bytes) -> Frame, value "frame"),
@@ -2671,6 +2700,7 @@ pub static ROWS: &[Row] = &[
     row!("frame.starts_column", "", "starts", crow_runtime::verbs::starts_column, (Column, Str) -> Bools, stops),
     row!("frame.ends_column", "", "ends", crow_runtime::verbs::ends_column, (Column, Str) -> Bools, stops),
     row!("frame.stack", "frame", "stack", crow_runtime::frames::stack, (Frame, Frame) -> Frame, stops),
+    row!("frame.stack_all", "frame", "stack", crow_runtime::frames::stack_all, (Frames) -> Frame, stops),
     row!("frame.head", "frame", "head", crow_runtime::frames::head, (Frame, Int) -> Frame, stops),
     row!("frame.tail", "frame", "tail", crow_runtime::frames::tail, (Frame, Int) -> Frame, stops),
     row!("frame.fill", "frame", "fill", crow_runtime::frames::fill, (Frame, Str, Cell, Str) -> Frame, stops),
@@ -2707,6 +2737,13 @@ pub static ROWS: &[Row] = &[
     Row { range: IntRange::OrXor, big: Some("core.__bitxor_big"), ..row!("bits.bitxor", "bits", "bitxor", crow_runtime::bits::xor, (Whole, Whole) -> Int, never) },
     Row { range: IntRange::Count, big: Some("core.__bitcount_big"), ..row!("bits.bitcount", "bits", "bitcount", crow_runtime::bits::count, (Whole) -> Int, never) },
     Row { range: IntRange::Shift, big: Some("core.__shift_big"), ..row!("bits.shift", "bits", "shift", crow_runtime::bits::shift, (Whole, Whole) -> Int, stops) },
+    // arithmetic wrapped to 64 bits: a hash's multiply, a checksum, an
+    // offset from a base (docs/magpie-in-crow.md, 2.2) — each an int of
+    // 64 bits to the width pass, so what is computed of it stays narrow
+    Row { range: IntRange::I64, ..row!("bits.wrapmul", "bits", "wrapmul", crow_runtime::bits::wrapmul, (Int, Int) -> Int, never) },
+    Row { range: IntRange::I64, ..row!("bits.wrapadd", "bits", "wrapadd", crow_runtime::bits::wrapadd, (Int, Int) -> Int, never) },
+    Row { range: IntRange::I64, ..row!("bits.wrapsub", "bits", "wrapsub", crow_runtime::bits::wrapsub, (Int, Int) -> Int, never) },
+    Row { range: IntRange::I64, big: Some("core.__wrap_big"), ..row!("bits.wrap", "bits", "wrap", crow_runtime::bits::wrap, (Whole) -> Int, never) },
     Row { range: IntRange::Code, ..row!("bits.code", "bits", "code", crow_runtime::bits::code, (Str) -> Int, stops) },
     row!("bits.char", "bits", "char", crow_runtime::bits::char, (Whole) -> Str, stops),
 ];
@@ -3258,6 +3295,8 @@ pub enum Arg {
     Bytes,
     /// A list of bytes (a connection's chunks).
     Chunks,
+    /// A list of frames (a file's groups, read apart).
+    Frames,
     /// A parsed JSON value, whose kind shows only as it runs.
     Json,
     /// A tensor.
@@ -3333,6 +3372,7 @@ impl Arg {
                 | Arg::Records
                 | Arg::Maps
                 | Arg::Items
+                | Arg::Frames
                 | Arg::Moments
                 | Arg::Tensors
                 | Arg::Rows
@@ -3361,6 +3401,7 @@ impl Arg {
             Arg::Text => "text",
             Arg::Texts => "a list of text",
             Arg::Chunks => "a list of bytes",
+            Arg::Frames => "a list of frames",
             Arg::Truth => "a bool",
             Arg::Truths => "a list of bools",
             Arg::Records => "a list of records",
@@ -3432,6 +3473,7 @@ impl Arg {
             Arg::Ints | Arg::Floats => Arg::Rows,
             Arg::Text => Arg::Texts,
             Arg::Bytes => Arg::Chunks,
+            Arg::Frame => Arg::Frames,
             Arg::Truth => Arg::Truths,
             Arg::Record => Arg::Records,
             Arg::Map => Arg::Maps,
@@ -3494,6 +3536,7 @@ impl Kind {
             Kind::Stream => STREAM.word,
             Kind::Strs => "a list of text",
             Kind::Chunks => "a list of bytes",
+            Kind::Frames => "a list of frames",
             Kind::Bools => "a list of bools",
             Kind::Sparse => "a sparse matrix",
             Kind::Frame => "a frame",
@@ -3538,7 +3581,7 @@ impl Kind {
     fn takes(self, a: Arg) -> bool {
         // a list whose items are not known could be any list
         if a == Arg::AnyList {
-            return [Arg::Ints, Arg::Floats, Arg::Texts, Arg::Truths, Arg::Tensors, Arg::Rows, Arg::Records, Arg::Maps, Arg::Items].iter().any(|l| self.takes(*l));
+            return [Arg::Ints, Arg::Floats, Arg::Texts, Arg::Truths, Arg::Tensors, Arg::Rows, Arg::Records, Arg::Maps, Arg::Items, Arg::Frames].iter().any(|l| self.takes(*l));
         }
         a == Arg::Unknown
             || match self.each() {
@@ -3557,6 +3600,7 @@ impl Kind {
                 Kind::Keys => matches!(a, Arg::Texts | Arg::Ints | Arg::Tensor),
                 Kind::Strs | Kind::Texts => a == Arg::Texts,
                 Kind::Chunks => a == Arg::Chunks,
+                Kind::Frames => a == Arg::Frames,
                 Kind::Bool => a == Arg::Truth,
                 Kind::Bools => a == Arg::Truths,
                 Kind::Sparse => a == Arg::Sparse,
@@ -3566,7 +3610,7 @@ impl Kind {
                 Kind::Mailer => matches!(a, Arg::Handle(h) if h.name == MAILER.name),
                 Kind::Response => matches!(a, Arg::Handle(h) if h.name == RESPONSE.name),
                 Kind::FnOf(_) => a == Arg::Fn,
-                Kind::Walked => matches!(a, Arg::Tensor | Arg::Column | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Tensors | Arg::Rows | Arg::Records | Arg::Maps | Arg::Items | Arg::Chunks | Arg::Fallible | Arg::FallibleNumbers | Arg::Moments | Arg::AnyList),
+                Kind::Walked => matches!(a, Arg::Tensor | Arg::Column | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Tensors | Arg::Rows | Arg::Records | Arg::Maps | Arg::Items | Arg::Chunks | Arg::Frames | Arg::Fallible | Arg::FallibleNumbers | Arg::Moments | Arg::AnyList),
                 // (a transaction's connection is a connection)
                 Kind::Db | Kind::Tx => matches!(a, Arg::Handle(h) if h.name == DB.name || h.name == TX.name),
                 Kind::Request | Kind::Found => false,
@@ -3577,7 +3621,7 @@ impl Kind {
                 // (a list whose items can fail: its items, a failed one
                 // stopping the program, as a sum's numbers do)
                 Kind::Words => matches!(a, Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Column | Arg::Moments | Arg::Fallible | Arg::FallibleNumbers),
-                Kind::List | Kind::Seq => matches!(a, Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Tensors | Arg::Rows | Arg::Records | Arg::Maps | Arg::Items | Arg::Chunks | Arg::Fallible | Arg::FallibleNumbers | Arg::Moments),
+                Kind::List | Kind::Seq => matches!(a, Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Tensors | Arg::Rows | Arg::Records | Arg::Maps | Arg::Items | Arg::Chunks | Arg::Frames | Arg::Fallible | Arg::FallibleNumbers | Arg::Moments),
                 Kind::Item | Kind::ItemRef => true,
                 Kind::MapOf | Kind::MapRef | Kind::TextMap => a == Arg::Map,
                 Kind::Ints | Kind::Bigs => a == Arg::Ints,

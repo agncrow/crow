@@ -1,0 +1,159 @@
+--- `use magpie.bloom`: a bloom filter over byte strings, in Crow — the
+--- Rust kernel's bits bit for bit (docs/magpie-in-crow.md, section 3).
+--- `k` hashes into `m` bits, the two hashes FNV-1a and a mix of it (Kirsch
+--- and Mitzenmacher's double hashing: the i-th position is h1 + i·h2
+--- modulo m), so a filter written today reads the same tomorrow — no
+--- hasher whose keys may change. Eight bits per item (about 2% false
+--- positives at six hashes), and at least eight items' worth. Written
+--- into a file as its hash count, its bit count (eight bytes,
+--- little-endian) and its bits. The hashes are 64-bit patterns held as
+--- ints, computed with `wrapmul` and `bitxor` as the kernel computes them
+--- on u64; a position is the pattern read as unsigned modulo m. The
+--- tests are the module's own: `crow test src/modules/bloom.co`, held to
+--- the kernel through its test-only rows until the kernel goes.
+use sys
+use bits
+
+--- a filter: its bits, its bit count and its hash count
+struct Bloom [slots, m, k]
+
+--- the two hashes of a byte string
+struct Pair [h1, h2]
+
+--- `sized[items]`: an empty filter for about `items` values
+fn sized[items]
+    least = items
+    if least lt 8
+        least = 8
+    m = least * 8
+    return Bloom[bytes[m / 8], m, 6]
+
+--- a 64-bit pattern's bits from `n` up, as a non-negative int: the
+--- kernel's logical shift of a u64 (`shift` of a negative int carries the
+--- sign, which the mask cuts away)
+fn _down[v, n]
+    return bitand[shift[v, 0 - n], shift[1, 64 - n] - 1]
+
+--- the two hashes of a byte string: FNV-1a, and murmur's fmix64 of it
+--- made odd, so the second is independent of the first
+fn _hashes[b]
+    h = -3750763034362895579
+    for i in range[len[b]]
+        h = bitxor[h, byte[b, i]]
+        h = wrapmul[h, 1099511628211]
+    g = h
+    g = bitxor[g, _down[g, 33]]
+    g = wrapmul[g, -49064778989728563]
+    g = bitxor[g, _down[g, 33]]
+    g = wrapmul[g, -4265267296055464877]
+    g = bitxor[g, _down[g, 33]]
+    --- (a record, not a list literal: a literal of numbers is a tensor,
+    --- which holds a 64-bit pattern inexactly)
+    return Pair[h, bitor[g, 1]]
+
+--- a pattern read as unsigned, modulo m: the remainder has the sign of
+--- the left side here, so a negative pattern is 2^64 more than its int
+fn _position[x, m, wrap_m]
+    r = x % m
+    if x lt 0
+        if r lt 0
+            r = r + m
+        r = (r + wrap_m) % m
+    return r
+
+--- 2^64 modulo m, once per filter (a growing int's remainder)
+fn _wrap_m[m]
+    return wrap[18446744073709551616 % m]
+
+--- `add[f, b]`: the filter with the byte string's k bits set
+fn add[f, b]
+    hs = _hashes[b]
+    wrap_m = _wrap_m[f.m]
+    slots = f.slots
+    for i in range[f.k]
+        at = _position[wrapadd[hs.h1, wrapmul[i, hs.h2]], f.m, wrap_m]
+        slot = shift[at, -3]
+        slots = set[slots, slot, bitor[byte[slots, slot], shift[1, bitand[at, 7]]]]
+    return Bloom[slots, f.m, f.k]
+
+--- `filled[f, items]`: the filter with every byte string of the list
+--- added — one pass over the bits, where `add` per item would copy them
+--- (a group's distinct values, a group's distinct words)
+fn filled[f, items]
+    wrap_m = _wrap_m[f.m]
+    slots = f.slots
+    for b in items
+        hs = _hashes[b]
+        for i in range[f.k]
+            at = _position[wrapadd[hs.h1, wrapmul[i, hs.h2]], f.m, wrap_m]
+            slot = shift[at, -3]
+            slots = set[slots, slot, bitor[byte[slots, slot], shift[1, bitand[at, 7]]]]
+    return Bloom[slots, f.m, f.k]
+
+--- `admits[f, b]`: whether the filter may hold the byte string (never false
+--- for one it holds; true, now and then, for one it does not)
+fn admits[f, b]
+    hs = _hashes[b]
+    wrap_m = _wrap_m[f.m]
+    for i in range[f.k]
+        at = _position[wrapadd[hs.h1, wrapmul[i, hs.h2]], f.m, wrap_m]
+        if bitand[byte[f.slots, shift[at, -3]], shift[1, bitand[at, 7]]] eq 0
+            return false
+    return true
+
+--- `filter_bytes[f]`: the filter as a file holds it — its hash count, its
+--- bit count as eight bytes little-endian, its bits
+fn filter_bytes[f]
+    out = bytes[0]
+    out = push[out, f.k]
+    out = concat[out, pack[f.m, 8, little = true]]
+    out = concat[out, f.slots]
+    return out
+
+--- `filter_of[raw]`: a filter read back from a file's bytes; an error
+--- value of kind `'magpie'` where the bytes are too few or the counts
+--- cannot be
+fn filter_of[raw]
+    if len[raw] lt 9
+        return error['a filter needs its hash count and its size', 'magpie']
+    k = byte[raw, 0]
+    m = unpack[raw, 1, 8, little = true]
+    slots = slice[raw, 9, len[raw]]
+    if m lte 0 or k eq 0 or len[slots] * 8 lt m
+        return error['a filter of `m` bits cannot lie in `len[slots]` bytes', 'magpie']
+    return Bloom[slots, m, k]
+
+--- a filter admits what it holds and little else, and its bytes are the
+--- kernel's bit for bit: a thousand ints as their eight bytes, read back
+--- through the bytes
+test a_filter_admits_what_it_holds_and_is_the_kernels[]
+    f = sized[1000]
+    items = []
+    for i in range[1000]
+        items = push[items, pack[i, 4, little = true]]
+    for b in items
+        f = add[f, b]
+    raw = filter_bytes[f]
+    assert[same[raw, bloom_rs[items]]]
+    assert[same[filter_bytes[filled[sized[1000], items]], raw]]
+    back = filter_of[raw]
+    for b in items
+        assert[admits[back, b]]
+    false_positives = 0
+    for i in range[1000, 11000]
+        probe = pack[i, 4, little = true]
+        if admits[back, probe]
+            false_positives = false_positives + 1
+        assert[admits[back, probe] eq bloom_has_rs[raw, probe]]
+    assert[false_positives lt 500]
+    assert[not filter_of[bytes[2]].ok]
+    tiny = bytes[10]
+    tiny = set[tiny, 0, 6]
+    tiny = set[tiny, 1, 64]
+    assert[not filter_of[tiny].ok]
+    --- the words of a text, as a token filter holds them
+    wordset = sized[3]
+    for w in ['apple', 'banana', 'cherry']
+        wordset = add[wordset, bytes[w]]
+    assert[same[filter_bytes[wordset], bloom_rs[[bytes['apple'], bytes['banana'], bytes['cherry']]]]]
+    assert[admits[wordset, bytes['banana']] and not admits[wordset, bytes['durian']]]

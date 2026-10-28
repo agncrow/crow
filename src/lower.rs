@@ -272,22 +272,47 @@ impl Lowerer {
 /// renamed.
 fn scoped(stmts: Vec<Stmt>) -> Result<Vec<Stmt>, String> {
     let mut globals: BTreeSet<String> = BTreeSet::new();
+    // the names a function's body may bind as the program's: none of the
+    // top level's variables (spec, No Ambient Mutability: a function sees
+    // its parameters and its own locals, so `x = 1` in a branch of one is
+    // a local of that branch however the program names its variables —
+    // kept as the global, a sibling branch's `x = 'a'` had been judged a
+    // reassignment, "variable type cannot change", only in programs
+    // holding an `x` at the top), unless the program holds state: a ui
+    // program's views, handlers and helpers write its facts, as a web
+    // program's handlers do where it derives
+    let mut fixed: BTreeSet<String> = BTreeSet::new();
+    let mut ui = false;
+    let mut web = false;
+    let mut derives = false;
     for s in &stmts {
         match s {
             Stmt::Assign { name, .. } => {
                 globals.insert(name.clone());
             }
             Stmt::MultiAssign { names, .. } => globals.extend(names.iter().cloned()),
-            Stmt::FnDecl { name, .. } | Stmt::StructDecl { name, .. } | Stmt::Derive { name, .. } => {
+            Stmt::FnDecl { name, .. } | Stmt::StructDecl { name, .. } => {
                 globals.insert(name.clone());
+                fixed.insert(name.clone());
+            }
+            Stmt::Derive { name, .. } => {
+                globals.insert(name.clone());
+                fixed.insert(name.clone());
+                derives = true;
             }
             Stmt::Use { path, alias } => {
-                globals.insert(alias.clone().unwrap_or_else(|| path.clone()));
+                let name = alias.clone().unwrap_or_else(|| path.clone());
+                globals.insert(name.clone());
+                fixed.insert(name);
+                ui |= path == "ui" || path.starts_with("ui.");
+                web |= path == "web" || path.starts_with("web.");
             }
             _ => {}
         }
     }
-    let mut namer = Namer::new(&globals, &[]);
+    let stateful = ui || (web && derives);
+    let within = if stateful { globals.clone() } else { fixed };
+    let mut namer = Namer::new(&globals, &within, &[]);
     namer.block(stmts, false)
 }
 
@@ -338,6 +363,8 @@ pub fn shown(msg: &str) -> String {
 
 struct Namer<'a> {
     globals: &'a BTreeSet<String>,
+    /// the globals a function's body binds as the program's (`scoped`)
+    within: &'a BTreeSet<String>,
     /// per open block: the name written → the variable it is now
     scopes: Vec<BTreeMap<String, String>>,
     /// how many variables of each written name this body has had
@@ -348,14 +375,14 @@ struct Namer<'a> {
 }
 
 impl<'a> Namer<'a> {
-    fn new(globals: &'a BTreeSet<String>, params: &[String]) -> Self {
+    fn new(globals: &'a BTreeSet<String>, within: &'a BTreeSet<String>, params: &[String]) -> Self {
         let mut top = BTreeMap::new();
         let mut seen = BTreeMap::new();
         for p in params {
             top.insert(p.clone(), p.clone());
             seen.insert(p.clone(), 1);
         }
-        Namer { globals, scopes: vec![top], seen, closed: BTreeSet::new(), line: 0 }
+        Namer { globals, within, scopes: vec![top], seen, closed: BTreeSet::new(), line: 0 }
     }
 
     fn visible(&self, name: &str) -> Option<&String> {
@@ -436,15 +463,16 @@ impl<'a> Namer<'a> {
             }
             // a function, a derivation and a test block are bodies of their own
             Stmt::FnDecl { name, params, defaults, body, is_view } => {
-                let mut inner = Namer::new(self.globals, &params);
+                let mut inner = Namer::new(self.within, self.within, &params);
                 Stmt::FnDecl { name, params, defaults, body: inner.block(body, false)?, is_view }
             }
             Stmt::Derive { name, fresh, body } => {
-                let mut inner = Namer::new(self.globals, &[]);
+                let mut inner = Namer::new(self.within, self.within, &[]);
                 Stmt::Derive { name, fresh, body: inner.block(body, false)? }
             }
+            // (a test block sees the program's values, as a caller does)
             Stmt::TestBlock { name, params, body } => {
-                let mut inner = Namer::new(self.globals, &params);
+                let mut inner = Namer::new(self.globals, self.within, &params);
                 Stmt::TestBlock { name, params, body: inner.block(body, false)? }
             }
             Stmt::Return(v) => Stmt::Return(v.map(|x| self.expr(x)).transpose()?),
@@ -1762,6 +1790,27 @@ mod tests {
         assert!(text.contains("name: \"x\"") && text.contains("name: \"x__s2\""), "{}", text);
         assert!(text.contains("`x__s2`!"), "the span reads the renamed variable: {}", text);
         assert!(!text.contains("n__s") && !text.contains("c__s"), "an update and a parameter keep their names: {}", text);
+    }
+
+    /// A function's branch binds its own local whatever the program names
+    /// its variables (spec, No Ambient Mutability): with a top-level `x`
+    /// the sibling branches' `x`s had been kept as the global, and the
+    /// lowering judged the second a reassignment of the first ("variable
+    /// type cannot change"); a ui program's function writes the fact
+    #[test]
+    fn a_top_level_name_is_no_binding_of_a_functions_branch() {
+        let body_of = |stmts: &[Stmt]| {
+            stmts.iter().find_map(|s| match s {
+                Stmt::FnDecl { body, .. } => Some(format!("{:?}", body)),
+                _ => None,
+            }).expect("the function")
+        };
+        let plain = lower_src("x = 2.5\nfn f[c]\n    if c\n        x = 1\n    else\n        x = 'one'\n    return c\nlog[x]\n").unwrap();
+        let text = body_of(&plain);
+        assert!(text.contains("name: \"x\"") && text.contains("name: \"x__s2\""), "{}", text);
+        let ui = lower_src("use ui\nx = 0\nfn bump[c]\n    if c\n        x = 1\n    else\n        x = 2\n    return c\n").unwrap();
+        let text = body_of(&ui);
+        assert!(!text.contains("__s"), "a ui program's function writes its fact: {}", text);
     }
 
     /// A read after the block that set the variable ended is refused, with

@@ -550,7 +550,14 @@ impl TypeContext {
                     // lowering ran the right side's statements before the
                     // left side, and the emitter printed a mask's `and` over a
                     // bool (no method `iter` for `bool`) — parity 302
-                    let cells = |t: &Ty| is_frame_col(t) || is_bool_mask(t);
+                    // (a list of numbers beside one number is a mask too, as
+                    // both modes answer it — `3 gte ys` of a list made by
+                    // push had been typed one truth: `if 3 gte ys` ran
+                    // interpreted and did not build compiled, and `type` of
+                    // it said `bool` — crow check --self, decompress of a
+                    // list for an int)
+                    let number_list = |t: &Ty| matches!(t, Ty::List(i) if matches!(i.as_ref(), Ty::Int | Ty::Float | Ty::Big));
+                    let cells = |t: &Ty| is_frame_col(t) || is_bool_mask(t) || number_list(t);
                     let one_value = |t: &Ty| matches!(t, Ty::Int | Ty::Float | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Str | Ty::Bool | Ty::Moment | Ty::Json);
                     if (cells(&lt_inner) && one_value(&rt_inner)) || (cells(&rt_inner) && one_value(&lt_inner)) {
                         Ty::List(Box::new(Ty::Bool))

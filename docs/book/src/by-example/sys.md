@@ -608,9 +608,9 @@ log[len[digest[bytes['123456789'], 'crc32']]]
 --- a file placed the way a kernel places one: written beside its name,
 --- flushed, linked into the name, the directory flushed; read by region
 kept = store['part.bin', bytes['0123456789']]
-flushed = flush['part.bin']
+synced = flushed['part.bin']
 placed = link['part.bin', 'placed.bin']
-flushed = flush['.']
+synced = flushed['.']
 log[hex[file['placed.bin', 3, 4]]]
 log[file['placed.bin', 8, 4].reason]
 log[link['part.bin', 'placed.bin'].ok]
@@ -683,4 +683,297 @@ Applebananacherry
 [true, false, true]
 1
 05
+```
+
+A chunk's floats at once, where `ieee` writes and reads one: a list of
+floats as their bits one after another, 8 bytes each or 4 of single
+precision, and read back. A region outside the bytes stops.
+
+```crow
+use sys
+
+xs = []
+xs = push[xs, 1.5]
+xs = push[xs, -2.0]
+packed = float_bytes[xs, 4, true]
+log[hex[packed]]
+log[float_values[packed, 0, 2, 4, true]]
+log[float_values[packed, 4, 1, 4, true]]
+log[len[float_bytes[xs, 8, false]]]
+```
+
+```text
+0000c03f000000c0
+[1.5, -2]
+[-2]
+16
+```
+
+## A column chunk, in Crow
+
+`use magpie.encode` is the third kernel ported: the cells of one column
+over one row group as a Magpie file writes them — ints by frame of
+reference or delta, floats as their bits, text plain or as a dictionary,
+bools as a bitmap, moments, vectors — through the codec where it
+shrinks them, the kernel's bytes byte for byte. `chunk` writes one,
+`unchunk` reads it back as a column with its missing cells marked, and a
+chunk cut short or of another kind is an error value saying why.
+
+```crow
+use sys, frame, magpie.encode
+
+df = frame.new[qty = [3, 1, 2, 1000, -7], name = ['a', 'b', 'a', 'a', 'b']]
+ints = chunk[df.qty, 0, 5, false]
+log[len[ints]]
+log[byte[ints, 0]]
+log[header[]]
+back = unchunk[ints, 'int']
+log[ints_of[back, 0, 5]]
+names = chunk[df.name, 0, 5, false]
+log[byte[names, 0]]
+log[text[text_bytes_of[unchunk[names, 'text'], 0, 5]]]
+log[unchunk[slice[ints, 0, 10], 'int'].reason]
+log[unchunk[ints, 'float'].reason]
+codes = []
+for c in [0, 1, 0]
+    codes = push[codes, int[c]]
+few = text_dict_column[bytes['ab'], range[1, 3], codes, bytes[0]]
+log[text_ends_of[few, 0, 3]]
+log[cell_kind[few]]
+
+--- held to the kernel, byte for byte, until the kernel goes
+test the_chunk_is_the_kernels[]
+    tf = frame.new[qty = [3, 1, 2, 1000, -7]]
+    assert[same[chunk[tf.qty, 0, 5, false], encode_rs[tf.qty, 0, 5, false]]]
+    assert[ints_of[decode_rs[chunk[tf.qty, 0, 5, false], 'int'], 0, 5] eq ints_of[tf.qty, 0, 5]]
+```
+
+```text
+30
+0
+14
+[3, 1, 2, 1000, -7]
+4
+abaab
+the file ends 4 bytes early
+a float chunk is not encoding 0
+[1, 2, 3]
+text
+```
+
+## A bloom filter, in Crow
+
+`use magpie.bloom` is the fourth kernel ported: `k` hashes into `m`
+bits, FNV-1a and a mix of it, the kernel's bits bit for bit — what a
+file keeps per column chunk over its distinct values. A filter never
+refuses what it holds, and admits a stranger now and then.
+
+```crow
+use sys, magpie.bloom
+
+f = sized[3]
+for w in ['apple', 'banana', 'cherry']
+    f = add[f, bytes[w]]
+log[admits[f, bytes['banana']]]
+log[admits[f, bytes['durian']]]
+raw = filter_bytes[f]
+log[len[raw]]
+log[byte[raw, 0]]
+back = filter_of[raw]
+log[admits[back, bytes['cherry']]]
+log[filter_of[bytes[2]].reason]
+log[same[filter_bytes[filled[sized[3], [bytes['apple'], bytes['banana'], bytes['cherry']]]], raw]]
+
+--- held to the kernel, bit for bit, until the kernel goes
+test the_bits_are_the_kernels[]
+    items = [bytes['apple'], bytes['banana'], bytes['cherry']]
+    g = sized[3]
+    for b in items
+        g = add[g, b]
+    assert[same[filter_bytes[g], bloom_rs[items]]]
+    assert[bloom_has_rs[filter_bytes[g], bytes['apple']]]
+```
+
+```text
+true
+false
+17
+6
+true
+a filter needs its hash count and its size
+true
+```
+
+## The stemmer and the tokenizer, in Crow
+
+`use magpie.stem` is the fifth kernel ported: the Porter stemmer as the
+paper gives it, for a log that declares `stem`, so `running`, `runs` and
+`runner` all `run`; and `tokens` splits a text as an index and a query
+split it, each run of letters and digits lowercased.
+
+```crow
+use sys, magpie.stem
+
+for w in ['running', 'runs', 'runner', 'generalization', 'ponies', 'Fox', 'the']
+    log['`w` → `stem[w]`']
+log[terms['The quick, brown Fox-42 jumps; über naïve 東京!']]
+
+--- held to the kernel, word for word, until the kernel goes
+test the_stems_are_the_kernels[]
+    for w in split['the quick brown foxes jumped over the lazily sleeping dogs', ' ']
+        assert[stem[w] eq stem_rs[w]]
+```
+
+```text
+running → run
+runs → run
+runner → runner
+generalization → gener
+ponies → poni
+Fox → Fox
+the → the
+['the', 'quick', 'brown', 'fox', '42', 'jumps', 'über', 'naïve', '東京']
+```
+
+## A search index over a row group, in Crow
+
+`use magpie.postings` is the sixth kernel ported: the lengths of a text
+column's documents, a sorted dictionary of its terms, and each term's
+postings in blocks with their bounds, the kernel's bytes byte for byte;
+terms found by word, by prefix and within an edit distance.
+
+```crow
+use sys, frame, magpie.postings
+
+df = frame.new[note = ['the quick brown fox', 'the fox and the dog', 'brown bread']]
+made = built[df.note, 0, 3, false]
+log[made.docs]
+log[made.words]
+log[len[made.blob]]
+ix = parsed[made.blob]
+log[ix.lengths]
+log[ix.terms]
+the = term_of[ix, 'the']
+log[ix.dfs[the]]
+blocks = blocks_of[ix, the]
+log[blocks[0].posts[1].row]
+log[blocks[0].posts[1].positions]
+log[with_prefix[ix, 'br']]
+log[within[ix, 'fix', 1]]
+log[term_of[ix, 'cat']]
+log[levenshtein['kitchen', 'kitten', 2]]
+log[parsed[bytes[3]].reason]
+
+--- held to the kernel, byte for byte, until the kernel goes
+test the_index_is_the_kernels[]
+    tf = frame.new[note = ['the quick brown fox', 'the fox and the dog', 'brown bread']]
+    assert[same[built[tf.note, 0, 3, false].blob, index_rs[tf.note, 0, 3, false]]]
+```
+
+```text
+3
+11
+258
+[4, 5, 2]
+['and', 'bread', 'brown', 'dog', 'fox', 'quick', 'the']
+2
+1
+[0, 3]
+[1, 2]
+[4]
+-1
+2
+the file ends 2 bytes early
+```
+
+`use magpie.file` is the seventh kernel ported: the file itself — row
+groups of chunks with their statistics and filters, a block per column,
+the footer — written as the kernel writes it and read back by region.
+
+```crow
+use sys, frame, magpie.file, magpie.bloom
+
+fn _floats[a, b, c, d, e]
+    out = []
+    out = push[out, a]
+    out = push[out, b]
+    out = push[out, c]
+    out = push[out, d]
+    return push[out, e]
+
+df = frame.new[id = [3, 1, 2, 1, 9], name = ['Apple pie', 'banana split', 'Cherry tart', 'apple crumble', 'durian'], ok = [true, false, true, true, false], _pos = [0, 1, 2, 3, 4]]
+gap = bytes[0]
+gap = push[gap, 23]
+df.price = floats_column[_floats[2.5, 1.0, 0.0 / 0.0, 0.5, 4.0], gap]
+nothing = slice[['x'], 0, 0]
+made = file_of[df, 3, 0, 4, ['id'], ['name'], nothing, false]
+log[len[made]]
+log[rows_per_group[df]]
+kept = store['ex.batch', made]
+r = opened['ex.batch']
+log[r.footer.groups]
+log[r.footer.columns[1].cells]
+ids = entries[r, 0]
+log[ids[0].lo.whole]
+log[ids[0].distinct]
+prices = entries[r, 4]
+log[prices[1].absent]
+names = entries[r, 1]
+log[names[0].docs]
+log[admits[token_filter[r, names[0]], bytes['cherry']]]
+log[admits[value_filter[r, ids[0]], pack[9, 8, little = true]]]
+both = []
+both = push[both, 0]
+both = push[both, 1]
+whole = groups_of[r, both, wanted[r, nothing]]
+log[whole.name]
+log[hex[present_of[whole.price, 0, 5]]]
+two = group_of[r, 1, wanted[r, ['name', '_pos']]]
+log[two._pos]
+log[len[empty_of[r, wanted[r, nothing]]]]
+log[about['ex.batch'].docs]
+log[opened['nosuch.batch'].reason]
+log[ints_of[chunk_of[r, 0, ids[1]], 0, 2]]
+log[len[index_bytes[r, names[0]]]]
+--- the writer in its parts: what file_of does, for a writer that streams groups
+cols = columns_of[df, ['name']]
+wide = [false, false, false, false, false]
+g1 = group_bytes[df, 0, 3, cols, wide, false, 8]
+g2 = group_bytes[df, 3, 5, cols, wide, false, 8 + len[g1.data]]
+out = concat[concat[bytes['MAGPIE'], push[push[bytes[0], 0], 2]], concat[g1.data, g2.data]]
+blocks = []
+for c in range[5]
+    blocks = push[blocks, concat[g1.entries[c], g2.entries[c]]]
+groups = []
+groups = push[groups, g1.rows]
+groups = push[groups, g2.rows]
+log[same[finish[out, blocks, groups, cols, 0, 4, ['id'], [], []], made]]
+
+--- held to the kernel, byte for byte, until the kernel goes
+test the_file_is_the_kernels[]
+    tf = frame.new[id = [3, 1, 2], name = ['Apple pie', 'banana split', 'Cherry tart']]
+    none = slice[['x'], 0, 0]
+    assert[same[file_of[tf, 2, 0, 2, ['id'], ['name'], none, false], file_rs[tf, 0, 2, ['id'], ['name'], none, false, 2]]]
+```
+
+```text
+1530
+89240
+[3, 2]
+text
+1
+3
+1
+3
+true
+false
+['Apple pie', 'banana split', 'Cherry tart', 'apple crumble', 'durian']
+17
+[3, 4]
+0
+[0, 5, 0, 0, 0]
+magpie: cannot read 'nosuch.batch': No such file or directory (os error 2)
+[1, 9]
+216
+true
 ```

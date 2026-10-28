@@ -1060,7 +1060,10 @@ impl IrInterp {
                 self.set_fact(fact, v);
                 Ok(Flow::Next)
             }
-            Stmt::SetPath { var, path, expr } => {
+            Stmt::SetPath { var, path, expr, taken } => {
+                if *taken && self.grown_in_place(var, path, expr)? {
+                    return Ok(Flow::Next);
+                }
                 let new = self.eval(expr)?;
                 // the common case — `xs[i] = v` of a local list — set where it
                 // lies, with no list of indexes
@@ -1752,6 +1755,48 @@ impl IrInterp {
     /// collection takes this path; anything else (a frame, a tensor, a
     /// module's function of the same name, a kind no row takes) goes the
     /// ordinary way.
+    /// `xs[i] = push[xs[i], v]` (ir::Stmt::SetPath, `taken`): the place's
+    /// value taken out of its slot — the lists and maps along the path
+    /// copied first where another value shares them, as a write does —
+    /// handed to the row moved (its take path, as a local's `xs = push[xs,
+    /// v]` is) and the answer written back, so the list under the key grows
+    /// where it lies. A failed argument goes the ordinary way (spec,
+    /// Auto-Propagation), the place untouched.
+    fn grown_in_place(&mut self, var: &str, path: &[PathStep], expr: &Expr) -> Result<bool, String> {
+        let Expr::Call { target: Target::Row(row), args, .. } = expr else { return Ok(false) };
+        if !row.takes_in_place() || args.is_empty() {
+            return Ok(false);
+        }
+        let mut idx = Vec::new();
+        for p in path {
+            if let PathStep::Index(i) = p {
+                idx.push(self.eval(i)?);
+            }
+        }
+        // (the other arguments are plain reads — the lowering computed any
+        // other first — so a failed one goes the ordinary way, which reads
+        // them again and hands the failure on as any call does)
+        let rest = self.eval_args(&args[1..])?;
+        if rest.iter().any(|r| r.is_error()) {
+            return Ok(false);
+        }
+        let trace = self.trace_entry();
+        let root = self.slot(var).ok_or_else(|| format!("undefined variable '{}'", var))?;
+        if root.is_error() {
+            return Err(format!("cannot set an item of an error value — {}", root.reason()));
+        }
+        let slot = path_slot(&mut root.value, path, &idx)?;
+        let taken = std::mem::replace(slot, CrowValue::done());
+        let mut vals = Vec::with_capacity(1 + rest.len());
+        vals.push(taken);
+        vals.extend(rest);
+        // (the answer is of the place's kind — the row makes it of what it
+        // was given — so it goes straight back into the slot; a stop in the
+        // row ends the program there, as the compiled one's does)
+        *slot = (row.take)(vals, &trace)?;
+        Ok(true)
+    }
+
     fn assign_in_place(&mut self, var: &str, expr: &Expr) -> Result<bool, String> {
         let (name, args, named) = match expr {
             Expr::Call { target: Target::Runtime(name), args, .. } => (name.rsplit('.').next().unwrap_or(name), args, None),
@@ -3893,59 +3938,76 @@ fn binop_of(op: &str) -> Result<BinOp, String> {
 }
 
 /// `x.f = v`, `xs[i] = v`, and their nestings, applied to a value in place.
-fn set_path(root: &mut Value, path: &[PathStep], idx: &[CrowValue], new: CrowValue) -> Result<(), String> {
-    fn step<'v>(cur: &'v mut Value, p: &PathStep, idx: &mut std::slice::Iter<'_, CrowValue>) -> Result<&'v mut CrowValue, String> {
-        match p {
-            PathStep::Field(f) => match cur {
-                Value::StructInstance(si) => {
-                    // (a record another value shares is copied first: values stay values)
-                    let si = Arc::make_mut(si);
-                    let shown = si.shown().to_string();
-                    si.get_mut(f).ok_or_else(|| format!("struct '{}' has no field '{}'", shown, f))
-                }
-                // (a map another value shares is copied first, as a record is)
-                Value::Map(m) => {
-                    crow_runtime::stops::key(m, &f.to_string())?;
-                    std::sync::Arc::make_mut(m).get_mut(f).ok_or_else(|| format!("map has no key '{}'", f))
-                }
-                other => Err(format!("cannot assign field '{}' on {}", f, other.type_name())),
-            },
-            PathStep::Index(_) => {
-                let i = idx.next().ok_or("missing index")?;
-                match cur {
-                    Value::Array(items) => match &i.value {
-                        Value::Int(n) => {
-                            let at = crow_runtime::stops::item(*n, items.len())?;
-                            Ok(&mut std::sync::Arc::make_mut(items)[at])
-                        }
-                        _ => Err("array index must be an integer".to_string()),
-                    },
-                    Value::Map(m) => match &i.value {
-                        Value::Str(k) => {
-                            crow_runtime::stops::key(m, k)?;
-                            std::sync::Arc::make_mut(m).get_mut(k).ok_or_else(|| format!("map has no key '{}'", k))
-                        }
-                        Value::Int(n) => Err(format!("the map's keys are text, not ints: {}", n)),
-                        _ => Err("a map's key is text or an int".to_string()),
-                    },
-                    Value::IntMap(m) => match &i.value {
-                        Value::Int(n) => {
-                            crow_runtime::stops::key(m, n)?;
-                            std::sync::Arc::make_mut(m).get_mut(n).ok_or_else(|| format!("map has no key '{}'", n))
-                        }
-                        Value::Str(k) => Err(format!("the map's keys are ints, not text: '{}'", k)),
-                        _ => Err("a map's key is text or an int".to_string()),
-                    },
-                    other => Err(format!("cannot index-assign into {}", other.type_name())),
-                }
+/// The slot a path reaches, to take a value out of (`grown_in_place`): each
+/// step as a write makes it, a missing key or a position outside stopping
+/// as a read does.
+fn path_slot<'v>(root: &'v mut Value, path: &[PathStep], idx: &[CrowValue]) -> Result<&'v mut CrowValue, String> {
+    let mut it = idx.iter();
+    let (first, rest) = path.split_first().ok_or("empty path")?;
+    let mut cur: &mut CrowValue = path_step(root, first, &mut it)?;
+    for p in rest {
+        cur = path_step(&mut cur.value, p, &mut it)?;
+    }
+    Ok(cur)
+}
+
+/// One step of a path write: the field or the item, where the value
+/// lies, the record, list or map copied first where another value shares
+/// it (values stay values).
+fn path_step<'v>(cur: &'v mut Value, p: &PathStep, idx: &mut std::slice::Iter<'_, CrowValue>) -> Result<&'v mut CrowValue, String> {
+    match p {
+        PathStep::Field(f) => match cur {
+            Value::StructInstance(si) => {
+                // (a record another value shares is copied first: values stay values)
+                let si = Arc::make_mut(si);
+                let shown = si.shown().to_string();
+                si.get_mut(f).ok_or_else(|| format!("struct '{}' has no field '{}'", shown, f))
+            }
+            // (a map another value shares is copied first, as a record is)
+            Value::Map(m) => {
+                crow_runtime::stops::key(m, &f.to_string())?;
+                std::sync::Arc::make_mut(m).get_mut(f).ok_or_else(|| format!("map has no key '{}'", f))
+            }
+            other => Err(format!("cannot assign field '{}' on {}", f, other.type_name())),
+        },
+        PathStep::Index(_) => {
+            let i = idx.next().ok_or("missing index")?;
+            match cur {
+                Value::Array(items) => match &i.value {
+                    Value::Int(n) => {
+                        let at = crow_runtime::stops::item(*n, items.len())?;
+                        Ok(&mut std::sync::Arc::make_mut(items)[at])
+                    }
+                    _ => Err("array index must be an integer".to_string()),
+                },
+                Value::Map(m) => match &i.value {
+                    Value::Str(k) => {
+                        crow_runtime::stops::key(m, k)?;
+                        std::sync::Arc::make_mut(m).get_mut(k).ok_or_else(|| format!("map has no key '{}'", k))
+                    }
+                    Value::Int(n) => Err(format!("the map's keys are text, not ints: {}", n)),
+                    _ => Err("a map's key is text or an int".to_string()),
+                },
+                Value::IntMap(m) => match &i.value {
+                    Value::Int(n) => {
+                        crow_runtime::stops::key(m, n)?;
+                        std::sync::Arc::make_mut(m).get_mut(n).ok_or_else(|| format!("map has no key '{}'", n))
+                    }
+                    Value::Str(k) => Err(format!("the map's keys are ints, not text: '{}'", k)),
+                    _ => Err("a map's key is text or an int".to_string()),
+                },
+                other => Err(format!("cannot index-assign into {}", other.type_name())),
             }
         }
     }
+}
+
+fn set_path(root: &mut Value, path: &[PathStep], idx: &[CrowValue], new: CrowValue) -> Result<(), String> {
     let mut it = idx.iter();
     let (last, front) = path.split_last().ok_or("empty path")?;
     let mut cur: &mut Value = root;
     for p in front {
-        cur = &mut step(cur, p, &mut it)?.value;
+        cur = &mut path_step(cur, p, &mut it)?.value;
     }
     match last {
         PathStep::Field(f) => match cur {

@@ -1,0 +1,52 @@
+--- A list held in a list, under a map's key or in a record's field grows
+--- where it lies: `xs[i] = push[xs[i], v]`, `m[k] = push[m[k], v]` and
+--- `r.items = push[r.items, v]` take the place's value, push onto it and
+--- write it back, in both modes (reading it had copied the list at every
+--- push: 200,000 pushes under eight keys took 650 ms compiled and 14 s
+--- interpreted — found by magpie.file's postings builder). What another
+--- value holds keeps its copy, an argument reading the place is computed
+--- first, and text under a key grows the same way.
+
+struct Bag [items, count]
+
+xs = []
+for k in range[3]
+    xs = push[xs, []]
+m = map[]
+for k in ['a', 'b']
+    m = set[m, k, []]
+b = Bag[[], 0]
+for i in range[10]
+    xs[i % 3] = push[xs[i % 3], i]
+    k = 'a'
+    if i % 2 eq 1
+        k = 'b'
+    m[k] = push[m[k], i * 10]
+    b.items = push[b.items, i]
+log[xs]
+log[m]
+log[b.items]
+--- a value read before keeps its copy
+keep = xs[0]
+xs[0] = push[xs[0], 99]
+log[keep]
+log[xs[0]]
+--- an argument reading the place is computed before the place is taken
+xs[1] = push[xs[1], len[xs[1]]]
+log[xs[1]]
+--- text under a key
+t = map[]
+t = set[t, 'k', '']
+for i in range[4]
+    t['k'] = concat[t['k'], str[i]]
+log[t]
+--- a list of lists in a function, its rows built in place
+fn rows_of[n, w]
+    out = []
+    for r in range[n]
+        out = push[out, []]
+    for i in range[n * w]
+        out[i % n] = push[out[i % n], i]
+    return out
+
+log[rows_of[3, 2]]

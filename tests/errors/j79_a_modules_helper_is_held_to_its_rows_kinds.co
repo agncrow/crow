@@ -2,6 +2,7 @@
 --- kinds as the program's own calls are, and the refusal names the function
 --- the program called: a list handed as prior's position had reached
 --- batch_asof's int through the helper — a stop interpreted, no build compiled
+--- known: count — the list reaches two uses of `upto` in the helper, a comparison (a mask, since a list beside a number is one) and the row, and each use is refused
 use magpie, frame
 
 labels = frame.new[user = ['ann', 'bob'], at = [10, 20]]
