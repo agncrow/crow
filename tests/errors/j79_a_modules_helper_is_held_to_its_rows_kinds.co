@@ -1,8 +1,11 @@
---- inside a standard module, a helper's call of a row is held to the row's
---- kinds as the program's own calls are, and the refusal names the function
---- the program called: a list handed as prior's position had reached
---- batch_asof's int through the helper — a stop interpreted, no build compiled
---- known: count — the list reaches two uses of `upto` in the helper, a comparison (a mask, since a list beside a number is one) and the row, and each use is refused
+--- inside a standard module, a helper's use of what the program handed is
+--- held to its kinds as the program's own calls are, and the refusal names
+--- the function the program called: a list handed as prior's position had
+--- reached batch_asof's int through the helper — a stop interpreted, no
+--- build compiled. The join is Crow's now (magpie.exec, 2026-10-28), and
+--- the list meets its first use there, a comparison with a position (a
+--- mask, since a list beside a number is one); a row's kinds inside a
+--- helper stay held by j80's `pack`
 use magpie, frame
 
 labels = frame.new[user = ['ann', 'bob'], at = [10, 20]]

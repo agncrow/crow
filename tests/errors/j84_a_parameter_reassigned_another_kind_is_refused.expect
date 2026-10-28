@@ -1,0 +1,3 @@
+j84_a_parameter_reassigned_another_kind_is_refused.co:7:5: cannot reassign 't' from json to float — variable type cannot change
+  7 │     t = t + 1
+    │     ^   ^

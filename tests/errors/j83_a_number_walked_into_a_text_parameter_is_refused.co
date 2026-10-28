@@ -1,0 +1,20 @@
+--- a number walked into a parameter read as text is refused
+--- mistakes: 2
+--- as a direct call of the function is (`op[3.0]`): the first rounds
+--- handed the parameter nothing known, the body's comparison with text
+--- guessed it text, and the guess had stood against the call's number —
+--- the lowered program disagreed with itself (crow check --self,
+--- magpie.exec's `summary_of` handed a vector for its operators)
+fn op[word]
+    if word eq 'lte'
+        return 'le'
+    return word
+
+fn run[ops]
+    out = []
+    for o in ops
+        out = push[out, op[o]]
+    return out
+
+xs = push[push[[], 3.0], 1.0]
+log[run[xs]]

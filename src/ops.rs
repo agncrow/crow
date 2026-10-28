@@ -1098,6 +1098,10 @@ pub fn field(obj: CrowValue, field: &str) -> Result<CrowValue, String> {
             _ => {
                 // Try column access by name: df.age returns the column as an array
                 if let Some(idx) = frame.col_index(field) {
+                    // (a column of no rows keeps its kind, which no cell says)
+                    if frame.nrows() == 0 {
+                        return Ok(CrowValue::empty_column(frame.data[idx].as_ref()));
+                    }
                     let vals: Vec<CrowValue> = (0..frame.nrows()).map(|i| frame_cell(frame, idx, i)).collect();
                     return Ok(CrowValue::ok(Value::Array(std::sync::Arc::new(vals))));
                 }

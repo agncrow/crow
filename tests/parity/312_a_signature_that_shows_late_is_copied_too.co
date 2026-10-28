@@ -1,0 +1,43 @@
+--- A function given its second signature only after an earlier round of
+--- copies is copied too: `measure` is called by `second` with a frame
+--- `made`'s copy answers and the columns `shape`'s copy answers, so its
+--- second signature shows two rounds in, when no function's types moved
+--- any more. The rounds had stopped there, `measure` uncopied, and each
+--- call of it answered nothing known: the compiled program read a field
+--- of a value that can fail and did not build (magpie's `group_bytes`,
+--- called by the manifest's writer and by `file_of`).
+use frame
+
+struct Sized [rows, cols]
+
+fn made[n]
+    return frame.new[y = [n, n], z = [true, false]]
+
+fn shape[df]
+    return df.columns
+
+fn measure[df, cols]
+    if len[cols] eq 0
+        return error['no columns', 'demo']
+    return Sized[len[df], len[cols]]
+
+fn first[df]
+    cols = shape[df]
+    got = measure[df, cols]
+    if not got.ok
+        return error[got.reason, 'demo']
+    log[got.rows * got.cols]
+    return len[df]
+
+fn second[k]
+    df = made[k]
+    cols = shape[df]
+    got = measure[df, cols]
+    if not got.ok
+        return error[got.reason, 'demo']
+    log[got.rows * got.cols]
+    return len[df]
+
+log[first[frame.new[x = [1, 2]]]]
+log[second['a']]
+log[len[made[1]]]

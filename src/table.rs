@@ -580,6 +580,13 @@ pub struct Row {
     /// The crate feature its call needs built in, by crate: a response as
     /// Arrow, the GPU, the Parquet kernels.
     pub feature: Option<(&'static str, &'static str)>,
+    /// The kind of the cells of a column the row answers, where the row
+    /// fixes it (`ints_column` answers ints): a scalar's kind, or
+    /// `Kind::Tensor` for vectors. Read by `Row::answer`, so the call is
+    /// typed `Column(Int)` and not a column of nothing known — written
+    /// onto a frame, that had made the frame's column text, and `df.v eq 5`
+    /// was refused before the program ran.
+    pub cells: Option<Kind>,
     /// The name a program writes to reach a row whose own name is hidden
     /// (`__fmt_time` is `fmt` with a time style: one name, the row an
     /// option picks, and its lowered form told from the plain row's by the
@@ -620,10 +627,21 @@ impl Row {
         self.path == IN_CROW
     }
 
+    /// The answer's type: its kind's, a column's cells where the row
+    /// declares them (`cells`).
+    pub fn answer(&self) -> Ty {
+        match (self.ret, self.cells) {
+            // a column of vectors holds a tensor of one axis in each cell
+            (Kind::Column, Some(Kind::Tensor)) => Ty::Column(Box::new(Ty::vector(Ty::Float))),
+            (Kind::Column, Some(cells)) => Ty::Column(Box::new(cells.ty())),
+            _ => self.ret.ty(),
+        }
+    }
+
     /// The call's type, for inference and the lowering: the answer's, able
     /// to fail when a failure is a value.
     pub fn ty(&self) -> Ty {
-        let t = self.ret.ty();
+        let t = self.answer();
         match self.fails {
             Fails::Value(_) => Ty::Result(Box::new(t)),
             _ => t,
@@ -1226,6 +1244,10 @@ pub fn read_strs(v: &CrowValue) -> Result<Vec<String>, String> {
 /// missing one an error of reason `missing` holding the column's
 /// placeholder, as `df.col` reads them (ops::frame_cell).
 pub fn write_column(c: crow_runtime::frame::CrowColumn) -> CrowValue {
+    // (an empty column keeps its kind, which no cell says)
+    if c.len() == 0 {
+        return CrowValue::empty_column(&c.data);
+    }
     CrowValue::ok(Value::Array(std::sync::Arc::new((0..c.len()).map(|i| crate::ops::column_cell(&c.data, c.valid[i], i)).collect())))
 }
 
@@ -1313,6 +1335,12 @@ pub fn read_cells(v: &CrowValue) -> Result<crow_runtime::frames::Cells, String> 
         Value::NumArray(t) => return Ok(Cells::from(t.as_ref().clone())),
         _ => return read_cell(v).map(Cells::One),
     };
+    // a column of no rows says its kind where no cell can (CrowValue::empty_column)
+    if items.is_empty()
+        && let Some(kind) = v.column_kind()
+    {
+        return Ok(Cells::Column(kind.clone(), crow_runtime::frame::Validity::from(Vec::<bool>::new())));
+    }
     // every cell says the column's kind, a missing one by the placeholder
     // it holds (ops::frame_cell), so a column all of whose cells are missing
     // keeps its kind, as the compiled program's column does
@@ -1903,7 +1931,7 @@ macro_rules! crow {
     ($id:literal, $module:literal, $name:literal, ($($k:ident),*) -> $r:ident, $($fails:tt)+) => {
         Row {
             id: $id, name: $name, module: $module, path: IN_CROW,
-            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($($fails)+), options: &[], written: "", form: "", props: &[], taken: None, big: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None,
+            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($($fails)+), options: &[], written: "", form: "", props: &[], taken: None, big: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None, cells: None,
             call: |_args: &[CrowValue], _trace: &str| Err(written_in_crow($name)),
             take: |_args: Vec<CrowValue>, _trace: &str| Err(written_in_crow($name)),
         }
@@ -1918,7 +1946,7 @@ macro_rules! maprow {
     ($id:literal, $name:literal, $f:path, ($($k:ident),*) -> $r:ident, $fails:tt, $call:path, $take:path) => {
         Row {
             id: $id, name: $name, module: "", path: stringify!($f),
-            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($fails), options: &[], written: "", form: "", props: &[], taken: None, big: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None,
+            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($fails), options: &[], written: "", form: "", props: &[], taken: None, big: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None, cells: None,
             call: $call,
             take: $take,
         }
@@ -1929,7 +1957,7 @@ macro_rules! row {
     ($id:literal, $module:literal, $name:literal, $f:path, ($($k:ident),*) -> $r:ident, $($fails:tt)+) => {
         Row {
             id: $id, name: $name, module: $module, path: stringify!($f),
-            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($($fails)+), options: &[], written: "", form: "", props: &[], taken: None, big: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None,
+            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($($fails)+), options: &[], written: "", form: "", props: &[], taken: None, big: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None, cells: None,
             call: |args: &[CrowValue], trace: &str| {
                 let _ = trace;
                 let groups = groups_in_place(&[$(Kind::$k),*], args, $name)?;
@@ -2568,6 +2596,7 @@ pub static ROWS: &[Row] = &[
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_stats", "sys", "batch_stats", crow_runtime::sys::batch_stats, (Str) -> Str, value "magpie") },
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_admits", "sys", "batch_admits", crow_runtime::sys::batch_admits, (Str, Str, Str, Bool) -> Bool, value "magpie") },
     Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("sys.batch_merge", "sys", "batch_merge", crow_runtime::sys::batch_merge, (Str, Texts, Bool) -> Str, value "magpie") },
+    Row { props: &[Prop::TestOnly, Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("sys.stream_rs", "sys", "stream_rs", crow_runtime::sys::stream_rs, (Str, Texts, Texts, Texts, Texts, Bool, Bool, Int, Int, Int) -> Texts, value "magpie") },
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_declared", "sys", "batch_declared", crow_runtime::sys::batch_declared, (Str) -> Str, value "magpie") },
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_summary", "sys", "batch_summary", crow_runtime::sys::batch_summary, (Texts, Texts, Texts, Texts, Texts, Texts, Texts, Str, Str, Int) -> Frame, value "magpie") },
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_asof", "sys", "batch_asof", crow_runtime::sys::batch_asof, (Texts, Frame, Texts, Str, Texts, Int) -> Frame, value "magpie") },
@@ -2606,13 +2635,13 @@ pub static ROWS: &[Row] = &[
     row!("sys.text_ends_of", "sys", "text_ends_of", crow_runtime::sys::text_ends_of, (Column, Int, Int) -> Ints, stops),
     row!("sys.present_of", "sys", "present_of", crow_runtime::sys::present_of, (Column, Int, Int) -> Bytes, stops),
     row!("sys.missing_in", "sys", "missing_in", crow_runtime::sys::missing_in, (Column, Int, Int) -> Int, stops),
-    row!("sys.ints_column", "sys", "ints_column", crow_runtime::sys::ints_column, (Ints, Bytes) -> Column, stops),
-    row!("sys.floats_column", "sys", "floats_column", crow_runtime::sys::floats_column, (Floats, Bytes) -> Column, stops),
-    row!("sys.bools_column", "sys", "bools_column", crow_runtime::sys::bools_column, (Bytes, Int, Bytes) -> Column, stops),
-    row!("sys.moments_column", "sys", "moments_column", crow_runtime::sys::moments_column, (Ints, Ints, Bytes) -> Column, stops),
-    row!("sys.vectors_column", "sys", "vectors_column", crow_runtime::sys::vectors_column, (Int, Floats, Bytes) -> Column, stops),
-    row!("sys.text_column", "sys", "text_column", crow_runtime::sys::text_column, (Bytes, Ints, Bytes) -> Column, stops),
-    row!("sys.text_dict_column", "sys", "text_dict_column", crow_runtime::sys::text_dict_column, (Bytes, Ints, Ints, Bytes) -> Column, stops),
+    Row { cells: Some(Kind::Int), ..row!("sys.ints_column", "sys", "ints_column", crow_runtime::sys::ints_column, (Ints, Bytes) -> Column, stops) },
+    Row { cells: Some(Kind::Float), ..row!("sys.floats_column", "sys", "floats_column", crow_runtime::sys::floats_column, (Floats, Bytes) -> Column, stops) },
+    Row { cells: Some(Kind::Bool), ..row!("sys.bools_column", "sys", "bools_column", crow_runtime::sys::bools_column, (Bytes, Int, Bytes) -> Column, stops) },
+    Row { cells: Some(Kind::Moment), ..row!("sys.moments_column", "sys", "moments_column", crow_runtime::sys::moments_column, (Ints, Ints, Bytes) -> Column, stops) },
+    Row { cells: Some(Kind::Tensor), ..row!("sys.vectors_column", "sys", "vectors_column", crow_runtime::sys::vectors_column, (Int, Floats, Bytes) -> Column, stops) },
+    Row { cells: Some(Kind::Str), ..row!("sys.text_column", "sys", "text_column", crow_runtime::sys::text_column, (Bytes, Ints, Bytes) -> Column, stops) },
+    Row { cells: Some(Kind::Str), ..row!("sys.text_dict_column", "sys", "text_dict_column", crow_runtime::sys::text_dict_column, (Bytes, Ints, Ints, Bytes) -> Column, stops) },
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_search", "sys", "batch_search", crow_runtime::sys::batch_search, (Texts, Str, Texts, Int, Bool, Int) -> Frame, value "magpie") },
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_nearest", "sys", "batch_nearest", crow_runtime::sys::batch_nearest, (Texts, Str, Tensor, Int) -> Frame, value "magpie") },
     row!("sys.frame_of_postgres", "sys", "frame_of_postgres", crow_runtime::sys::frame_of_postgres, (Bytes) -> Frame, value "frame"),
@@ -2766,7 +2795,7 @@ macro_rules! form {
     ($id:literal, $module:literal, $name:literal, ($($k:ident),*)) => {
         Row {
             id: $id, name: $name, module: $module, path: IN_FORM,
-            params: &[$(Kind::$k),*], ret: Kind::Unit, fails: Fails::Never, options: &[], written: "", form: "", props: &[], taken: None, big: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None,
+            params: &[$(Kind::$k),*], ret: Kind::Unit, fails: Fails::Never, options: &[], written: "", form: "", props: &[], taken: None, big: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None, cells: None,
             call: |_args: &[CrowValue], _trace: &str| Err(a_form($name)),
             take: |_args: Vec<CrowValue>, _trace: &str| Err(a_form($name)),
         }
@@ -3633,7 +3662,7 @@ impl Kind {
                 // (nor a connection, a response, a socket, a mailer, a stream,
                 // or bytes — which `encode` had written as JSON's null, and
                 // the compiled program had not built: base64[b] is text)
-                Kind::Encoded => !matches!(a, Arg::Fn | Arg::Fns | Arg::Frame | Arg::Sparse | Arg::Column | Arg::Handle(_) | Arg::Bytes | Arg::Chunks),
+                Kind::Encoded => !matches!(a, Arg::Fn | Arg::Fns | Arg::Frame | Arg::Frames | Arg::Sparse | Arg::Column | Arg::Handle(_) | Arg::Bytes | Arg::Chunks),
                 Kind::Operand => matches!(a, Arg::Tensor | Arg::Int | Arg::Float),
                 Kind::Scalar => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth),
                 _ => true,

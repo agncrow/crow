@@ -2184,11 +2184,18 @@ fn transpile_and_compile(entry: &str, quiet: bool, resources: Resources, release
             eprintln!("error writing .cargo/config.toml: {}", e);
             process::exit(1);
         });
+    }
+    // the runtime's lockfile, from any runtime: the program builds the
+    // crates the crow binary was built with. A checkout's program had
+    // resolved the newest it could and kept them — Arrow 60.1.0 beside the
+    // binary's 60.0.0 — and an Arrow response lost its null bitmap
+    // compiled alone (served 21, 2026-10-28). A lockfile already there is
+    // replaced where a version it pins differs from the runtime's.
+    if let Ok(text) = std::fs::read_to_string(rt.dir().join("Cargo.lock")) {
         let lock = build_dir.join("Cargo.lock");
-        if !lock.exists() {
-            if let Ok(text) = std::fs::read_to_string(rt.dir().join("Cargo.lock")) {
-                let _ = std::fs::write(&lock, text);
-            }
+        let held = std::fs::read_to_string(&lock).unwrap_or_default();
+        if held.is_empty() || home::pins_differ(&held, &text) {
+            let _ = std::fs::write(&lock, text);
         }
     }
 
@@ -5372,9 +5379,12 @@ fn rename_locals(st: &mut ast::Stmt, map: &std::collections::BTreeMap<String, St
             rename_locals_expr(condition, map);
             body.iter_mut().for_each(|s| rename_locals(s, map));
         }
-        ast::Stmt::FieldAssign { object, value, .. } => {
+        ast::Stmt::FieldAssign { object, field, value } => {
             rename_locals_expr(object, map);
             rename_locals_expr(value, map);
+            if field.contains('`') {
+                *field = renamed_spans(field, map, &std::collections::HashSet::new());
+            }
         }
         ast::Stmt::IndexAssign { object, index, value } => {
             rename_locals_expr(object, map);
@@ -5403,7 +5413,12 @@ fn rename_locals_expr(e: &mut ast::Expr, map: &std::collections::BTreeMap<String
             rename_locals_expr(callee, map);
             args.iter_mut().for_each(|a| rename_locals_expr(a, map));
         }
-        ast::Expr::FieldAccess { object, .. } => rename_locals_expr(object, map),
+        ast::Expr::FieldAccess { object, field } => {
+            rename_locals_expr(object, map);
+            if field.contains('`') {
+                *field = renamed_spans(field, map, &std::collections::HashSet::new());
+            }
+        }
         ast::Expr::Array(items) => items.iter_mut().for_each(|i| rename_locals_expr(i, map)),
         ast::Expr::Map(pairs) => pairs.iter_mut().for_each(|(_, v)| rename_locals_expr(v, map)),
         ast::Expr::Named { value, .. } => rename_locals_expr(value, map),
@@ -6013,9 +6028,12 @@ pub(crate) fn rewrite_refs_stmt(
                 rewrite_refs_stmt(st, map, &inner);
             }
         }
-        ast::Stmt::FieldAssign { object, value, .. } => {
+        ast::Stmt::FieldAssign { object, field, value } => {
             rewrite_refs_expr(object, map, shadowed);
             rewrite_refs_expr(value, map, shadowed);
+            if field.contains('`') {
+                *field = renamed_spans(field, map, shadowed);
+            }
         }
         ast::Stmt::IndexAssign { object, index, value } => {
             rewrite_refs_expr(object, map, shadowed);
@@ -7054,6 +7072,43 @@ mod module_parts_tests {
     }
 }
 
+/// A text's interpolation spans with their names renamed by the map — a
+/// string's, or a column's name the program computes (`df.`k``) — a name
+/// after `.` and a shadowed one left alone. Every walker that renames a
+/// body's names reads both: a part's local `k` renamed apart from the
+/// entry's `k` had left `df.`k`` reading the entry's, refused as a module
+/// variable a function does not see.
+fn renamed_spans(s: &str, map: &std::collections::BTreeMap<String, String>, shadowed: &std::collections::HashSet<String>) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_span = false;
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '`' {
+            in_span = !in_span;
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        if in_span && (c.is_alphabetic() || c == '_') && (i == 0 || chars[i - 1] != '.') {
+            let start = i;
+            while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
+                i += 1;
+            }
+            let word: String = chars[start..i].iter().collect();
+            match map.get(&word) {
+                Some(prefixed) if !shadowed.contains(&word) => out.push_str(prefixed),
+                _ => out.push_str(&word),
+            }
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
 fn rewrite_refs_expr(
     expr: &mut ast::Expr,
     map: &std::collections::BTreeMap<String, String>,
@@ -7078,9 +7133,13 @@ fn rewrite_refs_expr(
                 rewrite_refs_expr(a, map, shadowed);
             }
         }
-        ast::Expr::FieldAccess { object, .. } => {
-            // Only the object side — the field name is not a module-level ref
+        ast::Expr::FieldAccess { object, field } => {
+            // the object side, and a computed name's spans (`df.`col``) —
+            // a plain field name is not a module-level ref
             rewrite_refs_expr(object, map, shadowed);
+            if field.contains('`') {
+                *field = renamed_spans(field, map, shadowed);
+            }
         }
         ast::Expr::Array(items) => {
             for i in items {
@@ -7098,27 +7157,7 @@ fn rewrite_refs_expr(
         // parameters that shadow are left alone)
         ast::Expr::Str(s) => {
             if s.contains('`') {
-                let mut out = String::with_capacity(s.len());
-                let mut in_span = false;
-                let chars: Vec<char> = s.chars().collect();
-                let mut i = 0;
-                while i < chars.len() {
-                    let c = chars[i];
-                    if c == '`' { in_span = !in_span; out.push(c); i += 1; continue; }
-                    if in_span && (c.is_alphabetic() || c == '_') && (i == 0 || chars[i - 1] != '.') {
-                        let start = i;
-                        while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') { i += 1; }
-                        let word: String = chars[start..i].iter().collect();
-                        match map.get(&word) {
-                            Some(prefixed) if !shadowed.contains(&word) => out.push_str(prefixed),
-                            _ => out.push_str(&word),
-                        }
-                        continue;
-                    }
-                    out.push(c);
-                    i += 1;
-                }
-                *s = out;
+                *s = renamed_spans(s, map, shadowed);
             }
         }
         ast::Expr::ForExpr { var, iter, body } => {

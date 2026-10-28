@@ -72,14 +72,20 @@ impl Source {
     }
 }
 
-/// Two cells of one column compared, a missing cell before any present one.
+/// Two cells of one column compared as the frame sort orders them, which
+/// is the order every file holds its rows in: a missing cell (or a float
+/// that is not a number) after every present one, -0 before 0. (A missing
+/// cell had come first here while the files hold it last, so a key's
+/// versions could interleave across inputs and two of them survive the
+/// merge — found porting the merge to Crow.)
 fn cmp_cell(a: &CrowFrame, ai: usize, b: &CrowFrame, bi: usize, c: usize) -> std::cmp::Ordering {
     use std::cmp::Ordering::*;
-    let (va, vb) = (a.validity[c][ai], b.validity[c][bi]);
+    let nan = |f: &CrowFrame, i: usize| matches!(f.data[c].as_ref(), Column::Float(x) if x[i].is_nan());
+    let (va, vb) = (a.validity[c][ai] && !nan(a, ai), b.validity[c][bi] && !nan(b, bi));
     match (va, vb) {
         (false, false) => return Equal,
-        (false, true) => return Less,
-        (true, false) => return Greater,
+        (false, true) => return Greater,
+        (true, false) => return Less,
         _ => {}
     }
     match (a.data[c].as_ref(), b.data[c].as_ref()) {

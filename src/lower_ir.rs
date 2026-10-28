@@ -676,6 +676,25 @@ fn handed(e: &Expr) -> Vec<String> {
     }
 }
 
+/// The items a row's list parameter takes: what an empty list handed to
+/// it holds (`typed_empties`), and what a list whose items no type says
+/// is read as there (`retype_unknown_lists`). A tensor's parameter takes
+/// numbers.
+fn listed_item(k: crate::table::Kind) -> Option<Ty> {
+    use crate::table::Kind;
+    Some(match k {
+        Kind::Words | Kind::Strs | Kind::Texts => Ty::Str,
+        Kind::Ints => Ty::Int,
+        Kind::Floats => Ty::Float,
+        Kind::Bools => Ty::Bool,
+        Kind::Chunks => Ty::Bytes,
+        Kind::Frames => Ty::Frame(None),
+        Kind::Tensors => Ty::tensor(Ty::Float),
+        Kind::Tensor => Ty::Float,
+        _ => return None,
+    })
+}
+
 /// A lowered value's type as inference's rules read a child's
 /// (`infer_expr`): markup is text there.
 fn read(x: &Expr) -> Ty {
@@ -1334,6 +1353,26 @@ impl<'a> Lowerer<'a> {
         if self.ctx.call_says_of_callee(callee) {
             self.ctx.note_call(callee, args, types);
         }
+        // (an item of a list whose items no type says, handed to a function:
+        // held as text where it is compiled — `default_unknown_params`)
+        if let A::Ident(n) = callee
+            && self.ctx.functions.contains_key(n)
+        {
+            self.ctx.call_edges.insert((self.current_fn.clone(), n.clone()));
+            for (i, a) in args.iter().enumerate() {
+                if !matches!(types.get(i), Some(Ty::Unknown)) {
+                    continue;
+                }
+                let item = match a {
+                    A::Ident(v) => self.v.unknown_items.contains(v),
+                    A::Call { callee: c, args: at } if at.len() == 1 => matches!(c.as_ref(), A::Ident(xs) if matches!(self.ctx.vars.get(xs).map(|t| t.payload().clone()), Some(Ty::List(e)) if *e == Ty::Unknown)),
+                    _ => false,
+                };
+                if item {
+                    self.ctx.text_items.insert((self.current_fn.clone(), n.clone(), i));
+                }
+            }
+        }
         // (the program's first call of a module's function: where a refusal
         // inside the module's copy is placed)
         if let A::Ident(n) = callee {
@@ -1687,6 +1726,16 @@ impl<'a> Lowerer<'a> {
         // sanctioned exception to function-scope isolation
         self.v.reactive = self.v.ui_mode && matches!(kind, FnKind::View | FnKind::Handler);
         self.v.local_types.clear();
+        // (a parameter is a local holding what its calls hand: reassigned
+        // another kind — `t = t + 1` of a parsed value — it is refused as a
+        // local is, where its first reassignment had been taken for its
+        // type and the lowered program disagreed with itself; crow check
+        // --self, errors j84)
+        for (p, t) in &ps {
+            if !matches!(t, Ty::Unknown) {
+                self.v.local_types.insert(p.clone(), t.clone());
+            }
+        }
         self.v.stored.clear();
         // a route's handler reads each derivation it names once, as its
         // request begins: the app's value then, bound to a local of the
@@ -2753,6 +2802,10 @@ impl<'a> Lowerer<'a> {
                     // declared a record or none, and did not build)
                     let shadowed = self.ctx.vars.get(var.as_str()).cloned();
                     self.ctx.scan_loop_var(var, walks);
+                    let unknown_items = matches!(it.ty().payload(), Ty::List(e) if **e == Ty::Unknown);
+                    if unknown_items {
+                        self.v.unknown_items.insert(var.clone());
+                    }
                     let before = self.detailed_in_view();
                     // a call through the variable of a loop over a literal
                     // list of named functions types every one of them, as a
@@ -2771,6 +2824,9 @@ impl<'a> Lowerer<'a> {
                     let b = if self.pass == Pass::Scan { self.scan_loop_body(body) } else { self.lower_block(body) };
                     if listed {
                         self.fn_lists.pop();
+                    }
+                    if unknown_items {
+                        self.v.unknown_items.remove(var.as_str());
                     }
                     let b = b?;
                     let end = self.detailed_now(&before);
@@ -2809,6 +2865,13 @@ impl<'a> Lowerer<'a> {
                 vec![Stmt::Return(None)]
             }
             S::Return(Some(e)) => {
+                // a local nothing wrote a kind into, handed back, holds what
+                // the function answers: `out = map[]` returned where a group
+                // was pruned, beside a return of a map of records, had been
+                // declared a map of text compiled (E0308; parity 319)
+                if self.pass != Pass::Final {
+                    self.settled_return(e);
+                }
                 let x = self.lower_expr(e)?;
                 // a value a guard knows has failed hands back its failure:
                 // its value's type (a frame's columns) is none of the
@@ -3658,6 +3721,30 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// A provisional lowering's `return x` of a local whose type holds
+    /// something not known yet: it takes what the function answers, as a
+    /// variable first given `[]` takes its pushes' kind — the local is
+    /// empty of the kind nothing wrote, so the answer's kind is its own.
+    fn settled_return(&mut self, e: &A) {
+        let A::Ident(v) = e else { return };
+        if self.is_fact(v) {
+            return;
+        }
+        let Some(held) = self.ctx.vars.get(v).cloned() else { return };
+        if !held.has_unknown() {
+            return;
+        }
+        let Some(answer) = self.ctx.functions.get(&self.current_fn).map(|sig| sig.return_type.payload().clone()) else { return };
+        if answer.has_unknown() || !held.payload().compatible(&answer) {
+            return;
+        }
+        let joined = match &held {
+            Ty::Result(inner) => Ty::Result(Box::new(inner.unify(&answer))),
+            other => other.unify(&answer),
+        };
+        self.ctx.vars.insert(v.clone(), joined);
+    }
+
     /// A provisional lowering's `set[m, k, v]` as a statement (F5): the
     /// map's values take v's type, as inference's walk has it.
     fn settled_set(&mut self, e: &A, x: &Expr) {
@@ -3684,6 +3771,11 @@ impl<'a> Lowerer<'a> {
     /// name bound outside the loop (`scan_loop_var` says why).
     fn bind_loop_var(&mut self, var: &str, iter_ty: &Ty) -> Option<Ty> {
         let saved = self.ctx.vars.get(var).cloned();
+        if matches!(iter_ty.payload(), Ty::List(e) if **e == Ty::Unknown) {
+            self.v.unknown_items.insert(var.to_string());
+        } else {
+            self.v.unknown_items.remove(var);
+        }
         let elem = match iter_ty.payload() {
             // a frame's column walks its cells, as its type says them (the
             // variable had been unknown here and a float cell in the IR, so
@@ -3697,6 +3789,7 @@ impl<'a> Lowerer<'a> {
     }
 
     fn unbind_loop_var(&mut self, var: &str, saved: Option<Ty>) {
+        self.v.unknown_items.remove(var);
         match saved {
             Some(t) => {
                 self.ctx.vars.insert(var.to_string(), t);
@@ -4173,6 +4266,16 @@ impl<'a> Lowerer<'a> {
                     (crate::ast::UnaryOp::Not, Ty::List(e)) if **e == Ty::Unknown && matches!(&x, Expr::ListLit(items, _) if items.is_empty()) => {
                         Expr::ListLit(Vec::new(), Ty::List(Box::new(Ty::Bool)))
                     }
+                    // a list whose items no type says, turned over, is read
+                    // as a mask: a parameter handed `[]` where a truth was
+                    // meant (`not every`) had been a list of text compiled,
+                    // which `!` does not build (crow check --self; errors
+                    // j82) — as a mask, its use as a condition is refused
+                    // in both modes
+                    (crate::ast::UnaryOp::Not, Ty::List(e)) if **e == Ty::Unknown => {
+                        self.read_as_list_of(&x, Ty::Bool);
+                        x
+                    }
                     _ => x,
                 };
                 // `not` turns a truth over (or a mask, item by item), and a
@@ -4491,6 +4594,10 @@ impl<'a> Lowerer<'a> {
                 };
                 // (a name the variable hides keeps its type after the loop)
                 let shadowed = (self.pass == Pass::Scan).then(|| self.ctx.vars.get(var.as_str()).cloned()).flatten();
+                let unknown_items = self.pass == Pass::Scan && matches!(it.ty().payload(), Ty::List(e) if **e == Ty::Unknown);
+                if unknown_items {
+                    self.v.unknown_items.insert(var.clone());
+                }
                 let saved = if self.pass == Pass::Scan {
                     self.ctx.scan_loop_var(var, walked(&it));
                     None
@@ -4505,7 +4612,11 @@ impl<'a> Lowerer<'a> {
                 }
                 self.collecting += 1;
                 yields_of(body, &mut self.yields);
-                let mut b = self.lower_block(body)?;
+                let lowered = self.lower_block(body);
+                if unknown_items {
+                    self.v.unknown_items.remove(var.as_str());
+                }
+                let mut b = lowered?;
                 self.collecting -= 1;
                 if listed {
                     self.fn_lists.pop();
@@ -5645,7 +5756,9 @@ impl<'a> Lowerer<'a> {
                 // (a ui control named like a module's function — `select` of
                 // options, not of a frame — is the control's)
                 let first_is_frame = lowered.first().is_some_and(|x| matches!(x.ty().payload(), Ty::Frame(_)));
-                let control = self.in_ui && crate::lower::is_ui_control(&name, first_is_frame);
+                // (never inside a standard module's body: no module imports
+                // ui, and its `select[whole, names]` is frame's)
+                let control = self.in_ui && !crate::modules::is_crow_fn(&self.current_fn) && crate::lower::is_ui_control(&name, first_is_frame);
                 // (an element's name is an element's in a ui program only:
                 // elsewhere `stack[rows]` is math's, checked as math's —
                 // unchecked, a list no row takes had reached the verifier)
@@ -5749,7 +5862,7 @@ impl<'a> Lowerer<'a> {
     fn typed_by_row(ty: Ty, row: Option<&'static crate::table::Row>) -> Ty {
         match row {
             Some(r) if matches!(ty.payload(), Ty::Unknown) && !r.ret.generic() && !matches!(r.ret.ty(), Ty::Unknown) => {
-                let t = r.ret.ty();
+                let t = r.answer();
                 if ty.is_result() || matches!(r.fails, crate::table::Fails::Value(_)) { Ty::Result(Box::new(t)) } else { t }
             }
             _ => ty,
@@ -5832,33 +5945,90 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// A parameter whose items no type says — a call handed it `[]` — read
-    /// where a row takes a tensor is a list of numbers from then on, as a
-    /// parameter is typed by its use: `tensor[pred]` in `mse` for a call
-    /// handing `[]` reads an empty list of floats, converted where it meets
-    /// the row (the row's `[]` had been an empty tensor; typed by nothing,
-    /// the compiled program had held the list as text and not built — crow
-    /// check --self). Settled in the scan, which the rounds read again; a
-    /// list a body makes stays what the values say.
+    /// A list whose items no type says, read where a row takes a list of a
+    /// kind, is a list of that kind from then on, as a variable first given
+    /// `[]` takes its pushes' kind: a parameter a call handed `[]`
+    /// (`tensor[pred]` in `mse` reads an empty list of floats, converted
+    /// where it meets the row — the row's `[]` had been an empty tensor),
+    /// a local given `[]` (`stack[parts]` reads an empty list of frames),
+    /// and a record's field given `[]` where the record was made (a tail's
+    /// `parts`, read by `stack` in a program that writes no frame into
+    /// them). Typed by nothing, the compiled program had held the list as
+    /// text and not built (crow check --self; parity 322). A parameter
+    /// settles in the scan, which the rounds read again; a local and a
+    /// field in every provisional pass, as a field written does.
     fn retype_unknown_lists(&mut self, row: Option<&'static crate::table::Row>, lowered: &[Expr]) {
         let Some(row) = row else { return };
-        if self.pass != Pass::Scan {
+        if self.pass == Pass::Final {
             return;
         }
         let Some(kinds) = crate::table::kinds_of(row.params, lowered.len()) else { return };
-        for (k, x) in kinds.iter().zip(lowered) {
-            let name = match x {
-                Expr::Local(n, _) | Expr::Move(n, _) => n.clone(),
-                _ => continue,
-            };
-            if *k != crate::table::Kind::Tensor || !matches!(read(x).payload(), Ty::List(e) if **e == Ty::Unknown) {
+        // (only where every row of the name takes that list there: a list
+        // of nothing is any list to the row's choice, so `sort[ready]` had
+        // reached the core's first `sort` and typed `ready` numbers, which
+        // the text pushed onto it then contradicted — packages/graph)
+        let rows: Vec<Vec<crate::table::Kind>> = crate::table::ROWS
+            .iter()
+            .filter(|r| r.module == row.module && r.name == row.name)
+            .filter_map(|r| crate::table::kinds_of(r.params, lowered.len()))
+            .collect();
+        for (i, (k, x)) in kinds.iter().zip(lowered).enumerate() {
+            if !matches!(read(x).payload(), Ty::List(e) if **e == Ty::Unknown) {
                 continue;
             }
-            let numbers = Ty::List(Box::new(Ty::Float));
-            if let Some(p) = self.ctx.functions.get_mut(&self.current_fn).and_then(|sig| sig.params.iter_mut().find(|(p, _)| *p == name)) {
-                p.1 = numbers.clone();
-                self.ctx.vars.insert(name, numbers);
+            let Some(item) = listed_item(*k) else { continue };
+            // (a tensor's parameter takes numbers whatever the name's other
+            // rows take: the rule a parameter handed `[]` has always had —
+            // `tensor[x]` in math.stats's `corr` — which the agreement must
+            // not undo)
+            if *k != crate::table::Kind::Tensor && rows.iter().any(|ks| ks.get(i).and_then(|k| listed_item(*k)).as_ref() != Some(&item)) {
+                continue;
             }
+            self.read_as_list_of(x, item);
+        }
+    }
+
+    /// A list whose items no type says — a parameter a call handed `[]`, a
+    /// local given `[]`, a record's field given `[]` where the record was
+    /// made — read as a list of `item` from here on (see
+    /// `retype_unknown_lists`; `not xs` reads a mask, a list of bools). A
+    /// provisional pass's: a parameter in the scan, which the rounds read
+    /// again, a local and a field in every provisional pass.
+    fn read_as_list_of(&mut self, x: &Expr, item: Ty) {
+        if self.pass == Pass::Final || !matches!(read(x).payload(), Ty::List(e) if **e == Ty::Unknown) {
+            return;
+        }
+        let list = Ty::List(Box::new(item));
+        match x {
+            Expr::Local(n, _) | Expr::Move(n, _) => {
+                let scan = self.pass == Pass::Scan;
+                match self.ctx.functions.get_mut(&self.current_fn).and_then(|sig| sig.params.iter_mut().find(|(p, _)| p == n)) {
+                    Some(p) => {
+                        if scan {
+                            p.1 = list.clone();
+                            self.ctx.vars.insert(n.clone(), list);
+                        }
+                    }
+                    None => {
+                        if self.ctx.vars.contains_key(n) && !self.is_fact(n) {
+                            self.ctx.vars.insert(n.clone(), list);
+                        }
+                    }
+                }
+            }
+            Expr::Field { base, name, .. } => {
+                let rec = match base.ty().payload() {
+                    Ty::Record(r) | Ty::OptRecord(r) => r.clone(),
+                    _ => return,
+                };
+                if let Some(sig) = self.ctx.structs.get_mut(&rec)
+                    && let Some((_, held)) = sig.fields.iter_mut().find(|(f, _)| f == name)
+                    && matches!(held.payload(), Ty::List(e) if **e == Ty::Unknown)
+                {
+                    *held = if held.is_result() { Ty::Result(Box::new(list)) } else { list };
+                }
+            }
+            _ => {}
         }
     }
 
@@ -6075,17 +6245,7 @@ impl<'a> Lowerer<'a> {
                         other => other,
                     };
                 }
-                let item = match k {
-                    Some(Kind::Words | Kind::Strs | Kind::Texts) => Ty::Str,
-                    Some(Kind::Ints) => Ty::Int,
-                    Some(Kind::Floats) => Ty::Float,
-                    Some(Kind::Bools) => Ty::Bool,
-                    Some(Kind::Chunks) => Ty::Bytes,
-                    Some(Kind::Frames) => Ty::Frame(None),
-                    Some(Kind::Tensors) => Ty::tensor(Ty::Float),
-                    Some(Kind::Tensor) => Ty::Float,
-                    _ => return x,
-                };
+                let Some(item) = k.and_then(listed_item) else { return x };
                 match x {
                     Expr::ListLit(items, Ty::List(e)) if items.is_empty() && *e == Ty::Unknown => {
                         let list = Expr::ListLit(items, Ty::List(Box::new(item)));
@@ -6703,7 +6863,7 @@ fn infer_once(ctx: &mut TypeContext, stmts: &[S]) {
     // …]`: `two`'s parameter had kept the first rounds' guess, the other
     // copy's column, and the compiled program did not build), and a
     // signature that only now shows is copied too
-    for _ in 0..3 {
+    for _ in 0..8 {
         Lowerer::for_inference(ctx, in_ui, stmts).specialize();
         if ctx.clone_names().is_empty() {
             break;
@@ -6719,8 +6879,34 @@ fn infer_once(ctx: &mut TypeContext, stmts: &[S]) {
                 break;
             }
         }
-        if before == ctx.signatures() {
+        // (and while a function waits for its copies: a signature that
+        // shows only once another function's copies answer moves no
+        // function's types, and stopping there had left the function
+        // uncopied, each call of it answering nothing known — magpie's
+        // `group_bytes`, called by the manifest's writer once `columns_of`
+        // was copied, read as a field of a value that can fail compiled;
+        // parity 312)
+        if before == ctx.signatures() && !ctx.awaiting_clones() {
             break;
+        }
+    }
+    // a parameter every call hands a value of no known kind is text, as it
+    // is compiled (`default_unknown_params`), and the bodies are read again
+    // with it so — a value walked out of it reaches the functions it is
+    // handed to as text too, which the next look types in turn
+    for _ in 0..4 {
+        if !ctx.default_unknown_params() {
+            break;
+        }
+        for _ in 0..8 {
+            let round = ctx.signatures();
+            ctx.sync_derive_types();
+            Lowerer::for_inference(ctx, in_ui, stmts).scan_program(stmts);
+            ctx.propagate_indirect_fn_types(stmts);
+            infer_bodies(ctx, in_ui, stmts);
+            if round == ctx.signatures() {
+                break;
+            }
         }
     }
     ctx.sync_derive_types();
@@ -8982,6 +9168,18 @@ if r.ok
     /// of a name a module in scope also answers is typed by the core's row
     /// where one takes the arguments (`slice` of text beside sys's of
     /// bytes); and `map[]` handed where a row takes a map of text is one.
+    /// A column made from its parts is a column of its kind (`ints_column`
+    /// answers ints, as its row declares), and written onto a frame it is
+    /// the frame's column of that kind: typed a column of nothing known, it
+    /// had been the frame's text, and `df.v eq 1` was refused before the
+    /// program ran (found writing Magpie's read verbs in Crow)
+    #[test]
+    fn a_column_made_from_its_parts_keeps_its_kind() {
+        let ir = ir_of("use sys, frame\nvals = []\nfor i in range[3]\n    vals = push[vals, i]\nc = ints_column[vals, bytes[0]]\ndf = frame.new[id = [1, 2, 3]]\ndf.v = c\nlog[len[df[df.v eq 1]]]\n");
+        assert!(ir.contains("let c: Column(Int)"), "{}", ir);
+        assert!(ir.contains("v: Int"), "{}", ir);
+    }
+
     #[test]
     fn a_parameter_named_like_an_effect_and_a_name_two_tables_answer() {
         let ir = ir_of("fn f[query]\n    return query[0]\nlog[f[[1, 2]]]\n");

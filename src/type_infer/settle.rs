@@ -71,5 +71,12 @@ pub(crate) fn is_ints(t: &Ty) -> bool {
 /// is `payload`: it holds a plain value the payload fits, so its first
 /// value could not fail, and the failure is refused where it is assigned.
 pub(crate) fn refuses_failed(held: &Ty, payload: &Ty) -> bool {
-    !matches!(held, Ty::Result(_)) && !held.has_unknown() && held.compatible(payload)
+    // (a list or a map whose items nothing has typed yet is still no
+    // value that can fail: `out = []`, then `out = push[out, x]` with an x
+    // that can fail, is a consumption point — left undecided, the push's
+    // failure had been assigned to the list in a function no call typed,
+    // and the lowered program disagreed with itself; found writing
+    // Magpie's read verbs in Crow)
+    let open_collection = matches!(held, Ty::List(_) | Ty::Map(..));
+    !matches!(held, Ty::Result(_)) && (!held.has_unknown() || open_collection) && held.compatible(payload)
 }

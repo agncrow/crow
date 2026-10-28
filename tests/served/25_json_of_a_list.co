@@ -1,9 +1,11 @@
 --- A route answers JSON of a list as an array — of maps, of records, of
 --- numbers — and of a record as an object, each value as `encode` writes
---- it: a value that failed is `null` (spec, Responses). `json[…]` of a list
---- had been refused as text it could not parse, so a list of rows had to be
---- built as a frame first. Both modes answer it through the one JSON rule.
-use web
+--- it: a value that failed is `null` (spec, Responses), a frame its records.
+--- `json[…]` of a list had been refused as text it could not parse, so a
+--- list of rows had to be built as a frame first; a list of frames had not
+--- built compiled and stopped interpreted (crow check --self). Both modes
+--- answer it through the one JSON rule.
+use web, frame
 
 struct World [id, randomNumber]
 
@@ -28,9 +30,15 @@ fn failed_h[req]
         int[s]
     return json[parsed]
 
+fn frames_h[req]
+    sf = frame.new[a = [1, 2], b = ['x', 'y']]
+    both = push[push[[], sf], frame.head[sf, 1]]
+    return json[both]
+
 route['/worlds', worlds_h]
 route['/records', records_h]
 route['/one', one_h]
 route['/numbers', numbers_h]
 route['/failed', failed_h]
+route['/frames', frames_h]
 serve[3426]

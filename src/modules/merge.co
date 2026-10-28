@@ -1,0 +1,606 @@
+--- `use magpie.merge`: the streaming merge, in Crow — the inputs
+--- (batches and segments, each sorted by the log's keys then position)
+--- read one row group at a time and merged into segments of bounded
+--- size, the newest version of each key kept (a key's versions are
+--- adjacent in the merged order, the last of a run the newest) unless
+--- every row is wanted; the kernel's segments byte for byte
+--- (docs/magpie-in-crow.md, section 3). What is held: one group per
+--- input and the rows not yet decided, the merged order a frame sort of
+--- what is held (stable, adaptive to the sorted runs it is handed).
+--- Each round decides every row at or before the least of the inputs'
+--- last loaded rows — no row an input has not loaded can come before it
+--- — and loads the next group of the input that row came from; a key's
+--- run is held back until a row of another key follows it. A group of
+--- the output is cut where its rows' bytes reach the group's size, as
+--- the kernel counts them (8 an int or a float, 10 a moment, 1 a bool,
+--- a text's bytes and 4, 8 per number of a vector), a segment where its
+--- file reaches the segment's size; each segment is placed as the
+--- kernel places a file: written beside its name, flushed, linked into
+--- the name, the directory flushed.
+use sys
+use bits
+use frame
+use magpie.file
+use magpie.manifest
+
+--- an input: its reader, its columns' places in the merge's order, the
+--- next group to load, its group count, the position of the last row it
+--- loaded, and whether every group is loaded
+struct Source [r, cols, next, count, last, drained]
+
+--- an input advanced past a group, and the group's rows
+struct Loaded [s, rows]
+
+--- a segment the merge wrote: its name, its positions, its rows, its bytes
+struct Written [name, first, last, rows, bytes]
+
+--- the segment being written: its bytes so far, each column's block, the
+--- groups' row counts, its positions, its rows, and whether one is open
+struct Seg [out, blocks, groups, first, last, rows, open]
+
+--- what a merge answers: the segments written, the last counter taken
+struct Merged [written, counter]
+
+--- the next group of an input with rows, loaded; drained where none is
+--- left
+fn _load[s]
+    at = s.next
+    while at lt s.count
+        g = group_of[s.r, at, s.cols]
+        if not g.ok
+            return error[g.reason, 'magpie']
+        at = at + 1
+        n = len[g]
+        if n gt 0
+            pos = ints_of[g._pos, n - 1, n]
+            return Loaded[Source[s.r, s.cols, at, s.count, pos[0], at gte s.count], g]
+    return Loaded[Source[s.r, s.cols, at, s.count, s.last, true], frame.new[]]
+
+--- the bytes each row of a frame takes in a group being built, as the
+--- kernel counts them
+fn _row_bytes[df]
+    n = len[df]
+    fixed = 0
+    texts = []
+    for name in df.columns
+        col = df.`name`
+        kind = cell_kind[col]
+        if kind eq 'int' or kind eq 'float'
+            fixed = fixed + 8
+        if kind eq 'bool'
+            fixed = fixed + 1
+        if kind eq 'moment'
+            fixed = fixed + 10
+        if kind eq 'vector'
+            fixed = fixed + 8 * vector_width[col]
+        if kind eq 'text'
+            fixed = fixed + 4
+            texts = push[texts, text_ends_of[col, 0, n]]
+    out = []
+    for i in range[n]
+        b = fixed
+        for cut_ends in texts
+            start = 0
+            if i gt 0
+                start = cut_ends[i - 1]
+            b = b + cut_ends[i] - start
+        out = push[out, b]
+    return out
+
+--- the cells of a column a key compares, row by row: an int, a float's
+--- bits, a bool or a text, and whether the cell holds a value (a missing
+--- cell and a float that is not a number hold none, alike)
+struct Keyed [cells_kind, whole, held, cells, cut_ends]
+
+fn _keyed[col]
+    n = len[col]
+    kind = cell_kind[col]
+    present = []
+    whole = []
+    cells = bytes[0]
+    cut_ends = []
+    bitmap = present_of[col, 0, n]
+    for i in range[n]
+        present = push[present, len[bitmap] eq 0 or bitand[byte[bitmap, shift[i, -3]], shift[1, bitand[i, 7]]] ne 0]
+    if kind eq 'int' or kind eq 'moment'
+        whole = ints_of[col, 0, n]
+    if kind eq 'float'
+        reals = floats_of[col, 0, n]
+        raw = float_bytes[reals, 8, true]
+        for i in range[n]
+            x = reals[i]
+            if x ne x
+                present[i] = false
+            whole = push[whole, unpack[raw, i * 8, 8, little = true]]
+    if kind eq 'bool'
+        for v in bools_of[col, 0, n]
+            if v
+                whole = push[whole, 1]
+            else
+                whole = push[whole, 0]
+    if kind eq 'text'
+        cells = text_bytes_of[col, 0, n]
+        cut_ends = text_ends_of[col, 0, n]
+    return Keyed[kind, whole, present, cells, cut_ends]
+
+--- whether rows i and j hold the same key, column by column
+fn _same_key[keyed, i, j]
+    for k in keyed
+        if k.held[i] ne k.held[j]
+            return false
+        if k.held[i]
+            if k.cells_kind eq 'text'
+                si = 0
+                if i gt 0
+                    si = k.cut_ends[i - 1]
+                sj = 0
+                if j gt 0
+                    sj = k.cut_ends[j - 1]
+                if k.cut_ends[i] - si ne k.cut_ends[j] - sj
+                    return false
+                if not same[slice[k.cells, si, k.cut_ends[i]], slice[k.cells, sj, k.cut_ends[j]]]
+                    return false
+            else
+                if k.whole[i] ne k.whole[j]
+                    return false
+    return true
+
+--- a segment's place in its directory: written beside its name, flushed,
+--- linked into the name (never over a file of the name), the directory
+--- flushed — the kernel's place, in its words
+fn place[dir, name, data]
+    path = '`dir`/`name`'
+    part = '`dir`/.`name`.part'
+    written = store[part, data]
+    if not written.ok
+        return error['batch: cannot write \'`path`\': `written.reason`', 'magpie']
+    synced = flushed[part]
+    if not synced.ok
+        return error['batch: cannot flush \'`path`\': `synced.reason`', 'magpie']
+    linked = link[part, path]
+    gone = rm[part]
+    if not linked.ok
+        if exists[path]
+            return error['batch: \'`path`\' exists — it was written already', 'magpie']
+        return error['batch: cannot place \'`path`\': `linked.reason`', 'magpie']
+    swept = flushed[dir]
+    return path
+
+--- `merge_into[dir, paths, keyed, texts, narrow, stems, every, taken, group_limit, segment_limit]`:
+--- the files merged into segments under `dir`, each cut where it reaches
+--- `segment_limit` bytes, named from the counter past `taken` on: the
+--- rows in key-then-position order, one version per key where `keyed`
+--- names keys and `every` is false; the text columns in `texts` indexed,
+--- the float columns in `narrow` in 32 bits, the tokens stemmed where
+--- `stems`. Answers the segments written and the last counter
+fn merge_into[dir, paths, keyed, texts, narrow, stems, every, taken, group_limit, segment_limit]
+    if len[paths] eq 0
+        return error['batch: a merge takes one file or more', 'magpie']
+    head_r = opened[paths[0]]
+    if not head_r.ok
+        return error[head_r.reason, 'magpie']
+    names = []
+    kinds = []
+    for c in head_r.footer.columns
+        names = push[names, c.name]
+        kinds = push[kinds, c.cells]
+    sources = []
+    held_parts = []
+    for p in paths
+        r = opened[p]
+        if not r.ok
+            return error[r.reason, 'magpie']
+        cols = wanted[r, names]
+        if not cols.ok
+            return error[cols.reason, 'magpie']
+        for i in range[len[cols]]
+            if r.footer.columns[cols[i]].cells ne kinds[i]
+                return error['batch: \'`p`\' has other columns than the files before it — a merge takes files of one shape', 'magpie']
+        loaded = _load[Source[r, cols, 0, len[r.footer.groups], -1, false]]
+        if not loaded.ok
+            return error[loaded.reason, 'magpie']
+        sources = push[sources, loaded.s]
+        if len[loaded.rows] gt 0
+            held_parts = push[held_parts, loaded.rows]
+    for k in keyed
+        if k not in names
+            return error['batch: no column \'`k`\' to merge by', 'magpie']
+    if '_pos' not in names
+        return error['batch: the files hold no position column', 'magpie']
+    indexed = []
+    narrowed = []
+    for i in range[len[names]]
+        indexed = push[indexed, names[i] in texts and kinds[i] eq 'text']
+        narrowed = push[narrowed, names[i] in narrow and kinds[i] eq 'float']
+    shape = shape_of[names, kinds, indexed]
+    order = push[keyed, '_pos']
+    dedup = not every and len[keyed] gt 0
+    no_blocks = []
+    for c in names
+        no_blocks = push[no_blocks, bytes[0]]
+    seg = Seg[magic[], no_blocks, [], 0, -1, 0, false]
+    written = []
+    group_parts = []
+    group_size = 0
+    pool = stack[held_parts]
+    going = true
+    while going
+        sorted = pool
+        if len[pool] gt 1
+            sorted = sort[pool, order]
+        n = len[sorted]
+        --- the bound: the least, in the merged order, of the last rows the
+        --- inputs with groups left have loaded
+        targets = []
+        owners = []
+        for i in range[len[sources]]
+            if not sources[i].drained
+                targets = push[targets, sources[i].last]
+                owners = push[owners, i]
+        cut = n
+        owner = -1
+        idx = -1
+        if len[targets] gt 0
+            pos = ints_of[sorted._pos, 0, n]
+            at = 0
+            while idx lt 0 and at lt n
+                for t in range[len[targets]]
+                    if idx lt 0 and pos[at] eq targets[t]
+                        idx = at
+                        owner = owners[t]
+                at = at + 1
+            if idx lt 0
+                return error['batch: a merge lost its bound', 'magpie']
+            cut = idx + 1
+        keyed_cols = []
+        if dedup
+            for k in keyed
+                keyed_cols = push[keyed_cols, _keyed[sorted.`k`]]
+            --- the bound's key run is held back until another key follows it
+            if owner gte 0
+                while cut gt 0 and _same_key[keyed_cols, cut - 1, idx]
+                    cut = cut - 1
+        --- the rows decided this round, a key's run kept as its last row
+        chunk = frame.head[sorted, cut]
+        if dedup and cut gt 0
+            keep = slice[[true], 0, 0]
+            for i in range[cut]
+                keep = push[keep, i eq cut - 1 or not _same_key[keyed_cols, i, i + 1]]
+            chunk = chunk[keep]
+        pool = frame.tail[sorted, n - cut]
+        --- the decided rows into the group, cut where its bytes reach the limit
+        sizes = _row_bytes[chunk]
+        from = 0
+        for i in range[len[sizes]]
+            group_size = group_size + sizes[i]
+            if group_size gte group_limit
+                group_parts = push[group_parts, _rows_of[chunk, from, i + 1]]
+                from = i + 1
+                done = _flushed_group[dir, group_parts, shape, narrowed, stems, seg, written, taken, keyed, segment_limit, false]
+                if not done.ok
+                    return error[done.reason, 'magpie']
+                seg = done.seg
+                written = done.written
+                taken = done.counter
+                group_parts = []
+                group_size = 0
+        if from lt len[sizes]
+            group_parts = push[group_parts, _rows_of[chunk, from, len[sizes]]]
+        if owner lt 0
+            going = false
+        else
+            loaded = _load[sources[owner]]
+            if not loaded.ok
+                return error[loaded.reason, 'magpie']
+            sources[owner] = loaded.s
+            if len[loaded.rows] gt 0
+                both = []
+                both = push[both, pool]
+                both = push[both, loaded.rows]
+                pool = stack[both]
+    done = _flushed_group[dir, group_parts, shape, narrowed, stems, seg, written, taken, keyed, segment_limit, true]
+    if not done.ok
+        return error[done.reason, 'magpie']
+    return Merged[done.written, done.counter]
+
+--- rows `from` to `to` (excluded) of a frame
+fn _rows_of[df, from, to]
+    return frame.head[frame.tail[df, len[df] - from], to - from]
+
+--- the state a group's flush hands back
+struct Flushed [seg, written, counter]
+
+--- the group of the parts written into the segment (nothing where it
+--- holds no rows), then the segment finished and placed where it reaches
+--- the limit or the merge is through
+fn _flushed_group[dir, parts, shape, narrowed, stems, seg, written, taken, keyed, segment_limit, last]
+    rows = 0
+    for p in parts
+        rows = rows + len[p]
+    if rows gt 0
+        g = parts[0]
+        if len[parts] gt 1
+            g = stack[parts]
+        made = group_bytes[g, 0, rows, shape, narrowed, stems, len[seg.out]]
+        if not made.ok
+            return error[made.reason, 'magpie']
+        pos = ints_of[g._pos, 0, rows]
+        lo = pos[0]
+        hi = pos[0]
+        for x in pos
+            if x lt lo
+                lo = x
+            if x gt hi
+                hi = x
+        blocks = []
+        for c in range[len[seg.blocks]]
+            blocks = push[blocks, concat[seg.blocks[c], made.entries[c]]]
+        first = lo
+        last_pos = hi
+        if seg.open
+            if seg.first lt first
+                first = seg.first
+            if seg.last gt last_pos
+                last_pos = seg.last
+        seg = Seg[concat[seg.out, made.data], blocks, push[seg.groups, made.rows], first, last_pos, seg.rows + rows, true]
+    if seg.open and (len[seg.out] gte segment_limit or last)
+        taken = taken + 1
+        name = segment_named[taken]
+        data = finish[seg.out, seg.blocks, seg.groups, shape, seg.first, seg.last, keyed, [], []]
+        placed = place[dir, name, data]
+        if not placed.ok
+            return error[placed.reason, 'magpie']
+        written = push[written, Written[name, seg.first, seg.last, seg.rows, len[data]]]
+        no_blocks = []
+        for c in seg.blocks
+            no_blocks = push[no_blocks, bytes[0]]
+        seg = Seg[magic[], no_blocks, [], 0, -1, 0, false]
+    return Flushed[seg, written, taken]
+
+--- the JSON of a bound, as the kernel writes it (serde_json's forms: an
+--- exponent with no plus sign)
+fn _bound_json[b]
+    if b.form eq 1
+        return str[b.whole]
+    if b.form eq 2
+        return replace[encode[b.real], 'e+', 'e']
+    if b.form eq 3
+        if b.whole eq 1
+            return 'true'
+        return 'false'
+    return encode[b.word]
+
+--- whether a bound is at or below another of its form (true where the
+--- forms differ)
+fn _bound_le[a, b]
+    if a.form ne b.form
+        return true
+    if a.form eq 1 or a.form eq 3
+        return a.whole lte b.whole
+    if a.form eq 2
+        return a.real lte b.real
+    return a.word lte b.word
+
+--- `key_ranges[path, keyed]`: each key's least and greatest value over a
+--- file's groups, as the JSON object the manifest keeps (`{"id":[0,6]}`,
+--- the keys in order)
+fn key_ranges[path, keyed]
+    r = opened[path]
+    if not r.ok
+        return error[r.reason, 'magpie']
+    pieces = []
+    for k in sort[keyed]
+        c = -1
+        for i in range[len[r.footer.columns]]
+            if r.footer.columns[i].name eq k
+                c = i
+        if c gte 0
+            ents = entries[r, c]
+            if not ents.ok
+                return error[ents.reason, 'magpie']
+            lo = ents[0].lo
+            hi = ents[0].hi
+            seen_lo = false
+            seen_hi = false
+            for e in ents
+                if e.lo.form ne 0
+                    if not seen_lo or not _bound_le[lo, e.lo]
+                        lo = e.lo
+                    seen_lo = true
+                if e.hi.form ne 0
+                    if not seen_hi or not _bound_le[e.hi, hi]
+                        hi = e.hi
+                    seen_hi = true
+            if seen_lo and seen_hi
+                pieces = push[pieces, '`encode[k]`:[`_bound_json[lo]`,`_bound_json[hi]`]']
+    joined = join[pieces, ',']
+    return '{`joined`}'
+
+--- the crash harness's cut: the process ends here where
+--- `CROW_MAGPIE_CRASH` names this step (`placed`, `listed`)
+fn _crash_at[step]
+    asked = env['CROW_MAGPIE_CRASH', '']
+    if asked eq step or asked eq '`step`:1'
+        exit[3]
+    return step
+
+--- a path's last piece: the file's name
+fn _name_of[path]
+    pieces = split[path, '/']
+    return pieces[len[pieces] - 1]
+
+--- `merge_files[dir, paths, every]`: the files (batches, segments) folded
+--- into segments under `dir` by the streaming merge, the rows in the
+--- log's keys' order then position, the latest version of each key kept
+--- where the log has keys and `every` is false, every text column any
+--- input holds indexed; then the manifest rewritten — the new segments at
+--- the level past their inputs' (a batch is level 0), with the batch
+--- numbers and positions they cover and their key ranges, and no longer
+--- the inputs that were segments. Answers the first segment's path; the
+--- inputs are left for the caller to remove once the manifest names the
+--- segments. Refused: no files, a file that is neither a batch nor a
+--- segment by its name, files of different columns
+fn merge_files[dir, paths, every]
+    if len[paths] eq 0
+        return error['batch: a merge takes one file or more', 'magpie']
+    m = listed[dir]
+    if not m.ok
+        return error[m.reason, 'magpie']
+    keyed = m.keys
+    texts = slice[['x'], 0, 0]
+    inputs = slice[['x'], 0, 0]
+    number = 9223372036854775807
+    high = -9223372036854775807 - 1
+    level = 0
+    for p in paths
+        name = _name_of[p]
+        n = number_of[name]
+        if n gte 0
+            if n lt number
+                number = n
+            if n gt high
+                high = n
+        else
+            if counter_of[name] lt 0
+                return error['batch: \'`p`\' is neither a batch nor a segment by its name', 'magpie']
+            at = -1
+            for i in range[len[m.segments]]
+                if m.segments.name[i] eq name
+                    at = i
+            if at lt 0
+                return error['batch: \'`p`\' is a segment the manifest does not name', 'magpie']
+            if m.segments.number[at] lt number
+                number = m.segments.number[at]
+            if m.segments.high[at] gt high
+                high = m.segments.high[at]
+            if m.segments.level[at] gt level
+                level = m.segments.level[at]
+        r = opened[p]
+        if not r.ok
+            return error[r.reason, 'magpie']
+        for c in r.footer.columns
+            if c.cells eq 'text' and c.name not in texts
+                texts = push[texts, c.name]
+        inputs = push[inputs, name]
+    taken = counter[m]
+    listing = ls[dir]
+    if listing.ok
+        for f in listing
+            c = counter_of[f]
+            if c gt taken
+                taken = c
+    merged = merge_into[dir, paths, keyed, texts, narrow_of[m], stems_of[m], every, taken, 4194304, 1073741824]
+    if not merged.ok
+        return error[merged.reason, 'magpie']
+    if len[merged.written] eq 0
+        return error['batch: the merge wrote no segment', 'magpie']
+    placed = _crash_at['placed']
+    kept = m.segments
+    if len[kept] gt 0
+        stays = slice[[true], 0, 0]
+        for i in range[len[kept]]
+            stays = push[stays, kept.name[i] not in inputs]
+        kept = kept[stays]
+    names = slice[['x'], 0, 0]
+    levels = []
+    numbers = []
+    highs = []
+    firsts = []
+    lasts = []
+    counts = []
+    sizes = []
+    ranges = slice[['x'], 0, 0]
+    for w in merged.written
+        ranged = key_ranges['`dir`/`w.name`', keyed]
+        if not ranged.ok
+            return error[ranged.reason, 'magpie']
+        names = push[names, w.name]
+        levels = push[levels, level + 1]
+        numbers = push[numbers, number]
+        highs = push[highs, high]
+        firsts = push[firsts, w.first]
+        lasts = push[lasts, w.last]
+        counts = push[counts, w.rows]
+        sizes = push[sizes, w.bytes]
+        ranges = push[ranges, ranged]
+    fresh = frame.new[name = names, level = levels, number = numbers, high = highs, first = firsts, last = lasts, rows = counts, bytes = sizes, ranges = ranges]
+    both = []
+    both = push[both, kept]
+    both = push[both, fresh]
+    segments = sort[stack[both], ['first', 'name']]
+    switched = write_listed[dir, with_segments[m, segments]]
+    if not switched.ok
+        return error[switched.reason, 'magpie']
+    listed_cut = _crash_at['listed']
+    return '`dir`/`merged.written[0].name`'
+
+--- the same log written twice: batches by the kernel, keyed, the text
+--- and float columns varied, a key repeated across batches
+fn _log_of[dir, keyed, rows, count]
+    if exists[dir]
+        gone = rm[dir]
+    made = mkdir[dir]
+    k = batch_declare[dir, keyed, '']
+    nothing = slice[['x'], 0, 0]
+    for b in range[count]
+        ids = []
+        names = []
+        prices = []
+        for i in range[rows]
+            ids = push[ids, (i * 7 + b * 3) % 211]
+            names = push[names, 'w`(i + b) % 13` and `i % 5`']
+            prices = push[prices, float[(i * 11 + b) % 97] / 4.0]
+        df = frame.new[id = ids, name = names, price = prices]
+        w = batch_write[dir, b, b * rows, df, keyed, nothing, false]
+    return dir
+
+--- whether two directories hold the same files, byte for byte
+fn _same_dirs[a, b]
+    fa = ls[a]
+    fb = ls[b]
+    if fa ne fb
+        return false
+    for f in fa
+        if not same[file['`a`/`f`'], file['`b`/`f`']]
+            return false
+    return true
+
+--- the merge here and the kernel's write the same segments and the same
+--- manifest — the latest version of each key kept, or every row — and a
+--- second merge folds the first's segment with new batches
+test a_merge_is_the_kernels[]
+    for every in [false, true]
+        mine = _log_of['target/crow_merge_mine', ['id'], 600, 4]
+        theirs = _log_of['target/crow_merge_kernel', ['id'], 600, 4]
+        paths = []
+        kpaths = []
+        for b in range[4]
+            paths = push[paths, '`mine`/`batch_named[b]`']
+            kpaths = push[kpaths, '`theirs`/`batch_named[b]`']
+        got = merge_files[mine, paths, every]
+        want = batch_merge[theirs, kpaths, every]
+        assert[got.ok and want.ok]
+        assert[got eq '`mine`/S000000000001.segment']
+        assert[_same_dirs[mine, theirs]]
+    assert[not merge_files['target/crow_merge_mine', slice[['x'], 0, 0], false].ok]
+    assert[not merge_files['target/crow_merge_mine', ['target/crow_merge_mine/manifest'], false].ok]
+
+--- the merge at sizes small enough to cut groups and segments, here and
+--- in the kernel: the same segments, byte for byte, the text column
+--- indexed and stemmed, the float column narrowed
+test a_streamed_merge_cuts_where_the_kernels_does[]
+    for every in [false, true]
+        mine = _log_of['target/crow_stream_mine', ['id'], 300, 3]
+        theirs = _log_of['target/crow_stream_kernel', ['id'], 300, 3]
+        paths = []
+        kpaths = []
+        for b in range[3]
+            paths = push[paths, '`mine`/`batch_named[b]`']
+            kpaths = push[kpaths, '`theirs`/`batch_named[b]`']
+        got = merge_into[mine, paths, ['id'], ['name'], ['price'], true, every, 4, 1000, 3000]
+        want = stream_rs[theirs, kpaths, ['id'], ['name'], ['price'], true, every, 4, 1000, 3000]
+        assert[got.ok and want.ok]
+        assert[len[got.written] eq len[want]]
+        assert[len[want] gt 1]
+        assert[got.counter eq 4 + len[want]]
+        assert[_same_dirs[mine, theirs]]

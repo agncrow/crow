@@ -331,6 +331,50 @@ looked up) the kernel does in a tight loop. Still the kernel's: the
 footer cache per process (2.4, process memory) and the pending rows read
 as a file in memory (the tail's).
 
+`magpie.manifest` and `magpie.merge` (2026-10-28), and the verbs' reads:
+the manifest byte for byte (`listed`, `declare`, `write_listed` beside
+and over the old file, `catalog_of`); the streaming merge — one group
+per input held, the rows decided up to the least of the inputs' last
+loaded rows, a key's run held back until another key follows — held to
+the kernel's segments and manifest at the production sizes and, through
+`stream_rs`, at sizes small enough to cut several groups and segments,
+in both the keep-latest and keep-every modes. The verbs now read files
+in Crow: `lookup`, `latest`, `since`, `between` and `find` prune by the
+blocks' bounds and filters and decode only the groups that may hold a
+row (the pending rows of the tail are still read through the kernel),
+`batches` reads the catalog and each file's `about`, `sync` flushes each
+file and the directory, and `merge` folds through `merge_files`. What
+the port added: a row that makes a column says its cells' kind (`cells`
+on the row: `ints_column` answers a column of ints), so a column built
+from its parts and written onto a frame keeps its kind; an empty frame's
+column is an empty column of its kind in the interpreter as compiled.
+What it found in the compiler: a failure pushed into a list whose items
+were not known yet (parity 308), a module's local named like one of its
+exports (309), a literal of items typed late (310), a computed column
+name inside a function read as the program's (311), a function whose
+second signature showed only after a round of copies left uncopied, its
+calls answering nothing known (312), a function handed only an empty
+list's items not compiled while its call was (313), and `select` of a
+frame compiled as the dropdown in a page.
+
+The executor, nearest, search and the Kafka door's bytes (2026-10-28):
+`magpie.exec` (`summary_of` with the kernel's pruning, partials and
+merge order; `asof_rows`), `magpie.nearest`, `magpie.search` (BM25 with
+Lucene's query forms, the indexed groups' block skipping mirrored so a
+tie at the threshold resolves as the kernel's does), and
+`magpie.inflate`, `magpie.snappy` and `magpie.records` — each held to
+its kernel's answers in both modes (inflate and snappy to the kernels'
+own test streams), the verbs and the Kafka door rewired onto them. The
+tail's pending rows are read through `batch_read` until the sequencer
+is Crow's. What the port found in the compiler: a part's computed column
+name renamed apart from the entry's variable (parity 314), `keys` of a
+map with no key yet guessed as text (315), an empty map widened with no
+type Rust could read (316) or into the wrong kind (317), a plain value
+written beside values that can fail refused or printed bare (318), and
+a returned empty local declared a map of text (319). Left: the
+sequencer and its process memory (2.4), then the kernels, their rows
+and bridges deleted.
+
 ## 4.1 Measured: the codec, 2026-10-27
 
 The LZ77 codec ported (`src/modules/codec.co`), held to the Rust kernel

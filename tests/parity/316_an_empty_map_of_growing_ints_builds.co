@@ -1,0 +1,15 @@
+--- An empty map whose values the width pass widens to ints that grow
+--- names the kind of what it converts: `big(core.map_new())` had handed
+--- Rust a map of values of no stated type, which it could not infer
+--- (E0282), and the compiled program did not build (found porting
+--- Magpie's as-of join, whose latest moment per key is kept in a map).
+fn largest[xs]
+    best = map[]
+    for x in xs
+        best = set[best, 'k', x]
+    return best['k']
+
+xs = []
+xs = push[xs, int['123456789012345678901234567890']]
+xs = push[xs, 7]
+log[largest[xs]]

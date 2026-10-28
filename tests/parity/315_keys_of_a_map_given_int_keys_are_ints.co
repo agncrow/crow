@@ -1,0 +1,35 @@
+--- A map begun empty and given int keys by `set` answers its keys as
+--- ints: before a key was written, its keys' kind had been read as text,
+--- and the list a loop over them filled was refused the int — "push[]
+--- takes a list and an item of its kind: its items are text" — though
+--- every key was an int (found porting Magpie's search, which scores rows
+--- into a map by row).
+fn counted[xs]
+    acc = map[]
+    for x in xs
+        if x in acc
+            acc[x] = acc[x] + 1.0
+        else
+            acc = set[acc, x, 0.0 + 1.0]
+    out = []
+    for k in keys[acc]
+        out = push[out, k + 1]
+    return out
+
+fn rows_of[xs]
+    at = map[]
+    for x in xs
+        held = []
+        held = push[held, x]
+        at = set[at, x, held]
+    rows = []
+    for row in keys[at]
+        rows = push[rows, row * 10]
+    return rows
+
+ints = []
+ints = push[ints, 3]
+ints = push[ints, 1]
+ints = push[ints, 3]
+log[counted[ints]]
+log[rows_of[ints]]

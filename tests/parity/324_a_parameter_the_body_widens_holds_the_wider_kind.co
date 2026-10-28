@@ -1,0 +1,25 @@
+--- A parameter the body widens holds the wider kind, as a local does: an
+--- int parameter given `x + 0.5` is a float, a list of ints given `xs + 1`
+--- a list of floats, and every call converts what it hands; a function
+--- called at a list and at an int answers each copy's own, and a caller's
+--- answer is its body's, not an earlier round's guess. The lowered program
+--- had disagreed with itself in both modes ("'taken' holds List(Int) but
+--- is assigned List(Float)"; crow check --self: magpie.merge's
+--- `merge_into` handed a list where it counts segments).
+fn halved[x]
+    x = x + 0.5
+    return x
+
+fn bump[taken]
+    taken = taken + 1
+    return taken
+
+fn outer[taken]
+    t = bump[taken]
+    return t
+
+ys = push[push[[], 3], 1]
+log[halved[1]]
+log[bump[ys]]
+log[outer[ys]]
+log[bump[5]]

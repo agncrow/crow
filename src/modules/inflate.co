@@ -1,0 +1,413 @@
+--- `use magpie.inflate`: inflate (RFC 1951) and the gzip wrapper
+--- (RFC 1952), in Crow, so the Kafka door reads a producer's
+--- gzip-compressed message set: stored blocks, fixed Huffman blocks and
+--- dynamic Huffman blocks, the back-references of a 32 KB window, the gzip
+--- header's optional fields skipped and its CRC-32 and length checked.
+--- Only decoding: the door answers fetches uncompressed, which the
+--- protocol allows. The stream is read a bit at a time, least
+--- significant bit first, by its position; the kernel's answer byte for
+--- byte (docs/magpie-in-crow.md)
+use sys
+use bits
+
+--- a canonical Huffman code: how many codes of each length (1 to 15),
+--- and the symbols in code order (RFC 1951, section 3.2.2)
+struct Huff [counts, symbols]
+
+--- a symbol decoded, and the bit position after it
+struct Sym [value, bit]
+
+--- bits read, and the bit position after them
+struct Read [value, bit]
+
+--- `n` bits from bit `bit` on, least significant first; refused where
+--- the stream ends first
+fn _bits[data, bit, n]
+    v = 0
+    at = bit
+    total = len[data]
+    for k in range[n]
+        i = shift[at, -3]
+        if i gte total
+            return error['the deflate stream is cut short', 'magpie']
+        v = bitor[v, shift[bitand[shift[byte[data, i], 0 - bitand[at, 7]], 1], k]]
+        at = at + 1
+    return Read[v, at]
+
+--- the code of the lengths (one per symbol, 0 for none); refused where
+--- the lengths over-subscribe it
+fn _huffman[lengths]
+    counts = []
+    for i in range[16]
+        counts = push[counts, 0]
+    for l in lengths
+        counts[l] = counts[l] + 1
+    counts[0] = 0
+    left = 1
+    for size in range[1, 16]
+        left = shift[left, 1] - counts[size]
+        if left lt 0
+            return error['a Huffman code is over-subscribed', 'magpie']
+    offsets = []
+    for i in range[16]
+        offsets = push[offsets, 0]
+    for size in range[1, 15]
+        offsets[size + 1] = offsets[size] + counts[size]
+    symbols = []
+    for l in lengths
+        symbols = push[symbols, 0]
+    for sym in range[len[lengths]]
+        l = lengths[sym]
+        if l ne 0
+            symbols[offsets[l]] = sym
+            offsets[l] = offsets[l] + 1
+    return Huff[counts, symbols]
+
+--- one symbol of the code, read from bit `bit` on
+fn _decode[data, h, bit]
+    code = 0
+    first = 0
+    index = 0
+    at = bit
+    total = len[data]
+    for size in range[1, 16]
+        i = shift[at, -3]
+        if i gte total
+            return error['the deflate stream is cut short', 'magpie']
+        code = bitor[code, bitand[shift[byte[data, i], 0 - bitand[at, 7]], 1]]
+        at = at + 1
+        count = h.counts[size]
+        if code - count lt first
+            place = index + code - first
+            if place lt 0 or place gte len[h.symbols]
+                return error['a Huffman code names no symbol', 'magpie']
+            return Sym[h.symbols[place], at]
+        index = index + count
+        first = shift[first + count, 1]
+        code = shift[code, 1]
+    return error['a Huffman code is longer than 15 bits', 'magpie']
+
+--- the length and distance tables of RFC 1951
+fn _length_base[]
+    return [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258]
+
+fn _length_extra[]
+    return [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0]
+
+fn _dist_base[]
+    return [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577]
+
+fn _dist_extra[]
+    return [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13]
+
+--- the output so far, and the bit position after a block
+struct Out [data, bit]
+
+--- a block's literal/length and distance codes decoded onto `out`
+fn _codes[data, bit, lit, dist, out]
+    lb = _length_base[]
+    le = _length_extra[]
+    db = _dist_base[]
+    de = _dist_extra[]
+    at = bit
+    going = true
+    while going
+        got = _decode[data, lit, at]
+        if not got.ok
+            return error[got.reason, 'magpie']
+        at = got.bit
+        sym = got.value
+        if sym lt 256
+            out = push[out, sym]
+        else
+            if sym eq 256
+                going = false
+            else
+                i = sym - 257
+                if i gte 29
+                    return error['a deflate length code is out of range', 'magpie']
+                extra = _bits[data, at, int[le[i]]]
+                if not extra.ok
+                    return error[extra.reason, 'magpie']
+                at = extra.bit
+                size = int[lb[i]] + extra.value
+                d = _decode[data, dist, at]
+                if not d.ok
+                    return error[d.reason, 'magpie']
+                at = d.bit
+                if d.value gte 30
+                    return error['a deflate distance code is out of range', 'magpie']
+                more = _bits[data, at, int[de[d.value]]]
+                if not more.ok
+                    return error[more.reason, 'magpie']
+                at = more.bit
+                distance = int[db[d.value]] + more.value
+                if distance gt len[out]
+                    return error['a deflate back-reference reaches before the start', 'magpie']
+                start = len[out] - distance
+                for k in range[size]
+                    out = push[out, byte[out, start + k]]
+    return Out[out, at]
+
+--- the order a dynamic block's code lengths come in
+fn _code_order[]
+    return [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
+
+--- `inflated[data]`: the bytes of a raw deflate stream; refused where it
+--- is cut short or is no stream, in the kernel's words
+fn inflated[data]
+    out = bytes[0]
+    at = 0
+    going = true
+    while going
+        head = _bits[data, at, 3]
+        if not head.ok
+            return error[head.reason, 'magpie']
+        at = head.bit
+        last = bitand[head.value, 1] eq 1
+        kind = shift[head.value, -1]
+        if kind eq 0
+            --- (to the byte boundary: a stored block begins there)
+            at = bitand[at + 7, 0 - 8]
+            sizes = _bits[data, at, 32]
+            if not sizes.ok
+                return error[sizes.reason, 'magpie']
+            at = sizes.bit
+            size = bitand[sizes.value, 65535]
+            nsize = shift[sizes.value, -16]
+            if size ne bitxor[nsize, 65535]
+                return error['a stored block\'s length and its complement disagree', 'magpie']
+            from = shift[at, -3]
+            if from + size gt len[data]
+                return error['the deflate stream is cut short', 'magpie']
+            out = concat[out, slice[data, from, from + size]]
+            at = at + size * 8
+        if kind eq 1
+            lengths = []
+            for i in range[288]
+                l = 8
+                if i gte 144 and i lte 255
+                    l = 9
+                if i gte 256 and i lte 279
+                    l = 7
+                lengths = push[lengths, l]
+            lit = _huffman[lengths]
+            fives = []
+            for i in range[30]
+                fives = push[fives, 5]
+            dist = _huffman[fives]
+            if not lit.ok or not dist.ok
+                return error['a Huffman code is over-subscribed', 'magpie']
+            done = _codes[data, at, lit, dist, out]
+            if not done.ok
+                return error[done.reason, 'magpie']
+            out = done.data
+            at = done.bit
+        if kind eq 2
+            counts = _bits[data, at, 14]
+            if not counts.ok
+                return error[counts.reason, 'magpie']
+            at = counts.bit
+            nlen = bitand[counts.value, 31] + 257
+            ndist = bitand[shift[counts.value, -5], 31] + 1
+            ncode = shift[counts.value, -10] + 4
+            if nlen gt 286 or ndist gt 30
+                return error['a dynamic block declares too many codes', 'magpie']
+            code_lengths = []
+            for i in range[19]
+                code_lengths = push[code_lengths, 0]
+            order = _code_order[]
+            for j in range[ncode]
+                three = _bits[data, at, 3]
+                if not three.ok
+                    return error[three.reason, 'magpie']
+                at = three.bit
+                code_lengths[int[order[j]]] = three.value
+            code = _huffman[code_lengths]
+            if not code.ok
+                return error[code.reason, 'magpie']
+            lengths = []
+            for i in range[nlen + ndist]
+                lengths = push[lengths, 0]
+            i = 0
+            while i lt nlen + ndist
+                got = _decode[data, code, at]
+                if not got.ok
+                    return error[got.reason, 'magpie']
+                at = got.bit
+                sym = got.value
+                if sym lte 15
+                    lengths[i] = sym
+                    i = i + 1
+                else
+                    if sym eq 16
+                        if i eq 0
+                            return error['a dynamic block repeats a length before any', 'magpie']
+                        prev = lengths[i - 1]
+                        rep = _bits[data, at, 2]
+                        if not rep.ok
+                            return error[rep.reason, 'magpie']
+                        at = rep.bit
+                        n = 3 + rep.value
+                        if i + n gt len[lengths]
+                            return error['a dynamic block\'s lengths overrun', 'magpie']
+                        for k in range[n]
+                            lengths[i + k] = prev
+                        i = i + n
+                    else
+                        if sym eq 17 or sym eq 18
+                            width = 3
+                            base = 3
+                            if sym eq 18
+                                width = 7
+                                base = 11
+                            rep = _bits[data, at, width]
+                            if not rep.ok
+                                return error[rep.reason, 'magpie']
+                            at = rep.bit
+                            n = base + rep.value
+                            if i + n gt len[lengths]
+                                return error['a dynamic block\'s lengths overrun', 'magpie']
+                            i = i + n
+                        else
+                            return error['a dynamic block\'s code is out of range', 'magpie']
+            if lengths[256] eq 0
+                return error['a dynamic block has no end-of-block code', 'magpie']
+            lit = _huffman[slice[lengths, 0, nlen]]
+            if not lit.ok
+                return error[lit.reason, 'magpie']
+            dist = _huffman[slice[lengths, nlen, nlen + ndist]]
+            if not dist.ok
+                return error[dist.reason, 'magpie']
+            done = _codes[data, at, lit, dist, out]
+            if not done.ok
+                return error[done.reason, 'magpie']
+            out = done.data
+            at = done.bit
+        if kind eq 3
+            return error['a deflate block is of type 3, which is no type', 'magpie']
+        if last
+            going = false
+    return out
+
+--- the CRC-32 table (IEEE, as zlib computes it)
+fn _crc_table[]
+    t = []
+    for i in range[256]
+        c = i
+        for k in range[8]
+            if bitand[c, 1] eq 1
+                c = bitxor[3988292384, shift[c, -1]]
+            else
+                c = shift[c, -1]
+        t = push[t, c]
+    return t
+
+--- `crc32[data]`: the CRC-32 of the bytes (IEEE, as zlib and gzip
+--- compute it)
+fn crc32[data]
+    t = _crc_table[]
+    crc = 4294967295
+    for i in range[len[data]]
+        crc = bitxor[t[bitand[bitxor[crc, byte[data, i]], 255]], shift[crc, -8]]
+    return bitxor[crc, 4294967295]
+
+--- `gunzipped[data]`: the bytes of a gzip member — the header read past
+--- its optional fields, the deflate stream inflated, the trailer's
+--- CRC-32 and length checked; refused in the kernel's words
+fn gunzipped[data]
+    total = len[data]
+    if total lt 18 or byte[data, 0] ne 31 or byte[data, 1] ne 139
+        return error['no gzip header', 'magpie']
+    if byte[data, 2] ne 8
+        return error['gzip method `byte[data, 2]` is not deflate', 'magpie']
+    flags = byte[data, 3]
+    at = 10
+    if bitand[flags, 4] ne 0
+        if at + 2 gt total
+            return error['the gzip header is cut short', 'magpie']
+        at = at + 2 + unpack[data, at, 2, little = true, signed = false]
+    for flag in [8, 16]
+        if bitand[flags, int[flag]] ne 0
+            if at gte total
+                return error['the gzip header is cut short', 'magpie']
+            ended = find[slice[data, at, total], push[bytes[0], 0]]
+            if ended lt 0
+                return error['the gzip header is cut short', 'magpie']
+            at = at + ended + 1
+    if bitand[flags, 2] ne 0
+        at = at + 2
+    if at + 8 gt total
+        return error['the gzip header is cut short', 'magpie']
+    out = inflated[slice[data, at, total - 8]]
+    if not out.ok
+        return error[out.reason, 'magpie']
+    crc = unpack[data, total - 8, 4, little = true, signed = false]
+    size = unpack[data, total - 4, 4, little = true, signed = false]
+    if size ne bitand[len[out], 4294967295]
+        return error['the gzip trailer promises `size` bytes and `len[out]` were inflated', 'magpie']
+    if crc ne crc32[out]
+        return error['the gzip checksum does not match', 'magpie']
+    return out
+
+--- `gzip_stored[data]`: the bytes as a gzip member of stored blocks — no
+--- compression, a valid stream: what a test writes to drive the reader
+--- without a compressor
+fn gzip_stored[data]
+    out = bytes[0]
+    for b in [31, 139, 8, 0, 0, 0, 0, 0, 0, 255]
+        out = push[out, int[b]]
+    total = len[data]
+    if total eq 0
+        for b in [1, 0, 0, 255, 255]
+            out = push[out, int[b]]
+    from = 0
+    while from lt total
+        stop = from + 65535
+        if stop gt total
+            stop = total
+        last = 0
+        if stop eq total
+            last = 1
+        out = push[out, last]
+        out = concat[out, pack[stop - from, 2, little = true]]
+        out = concat[out, pack[bitxor[stop - from, 65535], 2, little = true]]
+        out = concat[out, slice[data, from, stop]]
+        from = stop
+    out = concat[out, pack[crc32[data], 4, little = true]]
+    out = concat[out, pack[bitand[total, 4294967295], 4, little = true]]
+    return out
+
+--- bytes from a list of numbers
+fn _bytes_of[nums]
+    out = bytes[0]
+    for x in nums
+        out = push[out, int[x]]
+    return out
+
+--- the kernel's own vectors: a stored stream, a fixed block, a dynamic
+--- block, a member carrying a file name; and torn streams refused
+test inflate_reads_the_kernels_streams[]
+    assert[crc32[bytes['123456789']] eq 3421780262]
+    assert[same[gunzipped[gzip_stored[bytes[0]]], bytes[0]]]
+    long = bytes['the quick brown fox jumps over the lazy dog']
+    text_x = long
+    for i in range[10]
+        text_x = concat[text_x, text_x]
+    assert[same[gunzipped[gzip_stored[text_x]], text_x]]
+    fixed = _bytes_of[[120, 218, 203, 72, 205, 201, 201, 87, 200, 64, 39, 1, 104, 3, 8, 177]]
+    assert[text[inflated[slice[fixed, 2, len[fixed] - 4]]] eq 'hello hello hello hello']
+    dynamic = _bytes_of[[120, 218, 125, 86, 141, 206, 195, 32, 8, 124, 21, 95, 205, 47, 235, 186, 38, 237, 108, 242, 245, 253, 51, 45, 200, 29, 232, 150, 172, 171, 202, 143, 112, 28, 164, 229, 153, 214, 124, 28, 57, 229, 247, 35, 229, 253, 124, 229, 244, 183, 92, 57, 237, 101, 149, 69, 121, 166, 179, 252, 111, 215, 86, 222, 42, 111, 162, 199, 178, 87, 25, 233, 223, 230, 245, 185, 55, 34, 53, 63, 112, 109, 158, 72, 45, 120, 183, 45, 206, 205, 156, 111, 109, 142, 37, 242, 235, 181, 220, 58, 178, 179, 192, 205, 190, 201, 161, 237, 101, 182, 16, 215, 53, 89, 159, 253, 183, 224, 68, 253, 200, 235, 185, 45, 150, 99, 181, 214, 19, 211, 211, 125, 149, 180, 40, 196, 74, 226, 32, 140, 134, 72, 97, 165, 171, 38, 240, 216, 57, 112, 197, 99, 233, 165, 84, 163, 73, 69, 205, 71, 213, 149, 95, 140, 52, 238, 113, 89, 139, 129, 15, 197, 181, 139, 140, 162, 85, 60, 68, 9, 249, 72, 128, 62, 149, 30, 46, 149, 184, 121, 96, 152, 58, 187, 248, 254, 33, 215, 150, 32, 12, 249, 164, 7, 83, 95, 92, 2, 114, 195, 151, 49, 203, 34, 42, 96, 220, 237, 247, 214, 241, 247, 49, 166, 12, 55, 216, 25, 56, 21, 72, 196, 143, 131, 39, 116, 1, 117, 144, 106, 80, 82, 99, 211, 82, 201, 66, 50, 63, 58, 125, 218, 165, 198, 183, 134, 0, 219, 128, 174, 32, 141, 30, 76, 95, 205, 158, 74, 208, 99, 32, 158, 33, 64, 206, 92, 81, 142, 194, 94, 108, 35, 171, 211, 171, 11, 88, 247, 199, 14, 67, 95, 131, 116, 188, 247, 157, 41, 151, 162, 9, 40, 169, 224, 19, 184, 72, 203, 197, 17, 233, 138, 104, 115, 200, 157, 78, 134, 98, 104, 44, 64, 142, 176, 29, 138, 218, 3, 166, 66, 180, 26, 250, 64, 45, 136, 221, 177, 197, 195, 233, 100, 222, 161, 60, 152, 189, 140, 153, 205, 36, 132, 55, 182, 31, 208, 236, 5, 29, 177, 237, 18, 16, 83, 108, 39, 211, 184, 171, 225, 90, 191, 2, 153, 230, 105, 50, 34, 252, 31, 239, 193, 112, 238, 145, 48, 235, 184, 73, 34, 183, 145, 108, 64, 137, 167, 4, 36, 128, 219, 229, 232, 54, 112, 73, 62, 130, 75, 16, 220, 227, 60, 48, 40, 210, 199, 211, 57, 124, 0, 132, 6, 55, 82, 96, 72, 139, 151, 15, 6, 255, 15, 223]]
+    got = inflated[slice[dynamic, 2, len[dynamic] - 4]]
+    assert[len[got] eq 2180]
+    assert[text[slice[got, 0, 13]] eq 'of gamma and ']
+    assert[crc32[got] eq 693277240]
+    named = _bytes_of[[31, 139, 8, 8, 0, 0, 0, 0, 2, 255, 120, 46, 116, 120, 116, 0, 203, 72, 205, 201, 201, 87, 200, 64, 39, 1, 227, 81, 61, 141, 23, 0, 0, 0]]
+    assert[text[gunzipped[named]] eq 'hello hello hello hello']
+    good = gzip_stored[bytes['some bytes to keep']]
+    assert[not gunzipped[slice[good, 0, len[good] - 3]].ok]
+    bad = set[good, 12, bitxor[byte[good, 12], 1]]
+    assert[not gunzipped[bad].ok]
+    assert[not gunzipped[bytes['not gzip at all, not even close to it']].ok]
+    assert[not inflated[_bytes_of[[7]]].ok]
+    assert[not inflated[_bytes_of[[3]]].ok]

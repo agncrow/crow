@@ -164,9 +164,12 @@ fn a_bytes_parameter_only_read_is_lent() {
 #[test]
 fn bytes_are_built_in_place_through_a_modules_row() {
     let rust = transpile("use sys\nfn grown[n]\n    out = bytes[0]\n    for i in range[n]\n        out = push[out, 66]\n    out = concat[out, bytes['x']]\n    return out\nb = grown[3]\nb = set[b, 0, 65]\nlog[len[b]]\n");
-    assert!(rust.contains("push_byte_taken(out,"), "{}", rust);
-    assert!(rust.contains("concat_taken(out,"), "{}", rust);
-    assert!(rust.contains("set_byte_taken(b,"), "{}", rust);
+    // (the buffer moved in, never copied: `{out}` is the move the row's
+    // argument rule prints for a local read for the last time)
+    assert!(rust.contains("push_byte_taken({out},"), "{}", rust);
+    assert!(rust.contains("concat_taken({out},"), "{}", rust);
+    assert!(rust.contains("set_byte_taken({b},"), "{}", rust);
+    assert!(!rust.contains("out.clone()") && !rust.contains("b.clone()"), "{}", rust);
     assert!(!rust.contains("push_byte(&"), "{}", rust);
 }
 
@@ -2135,6 +2138,18 @@ fn test_ui_field_codegen() {
     let rust = transpile("use web\nuse ui\nview render[s]\n    vol = s.get['vol', 0]\n    return div[field['Min Vol', vol]]\nserve[3000]\npage['/', render]\n");
     assert!(rust.contains("CrowVNode::field_typed("), "field should emit CrowVNode::field_typed\n{}", rust);
     assert!(rust.contains("\"vol\""), "field should extract key name\n{}", rust);
+}
+
+#[test]
+fn a_select_of_a_frame_is_frames_in_a_page() {
+    // the lowering's rule (`is_ui_control`): a select of a frame is frame's
+    // in a page as anywhere, and a standard module's body imports no ui —
+    // magpie's `_gathered` had printed the dropdown, and examples/magpie
+    // did not build compiled
+    let own = transpile("use web, ui, frame\nfn cols[n]\n    f = frame.new[a = [n], b = [n]]\n    return select[f, ['a']]\nview render[s]\n    return div[str[len[cols[1].columns]]]\nserve[3000]\npage['/', render]\n");
+    assert!(!own.contains("select_input"), "{}", own);
+    let module = transpile("use web, ui, frame, magpie\nderive orders\n    return latest['orders']\nview render[s]\n    return div[str[len[orders]]]\nserve[3000]\npage['/', render]\n");
+    assert!(!module.contains("select_input"), "{}", module);
 }
 
 #[test]

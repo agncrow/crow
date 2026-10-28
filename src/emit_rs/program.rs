@@ -521,6 +521,62 @@ impl Emitter {
         self.line("");
     }
 
+    /// The functions the program compiles. The original of a specialized
+    /// function never is (its copies are). A parameter of no known type
+    /// would be text in Rust; and a pure function nothing the program runs
+    /// calls (a shared part's, in a part's test app) is not compiled — its
+    /// types came from no call, or from a query nothing could describe, and
+    /// could meet a kernel that takes numbers. Nor is a helper nothing
+    /// calls: it writes facts for a handler no handler is (a part whose
+    /// button moved to another part), and it can never run. But a function
+    /// compiled code calls is compiled, its parameter of no known type held
+    /// as text, as the call's argument is: `declare[dir, keys, [], []]`
+    /// hands `with_note` the items of an empty list, and the call had been
+    /// printed while the function was not.
+    fn emitted_functions(&self, specialized: &BTreeSet<String>) -> BTreeSet<String> {
+        let reached = self.reached_functions();
+        let mut emitted: BTreeSet<String> = BTreeSet::new();
+        for (n, f) in &self.fns {
+            if specialized.contains(n) {
+                continue;
+            }
+            let has_unknown = f.params.iter().any(|(_, t)| matches!(t, Ty::Unknown))
+                || (!reached.contains(n) && (matches!(f.kind, FnKind::Pure | FnKind::Helper) || f.params.iter().any(|(_, t)| unknown_inside(t))));
+            let is_callback = self.live_render_fns.contains(n)
+                || self.live_handle_fns.contains(n)
+                || self.reactive_render_fns.contains(n)
+                || self.reactive_event_handlers.contains(n)
+                || self.web_handlers.contains(n)
+                || self.views.contains(n)
+                || f.kind == FnKind::Handler;
+            if !has_unknown || is_callback {
+                emitted.insert(n.clone());
+            }
+        }
+        let mut todo: Vec<String> = Vec::new();
+        visit_block(&self.part.main, &mut |e| note_called(e, &mut todo));
+        for fact in &self.part.facts {
+            visit_expr(&fact.default, &mut |e| note_called(e, &mut todo));
+        }
+        for d in &self.part.derives {
+            visit_block(&d.body, &mut |e| note_called(e, &mut todo));
+        }
+        for n in &emitted {
+            if let Some(f) = self.fns.get(n) {
+                visit_block(&f.body, &mut |e| note_called(e, &mut todo));
+            }
+        }
+        while let Some(c) = todo.pop() {
+            if specialized.contains(&c) || emitted.contains(&c) {
+                continue;
+            }
+            let Some(f) = self.fns.get(&c) else { continue };
+            emitted.insert(c.clone());
+            visit_block(&f.body, &mut |e| note_called(e, &mut todo));
+        }
+        emitted
+    }
+
     fn reached_functions(&self) -> BTreeSet<String> {
         let mut todo: Vec<String> = Vec::new();
         // a database driver written in Crow is called from Rust, not the
@@ -528,28 +584,7 @@ impl Emitter {
         for (_, module) in self.drivers_carried() {
             todo.extend(crate::table::ROWS.iter().filter(|r| r.module == module && r.is_crow()).map(crate::table::crow_fn_name));
         }
-        let note = |e: &Expr, todo: &mut Vec<String>| match e {
-            Expr::Call { target: Target::User(n), .. } | Expr::FnRef(n, _) => todo.push(n.clone()),
-            Expr::Deferred { name, .. } => todo.push(name.clone()),
-            // a builtin written in Crow reaches its function (an effect's
-            // row, or a call's)
-            Expr::Call { target: Target::Row(row), .. } | Expr::Effect { row: Some(row), .. } if row.is_crow() => todo.push(crate::table::crow_fn_name(row)),
-            // one the lowering left to the values: every row of the name,
-            // the emitter picking one where it is called
-            Expr::Effect { row: None, name, .. } => {
-                let (m, f) = name.rsplit_once('.').unwrap_or(("", name.as_str()));
-                crate::table::ROWS.iter().filter(|r| r.is_crow() && r.module == m && r.name == f).for_each(|r| todo.push(crate::table::crow_fn_name(r)));
-            }
-            Expr::Call { target: Target::Module(m, f), .. } => {
-                if let Some((m, f)) = format!("{}.{}", m, f).rsplit_once('.') {
-                    crate::table::ROWS.iter().filter(|r| r.is_crow() && r.module == m && r.name == f).for_each(|r| todo.push(crate::table::crow_fn_name(r)));
-                }
-            }
-            Expr::Call { target: Target::Runtime(n), .. } => {
-                crate::table::ROWS.iter().filter(|r| r.is_crow() && r.module.is_empty() && r.name == n.as_str()).for_each(|r| todo.push(crate::table::crow_fn_name(r)));
-            }
-            _ => {}
-        };
+        let note = note_called;
         visit_block(&self.part.main, &mut |e| note(e, &mut todo));
         for fact in &self.part.facts {
             visit_expr(&fact.default, &mut |e| note(e, &mut todo));
@@ -828,31 +863,12 @@ impl Emitter {
             .filter_map(|n| n.rsplit_once("__").filter(|(_, s)| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit())).map(|(b, _)| b.to_string()))
             .collect();
         let names: Vec<String> = self.fns.keys().cloned().collect();
-        let reached = self.reached_functions();
+        let emitted = self.emitted_functions(&specialized);
         for n in &names {
-            if specialized.contains(n) {
+            if !emitted.contains(n) {
                 continue;
             }
             let f = self.fns.get(n).unwrap().clone();
-            // a parameter of no known type would be text in Rust; and a pure
-            // function nothing the program runs calls (a shared part's, in a
-            // part's test app) is not compiled — its types came from no call,
-            // or from a query nothing could describe, and could meet a kernel
-            // that takes numbers. Nor is a helper nothing calls: it writes
-            // facts for a handler no handler is (a part whose button moved to
-            // another part), and it can never run
-            let has_unknown = f.params.iter().any(|(_, t)| matches!(t, Ty::Unknown))
-                || (!reached.contains(n) && (matches!(f.kind, FnKind::Pure | FnKind::Helper) || f.params.iter().any(|(_, t)| unknown_inside(t))));
-            let is_callback = self.live_render_fns.contains(n)
-                || self.live_handle_fns.contains(n)
-                || self.reactive_render_fns.contains(n)
-                || self.reactive_event_handlers.contains(n)
-                || self.web_handlers.contains(n)
-                || self.views.contains(n)
-                || f.kind == FnKind::Handler;
-            if has_unknown && !is_callback {
-                continue;
-            }
             self.in_crow_fn = crate::modules::is_crow_fn(&f.name);
             let scope = self.registry.enter(&f.name);
             self.emit_function(&f);
@@ -1848,6 +1864,32 @@ impl Emitter {
 
 /// Whether a type holds one not known: text in Rust, for a list's or a
 /// map's items as for a value.
+/// What a call names of the program's functions: a user function called
+/// or handed as a value, one run later, and the function behind a builtin
+/// written in Crow (an effect's row, or a call's).
+fn note_called(e: &Expr, todo: &mut Vec<String>) {
+    match e {
+        Expr::Call { target: Target::User(n), .. } | Expr::FnRef(n, _) => todo.push(n.clone()),
+        Expr::Deferred { name, .. } => todo.push(name.clone()),
+        Expr::Call { target: Target::Row(row), .. } | Expr::Effect { row: Some(row), .. } if row.is_crow() => todo.push(crate::table::crow_fn_name(row)),
+        // one the lowering left to the values: every row of the name, the
+        // emitter picking one where it is called
+        Expr::Effect { row: None, name, .. } => {
+            let (m, f) = name.rsplit_once('.').unwrap_or(("", name.as_str()));
+            crate::table::ROWS.iter().filter(|r| r.is_crow() && r.module == m && r.name == f).for_each(|r| todo.push(crate::table::crow_fn_name(r)));
+        }
+        Expr::Call { target: Target::Module(m, f), .. } => {
+            if let Some((m, f)) = format!("{}.{}", m, f).rsplit_once('.') {
+                crate::table::ROWS.iter().filter(|r| r.is_crow() && r.module == m && r.name == f).for_each(|r| todo.push(crate::table::crow_fn_name(r)));
+            }
+        }
+        Expr::Call { target: Target::Runtime(n), .. } => {
+            crate::table::ROWS.iter().filter(|r| r.is_crow() && r.module.is_empty() && r.name == n.as_str()).for_each(|r| todo.push(crate::table::crow_fn_name(r)));
+        }
+        _ => {}
+    }
+}
+
 fn unknown_inside(t: &Ty) -> bool {
     match t {
         Ty::Unknown => true,

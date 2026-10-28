@@ -8,5 +8,7 @@
   {"get": "/numbers"},
   {"expect": "200 OK | content-type: application/json | [1.5,2.5]"},
   {"get": "/failed"},
-  {"expect": "200 OK | content-type: application/json | [4,null,6]"}
+  {"expect": "200 OK | content-type: application/json | [4,null,6]"},
+  {"get": "/frames"},
+  {"expect": "200 OK | content-type: application/json | [[{\"a\":1,\"b\":\"x\"},{\"a\":2,\"b\":\"y\"}],[{\"a\":1,\"b\":\"x\"}]]"}
 ]

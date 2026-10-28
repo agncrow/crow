@@ -1,0 +1,31 @@
+--- A parameter every call hands a value of no known kind — the items of
+--- an empty list walked into it — is text, as the compiled program holds
+--- such a value: `'/.pending' in p` of one had been a list's `contains`
+--- answering a bool in a function compiled to answer text (E0308), and a
+--- record's field given one had been moved out of the record lent (E0507)
+--- — interpreted it ran (crow check --self: magpie.merge's `merge_into`
+--- and magpie.exec's `asof_rows` handed `[]` for their paths).
+struct Reader [path, size]
+
+fn pending[p]
+    return '/.pending' in p
+
+fn opened[p]
+    return Reader[p, len[p]]
+
+fn first_pending[paths]
+    for p in paths
+        if pending[p]
+            return p
+    return 'none'
+
+fn sizes[paths]
+    total = 0
+    for p in paths
+        r = opened[p]
+        where = r.path
+        total = total + r.size + len[where]
+    return total
+
+log[first_pending[[]]]
+log[sizes[[]]]

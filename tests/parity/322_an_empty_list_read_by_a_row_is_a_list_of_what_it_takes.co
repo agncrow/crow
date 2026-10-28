@@ -1,0 +1,27 @@
+--- A list whose items no type says, read where a row takes a list of a
+--- kind, is a list of that kind: a local given `[]`, and a record's field
+--- given `[]` where the record was made, read by `stack` as frames and by
+--- `join` as text, had been held as text compiled, and the program did
+--- not build (E0308) — interpreted it ran (found by Magpie's sequencer: a
+--- program that only follows a log writes no frame into a tail's parts).
+use frame
+
+struct Bag [parts, words]
+
+fn stacked[b]
+    if len[b.parts] eq 1
+        return b.parts[0]
+    return stack[b.parts]
+
+fn joined[b]
+    comma = ','
+    return join[b.words, comma]
+
+fn alone[n]
+    xs = []
+    return stack[xs]
+
+b = Bag[[], []]
+log[len[stacked[b]]]
+log[len[joined[b]]]
+log[len[alone[3]]]

@@ -430,6 +430,19 @@ pub fn batch_merge(dir: &str, paths: Vec<String>, every: bool) -> Result<String,
     crate::frames::batch_merge(dir, &paths, every)
 }
 
+/// `sys.stream_rs[dir, paths, keys, texts, narrow, stems, every, taken,
+/// group_bytes, segment_bytes]`: the kernel's streaming merge at the sizes
+/// given, its segments named from the counter past `taken`; answers their
+/// names. The oracle `magpie.merge`'s `stream` is held to, byte for byte,
+/// at sizes small enough to cut groups and segments (test only).
+#[allow(clippy::too_many_arguments)] // the merge's settings, as the row hands them
+pub fn stream_rs(dir: &str, paths: Vec<String>, keys: Vec<String>, texts: Vec<String>, narrow: Vec<String>, stems: bool, every: bool, taken: i64, group_bytes: i64, segment_bytes: i64) -> Result<Vec<String>, String> {
+    let size = |n: i64| usize::try_from(n).map_err(|_| format!("stream_rs: a size is 0 or more, not {}", n));
+    let mut counter = taken;
+    let written = crate::magpie::merge::stream(dir, &paths, &keys, &texts, &narrow, stems, every, &mut counter, size(group_bytes)?, size(segment_bytes)?)?;
+    Ok(written.into_iter().map(|w| w.name).collect())
+}
+
 /// `sys.batch_summary[paths, by, of, how, on, ops, equal, lo, hi, upto]`:
 /// aggregates over the files, pushed below the reader.
 pub fn batch_summary(paths: Vec<String>, by: Vec<String>, of: Vec<String>, how: Vec<String>, on: Vec<String>, ops: Vec<String>, equal: Vec<String>, lo: &str, hi: &str, upto: i64) -> Result<crate::frame::CrowFrame, String> {

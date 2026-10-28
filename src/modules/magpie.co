@@ -2,7 +2,7 @@
 --- (spec, magpie). Each commit is one file, written once by the kernel
 --- (sys.batch_write): a frame given a position per row, sorted by the
 --- log's keys, with the statistics a reader prunes by in its index. The
---- manifest (sys.batch_catalog) names the live segments and what the log
+--- manifest (magpie.manifest) names the live segments and what the log
 --- declares of itself — its keys, fixed by its first batch, and its time
 --- column — and is replaced whole, so a merge is one atomic switch and a
 --- reader sees the old list or the new. Everything else is here, in
@@ -18,18 +18,26 @@
 --- number exists, so a slip is a retry. The tests are the module's own:
 --- `crow test src/modules/magpie.co`.
 use sys
+use bits
 use frame
 use math
+use magpie.file
+use magpie.bloom
+use magpie.manifest
+use magpie.merge
+use magpie.exec
+use magpie.nearest
+use magpie.search
 
 --- the tail: the batch files in a directory, in order
 --- (`000000000017.batch`); a segment is named by its counter
 --- (`S000000000017.segment`) and the manifest says what it holds
 fn _names[dir]
-    entries = ls[dir]
-    if not entries.ok
-        return error['no log at \'`dir`\': `entries.reason`', 'magpie']
+    found = ls[dir]
+    if not found.ok
+        return error['no log at \'`dir`\': `found.reason`', 'magpie']
     names = []
-    for n in entries
+    for n in found
         if ends[n, '.batch'] and len[n] eq 18
             names = push[names, n]
     return names
@@ -63,22 +71,22 @@ fn batches[dir]
         if not got.ok
             return error[got.reason, 'magpie']
         return _catalog_of[got]
-    --- the pending rows are read before the files are listed: the flush
+    --- the pending rows are read before the files are segs: the flush
     --- thread moves rows from pending to a file under its lock, so in this
     --- order they are seen at least once — and a file covering their first
-    --- position says they were flushed in between, so they are listed once
+    --- position says they were flushed in between, so they are segs once
     waiting = tail_pending[dir]
     if not waiting.ok
         return error[waiting.reason, 'magpie']
     names = _names[dir]
     if not names.ok
         return names
-    listed = batch_catalog[dir]
-    if not listed.ok
-        return error[listed.reason, 'magpie']
+    segs = catalog_of[dir]
+    if not segs.ok
+        return error[segs.reason, 'magpie']
     segments = []
-    for i in range[len[listed]]
-        segments = push[segments, [listed.number[i] + 0, listed.high[i] + 0]]
+    for i in range[len[segs]]
+        segments = push[segments, [segs.number[i] + 0, segs.high[i] + 0]]
     numbers = []
     highs = []
     forms = []
@@ -87,22 +95,21 @@ fn batches[dir]
     counts = []
     firsts = []
     lasts = []
-    for i in range[len[listed]]
-        numbers = push[numbers, listed.number[i] + 0]
-        highs = push[highs, listed.high[i] + 0]
+    for i in range[len[segs]]
+        numbers = push[numbers, segs.number[i] + 0]
+        highs = push[highs, segs.high[i] + 0]
         forms = push[forms, 'segment']
-        levels = push[levels, listed.level[i] + 0]
-        paths = push[paths, '`dir`/`listed.name[i]`']
-        counts = push[counts, listed.rows[i] + 0]
-        firsts = push[firsts, listed.first[i] + 0]
-        lasts = push[lasts, listed.last[i] + 0]
+        levels = push[levels, segs.level[i] + 0]
+        paths = push[paths, '`dir`/`segs.name[i]`']
+        counts = push[counts, segs.rows[i] + 0]
+        firsts = push[firsts, segs.first[i] + 0]
+        lasts = push[lasts, segs.last[i] + 0]
     for n in names
         c = [_number[n], _number[n]]
         p = '`dir`/`n`'
-        head = batch_stats[p]
-        if not head.ok
-            return error[head.reason, 'magpie']
-        s = json[head]
+        stats = about[p]
+        if not stats.ok
+            return error[stats.reason, 'magpie']
         form = 'batch'
         if _inside[c, segments]
             form = 'stale'
@@ -111,13 +118,9 @@ fn batches[dir]
         forms = push[forms, form]
         levels = push[levels, 0]
         paths = push[paths, p]
-        --- each figure read as an int and held plain: a value that can
-        --- fail in the list had made the column's cells ones that can fail
-        rows = int[s.rows]
-        first = int[s.first]
-        last = int[s.last]
-        if not rows.ok or not first.ok or not last.ok
-            return error['`p` has no row count or positions in its footer', 'magpie']
+        rows = stats.rows
+        first = stats.first
+        last = stats.last
         counts = push[counts, rows + 0]
         firsts = push[firsts, first + 0]
         lasts = push[lasts, last + 0]
@@ -136,7 +139,7 @@ fn batches[dir]
         return frame.new[number = [0], high = [-1], form = ['none'], level = [0], path = [''], rows = [0], first = [0], last = [-1]]
     return sort[frame.new[number = numbers, high = highs, form = forms, level = levels, path = paths, rows = counts, first = firsts, last = lasts], 'number']
 
---- whether a file listed covers the position: the pending rows were
+--- whether a file segs covers the position: the pending rows were
 --- flushed into it between the sequencer's answer and the listing
 fn _covered[firsts, lasts, pos]
     for i in range[len[firsts]]
@@ -173,82 +176,69 @@ fn _words[named]
 --- the log's keys, as its manifest declares them: none for a log with
 --- no manifest yet
 fn _keys[dir]
-    declared = batch_declared[dir]
-    if not declared.ok
-        return error[declared.reason, 'magpie']
-    named = []
-    --- the list pinned as one of text, so an empty log's keys are typed
-    keyed = push[named, '']
-    if len[declared] eq 0
-        return named
-    d = json[declared]
-    for k in d.keys
-        named = push[named, str[k]]
-    return named
+    m = listed[dir]
+    if not m.ok
+        return error[m.reason, 'magpie']
+    return m.keys
 
 --- the log's keys fixed once: the first batch declares them (and the
 --- time column, where given), a later batch with other keys is refused,
 --- and one naming no keys takes the log's. Answers the keys the batch is
 --- written by
 fn _fixed[dir, f, by, time, narrow, stem]
-    declared = batch_declared[dir]
-    if not declared.ok
-        return error[declared.reason, 'magpie']
+    m = listed[dir]
+    if not m.ok
+        return error[m.reason, 'magpie']
     if len[time] gt 0 and time not in f.columns
         return error['no column \'`time`\' to be the log\'s time', 'magpie']
     for c in narrow
         if c not in f.columns
             return error['no column \'`c`\' to keep narrow', 'magpie']
-    if len[declared] eq 0
-        noted = map[]
+    if not m.found
+        names = slice[['x'], 0, 0]
+        texts = slice[['x'], 0, 0]
         if len[time] gt 0
-            noted = set[noted, 'time', time]
+            names = push[names, 'time']
+            texts = push[texts, time]
         if len[narrow] gt 0
-            noted = set[noted, 'narrow', join[narrow, ',']]
+            names = push[names, 'narrow']
+            texts = push[texts, join[narrow, ',']]
         if stem
-            noted = set[noted, 'stem', 'true']
-        notes = encode[noted]
-        --- the list copied for the row, which takes it as a value: `by`
+            names = push[names, 'stem']
+            texts = push[texts, 'true']
+        --- the list copied for the call, which takes it as a value: `by`
         --- is read again below (compiled, the row had moved it)
         named = by
-        made = batch_declare[dir, named, notes]
+        made = declare[dir, named, names, texts]
         if not made.ok
             return error[made.reason, 'magpie']
         return by
-    fixed = _keys[dir]
-    if not fixed.ok
-        return fixed
+    fixed = m.keys
     if len[by] gt 0 and join[by, ','] ne join[fixed, ',']
         return error['the log at \'`dir`\' is keyed by `_words[fixed]`, not by `_words[by]`', 'magpie']
-    d = json[declared]
     if len[time] gt 0
-        had = d.notes.time
-        if had.ok
-            if str[had] ne time
-                return error['the log at \'`dir`\' keeps its time in \'`str[had]`\', not in \'`time`\'', 'magpie']
+        had = note_of[m, 'time']
+        if len[had] gt 0
+            if had ne time
+                return error['the log at \'`dir`\' keeps its time in \'`had`\', not in \'`time`\'', 'magpie']
         else
-            again = fixed
-            noted = batch_declare[dir, again, encode[map[time = time]]]
+            noted = declare[dir, fixed, ['time'], [time]]
             if not noted.ok
                 return error[noted.reason, 'magpie']
     if len[narrow] gt 0
-        wide = d.notes.narrow
+        wide = note_of[m, 'narrow']
         asked = join[narrow, ',']
-        if wide.ok
-            if str[wide] ne asked
-                return error['the log at \'`dir`\' keeps \'`str[wide]`\' narrow, not \'`asked`\'', 'magpie']
+        if len[wide] gt 0
+            if wide ne asked
+                return error['the log at \'`dir`\' keeps \'`wide`\' narrow, not \'`asked`\'', 'magpie']
         else
-            once = fixed
-            noted = batch_declare[dir, once, encode[map[narrow = asked]]]
+            noted = declare[dir, fixed, ['narrow'], [asked]]
             if not noted.ok
                 return error[noted.reason, 'magpie']
-    if stem
-        stemmed = d.notes.stem
-        if not stemmed.ok
-            twice = fixed
-            noted = batch_declare[dir, twice, encode[map[stem = 'true']]]
-            if not noted.ok
-                return error[noted.reason, 'magpie']
+    if stem and not stems_of[m]
+        noted = declare[dir, fixed, ['stem'], ['true']]
+        if not noted.ok
+            return error[noted.reason, 'magpie']
     return fixed
 
 --- a frame about to be written, its key and text columns checked to
@@ -312,9 +302,9 @@ fn batch[dir, f, by = [], flush = true, time = '', narrow = [], stem = false]
         flushed = 1
     if not checked.ok
         return checked
-    opened = _opened[dir]
-    if not opened.ok
-        return opened
+    log_dir = _opened[dir]
+    if not log_dir.ok
+        return log_dir
     fixed = _fixed[dir, f, by, time, narrow, stem]
     if not fixed.ok
         return fixed
@@ -348,9 +338,9 @@ fn put[dir, f, by = [], time = '', narrow = [], stem = false]
     narrowed = push[narrow, '']
     if not checked.ok
         return checked
-    opened = _opened[dir]
-    if not opened.ok
-        return opened
+    log_dir = _opened[dir]
+    if not log_dir.ok
+        return log_dir
     fixed = _fixed[dir, f, by, time, narrow, stem]
     if not fixed.ok
         return fixed
@@ -368,10 +358,24 @@ fn sync[dir]
         return _posted_int[dir, 'sync']
     if len[bytes[dir]] eq 0
         return error['sync needs a log directory', 'magpie']
-    flushed = tail_flush[dir]
-    if not flushed.ok
-        return error[flushed.reason, 'magpie']
-    return batch_sync[dir]
+    drained = tail_flush[dir]
+    if not drained.ok
+        return error[drained.reason, 'magpie']
+    found = ls[dir]
+    if not found.ok
+        return error['batch: cannot read \'`dir`\': `found.reason`', 'magpie']
+    count = 0
+    for name in found
+        if number_of[name] gte 0 or counter_of[name] gte 0 or name eq 'manifest'
+            path = '`dir`/`name`'
+            done = flushed[path]
+            if not done.ok
+                return error['batch: cannot flush \'`path`\': `done.reason`', 'magpie']
+            count = count + 1
+    swept = flushed[dir]
+    if not swept.ok
+        return error['batch: cannot flush \'`dir`\': `swept.reason`', 'magpie']
+    return count
 
 --- whether a kernel's refusal says a listed file is gone — a merge
 --- replaced it between the listing and the open — so the listing is read
@@ -379,13 +383,10 @@ fn sync[dir]
 fn _gone[reason]
     return 'cannot read' in reason
 
---- the kernel's reader of several files in its own function, the lists
---- copied where the row takes them (a lent list had not built): the rows
---- past `after`, in position order, with the columns asked
+--- the rows of several files past `after`, in position order, with the
+--- columns asked
 fn _since[paths, after, upto, columns]
-    named = paths
-    wanted = columns
-    return batch_since[named, after, upto, wanted]
+    return _since_rows[paths, after, upto, columns]
 
 --- the live files whose positions reach past `after` and, with `upto`
 --- 0 or more, begin at or before it
@@ -459,12 +460,9 @@ fn scan[dir, from = 0, upto = -1, columns = []]
         return _asked[dir, 'scan', 'from=`q_from`&upto=`upto``q_cols`']
     return since[dir, from, upto, columns]
 
---- the kernel's range reader in its own function, the lists copied
---- where the row takes them
+--- the rows of several files whose column lies within a range
 fn _between[paths, column, lo, hi, upto, columns]
-    named = paths
-    wanted = columns
-    return batch_between[named, column, lo, hi, upto, wanted]
+    return _between_rows[paths, column, lo, hi, upto, columns]
 
 --- `latest[dir, upto = -1, columns = [], lo = '', hi = '', equal = []]`:
 --- the newest version of each key (the log's keys, as its first batch declared them)
@@ -557,14 +555,9 @@ fn latest[dir, upto = -1, columns = [], lo = '', hi = '', equal = []]
     newest = sort[rows, '_pos', desc = true]
     return sort[unique[newest, fixed], '_pos']
 
---- the rows of one file holding a value: the kernel's row in its own
---- function, as `_written` is, so `column` and `value` are text to the caller
+--- the rows of several files holding the values
 fn _found[paths, on, equal, columns]
-    files = paths
-    named = on
-    asked = equal
-    wanted = columns
-    return batch_find[files, named, asked, wanted]
+    return _find_in[paths, on, equal, columns]
 
 --- `lookup[dir, on, equal, columns = []]`: the rows whose `on`
 --- columns hold the values `equal`, every pair at once, each value written as
@@ -610,22 +603,14 @@ fn lookup[dir, on, equal, columns = []]
 --- the kernel's row in its own function, as `_found` is: the lists copied
 --- where the row takes them
 fn _searched[paths, column, words, k, stems, snippet]
-    named = paths
-    asked = words
-    return batch_search[named, column, asked, k, stems, snippet]
+    return search_rows[paths, column, words, k, stems, snippet]
 
 --- whether the log stems its words, as its manifest declares
 fn _stems[dir]
-    declared = batch_declared[dir]
-    if not declared.ok
+    m = listed[dir]
+    if not m.ok
         return false
-    if len[declared] eq 0
-        return false
-    d = json[declared]
-    had = d.notes.stem
-    if had.ok
-        return str[had] eq 'true'
-    return false
+    return stems_of[m]
 
 --- `search[dir, column, words, k = 10, snippet = 0]`: the k rows whose
 --- text `column` best matches the words — each a word (read as its
@@ -650,7 +635,7 @@ fn search[dir, column, words, k = 10, snippet = 0]
     --- the words pinned as a list of text (an empty word is no token, and
     --- the kernel reads each word as its tokens), k and the snippet as ints
     pinned = push[words, '']
-    wanted = pack[k, 8]
+    pinned_k = pack[k, 8]
     around = pack[snippet, 8]
     if k lt 0
         return error['a search answers at most k rows, and k is `k`', 'magpie']
@@ -674,8 +659,7 @@ fn search[dir, column, words, k = 10, snippet = 0]
     return hits
 
 fn _nearest_in[paths, column, vector, k]
-    named = paths
-    return batch_nearest[named, column, vector, k]
+    return nearest_rows[paths, column, vector, k]
 
 --- `nearest[dir, column, vector, k = 10]`: the k rows whose vector
 --- `column` lies nearest the query `vector` by the cosine — the inner
@@ -697,7 +681,7 @@ fn nearest[dir, column, vector, k = 10]
         return error['nearest needs a column name', 'magpie']
     --- the query pinned as a tensor of numbers, k as an int
     q = tensor[vector]
-    wanted = pack[k, 8]
+    pinned_k = pack[k, 8]
     if k lt 0
         return error['nearest answers at most k rows, and k is `k`', 'magpie']
     b = batches[dir]
@@ -740,9 +724,9 @@ fn commit[dir, f, seen = -1, columns = [], equal = []]
     pairs = concat[columns, equal]
     if len[pairs] ne 2 * len[columns]
         return error['commit takes its reads as two lists of one length: columns and equal', 'magpie']
-    opened = _opened[dir]
-    if not opened.ok
-        return opened
+    log_dir = _opened[dir]
+    if not log_dir.ok
+        return log_dir
     fixed = _fixed[dir, f, [], '', [], false]
     if not fixed.ok
         return fixed
@@ -779,14 +763,7 @@ fn commit[dir, f, seen = -1, columns = [], equal = []]
 --- the kernel's executor in its own function, the lists copied where
 --- the rows take them
 fn _summarised[paths, by, of, how, on, ops, equal, lo, hi, upto]
-    named = paths
-    grouped = by
-    columns = of
-    hows = how
-    cols = on
-    operators = ops
-    wanted = equal
-    return batch_summary[named, grouped, columns, hows, cols, operators, wanted, lo, hi, upto]
+    return summary_of[paths, by, of, how, on, ops, equal, lo, hi, upto]
 
 --- `summary[dir, by, of, how, on = [], ops = [], equal = [], lo = '', hi = '', upto = -1]`:
 --- an aggregate pushed below the reader — one kernel over the segments
@@ -851,23 +828,14 @@ fn summary[dir, by, of, how, on = [], ops = [], equal = [], lo = '', hi = '', up
 
 --- the kernel's as-of join in its own function
 fn _asof[paths, labels, by, time, columns, upto]
-    named = paths
-    fixed = by
-    wanted = columns
-    return batch_asof[named, labels, fixed, time, wanted, upto]
+    return asof_rows[paths, labels, by, time, columns, upto]
 
 --- the log's time column, as its manifest declares it; empty where none
 fn _time[dir]
-    declared = batch_declared[dir]
-    if not declared.ok
+    m = listed[dir]
+    if not m.ok
         return ''
-    if len[declared] eq 0
-        return ''
-    d = json[declared]
-    had = d.notes.time
-    if had.ok
-        return str[had]
-    return ''
+    return note_of[m, 'time']
 
 --- `prior[dir, f, columns = [], upto = -1]`: the as-of join over the log — for each
 --- row of `f`, which holds the log's keys and a moment in the log's time
@@ -917,18 +885,18 @@ fn prior[dir, f, columns = [], upto = -1]
 --- what a crash left between placing a segment and switching the
 --- manifest, or a merge's inputs it did not get to remove
 fn _unlisted[dir]
-    entries = ls[dir]
-    if not entries.ok
+    found = ls[dir]
+    if not found.ok
         return []
-    listed = batch_catalog[dir]
-    if not listed.ok
+    segs = catalog_of[dir]
+    if not segs.ok
         return []
     names = []
-    for i in range[len[listed]]
-        names = push[names, listed.name[i]]
+    for i in range[len[segs]]
+        names = push[names, segs.name[i]]
     named = push[names, '']
     gone = []
-    for n in entries
+    for n in found
         if ends[n, '.segment'] and n not in names
             gone = push[gone, '`dir`/`n`']
     return gone
@@ -960,8 +928,8 @@ fn _overflow[b]
     return paths
 
 --- `merge[dir, every = false]`: the log compacted in two moves. The
---- tail's batch files are folded into a segment of level 1 (sys,
---- `batch_merge`: the streaming merge, one row group per input in
+--- tail's batch files are folded into a segment of level 1 (magpie.merge,
+--- `merge_files`: the streaming merge, one row group per input in
 --- memory; the rows sorted by the log's keys, the latest version of each
 --- key kept — or every row, with `every`, for an append-only table whose
 --- keys are its sort order and no identity; a segment cut at a gigabyte
@@ -998,7 +966,7 @@ fn merge[dir, every = false]
         --- the paths copied for the row (it takes its lists as values, and
         --- `inputs` is read again below: compiled, the row had moved it)
         named = inputs
-        folded = batch_merge[dir, named, every]
+        folded = merge_files[dir, named, every]
         if not folded.ok
             return error[folded.reason, 'magpie']
         made = folded
@@ -1019,7 +987,7 @@ fn merge[dir, every = false]
             rounds = 64
         else
             named = chosen
-            folded = batch_merge[dir, named, every]
+            folded = merge_files[dir, named, every]
             if not folded.ok
                 return error[folded.reason, 'magpie']
             for p in chosen
@@ -1167,9 +1135,9 @@ fn restore[saved, dir]
     listing = read['`saved`/listing']
     if not listing.ok
         return error['no backup at \'`saved`\': `listing.reason`', 'magpie']
-    opened = _opened[dir]
-    if not opened.ok
-        return opened
+    log_dir = _opened[dir]
+    if not log_dir.ok
+        return log_dir
     restored = 0
     for name in split[listing, '\n']
         if len[name] gt 0
@@ -1311,9 +1279,9 @@ fn _exact[c, n]
 --- came. An error value of kind `'magpie'` where the server cannot be
 --- reached within the seconds, or answers other than a log's server does
 fn follow[dir, host, port, seconds = 5.0]
-    opened = _opened[dir]
-    if not opened.ok
-        return error[opened.reason, 'magpie']
+    log_dir = _opened[dir]
+    if not log_dir.ok
+        return error[log_dir.reason, 'magpie']
     s = open[host, port, false, seconds]
     if not s.ok
         return error[s.reason, 'magpie']
@@ -1328,14 +1296,14 @@ fn follow[dir, host, port, seconds = 5.0]
     n = int[count_line]
     if not n.ok
         return error['\'`host`:`port`\' answered no listing of a log', 'magpie']
-    listed = n + 0
+    count_n = n + 0
     have = ls[dir]
     if not have.ok
         return error[have.reason, 'magpie']
     --- every entry of the listing is read before a file is asked for:
     --- the entries still queued had been read as a file's size
     names = []
-    for i in range[listed]
+    for i in range[count_n]
         entry = _line_waited[c]
         if not entry.ok
             return error[entry.reason, 'magpie']
@@ -1344,9 +1312,9 @@ fn follow[dir, host, port, seconds = 5.0]
     for name in names
         --- a file the follower holds is whole; the manifest is taken every time
         if name not in have or name eq 'manifest'
-            wanted = send[s, bytes['get `name``nl`']]
-            if not wanted.ok
-                return error[wanted.reason, 'magpie']
+            asked_for = send[s, bytes['get `name``nl`']]
+            if not asked_for.ok
+                return error[asked_for.reason, 'magpie']
             size_line = _line_waited[c]
             if not size_line.ok
                 return error[size_line.reason, 'magpie']
@@ -1566,9 +1534,9 @@ fn _http_answer[root, r]
 --- with 0); answers how many requests it served. A program in another
 --- process reaches a log through the same verbs given its URL
 fn door[root, port, host = '127.0.0.1', rounds = 0]
-    opened = _opened[root]
-    if not opened.ok
-        return opened
+    log_dir = _opened[root]
+    if not log_dir.ok
+        return log_dir
     l = listen[host, port]
     if not l.ok
         return error[l.reason, 'magpie']
@@ -1774,6 +1742,463 @@ test the_http_door_answers_the_verbs[]
     assert[_joined['on', ['a', 'b']] eq '&on=a%2Cb' and _joined['on', []] eq '' and _one['lo', 'x y'] eq '&lo=x%20y']
     gone = rm[root]
 
+--- ── the read verbs over the log's files, in Crow (docs/magpie-in-crow.md):
+--- each prunes a file's row groups by the bounds and filters its column
+--- blocks keep before any chunk is decoded, then picks the rows ──
+
+--- a value as a column's kind: `form` 1 an int or a moment's milliseconds
+--- (in `whole`), 2 a float (`real`), 3 a bool (`whole` 0 or 1), 4 text
+--- (`word`), as the file module's bounds are; 0 for none
+struct Want [form, whole, real, word]
+
+--- `_parsed_as`: a value a program wrote as text, read as a column's kind: a Bound of
+--- the file module's forms (1 an int or a moment's milliseconds, 2 a
+--- float, 3 a bool, 4 text)
+fn _parsed_as[cells, value]
+    if cells eq 'int' or cells eq 'moment'
+        why = '\'`value`\' is no int'
+        if cells eq 'moment'
+            why = '\'`value`\' is no moment\'s milliseconds'
+        n = int[trim[value]]
+        if not n.ok
+            return error[why, 'magpie']
+        if n gt 9223372036854775807 or n lt -9223372036854775808
+            return error[why, 'magpie']
+        return Want[1, wrap[n], 0.0, '']
+    if cells eq 'float'
+        x = float[trim[value]]
+        if not x.ok
+            return error['\'`value`\' is no number', 'magpie']
+        return Want[2, 0, x, '']
+    if cells eq 'bool'
+        t = trim[value]
+        if t eq 'true'
+            return Want[3, 1, 0.0, '']
+        if t eq 'false'
+            return Want[3, 0, 0.0, '']
+        return error['\'`value`\' is no bool', 'magpie']
+    if cells eq 'text'
+        return Want[4, 0, 0.0, value]
+    return error['a column of vectors is compared with nothing: \`nearest\` finds rows by a vector', 'magpie']
+
+--- the bytes a parsed value hashes to in a column's filter
+fn _bytes_of[want]
+    if want.form eq 1
+        return pack[want.whole, 8, little = true]
+    if want.form eq 2
+        x = want.real
+        if x eq 0.0
+            x = 0.0
+        return ieee[x, 8, little = true]
+    if want.form eq 3
+        return push[bytes[0], want.whole]
+    return bytes[want.word]
+
+--- whether a bound is at or below a value of its form (true where the
+--- forms differ)
+fn _at_most[b, want]
+    if b.form ne want.form
+        return true
+    if b.form eq 1 or b.form eq 3
+        return b.whole lte want.whole
+    if b.form eq 2
+        return b.real lte want.real
+    return b.word lte want.word
+
+--- whether a bound is at or above a value of its form
+fn _at_least[b, want]
+    if b.form ne want.form
+        return true
+    if b.form eq 1 or b.form eq 3
+        return b.whole gte want.whole
+    if b.form eq 2
+        return b.real gte want.real
+    return b.word gte want.word
+
+--- whether a group's bounds admit the value: never a group whose every
+--- cell is missing
+fn _bounds_admit[ent, want]
+    if ent.rows gt 0 and ent.absent eq ent.rows
+        return false
+    if ent.lo.form ne 0 and not _at_most[ent.lo, want]
+        return false
+    if ent.hi.form ne 0 and not _at_least[ent.hi, want]
+        return false
+    return true
+
+--- the place of a column in a file, -1 for none
+fn _column_at[r, name]
+    for c in range[len[r.footer.columns]]
+        if r.footer.columns[c].name eq name
+            return c
+    return -1
+
+--- whether cell `i` is present, by the bitmap
+fn _present[present, i]
+    if len[present] eq 0
+        return true
+    return bitand[byte[present, shift[i, -3]], shift[1, bitand[i, 7]]] ne 0
+
+--- for each row of a column, whether it holds the value (a missing cell
+--- never does)
+fn _holding[col, want]
+    n = len[col]
+    present = present_of[col, 0, n]
+    kind = cell_kind[col]
+    out = []
+    if kind eq 'int' or kind eq 'moment'
+        nums = ints_of[col, 0, n]
+        for i in range[n]
+            out = push[out, _present[present, i] and want.form eq 1 and nums[i] eq want.whole]
+    if kind eq 'float'
+        reals = floats_of[col, 0, n]
+        for i in range[n]
+            out = push[out, _present[present, i] and want.form eq 2 and reals[i] eq want.real]
+    if kind eq 'bool'
+        flags = bools_of[col, 0, n]
+        for i in range[n]
+            v = 0
+            if flags[i]
+                v = 1
+            out = push[out, _present[present, i] and want.form eq 3 and v eq want.whole]
+    if kind eq 'text'
+        cell_bytes = text_bytes_of[col, 0, n]
+        cuts = text_ends_of[col, 0, n]
+        sought = bytes[want.word]
+        start = 0
+        for i in range[n]
+            stop = cuts[i]
+            out = push[out, _present[present, i] and want.form eq 4 and same[slice[cell_bytes, start, stop], sought]]
+            start = stop
+    return out
+
+--- for each row of a column, whether it lies within the bounds (form 0
+--- is no bound; a missing cell never does)
+fn _within[col, low, high]
+    n = len[col]
+    present = present_of[col, 0, n]
+    kind = cell_kind[col]
+    out = []
+    if kind eq 'int' or kind eq 'moment'
+        nums = ints_of[col, 0, n]
+        for i in range[n]
+            cell = Want[1, nums[i], 0.0, '']
+            out = push[out, _present[present, i] and (low.form eq 0 or _at_most[low, cell]) and (high.form eq 0 or _at_least[high, cell])]
+    if kind eq 'float'
+        reals = floats_of[col, 0, n]
+        for i in range[n]
+            cell = Want[2, 0, reals[i], '']
+            out = push[out, _present[present, i] and (low.form eq 0 or _at_most[low, cell]) and (high.form eq 0 or _at_least[high, cell])]
+    if kind eq 'bool'
+        flags = bools_of[col, 0, n]
+        for i in range[n]
+            v = 0
+            if flags[i]
+                v = 1
+            cell = Want[3, v, 0.0, '']
+            out = push[out, _present[present, i] and (low.form eq 0 or _at_most[low, cell]) and (high.form eq 0 or _at_least[high, cell])]
+    if kind eq 'text'
+        cell_bytes = text_bytes_of[col, 0, n]
+        cuts = text_ends_of[col, 0, n]
+        start = 0
+        for i in range[n]
+            stop = cuts[i]
+            cell = Want[4, 0, 0.0, text[slice[cell_bytes, start, stop], '']]
+            out = push[out, _present[present, i] and (low.form eq 0 or _at_most[low, cell]) and (high.form eq 0 or _at_least[high, cell])]
+            start = stop
+    return out
+
+--- the frame with the columns named, in that order (every column when
+--- none is named); a name it lacks is refused
+fn _only[df, names, path]
+    if len[names] eq 0
+        return df
+    for w in names
+        if w not in df.columns
+            return error['batch: \'`path`\' holds no column \'`w`\'', 'magpie']
+    return select[df, names]
+
+--- the names a read by position must hold: the ones wanted and `_pos`
+fn _with_position[names]
+    if len[names] eq 0 or '_pos' in names
+        return names
+    return push[names, '_pos']
+
+--- the parts of several files stacked, in position order, `_pos` dropped
+--- where it was not asked for
+fn _gathered[parts, names]
+    if len[parts] eq 0
+        return frame.new[]
+    full = []
+    for p in parts
+        if len[p] gt 0
+            full = push[full, p]
+    whole = parts[0]
+    if len[full] gt 0
+        whole = stack[full]
+    if len[whole] gt 1 and '_pos' in whole.columns
+        whole = sort[whole, '_pos']
+    if len[names] eq 0 or '_pos' in names
+        return whole
+    return select[whole, names]
+
+--- whether a path names the pending rows (`<dir>/.pending@first-last`):
+--- the sequencer's, read through the kernel until it is Crow's
+fn _pending_path[p]
+    return '/.pending' in p
+
+--- the rows of a frame where every column holds its value
+fn _held_rows[df, columns, wants]
+    keep = slice[[true], 0, 0]
+    for i in range[len[df]]
+        keep = push[keep, true]
+    for k in range[len[columns]]
+        name = columns[k]
+        held = _holding[df.`name`, wants[k]]
+        for i in range[len[df]]
+            keep[i] = keep[i] and held[i]
+    return df[keep]
+
+--- `_find_rows[path, columns, vals, names]`: the rows of the file whose
+--- columns hold the values (each written as text, read as its column's
+--- kind), every pair at once, with the columns named; each column's
+--- groups asked through their bounds and filters first, and only the
+--- groups every pair admits decoded — one, for keys the file is sorted by
+fn _find_rows[path, columns, vals, names]
+    if len[columns] eq 0
+        return error['batch: a find names at least one column', 'magpie']
+    if len[columns] ne len[vals]
+        return error['batch: `len[columns]` columns and `len[vals]` values — a find takes one value per column', 'magpie']
+    needed = names
+    if len[names] gt 0
+        for c in columns
+            if c not in needed
+                needed = push[needed, c]
+    if _pending_path[path]
+        df = batch_read[path, needed]
+        if not df.ok
+            return error[df.reason, 'magpie']
+        wants = []
+        for k in range[len[columns]]
+            name = columns[k]
+            want = _parsed_as[cell_kind[df.`name`], vals[k]]
+            if not want.ok
+                return error['batch: column \'`name`\': `want.reason`', 'magpie']
+            wants = push[wants, want]
+        return _only[_held_rows[df, columns, wants], names, path]
+    r = opened[path]
+    if not r.ok
+        return error[r.reason, 'magpie']
+    groups = len[r.footer.groups]
+    admitted = slice[[true], 0, 0]
+    for g in range[groups]
+        admitted = push[admitted, true]
+    wants = []
+    for k in range[len[columns]]
+        column = columns[k]
+        c = _column_at[r, column]
+        if c lt 0
+            return error['batch: \'`path`\' holds no column \'`column`\'', 'magpie']
+        want = _parsed_as[r.footer.columns[c].cells, vals[k]]
+        if not want.ok
+            return error['batch: column \'`column`\': `want.reason`', 'magpie']
+        wants = push[wants, want]
+        hashed = _bytes_of[want]
+        ents = entries[r, c]
+        if not ents.ok
+            return error[ents.reason, 'magpie']
+        for g in range[groups]
+            if admitted[g]
+                e = ents[g]
+                if not _bounds_admit[e, want]
+                    admitted[g] = false
+                else
+                    if e.bloom_len gt 0
+                        f = value_filter[r, e]
+                        if not f.ok
+                            return error[f.reason, 'magpie']
+                        if not admits[f, hashed]
+                            admitted[g] = false
+    cols = wanted[r, needed]
+    if not cols.ok
+        return error[cols.reason, 'magpie']
+    chosen = []
+    for g in range[groups]
+        if admitted[g]
+            chosen = push[chosen, g]
+    df = groups_of[r, chosen, cols]
+    if not df.ok
+        return error[df.reason, 'magpie']
+    return _only[_held_rows[df, columns, wants], names, path]
+
+--- `_find_in[paths, columns, vals, names]`: `_find_rows` over several
+--- files, the rows in position order, `_pos` dropped where not asked
+fn _find_in[paths, columns, vals, names]
+    needed = _with_position[names]
+    parts = []
+    for p in paths
+        part = _find_rows[p, columns, vals, needed]
+        if not part.ok
+            return error[part.reason, 'magpie']
+        parts = push[parts, part]
+    return _gathered[parts, names]
+
+--- the rows of a frame at a position past `after` and at or before
+--- `upto` (every one past `after` with -1)
+fn _between_positions[df, after, upto]
+    pos = ints_of[df._pos, 0, len[df]]
+    keep = slice[[true], 0, 0]
+    every = true
+    for x in pos
+        inside = x gt after and (upto lt 0 or x lte upto)
+        keep = push[keep, inside]
+        if not inside
+            every = false
+    if every
+        return df
+    return df[keep]
+
+--- one file's rows past `after` and at or before `upto`: a group whose
+--- positions all lie at or before `after`, or all past `upto`, not read
+fn _since_file[p, after, upto, needed]
+    if _pending_path[p]
+        df = batch_read[p, needed]
+        if not df.ok
+            return error[df.reason, 'magpie']
+        return _between_positions[df, after, upto]
+    r = opened[p]
+    if not r.ok
+        return error[r.reason, 'magpie']
+    pc = _column_at[r, '_pos']
+    if pc lt 0
+        return error['batch: \'`p`\' holds no column \'_pos\'', 'magpie']
+    ents = entries[r, pc]
+    if not ents.ok
+        return error[ents.reason, 'magpie']
+    chosen = []
+    for g in range[len[ents]]
+        e = ents[g]
+        before = e.hi.form eq 1 and e.hi.whole lte after
+        past = upto gte 0 and e.lo.form eq 1 and e.lo.whole gt upto
+        if not before and not past
+            chosen = push[chosen, g]
+    cols = wanted[r, needed]
+    if not cols.ok
+        return error[cols.reason, 'magpie']
+    df = groups_of[r, chosen, cols]
+    if not df.ok
+        return error[df.reason, 'magpie']
+    return _between_positions[df, after, upto]
+
+--- `_since_rows[paths, after, upto, names]`: the rows of the files at a
+--- position past `after` and at or before `upto`, in position order,
+--- with the columns named (`_pos` read for the picking and dropped where
+--- not asked)
+fn _since_rows[paths, after, upto, names]
+    needed = _with_position[names]
+    parts = []
+    for p in paths
+        part = _since_file[p, after, upto, needed]
+        if not part.ok
+            return error[part.reason, 'magpie']
+        parts = push[parts, part]
+    return _gathered[parts, names]
+
+--- one file's rows whose column lies within the bounds at a position at
+--- or before `upto`: a group whose bounds lie outside the range, or whose
+--- positions all lie past `upto`, not read
+fn _between_file[p, column, lo, hi, upto, needed]
+    cols_needed = needed
+    if len[cols_needed] gt 0 and column not in cols_needed
+        cols_needed = push[cols_needed, column]
+    df = frame.new[]
+    if _pending_path[p]
+        read_all = batch_read[p, cols_needed]
+        if not read_all.ok
+            return error[read_all.reason, 'magpie']
+        df = read_all
+    else
+        r = opened[p]
+        if not r.ok
+            return error[r.reason, 'magpie']
+        c = _column_at[r, column]
+        if c lt 0
+            return error['batch: \'`p`\' holds no column \'`column`\'', 'magpie']
+        cells = r.footer.columns[c].cells
+        bounds = _bounds_of[cells, column, lo, hi]
+        if not bounds.ok
+            return error[bounds.reason, 'magpie']
+        ents = entries[r, c]
+        if not ents.ok
+            return error[ents.reason, 'magpie']
+        pc = _column_at[r, '_pos']
+        if pc lt 0
+            return error['batch: \'`p`\' holds no column \'_pos\'', 'magpie']
+        positions = entries[r, pc]
+        if not positions.ok
+            return error[positions.reason, 'magpie']
+        chosen = []
+        for g in range[len[ents]]
+            e = ents[g]
+            pe = positions[g]
+            reach = (bounds.low.form eq 0 or e.hi.form eq 0 or _at_least[e.hi, bounds.low]) and (bounds.high.form eq 0 or e.lo.form eq 0 or _at_most[e.lo, bounds.high])
+            past = upto gte 0 and pe.lo.form eq 1 and pe.lo.whole gt upto
+            if reach and not past
+                chosen = push[chosen, g]
+        cols = wanted[r, cols_needed]
+        if not cols.ok
+            return error[cols.reason, 'magpie']
+        read_some = groups_of[r, chosen, cols]
+        if not read_some.ok
+            return error[read_some.reason, 'magpie']
+        df = read_some
+    bounds = _bounds_of[cell_kind[df.`column`], column, lo, hi]
+    if not bounds.ok
+        return error[bounds.reason, 'magpie']
+    inside = _within[df.`column`, bounds.low, bounds.high]
+    pos = ints_of[df._pos, 0, len[df]]
+    keep = slice[[true], 0, 0]
+    for i in range[len[df]]
+        keep = push[keep, inside[i] and (upto lt 0 or pos[i] lte upto)]
+    picked = df[keep]
+    if len[cols_needed] ne len[needed]
+        return _only[picked, needed, p]
+    return picked
+
+--- a range's two ends, each a value as text read as the column's kind
+--- (empty text is no bound)
+struct Range [low, high]
+
+fn _bounds_of[cells, column, lo, hi]
+    low = Want[0, 0, 0.0, '']
+    if len[lo] gt 0
+        got = _parsed_as[cells, lo]
+        if not got.ok
+            return error['batch: column \'`column`\': `got.reason`', 'magpie']
+        low = got
+    high = Want[0, 0, 0.0, '']
+    if len[hi] gt 0
+        got = _parsed_as[cells, hi]
+        if not got.ok
+            return error['batch: column \'`column`\': `got.reason`', 'magpie']
+        high = got
+    return Range[low, high]
+
+--- `_between_rows[paths, column, lo, hi, upto, names]`: the rows of the
+--- files whose column lies within `lo` and `hi` at a position at or
+--- before `upto` (every position with -1), in position order, with the
+--- columns named
+fn _between_rows[paths, column, lo, hi, upto, names]
+    needed = _with_position[names]
+    parts = []
+    for p in paths
+        part = _between_file[p, column, lo, hi, upto, needed]
+        if not part.ok
+            return error[part.reason, 'magpie']
+        parts = push[parts, part]
+    return _gathered[parts, names]
+
+
 --- a scratch log for the tests, emptied first
 fn _scratch[name]
     gone = rm[name]
@@ -1806,8 +2231,8 @@ test a_log_grows_by_batches[]
     assert[window._pos eq [1, 2, 3]]
     assert[scan[dir, 2, 2].id eq [2] and len[scan[dir, 4, 2]] eq 0 and scan[dir, 3].id eq [1, 4]]
     assert[not batch[dir, frame.new[], by = []].ok]
-    opened = batch['magpie-test-grows/made/here', frame.new[id = [1]]]
-    assert[opened eq 0 and exists['magpie-test-grows/made/here']]
+    first_pos = batch['magpie-test-grows/made/here', frame.new[id = [1]]]
+    assert[first_pos eq 0 and exists['magpie-test-grows/made/here']]
     assert[batch['/dev/null/no-log-here', frame.new[id = [1]]].kind eq 'magpie']
     gone = rm[dir]
 
@@ -1820,7 +2245,7 @@ test the_keys_are_declared_once[]
     first = batch[dir, frame.new[id = [1], at = [1000], qty = [10]], by = ['id'], time = 'at']
     assert[first eq 0]
     assert[_keys[dir] eq ['id']]
-    assert[str[json[batch_declared[dir]].notes.time] eq 'at']
+    assert[note_of[listed[dir], 'time'] eq 'at']
     other = batch[dir, frame.new[id = [2], at = [1001], qty = [20]], by = ['qty']]
     assert[other.kind eq 'magpie']
     assert[other.reason eq 'the log at \'magpie-test-keys\' is keyed by id, not by qty']
@@ -1903,8 +2328,8 @@ test a_merge_folds_the_tail_into_a_segment[]
     assert[merge[dir] eq '`dir`/S000000000001.segment']
     files = batches[dir]
     assert[len[files] eq 1 and files.form eq ['segment'] and files.level eq [1] and files.number eq [0] and files.high eq [1] and files.rows eq [3] and files.first eq [0] and files.last eq [3]]
-    listed = batch_catalog[dir]
-    assert[listed.name eq ['S000000000001.segment'] and listed.rows eq [3]]
+    segs = catalog_of[dir]
+    assert[segs.name eq ['S000000000001.segment'] and segs.rows eq [3]]
     assert[head[dir] eq 3]
     after = latest[dir]
     assert[after.id eq before.id and after.qty eq before.qty and after._pos eq before._pos]

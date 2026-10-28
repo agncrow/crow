@@ -79,6 +79,12 @@ fn cell_of(t: &Ty) -> Ty {
         Ty::Float => Ty::Float,
         Ty::Bool => Ty::Bool,
         Ty::Moment => Ty::Moment,
+        // a column written whole: its cells (one of cells nothing knows
+        // yet is read as the program runs, never guessed text)
+        Ty::Column(cells) => match cells.payload() {
+            Ty::Unknown => Ty::Json,
+            _ => *cells,
+        },
         _ => Ty::Str,
     }
 }

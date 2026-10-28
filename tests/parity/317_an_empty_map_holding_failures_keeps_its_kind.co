@@ -1,0 +1,15 @@
+--- A map begun empty and written a value that can fail holds it, as a
+--- variable would: here a parsed int, which grows past 64 bits. The
+--- width pass had converted the empty map into one of plain growing
+--- ints while the map held values that can fail, and the compiled
+--- program declared the plain kind (E0308) — `map[]` is a map of
+--- nothing, of the type it is held as (found probing Magpie's as-of
+--- join).
+fn by_index[t]
+    m = map[]
+    m['k'] = int[t]
+    return m
+
+log[by_index['5']]
+log[by_index['x']]
+log[by_index['123456789012345678901234567890']]

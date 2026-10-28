@@ -494,6 +494,8 @@ impl<'a> Namer<'a> {
             // the object of an assignment is the variable in scope
             Stmt::FieldAssign { object, field, value } => {
                 let value = self.expr(value)?;
+                // (a computed name's spans, as a read's: `df.`k` = …`)
+                let field = if field.contains('`') { self.spans(&field)? } else { field };
                 Stmt::FieldAssign { object: self.expr(object)?, field, value }
             }
             Stmt::IndexAssign { object, index, value } => {
@@ -519,7 +521,14 @@ impl<'a> Namer<'a> {
                 };
                 Expr::Call { callee: Box::new(callee), args: args.into_iter().map(|a| self.expr(a)).collect::<Result<Vec<_>, _>>()? }
             }
-            Expr::FieldAccess { object, field } => Expr::FieldAccess { object: Box::new(self.expr(*object)?), field },
+            // (a column named by a value the program computes — `df.`k`` —
+            // reads its spans' variables as a string's do: a loop's `k`
+            // bound again in a second loop is renamed, and the name had
+            // stayed `k`, undefined there)
+            Expr::FieldAccess { object, field } => {
+                let field = if field.contains('`') { self.spans(&field)? } else { field };
+                Expr::FieldAccess { object: Box::new(self.expr(*object)?), field }
+            }
             Expr::Array(items) => Expr::Array(items.into_iter().map(|a| self.expr(a)).collect::<Result<Vec<_>, _>>()?),
             // a key is a name (an attribute's, a field's), not a read
             Expr::Map(pairs) => Expr::Map(pairs.into_iter().map(|(k, v)| Ok((k, self.expr(v)?))).collect::<Result<Vec<_>, String>>()?),

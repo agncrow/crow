@@ -15,6 +15,7 @@
 --- module's own: `crow test src/modules/kafka.co`.
 use sys
 use magpie
+use magpie.records
 use frame
 use math
 
@@ -187,7 +188,7 @@ fn _answer_produce[root, version, body]
                 err = _unknown_topic[]
             else
                 dir = _ensure_topic[root, topic]
-                recs = records[payload]
+                recs = message_rows[payload]
                 if not recs.ok
                     err = 2
                 else
@@ -218,7 +219,7 @@ fn _fetched[dir, offset, most]
     --- producer's own offset column, kept as written, overwritten here)
     out = taken
     out.offset = taken._pos
-    encoded = records_of[out]
+    encoded = message_set[out]
     if not encoded.ok
         return bytes['']
     return encoded
@@ -794,7 +795,7 @@ test the_door_describes_itself[]
 test records_go_in_and_come_out[]
     root = _scratch['kafka-test-produce']
     recs = frame.new[offset = [0, 1], at = [1700000000000, 1700000001000], key = ['k', 'k2'], value = ['one', 'two']]
-    produce = concat[[pack[1, 2], pack[1000, 4], _array[1, concat[_wstr['t'], _array[1, concat[pack[0, 4], _wbytes[records_of[recs]]]]]]]]
+    produce = concat[[pack[1, 2], pack[1000, 4], _array[1, concat[_wstr['t'], _array[1, concat[pack[0, 4], _wbytes[message_set[recs]]]]]]]]
     p = _body[_answer[root, _unframed[_request[0, 2, 5, produce]], '127.0.0.1', 9092]]
     assert[unpack[p, 0, 4] eq 1 and _str_at[p, 4] eq 't']
     assert[unpack[p, 7, 4] eq 1 and unpack[p, 11, 4] eq 0 and unpack[p, 15, 2] eq 0 and unpack[p, 17, 8] eq 0]
@@ -806,7 +807,7 @@ test records_go_in_and_come_out[]
     f = _body[_answer[root, _unframed[_request[1, 3, 8, fetch]], '127.0.0.1', 9092]]
     assert[unpack[f, 0, 4] eq 0 and unpack[f, 4, 4] eq 1 and _str_at[f, 8] eq 't']
     assert[unpack[f, 11, 4] eq 1 and unpack[f, 15, 4] eq 0 and unpack[f, 19, 2] eq 0 and unpack[f, 21, 8] eq 6]
-    got = records[_bytes_at[f, 29]]
+    got = message_rows[_bytes_at[f, 29]]
     assert[got.offset eq [1, 2, 3, 4, 5] and got.value eq ['two', 'one', 'two', 'one', 'two']]
     assert[got.at[0] eq 1700000001000]
     past = _body[_answer[root, _unframed[_request[1, 3, 9, concat[[pack[-1, 4], pack[100, 4], pack[1, 4], pack[1000000, 4], _warray[[concat[_wstr['t'], _warray[[concat[[pack[0, 4], pack[9, 8], pack[1000000, 4]]]]]]]]]]]], '127.0.0.1', 9092]]

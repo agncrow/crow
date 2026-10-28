@@ -432,8 +432,11 @@ impl Emitter {
         if let Expr::Field { base, .. } = e {
             if Emitter::place_read(base) {
                 let t = self.tt(e);
+                // (a field of no known kind is held as text, never Copy: a
+                // reader's `path` given the item of an empty list had been
+                // moved out of the record lent — crow check --self)
                 let non_copy = matches!(t, Ty::Result(_))
-                    || matches!(Self::inner(&t), Ty::Tensor(..) | Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Fns(_) | Ty::Markup | Ty::Frame(_) | Ty::Record(_) | Ty::OptRecord(_) | Ty::Json | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Bytes | Ty::Column(_));
+                    || matches!(Self::inner(&t), Ty::Tensor(..) | Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Unknown | Ty::Fns(_) | Ty::Markup | Ty::Frame(_) | Ty::Record(_) | Ty::OptRecord(_) | Ty::Json | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Bytes | Ty::Column(_));
                 if non_copy && !s.ends_with(".clone()") {
                     return format!("{}.clone()", s);
                 }
@@ -462,6 +465,7 @@ impl Emitter {
             let non_copy = matches!(
                 t.text(),
                 Ty::Str
+                    | Ty::Unknown
                     | Ty::Fns(_)
                     | Ty::Markup
                     | Ty::List(_)
@@ -2278,7 +2282,9 @@ impl Emitter {
                     _ => false,
                 };
                 // (a parsed value, a column and a sparse matrix are no
-                // copies either: `kind_of[p]` then `p.ok` had moved `p`)
+                // copies either: `kind_of[p]` then `p.ok` had moved `p`;
+                // nor is a value of no known kind, held as text — a loop's
+                // borrowed item of an empty list handed on had not built)
                 let needs_clone = user
                     && local_read
                     && matches!(
@@ -2287,6 +2293,7 @@ impl Emitter {
                             | Ty::List(_)
                             | Ty::Map(..)
                             | Ty::Str
+                            | Ty::Unknown
                             | Ty::Markup
                             | Ty::Frame(_)
                             | Ty::Record(_)
@@ -3100,10 +3107,21 @@ fn grown(t: &Ty, v: &str) -> String {
     match t {
         Ty::Int | Ty::Unknown => format!("crow_runtime::int::Int::from({})", v),
         Ty::Result(i) => format!("{{ let _r = {}; CrowResult {{ ok: _r.ok, value: {}, reason: _r.reason, kind: _r.kind, trace: _r.trace, captured: _r.captured }} }}", v, grown(i, "_r.value")),
-        Ty::List(i) => format!("({}).into_iter().map(|_x| {}).collect::<Vec<_>>()", v, grown(i, "_x")),
-        Ty::Map(_, i) => format!("({}).into_iter().map(|(_k, _x)| (_k, {})).collect::<std::collections::BTreeMap<_, _>>()", v, grown(i, "_x")),
+        // (the item's type written: an empty literal widened —
+        // `big(core.map_new())` — names no type of its own, and Rust could
+        // not tell what `Int::from` was handed, E0282; an item of no known
+        // kind is the 64-bit int this conversion widens, as the arm for
+        // one above reads it — parity 316)
+        Ty::List(i) => format!("({}).into_iter().map(|_x: {}| {}).collect::<Vec<_>>()", v, widened_item(i), grown(i, "_x")),
+        Ty::Map(key, i) => format!("({}).into_iter().map(|(_k, _x): ({}, {})| (_k, {})).collect::<std::collections::BTreeMap<_, _>>()", v, key.rust(), widened_item(i), grown(i, "_x")),
         _ => v.to_string(),
     }
+}
+
+/// The Rust type of an item a widening conversion reads: its own, or a
+/// 64-bit int where nothing knows it.
+fn widened_item(t: &Ty) -> String {
+    if t.is_concrete() { t.to_rust_type() } else { "i64".to_string() }
 }
 
 /// A value of type `t` (ints that grow) as the same value in 64 bits, read

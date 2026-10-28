@@ -948,6 +948,8 @@ groups = []
 groups = push[groups, g1.rows]
 groups = push[groups, g2.rows]
 log[same[finish[out, blocks, groups, cols, 0, 4, ['id'], [], []], made]]
+log[len[magic[]]]
+log[shape_of[cols.names, cols.kinds, cols.indexed].indexed]
 
 --- held to the kernel, byte for byte, until the kernel goes
 test the_file_is_the_kernels[]
@@ -976,4 +978,253 @@ magpie: cannot read 'nosuch.batch': No such file or directory (os error 2)
 [1, 9]
 216
 true
+8
+[false, true, false, false, false]
+```
+
+`use magpie.manifest` is the eighth kernel ported: a log's list of live
+segments and its declarations, a file of one group replaced whole.
+
+```crow
+use sys, frame, magpie.manifest
+
+dir = 'ex_manifest'
+if exists[dir]
+    gone = rm[dir]
+made = mkdir[dir]
+log[listed[dir].found]
+m = declare[dir, ['day', 'symbol'], ['time', 'narrow'], ['at', 'price']]
+log[m.note_names]
+back = listed[dir]
+log[back.keys]
+log[note_of[back, 'time']]
+log[narrow_of[back]]
+log[stems_of[back]]
+log[len[catalog_of[dir]]]
+log[segment_columns[]]
+log[declare[dir, ['id'], [], []].reason]
+log[batch_named[17]]
+log[segment_named[3]]
+log[number_of['000000000017.batch']]
+log[counter_of['S000000000003.segment']]
+log[counter[back]]
+log[key_words[['a', 'b', 'c']]]
+log[len[listed_bytes[back]] eq len[file['`dir`/manifest']]]
+written = write_listed[dir, with_note[back, 'stem', 'true']]
+log[stems_of[listed[dir]]]
+log[unlisted[].found]
+log[len[with_segments[back, catalog_of[dir]].segments]]
+
+--- held to the kernel, byte for byte, until the kernel goes
+test the_manifest_is_the_kernels[]
+    d = 'ex_manifest_k'
+    if exists[d]
+        gone = rm[d]
+    made = mkdir[d]
+    k = batch_declare[d, ['id'], '{"time":"at"}']
+    assert[same[listed_bytes[listed[d]], file['`d`/manifest']]]
+```
+
+```text
+false
+['narrow', 'time']
+['day', 'symbol']
+at
+['price']
+false
+0
+['name', 'level', 'number', 'high', 'first', 'last', 'rows', 'bytes', 'ranges']
+batch: the log at 'ex_manifest' is keyed by day and symbol, not by id
+000000000017.batch
+S000000000003.segment
+17
+3
+0
+a, b and c
+true
+true
+false
+0
+```
+
+`use magpie.merge` is the ninth kernel ported: the streaming merge,
+batches and segments folded into segments of bounded size, one row group
+per input held at a time, the latest version of each key kept.
+
+```crow
+use sys, frame, magpie.file, magpie.manifest, magpie.merge
+
+dir = 'ex_merge'
+if exists[dir]
+    gone = rm[dir]
+made = mkdir[dir]
+m = declare[dir, ['id'], [], []]
+none = slice[['x'], 0, 0]
+a = frame.new[id = [1, 2, 3], qty = [10, 20, 30], _pos = [0, 1, 2]]
+b = frame.new[id = [2, 4], qty = [25, 40], _pos = [3, 4]]
+pa = place[dir, batch_named[0], file_of[a, 1024, 0, 2, ['id'], none, none, false]]
+pb = place[dir, batch_named[1], file_of[b, 1024, 3, 4, ['id'], none, none, false]]
+log[pb]
+seg = merge_files[dir, [pa, pb], false]
+log[seg]
+back = listed[dir]
+log[back.segments.name]
+log[back.segments.rows]
+log[key_ranges[seg, ['id']]]
+r = opened[seg]
+log[group_of[r, 0, wanted[r, none]].qty]
+cut = merge_into[dir, [pa, pb], ['id'], none, none, false, true, 7, 48, 120]
+log[cut.counter]
+log[cut.written[0].name]
+log[cut.written[0].rows]
+
+--- held to the kernel, byte for byte, until the kernel goes
+test the_merge_is_the_kernels[]
+    none = slice[['x'], 0, 0]
+    d = 'ex_merge_t'
+    if exists[d]
+        gone = rm[d]
+    made = mkdir[d]
+    x = frame.new[id = [1, 2, 3], qty = [10, 20, 30], _pos = [0, 1, 2]]
+    y = frame.new[id = [2, 4], qty = [25, 40], _pos = [3, 4]]
+    px = place[d, batch_named[0], file_of[x, 1024, 0, 2, ['id'], none, none, false]]
+    py = place[d, batch_named[1], file_of[y, 1024, 3, 4, ['id'], none, none, false]]
+    mine = merge_into[d, [px, py], ['id'], none, none, false, true, 0, 48, 120]
+    k = 'ex_merge_k'
+    if exists[k]
+        gone_k = rm[k]
+    made_k = mkdir[k]
+    theirs = stream_rs[k, [px, py], ['id'], none, none, false, true, 0, 48, 120]
+    assert[len[theirs] eq len[mine.written]]
+    for i in range[len[theirs]]
+        assert[same[file['`k`/`theirs[i]`'], file['`d`/`mine.written[i].name`']]]
+```
+
+```text
+ex_merge/000000000001.batch
+ex_merge/S000000000001.segment
+['S000000000001.segment']
+[4]
+{"id":[1,4]}
+[10, 25, 30, 40]
+9
+S000000000008.segment
+4
+```
+
+`use magpie.exec` is the executor in Crow: `summary_of`, an aggregate
+over a log's files pushed below the reader — each group pruned by its
+statistics, its rows masked and grouped, the partials merged in order —
+and `asof_rows`, each label's newest row at or before its moment.
+
+```crow
+use sys, frame, magpie.file, magpie.merge, magpie.exec
+
+dir = 'ex_exec'
+if exists[dir]
+    gone = rm[dir]
+made = mkdir[dir]
+none = slice[['x'], 0, 0]
+a = frame.new[sym = ['a', 'b', 'a'], px = [1.5, 2.0, 2.5], ts = [10, 20, 30], _pos = [0, 1, 2]]
+p = place[dir, '000000000000.batch', file_of[a, 1024, 0, 2, ['sym'], none, none, false]]
+s = summary_of[[p], ['sym'], ['px', 'px'], ['mean', 'max'], none, none, none, '', '', -1]
+log[s.sym]
+log[s.px_mean]
+log[s.px_max]
+labels = frame.new[sym = ['a', 'b'], ts = [25, 25]]
+j = asof_rows[[p], labels, ['sym'], 'ts', none, -1]
+log[j.columns]
+log[j.px]
+```
+
+```text
+['a', 'b']
+[2, 2]
+[2.5, 2]
+['sym', 'ts', 'px']
+[1.5, 2]
+```
+
+`use magpie.nearest` finds the rows nearest a query vector by the
+cosine, every present row scored and the best k kept, an earlier
+position first between equals.
+
+```crow
+use sys, frame, magpie.file, magpie.merge, magpie.nearest
+
+dir = 'ex_nearest'
+if exists[dir]
+    gone = rm[dir]
+made = mkdir[dir]
+none = slice[['x'], 0, 0]
+v = frame.new[id = [1, 2, 3], e = [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], _pos = [0, 1, 2]]
+p = place[dir, '000000000000.batch', file_of[v, 1024, 0, 2, ['id'], none, none, false]]
+hits = nearest_rows[[p], 'e', [1.0, 0.0], 2]
+log[hits.id]
+log[hits.score]
+```
+
+```text
+[1, 3]
+[1, 0.7071067811865475]
+```
+
+`use magpie.search` is BM25 as Lucene scores it over a log as one
+corpus: a word, a phrase, a prefix (`kit*`), a fuzzy word (`kitchn~`),
+from a group's index where it has one and its text where it has none,
+with a snippet around the first hit.
+
+```crow
+use sys, frame, magpie.file, magpie.merge, magpie.search
+
+dir = 'ex_search'
+if exists[dir]
+    gone = rm[dir]
+made = mkdir[dir]
+none = slice[['x'], 0, 0]
+d = frame.new[id = [1, 2, 3], note = ['a crate of apples', 'pears for the kitchen table', 'the kitchen table holds apples'], _pos = [0, 1, 2]]
+p = place[dir, '000000000000.batch', file_of[d, 1024, 0, 2, ['id'], ['note'], none, false]]
+hits = search_rows[[p], 'note', ['kitchen table'], 3, false, 10]
+log[hits.id]
+log[hits.snippet]
+log[len[terms_of[['kit*', 'kitchn~1', 'apples'], false]]]
+log[snippet_of['a crate of apples for the shop', terms_of[['apples'], false], 4, false]]
+```
+
+```text
+[2, 3]
+['…s for the kitchen table', 'the kitchen table holds app…']
+3
+… of apples for…
+```
+
+`use magpie.inflate`, `use magpie.snappy` and `use magpie.records` are
+the Kafka door's bytes in Crow: a gzip member or a raw deflate stream
+inflated, a snappy block decoded, and a legacy message set read into a
+frame and written from one, each message's CRC-32 checked.
+
+```crow
+use sys, frame, magpie.inflate, magpie.snappy, magpie.records
+
+data = bytes['hello hello hello hello']
+log[text[gunzipped[gzip_stored[data]]]]
+log[crc32[bytes['123456789']]]
+log[text[unsnapped[snappy_literal[data]]]]
+raw = bytes[0]
+for b in [203, 72, 205, 201, 201, 87, 200, 64, 39, 1]
+    raw = push[raw, int[b]]
+log[text[inflated[raw]]]
+f = frame.new[offset = [0, 1], at = [5, 6], key = ['a', 'b'], value = ['one', 'two']]
+set_bytes = message_set[f]
+log[len[set_bytes]]
+log[message_rows[set_bytes].value]
+```
+
+```text
+hello hello hello hello
+3421780262
+hello hello hello hello
+hello hello hello hello
+76
+['one', 'two']
 ```

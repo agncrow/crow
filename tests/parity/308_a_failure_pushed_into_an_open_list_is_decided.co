@@ -1,0 +1,33 @@
+--- A list begun empty, pushed a truth that can fail, decides the failure
+--- where it is assigned — in a function no call types too: `within` here
+--- is called by nothing, its parameter typed by nothing, and the helper
+--- it calls answers a truth that can fail (a record field that can fail
+--- is compared); the push's failure had been assigned to the list as it
+--- was, and the lowered program disagreed with itself ("'out' holds
+--- List(?) but is assigned Result(List(?))"), in both modes.
+struct Want [form, whole]
+
+fn parsed[value]
+    n = int[value]
+    if not n.ok or n gt 9223372036854775807
+        return error['no int', 'x']
+    return Want[1, n]
+
+fn at_most[b, want]
+    if b.form ne want.form
+        return true
+    return b.whole lte want.whole
+
+fn admit[e, want]
+    return at_most[e, want]
+
+fn within[nums, low]
+    out = []
+    for i in range[len[nums]]
+        cell = Want[1, nums[i]]
+        out = push[out, i gt 0 and (low.form eq 0 or at_most[low, cell])]
+    return out
+
+w = parsed['5']
+log[admit[Want[1, 3], w]]
+log[admit[Want[1, 7], w]]

@@ -1,7 +1,3 @@
-j79_a_modules_helper_is_held_to_its_rows_kinds.co:9:1: in prior: this is a list of bools, and a condition is true or false — compare it: x gt 0, len[xs] gt 0, s ne ''
-  9 │ rows = prior['no-such-log', labels, ['score'], push[[], 5]]
-    │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-j79_a_modules_helper_is_held_to_its_rows_kinds.co:9:1: in prior: batch_asof[] takes a list of text, a frame, a list of text, text, a list of text and an int, got a list of text, a frame, a list of text, text, a list of text and a list of ints
-  9 │ rows = prior['no-such-log', labels, ['score'], push[[], 5]]
-    │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-2 mistakes
+j79_a_modules_helper_is_held_to_its_rows_kinds.co:12:1: in prior: this is a list of bools, and a condition is true or false — compare it: x gt 0, len[xs] gt 0, s ne ''
+  12 │ rows = prior['no-such-log', labels, ['score'], push[[], 5]]
+     │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

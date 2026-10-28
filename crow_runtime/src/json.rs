@@ -196,6 +196,13 @@ impl ToJson for serde_json::Value {
 impl ToJson for crate::tensor::CrowTensor {
     fn to_json(&self) -> serde_json::Value { tensor_to_json(self) }
 }
+/// A frame answers as its records (`frame::records`, the one form `json[frame]`
+/// answers with), in a list as alone: `json[[f, g]]` is an array of each
+/// frame's records (it had not built compiled, and stopped interpreted —
+/// crow check --self, the routes family).
+impl ToJson for crate::frame::CrowFrame {
+    fn to_json(&self) -> serde_json::Value { crate::frame::records(self) }
+}
 impl<T: ToJson> ToJson for Vec<T> {
     fn to_json(&self) -> serde_json::Value { serde_json::Value::Array(self.iter().map(|v| v.to_json()).collect()) }
 }

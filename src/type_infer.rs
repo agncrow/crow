@@ -327,7 +327,19 @@ impl Ty {
             },
             (Ty::Map(ka, a), Ty::Map(kb, b)) => Ty::Map(ka.unify(*kb).unwrap_or(*ka), Box::new(a.unify(b))),
             // a column's cells, as a list's items: known where either knows them
-            (Ty::Column(a), Ty::Column(b)) => Ty::Column(Box::new(a.unify(b))),
+            // (two columns of different cells joined — a function that
+            // answers an int column in one branch and a column of vectors in
+            // another — are a column whose cells show as the program runs:
+            // the first's cells had been kept, and the lowered program
+            // disagreed with itself where the other was returned)
+            (Ty::Column(a), Ty::Column(b)) => {
+                let (pa, pb) = (a.payload(), b.payload());
+                if matches!(pa, Ty::Unknown) || matches!(pb, Ty::Unknown) || pa == pb {
+                    Ty::Column(Box::new(a.unify(b)))
+                } else {
+                    Ty::Column(Box::new(Ty::Unknown))
+                }
+            }
             // two ways a frame could have come: the columns both give (a
             // frame whose columns are not worked out yet adds nothing — one
             // whose columns show only as it runs is a frame of none known,
@@ -455,6 +467,14 @@ pub struct TypeContext {
     /// copy lowered on its own) is placed, since the module's line is no
     /// line of the program's.
     pub first_call_line: BTreeMap<String, usize>,
+    /// The calls handing a parameter the item of a list whose items no type
+    /// says — a loop's variable over it, or a position of it — as (caller,
+    /// callee, the parameter's place): what is held as text where it is
+    /// compiled (`default_unknown_params`).
+    pub text_items: std::collections::BTreeSet<(String, String, usize)>,
+    /// Every call of a function by its name the scan reads, as (caller,
+    /// callee): what the program's own code reaches.
+    pub call_edges: std::collections::BTreeSet<(String, String)>,
     /// Every call of a user function as it is lowered, by the names the
     /// lowering resolves (a copy by its own name): (caller, callee) → the
     /// line of the first such call, kept across the passes. A refusal
@@ -604,6 +624,8 @@ impl TypeContext {
             applying: Vec::new(),
             fn_defaults: BTreeMap::new(),
             first_call_line: BTreeMap::new(),
+            text_items: std::collections::BTreeSet::new(),
+            call_edges: std::collections::BTreeSet::new(),
             module_calls: BTreeMap::new(),
             first_items: BTreeMap::new(),
             body_assigned: None,
@@ -967,6 +989,12 @@ impl TypeContext {
             && !sigs.iter().any(|sig| sig.iter().any(|t| matches!(t, Ty::Fn(_, _))))
     }
 
+    /// Whether a function still waits for its copies (`awaits_clones`):
+    /// the copying rounds go on while one does.
+    pub(crate) fn awaiting_clones(&self) -> bool {
+        self.call_signatures.keys().any(|n| self.awaits_clones(n))
+    }
+
     pub(crate) fn new_clones(&mut self) -> Vec<String> {
         let mut new_clones: Vec<String> = Vec::new();
         for (name, sigs) in self.call_signatures.clone() {
@@ -1058,6 +1086,56 @@ impl TypeContext {
         false
     }
 
+    /// A parameter no round typed, which a call the program reaches hands
+    /// the item of a list whose items no type says — the loop's variable
+    /// over an empty list a call handed, or a position of it
+    /// (`merge_into['abc', [], …]` handing `opened` each of its paths) — is
+    /// text, as the compiled program holds such an item (parity 313): typed
+    /// so, the forms inside read it as text, where they had read it as
+    /// nothing — `'/.pending' in p` a list's `contains`, a file's size a
+    /// row-less effect with no range — and the compiled program did not
+    /// build (crow check --self; parity 323). Only a call the program's own
+    /// code reaches (its top level, a test, and what they call), and only a
+    /// parameter no other call typed: a function called nowhere, or only
+    /// from a module function the program does not call, keeps what it
+    /// had, and so does the original of a function copied per signature.
+    /// Whether any changed.
+    pub(crate) fn default_unknown_params(&mut self) -> bool {
+        let base = |n: &str| crate::ir::copy_base(n).to_string();
+        let mut edges: BTreeMap<String, std::collections::BTreeSet<String>> = BTreeMap::new();
+        for (caller, callee) in self.module_calls.keys() {
+            edges.entry(base(caller)).or_default().insert(base(callee));
+        }
+        for (caller, callee) in &self.call_edges {
+            edges.entry(base(caller)).or_default().insert(base(callee));
+        }
+        let mut reached: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        let mut todo: Vec<String> = edges.keys().filter(|c| !self.functions.contains_key(c.as_str())).cloned().collect();
+        while let Some(f) = todo.pop() {
+            if !reached.insert(f.clone()) {
+                continue;
+            }
+            if let Some(next) = edges.get(&f) {
+                todo.extend(next.iter().filter(|n| !reached.contains(*n)).cloned());
+            }
+        }
+        let copied: std::collections::BTreeSet<String> = self.specializations.keys().cloned().collect();
+        let mut changed = false;
+        for (caller, callee, i) in self.text_items.clone() {
+            if !reached.contains(&base(&caller)) || copied.contains(&callee) {
+                continue;
+            }
+            if let Some(sig) = self.functions.get_mut(&callee)
+                && let Some((_, t)) = sig.params.get_mut(i)
+                && matches!(t, Ty::Unknown)
+            {
+                *t = Ty::Str;
+                changed = true;
+            }
+        }
+        changed
+    }
+
     /// Every clone the monomorphization pass made.
     pub(crate) fn clone_names(&self) -> Vec<String> {
         self.specializations.values().flat_map(|v| v.iter().map(|(_, m)| m.clone())).collect()
@@ -1137,7 +1215,16 @@ impl TypeContext {
         // assigned to a variable that holds no error does: the return type
         // widens to Result
         if let Some(sig) = self.functions.get_mut(name) {
-            sig.return_type = sig.return_type.unify(&ret);
+            // (an answer the body no longer gives is a guess an earlier round
+            // made — a call answered by a function before its copies existed,
+            // `bump[5]`'s int for a list a copy answers: kept, it had typed
+            // the function's answer against its own body; parity 324)
+            // (kinds that differ once failures are looked through: an
+            // answer that could fail in one round and is plain in the next
+            // keeps the failure, which a function value handed on was typed
+            // by — a fuzz program's `ap[h2, …]`)
+            let differ = !sig.return_type.compatible(&ret) && !Self::without_failures(&sig.return_type).compatible(&Self::without_failures(&ret));
+            sig.return_type = if !differ || matches!(ret, Ty::Unknown | Ty::Unit) { sig.return_type.unify(&ret) } else { ret.clone() };
             if fails && !matches!(sig.return_type, Ty::Result(_)) {
                 let inner = std::mem::replace(&mut sig.return_type, Ty::Unknown);
                 sig.return_type = Ty::Result(Box::new(inner));

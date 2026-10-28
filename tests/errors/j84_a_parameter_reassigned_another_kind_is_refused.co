@@ -1,0 +1,10 @@
+--- a parameter is a local holding what its calls hand: reassigned
+--- another kind, it is refused as a local is — a parsed value's `t = t + 1`
+--- had been taken for the parameter's type, and the lowered program
+--- disagreed with itself (crow check --self, magpie.merge's `merge_into`
+--- handed a parsed value where it counts segments)
+fn bump[t]
+    t = t + 1
+    return t
+
+log[bump[json['3']]]

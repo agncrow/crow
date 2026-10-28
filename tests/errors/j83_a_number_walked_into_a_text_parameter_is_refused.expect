@@ -1,0 +1,7 @@
+j83_a_number_walked_into_a_text_parameter_is_refused.co:9:5: eq compares values of one kind, not a number with text
+  9 │     if word eq 'lte'
+    │     ^^^^^^^^^^^^^^^^
+j83_a_number_walked_into_a_text_parameter_is_refused.co:11:5: returns a number where the function answers text — a function answers one kind
+  11 │     return word
+     │     ^^^^^^^^^^^
+2 mistakes

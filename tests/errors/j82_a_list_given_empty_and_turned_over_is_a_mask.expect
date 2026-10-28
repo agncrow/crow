@@ -1,0 +1,3 @@
+j82_a_list_given_empty_and_turned_over_is_a_mask.co:8:8: 'dedup' is a list of bools, and a condition is true or false — compare it: x gt 0, len[xs] gt 0, s ne ''
+  8 │     if dedup
+    │        ^^^^^

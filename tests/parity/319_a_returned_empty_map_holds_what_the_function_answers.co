@@ -1,0 +1,26 @@
+--- A local nothing writes a kind into, handed back where the function's
+--- other return answers a map of records, holds what the function
+--- answers: `out = map[]` returned where a group was pruned, beside a
+--- `return counted[…]`, had been declared a map of text compiled, and
+--- the program did not build (E0308) — interpreted it ran (found porting
+--- Magpie's summary, whose pruned groups answer no partials).
+struct Tally [word, count]
+
+fn counted[words]
+    m = map[]
+    for w in words
+        if w in m
+            m[w] = Tally[w, m[w].count + 1]
+        else
+            m = set[m, w, Tally[w, 1]]
+    return m
+
+fn grouped[words, skip]
+    out = map[]
+    if skip
+        return out
+    return counted[words]
+
+log[len[grouped[['a', 'b', 'a'], false]]]
+log[grouped[['a', 'b', 'a'], false]['a'].count]
+log[len[grouped[['a'], true]]]

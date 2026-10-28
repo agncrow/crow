@@ -1,0 +1,26 @@
+--- A column a function walks with `for` and reads again after is
+--- borrowed by the walk: the compiled loop had moved the column into
+--- its walk, and the read after it did not build (E0382) — interpreted
+--- it ran (found by the self-check handing magpie.exec's `summary_of` a
+--- text column where it takes a list of paths).
+use frame
+
+fn walked_twice[c]
+    n = 0
+    for x in c
+        if len[x] gt 0
+            n = n + 1
+    return n + len[c]
+
+fn joined[c]
+    words = []
+    for x in c
+        words = push[words, x]
+    dash = '-'
+    shown = join[words, dash]
+    return '`shown` of `len[c]`'
+
+sf = frame.new[b = ['x', 'yy', ''], n = [1, 2, 3]]
+log[walked_twice[sf.b]]
+log[joined[sf.b]]
+log[walked_twice[sf.b]]

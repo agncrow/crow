@@ -1,0 +1,12 @@
+--- a parameter handed `[]` where a truth was meant, turned over, is read
+--- as a mask, and the mask decided on is refused before the program
+--- runs, in both modes: compiled, `not every` of a list of nothing had
+--- been `!` of a list of text, which did not build (crow check --self,
+--- magpie.merge's `merge_files` handed `[]` for `every`)
+fn pick[xs, every]
+    dedup = not every and len[xs] gt 0
+    if dedup
+        return 1
+    return 0
+
+log[pick[['a'], []]]

@@ -220,6 +220,9 @@ pub(super) struct Checks {
     /// given: a local reusing a module variable's name is a new binding
     /// (spec §7), so its type is its own, not the module's.
     pub local_types: HashMap<String, Ty>,
+    /// The loop variables bound over a list whose items no type says: what
+    /// a call hands of them is held as text (`TypeContext::text_items`).
+    pub unknown_items: BTreeSet<String>,
     /// Inside a test attached to a function (`test[p]` after it), which
     /// sees what a caller of that function sees.
     pub attached_test: bool,
@@ -1602,7 +1605,12 @@ impl<'a> Lowerer<'a> {
             if let Ty::Map(_, inner) = &map_ty {
                 let val_ty = arg_type(self, 2);
                 let val_ty = if let Ty::Result(i) = val_ty { *i } else { val_ty };
-                if !matches!(inner.as_ref(), Ty::Unknown) && !matches!(val_ty, Ty::Unknown | Ty::Unit) && !inner.compatible(&val_ty) {
+                // (a plain value fits a map whose values can fail: a success,
+                // as `m[k] = v` and `push` hand one — `m['a'] = int[t]` then
+                // `set[m, 'b', 5]` had been refused as "an int beside an
+                // int", parity 318)
+                let fits = inner.compatible(&val_ty) || matches!(inner.as_ref(), Ty::Result(p) if p.compatible(&val_ty));
+                if !matches!(inner.as_ref(), Ty::Unknown) && !matches!(val_ty, Ty::Unknown | Ty::Unit) && !fits {
                     let (held, given) = (crate::table::Arg::of_type(inner).words(), crate::table::Arg::of_type(&val_ty).words());
                     match args.get(1) {
                         Some(A::Str(key)) => self.refuse(format!("a map holds values of one kind: the entry '{}' holds {}, and the map's other values are {} — a record (struct) holds fields of several kinds", key, given, held)),
@@ -1759,7 +1767,7 @@ impl<'a> Lowerer<'a> {
                     // dropdown had been refused once the view's facts were
                     // typed)
                     let first_is_frame = types.first().is_some_and(|t| matches!(t.payload(), Ty::Frame(_)));
-                    if self.in_ui && crate::lower::is_ui_control(name, first_is_frame) {
+                    if self.in_ui && !crate::modules::is_crow_fn(&self.current_fn) && crate::lower::is_ui_control(name, first_is_frame) {
                         return;
                     }
                     // a name the core answers too (frame's sort, math's max)

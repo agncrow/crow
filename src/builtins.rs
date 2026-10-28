@@ -213,7 +213,14 @@ pub fn check_map_homogeneous(
     map: &std::collections::BTreeMap<String, CrowValue>,
     new_val: &CrowValue,
 ) -> Result<(), String> {
-    if let Some(existing) = map.values().next() {
+    // (a value that failed is of whatever kind the map holds: a map whose
+    // first entry was a parse that failed took a plain int after it, and
+    // this check had read the failure's placeholder as a kind of its own,
+    // "this map holds done values" — parity 318)
+    if new_val.is_error() {
+        return Ok(());
+    }
+    if let Some(existing) = map.values().find(|v| v.is_ok()) {
         let (have_key, have_name) = map_value_kind(&existing.value);
         let (add_key, add_name) = map_value_kind(&new_val.value);
         if have_key != add_key {
@@ -336,6 +343,10 @@ pub fn crow_to_json(trace: &str, val: &CrowValue) -> Result<serde_json::Value, S
             }
             Ok(serde_json::Value::Object(obj))
         }
+        // a frame as its records, as `json[frame]` answers it: a list of
+        // frames is an array of each frame's (the compiled program's
+        // `ToJson`)
+        Value::Frame(f) => Ok(crow_runtime::frame::records(f)),
         Value::Done => Ok(serde_json::Value::Null),
         _ => Err(format!("cannot encode {} to JSON", val.value.type_name())),
     }
@@ -347,7 +358,10 @@ pub fn crow_to_json(trace: &str, val: &CrowValue) -> Result<serde_json::Value, S
 /// distinct per name.
 pub fn map_value_kind(v: &Value) -> (String, String) {
     match v {
-        Value::Int(_) => ("number".to_string(), "int".to_string()),
+        // (an int past 64 bits is an int: a map of moments' milliseconds
+        // given a parsed int beside one had been refused "holds int values,
+        // cannot add int" — parity 318)
+        Value::Int(_) | Value::Big(_) => ("number".to_string(), "int".to_string()),
         Value::Float(_) | Value::Dual(_, _) => ("number".to_string(), "float".to_string()),
         Value::Str(_) => ("str".to_string(), "str".to_string()),
         Value::Bool(_) => ("bool".to_string(), "bool".to_string()),

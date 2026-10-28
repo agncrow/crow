@@ -450,7 +450,9 @@ impl CrowColumn {
                 Column::Float(v) => v[i],
                 Column::Bool(_) => return Err(crate::stops::not_numbers("bools")),
                 Column::Str(_) | Column::DateTime(..) => return Err(crate::stops::not_numbers("text")),
-                Column::Vectors(..) => unreachable!("answered above"),
+                // (answered above as the matrix of its rows; read here, a
+                // vector is no number)
+                Column::Vectors(..) => return Err(crate::stops::not_numbers("vectors")),
             });
         }
         Ok(crate::tensor::CrowTensor::from_vec(data, vec![n]))

@@ -1,0 +1,14 @@
+--- A part's function names a column by its own loop's variable
+--- (`df.`k``) however the entry names its variables: with a `k` at the
+--- entry's top level, the part's `k` is renamed apart (`k__lib_columns`)
+--- and the name inside the backticks had been left as the entry's,
+--- refused as "a module variable, which a function does not see" — read
+--- and written, in both modes (found porting Magpie's executor).
+use frame
+use lib/columns
+
+k = 7
+f = frame.new[a = [1, 2], b = [3, 4]]
+log[columns.total_of[f, ['a', 'b']]]
+log[columns.doubled[f, ['a', 'b']].b]
+log[k]

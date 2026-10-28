@@ -1,0 +1,17 @@
+--- A function's local named like an imported module's export is that
+--- function's own: every other function still reaches the export. A local
+--- `relu` in `g` had kept `f`'s `relu[x]` from reaching math.nn's —
+--- "module 'math.nn' has no function 'relu'", in both modes — since the
+--- inliner had read every name the program binds anywhere as shadowing
+--- the export everywhere (found writing Magpie's read verbs in Crow).
+use math.nn
+
+fn f[x]
+    return relu[x]
+
+fn g[y]
+    relu = y + 1
+    return relu
+
+log[f[tensor[[-2.0, 3.0]]]]
+log[g[1]]

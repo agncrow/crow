@@ -1,0 +1,243 @@
+--- `use magpie.nearest`: `nearest` over a log's files, in Crow — the k
+--- rows whose vector column lies nearest a query vector by the cosine:
+--- the inner product of the row's unit vector and the query's, each
+--- vector over its norm (the square root of its squares summed in order),
+--- the products summed in order, as the kernel and the vectors package
+--- compute them. Exact: every present row of every file is scored, a
+--- group at a time, the best k kept — a greater score first, an earlier
+--- position between equals — and the winners' rows read whole, with a
+--- `score` column. The kernel's answer row for row (docs/magpie-in-crow.md)
+use sys
+use bits
+use frame
+use math
+use magpie.file
+
+--- a scored row: its score, its position, and where it lies
+struct Hit [score, pos, file, group, row]
+
+--- a vector as a unit vector, its numbers in order; one of zeros stays
+fn _unit[v]
+    squares = 0.0
+    for x in v
+        squares = squares + x * x
+    n = sqrt[squares]
+    if n eq 0.0
+        return v
+    out = []
+    for x in v
+        out = push[out, x / n]
+    return out
+
+--- the inner product of a unit row (`flat` from `at`, `w` numbers) and the
+--- query's unit vector, summed in order
+fn _score[flat, at, w, uq]
+    squares = 0.0
+    for j in range[w]
+        x = flat[at + j]
+        squares = squares + x * x
+    n = sqrt[squares]
+    s = 0.0
+    for j in range[w]
+        x = flat[at + j]
+        if n ne 0.0
+            x = x / n
+        s = s + x * uq[j]
+    return s
+
+--- whether a hit ranks before another: a greater score, then an earlier
+--- position, then the earlier file, group and row
+fn _before[a, b]
+    if a.score ne b.score
+        return a.score gt b.score
+    if a.pos ne b.pos
+        return a.pos lt b.pos
+    if a.file ne b.file
+        return a.file lt b.file
+    if a.group ne b.group
+        return a.group lt b.group
+    return a.row lt b.row
+
+--- the best k, a hit offered: kept in order, the last let go past k
+fn _offered[best, h, k]
+    if len[best] eq k and not _before[h, best[k - 1]]
+        return best
+    out = []
+    placed = false
+    for b in best
+        if not placed and _before[h, b]
+            out = push[out, h]
+            placed = true
+        if len[out] lt k
+            out = push[out, b]
+    if not placed and len[out] lt k
+        out = push[out, h]
+    return out
+
+--- the files' columns and a `score`, with no rows
+fn _empty_scored[paths]
+    if len[paths] eq 0
+        f = frame.new[]
+        f.score = floats_column[[], bytes[0]]
+        return f
+    r = opened[paths[0]]
+    if not r.ok
+        return error[r.reason, 'magpie']
+    every = wanted[r, slice[['x'], 0, 0]]
+    if not every.ok
+        return error[every.reason, 'magpie']
+    f = empty_of[r, every]
+    f.score = floats_column[[], bytes[0]]
+    return f
+
+--- the place of a column in a file, -1 for none
+fn _column_at[r, name]
+    for c in range[len[r.footer.columns]]
+        if r.footer.columns[c].name eq name
+            return c
+    return -1
+
+--- `nearest_rows[paths, column, query, k]`: the `k` rows of the files
+--- whose vector `column` lies nearest the query, with the files' columns
+--- and a `score` — the cosine — the best first and an earlier position
+--- first between equals; an error value of kind `'magpie'` for a negative
+--- k, an empty query, a column that is not one of vectors, or vectors of
+--- another width than the query's
+fn nearest_rows[paths, column, query, k]
+    if k lt 0
+        return error['batch: nearest answers at most k rows, and k is `k`', 'magpie']
+    if len[query] eq 0
+        return error['batch: a query vector holds one number or more', 'magpie']
+    if len[paths] eq 0 or k eq 0
+        return _empty_scored[paths]
+    --- (the query's numbers in order, whatever holds them: a list, a
+    --- vector, or a tensor whose rank the caller's types do not say)
+    asked = []
+    for x in flatten[tensor[query]]
+        asked = push[asked, float[x]]
+    uq = _unit[asked]
+    best = []
+    readers = map[]
+    pending = map[]
+    for fi in range[len[paths]]
+        p = paths[fi]
+        if '/.pending' in p
+            --- (the sequencer's pending rows, read through the kernel until
+            --- the sequencer is Crow's: scored as one group)
+            df = batch_read[p, slice[['x'], 0, 0]]
+            if not df.ok
+                return error[df.reason, 'magpie']
+            pending = set[pending, fi, df]
+            if column not in df.columns
+                return error['batch: \'`p`\' holds no column \'`column`\'', 'magpie']
+            col = df.`column`
+            if cell_kind[col] ne 'vector'
+                return error['batch: column \'`column`\' holds `cell_kind[col]`, not vectors', 'magpie']
+            more = _scored[best, col, ints_of[df._pos, 0, len[df]], uq, fi, 0, k, column]
+            if not more.ok
+                return error[more.reason, 'magpie']
+            best = more
+        else
+            r = opened[p]
+            if not r.ok
+                return error[r.reason, 'magpie']
+            readers = set[readers, fi, r]
+            more = _file_scored[best, r, p, column, uq, fi, k]
+            if not more.ok
+                return error[more.reason, 'magpie']
+            best = more
+    if len[best] eq 0
+        return _empty_scored[paths]
+    rows = []
+    scores = []
+    for h in best
+        if h.file in pending
+            df = pending[h.file]
+            rows = push[rows, frame.head[frame.tail[df, len[df] - h.row], 1]]
+        else
+            r = readers[h.file]
+            every = wanted[r, slice[['x'], 0, 0]]
+            if not every.ok
+                return error[every.reason, 'magpie']
+            g = group_of[r, h.group, every]
+            if not g.ok
+                return error[g.reason, 'magpie']
+            rows = push[rows, frame.head[frame.tail[g, len[g] - h.row], 1]]
+        scores = push[scores, h.score]
+    whole = stack[rows]
+    whole.score = floats_column[scores, bytes[0]]
+    return whole
+
+--- the best k with one more column's rows offered: each present row
+--- scored, its position read beside it
+fn _scored[best, col, positions, uq, fi, g, k, column]
+    w = vector_width[col]
+    if w ne len[uq]
+        return error['batch: column \'`column`\' holds vectors of width `w`, and the query has `len[uq]` numbers', 'magpie']
+    n = len[col]
+    flat = vectors_of[col, 0, n]
+    present = present_of[col, 0, n]
+    out = best
+    for row in range[n]
+        held = len[present] eq 0 or bitand[byte[present, shift[row, -3]], shift[1, bitand[row, 7]]] ne 0
+        if held
+            s = _score[flat, row * w, w, uq]
+            out = _offered[out, Hit[s, positions[row], fi, g, row], k]
+    return out
+
+--- the best k with a file's rows offered, a group at a time (a group
+--- whose every cell is missing not read)
+fn _file_scored[best, r, p, column, uq, fi, k]
+    c = _column_at[r, column]
+    if c lt 0
+        return error['batch: \'`p`\' holds no column \'`column`\'', 'magpie']
+    cells = r.footer.columns[c].cells
+    if cells ne 'vector'
+        return error['batch: column \'`column`\' holds `cells`, not vectors', 'magpie']
+    ents = entries[r, c]
+    if not ents.ok
+        return error[ents.reason, 'magpie']
+    pc = _column_at[r, '_pos']
+    out = best
+    for g in range[len[ents]]
+        e = ents[g]
+        if e.rows gt 0 and e.absent lt e.rows
+            col = chunk_of[r, c, e]
+            if not col.ok
+                return error[col.reason, 'magpie']
+            n = len[col]
+            positions = range[n]
+            if pc gte 0
+                pg = group_of[r, g, [pc]]
+                if not pg.ok
+                    return error[pg.reason, 'magpie']
+                positions = ints_of[pg._pos, 0, n]
+            more = _scored[out, col, positions, uq, fi, g, k, column]
+            if not more.ok
+                return error[more.reason, 'magpie']
+            out = more
+    return out
+
+--- the same rows and scores as the kernel's nearest, across two files: a
+--- row of zeros, a missing cell, rows tied on the score
+test nearest_is_the_kernels[]
+    nothing = slice[['x'], 0, 0]
+    dir = 'target/crow_nearest_k'
+    if exists[dir]
+        gone = rm[dir]
+    made = mkdir[dir]
+    f1 = frame.new[id = [1, 2, 3], e = [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]]
+    f2 = frame.new[id = [4, 5, 6], e = [[2.0, 0.0], [0.0, 0.0], [3.0, 4.0]]]
+    a = batch_write[dir, 1, 0, f1, nothing, nothing, true]
+    b = batch_write[dir, 2, 3, f2, nothing, nothing, true]
+    paths = ['`dir`/000000000001.batch', '`dir`/000000000002.batch']
+    for q in [[1.0, 0.0], [0.0, 1.0], [0.6, 0.8], [-1.0, 0.5]]
+        for k in [1, 3, 10]
+            mine = nearest_rows[paths, 'e', q, k]
+            theirs = batch_nearest[paths, 'e', tensor[q], k]
+            assert[mine.id eq theirs.id]
+            assert[str[mine.score] eq str[theirs.score]]
+    assert[len[nearest_rows[paths, 'e', [1.0, 0.0], 0]] eq 0]
+    assert[nearest_rows[paths, 'e', [1.0, 0.0, 0.0], 3].reason eq batch_nearest[paths, 'e', tensor[[1.0, 0.0, 0.0]], 3].reason]
+    assert[nearest_rows[paths, 'id', [1.0, 0.0], 3].reason eq batch_nearest[paths, 'id', tensor[[1.0, 0.0]], 3].reason]
+    assert[nearest_rows[paths, 'e', [1.0, 0.0], -1].reason eq batch_nearest[paths, 'e', tensor[[1.0, 0.0]], -1].reason]

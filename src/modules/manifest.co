@@ -1,0 +1,343 @@
+--- `use magpie.manifest`: a log's manifest, in Crow — the list of its
+--- live segments and what the log declares of itself (its keys, its
+--- time column, its narrow columns, whether it stems), the kernel's file
+--- byte for byte (docs/magpie-in-crow.md, section 3). A Magpie file of one
+--- group at `<dir>/manifest`: a row per segment — its name, its level,
+--- the batch numbers it absorbed (`number` to `high`), its position range,
+--- its rows, its bytes and its keys' ranges as JSON — the keys in the
+--- file's own key list and the declarations in its notes. Written beside
+--- and moved over the old one, so a reader sees the old list or the new,
+--- never half. Batches are not in it: they are the tail, found by
+--- listing the directory, which is short because the merge runs. The
+--- names a log's files carry are here too: a batch `000000000017.batch`
+--- by its number, a segment `S000000000003.segment` by its counter.
+use sys
+use frame
+use magpie.file
+
+--- a log's manifest: its keys, its notes (their names in order, and their
+--- texts), its segments as a frame of nine columns, and whether the log
+--- has one yet
+struct Listed [keys, note_names, note_texts, segments, found]
+
+--- the segments' columns, in the file's order
+fn segment_columns[]
+    return ['name', 'level', 'number', 'high', 'first', 'last', 'rows', 'bytes', 'ranges']
+
+--- no segments: the nine columns, empty
+fn _no_segments[]
+    none = bytes[0]
+    return _segments_of[text_column[none, [], none], [], [], [], [], [], [], [], text_column[none, [], none]]
+
+--- the segments' frame from its columns' parts, each column named as
+--- the program reads it (its kind known where it is read: `segs.number[i]`
+--- an int, `segs.name[i]` text)
+fn _segments_of[names, levels, numbers, highs, firsts, lasts, counts, sizes, ranges]
+    none = bytes[0]
+    f = frame.new[]
+    f.name = names
+    f.level = ints_column[levels, none]
+    f.number = ints_column[numbers, none]
+    f.high = ints_column[highs, none]
+    f.first = ints_column[firsts, none]
+    f.last = ints_column[lasts, none]
+    f.rows = ints_column[counts, none]
+    f.bytes = ints_column[sizes, none]
+    f.ranges = ranges
+    return f
+
+--- `unlisted[]`: the manifest of a log that has none yet
+fn unlisted[]
+    nothing = slice[['x'], 0, 0]
+    return Listed[nothing, nothing, nothing, _no_segments[], false]
+
+--- a number written with twelve digits, zeros in front
+fn _twelve[n]
+    s = str[n]
+    while len[s] lt 12
+        s = '0`s`'
+    return s
+
+--- `batch_named[number]`: a batch file's name by its number
+fn batch_named[number]
+    return '`_twelve[number]`.batch'
+
+--- `segment_named[counter]`: a segment's name by its counter
+fn segment_named[counter]
+    return 'S`_twelve[counter]`.segment'
+
+--- whether a text is twelve digits
+fn _digits[s]
+    if len[s] ne 12
+        return false
+    for c in split[s, '']
+        if c lt '0' or c gt '9'
+            return false
+    return true
+
+--- `number_of[name]`: the number a batch file's name says, -1 for
+--- another file
+fn number_of[name]
+    if not ends[name, '.batch'] or len[name] ne 18
+        return -1
+    stem = slice[name, 0, 12]
+    if not _digits[stem]
+        return -1
+    return int[stem]
+
+--- `counter_of[name]`: the counter a segment's name says, -1 for another
+--- file
+fn counter_of[name]
+    if not starts[name, 'S'] or not ends[name, '.segment'] or len[name] ne 21
+        return -1
+    stem = slice[name, 1, 13]
+    if not _digits[stem]
+        return -1
+    return int[stem]
+
+--- `listed[dir]`: the log's manifest, `found` false where it has none
+--- yet; an error value of kind `'magpie'` where the file cannot be read
+fn listed[dir]
+    path = '`dir`/manifest'
+    if not exists[path]
+        return unlisted[]
+    r = opened[path]
+    if not r.ok
+        return error['magpie: the manifest of \'`dir`\': `r.reason`', 'magpie']
+    cols = wanted[r, segment_columns[]]
+    if not cols.ok
+        return error[cols.reason, 'magpie']
+    every = []
+    for g in range[len[r.footer.groups]]
+        every = push[every, g]
+    raw = groups_of[r, every, cols]
+    if not raw.ok
+        return error[raw.reason, 'magpie']
+    n = len[raw]
+    none = bytes[0]
+    names = text_column[text_bytes_of[raw.name, 0, n], text_ends_of[raw.name, 0, n], none]
+    ranges = text_column[text_bytes_of[raw.ranges, 0, n], text_ends_of[raw.ranges, 0, n], none]
+    segments = _segments_of[names, ints_of[raw.level, 0, n], ints_of[raw.number, 0, n], ints_of[raw.high, 0, n], ints_of[raw.first, 0, n], ints_of[raw.last, 0, n], ints_of[raw.rows, 0, n], ints_of[raw.bytes, 0, n], ranges]
+    return Listed[r.footer.key_names, r.footer.note_names, r.footer.note_texts, segments, true]
+
+--- `note_of[m, name]`: the text the manifest notes under a name, empty
+--- for none
+fn note_of[m, name]
+    for i in range[len[m.note_names]]
+        if m.note_names[i] eq name
+            return m.note_texts[i]
+    return ''
+
+--- `with_note[m, name, said]`: the manifest with the note set, the names
+--- kept in order
+fn with_note[m, name, said]
+    names = []
+    texts = []
+    placed = false
+    for i in range[len[m.note_names]]
+        n = m.note_names[i]
+        if not placed and n gte name
+            names = push[names, name]
+            texts = push[texts, said]
+            placed = true
+        if n ne name
+            names = push[names, n]
+            texts = push[texts, m.note_texts[i]]
+    if not placed
+        names = push[names, name]
+        texts = push[texts, said]
+    return Listed[m.keys, names, texts, m.segments, m.found]
+
+--- `with_segments[m, segments]`: the manifest with its segments replaced
+--- (a merge's switch: the inputs gone, the new segments listed)
+fn with_segments[m, segments]
+    return Listed[m.keys, m.note_names, m.note_texts, segments, true]
+
+--- `narrow_of[m]`: the float columns the log keeps in 32 bits (the note
+--- `narrow`, names joined by commas)
+fn narrow_of[m]
+    out = slice[['x'], 0, 0]
+    for c in split[note_of[m, 'narrow'], ',']
+        if len[c] gt 0
+            out = push[out, c]
+    return out
+
+--- `stems_of[m]`: whether the log stems its tokens (the note `stem`)
+fn stems_of[m]
+    return note_of[m, 'stem'] eq 'true'
+
+--- `counter[m]`: the highest counter a listed segment's name carries, 0
+--- for none
+fn counter[m]
+    top = 0
+    for name in m.segments.name
+        c = counter_of[name]
+        if c gt top
+            top = c
+    return top
+
+--- `listed_bytes[m]`: the manifest as its file holds it — one group of
+--- every segment (none where there are none), the keys and the notes in
+--- the footer, the positions 0 and -1
+fn listed_bytes[m]
+    nothing = slice[['x'], 0, 0]
+    df = m.segments
+    cols = columns_of[df, nothing]
+    out = magic[]
+    blocks = []
+    groups = []
+    n = len[df]
+    if n gt 0
+        wide = []
+        for c in cols.names
+            wide = push[wide, false]
+        g = group_bytes[df, 0, n, cols, wide, false, len[out]]
+        if not g.ok
+            return error[g.reason, 'magpie']
+        out = concat[out, g.data]
+        blocks = g.entries
+        groups = push[groups, g.rows]
+    else
+        for c in cols.names
+            blocks = push[blocks, bytes[0]]
+    return finish[out, blocks, groups, cols, 0, -1, m.keys, m.note_names, m.note_texts]
+
+--- `write_listed[dir, m]`: the manifest written — to `.manifest.part`,
+--- flushed, moved over `manifest`, the directory flushed: one atomic
+--- replacement; answers the manifest's path
+fn write_listed[dir, m]
+    made = listed_bytes[m]
+    if not made.ok
+        return error[made.reason, 'magpie']
+    path = '`dir`/manifest'
+    part = '`dir`/.manifest.part'
+    written = store[part, made]
+    if not written.ok
+        return error['magpie: cannot write the manifest of \'`dir`\': `written.reason`', 'magpie']
+    synced = flushed[part]
+    if not synced.ok
+        return error['magpie: cannot flush the manifest of \'`dir`\': `synced.reason`', 'magpie']
+    placed = move[part, path]
+    if not placed.ok
+        return error['magpie: cannot place the manifest of \'`dir`\': `placed.reason`', 'magpie']
+    --- (best effort, as the kernel's: the directory's flush can fail where
+    --- the name was placed)
+    swept = flushed[dir]
+    return path
+
+--- `key_words[named]`: keys named for a refusal — `nothing`, `id`, `day
+--- and symbol`, `a, b and c`
+fn key_words[named]
+    n = len[named]
+    if n eq 0
+        return 'nothing'
+    if n eq 1
+        return named[0]
+    front = join[slice[named, 0, n - 1], ', ']
+    return '`front` and `named[n - 1]`'
+
+--- `declare[dir, keyed, names, texts]`: the log's manifest written with
+--- its keys and its notes — the first write of a log, or new notes for
+--- one (a note given again is replaced, one not given kept); answers the
+--- manifest. Refused where the log is keyed otherwise
+fn declare[dir, keyed, names, texts]
+    have = listed[dir]
+    if not have.ok
+        return error[have.reason, 'magpie']
+    if have.found and join[have.keys, ','] ne join[keyed, ',']
+        return error['batch: the log at \'`dir`\' is keyed by `key_words[have.keys]`, not by `key_words[keyed]`', 'magpie']
+    m = Listed[keyed, have.note_names, have.note_texts, have.segments, true]
+    for i in range[len[names]]
+        m = with_note[m, names[i], texts[i]]
+    placed = write_listed[dir, m]
+    if not placed.ok
+        return error[placed.reason, 'magpie']
+    return m
+
+--- `catalog_of[dir]`: the manifest's segments as a frame — `name`,
+--- `level`, `number`, `high`, `first`, `last`, `rows`, `bytes`, `ranges`
+--- — with no rows where the log has none; an error value of kind
+--- `'magpie'` where the manifest cannot be read
+fn catalog_of[dir]
+    m = listed[dir]
+    if not m.ok
+        return error[m.reason, 'magpie']
+    return m.segments
+
+--- a manifest the kernel wrote reads back here, one written here reads
+--- back by the kernel, and both write the same bytes — keys, notes, the
+--- notes merged, other keys refused in the kernel's words
+test a_manifest_is_the_kernels[]
+    nothing = slice[['x'], 0, 0]
+    dir = 'target/crow_manifest_a'
+    if exists[dir]
+        gone = rm[dir]
+    made = mkdir[dir]
+    assert[not listed[dir].found]
+    keyed = ['day', 'symbol']
+    kernel = batch_declare[dir, keyed, '{"time":"timestamp","narrow":"price"}']
+    assert[kernel.ok]
+    m = listed[dir]
+    assert[m.found and m.keys eq keyed]
+    assert[m.note_names eq ['narrow', 'time']]
+    assert[note_of[m, 'time'] eq 'timestamp']
+    assert[narrow_of[m] eq ['price']]
+    assert[not stems_of[m]]
+    assert[len[m.segments] eq 0]
+    assert[m.segments.columns eq segment_columns[]]
+    kernel_bytes = file['`dir`/manifest']
+    assert[same[listed_bytes[m], kernel_bytes]]
+    dir2 = 'target/crow_manifest_b'
+    if exists[dir2]
+        gone = rm[dir2]
+    made = mkdir[dir2]
+    mine = declare[dir2, keyed, ['time', 'narrow'], ['timestamp', 'price']]
+    assert[mine.ok]
+    assert[same[file['`dir2`/manifest'], kernel_bytes]]
+    assert[batch_declared[dir2] eq batch_declared[dir]]
+    assert[not exists['`dir2`/.manifest.part']]
+    again = declare[dir2, keyed, ['stem', 'time'], ['true', 'at']]
+    k2 = batch_declare[dir, keyed, '{"stem":"true","time":"at"}']
+    assert[same[file['`dir2`/manifest'], file['`dir`/manifest']]]
+    assert[stems_of[listed[dir2]]]
+    wrong = declare[dir2, ['id'], nothing, nothing]
+    assert[not wrong.ok]
+    assert[wrong.reason eq batch_declare[dir2, ['id'], ''].reason]
+
+--- segments a merge listed read back as the kernel lists them, and the
+--- manifest written again from them is the kernel's byte for byte
+test segments_are_the_kernels[]
+    nothing = slice[['x'], 0, 0]
+    dir = 'target/crow_manifest_c'
+    if exists[dir]
+        gone = rm[dir]
+    made = mkdir[dir]
+    k = batch_declare[dir, ['id'], '']
+    ids = []
+    for i in range[40]
+        ids = push[ids, i % 7]
+    df = frame.new[id = ids]
+    a = batch_write[dir, 0, 0, df, ['id'], nothing, false]
+    b = batch_write[dir, 1, 40, df, ['id'], nothing, false]
+    folded = batch_merge[dir, ['`dir`/000000000000.batch', '`dir`/000000000001.batch'], false]
+    assert[folded.ok]
+    m = listed[dir]
+    assert[len[m.segments] eq 1]
+    assert[m.segments.name[0] eq segment_named[1]]
+    assert[counter[m] eq 1]
+    assert[m.segments.number[0] eq 0 and m.segments.high[0] eq 1]
+    assert[m.segments.rows[0] eq 7]
+    assert[same[listed_bytes[m], file['`dir`/manifest']]]
+    assert[catalog_of[dir].name eq batch_catalog[dir].name]
+
+--- the names a log's files carry
+test names_say_their_numbers[]
+    assert[batch_named[17] eq '000000000017.batch']
+    assert[segment_named[3] eq 'S000000000003.segment']
+    assert[number_of['000000000017.batch'] eq 17]
+    assert[number_of['00000000001x.batch'] eq -1]
+    assert[number_of['manifest'] eq -1]
+    assert[counter_of['S000000000003.segment'] eq 3]
+    assert[counter_of['000000000017.batch'] eq -1]
+    assert[key_words[slice[['x'], 0, 0]] eq 'nothing']
+    assert[key_words[['a', 'b', 'c']] eq 'a, b and c']

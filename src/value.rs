@@ -35,6 +35,15 @@ pub struct Status {
     /// Markup a view, an element or `doc` made: the one kind of string a
     /// view places as markup. Every other string is text, whatever it holds.
     pub markup: bool,
+    /// A column of no rows, held as the list of its cells, carries its kind
+    /// here — an empty column of it — so it reads back as the column it was
+    /// (an empty int column had read back as text: `cell_kind` said `text`
+    /// interpreted and `int` compiled, and an empty frame's columns had
+    /// changed kind on the way through a variable). Set where a column
+    /// becomes a list (a frame's field, a row's answer), read where a list
+    /// becomes a column again (`table::read_cells`); a list built anew
+    /// carries none.
+    pub column: Option<crow_runtime::frame::Column>,
 }
 
 impl CrowValue {
@@ -44,6 +53,26 @@ impl CrowValue {
 
     pub fn done() -> Self {
         CrowValue { value: Value::Done, status: None }
+    }
+
+    /// A column of no rows as the interpreter holds a column — the list of
+    /// its cells, empty — its kind kept in the status (`Status::column`).
+    pub fn empty_column(of: &crow_runtime::frame::Column) -> Self {
+        use crow_runtime::frame::Column;
+        let kind = match of {
+            Column::Int(_) => Column::Int(Vec::new()),
+            Column::Float(_) => Column::Float(Vec::new()),
+            Column::Str(_) => Column::Str(Default::default()),
+            Column::Bool(_) => Column::Bool(Vec::new()),
+            Column::DateTime(..) => Column::DateTime(Vec::new(), Vec::new()),
+            Column::Vectors(w, _) => Column::Vectors(*w, Vec::new()),
+        };
+        CrowValue { value: Value::Array(std::sync::Arc::new(Vec::new())), status: Some(Box::new(Status { column: Some(kind), ..Status::default() })) }
+    }
+
+    /// The kind an empty column held as a list keeps (`Status::column`).
+    pub fn column_kind(&self) -> Option<&crow_runtime::frame::Column> {
+        self.status.as_ref().and_then(|s| s.column.as_ref())
     }
 
     pub fn error(reason: &str, trace_entry: &str) -> Self {

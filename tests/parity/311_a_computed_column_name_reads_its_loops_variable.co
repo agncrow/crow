@@ -1,0 +1,25 @@
+--- A column named by a value the program computes reads the variable in
+--- scope where it is written: a loop's `k` bound again by a second loop
+--- is another variable, renamed apart for the passes after, and the name
+--- inside `df.`k`` had stayed `k` — "undefined variable 'k'" — read or
+--- written, in both modes (found porting Magpie's merge).
+use frame
+
+fn sizes[df, names]
+    total = 0
+    for k in names
+        total = total + len[df.`k`]
+    for k in names
+        total = total + len[df.`k`]
+    return total
+
+fn widened[df, names]
+    for k in names
+        df.`k` = df.`k` + 1
+    for k in names
+        df.`k` = df.`k` * 2
+    return df
+
+f = frame.new[a = [1, 2], b = [3, 4]]
+log[sizes[f, ['a', 'b']]]
+log[widened[f, ['a', 'b']].b]

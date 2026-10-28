@@ -83,8 +83,9 @@ fn _present[present, i]
         return true
     return bitand[byte[present, shift[i, -3]], shift[1, bitand[i, 7]]] ne 0
 
---- the file's magic: `MAGPIE`, a zero and the format, 2
-fn _magic[]
+--- `magic[]`: the file's magic — `MAGPIE`, a zero and the format, 2 —
+--- which a file begins and ends with
+fn magic[]
     m = bytes['MAGPIE']
     m = push[m, 0]
     return push[m, 2]
@@ -349,6 +350,12 @@ fn columns_of[df, indexed_names]
             return error['no column \'`t`\' to index the words of', 'magpie']
     return Columns[names, kinds, indexed]
 
+--- `shape_of[names, kinds, indexed]`: the columns a file holds, given
+--- as their names, their kinds and whether each is indexed (a merge's
+--- columns, read off its inputs' footers)
+fn shape_of[names, kinds, indexed]
+    return Columns[names, kinds, indexed]
+
 --- `rows_per_group[df]`: how many rows a group of the frame holds — 4 MB
 --- of rows as the frame holds them (8 bytes an int or a float, 10 a
 --- moment, 1 a bool, 8 per number of a vector, a text column's bytes per
@@ -476,7 +483,7 @@ fn finish[out, blocks, groups, cols, first_pos, last_pos, key_names, note_names,
         footer = concat[footer, pack[lens[c], 4, little = true]]
     out = concat[out, footer]
     out = concat[out, pack[len[footer], 4, little = true]]
-    out = concat[out, _magic[]]
+    out = concat[out, magic[]]
     return out
 
 --- `file_of[df, per, first_pos, last_pos, key_names, indexed_names, narrow_names, stems]`:
@@ -487,6 +494,8 @@ fn finish[out, blocks, groups, cols, first_pos, last_pos, key_names, note_names,
 --- to `last_pos` and the keys in the footer; an error value of kind
 --- `'magpie'` where a column to index holds no text or is not there
 fn file_of[df, per, first_pos, last_pos, key_names, indexed_names, narrow_names, stems]
+    if per lt 1
+        return error['a group holds 1 row or more, not `per`', 'magpie']
     cols = columns_of[df, indexed_names]
     if not cols.ok
         return error[cols.reason, 'magpie']
@@ -495,7 +504,7 @@ fn file_of[df, per, first_pos, last_pos, key_names, indexed_names, narrow_names,
     for c in range[len[cols.names]]
         narrow = push[narrow, cols.kinds[c] eq 'float' and cols.names[c] in narrow_names]
         blocks = push[blocks, bytes[0]]
-    out = _magic[]
+    out = magic[]
     groups = []
     n = len[df]
     start = 0
@@ -511,7 +520,11 @@ fn file_of[df, per, first_pos, last_pos, key_names, indexed_names, narrow_names,
             blocks[c] = concat[blocks[c], g.entries[c]]
         groups = push[groups, g.rows]
         start = stop
-    return finish[out, blocks, groups, cols, first_pos, last_pos, key_names, [], []]
+    --- (no notes: lists of text with nothing in them, typed as the notes
+    --- a manifest hands are — `[]` here had left them typed by nothing,
+    --- and keys of another kind made the compiled notes that kind)
+    nothing = slice[['x'], 0, 0]
+    return finish[out, blocks, groups, cols, first_pos, last_pos, key_names, nothing, nothing]
 
 --- how many bytes a read of `n` at `at` lacks (0 where they are there)
 fn _short[data, at, n]
@@ -709,10 +722,10 @@ fn opened[path]
     tail = file[path, total - 12, 12]
     if not tail.ok
         return error['magpie: cannot read \'`path`\': `tail.reason`', 'magpie']
-    if not same[slice[tail, 4, 12], _magic[]]
+    if not same[slice[tail, 4, 12], magic[]]
         head = file[path, 0, 8]
         if head.ok
-            if same[head, _magic[]]
+            if same[head, magic[]]
                 return error['magpie: \'`path`\' is cut short: its end carries no footer', 'magpie']
             if same[slice[head, 0, 6], bytes['MAGPIE']]
                 return error['magpie: \'`path`\' was written in format `byte[head, 7]`, and this Crow reads format 2 — read it with the Crow that wrote it, or a newer one', 'magpie']

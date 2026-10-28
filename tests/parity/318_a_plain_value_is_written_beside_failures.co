@@ -1,0 +1,40 @@
+--- A plain value is written beside values that can fail, by index or by
+--- `set`, and the place goes on holding values that can fail: a map whose
+--- first entry was a parse that failed had refused a plain int in the
+--- interpreter ("this map holds done values") and printed it bare
+--- compiled (E0308); `set[m, 'c', 6]` beside it had been refused as "an
+--- int beside an int"; a list of such values took `xs[0] = 7` bare
+--- (E0308); and a record's field written into a map from a loop's
+--- borrowed record had been moved out of it (E0507). Found probing
+--- Magpie's as-of join.
+struct Cell [whole]
+
+fn mapped[t]
+    m = map[]
+    m['a'] = int[t]
+    m['b'] = 5
+    m = set[m, 'c', 6]
+    return m
+
+fn listed[t]
+    xs = [int[t], int['2']]
+    xs[0] = 7
+    xs = push[xs, 8]
+    return xs
+
+fn latest_of[cells]
+    latest = map[]
+    for c in cells
+        if 'k' in latest
+            latest['k'] = c.whole
+        else
+            latest = set[latest, 'k', c.whole]
+    return latest['k']
+
+log[mapped['3']]
+log[mapped['x']]
+log[listed['x']]
+cells = []
+cells = push[cells, Cell[int['123456789012345678901234567890']]]
+cells = push[cells, Cell[int['5']]]
+log[latest_of[cells]]

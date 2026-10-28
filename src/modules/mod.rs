@@ -204,6 +204,54 @@ pub static MODULES: &[Module] = &[
         module: Some(|| Arc::new(Named::new("magpie.file"))),
         ..Module::plain("magpie.file", "_magpie_file")
     },
+    Module {
+        source: Some(MANIFEST_SOURCE), needs: &[], registry: true, under: Some("magpie"),
+        docs: Some("A log's manifest, in Crow: its live segments and what the log declares of itself — its keys, its time column, its narrow columns, whether it stems — a Magpie file of one group replaced whole, the kernel's bytes byte for byte; and the names a log's files carry."),
+        module: Some(|| Arc::new(Named::new("magpie.manifest"))),
+        ..Module::plain("magpie.manifest", "_magpie_manifest")
+    },
+    Module {
+        source: Some(MERGE_SOURCE), needs: &[], registry: true, under: Some("magpie"),
+        docs: Some("The streaming merge, in Crow: batches and segments folded into segments of bounded size, the rows in the log's keys' order then position, the newest version of each key kept — one group per input held — and the manifest switched in one step; the kernel's segments byte for byte."),
+        module: Some(|| Arc::new(Named::new("magpie.merge"))),
+        ..Module::plain("magpie.merge", "_magpie_merge")
+    },
+    Module {
+        source: Some(EXEC_SOURCE), needs: &[], registry: true, under: Some("magpie"),
+        docs: Some("The executor, in Crow: aggregates over a log's files pushed below the reader — each row group pruned by its statistics and filters, its rows masked and grouped into partials merged in order — and the as-of join, each label's newest row at or before its moment; the kernel's answers exactly."),
+        module: Some(|| Arc::new(Named::new("magpie.exec"))),
+        ..Module::plain("magpie.exec", "_magpie_exec")
+    },
+    Module {
+        source: Some(NEAREST_SOURCE), needs: &[], registry: true, under: Some("magpie"),
+        docs: Some("The nearest rows by a vector, in Crow: every present row of a log's vector column scored by the cosine with the query, a group at a time, the best k kept — a greater score first, an earlier position between equals — the kernel's answer row for row."),
+        module: Some(|| Arc::new(Named::new("magpie.nearest"))),
+        ..Module::plain("magpie.nearest", "_magpie_nearest")
+    },
+    Module {
+        source: Some(SEARCH_SOURCE), needs: &[], registry: true, under: Some("magpie"),
+        docs: Some("Search over a log, in Crow: BM25 as Lucene scores it over the whole log as one corpus — a word, a phrase, a prefix, a fuzzy word — from a group's index where it has one and its text where it has none, the blocks that cannot reach the k-th score skipped, a snippet around the first hit; the kernel's ranking and scores to the last digit."),
+        module: Some(|| Arc::new(Named::new("magpie.search"))),
+        ..Module::plain("magpie.search", "_magpie_search")
+    },
+    Module {
+        source: Some(INFLATE_SOURCE), needs: &[], registry: true, under: Some("magpie"),
+        docs: Some("Inflate and gzip, in Crow: a raw deflate stream's stored, fixed and dynamic Huffman blocks decoded, a gzip member's header read and its CRC-32 and length checked — the decoder the Kafka door reads a producer's compressed records with."),
+        module: Some(|| Arc::new(Named::new("magpie.inflate"))),
+        ..Module::plain("magpie.inflate", "_magpie_inflate")
+    },
+    Module {
+        source: Some(SNAPPY_SOURCE), needs: &[], registry: true, under: Some("magpie"),
+        docs: Some("Snappy's raw block format decoded, in Crow: literal runs and copies of three widths — the decoder the Kafka door reads a producer's snappy-compressed records with."),
+        module: Some(|| Arc::new(Named::new("magpie.snappy"))),
+        ..Module::plain("magpie.snappy", "_magpie_snappy")
+    },
+    Module {
+        source: Some(RECORDS_SOURCE), needs: &[], registry: true, under: Some("magpie"),
+        docs: Some("The Kafka wire's record sets, in Crow: a legacy message set decoded into a frame and encoded from one, each message's CRC-32 checked and written, a compressed wrapper read as the records it holds — the kernel's bytes byte for byte."),
+        module: Some(|| Arc::new(Named::new("magpie.records"))),
+        ..Module::plain("magpie.records", "_magpie_records")
+    },
     // tools from other programs, and a program as one: the client on
     // request, the server a function a route calls (it answers responses,
     // so crow_web comes with the import)
@@ -351,6 +399,14 @@ pub(crate) const BLOOM_SOURCE: &str = include_str!("bloom.co");
 pub(crate) const STEM_SOURCE: &str = include_str!("stem.co");
 pub(crate) const POSTINGS_SOURCE: &str = include_str!("postings.co");
 pub(crate) const FILE_SOURCE: &str = include_str!("file.co");
+pub(crate) const MANIFEST_SOURCE: &str = include_str!("manifest.co");
+pub(crate) const MERGE_SOURCE: &str = include_str!("merge.co");
+pub(crate) const EXEC_SOURCE: &str = include_str!("exec.co");
+pub(crate) const NEAREST_SOURCE: &str = include_str!("nearest.co");
+pub(crate) const SEARCH_SOURCE: &str = include_str!("search.co");
+pub(crate) const INFLATE_SOURCE: &str = include_str!("inflate.co");
+pub(crate) const SNAPPY_SOURCE: &str = include_str!("snappy.co");
+pub(crate) const RECORDS_SOURCE: &str = include_str!("records.co");
 /// `io.lines`, `io.csv`: readers written in Crow.
 pub(crate) const IO_SOURCE: &str = include_str!("io.co");
 /// `frame.load`, `frame.save`: written in Crow.
@@ -679,9 +735,26 @@ impl Rewrite {
                 self.expr(condition, shadowed);
                 body.iter_mut().for_each(|s| self.stmt(s, shadowed));
             }
-            Stmt::FnDecl { params, body, .. } | Stmt::TestBlock { params, body, .. } => {
+            // a function sees its parameters and its own locals, never the
+            // program's top-level names (spec, No Ambient Mutability): a
+            // name it binds is its own wherever in its body it is read, and
+            // nowhere else (a local `head = …` in one function had kept
+            // every other function's `head[d]` from reaching the export:
+            // "module 'magpie' has no function 'head'", in both modes); a
+            // test block sees the program's values as a caller does
+            Stmt::FnDecl { params, body, .. } => {
+                let mut inner: std::collections::HashSet<String> = params.iter().cloned().collect();
+                let mut locals = std::collections::BTreeSet::new();
+                body.iter().for_each(|s| bound_in_stmt(s, &mut locals));
+                inner.extend(locals);
+                body.iter_mut().for_each(|s| self.stmt(s, &inner));
+            }
+            Stmt::TestBlock { params, body, .. } => {
                 let mut inner = shadowed.clone();
                 inner.extend(params.iter().cloned());
+                let mut locals = std::collections::BTreeSet::new();
+                body.iter().for_each(|s| bound_in_stmt(s, &mut locals));
+                inner.extend(locals);
                 body.iter_mut().for_each(|s| self.stmt(s, &inner));
             }
             Stmt::Derive { body, .. } => body.iter_mut().for_each(|s| self.stmt(s, shadowed)),
@@ -945,10 +1018,26 @@ pub fn inline_crow_modules(stmts: &[crate::ast::Stmt]) -> Result<Vec<crate::ast:
     }
     // the program's calls of the exports in its scope: a bare name, where
     // one module imported bare (or brought by one, or the core) exports it
-    // and the program binds no such name; a module's path or alias and
-    // the name, for the module it names
+    // and the program declares no such function, record or derivation
+    // (those are everywhere its own); a name a scope binds is that scope's
+    // alone — the top level's at the top level, a function's in its body
+    // (`Rewrite`); a module's path or alias and the name, for the module
+    // it names
     let mut own: BTreeSet<String> = BTreeSet::new();
-    stmts.iter().for_each(|st| bound_in_stmt(st, &mut own));
+    let mut top: HashSet<String> = HashSet::new();
+    for st in stmts {
+        match st {
+            Stmt::FnDecl { name, .. } | Stmt::StructDecl { name, .. } | Stmt::Derive { name, .. } => {
+                own.insert(name.clone());
+            }
+            Stmt::TestBlock { .. } => {}
+            other => {
+                let mut bound = BTreeSet::new();
+                bound_in_stmt(other, &mut bound);
+                top.extend(bound);
+            }
+        }
+    }
     let mut bare: BTreeSet<String> = BTreeSet::new();
     bare.insert(String::new());
     for s in stmts {
@@ -977,7 +1066,7 @@ pub fn inline_crow_modules(stmts: &[crate::ast::Stmt]) -> Result<Vec<crate::ast:
     let mut out: Vec<Stmt> = stmts.to_vec();
     let program = Rewrite { bare: program_bare, qualified: program_qualified };
     for st in &mut out {
-        program.stmt(st, &HashSet::new());
+        program.stmt(st, &top);
     }
     for m in &modules {
         let Some(fns) = kept.get(&m.path).filter(|fns| !fns.is_empty()) else { continue };

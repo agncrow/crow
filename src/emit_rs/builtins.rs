@@ -330,7 +330,15 @@ impl Emitter {
         // not a module's row
         let kinds: Vec<crate::table::Arg> = args.iter().map(|x| crate::table::Arg::of_type(&self.tt(x))).collect();
         let providers = self.registry.providers_of(name);
-        let frame_select_widget = name == "select" && self.needs_ui && n == 2 && providers.contains(&"frame");
+        // (the lowering's rule, `is_ui_control`: a select of a frame is
+        // frame's, and a standard module's body imports no ui — magpie's
+        // `select[whole, names]` had printed the dropdown in a page)
+        let frame_select_widget = name == "select"
+            && self.needs_ui
+            && n == 2
+            && providers.contains(&"frame")
+            && !self.in_crow_fn
+            && crate::lower::is_ui_control(name, matches!(in0, Ty::Frame(_)));
         let element_in_view = self.in_view() && crate::lower::UI_ELEMENTS.contains(&name);
         if !frame_select_widget && !element_in_view && name != "mail" {
             if let Some(m) = crate::table::module_of_bare(name, &providers, &kinds) {

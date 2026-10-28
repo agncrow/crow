@@ -1,0 +1,37 @@
+--- A function handed as a value keeps the failure its answer could hold:
+--- `ap` and `relay` take a function, so one of each serves every call,
+--- typed by `h1`, whose answer can fail; `h2`'s answer could fail in an
+--- early round of inference and is plain in a later one, and replacing
+--- its answer's kind with the later round's had handed `ap` a function
+--- answering an int where one answering an int that can fail was taken —
+--- compiled, the program did not build (E0308); interpreted it ran (the
+--- fuzzer, seed 1793208597).
+use frame
+
+fn ap[f, a, b]
+    return f[a, b]
+
+fn relay[f, a, b]
+    return ap[f, a, b]
+
+fn h0[a, b]
+    return a
+
+fn h1[a, b]
+    return len[json['{"l": ["p", 1]}'].l] - b
+
+fn h2[a, b]
+    return len[group[frame.new[k = ['x', 'y', 'x', 'y'], a = [1, 2, 3, 4]], 'k', ['a', 'sum']]]
+
+fn case_a[]
+    log[relay[h1, 3, 28]]
+
+fn case_b[]
+    log[ap[h2, 1, 2]]
+    log[relay[h2, 4, 26 / 1]]
+
+fn case_c[]
+    log[ap[h0, 5, 6]]
+
+case_b[]
+case_c[]

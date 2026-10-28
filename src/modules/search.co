@@ -1,0 +1,862 @@
+--- `use magpie.search`: `search` over a log's files, in Crow —
+--- BM25 as Lucene scores it, over the whole log as one corpus, with the
+--- query forms Lucene has: a word, a phrase (a word with a space: the
+--- tokens in order), a prefix (`kit*`), a fuzzy word (`kitchn~`, within
+--- two edits; `~1` within one); the stemmer where the log declares it,
+--- and a snippet around the first hit where one is asked. An indexed
+--- group answers from its dictionary and postings, skipping the blocks
+--- whose bound cannot reach the k-th score; a group with no index is read
+--- and tokenised. The counts are the same either way, so the ranking is.
+--- The kernel's answer row for row (docs/magpie-in-crow.md)
+use sys
+use bits
+use frame
+use math
+use magpie.file
+use magpie.bloom
+use magpie.postings
+use magpie.stem
+
+--- a term of a query: its form (1 a word, 2 a phrase, 3 a prefix, 4 a
+--- fuzzy word), its word (a word's, a prefix's, a fuzzy word's), its
+--- parts (a phrase's tokens) and its edits (a fuzzy word's)
+struct Term [form, word, parts, edits]
+
+--- what a document tells of the query: its length, each term's frequency
+--- in it, whether a constant-scored term (a prefix, a fuzzy word)
+--- matches, which atoms it holds, and whether it is a hit at all
+struct Hit [size, tf, matched, holds, any]
+
+--- what one group tells before any row is read: its documents and words,
+--- each atom's document frequency in it, its parsed index where it has
+--- one (`indexed`), and the documents it hit where it was scanned
+struct Counts [docs, words, df, indexed, ix, rows, hits]
+
+--- a file's part in a search: its path, whether it is the tail's pending
+--- rows (read whole, `rows`; a file is read again by its path), the
+--- column's place, the groups' counts
+struct Part [path, held, rows, column, groups]
+
+--- a scored row: the score, the position, the file, the group, the row
+struct Scored [score, pos, file, group, row]
+
+--- a term's postings in a group, with the bound of each block
+struct Termed [blocks, bound]
+
+--- whether two terms are one
+fn _same_term[a, b]
+    return a.form eq b.form and a.word eq b.word and a.parts eq b.parts and a.edits eq b.edits
+
+--- the edits a fuzzy word asks (`~` 2, `~1` 1, at most 2): the digits as
+--- Rust reads a count, anything else 2
+fn _edits_of[given]
+    s = given
+    if len[s] eq 0
+        return 2
+    if starts[s, '+']
+        s = slice[s, 1, len[s]]
+    if len[s] eq 0
+        return 2
+    for c in split[s, '']
+        if c not in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+            return 2
+    n = int[s]
+    if not n.ok or n gt 2
+        return 2
+    return n
+
+--- `terms_of[words, stems]`: the words asked, read as terms: each word's
+--- tokens, a word with a space a phrase, `x*` a prefix, `x~` or `x~1`
+--- fuzzy; a term asked twice counts once; the stemmer applied to words
+--- and phrases where the log stems
+fn terms_of[words, stems]
+    out = []
+    nothing = slice[['x'], 0, 0]
+    for given in words
+        w = trim[given]
+        if len[w] gt 0
+            term = Term[0, '', nothing, 0]
+            if ends[w, '*']
+                toks = terms[slice[w, 0, len[w] - 1]]
+                if len[toks] gt 0
+                    term = Term[3, join[toks, ''], nothing, 0]
+            else
+                if '~' in w
+                    pieces = split[w, '~']
+                    base = join[slice[pieces, 0, len[pieces] - 1], '~']
+                    toks = terms[base]
+                    if len[toks] gt 0
+                        term = Term[4, join[toks, ''], nothing, _edits_of[pieces[len[pieces] - 1]]]
+                else
+                    toks = slice[['x'], 0, 0]
+                    for t in terms[w]
+                        if stems
+                            toks = push[toks, stem[t]]
+                        else
+                            toks = push[toks, t]
+                    if len[toks] eq 1
+                        term = Term[1, toks[0], nothing, 0]
+                    if len[toks] gt 1
+                        term = Term[2, '', toks, 0]
+            if term.form gt 0
+                seen = false
+                for t in out
+                    if _same_term[t, term]
+                        seen = true
+                if not seen
+                    out = push[out, term]
+    return out
+
+--- the tokens of the query's words and phrases, each once: what a
+--- document frequency is counted for, and an idf read from
+fn _atoms_of[query]
+    out = slice[['x'], 0, 0]
+    for t in query
+        if t.form eq 1 and t.word not in out
+            out = push[out, t.word]
+        if t.form eq 2
+            for w in t.parts
+                if w not in out
+                    out = push[out, w]
+    return out
+
+--- BM25's term frequency, normalised by the document's length
+fn _tf_norm[tf, dl, avgdl]
+    return tf / (tf + 1.2 * (1.0 - 0.75 + 0.75 * dl / avgdl))
+
+--- the phrase's occurrences in a document, from each token's positions
+--- in order
+fn _phrase_count[positions]
+    count = 0
+    for p in positions[0]
+        every = true
+        for i in range[1, len[positions]]
+            if every and (p + i) not in positions[i]
+                every = false
+        if every
+            count = count + 1
+    return count
+
+--- a document's hits, read as its tokens with positions
+fn _hits_of_text[doc, query, atoms, stems]
+    toks = terms[doc]
+    n = len[toks]
+    at = map[]
+    for p in range[n]
+        t = toks[p]
+        if stems
+            t = stem[t]
+        if t in at
+            at[t] = push[at[t], p]
+        else
+            one = []
+            one = push[one, p]
+            at = set[at, t, one]
+    holds = slice[[true], 0, 0]
+    any_hit = false
+    for a in atoms
+        h = a in at
+        holds = push[holds, h]
+        if h
+            any_hit = true
+    tf = []
+    matched = slice[[true], 0, 0]
+    for term in query
+        f = 0
+        m = false
+        if term.form eq 1 and term.word in at
+            f = len[at[term.word]]
+        if term.form eq 2
+            every = true
+            for w in term.parts
+                if w not in at
+                    every = false
+            if every
+                lists = []
+                for w in term.parts
+                    lists = push[lists, at[w]]
+                f = _phrase_count[lists]
+        if term.form eq 3
+            for k in keys[at]
+                if starts[k, term.word]
+                    m = true
+        if term.form eq 4
+            wn = len[split[term.word, '']]
+            for k in keys[at]
+                gap = len[split[k, '']] - wn
+                if gap lt 0
+                    gap = 0 - gap
+                if not m and gap lte term.edits and levenshtein[term.word, k, term.edits] lte term.edits
+                    m = true
+        tf = push[tf, f]
+        matched = push[matched, m]
+        if f gt 0 or m
+            any_hit = true
+    return Hit[n, tf, matched, holds, any_hit]
+
+--- the words a token filter is asked for: the query's words and phrases'
+fn _filter_words[query]
+    out = slice[['x'], 0, 0]
+    for t in query
+        if t.form eq 1
+            out = push[out, t.word]
+        if t.form eq 2
+            for w in t.parts
+                out = push[out, w]
+    return out
+
+--- whether every term is a word or a phrase
+fn _simple[query]
+    for t in query
+        if t.form gt 2
+            return false
+    return true
+
+--- the place of a column in a file, -1 for none
+fn _column_at[r, name]
+    for c in range[len[r.footer.columns]]
+        if r.footer.columns[c].name eq name
+            return c
+    return -1
+
+--- a file's part: per group the counts, the index or the hits
+--- a group with no index, scanned: each present document tokenised, its
+--- counts, the atoms' document frequencies, and the rows it hit
+fn _scanned[col, query, atoms, stems, no_df, empty_ix]
+    n = len[col]
+    present = present_of[col, 0, n]
+    cell_bytes = text_bytes_of[col, 0, n]
+    cuts = text_ends_of[col, 0, n]
+    docs = 0
+    total = 0
+    df = no_df
+    rows = []
+    hits = []
+    start = 0
+    for row in range[n]
+        stop = cuts[row]
+        held = len[present] eq 0 or bitand[byte[present, shift[row, -3]], shift[1, bitand[row, 7]]] ne 0
+        if held
+            h = _hits_of_text[text[slice[cell_bytes, start, stop], ''], query, atoms, stems]
+            docs = docs + 1
+            total = total + h.size
+            if h.any
+                for i in range[len[atoms]]
+                    if h.holds[i]
+                        df[i] = df[i] + 1
+                some = false
+                for i in range[len[query]]
+                    if h.tf[i] gt 0 or h.matched[i]
+                        some = true
+                if some
+                    rows = push[rows, row]
+                    hits = push[hits, h]
+        start = stop
+    return Counts[docs, total, df, false, empty_ix, rows, hits]
+
+--- the empty index: no lengths, no terms (what a group with no index holds)
+fn _empty_index[]
+    return parsed[concat[pack[0, 4, little = true], push[push[bytes[0], 0], 0]]]
+
+--- whether a path names the tail's pending rows (`<dir>/.pending@first-last`)
+fn _pending_path[p]
+    return '/.pending' in p
+
+fn _part_of[path, column, query, atoms, stems]
+    empty_ix = _empty_index[]
+    if not empty_ix.ok
+        return error[empty_ix.reason, 'magpie']
+    no_df = []
+    for a in atoms
+        no_df = push[no_df, 0]
+    if _pending_path[path]
+        --- (the tail's pending rows, read whole and scanned as one group)
+        rows_of = batch_read[path, slice[['x'], 0, 0]]
+        if not rows_of.ok
+            return error[rows_of.reason, 'magpie']
+        if column not in rows_of.columns
+            return error['batch: \'`path`\' holds no column \'`column`\'', 'magpie']
+        if cell_kind[rows_of.`column`] ne 'text'
+            return error['batch: column \'`column`\' holds no text to search', 'magpie']
+        one = []
+        one = push[one, _scanned[rows_of.`column`, query, atoms, stems, no_df, empty_ix]]
+        return Part[path, true, rows_of, 0, one]
+    r = opened[path]
+    if not r.ok
+        return error[r.reason, 'magpie']
+    c = _column_at[r, column]
+    if c lt 0
+        return error['batch: \'`path`\' holds no column \'`column`\'', 'magpie']
+    if r.footer.columns[c].cells ne 'text'
+        return error['batch: column \'`column`\' holds no text to search', 'magpie']
+    ents = entries[r, c]
+    if not ents.ok
+        return error[ents.reason, 'magpie']
+    simple = _simple[query]
+    words = _filter_words[query]
+    groups = []
+    for g in range[len[ents]]
+        ent = ents[g]
+        no_rows = []
+        no_hits = []
+        if ent.indexed
+            admitted = true
+            if simple
+                admitted = false
+                bf = token_filter[r, ent]
+                if not bf.ok
+                    return error[bf.reason, 'magpie']
+                for w in words
+                    if not admitted and admits[bf, bytes[w]]
+                        admitted = true
+            if not admitted or ent.docs eq 0
+                groups = push[groups, Counts[ent.docs, ent.words, no_df, false, empty_ix, no_rows, no_hits]]
+            else
+                blob = index_bytes[r, ent]
+                if not blob.ok
+                    return error[blob.reason, 'magpie']
+                ix = parsed[blob]
+                if not ix.ok
+                    return error['batch: \'`path`\': `ix.reason`', 'magpie']
+                df = []
+                for a in atoms
+                    t = term_of[ix, a]
+                    if t lt 0
+                        df = push[df, 0]
+                    else
+                        df = push[df, ix.dfs[t]]
+                groups = push[groups, Counts[ent.docs, ent.words, df, true, ix, no_rows, no_hits]]
+        else
+            only = []
+            only = push[only, c]
+            frame_g = group_of[r, g, only]
+            if not frame_g.ok
+                return error[frame_g.reason, 'magpie']
+            groups = push[groups, _scanned[frame_g.`column`, query, atoms, stems, no_df, empty_ix]]
+    return Part[path, false, frame.new[], c, groups]
+
+--- whether a scored row is kept over another: the greater score, then
+--- the earlier position, then the later file, group and row — the
+--- kernel's heap keeps by this order
+fn _kept_over[a, b]
+    if a.score ne b.score
+        return a.score gt b.score
+    if a.pos ne b.pos
+        return a.pos lt b.pos
+    if a.file ne b.file
+        return a.file gt b.file
+    if a.group ne b.group
+        return a.group gt b.group
+    return a.row gt b.row
+
+--- whether a scored row comes before another in the answer: the greater
+--- score, then the earlier position, file, group and row
+fn _ranks_before[a, b]
+    if a.score ne b.score
+        return a.score gt b.score
+    if a.pos ne b.pos
+        return a.pos lt b.pos
+    if a.file ne b.file
+        return a.file lt b.file
+    if a.group ne b.group
+        return a.group lt b.group
+    return a.row lt b.row
+
+--- the place of the least row kept
+fn _least_at[kept]
+    at = 0
+    for i in range[1, len[kept]]
+        if _kept_over[kept[at], kept[i]]
+            at = i
+    return at
+
+--- the k best with a row offered
+fn _offered[kept, s, k]
+    if k eq 0
+        return kept
+    if len[kept] lt k
+        return push[kept, s]
+    at = _least_at[kept]
+    if _kept_over[s, kept[at]]
+        kept[at] = s
+    return kept
+
+--- the score a row must beat once k are kept (0 before)
+fn _threshold[kept, k]
+    if len[kept] lt k
+        return 0.0
+    return kept[_least_at[kept]].score
+
+--- whether k rows are kept, so a bound can skip
+fn _full[kept, k]
+    return k gt 0 and len[kept] gte k
+
+--- the positions of a group's rows (none where the file holds none)
+fn _positions_of[r, g]
+    pc = _column_at[r, '_pos']
+    if pc lt 0
+        return []
+    only = []
+    only = push[only, pc]
+    f = group_of[r, g, only]
+    if not f.ok
+        return error[f.reason, 'magpie']
+    return ints_of[f._pos, 0, len[f]]
+
+--- the positions of a part's group: the pending rows' own, or a file's
+--- group's, read again by its path
+fn _part_positions[part, g]
+    if part.held
+        if '_pos' not in part.rows.columns
+            return []
+        return ints_of[part.rows._pos, 0, len[part.rows]]
+    r = opened[part.path]
+    if not r.ok
+        return error[r.reason, 'magpie']
+    return _positions_of[r, g]
+
+--- one row of a part, with every column: the pending rows', or a file's
+--- group's, read again by its path
+fn _row_of[part, g, row]
+    if part.held
+        return frame.head[frame.tail[part.rows, len[part.rows] - row], 1]
+    r = opened[part.path]
+    if not r.ok
+        return error[r.reason, 'magpie']
+    every = wanted[r, slice[['x'], 0, 0]]
+    if not every.ok
+        return error[every.reason, 'magpie']
+    whole_g = group_of[r, g, every]
+    if not whole_g.ok
+        return error[whole_g.reason, 'magpie']
+    return frame.head[frame.tail[whole_g, len[whole_g] - row], 1]
+
+--- a row's position: its own, or its place in the group
+fn _pos_at[positions, row]
+    if row lt len[positions]
+        return positions[row]
+    return row
+
+--- a block of a term's postings in a group, with its bound: its largest
+--- frequency, its shortest document, and its rows with their frequencies
+struct Run [max_tf, min_len, rows, tfs]
+
+--- a word's postings in one index, block by block
+fn _word_runs[ix, word]
+    out = []
+    t = term_of[ix, word]
+    if t lt 0
+        return out
+    blocks = blocks_of[ix, t]
+    if not blocks.ok
+        return error[blocks.reason, 'magpie']
+    for b in blocks
+        rows = []
+        tfs = []
+        for p in b.posts
+            rows = push[rows, p.row]
+            tfs = push[tfs, p.tf]
+        out = push[out, Run[b.max_tf, b.min_len, rows, tfs]]
+    return out
+
+--- the rows of the postings of several terms of one index, each once, in
+--- order, each of frequency 1, as one block: a prefix's or a fuzzy word's
+fn _constant_runs[ix, places]
+    out = []
+    rows = []
+    for t in places
+        blocks = blocks_of[ix, t]
+        if not blocks.ok
+            return error[blocks.reason, 'magpie']
+        for b in blocks
+            for p in b.posts
+                rows = push[rows, p.row]
+    rows = sort[rows]
+    kept = []
+    tfs = []
+    last = -1
+    for row in rows
+        if row ne last
+            kept = push[kept, row]
+            tfs = push[tfs, 1]
+            last = row
+    if len[kept] eq 0
+        return out
+    return push[out, Run[1, 1, kept, tfs]]
+
+--- a phrase's postings in one index: the rows holding every token, each
+--- with the phrase's count, as one block
+fn _phrase_runs[ix, parts]
+    out = []
+    lists = []
+    for w in parts
+        t = term_of[ix, w]
+        if t lt 0
+            return out
+        blocks = blocks_of[ix, t]
+        if not blocks.ok
+            return error[blocks.reason, 'magpie']
+        at = map[]
+        for b in blocks
+            for p in b.posts
+                at = set[at, p.row, p.positions]
+        lists = push[lists, at]
+    rows = []
+    tfs = []
+    max_tf = 0
+    min_len = -1
+    for row in keys[lists[0]]
+        every = true
+        for m in lists
+            if row not in m
+                every = false
+        if every
+            positions = []
+            for m in lists
+                positions = push[positions, m[row]]
+            count = _phrase_count[positions]
+            if count gt 0
+                rows = push[rows, row]
+                tfs = push[tfs, count]
+                if count gt max_tf
+                    max_tf = count
+                size = ix.lengths[row]
+                if min_len lt 0 or size lt min_len
+                    min_len = size
+    if len[rows] eq 0
+        return out
+    return push[out, Run[max_tf, min_len, rows, tfs]]
+
+--- a term's blocks in one index
+fn _runs_of[ix, t]
+    if t.form eq 1
+        return _word_runs[ix, t.word]
+    if t.form eq 2
+        return _phrase_runs[ix, t.parts]
+    if t.form eq 3
+        return _constant_runs[ix, with_prefix[ix, t.word]]
+    return _constant_runs[ix, within[ix, t.word, t.edits]]
+
+--- the files' columns, a `score` and (where asked) a `snippet`, with no
+--- rows
+fn _empty_scored[paths, with_snippet]
+    if len[paths] eq 0
+        f = frame.new[]
+        f.score = floats_column[[], bytes[0]]
+        if with_snippet
+            f.snippet = text_column[bytes[0], [], bytes[0]]
+        return f
+    r = opened[paths[0]]
+    if not r.ok
+        return error[r.reason, 'magpie']
+    every = wanted[r, slice[['x'], 0, 0]]
+    if not every.ok
+        return error[every.reason, 'magpie']
+    g = empty_of[r, every]
+    g.score = floats_column[[], bytes[0]]
+    if with_snippet
+        g.snippet = text_column[bytes[0], [], bytes[0]]
+    return g
+
+--- `snippet_of[doc, query, chars, stems]`: the text around the first
+--- word of the query found in it, `chars` characters each side, at
+--- character boundaries, an ellipsis where it is cut; the start of the
+--- text where no word is found
+fn snippet_of[doc, query, chars, stems]
+    tb = bytes[doc]
+    low = bytes[lower[doc]]
+    found_at = -1
+    found_len = 0
+    for t in query
+        needle = t.word
+        if t.form eq 2
+            needle = join[t.parts, ' ']
+        nb = bytes[needle]
+        i = find[low, nb]
+        size = len[nb]
+        if i lt 0 and stems
+            sb = bytes[stem[needle]]
+            i = find[low, sb]
+            size = len[sb]
+        if i gte 0 and (found_at lt 0 or i lt found_at)
+            found_at = i
+            found_len = size
+    center = 0
+    if found_at gte 0
+        center = found_at
+    n = len[tb]
+    --- `chars` characters before the center, the text's start where fewer
+    start = 0
+    seen = 0
+    i = center
+    looking = true
+    while looking and i gt 0
+        i = i - 1
+        if i lt n and bitand[byte[tb, i], 192] ne 128
+            seen = seen + 1
+            if seen eq chars
+                start = i
+                looking = false
+    --- `chars` characters after the word found, the text's end where fewer
+    after = center + found_len
+    if after gt n
+        after = n
+    stop = n
+    seen = 0
+    i = after
+    looking = true
+    while looking and i lt n
+        if bitand[byte[tb, i], 192] ne 128
+            if seen eq chars
+                stop = i
+                looking = false
+            seen = seen + 1
+        i = i + 1
+    out = ''
+    if start gt 0
+        out = '…'
+    piece = text[slice[tb, start, stop], '']
+    out = '`out``piece`'
+    if stop lt n
+        out = '`out`…'
+    return out
+
+--- `search_rows[paths, column, words, k, stems, snippet]`: the `k` rows
+--- of the files whose text `column` best match the words — a word, a
+--- phrase (a word with a space), a prefix (`kit*`), a fuzzy word
+--- (`kitchn~`) — with the files' columns and a `score` (and a `snippet`
+--- of that many characters each side of the first hit where `snippet`
+--- is more than 0), best first, an earlier position first between equals
+fn search_rows[paths, column, words, k, stems, snippet]
+    if k lt 0
+        return error['batch: a search answers at most k rows, and k is `k`', 'magpie']
+    query = terms_of[words, stems]
+    atoms = _atoms_of[query]
+    if len[query] eq 0 or len[paths] eq 0
+        return _empty_scored[paths, snippet gt 0]
+    parts = []
+    for p in paths
+        part = _part_of[p, column, query, atoms, stems]
+        if not part.ok
+            return error[part.reason, 'magpie']
+        parts = push[parts, part]
+    --- pass one: the corpus
+    n = 0
+    total = 0
+    df = []
+    for a in atoms
+        df = push[df, 0]
+    for part in parts
+        for c in part.groups
+            n = n + c.docs
+            total = total + c.words
+            for i in range[len[atoms]]
+                df[i] = df[i] + c.df[i]
+    constant_only = true
+    for t in query
+        if t.form lt 3
+            constant_only = false
+    none_held = true
+    for d in df
+        if d ne 0
+            none_held = false
+    if n eq 0 or (none_held and not constant_only)
+        return _empty_scored[paths, snippet gt 0]
+    avgdl = float[total] / float[n]
+    idf = map[]
+    for i in range[len[atoms]]
+        d = float[df[i]]
+        idf = set[idf, atoms[i], ln[1.0 + (float[n] - d + 0.5) / (d + 0.5)]]
+    --- a word's weight is its idf, a phrase's its tokens' idfs summed, a
+    --- prefix's or a fuzzy word's the constant 1
+    weights = []
+    for t in query
+        w = 1.0
+        if t.form eq 1
+            w = idf[t.word]
+        if t.form eq 2
+            w = 0.0
+            for x in t.parts
+                w = w + idf[x]
+        weights = push[weights, w]
+    --- pass two: the scores, the k best kept, groups and blocks whose
+    --- bound cannot reach the k-th score skipped
+    kept = []
+    for fi in range[len[parts]]
+        part = parts[fi]
+        for g in range[len[part.groups]]
+            c = part.groups[g]
+            if not c.indexed and len[c.rows] gt 0
+                positions = _part_positions[part, g]
+                if not positions.ok
+                    return error[positions.reason, 'magpie']
+                for j in range[len[c.rows]]
+                    h = c.hits[j]
+                    s = 0.0
+                    for i in range[len[query]]
+                        if h.tf[i] gt 0
+                            s = s + weights[i] * _tf_norm[float[h.tf[i]], float[h.size], avgdl]
+                        else
+                            if h.matched[i]
+                                s = s + 1.0
+                    kept = _offered[kept, Scored[s, _pos_at[positions, c.rows[j]], fi, g, c.rows[j]], k]
+            if c.indexed
+                ix = c.ix
+                per_term = []
+                bounds = []
+                for i in range[len[query]]
+                    runs = _runs_of[ix, query[i]]
+                    if not runs.ok
+                        return error[runs.reason, 'magpie']
+                    bound = 0.0
+                    if query[i].form lt 3
+                        for b in runs
+                            x = weights[i] * _tf_norm[float[b.max_tf], float[b.min_len], avgdl]
+                            if x gt bound
+                                bound = x
+                    else
+                        if len[runs] gt 0
+                            bound = 1.0
+                    per_term = push[per_term, runs]
+                    bounds = push[bounds, bound]
+                group_bound = 0.0
+                for b in bounds
+                    group_bound = group_bound + b
+                threshold = _threshold[kept, k]
+                full = _full[kept, k]
+                if not (group_bound lte threshold and full)
+                    acc = map[]
+                    for i in range[len[query]]
+                        others = group_bound - bounds[i]
+                        for b in per_term[i]
+                            block_bound = 1.0
+                            if query[i].form lt 3
+                                block_bound = weights[i] * _tf_norm[float[b.max_tf], float[b.min_len], avgdl]
+                            if not (block_bound + others lte threshold and full)
+                                for j in range[len[b.rows]]
+                                    row = b.rows[j]
+                                    s = 1.0
+                                    if query[i].form lt 3
+                                        s = weights[i] * _tf_norm[float[b.tfs[j]], float[ix.lengths[row]], avgdl]
+                                    if row in acc
+                                        acc[row] = acc[row] + s
+                                    else
+                                        acc = set[acc, row, 0.0 + s]
+                    if len[acc] gt 0
+                        positions = _part_positions[part, g]
+                        if not positions.ok
+                            return error[positions.reason, 'magpie']
+                        for row in keys[acc]
+                            kept = _offered[kept, Scored[acc[row], _pos_at[positions, row], fi, g, row], k]
+    if len[kept] eq 0
+        return _empty_scored[paths, snippet gt 0]
+    --- the rows of the k best read, best first
+    ranked = []
+    for s in kept
+        placed = false
+        out = []
+        for x in ranked
+            if not placed and _ranks_before[s, x]
+                out = push[out, s]
+                placed = true
+            out = push[out, x]
+        if not placed
+            out = push[out, s]
+        ranked = out
+    rows = []
+    scores = []
+    snip_bytes = bytes[0]
+    snip_ends = []
+    for s in ranked
+        one = _row_of[parts[s.file], s.group, s.row]
+        if not one.ok
+            return error[one.reason, 'magpie']
+        rows = push[rows, one]
+        scores = push[scores, s.score]
+        if snippet gt 0
+            cell = one.`column`
+            doc = text[text_bytes_of[cell, 0, 1], '']
+            snip_bytes = concat[snip_bytes, bytes[snippet_of[doc, query, snippet, stems]]]
+            snip_ends = push[snip_ends, len[snip_bytes]]
+    answer = stack[rows]
+    answer.score = floats_column[scores, bytes[0]]
+    if snippet gt 0
+        answer.snippet = text_column[snip_bytes, snip_ends, bytes[0]]
+    return answer
+
+fn _fresh[dir]
+    if exists[dir]
+        gone = rm[dir]
+    made = mkdir[dir]
+    return dir
+
+--- whether two frames hold the same columns and cells, kind for kind
+fn _alike[a, b]
+    if a.columns ne b.columns or len[a] ne len[b]
+        log['shape: `a.columns` `len[a]` against `b.columns` `len[b]`']
+        return false
+    n = len[a]
+    for name in a.columns
+        x = a.`name`
+        y = b.`name`
+        if cell_kind[x] ne cell_kind[y]
+            log['kind of `name`: `cell_kind[x]` against `cell_kind[y]`']
+            return false
+        if not same[present_of[x, 0, n], present_of[y, 0, n]]
+            log['missing in `name`']
+            return false
+        if not _same_cells[x, y, n]
+            log['`name`: `str[x]` against `str[y]`']
+            return false
+    return true
+
+fn _same_cells[x, y, n]
+    kind = cell_kind[x]
+    if kind eq 'int'
+        return ints_of[x, 0, n] eq ints_of[y, 0, n]
+    if kind eq 'float'
+        return same[float_bytes[floats_of[x, 0, n], 8, true], float_bytes[floats_of[y, 0, n], 8, true]]
+    if kind eq 'bool'
+        return bools_of[x, 0, n] eq bools_of[y, 0, n]
+    if kind eq 'text'
+        return same[text_bytes_of[x, 0, n], text_bytes_of[y, 0, n]] and text_ends_of[x, 0, n] eq text_ends_of[y, 0, n]
+    return vectors_of[x, 0, n] eq vectors_of[y, 0, n]
+
+--- the same rows, scores and snippets as the kernel's search, over a
+--- batch (scanned) and a segment (indexed), for every query form
+test search_is_the_kernels[]
+    nothing = slice[['x'], 0, 0]
+    dir = _fresh['target/crow_search_k']
+    k = batch_declare[dir, ['id'], '']
+    notes = ['a crate of apples for the shop', 'pears for the kitchen table', 'the kitchen table holds apples and pears', 'running late to the kitchen', 'kitten on the kitchen table', 'apple pie, apple tart', 'nothing here', 'Kitchens and kitchenware']
+    ids = []
+    texts = []
+    for i in range[64]
+        ids = push[ids, i]
+        texts = push[texts, '`notes[i % 8]` `i`']
+    df = frame.new[id = ids, note = texts]
+    a = batch_write[dir, 0, 0, frame.head[df, 32], ['id'], ['note'], false]
+    b = batch_write[dir, 1, 32, frame.tail[df, 32], ['id'], nothing, false]
+    merged = batch_merge[dir, ['`dir`/000000000000.batch'], false]
+    paths = ['`dir`/000000000001.batch']
+    seg = ls[dir]
+    for f in seg
+        if ends[f, '.segment']
+            paths = push[paths, '`dir`/`f`']
+    queries = [['apples'], ['kitchen table'], ['kit*'], ['kitchn~'], ['kitchn~1'], ['apples', 'pears'], ['running'], ['zzz'], ['table', 'kit*']]
+    for q in queries
+        for kk in [1, 3, 100]
+            for sn in [0, 6]
+                for st in [false, true]
+                    mine = search_rows[paths, 'note', q, kk, st, sn]
+                    theirs = batch_search[paths, 'note', q, kk, st, sn]
+                    if not _alike[mine, theirs]
+                        log['`q` `kk` `sn` `st`']
+                    assert[_alike[mine, theirs]]
+    shown = search_rows[paths, 'note', ['kitchen table', 'apples'], 4, false, 8]
+    log[shown.id]
+    log[shown.score]
+    log[shown.snippet]
+    assert[search_rows[paths, 'note', ['apples'], -1, false, 0].reason eq batch_search[paths, 'note', ['apples'], -1, false, 0].reason]
+    assert[search_rows[paths, 'id', ['apples'], 3, false, 0].reason eq batch_search[paths, 'id', ['apples'], 3, false, 0].reason]
+    assert[_alike[search_rows[nothing, 'note', ['apples'], 3, false, 4], batch_search[nothing, 'note', ['apples'], 3, false, 4]]]

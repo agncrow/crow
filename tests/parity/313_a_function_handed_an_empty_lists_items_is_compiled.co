@@ -1,0 +1,18 @@
+--- A function compiled code calls is compiled, even where it is handed
+--- only the items of an empty list, whose kind no call says: `notes` walks
+--- the lists it is given and hands `note` their items, and the program
+--- hands it two empty lists. The compiled program had printed the call and
+--- not the function (magpie.manifest's `declare` with no notes calls
+--- `with_note`), and did not build; a parameter of no known kind is held
+--- as text, as the empty list's items are.
+fn note[held, name, said]
+    return push[held, '`name`=`said`']
+
+fn notes[names, texts]
+    held = slice[['x'], 0, 0]
+    for i in range[len[names]]
+        held = note[held, names[i], texts[i]]
+    return held
+
+log[len[notes[[], []]]]
+log[notes[[], []]]

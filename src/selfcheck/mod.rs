@@ -1606,6 +1606,13 @@ fn sandbox(dir: &Path, file: &str, config: &str) -> PathBuf {
     let _ = std::fs::write(s.join("self_data.csv"), "a,b,c\n1,x,1.5\n2,y,2.5\n3,z,3.5\n");
     let _ = std::fs::write(s.join("self_data.json"), "{\"a\": 1, \"b\": [1, 2]}\n");
     let _ = std::fs::write(s.join("self_dir").join("inside.txt"), "inside\n");
+    // (each configuration writes its files at its own moment: pinned to the
+    // run's clock, `modified[path]` answers one moment under every one —
+    // the walked, unfused, unmoved and compiled runs had all disagreed with
+    // the interpreted one)
+    for f in ["self_text.txt", "self_data.csv", "self_data.json", "self_dir/inside.txt", "self_dir"] {
+        let _ = written_at_the_clock(&s.join(f));
+    }
     s
 }
 

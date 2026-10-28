@@ -878,8 +878,12 @@ impl Emitter {
         // written in place: the value first, then the write, then the
         // fact's version (typed-values-design.md §6)
         let in_facts = self.facts_in_state && self.reactive_vars.contains_key(var);
-        // (a local read again later is copied in: a growing int is no Copy)
-        let mut val = if matches!(expr, Expr::Local(..)) && matches!(as_inferred(&self.tt(expr)), Ty::Big | Ty::Decimal | Ty::Fraction) { self.owned_expr(expr) } else { self.expr(expr) };
+        // (a local read again later is copied in: a growing int is no Copy;
+        // and a field read is copied out of its record — `m[k] = c.whole`
+        // of a loop's borrowed record had moved the field out, E0507,
+        // parity 318)
+        let copied = (matches!(expr, Expr::Local(..)) && matches!(as_inferred(&self.tt(expr)), Ty::Big | Ty::Decimal | Ty::Fraction)) || matches!(expr, Expr::Field { .. });
+        let mut val = if copied { self.owned_expr(expr) } else { self.expr(expr) };
         if in_facts {
             self.line("{");
             self.indent += 1;
@@ -966,7 +970,7 @@ impl Emitter {
                 ty = inner.as_ref().clone();
             }
         }
-        let (mut found, mut obj, mut ty) = self.path_prefix(obj, ty, &path[..path.len().saturating_sub(1)]);
+        let (found, mut obj, mut ty) = self.path_prefix(obj, ty, &path[..path.len().saturating_sub(1)]);
         match path.last() {
             Some(PathStep::Field(f)) => {
                 (obj, ty) = self.through_link(obj, &ty, f);
@@ -980,6 +984,8 @@ impl Emitter {
                         _ => None,
                     };
                     let val = match held {
+                        // (a field that can fail given a plain value: a success)
+                        Some(Ty::Result(_)) if !matches!(self.tt(given), Ty::Result(_)) => ok_of(&val),
                         Some(Ty::OptRecord(_)) if matches!(Emitter::raw(given), Expr::Const(Const::Int(0), _)) => "None".to_string(),
                         Some(Ty::OptRecord(_)) if matches!(Self::inner(&self.tt(given)), Ty::Record(_)) => format!("Some(crow_runtime::link::new({}))", val),
                         _ => val,
@@ -989,6 +995,14 @@ impl Emitter {
             }
             Some(PathStep::Index(i)) => {
                 let idx = self.expr(i);
+                // a plain value written where the items can fail is a
+                // success, as a variable that can fail takes one (`m['b'] =
+                // 5` beside `m['a'] = int[t]`: printed bare, it did not
+                // build — parity 318)
+                let val = match &ty {
+                    Ty::Map(_, item) | Ty::List(item) if matches!(item.as_ref(), Ty::Result(_)) && !matches!(self.tt(given), Ty::Result(_)) => ok_of(&val),
+                    _ => val,
+                };
                 match &ty {
                     // the value first, then a copy of the key: `m[k] = m[k] + 1`
                     // reads the key after the insert would have taken it, and
@@ -1248,14 +1262,15 @@ impl Emitter {
     /// each cell as its column's type holds it, and where the column can
     /// have missing cells, each a result — a missing one an error of reason
     /// `missing`, as an index reads it. (A loop over a column did not build
-    /// compiled.)
+    /// compiled.) The column is borrowed: a parameter walked and read again
+    /// after had been moved by the walk (parity 321).
     fn column_items(&mut self, iter_str: &str, cell: &Ty) -> (String, Ty) {
         let cell_ty = as_inferred(cell);
         let getter = Self::cell_getter(&Self::inner(&cell_ty));
         let walked = if matches!(cell_ty, Ty::Result(_)) {
-            format!("{{ let _c = {}; (0.._c.len()).map(|_i| {{ let _ok = _c.valid[_i]; let _why = if _ok {{ String::new() }} else {{ \"missing\".to_string() }}; CrowResult {{ ok: _ok, value: _c.{}(_i), reason: _why.clone(), kind: _why, trace: vec![], captured: 0.0 }} }}).collect::<Vec<_>>() }}", iter_str, getter)
+            format!("{{ let _c = &({}); (0.._c.len()).map(|_i| {{ let _ok = _c.valid[_i]; let _why = if _ok {{ String::new() }} else {{ \"missing\".to_string() }}; CrowResult {{ ok: _ok, value: _c.{}(_i), reason: _why.clone(), kind: _why, trace: vec![], captured: 0.0 }} }}).collect::<Vec<_>>() }}", iter_str, getter)
         } else {
-            format!("{{ let _c = {}; (0.._c.len()).map(|_i| _c.{}(_i)).collect::<Vec<_>>() }}", iter_str, getter)
+            format!("{{ let _c = &({}); (0.._c.len()).map(|_i| _c.{}(_i)).collect::<Vec<_>>() }}", iter_str, getter)
         };
         (walked, cell_ty)
     }
@@ -1342,4 +1357,10 @@ impl Emitter {
         }
         self.pop_scope();
     }
+}
+
+/// A plain value as a value that can fail and did not: what a place
+/// whose values can fail holds of it.
+fn ok_of(val: &str) -> String {
+    format!("CrowResult {{ ok: true, value: ({}), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", val)
 }

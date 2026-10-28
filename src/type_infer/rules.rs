@@ -338,7 +338,12 @@ impl TypeContext {
                 Ty::Unknown
             }
             // Map builtins
+            // (a map no key has been written into yet says nothing of its
+            // keys' kind: read as text, the guess had become the kind a list
+            // filled from them was first known to hold, and the int keys
+            // `set` wrote later were refused against it — parity 315)
             "keys" => match args.first().map(arg_ty).map(Self::walked) {
+                Some(Ty::Map(crate::ir::Key::Open, _)) => Ty::List(Box::new(Ty::Unknown)),
                 Some(Ty::Map(key, _)) => Ty::List(Box::new(key.ty())),
                 _ => Ty::List(Box::new(Ty::Str)),
             },
@@ -973,6 +978,15 @@ impl TypeContext {
         }
         if !any {
             return Ty::List(Box::new(Ty::Unknown));
+        }
+        // (items nothing has typed yet: a list or a tensor, as they turn
+        // out — numbers make the literal a tensor — so nothing is said of it
+        // yet. Typed a list, the guess had stuck to a parameter it was
+        // handed through a push, and the final pass, which knew the items
+        // were ints, handed the parameter a list of tensors: "the lowered
+        // program disagrees with itself", found porting Magpie's catalog)
+        if matches!(inner, Ty::Unknown) {
+            return Ty::Unknown;
         }
         // All-numeric array literals become NumArray (backed by CrowTensor).
         match inner {

@@ -9,6 +9,105 @@ history says the rest.
 
 ### Fixed
 
+- A parameter is a variable of its function: one the body assigns a
+  float (`x = x + 0.5`), or a list of ints the body gives floats, holds
+  the wider kind and every call converts what it hands; one reassigned
+  another kind (`t = t + 1` of a parsed value) is refused as a local is;
+  and a function's answer is its body's, not a guess an earlier round
+  made before its callee's copies existed — where the kinds differ, not
+  where one answer only adds a failure, which a function value handed on
+  keeps (parity 325). Each had been an internal error, the lowered
+  program disagreeing with itself (parity 324, errors j84).
+- A number handed to a parameter its body reads as text is refused as a
+  direct call is, however the number got there: walked out of a list,
+  the first rounds had handed the parameter nothing known, the body's
+  guess of text had stood against the call's number, and the lowered
+  program disagreed with itself (errors j83).
+- A parameter every reachable call hands an item of a list of nothing —
+  a function handed `[]` walking it into another — is text, as the
+  compiled program holds such an item: `'/.pending' in p` of one had
+  compiled as a list's `contains`, a field given one had been moved out
+  of a lent record, a value of no known kind handed on had not been
+  copied, and an effect whose row the item left unchosen had taken a
+  growing int unconverted (parity 323).
+- A list whose items no type says, read where every row of the name
+  takes a list of one kind — a local given `[]`, a record's field given
+  `[]` where the record was made, read by `stack` as frames or `join` as
+  text — is a list of that kind; compiled, it had been a list of text and
+  the program did not build (parity 322). A name whose rows take lists of
+  several kinds (`sort`) types nothing by it, except where the row takes a
+  tensor, whose numbers a list of nothing always was. Turned over with `not`, such a list is read as a
+  mask, so deciding on it is refused in both modes, where `!` of a list of
+  text had not built (errors j82).
+- A column a function walks with `for` and reads again after is borrowed
+  by the walk: compiled, the loop had moved the column and the read after
+  did not build (parity 321).
+- `json[…]` of a list of frames answers an array of each frame's records,
+  in both modes: compiled it had not built, interpreted the route had
+  stopped (served 25).
+
+- A local nothing wrote a kind into, handed back where the function's
+  other return answers a map of records, holds what the function
+  answers: declared a map of text compiled, the program had not built
+  (parity 319).
+- A plain value written beside values that can fail — `m['b'] = 5` after
+  `m['a'] = int[t]`, `set[m, 'c', 6]`, `xs[0] = 7` in a list of such
+  values — is a success the place goes on holding, in both modes: the
+  interpreter had refused the map ("this map holds done values"), `set`
+  had been refused as "an int beside an int", and compiled the value had
+  been printed bare; an int past 64 bits beside an int is one kind to a
+  map in the interpreter, and a record's field written into a map from a
+  loop's borrowed record is copied out of it (parity 318).
+- `map[]` is a map of nothing, of the type it is held as: the width pass
+  had converted an empty map into one of plain growing ints where the
+  map held values that can fail (E0308, parity 317), and the conversion
+  of an empty map to growing ints names the kind it reads (E0282,
+  parity 316).
+- `keys` of a map no key has been written into yet is a list of items
+  not known yet: read as text, the guess had become the kind a list
+  filled from them held, and the int keys `set` wrote later were refused
+  against it (parity 315).
+- A part's function names a column by its own loop's variable
+  (`df.`k``) whatever the entry names its variables: the entry's `k` had
+  the part's renamed apart and the name inside the backticks left as
+  the entry's, refused as a module variable (parity 314).
+- A function given its second signature only after an earlier round of
+  copies is copied too: the rounds had stopped once no function's types
+  moved, leaving it uncopied and each call of it answering nothing known,
+  so the compiled program read a field of a value that can fail and did
+  not build (parity 312; magpie's `group_bytes`, called by the manifest's
+  writer and by `file_of`).
+- A function compiled code calls is compiled even where it is handed only
+  the items of an empty list (`notes[[], []]` walking its lists into
+  `note`): the call had been printed and the function left out, so the
+  program did not build; a parameter of no known kind is held as text, as
+  the empty list's items are (parity 313).
+- `select` of a frame in a `use ui` program is frame's, compiled as it is
+  lowered: the emitter had printed the dropdown for any `select` of two
+  arguments, and inside a standard module's function a `select[whole,
+  names]` is never the control (examples/magpie did not build compiled).
+- A computed column name inside a function reads the function's own
+  variable (`df.`k`` in a loop over `k`): the scoping pass had left the
+  name inside the backticks as the program's (parity 311).
+- A failure pushed into a list whose items are not known yet is decided
+  where the function is lowered: the verifier had found a value that can
+  fail in a list of plain values in a function nothing called (parity
+  308).
+- A standard module's local named like one of its exports is the
+  function's own: the inliner had renamed it to the export across the
+  whole module (parity 309).
+- A literal of items whose kinds are not known yet is typed when they
+  are: it had been typed a list in the early rounds and a tensor in the
+  last, and disagreed with itself (parity 310).
+- A column made from its parts (`ints_column`, `floats_column`, …) keeps
+  its kind, and an empty frame's column read by name is an empty column
+  of its kind in the interpreter as compiled: both had been read as text.
+- A generated program's lockfile follows the runtime's pins: a program
+  built where the runtime's `Cargo.lock` had moved resolved its
+  dependencies afresh, and an Arrow response differed between the modes
+  (served 21).
+- The kernel's merge orders a missing key and a NaN last, tied, as a
+  frame's sort does.
 - A list held in a list, under a map's key or in a record's field grows
   where it lies: `xs[i] = push[xs[i], v]`, `m[k] = push[m[k], v]` and
   `r.items = push[r.items, v]` take the value out, push onto it and put
@@ -79,6 +178,22 @@ history says the rest.
 
 ### Added
 
+- `use magpie.exec` (`summary_of`, `asof_rows`), `use magpie.nearest`
+  (`nearest_rows`), `use magpie.search` (`search_rows`, `terms_of`,
+  `snippet_of`), and the Kafka door's bytes — `use magpie.inflate`
+  (`inflated`, `gunzipped`, `gzip_stored`, `crc32`), `use magpie.snappy`
+  (`unsnapped`, `snappy_literal`), `use magpie.records` (`message_rows`,
+  `message_set`): the executor, the nearest rows, BM25 search and the
+  record sets in Crow, held to the kernels' answers in both modes;
+  magpie's `summary`, `prior`, `search` and `nearest` and the Kafka
+  door run on them.
+- `use magpie.merge` (`merge_files`, `merge_into`, `place`,
+  `key_ranges`): the streaming merge in Crow — one row group per input
+  held, the rows decided up to the least of the inputs' last loaded rows,
+  a key's run held back until another key follows, groups and segments
+  cut where the kernel cuts them — the kernel's segments and manifest
+  byte for byte (the ninth kernel); `magpie`'s merge runs on it. And
+  `shape_of` in `use magpie.file`.
 - `use magpie.encode` (`chunk`, `unchunk`, `header`): a column chunk in
   Crow, every kind the kernel writes — ints by frame of reference or
   delta, floats at 64 and 32 bits, text plain or as a dictionary, bools,
@@ -88,6 +203,13 @@ history says the rest.
   modes (0, 0.0, false, empty text, zeros), where the interpreter had
   handed a float back as NaN and the compiled program as what was
   written.
+- `use magpie.manifest` (`listed`, `unlisted`, `note_of`, `with_note`, `with_segments`,
+  `narrow_of`, `stems_of`, `counter`, `listed_bytes`, `write_listed`,
+  `declare`, `catalog_of`, `segment_columns`, `batch_named`,
+  `segment_named`, `number_of`, `counter_of`, `key_words`): a log's
+  manifest in Crow, the kernel's file byte for byte, written beside and
+  moved over the old one (the eighth kernel); and `magic[]` in
+  `use magpie.file`.
 - `use magpie.file` (`file_of`, `rows_per_group`, `columns_of`,
   `group_bytes`, `finish`, `opened`, `entries`, `wanted`, `groups_of`,
   `group_of`, `empty_of`, `chunk_of`, `value_filter`, `token_filter`,

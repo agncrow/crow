@@ -1,0 +1,29 @@
+--- A list literal whose items nothing has typed yet is typed only once
+--- they are: a pair of a frame's cells pushed onto a list and handed to a
+--- function, the frame handed back by another function, had been typed a
+--- list of lists in the passes that met the cells before their kind, and
+--- a list of tensors (a literal of numbers) in the last — "the lowered
+--- program disagrees with itself", in both modes (found porting Magpie's
+--- catalog).
+use frame
+
+fn inside[c, segments]
+    for s in segments
+        if c[0] gte s[0] and c[0] lte s[1]
+            return true
+    return false
+
+fn cat[]
+    return frame.new[number = [1, 4], high = [3, 6]]
+
+fn run[at]
+    segs = cat[]
+    segments = []
+    for i in range[len[segs]]
+        segments = push[segments, [segs.number[i] + 0, segs.high[i] + 0]]
+    c = [at, at]
+    return inside[c, segments]
+
+log[run[5]]
+log[run[7]]
+log[run[2]]

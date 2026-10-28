@@ -153,7 +153,26 @@ impl TypeContext {
                     };
                     normalized_sig.push(normalized.clone());
                     if i < new_params.len() {
-                        new_params[i].1 = new_params[i].1.unify(&normalized);
+                        // (a kind no call of the function supports — the
+                        // body's own guess, made while the calls still handed
+                        // nothing known, `word eq 'lte'` reading the parameter
+                        // as text — gives way to what a call hands: kept, a
+                        // float walked out of a list reached a parameter of
+                        // text, and the lowered program disagreed with itself
+                        // where a direct call was refused; crow check --self,
+                        // parity 325. A kind a call did hand stays: a second
+                        // kind is a copy's, never a flip)
+                        // (a function taking a function is not copied, so
+                        // its calls record no signatures: its first call's
+                        // kind stands, and a second is refused there)
+                        let held = new_params[i].1.clone();
+                        let takes_fn = sig.params.iter().any(|(_, t)| matches!(t, Ty::Fn(..)));
+                        let called_so = self.call_signatures.get(name).is_some_and(|sigs| sigs.iter().any(|s| s.get(i).is_some_and(|t| t.compatible(&held))));
+                        // (kinds that differ once failures are looked
+                        // through: a list of text and a list of text that
+                        // can fail join, as they did)
+                        let differ = !held.compatible(&normalized) && !Self::without_failures(&held).compatible(&Self::without_failures(&normalized));
+                        new_params[i].1 = if differ && Self::type_is_concrete(&normalized) && !called_so && !takes_fn && !matches!(held, Ty::Fn(..)) { normalized.clone() } else { held.unify(&normalized) };
                     }
                 }
                 // F2: record this call's concrete signature for the
@@ -259,6 +278,17 @@ impl TypeContext {
                 _ => None,
             },
             _ => None,
+        }
+    }
+
+    /// A type with every value that can fail read as its payload, at any
+    /// depth: what kind a value is, whether or not it can fail.
+    pub(crate) fn without_failures(t: &Ty) -> Ty {
+        match t {
+            Ty::Result(inner) => Self::without_failures(inner),
+            Ty::List(inner) => Ty::List(Box::new(Self::without_failures(inner))),
+            Ty::Map(k, inner) => Ty::Map(*k, Box::new(Self::without_failures(inner))),
+            other => other.clone(),
         }
     }
 
@@ -584,8 +614,22 @@ impl TypeContext {
                         Ty::Result(inner) => inner.as_ref().clone(),
                         t => t.clone(),
                     };
+                    // (a parameter the body widens — an int given a float,
+                    // a list or map of ints given floats: `x = x + 0.5`,
+                    // `taken = taken + 1` of a list — holds the wider kind,
+                    // as a local does from its first value, and every call
+                    // converts what it hands (the lowering's call site): it
+                    // had kept the calls' kind, and the lowered program
+                    // disagreed with itself — crow check --self; parity 324)
+                    let widened = match (pty, &updated) {
+                        (Ty::Int, Ty::Float) => true,
+                        (Ty::List(a), Ty::List(b)) | (Ty::Map(_, a), Ty::Map(_, b)) => matches!((a.as_ref(), b.as_ref()), (Ty::Int, Ty::Float)),
+                        _ => false,
+                    };
                     if matches!(updated, Ty::Fn(_, _)) || (open && &updated != pty && !matches!(updated, Ty::Unknown)) {
                         new_params[i].1 = new_params[i].1.unify(&updated);
+                    } else if widened {
+                        new_params[i].1 = updated.clone();
                     }
                 }
             }

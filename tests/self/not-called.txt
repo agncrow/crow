@@ -4,19 +4,68 @@
 db.clickhouse.ch_cancel	a driver's own row, reached through use db (the db family): a stop abandoning a statement in flight calls it, which tests/query_cancel.rs holds in both modes
 db.postgres.pg_cancel	a driver's own row, reached through use db (the db family): a stop abandoning a statement in flight calls it, which tests/query_cancel.rs holds in both modes
 kafka.serve	runs until it is stopped: its loop is driven by tests/kafka.rs with the Python client in both modes, its answers by the module's own tests through _answer
-redis.serve	runs until it is stopped: its loop is driven by tests/redis_door.rs with a RESP client in both modes, its answers by the module's own tests through _answer
-magpie.door	runs until it is stopped: its loop is driven by tests/magpie_door.rs with a client in both modes, its answers by the module's own tests through _http_answer
-magpie.share	runs until it is stopped: its loop is driven by tests/magpie_share.rs with a follower in both modes, its answers by the module's own tests through _shared
 llm.act	the loop against a model: tests/llm_server.rs scripts its runs (a tool called and answered, the limits, the failures, keep, compact, skills, an MCP server's tools) in both modes, the llm family's live cases run it against the check's model, parity 274 its refusals
 llm.chat	its parameter 'm' is typed by nothing the module's tests hand it (?), or takes what no kind names
 llm.embed	its parameter 'm' is typed by nothing the module's tests hand it (?), or takes what no kind names
 llm.follow	its parameter 'm' is typed by nothing the module's tests hand it (?), or takes what no kind names
 llm.next	its parameter 's' is typed by nothing the module's tests hand it (?), or takes what no kind names
 llm.reply	its parameter 's' is typed by nothing the module's tests hand it (?), or takes what no kind names
+magpie.backup	no call of it lowers: internal error: the lowered program disagrees with itself — a bug in Crow, not in this program: fn _magpie__fixed: line 0: hands '_magpie_manifest_declare' Unit for its parameter 'keyed' (argument 2), which is List(Str) (and 2 more)
+magpie.bloom.add	its parameter 'f' is typed by nothing the module's tests hand it (Record(Bloom)), or takes what no kind names
+magpie.bloom.admits	its parameter 'f' is typed by nothing the module's tests hand it (Record(Bloom)), or takes what no kind names
+magpie.bloom.filled	its parameter 'f' is typed by nothing the module's tests hand it (Record(Bloom)), or takes what no kind names
+magpie.bloom.filter_bytes	its parameter 'f' is typed by nothing the module's tests hand it (Record(Bloom)), or takes what no kind names
+magpie.door	runs until it is stopped: its loop is driven by tests/magpie_door.rs with a client in both modes, its answers by the module's own tests through _http_answer
+magpie.encode.chunk	its parameter 'col' is typed by nothing the module's tests hand it (Column(?)), or takes what no kind names
+magpie.file.chunk_of	its parameter 'r' is typed by nothing the module's tests hand it (?), or takes what no kind names
+magpie.file.empty_of	its parameter 'r' is typed by nothing the module's tests hand it (Record(Reader)), or takes what no kind names
+magpie.file.entries	its parameter 'r' is typed by nothing the module's tests hand it (Record(Reader)), or takes what no kind names
+magpie.file.finish	its parameter 'cols' is typed by nothing the module's tests hand it (Record(Columns)), or takes what no kind names
+magpie.file.group_bytes	its parameter 'cols' is typed by nothing the module's tests hand it (Record(Columns)), or takes what no kind names
+magpie.file.group_of	its parameter 'r' is typed by nothing the module's tests hand it (Record(Reader)), or takes what no kind names
+magpie.file.groups_of	its parameter 'r' is typed by nothing the module's tests hand it (Record(Reader)), or takes what no kind names
+magpie.file.index_bytes	its parameter 'r' is typed by nothing the module's tests hand it (?), or takes what no kind names
+magpie.file.shape_of	its parameter 'names' is typed by nothing the module's tests hand it (?), or takes what no kind names
+magpie.file.token_filter	its parameter 'r' is typed by nothing the module's tests hand it (Record(Reader)), or takes what no kind names
+magpie.file.value_filter	its parameter 'r' is typed by nothing the module's tests hand it (Record(Reader)), or takes what no kind names
+magpie.file.wanted	its parameter 'r' is typed by nothing the module's tests hand it (Record(Reader)), or takes what no kind names
+magpie.manifest.counter	its parameter 'm' is typed by nothing the module's tests hand it (Record(Listed)), or takes what no kind names
+magpie.manifest.listed_bytes	its parameter 'm' is typed by nothing the module's tests hand it (Record(Listed)), or takes what no kind names
+magpie.manifest.narrow_of	its parameter 'm' is typed by nothing the module's tests hand it (Record(Listed)), or takes what no kind names
+magpie.manifest.note_of	its parameter 'm' is typed by nothing the module's tests hand it (Record(Listed)), or takes what no kind names
+magpie.manifest.stems_of	its parameter 'm' is typed by nothing the module's tests hand it (Record(Listed)), or takes what no kind names
+magpie.manifest.with_note	its parameter 'm' is typed by nothing the module's tests hand it (Record(Listed)), or takes what no kind names
+magpie.manifest.with_segments	its parameter 'm' is typed by nothing the module's tests hand it (?), or takes what no kind names
+magpie.manifest.write_listed	its parameter 'm' is typed by nothing the module's tests hand it (Record(Listed)), or takes what no kind names
+magpie.packing.put_var	its parameter 'out' is typed by nothing the module's tests hand it (?), or takes what no kind names
+magpie.packing.read_var	its parameter 'data' is typed by nothing the module's tests hand it (?), or takes what no kind names
+magpie.postings.blocks_of	its parameter 'ix' is typed by nothing the module's tests hand it (Record(Index)), or takes what no kind names
+magpie.postings.built	its parameter 'col' is typed by nothing the module's tests hand it (Column(?)), or takes what no kind names
+magpie.postings.term_of	its parameter 'ix' is typed by nothing the module's tests hand it (Record(Index)), or takes what no kind names
+magpie.postings.with_prefix	its parameter 'ix' is typed by nothing the module's tests hand it (Record(Index)), or takes what no kind names
+magpie.postings.within	its parameter 'ix' is typed by nothing the module's tests hand it (Record(Index)), or takes what no kind names
+magpie.records.message_set	no call of it lowers: line 4: in message_set: frame has no property or column 'offset' — its columns are 'a', 'b', 'f', 'on' (the frame message_set[] is handed as `df`)
+magpie.search.snippet_of	no call of it lowers: line 3: in snippet_of: an int has no field 'word'
+magpie.share	runs until it is stopped: its loop is driven by tests/magpie_share.rs with a follower in both modes, its answers by the module's own tests through _shared
 mcp.answer	a route's request: tests/mcp.rs drives a stand-in client against a Crow program serving /mcp in both modes (discovery, the list, calls, every error the protocol names)
 mcp.listen	serves over the program's own standard streams until its input ends, over a group of tools: tests/mcp.rs and tests/llm_server.rs drive a Crow client against a Crow program serving so, in both modes
+redis.serve	runs until it is stopped: its loop is driven by tests/redis_door.rs with a RESP client in both modes, its answers by the module's own tests through _answer
+sys.bloom_has_rs	no call of it lowers: line 3: 'bloom_has_rs' is a test-harness builtin — it only works inside a test block
+sys.bloom_rs	no call of it lowers: line 3: 'bloom_rs' is a test-harness builtin — it only works inside a test block
+sys.compress_rs	no call of it lowers: line 3: 'compress_rs' is a test-harness builtin — it only works inside a test block
+sys.decode_rs	no call of it lowers: line 3: 'decode_rs' is a test-harness builtin — it only works inside a test block
+sys.decompress_rs	no call of it lowers: line 3: 'decompress_rs' is a test-harness builtin — it only works inside a test block
+sys.encode_rs	no call of it lowers: line 4: 'encode_rs' is a test-harness builtin — it only works inside a test block
+sys.file_rs	no call of it lowers: line 4: 'file_rs' is a test-harness builtin — it only works inside a test block
+sys.index_rs	no call of it lowers: line 4: 'index_rs' is a test-harness builtin — it only works inside a test block
 sys.listen	binds a port the system picks; the listener is driven by accept in the runtime's test, the sys book block and tests/kafka.rs
+sys.pack_rs	no call of it lowers: line 3: 'pack_rs' is a test-harness builtin — it only works inside a test block
 sys.put	its parameter 'path' is typed by nothing the module's tests hand it (?), or takes what no kind names
+sys.put_var_rs	no call of it lowers: line 3: 'put_var_rs' is a test-harness builtin — it only works inside a test block
+sys.read_var_rs	no call of it lowers: line 3: 'read_var_rs' is a test-harness builtin — it only works inside a test block
+sys.stem_rs	no call of it lowers: line 3: 'stem_rs' is a test-harness builtin — it only works inside a test block
+sys.stream_rs	no call of it lowers: line 3: 'stream_rs' is a test-harness builtin — it only works inside a test block
+sys.unpack_rs	no call of it lowers: line 3: 'unpack_rs' is a test-harness builtin — it only works inside a test block
 sys.upgrade	its parameter 'url' is typed by nothing the module's tests hand it (?), or takes what no kind names
 web.ws.close	its parameter 's' is typed by nothing the module's tests hand it (?), or takes what no kind names
 web.ws.socket	its parameter 'url' is typed by nothing the module's tests hand it (?), or takes what no kind names

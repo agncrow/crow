@@ -2200,10 +2200,19 @@ fn to_type(e: Expr, want: &Ty) -> Expr {
         let ty = inner.ty().payload().clone();
         return Expr::Convert { how, expr: Box::new(inner), ty };
     }
-    // an empty literal is of the type it is held as
+    // an empty literal is of the type it is held as — `map[]` too, a call
+    // of the row that makes a map from nothing (a row taking nothing and
+    // answering a map makes an empty one): converted, a map of values
+    // that can fail had become one of plain growing ints, and the compiled
+    // program declared the plain kind (parity 317)
     match e {
         Expr::ListLit(items, Ty::List(_)) if items.is_empty() && matches!(want.payload(), Ty::List(_)) => return Expr::ListLit(items, want.payload().clone()),
         Expr::MapLit(pairs, Ty::Map(..)) if pairs.is_empty() && matches!(want.payload(), Ty::Map(..)) => return Expr::MapLit(pairs, want.payload().clone()),
+        Expr::Call { target: crate::ir::Target::Row(row), args, propagates, .. }
+            if args.is_empty() && row.params.is_empty() && matches!(row.ret, crate::table::Kind::MapOf) && matches!(want.payload(), Ty::Map(..)) =>
+        {
+            return Expr::Call { target: crate::ir::Target::Row(row), args, ty: want.payload().clone(), propagates };
+        }
         _ => {}
     }
     let have = e.ty();
@@ -2627,9 +2636,14 @@ impl<'a> Retype<'a> {
                     }
                     return;
                 }
-                // an effect takes a big int as its row's parameter does; `log`
-                // shows any value
+                // an effect takes a big int as its row's parameter does; one
+                // whose row was not chosen (an argument of no known kind) as
+                // the rows of its name do — `log` shows any value, `file`'s
+                // region takes 64 bits (a growing offset had reached it
+                // unconverted, cast as no int can be: crow check --self)
                 let kinds = row.and_then(|r| crate::table::kinds_of(r.params, args.len()));
+                let effect = name.rsplit('.').next().unwrap_or(name.as_str()).to_string();
+                let shows = name == "log" || crate::table::rows_named(&effect).any(|r| r.params.first().is_some_and(|k| k.takes_big() == crate::table::TakesBig::AsIs));
                 let name = row.map(|r| r.name).unwrap_or("log");
                 for (i, a) in args.iter_mut().enumerate() {
                     if !has_big(&a.ty()) {
@@ -2637,7 +2651,8 @@ impl<'a> Retype<'a> {
                     }
                     let takes = match &kinds {
                         Some(k) => k.get(i).map(|k| k.takes_big()).unwrap_or(crate::table::TakesBig::Refused),
-                        None => crate::table::TakesBig::AsIs,
+                        None if shows => crate::table::TakesBig::AsIs,
+                        None => crate::table::TakesBig::Refused,
                     };
                     *a = handed(take(a), takes, crate::ir::Who::Row(name));
                 }

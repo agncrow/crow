@@ -101,6 +101,34 @@ impl Runtime {
     }
 }
 
+/// Each package a lockfile pins, with its versions (one package can be
+/// pinned at several).
+fn lock_pins(text: &str) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
+    let mut pins: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> = Default::default();
+    let mut name: Option<String> = None;
+    for line in text.lines() {
+        let line = line.trim();
+        if line == "[[package]]" {
+            name = None;
+        } else if let Some(n) = line.strip_prefix("name = ") {
+            name = Some(n.trim_matches('"').to_string());
+        } else if let Some(v) = line.strip_prefix("version = ")
+            && let Some(n) = name.take()
+        {
+            pins.entry(n).or_default().insert(v.trim_matches('"').to_string());
+        }
+    }
+    pins
+}
+
+/// Whether a generated program's lockfile pins a package the runtime's
+/// lockfile pins at another version (a package only one of them names —
+/// the program's own, one the program does not use — is no difference).
+pub fn pins_differ(held: &str, runtime: &str) -> bool {
+    let (held, runtime) = (lock_pins(held), lock_pins(runtime));
+    held.iter().any(|(name, versions)| runtime.get(name).is_some_and(|want| want != versions))
+}
+
 fn holds_runtime(p: &Path) -> bool {
     p.join("crow_runtime").join("Cargo.toml").is_file()
 }
@@ -753,6 +781,18 @@ fn replace(new: &Path, line: &Path, name: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+
+    /// A generated program's lockfile follows the runtime's where a pin
+    /// differs, and only there (served 21: Arrow 60.1.0 against 60.0.0)
+    #[test]
+    fn a_program_lockfile_follows_the_runtimes_pins() {
+        let runtime = "[[package]]\nname = \"arrow-ipc\"\nversion = \"60.0.0\"\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.200\"\n";
+        let drifted = "[[package]]\nname = \"arrow-ipc\"\nversion = \"60.1.0\"\n\n[[package]]\nname = \"f\"\nversion = \"0.1.0\"\n";
+        let same = "[[package]]\nname = \"arrow-ipc\"\nversion = \"60.0.0\"\n\n[[package]]\nname = \"f\"\nversion = \"0.1.0\"\n";
+        assert!(pins_differ(drifted, runtime));
+        assert!(!pins_differ(same, runtime));
+    }
+
     use super::*;
 
     const MANIFEST: &str = r#"

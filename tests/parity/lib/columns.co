@@ -1,0 +1,14 @@
+--- module: a column named by a loop's variable, read and written
+--- (imported by 314_a_parts_computed_column_name_reads_its_own_variable)
+use frame
+
+fn total_of[df, names]
+    total = 0
+    for k in names
+        total = total + len[df.`k`]
+    return total
+
+fn doubled[df, names]
+    for k in names
+        df.`k` = df.`k` * 2
+    return df
