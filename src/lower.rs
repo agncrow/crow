@@ -1266,6 +1266,12 @@ impl Lowerer {
         // whether some row takes this many positions at all: none does,
         // and the count is the refusal, whatever the names
         let mut counted = false;
+        // an option given by position and by name in one row: another row
+        // of the name may take the call (`ieee[bytes, at, width = 4]` is
+        // the reader's row, whose second position is `at`, not the writer's,
+        // whose second is `width`); the conflict is the refusal only where
+        // no row takes it
+        let mut conflict: Option<String> = None;
         'rows: for row in rows {
             let all = row.params.len();
             let fixed = all - row.options.len();
@@ -1298,7 +1304,10 @@ impl Lowerer {
             for (n, v) in &named {
                 let Some(i) = row.options.iter().position(|(o, _)| o == n) else { continue 'rows };
                 if slots[i].is_some() {
-                    return Err(self.err(format!("argument '{}' given more than once in call to '{}'", n, name)));
+                    if conflict.is_none() {
+                        conflict = Some(self.err(format!("argument '{}' given more than once in call to '{}'", n, name)));
+                    }
+                    continue 'rows;
                 }
                 slots[i] = Some(v.clone());
             }
@@ -1322,6 +1331,9 @@ impl Lowerer {
         }
         if let Some((_, row, resolved)) = best {
             return Ok((Some(row), resolved));
+        }
+        if let Some(e) = conflict {
+            return Err(e);
         }
         if counted && named.is_empty() {
             return Ok((None, positional));

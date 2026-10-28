@@ -7,6 +7,51 @@ history says the rest.
 
 ## Unreleased
 
+### Fixed
+
+- A nested literal of numbers holding an int past 2^53 is refused as the
+  rule says (a matrix holds its numbers as floats; a list of ints is built
+  with push[…]), in both modes: the row with the big int had been typed a
+  list of ints by the flat rule and the other rows tensors, and the
+  verifier found "a list of List(Int) holds an item of type Tensor" (errors
+  j81).
+- A test block reading a top-level value the declarations leave out — a
+  value a call made — is refused at the lowering, saying what a test sees
+  and to make the value inside the test; the interpreter had stopped as
+  the test ran on a bare "undefined variable" (checker::left_out_of,
+  carried on the type context).
+- An option given by position and by name in one row no longer refuses
+  the call where another row of the name takes it: `ieee[bytes, at, width
+  = 4]` is the reader's row, whose second position is `at`, where the
+  writer's second is `width`; the conflict is the refusal only where no
+  row takes the call.
+- The width pass bounds a right shift by its least shift: `shift[v, -16]`
+  of a 32-bit int is 16 bits, not 32, so a hash's multiply of it stays in
+  64 bits (it had gone to the growing form, and a codec written in Crow
+  ran its hash on big ints).
+- A bytes parameter a function only reads is lent (`&Bytes`, read where
+  the caller holds it), as a list's, a map's or a text's is: it had been
+  passed by value, so a hash of four bytes called once per byte of a 50 MB
+  input cloned the input at every call.
+- A row of any module that takes its collection whole is written where it
+  lies, in both modes: `Row::takes_in_place` is the one rule the lowering's
+  split, the walker, the prepared form and the emitter read (each had asked
+  for a core row with an owned first kind), and the emitter asks the taken
+  path for a module row's call as for a core row's — sys's bytes rows had
+  copied the buffer at every write, and a codec written in Crow was
+  quadratic.
+
+### Added
+
+- Bytes written in place, on the sys layer (docs/magpie-in-crow.md, the
+  plan to rewrite Magpie's kernels in Crow): `bytes[n]` (zero bytes to
+  write into), `set[bytes, i, v]`, `push[bytes, v]`, and `concat[a, b]`
+  appending where `a` lies — each in place where nothing else holds the
+  bytes, in both modes, through the take bridges and the emitter's taken
+  path the tensors and texts already use; the lowering's split of a
+  self-reading write (`taken_in_place`) applies to any module's in-place
+  row now, not the core's alone.
+
 ### Breaking
 
 - One value for several names is refused before the program runs, in

@@ -736,9 +736,7 @@ impl Comp {
                 // walker's own rule (a row whose first parameter it owns)
                 if moves_first(var, expr)
                     && let Expr::Call { target: Target::Row(row), args, propagates, .. } = expr
-                    && row.module.is_empty()
-                    && row.props.contains(&crate::table::Prop::InPlace)
-                    && row.params.first().is_some_and(|k| k.owned())
+                    && row.takes_in_place()
                     && let Some(d) = self.resolve(var)
                 {
                     let mut rest = Vec::with_capacity(args.len().saturating_sub(1));

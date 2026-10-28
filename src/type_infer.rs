@@ -482,6 +482,11 @@ pub struct TypeContext {
     /// Names declared with `derive` — values computed from facts, read by
     /// name, never assigned (derive-design.md)
     pub derives: std::collections::BTreeSet<String>,
+    /// The program's top-level values a test block is lowered without
+    /// (checker::declarations keeps the literal ones, the connections and
+    /// the functions): a test reading one is refused by name, with what a
+    /// test sees, where the interpreter had stopped on "undefined variable".
+    pub left_out: std::collections::BTreeSet<String>,
     /// The facts: every top-level assignment. A view or handler assigning
     /// one a float makes it a float for its whole scope, the program
     pub facts: std::collections::BTreeSet<String>,
@@ -606,6 +611,7 @@ impl TypeContext {
             is_ui: false,
             view_handlers: std::collections::BTreeSet::new(),
             derives: std::collections::BTreeSet::new(),
+            left_out: std::collections::BTreeSet::new(),
             facts: std::collections::BTreeSet::new(),
             bare_modules: std::collections::BTreeSet::new(),
             module_aliases: BTreeMap::new(),

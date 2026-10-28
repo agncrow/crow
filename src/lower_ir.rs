@@ -3360,12 +3360,12 @@ impl<'a> Lowerer<'a> {
         // grows where it lies
         if let Expr::Call { target: target @ (Target::Runtime(_) | Target::Row(_)), args, ty: _, propagates } = &expr {
             let own = matches!(args.first(), Some(Expr::Local(v, _)) if v == name);
-            let path = match target {
-                Target::Row(row) if row.module.is_empty() => row.name,
-                Target::Runtime(path) => path.as_str(),
-                _ => "",
+            let in_place = match target {
+                Target::Row(row) => row.takes_in_place() || (row.module.is_empty() && in_place_builtin(row.name)),
+                Target::Runtime(path) => in_place_builtin(path),
+                _ => false,
             };
-            if own && in_place_builtin(path) {
+            if own && in_place {
                 let mut out = vec![args[0].clone()];
                 let mut failing = Vec::new();
                 for a in &args[1..] {
@@ -3632,7 +3632,11 @@ impl<'a> Lowerer<'a> {
         let takes_var = matches!(args.first(), Some(Expr::Local(n, _) | Expr::Move(n, _)) if n == var);
         // (a tensor too: `d[i][j] = d[i - 1][j] + 1.0` reads `d` in the
         // value, which had made every write a copy of the whole matrix)
-        if !(row.module.is_empty() && row.props.contains(&crate::table::Prop::InPlace) && row.params.first().is_some_and(|k| k.owned() || *k == crate::table::Kind::Tensor) && takes_var && args[1..].iter().any(reads_var)) {
+        // (any module's row: a bytes buffer's `set` and `push` are sys's,
+        // and `b = set[b, i, byte[b, j]]` reads `b` in the value as a
+        // tensor's write does)
+        let taken_kind = |k: &crate::table::Kind| k.taken_whole() || matches!(k, crate::table::Kind::Tensor);
+        if !(row.props.contains(&crate::table::Prop::InPlace) && row.params.first().is_some_and(taken_kind) && takes_var && args[1..].iter().any(reads_var)) {
             return vec![stmt];
         }
         let mut out = Vec::with_capacity(args.len() + 1);
@@ -4327,7 +4331,11 @@ impl<'a> Lowerer<'a> {
                 let past = |e: &Expr| matches!(e, Expr::Const(Const::Int(v), _) if v.unsigned_abs() > 1u64 << 53);
                 let ty = match &ty {
                     Ty::Tensor(e, dims) if matches!(e.as_ref(), Ty::Int) && dims.as_ref().is_none_or(|d| d.len() <= 1) && out.iter().any(past) => Ty::List(Box::new(Ty::Int)),
-                    Ty::Tensor(..) if out.iter().any(|row| matches!(row, Expr::ListLit(inner, _) if inner.iter().any(past))) => {
+                    // (whatever the outer type came out as: the row with the
+                    // big int had been typed a list of ints by the rule
+                    // above, the other rows tensors, and the verifier found
+                    // "a list of List(Int) holds an item of type Tensor")
+                    _ if out.iter().any(|row| matches!(row, Expr::ListLit(inner, _) if inner.iter().any(past))) => {
                         self.refuse("a matrix holds its numbers as floats, which hold a whole number exactly only up to 2^53 (9007199254740992) — a list of ints holds a larger one, built with push[…]".to_string());
                         ty
                     }

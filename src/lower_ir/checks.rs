@@ -585,6 +585,16 @@ impl<'a> Lowerer<'a> {
         // function sees them; and the language's own words (`retrun`)
         let plain_fn = matches!(self.at, Where::In(_)) && !self.v.reactive;
         let hidden = plain_fn || (self.at == Where::Test && self.v.attached_test);
+        // a top-level value a test cannot see is named for what it is: a
+        // test sees the program's declarations (checker::declarations),
+        // never what top-level code computes — the interpreter had stopped
+        // as the test ran on a bare "undefined variable", which sent a
+        // reader looking for a misspelling (a function's read of one has
+        // its own refusal, in the checks before this one)
+        if self.at == Where::Test && self.ctx.left_out.contains(name) {
+            self.refuse(format!("undefined variable '{}' — a test sees the program's declarations (its functions, its literal values, its connections), not what top-level code computes: make the value inside the test", name));
+            return;
+        }
         let mut seen: Vec<String> = self.scopes.iter().skip(1).flat_map(|s| s.iter().cloned()).collect();
         seen.extend(self.v.stored.iter().cloned());
         if !hidden {

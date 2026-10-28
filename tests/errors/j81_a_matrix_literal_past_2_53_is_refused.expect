@@ -1,0 +1,3 @@
+j81_a_matrix_literal_past_2_53_is_refused.co:6:1: a matrix holds its numbers as floats, which hold a whole number exactly only up to 2^53 (9007199254740992) — a list of ints holds a larger one, built with push[…]
+  6 │ cases = [[1, 2], [9223372036854775807, 0]]
+    │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

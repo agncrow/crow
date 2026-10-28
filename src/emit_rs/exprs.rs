@@ -2805,6 +2805,45 @@ impl Emitter {
         out
     }
 
+    /// A collection nothing else holds is changed where it lies
+    /// (table::taken_path, the interpreter's `take` bridges): the variable
+    /// the statement assigns, read for the last time, or another call's
+    /// answer — a text, a list's slice, a tensor's push, and the bytes a
+    /// kernel builds (docs/magpie-in-crow.md 2.1), whatever module declares
+    /// the row (a core row's call and a module row's both ask here).
+    fn taken_call(&mut self, row: &crate::table::Row, args: &[Expr], strs: &[String]) -> Option<String> {
+        let (Some(path), Some(first)) = (crate::table::taken_path(row.id), args.first()) else { return None };
+        let raw = Emitter::raw(first);
+        let taken = matches!(raw, Expr::Local(n, _) | Expr::Move(n, _) if self.move_target.as_deref() == Some(n.as_str()))
+            || self.moved_local(first)
+            || matches!(raw, Expr::Call { propagates: false, .. } | Expr::Call { target: Target::Row(_) | Target::User(_), .. } | Expr::Interp(_));
+        let held = match Self::inner(&self.tt(first)) {
+            Ty::Str => true,
+            // (a list's items are moved with it: `lines` drops its empty
+            // last piece without copying the rest)
+            Ty::List(_) => row.id == "core.slice",
+            // (a tensor's numbers are appended where they lie: `xs =
+            // push[xs, v]` at the top level had copied the tensor at
+            // every push, 400,000 pushes in 18 s)
+            Ty::Tensor(..) => row.id == "core.push_number",
+            // (a buffer a kernel builds: `b = set[b, i, v]`, `b =
+            // push[b, v]`, `b = concat[b, c]`)
+            Ty::Bytes => true,
+            _ => false,
+        };
+        if !(taken && held && row.params.len() == strs.len()) {
+            return None;
+        }
+        let line = self.line_now();
+        let mut printed = vec![strs[0].clone()];
+        printed.extend(row.params.iter().zip(strs).skip(1).map(|(k, s)| k.print(s, &line)));
+        let call = format!("{}({})", path, printed.join(", "));
+        Some(match row.fails {
+            crate::table::Fails::Stops => format!("{}.unwrap_or_else(|e| crow_stop({}, e))", call, line),
+            _ => call,
+        })
+    }
+
     fn module_row_call(&mut self, row: &crate::table::Row, args: &[Expr], arg_strs: &[String]) -> String {
         let mut strs = arg_strs.to_vec();
         for (i, a) in args.iter().enumerate() {
@@ -2815,6 +2854,9 @@ impl Emitter {
             }
         }
         self.needs_crow_runtime = true;
+        if let Some(call) = self.taken_call(row, args, &strs) {
+            return call;
+        }
         crate::table::print(row, &strs, crate::modules::STOP_LINE, None)
             .map(|code| code.replace(crate::modules::STOP_LINE, &self.line_now()))
             .unwrap_or_else(|e| format!("compile_error!({:?})", e))
@@ -2891,35 +2933,8 @@ impl Emitter {
                 };
             }
         }
-        // a text nothing else holds is changed where it lies (table::taken_path,
-        // the interpreter's `take` bridges): the variable the statement
-        // assigns, read for the last time, or another call's answer
-        if let (Some(path), Some(first)) = (crate::table::taken_path(row.id), args.first()) {
-            let raw = Emitter::raw(first);
-            let taken = matches!(raw, Expr::Local(n, _) | Expr::Move(n, _) if self.move_target.as_deref() == Some(n.as_str()))
-                || self.moved_local(first)
-                || matches!(raw, Expr::Call { propagates: false, .. } | Expr::Call { target: Target::Row(_) | Target::User(_), .. } | Expr::Interp(_));
-            let held = match Self::inner(&self.tt(first)) {
-                Ty::Str => true,
-                // (a list's items are moved with it: `lines` drops its empty
-                // last piece without copying the rest)
-                Ty::List(_) => row.id == "core.slice",
-                // (a tensor's numbers are appended where they lie: `xs =
-                // push[xs, v]` at the top level had copied the tensor at
-                // every push, 400,000 pushes in 18 s)
-                Ty::Tensor(..) => row.id == "core.push_number",
-                _ => false,
-            };
-            if taken && held && row.params.len() == strs.len() {
-                let line = self.line_now();
-                let mut printed = vec![strs[0].clone()];
-                printed.extend(row.params.iter().zip(&strs).skip(1).map(|(k, s)| k.print(s, &line)));
-                let call = format!("{}({})", path, printed.join(", "));
-                return match row.fails {
-                    crate::table::Fails::Stops => format!("{}.unwrap_or_else(|e| crow_stop({}, e))", call, line),
-                    _ => call,
-                };
-            }
+        if let Some(call) = self.taken_call(row, args, &strs) {
+            return call;
         }
         let trace = self.trace_format_expr();
         crate::table::print(row, &strs, &self.line_now(), Some(&trace)).unwrap_or_else(|e| format!("compile_error!({:?})", e))

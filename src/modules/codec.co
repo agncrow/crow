@@ -1,0 +1,232 @@
+--- `use magpie.codec`: Magpie's codec, in Crow — an LZ77 byte codec of
+--- our own, applied to a chunk's payload where it shrinks it, the Rust
+--- original's stream byte for byte (docs/magpie-in-crow.md, section 3:
+--- the first kernel ported, and the one the port is measured on). A
+--- stream is a run of tokens, each a literal run followed by a match —
+--- an offset back into what was written and a length — the last token
+--- literals alone: a token byte whose high nibble is the literal length
+--- and low nibble the match length less four (a nibble of 15 goes on in
+--- bytes of 255 and a final byte less), the literal bytes, the offset as
+--- two bytes little-endian (absent after the last token), then the match
+--- length's bytes where the nibble was 15. Matches are at least four
+--- bytes, found through a hash of four bytes into a table of the last
+--- position seen, and the encoder is greedy. The decoder is the loop
+--- every LZ decoder is, every offset and length checked against what is
+--- there, so a corrupt stream is refused with its reason and never read
+--- past its end. The tests are the module's own: `crow test
+--- src/modules/codec.co`, held to the Rust codec through its test-only
+--- rows until the kernel goes.
+use sys
+use bits
+
+--- the hash of the four bytes at `at`: the kernel's, (v times 2654435761)
+--- modulo 2^32, shifted down to 15 bits — computed in halves, so that no
+--- product passes 64 bits and the int stays narrow
+fn _hash4[data, at]
+    v = byte[data, at] + shift[byte[data, at + 1], 8] + shift[byte[data, at + 2], 16] + shift[byte[data, at + 3], 24]
+    lo = bitand[v, 65535]
+    hi = shift[v, -16]
+    mixed = bitand[shift[bitand[hi * 2654435761, 65535], 16] + lo * 2654435761, 4294967295]
+    return shift[mixed, -17]
+
+--- a length past a nibble's 15: bytes of 255 and a final byte less
+fn _put_len[out, n]
+    rest = n
+    while rest gte 255
+        out = push[out, 255]
+        rest = rest - 255
+    out = push[out, rest]
+    return out
+
+--- a nibble: at most 15
+fn _nibble[n]
+    if n gt 15
+        return 15
+    return n
+
+--- `compress[input]`: the bytes compressed. Short inputs are literals
+--- alone; a run of one byte, or of a few, shrinks to a few bytes per 255
+fn compress[data]
+    n = len[data]
+    out = bytes[0]
+    --- the last position seen for each hash, -1 for none
+    table = []
+    for i in range[32768]
+        table = push[table, -1]
+    lit_start = 0
+    i = 0
+    --- the last five bytes are never the start of a match: a match needs
+    --- four bytes, and the final token carries literals only
+    last_match_start = 0
+    if n gt 5
+        last_match_start = n - 5
+    while i lt last_match_start
+        h = _hash4[data, i]
+        cand = table[h]
+        table[h] = i
+        matched = false
+        if cand gte 0 and i - cand lte 65535
+            if byte[data, cand] eq byte[data, i] and byte[data, cand + 1] eq byte[data, i + 1] and byte[data, cand + 2] eq byte[data, i + 2] and byte[data, cand + 3] eq byte[data, i + 3]
+                matched = true
+        if matched
+            --- the match extended as far as it goes, the final five bytes
+            --- left as literals
+            limit = n - 5
+            size = 4
+            while i + size lt limit and byte[data, cand + size] eq byte[data, i + size]
+                size = size + 1
+            lits = i - lit_start
+            out = push[out, shift[_nibble[lits], 4] + _nibble[size - 4]]
+            if lits gte 15
+                out = _put_len[out, lits - 15]
+            out = concat[out, slice[data, lit_start, i]]
+            off = i - cand
+            out = push[out, bitand[off, 255]]
+            out = push[out, shift[off, -8]]
+            if size - 4 gte 15
+                out = _put_len[out, size - 4 - 15]
+            --- the bytes the match covered hashed too, so the next match
+            --- may start inside it
+            stop = i + size
+            j = i + 1
+            while j lt stop and j lt last_match_start
+                table[_hash4[data, j]] = j
+                j = j + 1
+            i = stop
+            lit_start = i
+        else
+            i = i + 1
+    --- the final token: literals, no match
+    lits = n - lit_start
+    out = push[out, shift[_nibble[lits], 4]]
+    if lits gte 15
+        out = _put_len[out, lits - 15]
+    out = concat[out, slice[data, lit_start, n]]
+    return out
+
+--- `decompress[input, raw_len]`: the bytes decompressed to exactly
+--- `raw_len` bytes; a stream that does not decode to that many, or
+--- reaches outside itself, is an error value of kind `'magpie'` saying
+--- why
+fn decompress[data, raw_len]
+    n = len[data]
+    out = bytes[0]
+    i = 0
+    going = true
+    while going
+        if i gte n
+            return error['the codec stream is cut short', 'magpie']
+        token = byte[data, i]
+        i = i + 1
+        lits = shift[token, -4]
+        if lits eq 15
+            more = 255
+            while more eq 255
+                if i gte n
+                    return error['the codec stream is cut short', 'magpie']
+                more = byte[data, i]
+                i = i + 1
+                lits = lits + more
+        lit_end = i + lits
+        if lit_end gt n
+            return error['the codec stream is cut short', 'magpie']
+        out = concat[out, slice[data, i, lit_end]]
+        i = lit_end
+        if i eq n
+            going = false
+        else
+            if i + 2 gt n
+                return error['the codec stream is cut short', 'magpie']
+            offset = byte[data, i] + shift[byte[data, i + 1], 8]
+            i = i + 2
+            written = len[out]
+            if offset eq 0 or offset gt written
+                return error['the codec stream reaches `offset` bytes back where `written` were written', 'magpie']
+            size = bitand[token, 15] + 4
+            if bitand[token, 15] eq 15
+                more = 255
+                while more eq 255
+                    if i gte n
+                        return error['the codec stream is cut short', 'magpie']
+                    more = byte[data, i]
+                    i = i + 1
+                    size = size + more
+            if written + size gt raw_len
+                return error['the codec stream decodes past the `raw_len` bytes promised', 'magpie']
+            start = written - offset
+            if offset gte size
+                out = concat[out, slice[out, start, start + size]]
+            else
+                --- an overlapping match: a repeat of the last `offset` bytes
+                k = 0
+                while k lt size
+                    out = push[out, byte[out, start + k]]
+                    k = k + 1
+    made = len[out]
+    if made ne raw_len
+        return error['the codec stream decodes to `made` bytes, and `raw_len` were promised', 'magpie']
+    return out
+
+--- a text repeated to about the bytes asked
+fn _repeated[piece, about]
+    out = bytes[0]
+    unit = bytes[piece]
+    while len[out] lt about
+        out = concat[out, unit]
+    return out
+
+--- bytes that repeat little: a linear congruence's low byte, every byte
+fn _noise[count, seed]
+    out = bytes[0]
+    x = seed
+    for i in range[count]
+        x = bitand[x * 1103515245 + 12345, 2147483647]
+        out = push[out, bitand[shift[x, -16], 255]]
+    return out
+
+--- every stream the Rust codec writes, byte for byte, and every one
+--- round-trips: nothing, a few bytes, a run of zeros, a text repeated,
+--- a run of one byte then a two-byte pattern (overlapping matches),
+--- bytes that repeat little (growing by a few per 255 literals at most),
+--- and a window's worth and more of distance
+test the_streams_are_the_rust_codecs_byte_for_byte[]
+    zeros = bytes[100000]
+    text = _repeated['the quick brown fox jumps over the lazy dog; ', 50000]
+    mixed = bytes[300]
+    for i in range[300]
+        mixed = set[mixed, i, 7]
+    for i in range[300]
+        mixed = push[mixed, i - 2 * shift[i, -1]]
+    noise = _noise[65536, 305419896]
+    far = concat[noise, slice[noise, 0, 1000]]
+    samples = [bytes[''], bytes['abc'], zeros, text, mixed, noise, far]
+    sizes = []
+    for s in samples
+        c = compress[s]
+        assert[same[c, compress_rs[s]]]
+        d = decompress[c, len[s]]
+        assert[same[d, s]]
+        e = decompress_rs[c, len[s]]
+        assert[same[e, s]]
+        sizes = push[sizes, len[c]]
+    assert[sizes[0] eq 1 and sizes[1] eq 4]
+    assert[sizes[2] lt 1000 and sizes[3] lt 2000]
+    assert[sizes[5] lte 65536 + 65536 / 200 + 16]
+
+--- a corrupt stream is refused with its reason, as the kernel refuses it
+test a_corrupt_stream_is_refused[]
+    good = compress[bytes['hello hello hello hello hello']]
+    assert[not decompress[good, 5].ok]
+    assert[not decompress[good, 100].ok]
+    assert[not decompress[slice[good, 0, len[good] - 1], 29].ok]
+    bad = set[good, 1, 255]
+    broken = decompress[bad, 29]
+    --- a literal corrupted decodes to other bytes, or is refused
+    assert[not broken.ok or len[broken] eq 29]
+    cut = bytes[2]
+    cut = set[cut, 0, 5]
+    cut = set[cut, 1, 97]
+    assert[decompress[cut, 5].reason eq 'the codec stream is cut short']
+    back = bytes[3]
+    back = set[back, 1, 9]
+    assert[decompress[back, 9].reason eq 'the codec stream reaches 9 bytes back where 0 were written']

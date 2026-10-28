@@ -160,6 +160,20 @@ pub static MODULES: &[Module] = &[
         module: Some(|| Arc::new(Named::new("redis"))),
         ..Module::plain("redis", "_redis")
     },
+    // Magpie's kernels in Crow (docs/magpie-in-crow.md), each a module
+    // under magpie, imported by the verbs: the codec first
+    Module {
+        source: Some(CODEC_SOURCE), needs: &[], registry: true, under: Some("magpie"),
+        docs: Some("Magpie's codec, in Crow: the LZ77 byte codec a chunk's payload goes through where it shrinks it, the Rust kernel's stream byte for byte — compress and decompress over the sys layer's bytes."),
+        module: Some(|| Arc::new(Named::new("magpie.codec"))),
+        ..Module::plain("magpie.codec", "_magpie_codec")
+    },
+    Module {
+        source: Some(PACKING_SOURCE), needs: &[], registry: true, under: Some("magpie"),
+        docs: Some("Bits and varints, in Crow: the two ways a number is written into a Magpie file — values at a width of bits each, little-endian, and LEB128 counts — the Rust kernel's bytes byte for byte."),
+        module: Some(|| Arc::new(Named::new("magpie.packing"))),
+        ..Module::plain("magpie.packing", "_magpie_packing")
+    },
     // tools from other programs, and a program as one: the client on
     // request, the server a function a route calls (it answers responses,
     // so crow_web comes with the import)
@@ -300,6 +314,8 @@ pub(crate) const MAGPIE_SOURCE: &str = include_str!("magpie.co");
 pub(crate) const KAFKA_SOURCE: &str = include_str!("kafka.co");
 /// The RESP door, written in Crow over Magpie and the sys layer.
 pub(crate) const REDIS_SOURCE: &str = include_str!("redis.co");
+pub(crate) const CODEC_SOURCE: &str = include_str!("codec.co");
+pub(crate) const PACKING_SOURCE: &str = include_str!("packing.co");
 /// `io.lines`, `io.csv`: readers written in Crow.
 pub(crate) const IO_SOURCE: &str = include_str!("io.co");
 /// `frame.load`, `frame.save`: written in Crow.

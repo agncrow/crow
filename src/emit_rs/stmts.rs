@@ -827,9 +827,11 @@ impl Emitter {
     fn in_place_call_on(e: &Expr, var: &str) -> bool {
         match e {
             Expr::Call { target: target @ (Target::Runtime(_) | Target::Row(_)), args, .. } => {
-                let path = match target {
-                    Target::Row(row) if row.module.is_empty() => row.name,
-                    Target::Runtime(path) => path.as_str(),
+                // (a row of any module that takes its collection whole —
+                // sys's bytes — or a core row named in place)
+                let in_place = match target {
+                    Target::Row(row) => row.takes_in_place() || (row.module.is_empty() && in_place_builtin(row.name)),
+                    Target::Runtime(path) => in_place_builtin(path),
                     _ => return false,
                 };
                 // only when the right side reads the variable once (spec:
@@ -839,7 +841,7 @@ impl Emitter {
                 for a in args.iter().skip(1) {
                     crate::ir::visit_expr(a, &mut |x| again |= matches!(x, Expr::Local(n, _) | Expr::Move(n, _) if n == var));
                 }
-                !again && in_place_builtin(path) && matches!(args.first().map(Emitter::raw), Some(Expr::Move(v, _)) | Some(Expr::Local(v, _)) if v == var)
+                !again && in_place && matches!(args.first().map(Emitter::raw), Some(Expr::Move(v, _)) | Some(Expr::Local(v, _)) if v == var)
             }
             _ => false,
         }

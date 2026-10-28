@@ -1949,6 +1949,7 @@ fn row_iv(row: &crate::table::Row, ivs: &[Iv]) -> Iv {
             _ => Iv::I64,
         },
         R::Code => Iv::new(0, 0x10FFFF),
+        R::Byte => Iv::new(0, 255),
         R::Shift => match ivs {
             [a, n] if n.hi < 100 => {
                 // a left shift multiplies by 2^n for n between its ends; a
@@ -1960,7 +1961,12 @@ fn row_iv(row: &crate::table::Row, ivs: &[Iv]) -> Iv {
                     r = r.join(Iv::new(ends.iter().copied().min().unwrap_or(0), ends.iter().copied().max().unwrap_or(0)));
                 }
                 if n.lo <= 0 {
-                    r = r.join(Iv::new(a.lo.min(if a.lo < 0 { -1 } else { 0 }), a.hi.max(0)));
+                    // the least right shift bounds the result: `shift[v,
+                    // -16]` of a 32-bit v is 16 bits, not 32 (a hash's
+                    // multiply of it had gone to the growing form, and a
+                    // codec written in Crow ran its hash on big ints)
+                    let k = (-n.hi).clamp(0, 127) as u32;
+                    r = r.join(Iv::new((a.lo >> k).min(if a.lo < 0 { -1 } else { 0 }), (a.hi >> k).max(0)));
                 }
                 r
             }

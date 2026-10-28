@@ -490,3 +490,197 @@ log[records_of[frame.new[a = [1]]].reason]
 true
 records: the frame holds no column 'offset'
 ```
+
+## Magpie's codec, in Crow
+
+Magpie's kernels are being rewritten in Crow (docs/magpie-in-crow.md),
+and the codec was the first: `use magpie.codec` brings `compress` and
+`decompress`, an LZ77 byte codec of our own over the sys layer's bytes,
+written with the bytes a kernel builds in place — `bytes[n]`, `set`,
+`push` and `concat` where the bytes lie. A stream that is cut short, or
+decodes to another count than promised, is an error value saying why.
+Until the Rust kernel goes, the test-only rows `compress_rs` and
+`decompress_rs` hold the Crow codec to it byte for byte.
+
+```crow
+use sys, magpie.codec
+
+phrase = 'the quick brown fox jumps over the lazy dog; '
+data = bytes[concat[phrase, phrase]]
+small = compress[data]
+log[len[data]]
+log[len[small]]
+back = decompress[small, len[data]]
+log[same[back, data]]
+log[decompress[small, 50].reason]
+log[decompress[slice[small, 0, 10], 90].reason]
+
+--- held to the Rust kernel, byte for byte, until the kernel goes
+test the_stream_is_the_kernels[]
+    text = bytes['hello hello hello hello']
+    assert[same[compress[text], compress_rs[text]]]
+    assert[same[decompress_rs[compress[text], 23], text]]
+```
+
+```text
+90
+57
+true
+the codec stream decodes past the 50 bytes promised
+the codec stream is cut short
+```
+
+## Bits and varints, in Crow
+
+`use magpie.packing` is the second kernel ported: values packed at a
+width of bits each, little-endian within and across bytes, and LEB128
+varints for counts — what a Magpie file writes its columns and its
+footer with. A value is a 64-bit pattern held as an int, so one at or
+past 2^63 is the negative int of the same bits. The test-only rows
+`pack_rs`, `unpack_rs`, `put_var_rs` and `read_var_rs` hold the Crow
+module to the kernel until the kernel goes.
+
+```crow
+use sys, magpie.packing
+
+codes = []
+for c in [3, 0, 7, 7, 1, 5]
+    codes = push[codes, int[c]]
+width = width_of[7]
+log[width]
+b = packed[codes, width]
+log[len[b]]
+log[hex[b]]
+log[unpacked[b, 0, 6, width]]
+counts = put_var[put_var[bytes[0], 300], 5]
+log[hex[counts]]
+log[read_var[counts, 0]]
+log[read_var[counts, 2]]
+log[unpacked[bytes[1], 0, 4, 3].reason]
+
+--- held to the kernel, byte for byte, until the kernel goes (a test
+--- sees the program's declarations, so it makes its own values)
+test the_bits_are_the_kernels[]
+    nums = []
+    for c in [3, 0, 7, 7, 1, 5]
+        nums = push[nums, int[c]]
+    packed_here = packed[nums, 3]
+    assert[same[packed_here, pack_rs[nums, 3]]]
+    assert[unpack_rs[packed_here, 6, 3] eq nums]
+    assert[same[put_var[bytes[0], 300], put_var_rs[300]]]
+    assert[read_var_rs[put_var[bytes[0], 300], 0] eq [300, 2]]
+```
+
+```text
+3
+3
+c39f02
+[3, 0, 7, 7, 1, 5]
+ac0205
+[300, 2]
+[5, 3]
+4 nums of 3 bits need 2 bytes, and 1 are there
+```
+
+## Bytes, files and columns for a kernel in Crow
+
+What a file format's writer and reader need beyond bytes written in
+place (docs/magpie-in-crow.md, section 2): numbers in bytes at either
+byte order, a float's bits in 8 or 4 bytes, the checksum gzip and Kafka
+carry; a file read by region, flushed through to the disk, linked into
+its name and moved over another; and a column read as the vectors it
+is held in and built from them, with no value per cell.
+
+```crow
+use sys, frame
+
+--- numbers written into bytes, and read back
+log[hex[pack[258, 2]]]
+log[hex[pack[258, 2, little = true]]]
+log[unpack[pack[-2, 2], 0, 2]]
+log[unpack[pack[65534, 2], 0, 2, signed = false]]
+log[hex[ieee[1.5]]]
+log[hex[ieee[1.5, width = 4, little = true]]]
+log[ieee[ieee[2.25, width = 4, little = true], 0, 4, true]]
+log[hash[bytes['123456789'], 'crc32']]
+log[len[digest[bytes['123456789'], 'crc32']]]
+
+--- a file placed the way a kernel places one: written beside its name,
+--- flushed, linked into the name, the directory flushed; read by region
+kept = store['part.bin', bytes['0123456789']]
+flushed = flush['part.bin']
+placed = link['part.bin', 'placed.bin']
+flushed = flush['.']
+log[hex[file['placed.bin', 3, 4]]]
+log[file['placed.bin', 8, 4].reason]
+log[link['part.bin', 'placed.bin'].ok]
+moved = move['part.bin', 'moved.bin']
+log[exists['part.bin']]
+log[filesize['moved.bin']]
+log[type[modified['moved.bin']]]
+
+--- a column as its parts, and from them: no value per cell
+df = frame.new[id = [3, 1, 2], name = ['Apple', 'banana', 'cherry'], price = [1.5, 2.0, 0.25], flag = [true, false, true], at = [moment[0.0], moment[1.0], moment[2.0]], e = [[1.0, 0.0], [0.0, 1.0], [0.5, 0.5]]]
+log[cell_kind[df.name]]
+log[ints_of[df.id, 1, 3]]
+log[floats_of[df.price, 0, 3]]
+log[bools_of[df.flag, 0, 3]]
+log[text[text_bytes_of[df.name, 0, 3]]]
+log[text_ends_of[df.name, 0, 3]]
+log[millis_of[df.at, 0, 3]]
+log[zones_of[df.at, 0, 3]]
+log[vector_width[df.e]]
+log[vectors_of[df.e, 2, 3]]
+log[len[present_of[df.id, 0, 3]]]
+log[missing_in[df.id, 0, 3]]
+back = frame.new[]
+back.id = ints_column[ints_of[df.id, 0, 3], bytes[0]]
+back.name = text_column[text_bytes_of[df.name, 0, 3], text_ends_of[df.name, 0, 3], bytes[0]]
+back.price = floats_column[floats_of[df.price, 0, 3], present_of[df.price, 0, 3]]
+back.at = moments_column[millis_of[df.at, 0, 3], zones_of[df.at, 0, 3], bytes[0]]
+back.e = vectors_column[2, vectors_of[df.e, 0, 3], bytes[0]]
+bits = bytes[1]
+bits = set[bits, 0, 5]
+back.flag = bools_column[bits, 3, bytes[0]]
+log[back.columns]
+log[back.flag]
+present = bytes[1]
+present = set[present, 0, 5]
+partial = ints_column[ints_of[df.id, 0, 3], present]
+log[missing_in[partial, 0, 3]]
+log[hex[present_of[partial, 0, 3]]]
+```
+
+```text
+0102
+0201
+-2
+65534
+3ff8000000000000
+0000c03f
+2.25
+cbf43926
+4
+33343536
+file: 4 bytes at 8 lie outside 'placed.bin', which holds 10
+false
+false
+10
+moment
+text
+[1, 2]
+[1.5, 2, 0.25]
+[true, false, true]
+Applebananacherry
+[5, 11, 17]
+[0, 1000, 2000]
+[0, 0, 0]
+2
+[0.5, 0.5]
+0
+0
+['id', 'name', 'price', 'at', 'e', 'flag']
+[true, false, true]
+1
+05
+```

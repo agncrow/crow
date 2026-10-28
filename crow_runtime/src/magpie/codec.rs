@@ -215,3 +215,31 @@ mod tests {
         assert!(decompress(&[0x00, 9, 0], 9).is_err());
     }
 }
+
+/// The measurement the Crow codec is held to (docs/magpie-in-crow.md,
+/// section 4): `cargo test --release -p crow_runtime codec::bench -- --ignored --nocapture`.
+#[cfg(test)]
+mod bench {
+    #[test]
+    #[ignore]
+    fn fifty_megabytes() {
+        let piece = b"the quick brown fox jumps over the lazy dog; ";
+        let total = 50_000_000usize;
+        let mut input: Vec<u8> = piece.iter().cycle().take(total).copied().collect();
+        let mut x: i64 = 305419896;
+        let mut k = 0usize;
+        while k * 64 < total {
+            x = (x * 1103515245 + 12345) & 2147483647;
+            input[k * 64] = ((x >> 16) & 255) as u8;
+            k += 1;
+        }
+        for _ in 0..2 {
+            let t = std::time::Instant::now();
+            let c = super::compress(&input);
+            println!("compress: {} ms to {} bytes", t.elapsed().as_millis(), c.len());
+            let t = std::time::Instant::now();
+            let d = super::decompress(&c, input.len()).expect("decodes");
+            println!("decompress: {} ms, same: {}", t.elapsed().as_millis(), d == input);
+        }
+    }
+}

@@ -1,0 +1,7 @@
+--- a nested literal of numbers is a matrix, and a matrix holds a whole
+--- number exactly only up to 2^53: one past it is refused with the push
+--- advice, in both modes — the row holding the big int had been typed a
+--- list of ints by the flat rule, the other rows tensors, and the
+--- verifier found "a list of List(Int) holds an item of type Tensor"
+cases = [[1, 2], [9223372036854775807, 0]]
+log[len[cases]]

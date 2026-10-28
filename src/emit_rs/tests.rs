@@ -125,6 +125,30 @@ fn a_last_read_moves_into_the_collection_and_out_of_the_function() {
     assert!(!rust.contains("return out.clone()"), "{}", rust);
 }
 
+/// A bytes parameter a function only reads is lent, as a list's or a
+/// text's is: a hash of four bytes called once per byte of a 50 MB input
+/// had taken its bytes by value and cloned the input at every call
+#[test]
+fn a_bytes_parameter_only_read_is_lent() {
+    let rust = transpile("use sys\nfn peek[b, i]\n    return byte[b, i] + byte[b, i + 1]\nfn total[b]\n    t = 0\n    for i in range[len[b] - 1]\n        t = t + peek[b, i]\n    return t\nlog[total[bytes['abcd']]]\n");
+    assert!(rust.contains("fn peek(b: &crow_runtime::sys::Bytes"), "{}", rust);
+    assert!(rust.contains("fn total(b: &crow_runtime::sys::Bytes"), "{}", rust);
+    assert!(!rust.contains("b.clone()"), "{}", rust);
+}
+
+/// A bytes buffer a kernel builds is changed where it lies, in a function
+/// and at the top level, through a row of the sys module: the taken path
+/// had been asked for core rows alone, and a codec written in Crow copied
+/// its output at every byte (docs/magpie-in-crow.md, 2.1)
+#[test]
+fn bytes_are_built_in_place_through_a_modules_row() {
+    let rust = transpile("use sys\nfn grown[n]\n    out = bytes[0]\n    for i in range[n]\n        out = push[out, 66]\n    out = concat[out, bytes['x']]\n    return out\nb = grown[3]\nb = set[b, 0, 65]\nlog[len[b]]\n");
+    assert!(rust.contains("push_byte_taken(out,"), "{}", rust);
+    assert!(rust.contains("concat_taken(out,"), "{}", rust);
+    assert!(rust.contains("set_byte_taken(b,"), "{}", rust);
+    assert!(!rust.contains("push_byte(&"), "{}", rust);
+}
+
 /// A control renders what it is given, as an element and a view do: a
 /// failed argument is, in place of the control, the id the log has its
 /// reason under (it was a result where the page wanted a node, and the

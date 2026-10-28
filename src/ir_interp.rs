@@ -320,8 +320,16 @@ fn walk_only() -> bool {
 }
 
 pub fn prepare(stmts: &[crate::ast::Stmt], name: &str) -> Result<(Program, crate::type_infer::TypeContext), String> {
+    prepare_with(stmts, name, &std::collections::BTreeSet::new())
+}
+
+/// `prepare`, with the program's top-level names the statements leave out
+/// (a test lowered over the declarations alone): a read of one is refused
+/// by name (lower_ir/checks.rs, `check_ident`).
+pub fn prepare_with(stmts: &[crate::ast::Stmt], name: &str, left_out: &std::collections::BTreeSet<String>) -> Result<(Program, crate::type_infer::TypeContext), String> {
     let stmts = crate::lower::lower_program(stmts)?;
     let mut ctx = crate::type_infer::TypeContext::new();
+    ctx.left_out = left_out.clone();
     // a test's program types its queries' columns as the program does
     // (crate::describing): with them off, every cell of a test read as
     // dynamic, or as text before that, while `crow run` typed it
@@ -463,12 +471,12 @@ pub fn run_scenario(decls: &[crate::ast::Stmt], label: &str, body: &[crate::ast:
 /// A test block lowered with the program's declarations: its inputs typed
 /// by their use and its truths asserted (the lowering's `lower_test`), the
 /// last of the program's tests, which the runner reads for both.
-pub fn prepare_test(decls: &[crate::ast::Stmt], label: &str, params: &[String], body: &[crate::ast::Stmt]) -> Result<(Program, crate::type_infer::TypeContext), String> {
+pub fn prepare_test(decls: &[crate::ast::Stmt], left_out: &std::collections::BTreeSet<String>, label: &str, params: &[String], body: &[crate::ast::Stmt]) -> Result<(Program, crate::type_infer::TypeContext), String> {
     let mut all = decls.to_vec();
     // named, so the gate reads it as the block it was in its file (an
     // unnamed block is one attached to the function before it)
     all.push(crate::ast::Stmt::TestBlock { name: Some(label.to_string()), params: params.to_vec(), body: body.to_vec() });
-    let (program, ctx) = prepare(&all, "test")?;
+    let (program, ctx) = prepare_with(&all, "test", left_out)?;
     // CROW_IR_SHOW=1 prints the lowered test program, as `crow build --ir` does for a file
     if std::env::var("CROW_IR_SHOW").is_ok() {
         eprintln!("{}", crate::ir::print(&program));
@@ -1774,7 +1782,7 @@ impl IrInterp {
         // moved argument is its take path — evaluating the arguments here
         // first had read a moved one twice: `m[1] = r` at r's last read,
         // "expected numbers, got done")
-        if named.is_some_and(|row| !row.params.first().is_some_and(|k| k.owned())) {
+        if named.is_some_and(|row| !row.takes_in_place()) {
             return Ok(false);
         }
         let rest = self.eval_args(&args[1..])?;
@@ -1791,7 +1799,7 @@ impl IrInterp {
             let mut kinds = vec![crate::table::Arg::of_value(cur)];
             kinds.extend(rest.iter().map(crate::table::Arg::of_value));
             match named.or_else(|| crate::table::core_row(name, &kinds)) {
-                Some(row) if row.params.first().is_some_and(|k| k.owned()) => row,
+                Some(row) if row.takes_in_place() => row,
                 _ => return Ok(false),
             }
         };

@@ -426,7 +426,10 @@ impl Emitter {
                     if plain && !self.struct_is_copy(s) && !changed.contains(p) {
                         refs.insert(p.clone());
                     }
-                } else if plain && matches!(as_inferred(t), Ty::List(_) | Ty::Map(..) | Ty::Str) && lendable.get(&n).and_then(|v| v.get(i)).copied().unwrap_or(false) {
+                // (bytes too: a hash of four bytes called per byte of a 50
+                // MB input had cloned the input each time — a codec written
+                // in Crow, docs/magpie-in-crow.md)
+                } else if plain && matches!(as_inferred(t), Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Bytes) && lendable.get(&n).and_then(|v| v.get(i)).copied().unwrap_or(false) {
                     refs.insert(p.clone());
                     lent.insert(p.clone());
                 }

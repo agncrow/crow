@@ -346,6 +346,7 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
     counts.blocks = blocks.len();
 
     let decls = declarations(stmts);
+    let left_out = left_out_of(stmts, &decls);
 
     let prev_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
@@ -354,7 +355,7 @@ pub fn run_test_blocks(stmts: &[Stmt]) -> (Vec<Issue>, TestCounts) {
         // the block lowered with the declarations, once: its inputs typed by
         // their use and its bare boolean lines asserted (lower_ir's
         // lower_test); what the lowering refuses is the block's failure
-        let prepared = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| crate::ir_interp::prepare_test(&decls, &block.label, &block.params, &block.body)));
+        let prepared = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| crate::ir_interp::prepare_test(&decls, &left_out, &block.label, &block.params, &block.body)));
         let (program, pctx) = match prepared {
             Ok(Ok(p)) => p,
             Ok(Err(e)) => {
@@ -1427,6 +1428,13 @@ fn check_unreachable(name: &str, stmts: &[Stmt], issues: &mut Vec<Issue>) {
 /// functions, structs, imports and derivations, and the top-level values
 /// that are declarations too (a literal default, a connection, a mailer);
 /// never top-level code, which could do something.
+/// The program's top-level values its declarations leave out: what a test
+/// cannot see, named in the refusal of a test that reads one.
+pub(crate) fn left_out_of(stmts: &[Stmt], decls: &[Stmt]) -> BTreeSet<String> {
+    let kept: BTreeSet<&str> = decls.iter().filter_map(|s| if let Stmt::Assign { name, .. } = s { Some(name.as_str()) } else { None }).collect();
+    stmts.iter().filter_map(|s| if let Stmt::Assign { name, .. } = s { Some(name) } else { None }).filter(|n| !kept.contains(n.as_str())).cloned().collect()
+}
+
 pub(crate) fn declarations(stmts: &[Stmt]) -> Vec<Stmt> {
     // Declarations only — the boundary: tests see what callers see. Literal
     // top-level assigns ride along: they are reactive-state defaults, which
@@ -2284,6 +2292,28 @@ mod tests {
             assert_eq!(snap_unescaped(input), "two[]");
             assert_eq!(snap_unescaped(output), text, "{:?}", line);
         }
+    }
+
+    /// A test reading a top-level value the declarations leave out (a
+    /// value a call made) is refused at the lowering, saying what a test
+    /// sees — the interpreter had stopped as the test ran, "undefined
+    /// variable", and the reader went looking for a misspelling
+    #[test]
+    fn a_test_reading_what_top_level_code_computes_is_told_what_a_test_sees() {
+        let src = "shout = upper['hello']\ngreeting = 'hello'\n\ntest the_greeting_is_known[]\n    assert[greeting eq 'hello']\n    assert[shout eq 'HELLO']\n";
+        let stmts = crate::build(src).unwrap();
+        let decls = declarations(&stmts);
+        let left_out = left_out_of(&stmts, &decls);
+        assert_eq!(left_out.iter().cloned().collect::<Vec<String>>(), vec!["shout".to_string()]);
+        let body = stmts.iter().find_map(|s| if let Stmt::TestBlock { body, .. } = s { Some(body.clone()) } else { None }).unwrap();
+        let err = crate::ir_interp::prepare_test(&decls, &left_out, "the_greeting_is_known", &[], &body).unwrap_err();
+        assert!(err.contains("undefined variable 'shout' — a test sees the program's declarations"), "{}", err);
+        assert!(err.contains("make the value inside the test"), "{}", err);
+        // the literal value is a declaration, and the test sees it
+        let fine = "greeting = 'hello'\n\ntest the_greeting_is_known[]\n    assert[greeting eq 'hello']\n";
+        let stmts = crate::build(fine).unwrap();
+        let decls = declarations(&stmts);
+        assert!(left_out_of(&stmts, &decls).is_empty());
     }
 
     /// A map written as a literal is a declaration's first value, as a list

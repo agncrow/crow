@@ -1,0 +1,232 @@
+--- `use magpie.packing`: bits and varints, in Crow — the two ways a number
+--- is written into a Magpie file, the Rust kernel's bytes byte for byte
+--- (docs/magpie-in-crow.md, section 3). Bit packing writes each of `n`
+--- values in `width` bits, little-endian bit order, so a column of small
+--- ints or dictionary codes takes the bits its largest value needs and no
+--- more; a varint is LEB128, for the footer's counts and lengths. A value
+--- is a 64-bit pattern held as an int: one at or past 2^63 is the
+--- negative int of the same bits, as the kernel reads it as a u64. Every
+--- int here stays within 64 bits: a value wider than 32 bits is packed and
+--- unpacked as its low 32 bits and its high bits apart, and bits gather by
+--- `bitor`, so the width pass keeps the loops' ints narrow (a sum would
+--- grow). The tests are the module's own: `crow test
+--- src/modules/packing.co`, held to the kernel through its test-only rows
+--- until the kernel goes.
+use sys
+use bits
+
+--- how many bits a value needs: 0 for 0, 64 for a pattern at or past
+--- 2^63 (a negative int)
+fn width_of[top]
+    if top lt 0
+        return 64
+    width = 0
+    rest = top
+    while rest gt 0
+        width = width + 1
+        rest = shift[rest, -1]
+    return width
+
+--- the low `bits` bits of a pattern (at most 32 of them)
+fn _low[v, count]
+    return bitand[v, shift[1, count] - 1]
+
+--- the pattern's bits from 32 up, as a non-negative int (`shift` of a
+--- negative int rounds down, so the mask cuts the sign away)
+fn _high[v, count]
+    return bitand[shift[v, -32], shift[1, count] - 1]
+
+--- `packed[values, width]`: the values at `width` bits each, little-endian
+--- within and across bytes; width 0 writes nothing (every value is 0)
+fn packed[nums, width]
+    out = bytes[0]
+    if width eq 0
+        return out
+    buf = 0
+    have = 0
+    for v in nums
+        if width lte 32
+            buf = bitor[buf, shift[_low[v, width], have]]
+            have = have + width
+        else
+            buf = bitor[buf, shift[_low[v, 32], have]]
+            have = have + 32
+            while have gte 8
+                out = push[out, bitand[buf, 255]]
+                buf = shift[buf, -8]
+                have = have - 8
+            buf = bitor[buf, shift[_high[v, width - 32], have]]
+            have = have + width - 32
+        while have gte 8
+            out = push[out, bitand[buf, 255]]
+            buf = shift[buf, -8]
+            have = have - 8
+    if have gt 0
+        out = push[out, bitand[buf, 255]]
+    return out
+
+--- `unpacked[data, at, n, width]`: `n` values of `width` bits each read
+--- from the bytes at `at`; an error value of kind `'magpie'` where the
+--- bytes are too few
+fn unpacked[data, at, n, width]
+    out = []
+    if width eq 0
+        for i in range[n]
+            out = push[out, 0]
+        return out
+    if width gt 64
+        return error['a packed value is at most 64 bits wide, not `width`', 'magpie']
+    total_bits = n * width
+    needed = shift[total_bits + 7, -3]
+    there = len[data] - at
+    if there lt needed
+        return error['`n` nums of `width` bits need `needed` bytes, and `there` are there', 'magpie']
+    buf = 0
+    have = 0
+    pos = at
+    for i in range[n]
+        if width lte 32
+            while have lt width
+                buf = bitor[buf, shift[byte[data, pos], have]]
+                pos = pos + 1
+                have = have + 8
+            out = push[out, _low[buf, width]]
+            buf = shift[buf, -width]
+            have = have - width
+        else
+            while have lt 32
+                buf = bitor[buf, shift[byte[data, pos], have]]
+                pos = pos + 1
+                have = have + 8
+            lo = _low[buf, 32]
+            buf = shift[buf, -32]
+            have = have - 32
+            rest = width - 32
+            while have lt rest
+                buf = bitor[buf, shift[byte[data, pos], have]]
+                pos = pos + 1
+                have = have + 8
+            hi = _low[buf, rest]
+            buf = shift[buf, -rest]
+            have = have - rest
+            --- the pattern as the int of its bits: one at or past 2^63 is
+            --- negative, which the high half says
+            if hi lt 2147483648
+                out = push[out, lo + shift[hi, 32]]
+            else
+                out = push[out, lo + shift[hi - 4294967296, 32]]
+    return out
+
+--- `put_var[out, v]`: a varint (LEB128) appended, a pattern's 64 bits
+--- read as unsigned
+fn put_var[out, v]
+    rest = v
+    going = true
+    while going
+        piece = bitand[rest, 127]
+        --- a logical shift: the sign's bits masked away
+        rest = bitand[shift[rest, -7], 144115188075855871]
+        if rest eq 0
+            out = push[out, piece]
+            going = false
+        else
+            out = push[out, piece + 128]
+    return out
+
+--- `read_var[data, at]`: the varint at `at` and the position after it,
+--- as a list of two ints; an error value of kind `'magpie'` where the
+--- bytes run out or the count passes 64 bits
+fn read_var[data, at]
+    v = 0
+    pos = at
+    moved = 0
+    going = true
+    while going
+        if pos gte len[data]
+            return error['a count is cut short', 'magpie']
+        b = byte[data, pos]
+        pos = pos + 1
+        if moved gte 64
+            return error['a count is longer than 64 bits', 'magpie']
+        piece = bitand[b, 127]
+        if moved lt 57
+            v = bitor[v, shift[piece, moved]]
+        else
+            --- the tenth byte, at 63, holds the pattern's top bit alone:
+            --- set, the int is the negative of the same bits (and the
+            --- shift above stays under 2^63, so the pass keeps it narrow)
+            if bitand[piece, 1] ne 0
+                v = v - 9223372036854775808
+        if bitand[b, 128] eq 0
+            going = false
+        else
+            moved = moved + 7
+    return [v, pos]
+
+--- five ints as a list (a literal of numbers is a tensor)
+fn _ints[a, b, c, d, e]
+    out = []
+    out = push[out, a]
+    out = push[out, b]
+    out = push[out, c]
+    out = push[out, d]
+    out = push[out, e]
+    return out
+
+--- bits packed and read back as the kernel packs and reads them: small
+--- codes, a column's worth at every width, patterns past 2^63, and zero
+--- width
+test the_bits_are_the_kernels_byte_for_byte[]
+    --- (a list of ints is grown with push: a literal of numbers is a
+    --- tensor, which holds no 64-bit pattern)
+    cases = []
+    cases = push[cases, _ints[0, 1, 2, 3, 0]]
+    cases = push[cases, _ints[7, 0, 7, 7, 1]]
+    cases = push[cases, _ints[1000, 999, 0, 65535, 70000]]
+    cases = push[cases, _ints[1, 4294967295, 4294967296, 1099511627775, 3]]
+    cases = push[cases, _ints[-1, -2, 9223372036854775807, -9223372036854775808, 0]]
+    for nums in cases
+        top = 0
+        for v in nums
+            if v lt 0
+                top = -1
+            if top gte 0 and v gt top
+                top = v
+        for extra in [0, 1, 5]
+            width = width_of[top] + extra
+            if width lte 64
+                b = packed[nums, width]
+                assert[same[b, pack_rs[nums, width]]]
+                back = unpacked[b, 0, len[nums], width]
+                assert[back eq nums]
+                assert[unpack_rs[b, len[nums], width] eq nums]
+    assert[len[packed[[1, 2, 3], 0]] eq 0 and unpacked[bytes[''], 0, 3, 0] eq [0, 0, 0]]
+    assert[width_of[0] eq 0 and width_of[1] eq 1 and width_of[255] eq 8 and width_of[256] eq 9 and width_of[-1] eq 64]
+    short = unpacked[bytes[3], 0, 10, 9]
+    assert[short.reason eq '10 nums of 9 bits need 12 bytes, and 3 are there']
+
+--- varints written and read as the kernel's: one byte to ten, the top
+--- bit of a pattern included, and a count cut short or too long refused
+test the_varints_are_the_kernels[]
+    for v in [0, 1, 127, 128, 300, 16383, 16384, 4294967295, 9223372036854775807, -1, -9223372036854775808]
+        b = put_var[bytes[0], v]
+        assert[same[b, put_var_rs[v]]]
+        got = read_var[b, 0]
+        assert[got eq [v, len[b]]]
+        assert[read_var_rs[b, 0] eq [v, len[b]]]
+    two = put_var[put_var[bytes[0], 300], 5]
+    first = read_var[two, 0]
+    assert[first eq [300, 2] and read_var[two, 2] eq [5, 3]]
+    cut = bytes[1]
+    cut = set[cut, 0, 129]
+    assert[read_var[cut, 0].reason eq 'a count is cut short']
+    --- ten bytes going on are cut short; an eleventh is past 64 bits
+    cut_long = bytes[10]
+    for i in range[10]
+        cut_long = set[cut_long, i, 255]
+    assert[read_var[cut_long, 0].reason eq 'a count is cut short']
+    long = bytes[11]
+    for i in range[11]
+        long = set[long, i, 255]
+    assert[read_var[long, 0].reason eq 'a count is longer than 64 bits']
+    assert[read_var_rs[long, 0].reason eq 'a count is longer than 64 bits']

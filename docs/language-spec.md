@@ -2587,6 +2587,9 @@ Import with `use sys` — **only in a module of the standard library.** `sys` is
 | `find[bytes, needle]` | Where the needle first occurs, or -1 |
 | `concat[a, b]` | The two in order |
 | `byte[bytes, i]` | The byte at `i` as an int, counted from the end when negative; outside stops |
+| `bytes[n]` | `n` zero bytes: a buffer a kernel written in Crow writes into by position |
+| `set[bytes, i, v]` | The byte at `i` replaced by `v` (0 to 255), counted from the end when negative; outside stops. `b = set[b, i, v]` writes where the bytes lie, as a list's `set` does |
+| `push[bytes, v]` | The byte appended (0 to 255); `b = push[b, v]` grows the bytes where they lie, and `a = concat[a, b]` appends `b` where `a` lies |
 | `open[host, port, tls, seconds]` | A connection to the host's port — each address the host's name resolves to tried in turn (`localhost` is `::1` and `127.0.0.1`, and a server may listen on one) — behind TLS when `tls` is true (the system's roots); each read and write gives up after `seconds` (none when 0). An error value of kind `'sys'` when none can be made: a host that does not resolve, a port nobody listens on, a certificate that does not fit |
 | `listen[host, port]` | A socket listening on the host's port, as a stream that is accepted on (port 0 for one the system picks; `address` says which); an error value of kind `'sys'` where the port cannot be bound. It is neither read nor written: `send` and `recv` on it are refused, naming it a listener |
 | `accept[listener, seconds]` | The next connection that arrives, as a stream of its own named by the peer's address, waiting at most the seconds (as long as it takes when 0); an error value of kind `'sys'` where none arrives in time, the stream is no listener, or it is closed. The wait ends early with a stop of the work it is in, as a read's does |
@@ -2602,8 +2605,8 @@ Import with `use sys` — **only in a module of the standard library.** `sys` is
 | `random[n]` | `n` bytes from the operating system's randomness |
 | `hex[bytes]` | The bytes as lowercase hex, two digits each |
 | `text[bytes, fill]` | The text the bytes spell, each run that spells none replaced by `fill` (`'�'`, as a browser shows one) — never an error |
-| `hash[bytes, algo]` | The digest as lowercase hex: `'sha256'`, `'sha512'`, `'sha1'` or `'md5'` |
-| `digest[bytes, algo]` | The digest as bytes: `'sha1'` (a socket's accept key), `'sha256'`, `'sha512'` or `'md5'` |
+| `hash[bytes, algo]` | The digest as lowercase hex: `'sha256'`, `'sha512'`, `'crc32'` (eight digits, the checksum gzip and Kafka carry), `'sha1'` or `'md5'` |
+| `digest[bytes, algo]` | The digest as bytes: `'crc32'` (four bytes), `'sha1'` (a socket's accept key), `'sha256'`, `'sha512'` or `'md5'` |
 | `hmac[key, message, algo]` | The keyed digest as bytes: `'sha256'` (an S3 signature's chain) or `'sha512'` |
 | `reply[status, body, headers]` | A request's answer from its parts: the record `request` answers, made by the client written in Crow |
 | `replaying[]`, `recording[]`, `rehearsing[]` | Whether a replay answers the requests (`crow test --fixtures`); whether a recording keeps what they answer (`crow check --record-fixtures`); whether a rehearsal stands in for them (`crow check`) |
@@ -2618,11 +2621,14 @@ Import with `use sys` — **only in a module of the standard library.** `sys` is
 | `base64url[bytes]` | The bytes as base64 in the URL-safe alphabet, unpadded, as a token's parts are written |
 | `unbase64[text]` | Base64's bytes, either alphabet, padded or not; an error value of kind `'parse'` where the text is no base64 |
 | `same[a, b]` | Whether two byte strings are equal, decided in time that does not depend on where they differ (a signature checked against the one computed) |
-| `pack[n, width]` | An int as `width` bytes, big-endian — 1, 2, 4 or 8, the low bytes of its two's complement; another width stops |
-| `unpack[bytes, at, width]` | The int the `width` bytes at `at` spell, big-endian two's complement — 1, 2, 4 or 8 — the counterpart of `pack`; a span outside the bytes, or another width, stops |
+| `pack[n, width, little = false]` | An int as `width` bytes, big-endian, or little-endian with `little` — 1, 2, 4 or 8, the low bytes of its two's complement; another width stops |
+| `unpack[bytes, at, width, little = false, signed = true]` | The int the `width` bytes at `at` spell (little-endian with `little`; unsigned with `signed` false, where 8 bytes past 2^63 are refused), big-endian two's complement — 1, 2, 4 or 8 — the counterpart of `pack`; a span outside the bytes, or another width, stops |
 | `records[bytes]` | A Kafka message set (magic 0 or 1, the legacy format) as a frame: `offset` as the producer wrote it, `at` (milliseconds, -1 for none), `key` (a missing cell for none) and `value` as text; each message's CRC-32 checked; a compressed wrapper (gzip, or snappy in xerial's framing or raw) read as the records it holds. An error value of kind `'kafka'` for a message whose checksum does not match, a set compressed another way (lz4), a payload that is no UTF-8 text, or a magic past 1 |
 | `records_of[frame]` | A frame's rows (`offset`, `at`, `key`, `value`) as a message set of magic 1, each message's checksum written; a missing `key` is no key, a missing `at` no timestamp. An error value of kind `'kafka'` for a frame lacking a column |
-| `ieee[x]` | A number as the 8 bytes of its IEEE 754 double, big-endian |
+| `ieee[x, width = 8, little = false]` | A number as the 8 bytes of its IEEE 754 double, big-endian — or the 4 of its single precision with `width` 4, little-endian with `little` |
+| `ieee[bytes, at, width, little]` | The float the `width` bytes at `at` spell — 8 of a double, 4 of single precision — little-endian where `little` is true; outside stops. (Its width and byte order are positions, since the writer's options may be given by position: `ieee[x, 4]`) |
+| `compress_rs[bytes]`, `decompress_rs[bytes, n]` | Magpie's Rust codec, for the Crow codec's tests alone (`use magpie.codec`, docs/magpie-in-crow.md); test-only, and gone with the kernel |
+| `pack_rs[values, width]`, `unpack_rs[bytes, n, width]`, `put_var_rs[v]`, `read_var_rs[bytes, at]` | The kernel's bit packing and varints, for `magpie.packing`'s tests alone; test-only, and gone with the kernel |
 | `binary[bytes, media]` | A response of the bytes, as the media type names them (`msgpack`'s) |
 | `mask[bytes, key]` | The bytes XORed with the 4-byte key, cycling: a client's frame masked, a masked frame read |
 | `read_head[stream, deadline]` | A connection's answer's head read to its blank line — the status and phrase, the headers — and, as the answer's `body`, what came after it (a body's start, a socket's first frame); written in Crow |
@@ -2667,6 +2673,19 @@ Import with `use sys` — **only in a module of the standard library.** `sys` is
 | `tail_last[dir, values]` | The last position at which the key was written, as the index knows it (the pending rows, and the files once the image is built); -1 where it does not |
 | `tail_forget[dir]` | The log's tail forgotten by this process (a restore, a follow, or a log made afresh at the path): the next put reads the head off the disk again |
 | `filesize[path]` | How many bytes a file holds, from its metadata, the file unread; an error value of kind `'sys'` for a directory or a path that is no file |
+| `file[path, from, n]` | The `n` bytes at `from` of a file, read without the rest (a footer, one chunk); an error value of kind `'sys'` where the region lies outside it |
+| `modified[path]` | When the file was last written, a moment; an error value of kind `'sys'` where it cannot be read |
+| `flush[path]` | The file, or the directory, written through to the disk (`F_FULLFSYNC` on macOS, `fsync` elsewhere), answering the path — the write path of a file a kernel places: written beside its name, flushed, linked into the name, the directory flushed |
+| `link[from, to]` | A hard link, refused with the system's reason where `to` exists (a name claimed once); answers `to` |
+| `move[from, to]` | Renamed over `to`, atomically, as a manifest is replaced; answers `to` (`rename` is the frame module's) |
+| `cell_kind[column]` | `int`, `float`, `text`, `bool`, `moment` or `vector` — a column as its parts (docs/magpie-in-crow.md, 2.5): what a file's writer reads and its reader builds, with no value per cell |
+| `ints_of[column, from, to]` | An int column's values of rows `from` to `to` (excluded), or a moment column's milliseconds; a missing cell's value is whatever the column holds there, and `present_of` says which |
+| `floats_of[column, from, to]`, `bools_of[column, from, to]` | A float column's values (a vector column's rows laid flat), a bool column's |
+| `millis_of[column, from, to]`, `zones_of[column, from, to]` | A moment column's milliseconds and its offsets in minutes |
+| `vectors_of[column, from, to]`, `vector_width[column]` | A vector column's rows laid flat, and how many numbers each holds |
+| `text_bytes_of[column, from, to]`, `text_ends_of[column, from, to]` | A text column's cells' UTF-8 one after another (a missing cell empty), and where each cell ends in it |
+| `present_of[column, from, to]`, `missing_in[column, from, to]` | Which cells are present as a bitmap's bytes (bit i of byte i / 8 for cell `from + i`; no bytes where every cell is), and how many are missing |
+| `ints_column[ints, present]`, `floats_column[floats, present]`, `bools_column[bits, n, present]`, `moments_column[millis, zones, present]`, `vectors_column[width, floats, present]`, `text_column[bytes, ends, present]` | A column from its parts, `present` the bitmap `present_of` answers or no bytes for every cell; written onto a frame with `df.`name` = column`. Refused where the parts disagree: more offsets than milliseconds, numbers that fill no row, bytes that spell no text, an end outside them |
 | `batch_search[paths, column, words, k, stems, snippet]` | The `k` rows of the files whose text `column` best match the words — each a word, a phrase, a prefix (`kit*`) or a fuzzy word (`kitchn~`), stemmed where `stems` — BM25 as Lucene scores it, the files as one corpus: `n`, `df` and the average length from every indexed group's dictionary and counts and from every other group's rows, which are read and tokenised; an indexed group answers from its postings, the blocks whose bound cannot reach the k-th score skipped. The files' columns, a `score` and, where `snippet` is more than 0, a `snippet` of that many characters around the first hit; the best first, an earlier position first between equals; the columns alone where nothing matches. An error value of kind `'magpie'` for a column that holds no text, a negative `k` or a negative `snippet` |
 | `batch_nearest[paths, column, query, k]` | The `k` rows of the files whose vector `column` lies nearest the `query` (a tensor of one axis) by the cosine — the inner product of the row's unit vector and the query's — with the files' columns and a `score`, the best first and an earlier position first between equals; exact over every present row, a group at a time, the files across the cores. An error value of kind `'magpie'` for a column that holds no vectors, a query of another width than the column's, a query of two axes or more, or a negative `k` |
 | `batch_find[paths, columns, values, wanted]` | The rows of the files whose `columns` hold the `values`, every pair at once, the files read across the cores and the rows in position order (each value written as text, read as its column's kind, as `batch_admits` reads it), with the columns `wanted` (every column when empty, `_pos` included) — an empty frame of those columns where none does. Each key column's groups are asked through their bounds and their filters first; only the groups every key admits are decoded (a group is a few megabytes), so keys a file is sorted by read one group. An error value of kind `'magpie'` for a column the file lacks, a value that is no value of its kind, or lists of different lengths |
@@ -3593,6 +3612,27 @@ log[latest['orders'].qty]            --- [10, 25, 30]
 ```
 
 **Nodes and shards.** A second node is a follower of the log (`share`, `follow`): it holds the same files and the leader's manifest, reads them with the same verbs, and serves what the leader serves; the leader is the one process that writes, and a follower promoted by the operator writes from the head it holds — there is no election, since every file a follower lacks is one `follow` fetches, and a leader that writes nothing more is followed to its last file. A table too large for one node is split into logs by a key (`orders_a`, `orders_b`, a directory each, on a node each), and a query runs the same verbs on each and stacks the answers: `frame.stack[latest['orders_a', k], latest['orders_b', k]]`, or a reduction over each log's part. Nothing in the module knows a shard: the placement is the program's, written where the logs are named.
+
+#### Codec (`use magpie.codec`)
+
+Magpie's codec, in Crow (docs/magpie-in-crow.md, the plan that rewrites every kernel of Magpie's in the language): the LZ77 byte codec a chunk's payload goes through where it shrinks it, the Rust kernel's stream byte for byte. A standard module's own, as every kernel ported stands under `magpie`; a program has no bytes to hand it.
+
+| Function | Description |
+|----------|-------------|
+| `compress[bytes]` | The bytes compressed: tokens of a literal run and a match (an offset of at most 65,535 back and a length of four or more), the last token literals alone; a short input is literals alone, a run shrinks to a few bytes per 255 |
+| `decompress[bytes, raw_len]` | The bytes decompressed to exactly `raw_len` bytes; a stream that decodes to another count, is cut short, or reaches outside itself is an error value of kind `'magpie'` saying why |
+
+#### Packing (`use magpie.packing`)
+
+Bits and varints, in Crow: the two ways a number is written into a Magpie file, the Rust kernel's bytes byte for byte. A value is a 64-bit pattern held as an int, one at or past 2^63 the negative int of the same bits.
+
+| Function | Description |
+|----------|-------------|
+| `width_of[top]` | How many bits the value needs: 0 for 0, 64 for a pattern at or past 2^63 |
+| `packed[values, width]` | The values at `width` bits each, little-endian within and across bytes; width 0 writes nothing |
+| `unpacked[bytes, at, n, width]` | `n` values of `width` bits each read from the bytes at `at`; an error value of kind `'magpie'` where the bytes are too few or the width passes 64 |
+| `put_var[bytes, v]` | A varint (LEB128) of the pattern's 64 bits appended |
+| `read_var[bytes, at]` | The varint at `at` and the position after it, as a list of two ints; an error value of kind `'magpie'` where the bytes run out or the count passes 64 bits |
 
 **Design Note: one file per commit, and the module over it.** Considered: a write-ahead log of row-shaped entries, a memtable flushed to sorted segments and postings built beside them — three writes per row, three structures (rejected: every durable database pays them, and no reader of this log needs them apart: a batch file sorted by key with statistics in its head is the segment a scan prunes, the index a search prefilters, and the entry a consumer reads by position, so the row is written once at commit and again only when files are merged). Considered, for the kernel's reach: the sequencer in the runtime under a lock (rejected: the validation is policy, which is Crow's; the kernel claims a number atomically — a file linked into place only where none exists — and the Crow module validates every file before the number it claims, so a slip is a retry, not a hole). Considered, for the name: `log` (taken by the console), `store` (sys's `store` row), `journal` (rejected: long), `lake` (the first name, rejected 2026-10-26: the industry's word for raw files other engines query, where this store holds its state and runs its own engines), `keep` (a web option), `hold` (the spec's verb on every page), `ledger` (the log alone, not the engines over it), `corvid` (heard as covid) — `magpie`, the corvid that gathers everything into one nest, a bird as crow and finch are. The position column is `_pos`, a name no table of a program is likely to use; a frame that holds one is refused. A value looked up is written as text so that one function serves every column kind, compared with `str` of the column on both sides and read by the kernel as the column's kind for its filter.
 

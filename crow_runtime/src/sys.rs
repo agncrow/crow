@@ -86,6 +86,97 @@ pub fn len_bytes(b: &Bytes) -> i64 {
     b.len()
 }
 
+/// `sys.bytes[n]`: `n` zero bytes — a buffer a kernel written in Crow
+/// writes into by position (`set`), as `bytes[text]` is a text's UTF-8
+/// (docs/magpie-in-crow.md, 2.1).
+pub fn bytes_zeroed(n: i64) -> Result<Bytes, String> {
+    let n = usize::try_from(n).map_err(|_| format!("bytes: a count is 0 or more, got {}", n))?;
+    Ok(Bytes(vec![0u8; n]))
+}
+
+fn byte_value(v: i64) -> Result<u8, String> {
+    u8::try_from(v).map_err(|_| format!("a byte is 0 to 255, got {}", v))
+}
+
+/// `sys.set[bytes, i, v]`: the byte at `i` replaced by `v` (0 to 255),
+/// counted from the end when negative, outside a stop — a copy here, as
+/// the row's general call; the taken form writes where the bytes lie.
+pub fn set_byte(b: &Bytes, i: i64, v: i64) -> Result<Bytes, String> {
+    set_byte_taken(b.clone(), i, v)
+}
+
+/// `set[b, i, v]` given the bytes (`b = set[b, i, v]`): written where
+/// they lie.
+pub fn set_byte_taken(mut b: Bytes, i: i64, v: i64) -> Result<Bytes, String> {
+    let at = crate::stops::item(i, b.0.len())?;
+    b.0[at] = byte_value(v)?;
+    Ok(b)
+}
+
+/// `sys.push[bytes, v]`: the byte appended (0 to 255).
+pub fn push_byte(b: &Bytes, v: i64) -> Result<Bytes, String> {
+    push_byte_taken(b.clone(), v)
+}
+
+/// `push[b, v]` given the bytes (`b = push[b, v]`): grown where they lie.
+pub fn push_byte_taken(mut b: Bytes, v: i64) -> Result<Bytes, String> {
+    b.0.push(byte_value(v)?);
+    Ok(b)
+}
+
+/// `concat[a, b]` given `a` (`a = concat[a, b]`): `b` appended where `a`
+/// lies.
+pub fn concat_taken(mut a: Bytes, b: &Bytes) -> Bytes {
+    a.0.extend_from_slice(&b.0);
+    a
+}
+
+/// `sys.compress_rs[bytes]`: Magpie's Rust codec, for the Crow codec's
+/// tests alone (docs/magpie-in-crow.md): gone with the kernel.
+pub fn compress_rs(b: &Bytes) -> Bytes {
+    Bytes(crate::magpie::codec::compress(&b.0))
+}
+
+/// `sys.decompress_rs[bytes, n]`: the Rust codec's decode, for the tests.
+pub fn decompress_rs(b: &Bytes, n: i64) -> Result<Bytes, String> {
+    let n = usize::try_from(n).map_err(|_| format!("a length is 0 or more, got {}", n))?;
+    crate::magpie::codec::decompress(&b.0, n).map(Bytes)
+}
+
+/// `sys.pack_rs[values, width]`: the kernel's bit packing, for
+/// `magpie.packing`'s tests alone; each value a 64-bit pattern.
+pub fn pack_rs(values: Vec<i64>, width: i64) -> Result<Bytes, String> {
+    let width = u8::try_from(width).ok().filter(|w| *w <= 64).ok_or_else(|| format!("a width is 0 to 64 bits, got {}", width))?;
+    let patterns: Vec<u64> = values.iter().map(|&v| v as u64).collect();
+    Ok(Bytes(crate::magpie::pack::pack(&patterns, width)))
+}
+
+/// `sys.unpack_rs[bytes, n, width]`: the kernel's unpacking, for the tests.
+pub fn unpack_rs(b: &Bytes, n: i64, width: i64) -> Result<Vec<i64>, String> {
+    let n = usize::try_from(n).map_err(|_| format!("a count is 0 or more, got {}", n))?;
+    let width = u8::try_from(width).map_err(|_| format!("a width is 0 to 64 bits, got {}", width))?;
+    Ok(crate::magpie::pack::unpack(&b.0, n, width)?.into_iter().map(|v| v as i64).collect())
+}
+
+/// `sys.put_var_rs[v]`: the kernel's varint, for the tests.
+pub fn put_var_rs(v: i64) -> Bytes {
+    let mut out = Vec::new();
+    crate::magpie::pack::put_var(&mut out, v as u64);
+    Bytes(out)
+}
+
+/// `sys.read_var_rs[bytes, at]`: the kernel's varint read, for the tests:
+/// the value and the position after it.
+pub fn read_var_rs(b: &Bytes, at: i64) -> Result<Vec<i64>, String> {
+    let at = usize::try_from(at).map_err(|_| format!("a position is 0 or more, got {}", at))?;
+    if at > b.0.len() {
+        return Err("a count is cut short".to_string());
+    }
+    let mut c = crate::magpie::pack::Cursor::new(&b.0[at..]);
+    let v = c.var()?;
+    Ok(vec![v as i64, (at + c.at) as i64])
+}
+
 /// `sys.gather[chunks]`: the chunks joined in order — what a connection
 /// read, piece by piece, as one (a `concat` per piece would copy the whole
 /// each time).
@@ -363,8 +454,379 @@ pub fn records_of(f: &crate::frame::CrowFrame) -> Result<Bytes, String> {
 }
 
 /// `sys.unpack[bytes, at, width]`: the big-endian int at a position.
-pub fn unpack(b: &Bytes, at: i64, width: i64) -> Result<i64, String> {
-    crate::kafka::unpack(&b.0, at, width)
+pub fn unpack(b: &Bytes, at: i64, width: i64, little: bool, signed: bool) -> Result<i64, String> {
+    let at = usize::try_from(at).map_err(|_| format!("unpack: a position is 0 or more, got {}", at))?;
+    let w = match width {
+        1 | 2 | 4 | 8 => width as usize,
+        other => return Err(format!("unpack: a width is 1, 2, 4 or 8 bytes, got {}", other)),
+    };
+    let s = b.0.get(at..at + w).ok_or_else(|| format!("unpack: {} bytes at {} lie outside {} bytes", w, at, b.0.len()))?;
+    let mut bytes = s.to_vec();
+    if little {
+        bytes.reverse();
+    }
+    let mut v: u64 = 0;
+    for &x in &bytes {
+        v = (v << 8) | x as u64;
+    }
+    if signed {
+        // the top bit of the width read carried into every bit above it
+        let shift = 64 - 8 * w as u32;
+        Ok(((v << shift) as i64) >> shift)
+    } else if w == 8 && v > i64::MAX as u64 {
+        Err(format!("unpack: the 8 bytes at {} spell {}, past what an int holds in 64 bits — read them signed", at, v))
+    } else {
+        Ok(v as i64)
+    }
+}
+
+/// CRC-32 as gzip, zlib and Kafka's message sets carry it (IEEE 802.3,
+/// reflected, 0xEDB88320), written here as the other digests are not:
+/// a table made once.
+pub fn crc32(data: &[u8]) -> u32 {
+    static TABLE: std::sync::OnceLock<[u32; 256]> = std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        let mut t = [0u32; 256];
+        for (i, slot) in t.iter_mut().enumerate() {
+            let mut c = i as u32;
+            for _ in 0..8 {
+                c = if c & 1 != 0 { 0xEDB8_8320 ^ (c >> 1) } else { c >> 1 };
+            }
+            *slot = c;
+        }
+        t
+    });
+    let mut c = 0xFFFF_FFFFu32;
+    for &b in data {
+        c = table[((c ^ b as u32) & 0xff) as usize] ^ (c >> 8);
+    }
+    c ^ 0xFFFF_FFFF
+}
+
+/// `sys.ieee[bytes, at, width = 8, little = false]`: the float the bytes
+/// at `at` spell, a double in 8 or single precision in 4.
+pub fn ieee_at(b: &Bytes, at: i64, width: i64, little: bool) -> Result<f64, String> {
+    let at = usize::try_from(at).map_err(|_| format!("ieee: a position is 0 or more, got {}", at))?;
+    let w = match width {
+        8 | 4 => width as usize,
+        other => return Err(format!("ieee: a float's width is 8 bytes, or 4 for single precision, not {}", other)),
+    };
+    let s = b.0.get(at..at + w).ok_or_else(|| format!("ieee: {} bytes at {} lie outside {} bytes", w, at, b.0.len()))?;
+    let mut bytes = s.to_vec();
+    if little {
+        bytes.reverse();
+    }
+    Ok(if w == 8 { f64::from_be_bytes(bytes.try_into().unwrap_or([0; 8])) } else { f32::from_be_bytes(bytes.try_into().unwrap_or([0; 4])) as f64 })
+}
+
+/// `sys.file[path, from, n]`: the bytes of a region of a file, read
+/// without the rest (a footer, one chunk).
+pub fn file_region(path: &str, from: i64, n: i64) -> Result<Bytes, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let cannot = |e: std::io::Error| format!("cannot read '{}': {}", path, e);
+    let from = u64::try_from(from).map_err(|_| format!("file: a position is 0 or more, got {}", from))?;
+    let n = usize::try_from(n).map_err(|_| format!("file: a count is 0 or more, got {}", n))?;
+    let mut f = std::fs::File::open(path).map_err(cannot)?;
+    let size = f.metadata().map_err(cannot)?.len();
+    if from + n as u64 > size {
+        return Err(format!("file: {} bytes at {} lie outside '{}', which holds {}", n, from, path, size));
+    }
+    f.seek(SeekFrom::Start(from)).map_err(cannot)?;
+    let mut out = vec![0u8; n];
+    f.read_exact(&mut out).map_err(cannot)?;
+    Ok(Bytes(out))
+}
+
+/// `sys.modified[path]`: when the file was last written, a moment (UTC).
+pub fn modified(path: &str) -> Result<crate::moments::Moment, String> {
+    let meta = std::fs::metadata(path).map_err(|e| format!("cannot read '{}': {}", path, e))?;
+    let when = meta.modified().map_err(|e| format!("cannot read when '{}' was written: {}", path, e))?;
+    let ms = match when.duration_since(std::time::UNIX_EPOCH) {
+        Ok(d) => i64::try_from(d.as_millis()).unwrap_or(i64::MAX),
+        Err(e) => -i64::try_from(e.duration().as_millis()).unwrap_or(i64::MAX),
+    };
+    Ok(crate::moments::Moment { ms, offset: 0 })
+}
+
+/// `sys.flush[path]`: the file, or the directory, written through to the
+/// disk (`F_FULLFSYNC` on macOS, `fsync` elsewhere, as `File::sync_all`
+/// does); answers the path.
+pub fn flush(path: &str) -> Result<String, String> {
+    let f = std::fs::File::open(path).map_err(|e| format!("cannot flush '{}': {}", path, e))?;
+    f.sync_all().map_err(|e| format!("cannot flush '{}': {}", path, e))?;
+    Ok(path.to_string())
+}
+
+/// `sys.link[from, to]`: a hard link, refused where `to` exists (the
+/// system's reason); answers `to`.
+pub fn link(from: &str, to: &str) -> Result<String, String> {
+    std::fs::hard_link(from, to).map_err(|e| format!("cannot link '{}' as '{}': {}", from, to, e))?;
+    Ok(to.to_string())
+}
+
+/// `sys.move[from, to]`: renamed over `to`, atomically where the system
+/// renames so; answers `to`.
+pub fn move_path(from: &str, to: &str) -> Result<String, String> {
+    std::fs::rename(from, to).map_err(|e| format!("cannot move '{}' to '{}': {}", from, to, e))?;
+    Ok(to.to_string())
+}
+
+// A column as its parts, and from them (docs/magpie-in-crow.md, 2.5):
+// what a file's writer and reader hold, with no value per cell.
+
+fn column_word(c: &crate::frame::Column) -> &'static str {
+    match c {
+        crate::frame::Column::Int(_) => "int",
+        crate::frame::Column::Float(_) => "float",
+        crate::frame::Column::Str(_) => "text",
+        crate::frame::Column::Bool(_) => "bool",
+        crate::frame::Column::DateTime(..) => "moment",
+        crate::frame::Column::Vectors(..) => "vector",
+    }
+}
+
+fn column_rows(c: &crate::frame::CrowColumn, from: i64, to: i64, what: &str) -> Result<(usize, usize), String> {
+    let n = c.len();
+    let from = usize::try_from(from).map_err(|_| format!("{}: a row is 0 or more, got {}", what, from))?;
+    let to = usize::try_from(to).map_err(|_| format!("{}: a row is 0 or more, got {}", what, to))?;
+    if from > to || to > n {
+        return Err(format!("{}: rows {} to {} lie outside a column of {}", what, from, to, n));
+    }
+    Ok((from, to))
+}
+
+fn not_a(what: &str, wanted: &str, c: &crate::frame::Column) -> String {
+    format!("{} takes {} column, not a column of {}", what, wanted, column_word(c))
+}
+
+/// `sys.cell_kind[column]`: `int`, `float`, `text`, `bool`, `moment` or
+/// `vector`.
+pub fn cell_kind(c: &crate::frame::CrowColumn) -> String {
+    column_word(&c.data).to_string()
+}
+
+/// `sys.ints_of[column, from, to]`: an int column's values of rows `from`
+/// to `to` (excluded), a moment column's milliseconds; a missing cell's
+/// value is whatever the column holds there (`present_of` says which).
+pub fn ints_of(c: &crate::frame::CrowColumn, from: i64, to: i64) -> Result<Vec<i64>, String> {
+    let (from, to) = column_rows(c, from, to, "ints_of")?;
+    match &*c.data {
+        crate::frame::Column::Int(v) => Ok(v[from..to].to_vec()),
+        crate::frame::Column::DateTime(ms, _) => Ok(ms[from..to].to_vec()),
+        other => Err(not_a("ints_of", "an int or a moment", other)),
+    }
+}
+
+/// `sys.floats_of[column, from, to]`: a float column's values, or a vector
+/// column's rows laid flat.
+pub fn floats_of(c: &crate::frame::CrowColumn, from: i64, to: i64) -> Result<Vec<f64>, String> {
+    let (from, to) = column_rows(c, from, to, "floats_of")?;
+    match &*c.data {
+        crate::frame::Column::Float(v) => Ok(v[from..to].to_vec()),
+        crate::frame::Column::Vectors(w, v) => Ok(v[from * w..to * w].to_vec()),
+        other => Err(not_a("floats_of", "a float or a vector", other)),
+    }
+}
+
+/// `sys.bools_of[column, from, to]`: a bool column's values.
+pub fn bools_of(c: &crate::frame::CrowColumn, from: i64, to: i64) -> Result<Vec<bool>, String> {
+    let (from, to) = column_rows(c, from, to, "bools_of")?;
+    match &*c.data {
+        crate::frame::Column::Bool(v) => Ok(v[from..to].to_vec()),
+        other => Err(not_a("bools_of", "a bool", other)),
+    }
+}
+
+/// `sys.millis_of[column, from, to]`: a moment column's milliseconds.
+pub fn millis_of(c: &crate::frame::CrowColumn, from: i64, to: i64) -> Result<Vec<i64>, String> {
+    let (from, to) = column_rows(c, from, to, "millis_of")?;
+    match &*c.data {
+        crate::frame::Column::DateTime(ms, _) => Ok(ms[from..to].to_vec()),
+        other => Err(not_a("millis_of", "a moment", other)),
+    }
+}
+
+/// `sys.zones_of[column, from, to]`: a moment column's offsets, minutes.
+pub fn zones_of(c: &crate::frame::CrowColumn, from: i64, to: i64) -> Result<Vec<i64>, String> {
+    let (from, to) = column_rows(c, from, to, "zones_of")?;
+    match &*c.data {
+        crate::frame::Column::DateTime(_, off) => Ok(off[from..to].iter().map(|o| *o as i64).collect()),
+        other => Err(not_a("zones_of", "a moment", other)),
+    }
+}
+
+/// `sys.vectors_of[column, from, to]`: a vector column's rows laid flat.
+pub fn vectors_of(c: &crate::frame::CrowColumn, from: i64, to: i64) -> Result<Vec<f64>, String> {
+    let (from, to) = column_rows(c, from, to, "vectors_of")?;
+    match &*c.data {
+        crate::frame::Column::Vectors(w, v) => Ok(v[from * w..to * w].to_vec()),
+        other => Err(not_a("vectors_of", "a vector", other)),
+    }
+}
+
+/// `sys.vector_width[column]`: how many numbers each vector holds.
+pub fn vector_width(c: &crate::frame::CrowColumn) -> Result<i64, String> {
+    match &*c.data {
+        crate::frame::Column::Vectors(w, _) => Ok(*w as i64),
+        other => Err(not_a("vector_width", "a vector", other)),
+    }
+}
+
+/// `sys.text_bytes_of[column, from, to]`: a text column's cells' UTF-8,
+/// one after another (a missing cell is empty).
+pub fn text_bytes_of(c: &crate::frame::CrowColumn, from: i64, to: i64) -> Result<Bytes, String> {
+    let (from, to) = column_rows(c, from, to, "text_bytes_of")?;
+    match &*c.data {
+        crate::frame::Column::Str(t) => {
+            let mut out = Vec::new();
+            for i in from..to {
+                if c.valid[i] {
+                    out.extend_from_slice(t.get(i).as_bytes());
+                }
+            }
+            Ok(Bytes(out))
+        }
+        other => Err(not_a("text_bytes_of", "a text", other)),
+    }
+}
+
+/// `sys.text_ends_of[column, from, to]`: where each cell's bytes end in
+/// `text_bytes_of`, one int per cell.
+pub fn text_ends_of(c: &crate::frame::CrowColumn, from: i64, to: i64) -> Result<Vec<i64>, String> {
+    let (from, to) = column_rows(c, from, to, "text_ends_of")?;
+    match &*c.data {
+        crate::frame::Column::Str(t) => {
+            let mut at = 0i64;
+            let mut out = Vec::with_capacity(to - from);
+            for i in from..to {
+                if c.valid[i] {
+                    at += t.get(i).len() as i64;
+                }
+                out.push(at);
+            }
+            Ok(out)
+        }
+        other => Err(not_a("text_ends_of", "a text", other)),
+    }
+}
+
+/// `sys.present_of[column, from, to]`: which cells are present, as a
+/// bitmap's bytes — bit i of byte i / 8 for cell `from + i` — and no
+/// bytes where every cell is.
+pub fn present_of(c: &crate::frame::CrowColumn, from: i64, to: i64) -> Result<Bytes, String> {
+    let (from, to) = column_rows(c, from, to, "present_of")?;
+    if (from..to).all(|i| c.valid[i]) {
+        return Ok(Bytes(Vec::new()));
+    }
+    let n = to - from;
+    let mut out = vec![0u8; n.div_ceil(8)];
+    for i in from..to {
+        if c.valid[i] {
+            out[(i - from) / 8] |= 1 << ((i - from) % 8);
+        }
+    }
+    Ok(Bytes(out))
+}
+
+/// `sys.missing_in[column, from, to]`: how many cells are missing.
+pub fn missing_in(c: &crate::frame::CrowColumn, from: i64, to: i64) -> Result<i64, String> {
+    let (from, to) = column_rows(c, from, to, "missing_in")?;
+    Ok((from..to).filter(|&i| !c.valid[i]).count() as i64)
+}
+
+/// A column's validity from a bitmap's bytes: none for every cell present.
+fn validity_of(present: &Bytes, n: usize, what: &str) -> Result<crate::validity::Validity, String> {
+    if present.0.is_empty() {
+        return Ok(crate::validity::Validity::all(n));
+    }
+    if present.0.len() < n.div_ceil(8) {
+        return Err(format!("{}: {} cells need {} bytes of presence, and {} are there", what, n, n.div_ceil(8), present.0.len()));
+    }
+    Ok(crate::validity::Validity::from((0..n).map(|i| present.0[i / 8] & (1 << (i % 8)) != 0).collect::<Vec<bool>>()))
+}
+
+fn column_of(data: crate::frame::Column, valid: crate::validity::Validity) -> crate::frame::CrowColumn {
+    crate::frame::CrowColumn { data: Arc::new(data), valid: Arc::new(valid) }
+}
+
+/// `sys.ints_column[ints, present]`: an int column from its values and
+/// its presence bitmap (`present_of`'s bytes, or none).
+pub fn ints_column(ints: Vec<i64>, present: &Bytes) -> Result<crate::frame::CrowColumn, String> {
+    let valid = validity_of(present, ints.len(), "ints_column")?;
+    Ok(column_of(crate::frame::Column::Int(ints), valid))
+}
+
+/// `sys.floats_column[floats, present]`: a float column from its values.
+pub fn floats_column(floats: Vec<f64>, present: &Bytes) -> Result<crate::frame::CrowColumn, String> {
+    let valid = validity_of(present, floats.len(), "floats_column")?;
+    Ok(column_of(crate::frame::Column::Float(floats), valid))
+}
+
+/// `sys.bools_column[bits, n, present]`: a bool column of `n` cells from
+/// a bitmap's bytes (bit i of byte i / 8).
+pub fn bools_column(bits: &Bytes, n: i64, present: &Bytes) -> Result<crate::frame::CrowColumn, String> {
+    let n = usize::try_from(n).map_err(|_| format!("bools_column: a count is 0 or more, got {}", n))?;
+    if bits.0.len() < n.div_ceil(8) {
+        return Err(format!("bools_column: {} cells need {} bytes, and {} are there", n, n.div_ceil(8), bits.0.len()));
+    }
+    let values: Vec<bool> = (0..n).map(|i| bits.0[i / 8] & (1 << (i % 8)) != 0).collect();
+    let valid = validity_of(present, n, "bools_column")?;
+    Ok(column_of(crate::frame::Column::Bool(values), valid))
+}
+
+/// `sys.moments_column[millis, zones, present]`: a moment column from its
+/// milliseconds and its offsets in minutes.
+pub fn moments_column(millis: Vec<i64>, zones: Vec<i64>, present: &Bytes) -> Result<crate::frame::CrowColumn, String> {
+    if zones.len() != millis.len() {
+        return Err(format!("moments_column: {} milliseconds and {} offsets", millis.len(), zones.len()));
+    }
+    let mut offs = Vec::with_capacity(zones.len());
+    for z in zones {
+        offs.push(i16::try_from(z).map_err(|_| format!("moments_column: an offset is minutes within a day, not {}", z))?);
+    }
+    let valid = validity_of(present, millis.len(), "moments_column")?;
+    Ok(column_of(crate::frame::Column::DateTime(millis, offs), valid))
+}
+
+/// `sys.vectors_column[width, floats, present]`: a vector column from its
+/// rows laid flat.
+pub fn vectors_column(width: i64, floats: Vec<f64>, present: &Bytes) -> Result<crate::frame::CrowColumn, String> {
+    let w = usize::try_from(width).map_err(|_| format!("vectors_column: a width is 0 or more, got {}", width))?;
+    let n = if w == 0 {
+        if !floats.is_empty() {
+            return Err("vectors_column: a width of 0 holds no numbers".to_string());
+        }
+        0
+    } else {
+        if floats.len() % w != 0 {
+            return Err(format!("vectors_column: {} numbers do not fill rows of {}", floats.len(), w));
+        }
+        floats.len() / w
+    };
+    let valid = validity_of(present, n, "vectors_column")?;
+    Ok(column_of(crate::frame::Column::Vectors(w, floats), valid))
+}
+
+/// `sys.text_column[bytes, ends, present]`: a text column from its cells'
+/// UTF-8 one after another and where each ends; refused where the bytes
+/// spell no text or an end lies outside them.
+pub fn text_column(bytes: &Bytes, ends: Vec<i64>, present: &Bytes) -> Result<crate::frame::CrowColumn, String> {
+    std::str::from_utf8(&bytes.0).map_err(|_| "text_column: the bytes spell no UTF-8 text".to_string())?;
+    let mut offsets: Vec<u64> = Vec::with_capacity(ends.len() + 1);
+    offsets.push(0);
+    let mut last = 0i64;
+    for e in &ends {
+        if *e < last || *e as usize > bytes.0.len() {
+            return Err(format!("text_column: a cell ends at {}, outside the {} bytes or before the cell before it", e, bytes.0.len()));
+        }
+        offsets.push(*e as u64);
+        last = *e;
+    }
+    if last as usize != bytes.0.len() {
+        return Err(format!("text_column: the cells end at {}, and {} bytes are there", last, bytes.0.len()));
+    }
+    let valid = validity_of(present, ends.len(), "text_column")?;
+    Ok(column_of(crate::frame::Column::Str(crate::textcol::Text::Plain { offsets, bytes: bytes.0.clone() }), valid))
 }
 
 /// `sys.frame_csv[frame]`: a frame as CSV text.
@@ -437,7 +899,8 @@ pub fn hash(b: &Bytes, algo: &str) -> Result<String, String> {
         "sha512" => Ok(format!("{:x}", sha2::Sha512::digest(&b.0))),
         "sha1" => Ok(format!("{:x}", sha1::Sha1::digest(&b.0))),
         "md5" => Ok(format!("{:x}", md5::Md5::digest(&b.0))),
-        other => Err(format!("hash: '{}' is not a digest of bytes — sha256, sha512, sha1 or md5", other)),
+        "crc32" => Ok(format!("{:08x}", crc32(&b.0))),
+        other => Err(format!("hash: '{}' is not a digest of bytes — sha256, sha512, sha1, md5 or crc32", other)),
     }
 }
 
@@ -450,7 +913,8 @@ pub fn digest(b: &Bytes, algo: &str) -> Result<Bytes, String> {
         "sha256" => Ok(Bytes(sha2::Sha256::digest(&b.0).to_vec())),
         "sha512" => Ok(Bytes(sha2::Sha512::digest(&b.0).to_vec())),
         "md5" => Ok(Bytes(md5::Md5::digest(&b.0).to_vec())),
-        other => Err(format!("digest: '{}' is not a digest of bytes — sha1, sha256, sha512 or md5", other)),
+        "crc32" => Ok(Bytes(crc32(&b.0).to_be_bytes().to_vec())),
+        other => Err(format!("digest: '{}' is not a digest of bytes — sha1, sha256, sha512, md5 or crc32", other)),
     }
 }
 
@@ -562,17 +1026,30 @@ pub fn same(a: &Bytes, b: &Bytes) -> bool {
 /// `sys.pack[n, width]`: an int as `width` bytes, big-endian — 1, 2, 4 or
 /// 8, the low bytes of its two's complement (a length in a frame's header,
 /// a MessagePack number). Another width stops.
-pub fn pack(n: i64, width: i64) -> Result<Bytes, String> {
-    match width {
-        1 | 2 | 4 | 8 => Ok(Bytes(n.to_be_bytes()[(8 - width as usize)..].to_vec())),
-        other => Err(format!("pack: a width is 1, 2, 4 or 8 bytes, not {}", other)),
+pub fn pack(n: i64, width: i64, little: bool) -> Result<Bytes, String> {
+    let mut out = match width {
+        1 | 2 | 4 | 8 => n.to_be_bytes()[(8 - width as usize)..].to_vec(),
+        other => return Err(format!("pack: a width is 1, 2, 4 or 8 bytes, not {}", other)),
+    };
+    if little {
+        out.reverse();
     }
+    Ok(Bytes(out))
 }
 
-/// `sys.ieee[x]`: a number as the 8 bytes of its IEEE 754 double,
-/// big-endian (a MessagePack float).
-pub fn ieee(x: f64) -> Bytes {
-    Bytes(x.to_be_bytes().to_vec())
+/// `sys.ieee[x, width = 8, little = false]`: a number as the 8 bytes of
+/// its IEEE 754 double, big-endian (a MessagePack float), or the 4 of its
+/// single precision.
+pub fn ieee(x: f64, width: i64, little: bool) -> Result<Bytes, String> {
+    let mut out = match width {
+        8 => x.to_be_bytes().to_vec(),
+        4 => (x as f32).to_be_bytes().to_vec(),
+        other => return Err(format!("ieee: a float's width is 8 bytes, or 4 for single precision, not {}", other)),
+    };
+    if little {
+        out.reverse();
+    }
+    Ok(Bytes(out))
 }
 
 /// A mailer `smtp[host, port, user, pass]` made: the server to talk to and
@@ -1359,6 +1836,110 @@ mod file_lines_tests {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn numbers_pack_both_ways_and_the_checksum_is_crc32() {
+        assert_eq!(pack(258, 2, false).unwrap().0, vec![1, 2]);
+        assert_eq!(pack(258, 2, true).unwrap().0, vec![2, 1]);
+        assert_eq!(unpack(&Bytes(vec![0xff, 0xfe]), 0, 2, false, true).unwrap(), -2);
+        assert_eq!(unpack(&Bytes(vec![0xff, 0xfe]), 0, 2, false, false).unwrap(), 65534);
+        assert_eq!(unpack(&Bytes(vec![2, 1, 0, 0]), 0, 4, true, true).unwrap(), 258);
+        assert!(unpack(&Bytes(vec![0x80, 0, 0, 0, 0, 0, 0, 0]), 0, 8, false, false).unwrap_err().contains("read them signed"));
+        assert_eq!(unpack(&Bytes(vec![0x80, 0, 0, 0, 0, 0, 0, 0]), 0, 8, false, true).unwrap(), i64::MIN);
+        assert!(unpack(&Bytes(vec![1]), 0, 2, false, true).unwrap_err().contains("outside"));
+        assert_eq!(ieee(1.5, 8, false).unwrap().0, 1.5f64.to_be_bytes().to_vec());
+        assert_eq!(ieee(1.5, 4, true).unwrap().0, 1.5f32.to_le_bytes().to_vec());
+        assert_eq!(ieee_at(&ieee(2.25, 8, false).unwrap(), 0, 8, false).unwrap(), 2.25);
+        assert_eq!(ieee_at(&ieee(2.25, 4, true).unwrap(), 0, 4, true).unwrap(), 2.25);
+        assert!(ieee(1.0, 3, false).is_err() && ieee_at(&Bytes(vec![0; 2]), 0, 8, false).is_err());
+        assert_eq!(crc32(b"123456789"), 0xCBF43926);
+        assert_eq!(hash(&Bytes(b"123456789".to_vec()), "crc32").unwrap(), "cbf43926");
+        assert_eq!(digest(&Bytes(Vec::new()), "crc32").unwrap().0, vec![0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn a_column_is_its_parts_and_is_made_of_them() {
+        use crate::frame::{Column, CrowColumn};
+        let col = CrowColumn { data: Arc::new(Column::Int(vec![3, 1, 2])), valid: Arc::new(crate::validity::Validity::from(vec![true, false, true])) };
+        assert_eq!(cell_kind(&col), "int");
+        assert_eq!(ints_of(&col, 0, 3).unwrap(), vec![3, 1, 2]);
+        assert_eq!(ints_of(&col, 1, 2).unwrap(), vec![1]);
+        assert_eq!(missing_in(&col, 0, 3).unwrap(), 1);
+        assert_eq!(present_of(&col, 0, 3).unwrap().0, vec![0b101]);
+        assert!(present_of(&col, 0, 1).unwrap().0.is_empty());
+        assert!(floats_of(&col, 0, 3).unwrap_err().contains("a float or a vector column, not a column of int"));
+        assert!(ints_of(&col, 2, 5).unwrap_err().contains("outside"));
+        let back = ints_column(vec![3, 1, 2], &Bytes(vec![0b101])).unwrap();
+        assert_eq!(back.valid.to_vec(), vec![true, false, true]);
+        assert!(ints_column(vec![1; 9], &Bytes(vec![1])).unwrap_err().contains("need 2 bytes"));
+        let mut t = crate::textcol::Text::with_capacity(3, 16);
+        for s in ["Apple", "", "cherry"] {
+            t.push(s);
+        }
+        let text = CrowColumn { data: Arc::new(Column::Str(t)), valid: Arc::new(crate::validity::Validity::from(vec![true, false, true])) };
+        assert_eq!(text_bytes_of(&text, 0, 3).unwrap().0, b"Applecherry".to_vec());
+        assert_eq!(text_ends_of(&text, 0, 3).unwrap(), vec![5, 5, 11]);
+        let made = text_column(&Bytes(b"Applecherry".to_vec()), vec![5, 5, 11], &Bytes(vec![0b101])).unwrap();
+        if let Column::Str(t) = &*made.data {
+            assert_eq!((t.get(0), t.get(1), t.get(2)), ("Apple", "", "cherry"));
+        } else {
+            panic!("a text column");
+        }
+        assert!(text_column(&Bytes(vec![0xff]), vec![1], &Bytes(Vec::new())).unwrap_err().contains("UTF-8"));
+        assert!(text_column(&Bytes(b"ab".to_vec()), vec![3], &Bytes(Vec::new())).unwrap_err().contains("outside"));
+        let bools = bools_column(&Bytes(vec![0b110]), 3, &Bytes(Vec::new())).unwrap();
+        assert_eq!(bools_of(&bools, 0, 3).unwrap(), vec![false, true, true]);
+        let moments = moments_column(vec![1000, 2000], vec![0, 60], &Bytes(Vec::new())).unwrap();
+        assert_eq!(cell_kind(&moments), "moment");
+        assert_eq!((millis_of(&moments, 0, 2).unwrap(), zones_of(&moments, 0, 2).unwrap()), (vec![1000, 2000], vec![0, 60]));
+        assert!(moments_column(vec![1], vec![100000], &Bytes(Vec::new())).is_err());
+        let vectors = vectors_column(2, vec![1.0, 2.0, 3.0, 4.0], &Bytes(Vec::new())).unwrap();
+        assert_eq!(vector_width(&vectors).unwrap(), 2);
+        assert_eq!(vectors_of(&vectors, 1, 2).unwrap(), vec![3.0, 4.0]);
+        assert_eq!(floats_of(&vectors, 0, 2).unwrap().len(), 4);
+        assert!(vectors_column(3, vec![1.0, 2.0], &Bytes(Vec::new())).unwrap_err().contains("fill rows"));
+    }
+
+    #[test]
+    fn a_file_is_read_by_region_flushed_linked_and_moved() {
+        let dir = std::env::temp_dir().join(format!("crow-sys-files-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("a.bin").to_string_lossy().to_string();
+        store(&path, &Bytes(b"0123456789".to_vec())).unwrap();
+        assert_eq!(file_region(&path, 3, 4).unwrap().0, b"3456".to_vec());
+        assert!(file_region(&path, 8, 4).unwrap_err().contains("outside"));
+        assert_eq!(flush(&path).unwrap(), path);
+        assert_eq!(flush(&dir.to_string_lossy()).unwrap(), dir.to_string_lossy().to_string());
+        let linked = dir.join("b.bin").to_string_lossy().to_string();
+        assert_eq!(link(&path, &linked).unwrap(), linked);
+        assert!(link(&path, &linked).is_err(), "a name taken is refused");
+        let moved = dir.join("c.bin").to_string_lossy().to_string();
+        assert_eq!(move_path(&linked, &moved).unwrap(), moved);
+        assert!(!std::path::Path::new(&linked).exists() && std::path::Path::new(&moved).exists());
+        assert!(modified(&moved).unwrap().ms > 0);
+        assert!(modified(&dir.join("nowhere").to_string_lossy()).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn bytes_are_written_in_place_and_refuse_what_no_byte_holds() {
+        let b = bytes_zeroed(3).unwrap();
+        assert_eq!(b.0, vec![0, 0, 0]);
+        let b = set_byte_taken(b, 1, 255).unwrap();
+        let b = set_byte_taken(b, -1, 9).unwrap();
+        let b = push_byte_taken(b, 7).unwrap();
+        assert_eq!(b.0, vec![0, 255, 9, 7]);
+        let c = concat_taken(b.clone(), &Bytes(vec![1, 2]));
+        assert_eq!(c.0, vec![0, 255, 9, 7, 1, 2]);
+        assert_eq!(set_byte(&b, 0, 1).unwrap().0, vec![1, 255, 9, 7]);
+        assert_eq!(push_byte(&b, 0).unwrap().0.len(), 5);
+        assert!(set_byte(&b, 4, 1).unwrap_err().contains("4"));
+        assert_eq!(set_byte(&b, 0, 256).unwrap_err(), "a byte is 0 to 255, got 256");
+        assert_eq!(push_byte(&b, -1).unwrap_err(), "a byte is 0 to 255, got -1");
+        assert!(bytes_zeroed(-1).unwrap_err().contains("0 or more"));
+    }
+
     /// A wait of more seconds than a clock holds is none, as 0 is: it had
     /// panicked converting `2 ^ 100` seconds (crow check --self).
     #[test]

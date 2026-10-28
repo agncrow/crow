@@ -376,6 +376,8 @@ pub enum IntRange {
     OrXor,
     /// A character's code: 0 to 0x10FFFF.
     Code,
+    /// A byte: 0 to 255.
+    Byte,
     /// The first argument's bits moved by the second.
     Shift,
     /// 0 or 1.
@@ -696,6 +698,15 @@ impl Kind {
     pub fn generic(self) -> bool {
         // (a map's keys are the map's kind: the rule reads it from the argument)
         matches!(self, Kind::List | Kind::Seq | Kind::Item | Kind::ItemRef | Kind::MapOf | Kind::MapRef | Kind::Key | Kind::Keys | Kind::Walked)
+    }
+
+    /// Whether an in-place row takes the collection whole, where it lies:
+    /// the owned kinds, and bytes a kernel builds (`b = set[b, i, v]`,
+    /// `push`, `concat`; docs/magpie-in-crow.md, 2.1). The one rule
+    /// `Row::takes_in_place` reads, for the lowering, both backends and
+    /// the emitter alike.
+    pub fn taken_whole(self) -> bool {
+        self.owned() || matches!(self, Kind::Bytes)
     }
 
     /// Whether the function takes the collection itself, to make its
@@ -2421,8 +2432,15 @@ pub static ROWS: &[Row] = &[
     row!("sys.text", "sys", "text", crow_runtime::sys::text_of_bytes, (Bytes) -> Str, value "parse"),
     row!("sys.slice", "sys", "slice", crow_runtime::sys::slice, (Bytes, Int, Int) -> Bytes, stops),
     Row { range: IntRange::Position, ..row!("sys.find", "sys", "find", crow_runtime::sys::find, (Bytes, Bytes) -> Int, never) },
-    Row { props: &[Prop::InPlace], ..row!("sys.concat", "sys", "concat", crow_runtime::sys::concat, (Bytes, Bytes) -> Bytes, never) },
-    row!("sys.byte", "sys", "byte", crow_runtime::sys::byte, (Bytes, Int) -> Int, stops),
+    Row { taken: Some("crow_runtime::sys::concat_taken"), props: &[Prop::InPlace], take: bytes_rows::concat_taken, ..row!("sys.concat", "sys", "concat", crow_runtime::sys::concat, (Bytes, Bytes) -> Bytes, never) },
+    Row { range: IntRange::Byte, ..row!("sys.byte", "sys", "byte", crow_runtime::sys::byte, (Bytes, Int) -> Int, stops) },
+    // a buffer a kernel written in Crow builds (docs/magpie-in-crow.md,
+    // 2.1): zero bytes to write into, a byte written at a position, a byte
+    // appended — each where the bytes lie when nothing else holds them
+    // (the take bridges, the emitter's taken path, `taken_in_place`)
+    row!("sys.bytes_zeroed", "sys", "bytes", crow_runtime::sys::bytes_zeroed, (Int) -> Bytes, stops),
+    Row { taken: Some("crow_runtime::sys::set_byte_taken"), props: &[Prop::InPlace], take: bytes_rows::set_taken, ..row!("sys.set_byte", "sys", "set", crow_runtime::sys::set_byte, (Bytes, Int, Int) -> Bytes, stops) },
+    Row { taken: Some("crow_runtime::sys::push_byte_taken"), props: &[Prop::InPlace], take: bytes_rows::push_taken, ..row!("sys.push_byte", "sys", "push", crow_runtime::sys::push_byte, (Bytes, Int) -> Bytes, stops) },
     Row { props: &[Prop::InPlace], ..row!("sys.concat_all", "sys", "concat", crow_runtime::sys::gather, (Chunks) -> Bytes, never) },
     row!("sys.file", "sys", "file", crow_runtime::sys::file, (Str) -> Bytes, value "sys"),
     row!("sys.file_lines", "sys", "file_lines", crow_runtime::sys::file_lines, (Str) -> Strs, value "sys"),
@@ -2447,11 +2465,23 @@ pub static ROWS: &[Row] = &[
     row!("sys.base64url", "sys", "base64url", crow_runtime::sys::base64url, (Bytes) -> Str, never),
     row!("sys.unbase64", "sys", "unbase64", crow_runtime::sys::unbase64, (Str) -> Bytes, value "parse"),
     row!("sys.same", "sys", "same", crow_runtime::sys::same, (Bytes, Bytes) -> Bool, never),
-    row!("sys.pack", "sys", "pack", crow_runtime::sys::pack, (Int, Int) -> Bytes, stops),
-    row!("sys.unpack", "sys", "unpack", crow_runtime::sys::unpack, (Bytes, Int, Int) -> Int, stops),
+    Row { options: &[("little", Preset::Bool(false))], ..row!("sys.pack", "sys", "pack", crow_runtime::sys::pack, (Int, Int, Bool) -> Bytes, stops) },
+    Row { options: &[("little", Preset::Bool(false)), ("signed", Preset::Bool(true))], ..row!("sys.unpack", "sys", "unpack", crow_runtime::sys::unpack, (Bytes, Int, Int, Bool, Bool) -> Int, stops) },
     row!("sys.records", "sys", "records", crow_runtime::sys::records, (Bytes) -> Frame, value "kafka"),
     row!("sys.records_of", "sys", "records_of", crow_runtime::sys::records_of, (Frame) -> Bytes, value "kafka"),
-    row!("sys.ieee", "sys", "ieee", crow_runtime::sys::ieee, (Float) -> Bytes, never),
+    Row { options: &[("width", Preset::Int(8)), ("little", Preset::Bool(false))], ..row!("sys.ieee", "sys", "ieee", crow_runtime::sys::ieee, (Float, Int, Bool) -> Bytes, stops) },
+    // (the reader's width and byte order are positions, not options: a row
+    // of the writer's name whose options may be given by position would
+    // take `ieee[b, at, 8]` as a float with a width and a byte order)
+    row!("sys.ieee_at", "sys", "ieee", crow_runtime::sys::ieee_at, (Bytes, Int, Int, Bool) -> Float, stops),
+    // Magpie's Rust codec, for the Crow codec's tests alone
+    // (docs/magpie-in-crow.md, section 3): gone with the kernel
+    Row { props: &[Prop::TestOnly], ..row!("sys.compress_rs", "sys", "compress_rs", crow_runtime::sys::compress_rs, (Bytes) -> Bytes, never) },
+    Row { props: &[Prop::TestOnly], ..row!("sys.decompress_rs", "sys", "decompress_rs", crow_runtime::sys::decompress_rs, (Bytes, Int) -> Bytes, value "magpie") },
+    Row { props: &[Prop::TestOnly], ..row!("sys.pack_rs", "sys", "pack_rs", crow_runtime::sys::pack_rs, (Ints, Int) -> Bytes, stops) },
+    Row { props: &[Prop::TestOnly], ..row!("sys.unpack_rs", "sys", "unpack_rs", crow_runtime::sys::unpack_rs, (Bytes, Int, Int) -> Ints, value "magpie") },
+    Row { props: &[Prop::TestOnly], ..row!("sys.put_var_rs", "sys", "put_var_rs", crow_runtime::sys::put_var_rs, (Int) -> Bytes, never) },
+    Row { props: &[Prop::TestOnly], ..row!("sys.read_var_rs", "sys", "read_var_rs", crow_runtime::sys::read_var_rs, (Bytes, Int) -> Ints, value "magpie") },
     row!("sys.binary", "sys", "binary", crow_web::core::response::binary_of, (Bytes, Str) -> Response, never),
     // a socket: the stream it talks over, what it holds unread, a frame's
     // mask, a digest as bytes (the handshake's accept key)
@@ -2526,6 +2556,34 @@ pub static ROWS: &[Row] = &[
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_between", "sys", "batch_between", crow_runtime::sys::batch_between, (Texts, Str, Str, Str, Int, Texts) -> Frame, value "magpie") },
     Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("sys.batch_sync", "sys", "batch_sync", crow_runtime::sys::batch_sync, (Str) -> Int, value "magpie") },
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.filesize", "sys", "filesize", crow_runtime::sys::filesize, (Str) -> Int, value "sys") },
+    // a file's region, when it was written, and the write path of a file a
+    // kernel places: flushed through to the disk, linked into its name,
+    // moved over another (docs/magpie-in-crow.md, 2.3)
+    Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.file_region", "sys", "file", crow_runtime::sys::file_region, (Str, Int, Int) -> Bytes, value "sys") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.modified", "sys", "modified", crow_runtime::sys::modified, (Str) -> Moment, value "sys") },
+    Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("sys.flush", "sys", "flush", crow_runtime::sys::flush, (Str) -> Str, value "sys") },
+    Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("sys.link", "sys", "link", crow_runtime::sys::link, (Str, Str) -> Str, value "sys") },
+    Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("sys.move", "sys", "move", crow_runtime::sys::move_path, (Str, Str) -> Str, value "sys") },
+    // a column as its parts, and from them (docs/magpie-in-crow.md, 2.5):
+    // what a file's writer and reader hold, with no value per cell
+    row!("sys.cell_kind", "sys", "cell_kind", crow_runtime::sys::cell_kind, (Column) -> Str, never),
+    row!("sys.ints_of", "sys", "ints_of", crow_runtime::sys::ints_of, (Column, Int, Int) -> Ints, stops),
+    row!("sys.floats_of", "sys", "floats_of", crow_runtime::sys::floats_of, (Column, Int, Int) -> Floats, stops),
+    row!("sys.bools_of", "sys", "bools_of", crow_runtime::sys::bools_of, (Column, Int, Int) -> Bools, stops),
+    row!("sys.millis_of", "sys", "millis_of", crow_runtime::sys::millis_of, (Column, Int, Int) -> Ints, stops),
+    row!("sys.zones_of", "sys", "zones_of", crow_runtime::sys::zones_of, (Column, Int, Int) -> Ints, stops),
+    row!("sys.vectors_of", "sys", "vectors_of", crow_runtime::sys::vectors_of, (Column, Int, Int) -> Floats, stops),
+    row!("sys.vector_width", "sys", "vector_width", crow_runtime::sys::vector_width, (Column) -> Int, stops),
+    row!("sys.text_bytes_of", "sys", "text_bytes_of", crow_runtime::sys::text_bytes_of, (Column, Int, Int) -> Bytes, stops),
+    row!("sys.text_ends_of", "sys", "text_ends_of", crow_runtime::sys::text_ends_of, (Column, Int, Int) -> Ints, stops),
+    row!("sys.present_of", "sys", "present_of", crow_runtime::sys::present_of, (Column, Int, Int) -> Bytes, stops),
+    row!("sys.missing_in", "sys", "missing_in", crow_runtime::sys::missing_in, (Column, Int, Int) -> Int, stops),
+    row!("sys.ints_column", "sys", "ints_column", crow_runtime::sys::ints_column, (Ints, Bytes) -> Column, stops),
+    row!("sys.floats_column", "sys", "floats_column", crow_runtime::sys::floats_column, (Floats, Bytes) -> Column, stops),
+    row!("sys.bools_column", "sys", "bools_column", crow_runtime::sys::bools_column, (Bytes, Int, Bytes) -> Column, stops),
+    row!("sys.moments_column", "sys", "moments_column", crow_runtime::sys::moments_column, (Ints, Ints, Bytes) -> Column, stops),
+    row!("sys.vectors_column", "sys", "vectors_column", crow_runtime::sys::vectors_column, (Int, Floats, Bytes) -> Column, stops),
+    row!("sys.text_column", "sys", "text_column", crow_runtime::sys::text_column, (Bytes, Ints, Bytes) -> Column, stops),
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_search", "sys", "batch_search", crow_runtime::sys::batch_search, (Texts, Str, Texts, Int, Bool, Int) -> Frame, value "magpie") },
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_nearest", "sys", "batch_nearest", crow_runtime::sys::batch_nearest, (Texts, Str, Tensor, Int) -> Frame, value "magpie") },
     row!("sys.frame_of_postgres", "sys", "frame_of_postgres", crow_runtime::sys::frame_of_postgres, (Bytes) -> Frame, value "frame"),
@@ -4080,6 +4138,15 @@ mod tests {
 /// answer): the text is changed where it lies, as the interpreter's `take`
 /// bridges change it (`texts`) — and a list cut, a tensor pushed onto, the
 /// same way. None for a row without one.
+impl Row {
+    /// Whether `x = row[x, …]` takes `x` where it lies: an in-place row
+    /// whose first parameter is taken whole, whatever module declares it
+    /// (a core row's list or map, sys's bytes).
+    pub fn takes_in_place(&self) -> bool {
+        self.props.contains(&Prop::InPlace) && self.params.first().is_some_and(|k| k.taken_whole())
+    }
+}
+
 pub fn taken_path(id: &str) -> Option<&'static str> {
     ROWS.iter().find(|r| r.id == id).and_then(|r| r.taken)
 }
@@ -4212,6 +4279,62 @@ pub mod texts {
             }
         }
         by_row("text.lower", &args, trace)
+    }
+}
+
+/// The bytes rows' take bridges: given the bytes — `b = set[b, i, v]`,
+/// `b = push[b, v]`, `b = concat[b, c]` at b's last read — written where
+/// they lie; anything else is the row's own call.
+pub mod bytes_rows {
+    use super::*;
+
+    fn by_row(id: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, String> {
+        match ROWS.iter().find(|r| r.id == id) {
+            Some(row) => (row.call)(args, trace),
+            None => Err(format!("a bug in Crow: the row {} is gone", id)),
+        }
+    }
+
+    /// The first argument's bytes taken out of it, when every argument is
+    /// a plain value (no failure riding on one); None for anything else.
+    fn bytes_taken(args: &mut [CrowValue]) -> Option<crow_runtime::sys::Bytes> {
+        if !args.iter().all(|a| a.is_ok()) {
+            return None;
+        }
+        let first = args.first_mut()?;
+        let Value::Bytes(b) = &mut first.value else { return None };
+        Some(std::mem::take(b))
+    }
+
+    pub fn set_taken(mut args: Vec<CrowValue>, trace: &str) -> Result<CrowValue, String> {
+        if args.len() == 3
+            && let (Some(i), Some(v)) = (args[1].plain_int(), args[2].plain_int())
+            && let Some(b) = bytes_taken(&mut args)
+        {
+            return crow_runtime::sys::set_byte_taken(b, i, v).map(write_bytes);
+        }
+        by_row("sys.set_byte", &args, trace)
+    }
+
+    pub fn push_taken(mut args: Vec<CrowValue>, trace: &str) -> Result<CrowValue, String> {
+        if args.len() == 2
+            && let Some(v) = args[1].plain_int()
+            && let Some(b) = bytes_taken(&mut args)
+        {
+            return crow_runtime::sys::push_byte_taken(b, v).map(write_bytes);
+        }
+        by_row("sys.push_byte", &args, trace)
+    }
+
+    pub fn concat_taken(mut args: Vec<CrowValue>, trace: &str) -> Result<CrowValue, String> {
+        if args.len() == 2
+            && matches!(args[1].value, Value::Bytes(_))
+            && let Some(a) = bytes_taken(&mut args)
+            && let Value::Bytes(b) = &args[1].value
+        {
+            return Ok(write_bytes(crow_runtime::sys::concat_taken(a, b)));
+        }
+        by_row("sys.concat", &args, trace)
     }
 }
 
