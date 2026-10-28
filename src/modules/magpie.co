@@ -474,8 +474,9 @@ fn _between[paths, column, lo, hi, upto, columns]
 --- `lookup` takes one; an empty one is no bound): a segment's groups are
 --- in key order, so the range reads the groups it covers — a window of
 --- the table where the whole is more than one read should hold.
---- `columns` names the ones to read (the keys and `_pos` among them, or
---- every column when empty). With `equal` (one value per key column,
+--- `columns` names the ones to read, every column when empty; the log's
+--- keys and `_pos` are read beside them, since the newest row of each
+--- key is found by them, and answered with them. With `equal` (one value per key column,
 --- each written as text as `lookup` takes one), the newest row of that
 --- one key, as a frame of one row or none — from the image the
 --- sequencer keeps: the table built from the log when first asked, kept
@@ -514,6 +515,16 @@ fn latest[dir, upto = -1, columns = [], lo = '', hi = '', equal = []]
     fixed = _keys[dir]
     if not fixed.ok
         return fixed
+    --- the columns read: the ones asked, the keys and `_pos` beside them
+    --- (`latest[d, columns = ['e']]` had stopped at the fold's sort:
+    --- column '_pos' not found)
+    reading = columns
+    if len[columns] gt 0
+        for k in fixed
+            if k not in reading
+                reading = push[reading, k]
+        if '_pos' not in reading
+            reading = push[reading, '_pos']
     rows = frame.new[]
     if len[bounds] gt 0
         if len[fixed] eq 0
@@ -526,17 +537,17 @@ fn latest[dir, upto = -1, columns = [], lo = '', hi = '', equal = []]
         paths = _reaching[b, -1, upto]
         if len[paths] eq 0
             return frame.new[]
-        rows = _between[paths, fixed[0], lo_text, hi_text, upto, columns]
+        rows = _between[paths, fixed[0], lo_text, hi_text, upto, reading]
         if not rows.ok and _gone[rows.reason]
             again = batches[dir]
             if not again.ok
                 return again
             paths = _reaching[again, -1, upto]
-            rows = _between[paths, fixed[0], lo_text, hi_text, upto, columns]
+            rows = _between[paths, fixed[0], lo_text, hi_text, upto, reading]
         if not rows.ok
             return error[rows.reason, 'magpie']
     else
-        rows = scan[dir, 0, upto, columns]
+        rows = scan[dir, 0, upto, reading]
     if not rows.ok
         return rows
     if len[rows] eq 0
@@ -2213,6 +2224,8 @@ test a_column_of_vectors_is_held_and_searched_by_a_vector[]
     assert[batch[dir, frame.new[id = ['d'], e = [[2.0, 0.0]], n = [4]]] eq 3]
     assert[latest[dir].e[3] eq [2.0, 0.0]]
     assert[latest[dir, equal = ['c']].e[0] eq [1.0, 1.0]]
+    --- the columns asked, the keys and `_pos` beside them
+    assert[latest[dir, columns = ['e']].columns eq ['e', 'id', '_pos']]
     near = nearest[dir, 'e', [1.0, 0.1], 3]
     assert[near.id eq ['a', 'd', 'c']]
     assert[near.score[0] gt 0.99 and near.score[1] gt 0.99 and near.score[2] lt 0.8]

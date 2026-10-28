@@ -266,7 +266,13 @@ in the kernel (`CROW_MAGPIE_CRASH`).
 column of every segment it writes and keeps, per group, the token filter
 and the two counts in the index section; a column whose distinct tokens
 exceed half its documents (an identifier column) gets none and is
-scanned. `search` on a segment reads the index and scores from the
+scanned, and so does one with fewer than one distinct token per 64
+documents (a category column — a symbol, a day — whose filter over its
+values admits the group and whose rows `lookup` reads: measured
+2026-10-27, the bars' `symbol` and `day` had cost 187 MB of postings on
+a 266 MB month, pruning nothing a filter did not; the position column
+gets no filter either, its values all distinct and its bounds pruning
+by range, 11 MB on the month). `search` on a segment reads the index and scores from the
 groups whose filters admit a word; on a batch it reads the column and
 tokenises it, the counts from what it read. The answer is the same
 either way: the index changes what is read, not what is scored.
@@ -658,6 +664,87 @@ Phases 0–5 are about one and a half times the first architecture
 single phase. Phase 8 is a kernel round the size of the frame verbs'.
 Phase 9 is small. Phase 10 is a package plus one index. All of it is
 ours.
+
+## Measured 2026-10-27, on small sets
+
+Every number below is interpreted (`crow run -i`; the kernels do the
+work either way), warm — the median of five runs after a first — on
+one machine (Apple M4 Max, 64 GB), the same for every column, with
+nothing else running. Vijay asked for small sets, not the billion rows
+the plan names; the programs are `tests/magpie/measure/` (run by hand on a quiet
+machine, not by the gate) and answer the same way at any size.
+
+**finch's month, copied again** (bars 11,268,166 rows out of ClickHouse
+in 17 s, NBBO 19,193,311 rows in 18.5 s, a batch a day; merged into one
+segment each in 14.5 and 15 s). The bars' segment is 289 MB — 266 MB of
+column chunks, 23 MB of filters, no postings — against 487 MB before
+the category rule of phase 4 (187 MB of postings over `symbol` and
+`day`, 11 MB of filters over `_pos`); the NBBO's 240 MB against 550.
+
+**finch's five questions**, warm ms, ClickHouse as finch runs it (its
+143,000 parts) against Magpie from the files and over rows held:
+
+| Question | ClickHouse (finch) | Magpie, from the files | Magpie, rows held |
+|---|---|---|---|
+| A symbol's day as 1-minute candles with cumulative VWAP | 222 | 9 | 3 |
+| A symbol's last, high and volume to an instant | 223 | 4 | 1 |
+| The day's volume by symbol, top 20 | 240 | 17 | 3 |
+| The month's volume by day (11.3M rows) | 558 | 73 | 24 |
+| The scanner's columns for the universe at an instant | 299 | 72 | 54 |
+
+The answers agree with ClickHouse's: the point question's three
+numbers, the top twenty symbols and their volumes, the twenty-one
+days' volumes, checked in the run (the candles and the scanner's
+columns were held in the first architecture's round). Against the
+first architecture's numbers (8 / 7 / 27 / 220 / 80 from the files) the
+month's question is three times faster — the format's decode of two
+columns over 11.3 million rows — and the rest within a few
+milliseconds.
+
+**Vectors** (the column of vectors and `nearest`): 20,000 vectors of
+width 64 merge in 74 ms; `nearest` from the files answers in 2.0 ms,
+the vectors package's flat index over the same matrix held in memory
+in 2.0 ms (built in 9 ms). 100,000 vectors: merge 311 ms, `nearest`
+9.0 ms from the files, the flat index 12.0 ms (built in 48 ms). The
+positions and the cosines agree in both. Exact, as planned; the HNSW
+per segment is the step when a corpus asks for one.
+
+**A hop over thousands of nodes** (packages/kg, 5,000 nodes with 10
+out-edges each, 50,000 edges written both ways in 118 ms): a node's
+neighbors 3.0 ms; `walk` one hop 11 nodes in 2 ms, two hops 111 nodes
+in 23 ms, three hops 1,022 nodes in 222 ms — 0.2 ms per node reached,
+the cost of reading one key's run of the edges log per node. The
+frontier kernel the plan names (a hop that costs per byte) is worth
+writing when a graph's hops reach thousands of nodes: a hop over a
+thousand costs a fifth of a second now.
+
+**A common word's top-10** over 100,000 texts of eight words from a
+vocabulary of 3,000 with a long tail: 11 ms over the batches (scanned,
+14 ms cold), 7 ms over the merged segment (indexed), the same ranking;
+a rare word beside the common one 8 ms.
+
+**A wide log**, 200,000 rows by 102 columns (100 of floats): written
+in 2.67 s as ten batches, merged in 2.34 s; a scan of two columns over
+every row 2 ms, a lookup of one key with two columns under 0.05 ms, a
+summary of two columns by a key of a hundred groups 2 ms — the reader
+decodes the columns asked, so the width is not paid for.
+
+**The sequencer against Redis and Postgres** on the loopback, 2,000
+point writes then 2,000 point reads, one client each: `put` 77.5 µs a
+row (with the flush at the end), `latest` of one key 13.5 µs, `batch`
+(durable before it answers, an fsync each) 12.0 ms; Postgres `INSERT`
+154 µs and `SELECT` by primary key 71 µs (a commit per statement, the
+same client loop in Crow); Redis `SET` 23 µs and `GET` 15 µs at the
+median (redis-benchmark, one client, Redis's default durability — no
+flush). So a point read from the image is Redis's, a put is three
+times Redis's unflushed write and half Postgres's insert, and a
+durable write is the disk's flush.
+
+**What the measures changed**: the category rule in phase 4 (above);
+`latest` reads the keys and `_pos` beside the columns asked (a list
+lacking them had stopped). What they leave open: the frontier kernel
+(when a hop reaches thousands of nodes), the HNSW (when a corpus asks),
+the billion-row run the plan names (not run, by Vijay's word).
 
 ## Open for Vijay
 

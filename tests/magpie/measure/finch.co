@@ -1,0 +1,157 @@
+--- finch's five questions asked of ClickHouse (finch's deployment, as
+--- it runs) and of Magpie from its files and over rows held, each
+--- repeated: the first run cold, then the median of the warm runs
+use magpie
+use db
+use frame
+use math
+
+ch = db.connect['clickhouse://localhost:8123/finch_trading']
+root = env['ROOT', 'lakehouse3']
+--- (the day and the symbol written plain: a value from the environment
+--- can fail, and a list of such values is refused where the kernel takes
+--- text — the top level has no guard that narrows)
+day = '2026-09-17'
+sym = 'RETO'
+reps = int[env['REPS', '5']]
+upto = '`day`T10:30:00-04:00'
+cut = moment[upto]
+
+fn ms[a, b]
+    return (float[b] - float[a]) * 1000.0
+
+fn median[xs]
+    s = sort[xs]
+    return s[len[s] / 2]
+
+fn q_ch[conn, q, sym, day, upto, ids]
+    if q eq 1
+        return query[conn, 'SELECT ts, c, sum(pv) OVER (ORDER BY ts) / greatest(sum(vol) OVER (ORDER BY ts), 1) AS cum_vwap FROM (SELECT toFloat64(toUnixTimestamp(toStartOfMinute(timestamp))) AS ts, argMax(close, timestamp) AS c, sum(toFloat64(volume)) AS vol, sum(close * toFloat64(volume)) AS pv FROM dataset_bars WHERE symbol = ? AND date = toDate(?) GROUP BY ts) ORDER BY ts', [sym, day]]
+    if q eq 2
+        return query[conn, 'SELECT argMax(close, timestamp) AS last, max(high) AS hi, sum(toFloat64(volume)) AS vol FROM dataset_bars WHERE symbol = ? AND date = toDate(?) AND timestamp <= parseDateTimeBestEffort(?)', [sym, day, upto]]
+    if q eq 3
+        return query[conn, 'SELECT symbol, sum(volume) AS v FROM dataset_bars WHERE date = toDate(?) GROUP BY symbol ORDER BY v DESC LIMIT 20', [day]]
+    if q eq 4
+        return query[conn, 'SELECT toString(date) AS day, sum(volume) AS v FROM dataset_bars WHERE toYYYYMM(date) = 202609 GROUP BY date ORDER BY date']
+    return query[conn, 'WITH parseDateTimeBestEffort(?) AS t, sumIf(close * volume, timestamp >= t - INTERVAL 60 SECOND) AS pv60, sumIf(volume, timestamp >= t - INTERVAL 60 SECOND) AS v60, sum(close * volume) / sum(volume) AS cv, argMax(close, timestamp) AS px SELECT symbol, round(px, 3) AS price, round(cv, 3) AS cum_vwap, round(pv60 / greatest(v60, 1), 3) AS rvwap_60, sum(volume) AS cum_vol FROM dataset_bars WHERE date = toDate(?) AND dataset_id IN ? AND timestamp <= parseDateTimeBestEffort(?) GROUP BY symbol ORDER BY symbol', [upto, day, ids, upto]]
+
+fn lake_rows[root, q, sym, day]
+    if q eq 1
+        return lookup['`root`/bars', ['day', 'symbol'], [day, sym], ['timestamp', 'close', 'volume']]
+    if q eq 2
+        return lookup['`root`/bars', ['day', 'symbol'], [day, sym], ['symbol', 'timestamp', 'close', 'high', 'volume']]
+    if q eq 3
+        return lookup['`root`/bars', ['day'], [day], ['symbol', 'volume']]
+    if q eq 4
+        return scan['`root`/bars', 0, -1, ['day', 'volume']]
+    return lookup['`root`/bars', ['day'], [day], ['symbol', 'timestamp', 'close', 'volume', 'dataset_id']]
+
+fn lake_answer[q, rows, cut, ids]
+    if q eq 1
+        one = sort[rows, 'timestamp']
+        one.minute = bucket[one.timestamp, 60]
+        one.v = float[one.volume]
+        one.pv = one.close .* one.v
+        candles = group[one, 'minute', ['close', 'last'], ['v', 'sum'], ['pv', 'sum']]
+        candles.cum_pv = window[candles, 'pv_sum', 'sum']
+        candles.cum_v = window[candles, 'v_sum', 'sum']
+        candles.cum_vwap = candles.cum_pv ./ where[candles.cum_v gt 0.0, candles.cum_v, 1.0]
+        return candles
+    if q eq 2
+        mine = sort[rows[rows.timestamp lte cut], 'timestamp']
+        return group[mine, 'symbol', ['close', 'last'], ['high', 'max'], ['volume', 'sum']]
+    if q eq 3
+        g = group[rows, 'symbol', ['volume', 'sum']]
+        return frame.head[sort[g, 'volume_sum', desc = true], 20]
+    if q eq 4
+        return sort[group[rows, 'day', ['volume', 'sum']], 'day']
+    inset = frame.new[dataset_id = ids]
+    r = join[rows, inset, 'dataset_id']
+    r = r[r.timestamp lte cut]
+    r = sort[r, ['symbol', 'timestamp']]
+    r.v = float[r.volume]
+    r.pv = r.close .* r.v
+    r.in60 = r.timestamp gte moment[cut] - 60.0
+    r.pv60 = where[r.in60, r.pv, 0.0]
+    r.v60 = where[r.in60, r.v, 0.0]
+    g = group[r, 'symbol', ['pv', 'sum'], ['v', 'sum'], ['pv60', 'sum'], ['v60', 'sum'], ['close', 'last'], ['volume', 'sum']]
+    g.cv = g.pv_sum ./ g.v_sum
+    g.rv60 = g.pv60_sum ./ where[g.v60_sum gt 0.0, g.v60_sum, 1.0]
+    return g
+
+--- the universe's dataset ids, the same for every system
+ds = latest['`root`/datasets', columns = ['id', 'day', 'granularity', 'status']]
+dd = ds[ds.day eq day]
+dd = dd[dd.granularity eq '1s']
+dd = dd[dd.status eq 'ready']
+ids = []
+for i in range[len[dd]]
+    ids = push[ids, dd.id[i]]
+
+names = ['Q1 symbol day as 1-min candles with cumulative VWAP', 'Q2 last, high, volume to an instant', 'Q3 day volume by symbol, top 20', 'Q4 month volume by day', 'Q5 scanner columns for the universe at an instant']
+systems = []
+questions = []
+colds = []
+warms = []
+
+--- ClickHouse, finch's deployment
+for q in range[1, 6]
+    name = names[q - 1]
+    times = []
+    for i in range[reps]
+        t0 = now[]
+        r = q_ch[ch, q, sym, day, upto, ids]
+        t1 = now[]
+        times = push[times, ms[t0, t1]]
+    systems = push[systems, 'clickhouse (finch)']
+    questions = push[questions, name]
+    colds = push[colds, round[times[0]]]
+    warms = push[warms, round[median[slice[times, 1, len[times]]]]]
+for q in range[1, 6]
+    name = names[q - 1]
+    times = []
+    for i in range[reps]
+        t0 = now[]
+        rows = lake_rows[root, q, sym, day]
+        r = lake_answer[q, rows, cut, ids]
+        t1 = now[]
+        times = push[times, ms[t0, t1]]
+    systems = push[systems, 'magpie, from the files']
+    questions = push[questions, name]
+    colds = push[colds, round[times[0]]]
+    warms = push[warms, round[median[slice[times, 1, len[times]]]]]
+    held = lake_rows[root, q, sym, day]
+    times = []
+    for i in range[reps]
+        t0 = now[]
+        r = lake_answer[q, held, cut, ids]
+        t1 = now[]
+        times = push[times, ms[t0, t1]]
+    systems = push[systems, 'magpie, rows held']
+    questions = push[questions, name]
+    colds = push[colds, round[times[0]]]
+    warms = push[warms, round[median[slice[times, 1, len[times]]]]]
+for i in range[len[systems]]
+    log['`questions[i]` | `systems[i]` | cold `colds[i]` ms | warm `warms[i]` ms']
+
+--- the answers held to ClickHouse's: Q2's three numbers, Q3's top 20
+--- symbols and their volumes, Q4's volume per day
+fn close_enough[a, b]
+    return abs[a - b] lte 0.000001 * (abs[a] + abs[b] + 1.0)
+
+ch2 = q_ch[ch, 2, sym, day, upto, ids]
+mg2 = lake_answer[2, lake_rows[root, 2, sym, day], cut, ids]
+agree2 = close_enough[float[ch2.last[0]], float[mg2.close_last[0]]] and close_enough[float[ch2.hi[0]], float[mg2.high_max[0]]] and close_enough[float[ch2.vol[0]], float[mg2.volume_sum[0]]]
+ch3 = q_ch[ch, 3, sym, day, upto, ids]
+mg3 = lake_answer[3, lake_rows[root, 3, sym, day], cut, ids]
+agree3 = ch3.symbol eq mg3.symbol
+for i in range[len[ch3]]
+    if not close_enough[float[ch3.v[i]], float[mg3.volume_sum[i]]]
+        agree3 = false
+ch4 = q_ch[ch, 4, sym, day, upto, ids]
+mg4 = lake_answer[4, lake_rows[root, 4, sym, day], cut, ids]
+agree4 = len[ch4] eq len[mg4]
+for i in range[len[ch4]]
+    if not close_enough[float[ch4.v[i]], float[mg4.volume_sum[i]]]
+        agree4 = false
+log['answers agree with ClickHouse: Q2 `agree2`, Q3 `agree3` (`len[ch3]` symbols), Q4 `agree4` (`len[ch4]` days)']

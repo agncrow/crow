@@ -1,0 +1,61 @@
+--- a wide log: N rows by C float columns in batches, merged; a scan of
+--- two columns, a lookup by the key, a summary by a key — the cost flat in
+--- the width (the reader decodes the columns asked)
+use magpie, frame, math
+
+n = int[env['N', '200000']]
+c = int[env['C', '100']]
+reps = int[env['REPS', '3']]
+d = 'measure-wide'
+gone = rm[d]
+
+fn ms[a, b]
+    return (float[b] - float[a]) * 1000.0
+
+fn median[xs]
+    s = sort[xs]
+    return s[len[s] / 2]
+
+seed[5]
+per = 20000
+written = 0
+t0 = now[]
+while written lt n
+    ks = for i in range[per]
+        int[rand[] * 100.0]
+    f = frame.new[id = range[written, written + per], k = ks]
+    for j in range[c]
+        f.`'c`j`'` = randn[per]
+    p = batch[d, f, by = ['id']]
+    written = written + per
+t1 = now[]
+log['`n` rows x `c + 2` columns written in `fmt[ms[t0, t1], decimals = 0]` ms']
+a = now[]
+m = merge[d]
+b = now[]
+log['merged in `fmt[ms[a, b], decimals = 0]` ms']
+
+times = []
+for r in range[reps]
+    a = now[]
+    s = scan[d, 0, -1, ['id', 'c7']]
+    b = now[]
+    times = push[times, ms[a, b]]
+log['scan of 2 columns over `n` rows: `fmt[median[times], decimals = 0]` ms']
+times = []
+for r in range[reps]
+    a = now[]
+    one = lookup[d, ['id'], ['123456'], ['id', 'c3']]
+    b = now[]
+    times = push[times, ms[a, b]]
+log['lookup of one key, 2 columns: `fmt[median[times], decimals = 1]` ms']
+times = []
+groups = 0
+for r in range[reps]
+    a = now[]
+    g = summary[d, ['k'], ['c7', 'c8'], ['mean', 'sum']]
+    b = now[]
+    times = push[times, ms[a, b]]
+    groups = len[g]
+log['summary by k of 2 columns: `fmt[median[times], decimals = 0]` ms (`groups` groups)']
+gone = rm[d]

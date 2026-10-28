@@ -387,6 +387,17 @@ history says the rest.
 
 ### Changed
 
+- The merge indexes no category column (magpie): a text column with
+  fewer than one distinct token per 64 documents — a symbol, a day —
+  gets no token index, as an identifier-like column gets none, since
+  every row would be a posting and the group's filter over its values
+  already admits or refuses the group (`lookup` reads the rows); the
+  position column gets no filter, its values all distinct and its
+  bounds pruning by range. Measured 2026-10-27 on finch's month of
+  bars: 187 MB of postings over `symbol` and `day` and 11 MB of filters
+  over `_pos` on a segment whose column chunks are 266 MB, pruning
+  nothing the filters did not.
+
 - `crow fmt` indents at four spaces, the unit every document, the book
   and the standard modules write (it had normalized every file to two),
   and reads levels from the nesting: a line inside a bracket moves with
@@ -575,7 +586,10 @@ history says the rest.
   tensor row types a cell only where no row of the name takes a scalar
   (the market package had lost its cells' kind). A package of one file
   is `main.co`, which `use kg` resolves to from inside the package and
-  from a program that depends on it (kg, features).
+  from a program that depends on it (kg, features). `latest[dir, columns
+  = […]]` reads the log's keys and `_pos` beside the columns asked and
+  answers with them: a list lacking them had stopped the fold (`sort:
+  column '_pos' not found`).
 
 - The left side of an operator runs before the right side's own
   statements: `put[d, f] eq 1 and latest[d].id eq ['a', 'b']` had read

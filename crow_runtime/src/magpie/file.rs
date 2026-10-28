@@ -144,11 +144,14 @@ pub fn cell_bytes(col: &Column, i: usize, out: &mut Vec<u8>) {
 /// (none where every cell is missing or every number is NaN; a text past
 /// 256 bytes gives no bound), the missing count, the distinct count and
 /// its filter where the distinct values are few enough.
-fn statistics(col: &Column, valid: &Validity, start: usize, end: usize) -> (u32, Option<u32>, Option<Bound>, Option<Bound>, Option<Bloom>) {
+fn statistics(col: &Column, valid: &Validity, start: usize, end: usize, filter: bool) -> (u32, Option<u32>, Option<Bound>, Option<Bound>, Option<Bloom>) {
     let present: Vec<usize> = (start..end).filter(|&i| valid[i]).collect();
     let mut distinct: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
     let mut bytes = Vec::new();
-    let mut filtered = true;
+    // (the position column's values are all distinct and its bounds prune
+    // by range: a filter over them admitted every group and cost 11 MB on
+    // the bars' month)
+    let mut filtered = filter;
     for &i in &present {
         cell_bytes(col, i, &mut bytes);
         if !distinct.contains(&bytes) {
@@ -217,6 +220,15 @@ fn token_index(t: &crate::textcol::Text, valid: &Validity, start: usize, end: us
     if docs >= 16 && words.len() as u32 > docs / 2 {
         return None;
     }
+    // a category column — a symbol, a day: fewer than one distinct token
+    // per 64 documents — gets no index either: every row would be a
+    // posting, and the group's filter over its distinct values already
+    // admits or refuses the group (the bars' `symbol` and `day` had cost
+    // 187 MB of postings on a 266 MB month, pruning nothing a filter did
+    // not; measured 2026-10-27)
+    if docs >= 64 && (words.len() as u32).saturating_mul(64) < docs {
+        return None;
+    }
     let mut bloom = Bloom::sized(words.len());
     for w in &words {
         bloom.add(w.as_bytes());
@@ -276,7 +288,7 @@ impl Writer {
             let chunk = encode::encode(col, valid, start, end, self.narrow.get(c).copied().unwrap_or(false));
             let chunk_off = self.out.len() as u64;
             self.out.extend_from_slice(&chunk);
-            let (missing, distinct, min, max, bloom) = statistics(col, valid, start, end);
+            let (missing, distinct, min, max, bloom) = statistics(col, valid, start, end, name != super::POSITION);
             let bloom = bloom.map(|b| {
                 let bytes = b.to_bytes();
                 let off = self.out.len() as u64;

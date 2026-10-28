@@ -1087,6 +1087,35 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A category column — a token or two over hundreds of rows — gets no
+    /// token index (its filter admits the group, its rows are read), a
+    /// text column does, and a search over either answers the same rows.
+    #[test]
+    fn a_category_column_is_not_indexed_and_still_searched() {
+        let dir = scratch("category");
+        let n = 200;
+        let kinds: Vec<String> = (0..n).map(|i| if i % 2 == 0 { "buy".to_string() } else { "sell".to_string() }).collect();
+        // (a few dozen distinct words over the rows: text, not identifiers)
+        let texts: Vec<String> = (0..n).map(|i| format!("order of lot {} by desk {}", i % 7, i % 13)).collect();
+        let f = CrowFrame::new(
+            vec!["id".into(), "kind".into(), "text".into()],
+            vec![Column::Int((0..n as i64).collect()), Column::strs(kinds), Column::strs(texts)],
+            vec![vec![true; n], vec![true; n], vec![true; n]],
+        );
+        let path = write(&dir, 1, 0, &f, &[], &["kind".to_string(), "text".to_string()], true).expect("written");
+        // (the flag says the column was named for indexing; the counts say
+        // which groups got an index: none for the category column)
+        let stats: serde_json::Value = serde_json::from_str(&stats(&path).unwrap()).unwrap();
+        assert_eq!(stats["columns"]["kind"]["indexed"], true, "{}", stats);
+        assert_eq!(stats["tokens"]["kind"]["docs"], 0, "{}", stats);
+        assert_eq!(stats["tokens"]["text"]["docs"], 200, "{}", stats);
+        let buys = search(&[path.clone()], "kind", &["buy".to_string()], 300, false, 0).expect("searched by the scan");
+        assert_eq!(buys.nrows(), 100);
+        let lot3 = search(&[path], "text", &["lot".to_string(), "3".to_string()], 300, false, 0).expect("searched by the index");
+        assert!(lot3.nrows() >= 29, "{}", lot3.nrows());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A value present is admitted; one absent is (almost always) not; a
     /// word of a text column is found lowercased; a word absent is not.
     #[test]

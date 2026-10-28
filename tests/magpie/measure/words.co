@@ -1,0 +1,60 @@
+--- a common word's top-10 over a log of N texts: a batch read whole
+--- against the index the merge built (the same ranking either way)
+use magpie, frame, math
+
+n = int[env['N', '100000']]
+reps = int[env['REPS', '5']]
+d = 'measure-words'
+gone = rm[d]
+
+fn ms[a, b]
+    return (float[b] - float[a]) * 1000.0
+
+fn median[xs]
+    s = sort[xs]
+    return s[len[s] / 2]
+
+--- a vocabulary of 3000 words, drawn with a long tail (word i with
+--- weight 1 / (i + 1)), eight words a text
+seed[11]
+vocab = for i in range[3000]
+    'w`i`'
+per = 10000
+written = 0
+while written lt n
+    texts = for r in range[per]
+        words = for j in range[8]
+            vocab[int[(rand[] ^ 3.0) * 3000.0]]
+        join[words, ' ']
+    ids = range[written, written + per]
+    p = batch[d, frame.new[id = ids, text = texts]]
+    written = written + per
+a = now[]
+hits = search[d, 'text', ['w1'], 10]
+b = now[]
+log['top-10 of a common word over `n` batched texts (scanned): `fmt[ms[a, b], decimals = 0]` ms first, then warm:']
+times = []
+for r in range[reps]
+    a = now[]
+    hits = search[d, 'text', ['w1'], 10]
+    b = now[]
+    times = push[times, ms[a, b]]
+log['  `fmt[median[times], decimals = 0]` ms']
+m = merge[d]
+times2 = []
+hits2 = search[d, 'text', ['w1'], 10]
+for r in range[reps]
+    a = now[]
+    hits2 = search[d, 'text', ['w1'], 10]
+    b = now[]
+    times2 = push[times2, ms[a, b]]
+log['the same over the merged segment (indexed): `fmt[median[times2], decimals = 0]` ms']
+log[hits.id eq hits2.id]
+times3 = []
+for r in range[reps]
+    a = now[]
+    rare = search[d, 'text', ['w2500', 'w1'], 10]
+    b = now[]
+    times3 = push[times3, ms[a, b]]
+log['a rare word and a common one, indexed: `fmt[median[times3], decimals = 0]` ms']
+gone = rm[d]

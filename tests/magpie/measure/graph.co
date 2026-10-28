@@ -1,0 +1,59 @@
+--- a hop over thousands of nodes: the graph package's walk and
+--- neighbors over N nodes with D out-edges each — what a hop costs a node
+--- at a time through latest's key ranges (the frontier kernel question)
+use magpie, frame, math
+use kg
+
+n = int[env['N', '5000']]
+deg = int[env['D', '10']]
+reps = int[env['REPS', '3']]
+root = 'measure-graph'
+gone = rm[root]
+
+fn ms[a, b]
+    return (float[b] - float[a]) * 1000.0
+
+seed[3]
+--- the edges as one frame per 1000 sources, written by kg's own logs
+src_ids = []
+rel_ids = []
+dst_ids = []
+for i in range[n]
+    for j in range[deg]
+        src_ids = push[src_ids, 'n`i`']
+        rel_ids = push[rel_ids, 'to']
+        dst_ids = push[dst_ids, 'n`int[rand[] * float[n]]`']
+weights = for i in range[len[src_ids]]
+    1.0
+origins = for i in range[len[src_ids]]
+    ''
+gones = for i in range[len[src_ids]]
+    false
+ats = for i in range[len[src_ids]]
+    1000 + i
+fwd = frame.new[src = src_ids, rel = rel_ids, dst = dst_ids, weight = weights, source = origins, gone = gones, at = ats]
+rev = frame.new[dst = dst_ids, rel = rel_ids, src = src_ids, weight = weights, source = origins, gone = gones, at = ats]
+a = now[]
+p = batch['`root`/edges', fwd, by = ['src', 'rel', 'dst'], time = 'at']
+q = batch['`root`/back', rev, by = ['dst', 'rel', 'src'], time = 'at']
+b = now[]
+log['`len[fwd]` edges written both ways in `fmt[ms[a, b], decimals = 0]` ms']
+m1 = merge['`root`/edges']
+m2 = merge['`root`/back']
+
+a = now[]
+out = kg.neighbors[root, 'n7']
+b = now[]
+log['neighbors of one node: `len[out]` edges in `fmt[ms[a, b], decimals = 2]` ms']
+for hops in [1, 2, 3]
+    times = []
+    reached = 0
+    for r in range[reps]
+        a = now[]
+        w = kg.walk[root, 'n7', hops]
+        b = now[]
+        times = push[times, ms[a, b]]
+        reached = len[w]
+    s = sort[times]
+    log['walk `hops` hops: `reached` nodes reached in `fmt[s[len[s] / 2], decimals = 1]` ms']
+gone = rm[root]
