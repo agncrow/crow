@@ -18,7 +18,7 @@ The `math` module is built in — no file needed. It provides tensor creation, e
 | `linspace[start, end, n]` | `n` evenly spaced values from `start` to `end` | [Math: random, signal, special, and sparse](../by-example/math-more.md) · [Math: tensors](../by-example/math.md) |
 | `arange[start, end, step]` | Values from `start` to `end` by `step` | [Math: tensors](../by-example/math.md) · [The standard library's layer: `use sys`](../by-example/sys.md) |
 | `randn[d1, d2, ...]` | Normal random values (mean=0, std=1); written in Crow (see Random Numbers) | [Math: tensors](../by-example/math.md) |
-| `tensor[array]` | Convert an array to a tensor | [Math: tensors](../by-example/math.md) |
+| `tensor[array]` | Convert an array to a tensor | [Frames: `use frame`](../by-example/frames.md) · [Math: tensors](../by-example/math.md) |
 
 ### Element-wise Operations
 
@@ -142,7 +142,7 @@ Negative indices are supported (wrap around from the end). The result tensor has
 | `eigen[a]` | Eigenvalues → returns [real, imag] | [Math: reductions and linear algebra](../by-example/math-linalg.md) |
 | `norm[x]` | L2 (Euclidean) norm (returns float) | [Math: reductions and linear algebra](../by-example/math-linalg.md) |
 | `norm[x, p]` | Lp norm (p=1 for L1, inf for L∞) | [Math: reductions and linear algebra](../by-example/math-linalg.md) |
-| `dot[a, b]` | Vector dot product (inner product, returns float) | [Math: reductions and linear algebra](../by-example/math-linalg.md) |
+| `dot[a, b]` | Vector dot product (inner product, returns float) | [Frames: `use frame`](../by-example/frames.md) · [Math: reductions and linear algebra](../by-example/math-linalg.md) |
 | `pinv[a]` | Moore-Penrose pseudo-inverse | [Math: reductions and linear algebra](../by-example/math-linalg.md) |
 | `lstsq[a, b]` | Least-squares solve: minimize ‖Ax − b‖² | [Math: reductions and linear algebra](../by-example/math-linalg.md) |
 | `triu[a]` | Upper triangular part of matrix | [Math: reductions and linear algebra](../by-example/math-linalg.md) |
@@ -271,7 +271,7 @@ log[sum[data]]         --- total of all values
 | Constant | Description | Example |
 |---|---|---|
 | `pi` | π = 3.14159... |  |
-| `e` | Euler's number e = 2.71828... |  |
+| `e` | Euler's number e = 2.71828... | [Frames: `use frame`](../by-example/frames.md) · [The log as batch files: `use magpie`](../by-example/magpie.md) |
 | `inf` | Positive infinity |  |
 | `nan` | Not a number |  |
 

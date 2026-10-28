@@ -56,6 +56,7 @@ enum Cell {
     Text(String),
     Bool(bool),
     Moment(i64, i16),
+    Vector(Vec<f64>),
     Missing,
 }
 
@@ -69,6 +70,7 @@ fn cell_of(frame: &CrowFrame, c: usize, i: usize) -> Cell {
         Column::Str(t) => Cell::Text(t.get(i).to_string()),
         Column::Bool(v) => Cell::Bool(v[i]),
         Column::DateTime(ms, off) => Cell::Moment(ms[i], off[i]),
+        Column::Vectors(w, v) => Cell::Vector(v[i * w..(i + 1) * w].to_vec()),
     }
 }
 
@@ -102,6 +104,19 @@ fn frame_of_rows(columns: &[(String, Kind)], rows: &[&Vec<Cell>]) -> CrowFrame {
                     }
                 }
                 Column::Str(t)
+            }
+            Kind::Vector => {
+                // (the width from the first vector held; a missing cell a
+                // vector of zeros)
+                let width = rows.iter().find_map(|r| match &r[c] { Cell::Vector(v) => Some(v.len()), _ => None }).unwrap_or(0);
+                let mut data = Vec::with_capacity(n * width);
+                for r in rows {
+                    match &r[c] {
+                        Cell::Vector(v) if v.len() == width => { valid.push(true); data.extend_from_slice(v); }
+                        _ => { valid.push(false); data.extend(std::iter::repeat_n(0.0, width)); }
+                    }
+                }
+                Column::Vectors(width, data)
             }
         };
         data.push(col);

@@ -23,6 +23,7 @@ pub mod file;
 pub mod inflate;
 pub mod manifest;
 pub mod merge;
+pub mod nearest;
 pub mod pack;
 pub mod postings;
 pub mod search;
@@ -96,6 +97,7 @@ fn bytes_per_row(frame: &CrowFrame) -> usize {
             Column::Bool(_) => 1,
             Column::DateTime(..) => 10,
             Column::Str(t) => t.bytes_held() / n + 4,
+            Column::Vectors(w, _) => 8 * w.max(&1),
         })
         .sum::<usize>()
         .max(1)
@@ -270,6 +272,7 @@ pub(crate) fn parsed(kind: Kind, value: &str) -> Result<Parsed, String> {
             _ => return Err(format!("'{}' is no bool", value)),
         },
         Kind::Text => Parsed::Text(value.to_string()),
+        Kind::Vector => return Err("a column of vectors is compared with nothing: `nearest` finds rows by a vector".to_string()),
     })
 }
 
@@ -425,6 +428,14 @@ pub fn search(paths: &[String], column: &str, words: &[String], k: i64, stems: b
     search::search(paths, column, words, k, stems, snippet)
 }
 
+/// `sys.batch_nearest[paths, column, query, k]`: the `k` rows of the
+/// files whose vector `column` lies nearest the query by the cosine, with
+/// the files' columns and a `score`, the best first and an earlier
+/// position first between equals (nearest.rs).
+pub fn nearest_rows(paths: &[String], column: &str, query: &[f64], k: i64) -> Result<CrowFrame, String> {
+    nearest::nearest(paths, column, query, k)
+}
+
 /// The frames of several files stacked, sorted by position, `_pos` dropped
 /// where it was not asked for.
 fn gathered(parts: Vec<CrowFrame>, wanted: &[String]) -> Result<CrowFrame, String> {
@@ -529,6 +540,8 @@ fn cell_within(col: &Column, i: usize, lo: Option<&Parsed>, hi: Option<&Parsed>)
         Column::Float(v) => Parsed::Float(v[i]),
         Column::Bool(v) => Parsed::Bool(v[i]),
         Column::Str(t) => Parsed::Text(t.get(i).to_string()),
+        // (never reached: a range over a column of vectors is refused by `parsed`)
+        Column::Vectors(..) => return false,
     };
     lo.is_none_or(|l| parsed_le(l, &cell)) && hi.is_none_or(|h| parsed_le(&cell, h))
 }

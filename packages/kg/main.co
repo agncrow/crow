@@ -18,6 +18,9 @@ use magpie, frame
 fn _nodes[root]
     return '`root`/nodes'
 
+fn _vectors[root]
+    return '`root`/vectors'
+
 fn _edges[root]
     return '`root`/edges'
 
@@ -344,6 +347,48 @@ fn rule[root, f, at = -1]
         added = added + 1
     return added
 
+--- a node's embedding written: a vector (a tensor of one axis, or a
+--- list of numbers) keyed by the node's id in the `vectors` log, so a
+--- node re-embedded has a newer version; answers the position the row
+--- took
+fn embed[root, id, v, at = -1]
+    t = _when[at]
+    rows = push[[], tensor[v]]
+    f = frame.new[id = [id], e = rows, at = [t]]
+    return put[_vectors[root], f, by = ['id'], time = 'at']
+
+--- the k nodes whose newest embedding lies nearest the vector by the
+--- cosine (Magpie's `nearest` over the vectors log; `similar`, since a
+--- package's function is not named like an export it imports): a frame of `id`
+--- and `score`, the best first — an entity found by meaning, before
+--- the edges expand it. A node's older embeddings are skipped (a merge
+--- folds them away; until one, the newest row of each id is the one
+--- read); as of a position with `upto`
+fn similar[root, v, k = 10, upto = -1]
+    d = _vectors[root]
+    blank = frame.new[id = [''], score = [0.0]]
+    if not exists[d]
+        return blank[blank.score gt 1.0]
+    newest = latest[d, upto, ['id', '_pos']]
+    if not newest.ok
+        return error[newest.reason, 'kg']
+    m = metrics[d]
+    if not m.ok
+        return error[m.reason, 'kg']
+    rows = m.rows[0]
+    if not rows.ok
+        return error['no figures for the vectors log at \'`d`\'', 'kg']
+    --- the stale versions asked for beside the k wanted, then dropped
+    extra = rows - len[newest]
+    hits = magpie.nearest[d, 'e', v, k + extra]
+    if not hits.ok
+        return error[hits.reason, 'kg']
+    live = join[hits, newest, ['id', '_pos'], 'semi']
+    if upto gte 0
+        live = live[live._pos lte upto]
+    kept = frame.head[live, k]
+    return select[kept, ['id', 'score']]
+
 --- the edges as they stood at each row's moment: `f` holds `src`,
 --- `rel`, `dst` and `at` (milliseconds); beside each row the edge's
 --- newest version at or before that moment, with its `columns` (every
@@ -383,6 +428,25 @@ test a_graph_is_two_logs[]
     assert[len[h] eq 3 and h.gone eq [false, false, true]]
     assert[len[history[root, 'alice', 1]] eq 2]
     assert[len[neighbors['kg-test-nowhere', 'alice']] eq 0 and len[nodes['kg-test-nowhere']] eq 0 and len[edges['kg-test-nowhere']] eq 0]
+    gone = rm[root]
+
+--- an embedding per node, the nearest nodes by meaning, a node
+--- re-embedded answering by its newest vector, and the graph as of a
+--- position before the re-embedding
+test a_node_is_found_by_its_embedding[]
+    root = _fresh['kg-test-vectors']
+    assert[embed[root, 'alice', [1.0, 0.0], 1000] eq 0]
+    assert[embed[root, 'bob', [0.0, 1.0], 1001] eq 1]
+    assert[embed[root, 'carol', [1.0, 1.0], 1002] eq 2]
+    near = similar[root, [1.0, 0.1], 2]
+    assert[near.id eq ['alice', 'carol']]
+    assert[near.score[0] gt 0.99 and near.score[1] lt 0.8]
+    assert[embed[root, 'alice', [0.0, 1.0], 1003] eq 3]
+    --- alice's newest vector is bob's, and bob's earlier position wins the tie
+    again = similar[root, [1.0, 0.1], 2]
+    assert[again.id eq ['carol', 'bob']]
+    assert[similar[root, [1.0, 0.1], 2, 2].id eq ['alice', 'carol']]
+    assert[len[similar['kg-test-nowhere', [1.0, 0.0]]] eq 0]
     gone = rm[root]
 
 test a_walk_is_breadth_first[]

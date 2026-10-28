@@ -273,6 +273,7 @@ fn cell_json(frame: &CrowFrame, col: usize, row: usize) -> serde_json::Value {
         Column::Str(v) => serde_json::json!(&v[row]),
         Column::Bool(v) => serde_json::json!(v[row]),
         Column::DateTime(v, _) => serde_json::json!(v[row]),
+        Column::Vectors(w, v) => serde_json::json!(&v[row * w..(row + 1) * w]),
     }
 }
 

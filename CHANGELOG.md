@@ -117,6 +117,29 @@ history says the rest.
 
 ### Added
 
+- A column of vectors (spec, frame: "A `vector` column"; design
+  rule 24's one exception this round, on Vijay's word): a frame's
+  column holds vectors of one width — an embedding per row — written
+  from a matrix or a list of vectors, read one cell at a time as a
+  tensor and whole as its matrix (`tensor[df.e]`), shown as a tensor
+  shows, carried through the verbs that need no order (a mask, `select`,
+  `head`, `stack`, `join`, `group` with `count`/`first`/`last`, `where`,
+  `unique`, `pivot`), refused by the ones that do (`sort`, a `sum` or
+  `mean`, `rank`, `fill`, `unpivot`, a text function) in both modes with
+  one wording, saved as JSON records or Parquet (a fixed-size list of
+  float64) and read back, refused by CSV, and held by Magpie as a float
+  chunk of rows × width (`narrow` 32 bits), never a key. The cell's type
+  is a tensor inside the column's, so the compiler gained no type.
+  `nearest[dir, column, vector, k = 10]` (magpie) finds the `k` rows
+  nearest a query vector by the cosine — the vectors package's flat
+  score, exact over every row, the pending rows included — through the
+  door too (`/orders/nearest`); `packages/kg` gained `embed` and
+  `similar` (an entity found by meaning, the stale versions a
+  re-embedding leaves dropped), `packages/features` embeddings as
+  features and `similar`. Parity 303, the module's, the kernel's and
+  the packages' tests, the frame runtime's unit tests, the self-check's
+  `colvec` value, and a book block each.
+
 - Magpie, the data platform (`use magpie`; first built as `lake`, renamed
   2026-10-26 before any release: a lake is raw files other engines query,
   and this store holds its state and runs its own engines — the magpie is
@@ -533,6 +556,26 @@ history says the rest.
   smoothing — as it was, now written down and held to a reference.
 
 ### Fixed
+
+- A refusal inside a standard module's helper two exports share is
+  blamed on the export whose call made the refused copy, at that
+  call's line (errors j80): `lookup`, valid, had answered for a list
+  handed to `latest`'s `upto`, since the helper's copy was lowered
+  before its caller's body and the first export reaching the helper was
+  named. The parity harness fails a program refused in both modes that
+  printed nothing (a refusal is an errors case; a program that stops as
+  it runs is parity as before): parity 233 had passed for weeks refused
+  (`abs[j.n]` of a parsed value; `abs[int[j.n]]` now). The freeze ratchet
+  holds each compiler file to the set of name-shaped literals it held at
+  the bless (`tests/freeze/names.txt`), not a count, and records the
+  literals that are no name, so a module may later export a word the
+  emitter already held (`get`): the count had made magpie's `get` and
+  `asof` cost their names. A loaded cell handed to a builtin that takes
+  numbers one at a time and a tensor whole (`max`) is a number: the
+  tensor row types a cell only where no row of the name takes a scalar
+  (the market package had lost its cells' kind). A package of one file
+  is `main.co`, which `use kg` resolves to from inside the package and
+  from a program that depends on it (kg, features).
 
 - The left side of an operator runs before the right side's own
   statements: `put[d, f] eq 1 and latest[d].id eq ['a', 'b']` had read

@@ -100,4 +100,35 @@ names the variable being assigned (`gap`) reads the value so far there,
 so the value may change its kind — a frame through the join, a number at
 the end.
 
+## A column of vectors
+
+```crow
+use frame
+use math
+
+df = frame.new[id = [1, 2, 3], e = [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]]
+log[df.dtypes]
+log[df.e[2]]
+along = for v in df.e
+    fmt[dot[v, [1.0, 0.0]], decimals = 1]
+log[along]
+log[tensor[df.e].shape]
+log[str[df.e]]
+```
+
+```text
+['int', 'vector']
+[1, 1]
+['1.0', '0.0', '1.0']
+[3, 2]
+['[1, 0]', '[0, 1]', '[1, 1]']
+```
+
+A `vector` column holds vectors of one width, an embedding per row:
+written from a matrix (its rows) or a list of vectors, read one cell at
+a time as a tensor, whole as its matrix (`tensor[df.e]`). It has no
+order and no cell-by-cell arithmetic — `sort` by it or a `sum` over it
+stops the program — and `save` writes it as JSON records or Parquet,
+not CSV. Magpie holds the column and finds rows by it (`nearest`).
+
 Reference: spec section 13 (frame) and book chapter 10.

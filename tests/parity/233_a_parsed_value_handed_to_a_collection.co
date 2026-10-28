@@ -4,10 +4,12 @@
 --- had made a list of ints floats, and the lowered program disagreed with
 --- itself). And a builtin reading an item of a parsed value reads the item:
 --- `upper[j.names[1]]` had not built compiled, the read handed the item's
---- failure mark it does not read.
+--- failure mark it does not read. (A number of several kinds — `abs` takes
+--- an int or a float — is read first, `int[j.n]`: the program had been
+--- refused in both modes and passed the harness as a stop alike, 2026-10-27.)
 j = json['{"ids": [4, 5, 6], "names": ["ada", "bo"], "n": 4}']
 log[upper[j.names[1]]]
-log[abs[j.n]]
+log[abs[int[j.n]]]
 ids = [0]
 ids = pop[ids]
 ids = push[ids, j.ids[0]]

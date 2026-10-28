@@ -389,6 +389,7 @@ log[tail_forget['ex_batches']]
 log[batch_search[['ex_batches/S000000000001.segment'], 'name', ['apple'], 5, false, 0].id]
 log[batch_summary[['ex_batches/S000000000001.segment'], [], ['id'], ['sum'], [], [], [], '', '', -1].id_sum]
 log[batch_asof[['ex_batches/S000000000001.segment'], frame.new[id = [2], t = [5]], ['id'], 't', [], -1].kind]
+log[batch_nearest[['ex_batches/S000000000001.segment'], 'name', [1.0], 1].kind]
 log[int[json[batch_stats[seg]].tokens.name.docs]]
 log[filesize[seg] gt 100]
 gone = rm['ex_batches']
@@ -423,6 +424,7 @@ ex_batches/S000000000001.segment
 0
 [3, 1]
 [6]
+magpie
 magpie
 3
 true

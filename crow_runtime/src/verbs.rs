@@ -300,6 +300,9 @@ impl CrowFrame {
                 if matches!(column, Column::Bool(_)) {
                     return Err(format!("window: rank orders numbers or text, and column '{}' holds bools", col));
                 }
+                if matches!(column, Column::Vectors(..)) {
+                    return Err(format!("window: rank orders numbers or text, and column '{}' holds vectors", col));
+                }
                 let mut out = vec![0i64; nrows];
                 for rows in &members {
                     let present: Vec<usize> = rows.iter().copied().filter(|&r| valid[r]).collect();
@@ -329,6 +332,9 @@ impl CrowFrame {
         let nrows = self.nrows();
         let column = self.data[ci].as_ref();
         let valid = self.validity[ci].as_ref();
+        if matches!(column, Column::Vectors(..)) && !matches!(agg, AggFn::Count | AggFn::First | AggFn::Last | AggFn::Distinct) {
+            return Err(format!("window: {} of column '{}', which holds vectors", agg.word(), col));
+        }
         // a number per row where numbers are taken; a missing cell is the
         // reason there are none, as where numbers are handed to a function
         let numbers: Option<Vec<f64>> = if agg.numeric() || matches!(agg, AggFn::Min | AggFn::Max) {
@@ -648,6 +654,7 @@ impl CrowFrame {
         let flip = |k: u64| if desc { u64::MAX - k } else { k };
         let keyed = |key: &dyn Fn(usize) -> Option<u64>| -> Vec<(bool, u64)> { (0..n).map(|i| match key(i) { Some(k) if valid[i] => (false, flip(k)), _ => (true, 0) }).collect() };
         Ok(match self.data[idx].as_ref() {
+            Column::Vectors(..) => return Err(format!("sort: column '{}' holds vectors, which have no order", name)),
             Column::Int(v) => keyed(&|i| Some((v[i] as u64) ^ (1 << 63))),
             Column::DateTime(ms, _) => keyed(&|i| Some((ms[i] as u64) ^ (1 << 63))),
             Column::Bool(v) => keyed(&|i| Some(v[i] as u64)),
@@ -739,6 +746,13 @@ fn shared_codes<'a>(l: &'a Column, lv: &Validity, r: &'a Column, rv: &Validity) 
         (Column::Int(a), Column::Int(b)) => both(a.iter().copied(), lv, b.iter().copied(), rv),
         (Column::DateTime(a, _), Column::DateTime(b, _)) => both(a.iter().copied(), lv, b.iter().copied(), rv),
         (Column::Float(a), Column::Float(b)) => both(a.iter().map(|x| x.to_bits()), lv, b.iter().map(|x| x.to_bits()), rv),
+        // (equal vectors share a code, by their numbers' bits)
+        (Column::Vectors(wa, a), Column::Vectors(wb, b)) => both(
+            (0..l.len()).map(|i| a[i * wa..(i + 1) * wa].iter().map(|x| (*x + 0.0).to_bits()).collect::<Vec<u64>>()),
+            lv,
+            (0..r.len()).map(|i| b[i * wb..(i + 1) * wb].iter().map(|x| (*x + 0.0).to_bits()).collect::<Vec<u64>>()),
+            rv,
+        ),
         // a number is a number: an int side and a float side match where
         // their values are equal (coded as text, they had not)
         (Column::Int(a), Column::Float(b)) => both(a.iter().map(|&x| (x as f64).to_bits()), lv, b.iter().map(|x| (*x + 0.0).to_bits()), rv),
@@ -1160,6 +1174,9 @@ impl CrowFrame {
             return Err(format!("unpivot: '{}' is a key and a column to unpivot", both));
         }
         let kinds: Vec<&str> = ci.iter().map(|&i| self.data[i].dtype_name()).collect();
+        if let Some(v) = kinds.iter().position(|k| *k == "vector") {
+            return Err(format!("unpivot: column '{}' holds vectors, and the values are cells", cols[v]));
+        }
         let kind = if kinds.iter().all(|k| *k == "int") {
             "int"
         } else if kinds.iter().all(|k| *k == "int" || *k == "float") {
@@ -1314,6 +1331,7 @@ pub fn choose(mask: &[bool], a: Cells, b: Cells) -> Result<CrowColumn, String> {
                 Ok((col, valid))
             }
             Cells::One(cell) => Ok((repeated(&cell, n)?, Validity::all(n))),
+            Cells::Refused(why) => Err(format!("where: {}: {}", name, why)),
         }
     };
     let (a, av) = sided(a, "the first value")?;
@@ -1340,6 +1358,12 @@ pub fn choose(mask: &[bool], a: Cells, b: Cells) -> Result<CrowColumn, String> {
                     t.push(if mask[i] { p.get(i) } else { q.get(i) });
                 }
                 Column::Str(t.finish())
+            }
+            (Column::Vectors(wp, p), Column::Vectors(wq, q)) => {
+                if wp != wq && n > 0 {
+                    return Err(format!("where: one value holds vectors of width {} and the other of width {}", wp, wq));
+                }
+                Column::Vectors(*wp, (0..n).flat_map(|i| if mask[i] { p[i * wp..(i + 1) * wp].iter().copied() } else { q[i * wq..(i + 1) * wq].iter().copied() }).collect())
             }
             (x, y) => return Err(format!("where: one value holds {} and the other {} — both are one kind", x.dtype_name(), y.dtype_name())),
         })
@@ -1370,6 +1394,7 @@ pub fn cast_column(c: &CrowColumn, to: &str) -> Result<CrowColumn, String> {
                         Column::Bool(v) => Some(v[i] as i64),
                         Column::Str(t) => t.get(i).trim().parse::<i64>().ok(),
                         Column::DateTime(ms, _) => Some(ms[i].div_euclid(1000)),
+                        Column::Vectors(..) => None,
                     }
                 };
                 ok.push(v.is_some());
@@ -1390,6 +1415,7 @@ pub fn cast_column(c: &CrowColumn, to: &str) -> Result<CrowColumn, String> {
                         Column::Bool(v) => Some(v[i] as u8 as f64),
                         Column::Str(t) => t.get(i).trim().parse::<f64>().ok(),
                         Column::DateTime(ms, _) => Some(ms[i] as f64 / 1000.0),
+                        Column::Vectors(..) => None,
                     }
                 };
                 ok.push(v.is_some());
@@ -1408,6 +1434,9 @@ pub fn cast_column(c: &CrowColumn, to: &str) -> Result<CrowColumn, String> {
             if matches!(col, Column::Bool(_)) {
                 return Err("moment: a column of bools holds no moments".to_string());
             }
+            if matches!(col, Column::Vectors(..)) {
+                return Err("moment: a column of vectors holds no moments".to_string());
+            }
             let mut ms = vec![0i64; n];
             let mut off = vec![0i16; n];
             let mut ok = Vec::with_capacity(n);
@@ -1422,7 +1451,7 @@ pub fn cast_column(c: &CrowColumn, to: &str) -> Result<CrowColumn, String> {
                         Column::Int(v) => v[i].checked_mul(1000).filter(|ms| ms.abs() <= crate::moments::MOST_MS).map(|ms| (ms, 0)),
                         Column::Float(v) => crate::moments::ms_within(v[i]).map(|ms| (ms, 0)),
                         Column::Str(t) => crate::frame::parse_datetime(t.get(i)),
-                        Column::Bool(_) => None,
+                        Column::Bool(_) | Column::Vectors(..) => None,
                     }
                 };
                 ok.push(v.is_some());

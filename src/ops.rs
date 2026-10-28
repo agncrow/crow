@@ -945,6 +945,9 @@ pub fn column_cell(column: &crow_runtime::frame::Column, valid: bool, row: usize
             Column::Bool(_) => Value::Bool(false),
             Column::Str(_) => Value::Str(String::new()),
             Column::DateTime(..) => Value::Moment(crow_runtime::moments::Moment::default()),
+            // (a vector of zeros of the column's width, as the compiled
+            // `get_vector` answers a missing cell)
+            Column::Vectors(w, _) => Value::NumArray(Box::new(crow_runtime::tensor::CrowTensor::zeros(vec![(*w).max(1)]))),
         };
         return missing;
     }
@@ -954,6 +957,7 @@ pub fn column_cell(column: &crow_runtime::frame::Column, valid: bool, row: usize
         Column::Str(v) => Value::Str(v[row].to_string()),
         Column::Bool(v) => Value::Bool(v[row]),
         Column::DateTime(millis, offsets) => Value::Moment(crow_runtime::moments::Moment { ms: millis[row], offset: offsets[row] }),
+        Column::Vectors(..) => Value::NumArray(Box::new(column.vector_at(row))),
     })
 }
 

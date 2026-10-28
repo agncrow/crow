@@ -662,6 +662,49 @@ fn search[dir, column, words, k = 10, snippet = 0]
         hits = _searched[paths, column, words, k, stems, snippet]
     return hits
 
+fn _nearest_in[paths, column, vector, k]
+    named = paths
+    return batch_nearest[named, column, vector, k]
+
+--- `nearest[dir, column, vector, k = 10]`: the k rows whose vector
+--- `column` lies nearest the query `vector` by the cosine — the inner
+--- product of the row's unit vector and the query's, the score the
+--- vectors package's flat index computes — with the files' columns and
+--- a `score`, the best first and an earlier position first between
+--- equals; exact over every row of the log, the pending rows included.
+--- A column of another kind, a vector of another width than the
+--- column's and a negative k are refused
+fn nearest[dir, column, vector, k = 10]
+    if _remote[dir]
+        q_col = _one['column', column]
+        pieces = []
+        for x in vector
+            pieces = push[pieces, str[x]]
+        q_vec = _joined['vector', pieces]
+        return _asked[dir, 'nearest', 'k=`k``q_col``q_vec`']
+    if len[bytes[column]] eq 0
+        return error['nearest needs a column name', 'magpie']
+    --- the query pinned as a tensor of numbers, k as an int
+    q = tensor[vector]
+    wanted = pack[k, 8]
+    if k lt 0
+        return error['nearest answers at most k rows, and k is `k`', 'magpie']
+    b = batches[dir]
+    if not b.ok
+        return b
+    live = _live[b]
+    paths = []
+    for i in range[len[live]]
+        paths = push[paths, live.path[i]]
+    hits = _nearest_in[paths, column, q, k]
+    if not hits.ok and _gone[hits.reason]
+        again = batches[dir]
+        if not again.ok
+            return again
+        paths = _reaching[again, -1, -1]
+        hits = _nearest_in[paths, column, q, k]
+    return hits
+
 --- `commit[dir, f, seen = -1, columns = [], equal = []]`: a transaction
 --- read at snapshot `seen` the keys `columns[i] = equal[i]` (each value
 --- as text); the write set `f` is appended where none of those keys was
@@ -1459,6 +1502,11 @@ fn _http_answer[root, r]
         return _framed[lookup[dir, _params[q, 'on'], _params[q, 'equal'], _params[q, 'columns']]]
     if verb eq 'search'
         return _framed[search[dir, _param[q, 'column'], _params[q, 'words'], _param_int[q, 'k', 10], _param_int[q, 'snippet', 0]]]
+    if verb eq 'nearest'
+        numbers = []
+        for piece in _params[q, 'vector']
+            numbers = push[numbers, float[piece]]
+        return _framed[nearest[dir, _param[q, 'column'], numbers, _param_int[q, 'k', 10]]]
     if verb eq 'summary'
         return _framed[summary[dir, _params[q, 'by'], _params[q, 'of'], _params[q, 'how'], _params[q, 'on'], _params[q, 'ops'], _params[q, 'equal'], _param[q, 'lo'], _param[q, 'hi'], _param_int[q, 'upto', -1]]]
     if verb eq 'batches'
@@ -2152,3 +2200,35 @@ test a_batch_can_skip_the_flush_until_a_sync[]
     assert[sync[dir] eq 2]
     assert[not sync['magpie-test-nowhere'].ok]
     gone = rm[dir]
+
+--- a column of vectors is held as any column: put and read back, the
+--- nearest rows by a query vector (best first, an earlier position first
+--- between equals, the pending rows included), kept across a merge and
+--- in 32 bits with `narrow`; a lookup by a vector, a query of another
+--- width and a column of another kind are refused
+test a_column_of_vectors_is_held_and_searched_by_a_vector[]
+    dir = _scratch['magpie-test-vectors']
+    rows = frame.new[id = ['a', 'b', 'c'], e = [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], n = [1, 2, 3]]
+    assert[put[dir, rows, by = ['id']] eq 0]
+    assert[batch[dir, frame.new[id = ['d'], e = [[2.0, 0.0]], n = [4]]] eq 3]
+    assert[latest[dir].e[3] eq [2.0, 0.0]]
+    assert[latest[dir, equal = ['c']].e[0] eq [1.0, 1.0]]
+    near = nearest[dir, 'e', [1.0, 0.1], 3]
+    assert[near.id eq ['a', 'd', 'c']]
+    assert[near.score[0] gt 0.99 and near.score[1] gt 0.99 and near.score[2] lt 0.8]
+    assert[nearest[dir, 'e', tensor[[0.0, 1.0]], 1].id eq ['b']]
+    assert[len[nearest[dir, 'e', [0.0, 1.0], 0]] eq 0]
+    assert[merge[dir].ok]
+    assert[nearest[dir, 'e', [1.0, 0.1], 2].id eq ['a', 'd']]
+    assert[latest[dir].e[3] eq [2.0, 0.0]]
+    assert[summary[dir, [], ['n'], ['count']].n_count eq [4]]
+    assert[not lookup[dir, ['e'], ['[1, 0]']].ok]
+    assert[not nearest[dir, 'e', [1.0, 0.0, 0.0], 2].ok]
+    assert[not nearest[dir, 'n', [1.0, 0.0], 2].ok]
+    assert[not nearest[dir, 'e', [1.0, 0.0], -1].ok]
+    gone = rm[dir]
+    thin = _scratch['magpie-test-vectors-narrow']
+    assert[batch[thin, rows, by = ['id'], narrow = ['e']] eq 0]
+    assert[latest[thin].e[2] eq [1.0, 1.0]]
+    assert[nearest[thin, 'e', [1.0, 1.0], 1].id eq ['c']]
+    gone = rm[thin]

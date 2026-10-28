@@ -1314,6 +1314,34 @@ pub fn read_cells(v: &CrowValue) -> Result<crow_runtime::frames::Cells, String> 
         Column::Bool(items.iter().map(|i| matches!(i.value, Value::Bool(true))).collect())
     } else if items.iter().all(|i| matches!(i.value, Value::Str(_))) {
         Column::Str(items.iter().map(|i| if let Value::Str(s) = &i.value { s.clone() } else { String::new() }).collect())
+    } else if all(|v| matches!(v, Value::NumArray(_))) {
+        // a list of vectors is a column of vectors, as the compiled
+        // `Cells::from(Vec<CrowTensor>)` reads it (one width, or refused
+        // by the row)
+        let rows: Vec<CrowTensor> = items.iter().map(|i| if let Value::NumArray(t) = &i.value { t.as_ref().clone() } else { CrowTensor::zeros(vec![0]) }).collect();
+        return match Cells::from(rows) {
+            Cells::Column(c, _) => Ok(Cells::Column(c, crow_runtime::frame::Validity::from(valid))),
+            other => Ok(other),
+        };
+    } else if all(|v| matches!(v, Value::Array(_))) {
+        // a list of lists of numbers, likewise
+        let mut rows: Vec<Vec<f64>> = Vec::with_capacity(items.len());
+        for i in items.iter() {
+            let Value::Array(xs) = &i.value else { continue };
+            let mut row = Vec::with_capacity(xs.len());
+            for x in xs.iter() {
+                match &x.value {
+                    Value::Int(n) if x.is_ok() => row.push(*n as f64),
+                    Value::Float(f) if x.is_ok() => row.push(*f),
+                    _ => return Err(format!("expected a column's values, got a list of lists of {}", named(x))),
+                }
+            }
+            rows.push(row);
+        }
+        return match Cells::from(rows) {
+            Cells::Column(c, _) => Ok(Cells::Column(c, crow_runtime::frame::Validity::from(valid))),
+            other => Ok(other),
+        };
     } else {
         let other = items.iter().find(|i| !matches!(i.value, Value::Int(_) | Value::Float(_) | Value::Bool(_) | Value::Str(_) | Value::Moment(_)));
         return Err(format!("expected a column's values, got a list of {}", other.map(named).unwrap_or("mixed values")));
@@ -1411,6 +1439,7 @@ pub fn read_column(v: &CrowValue) -> Result<crow_runtime::frame::CrowColumn, Str
     match read_cells(v)? {
         crow_runtime::frames::Cells::Column(data, valid) => Ok(crow_runtime::frame::CrowColumn { data: std::sync::Arc::new(data), valid: std::sync::Arc::new(valid) }),
         crow_runtime::frames::Cells::One(_) => Err(format!("expected a frame's column, got {}", named(v))),
+        crow_runtime::frames::Cells::Refused(why) => Err(why),
     }
 }
 
@@ -2498,6 +2527,7 @@ pub static ROWS: &[Row] = &[
     Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("sys.batch_sync", "sys", "batch_sync", crow_runtime::sys::batch_sync, (Str) -> Int, value "magpie") },
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.filesize", "sys", "filesize", crow_runtime::sys::filesize, (Str) -> Int, value "sys") },
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_search", "sys", "batch_search", crow_runtime::sys::batch_search, (Texts, Str, Texts, Int, Bool, Int) -> Frame, value "magpie") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_nearest", "sys", "batch_nearest", crow_runtime::sys::batch_nearest, (Texts, Str, Tensor, Int) -> Frame, value "magpie") },
     row!("sys.frame_of_postgres", "sys", "frame_of_postgres", crow_runtime::sys::frame_of_postgres, (Bytes) -> Frame, value "frame"),
     row!("sys.frame_csv", "sys", "frame_csv", crow_runtime::sys::frame_csv, (Frame) -> Str, value "frame"),
     row!("sys.frame_json", "sys", "frame_json", crow_runtime::sys::frame_json, (Frame) -> Str, never),
@@ -3484,7 +3514,8 @@ impl Kind {
                 Kind::Request | Kind::Found => false,
                 Kind::Frame => a == Arg::Frame,
                 Kind::Cell => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Json | Arg::Moment),
-                Kind::Cells => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Column | Arg::Moment | Arg::Moments),
+                // (a list of vectors, or of rows of numbers, is a column of vectors)
+                Kind::Cells => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth | Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Column | Arg::Moment | Arg::Moments | Arg::Tensors | Arg::Rows),
                 // (a list whose items can fail: its items, a failed one
                 // stopping the program, as a sum's numbers do)
                 Kind::Words => matches!(a, Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Column | Arg::Moments | Arg::Fallible | Arg::FallibleNumbers),

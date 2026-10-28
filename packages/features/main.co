@@ -160,6 +160,14 @@ fn define[dir, feature, g, meaning, computed = '', at = -1]
     f = frame.new[feature = [feature], log = [g.dir], entity = [join[g.entity, ',']], moment = [g.time], meaning = [meaning], computed = [computed], at = [t]]
     return put[dir, f, by = ['feature'], time = 'at']
 
+--- the entities whose embedding feature `column` lies nearest the
+--- vector by the cosine (Magpie's `nearest` over the group's log): the
+--- group's rows with a `score`, the best first — an embedding is a
+--- feature like any other, written by `append` as a column of vectors,
+--- served by `online` and joined into a training set by `training`
+fn similar[g, column, v, k = 10]
+    return nearest[g.dir, column, v, k]
+
 --- the registry: every feature's newest definition, in the order the
 --- newest definitions were written
 fn defined[dir]
@@ -237,6 +245,22 @@ test a_training_set_is_as_of_a_position[]
     first = training[labels, [g], ['clicks'], 0]
     assert[first.clicks[0] eq 1]
     assert[not first.clicks[1].ok]
+    gone = rm[g.dir]
+
+--- an embedding is a feature: written as a column of vectors, served
+--- by the online store, joined into a training set as of a moment, and
+--- the nearest entities found by it
+test an_embedding_is_a_feature[]
+    g = declare[_fresh['features-test-embed'], ['user'], 'at']
+    vs = push[push[[], tensor[[1.0, 0.0]]], tensor[[0.0, 1.0]]]
+    assert[append[g, frame.new[user = ['u1', 'u2'], at = [10, 20], emb = vs]] eq 0]
+    assert[online[g, ['u2']].emb[0] eq [0.0, 1.0]]
+    labels = frame.new[user = ['u1', 'u2'], at = [15, 25], y = [1, 0]]
+    whole = training[labels, [g], ['emb']]
+    assert[whole.columns eq ['user', 'at', 'y', 'emb']]
+    assert[whole.emb[0] eq [1.0, 0.0] and whole.emb[1] eq [0.0, 1.0]]
+    near = similar[g, 'emb', [0.9, 0.1], 1]
+    assert[near.user eq ['u1'] and near.score[0] gt 0.99]
     gone = rm[g.dir]
 
 test the_registry_is_a_log[]

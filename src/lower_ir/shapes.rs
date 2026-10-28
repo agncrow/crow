@@ -215,6 +215,13 @@ pub(super) fn stacked_dims(list: &Ty) -> Option<Dims> {
             Ty::List(inner) if matches!(inner.payload(), Ty::Int | Ty::Float) => Some(vec![None, None]),
             _ => None,
         },
+        // a column of vectors is its matrix, a row per cell; another
+        // column its vector of numbers
+        Ty::Column(cell) => match cell.payload() {
+            Ty::Tensor(_, Some(d)) => Some(std::iter::once(None).chain(d.iter().cloned()).collect()),
+            Ty::Tensor(_, None) => Some(vec![None, None]),
+            _ => Some(vec![None]),
+        },
         _ => None,
     }
 }

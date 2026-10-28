@@ -71,6 +71,8 @@ const FRAME_SETUP: &str = "sf = frame.new[a = [1, 2, 3], b = ['x', 'y', 'z'], on
 /// (`servers`).
 const PORT_SETUP: &str = "self_port = env['CROW_SELF_PORT', '9']";
 const JOIN_SETUP: &str = "sj = join[frame.new[k = [1, 2, 3]], frame.new[k = [1, 3], n = [5, 7]], 'k', 'left']";
+/// A frame with a column of vectors (spec, frame: a column of vectors).
+const VEC_SETUP: &str = "sv = frame.new[k = ['x', 'y', 'z'], e = [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]]";
 
 fn plain(name: &str, expr: &str) -> Val {
     Val { name: name.to_string(), expr: expr.to_string(), setup: Vec::new(), imports: Vec::new() }
@@ -163,6 +165,8 @@ fn values() -> Vec<Val> {
         framed("colfloat", "sf.f"),
         framed("maskcmp", "sf.a gt 1"),
         Val { name: "colmissing".into(), expr: "sj.n".into(), setup: vec![JOIN_SETUP.to_string()], imports: vec!["frame"] },
+        Val { name: "colvec".into(), expr: "sv.e".into(), setup: vec![VEC_SETUP.to_string()], imports: vec!["frame"] },
+        Val { name: "vecframe".into(), expr: "sv".into(), setup: vec![VEC_SETUP.to_string()], imports: vec!["frame"] },
         // (several arguments at once, for a row that takes the rest of them)
         plain("sizes", "2, 3"),
         plain("groups", "[1.0, 2.0], [3.0, 4.0]"),
@@ -204,7 +208,7 @@ fn tried_first(k: Kind) -> &'static [&'static str] {
         Kind::Strs => &["texts", "colnames"],
         Kind::Bools => &["bools", "maskcmp", "colbool"],
         Kind::Cell => &["int", "float", "text", "bool"],
-        Kind::Cells => &["ints", "texts", "vector", "colint"],
+        Kind::Cells => &["ints", "texts", "vector", "colint", "matrix", "tensors"],
         Kind::Lists => &["lists"],
         Kind::Words => &["texts", "ints"],
         Kind::List | Kind::Seq => &["ints", "texts", "floats"],
@@ -220,7 +224,7 @@ fn tried_first(k: Kind) -> &'static [&'static str] {
         Kind::Texts => &["texts"],
         Kind::Json => &["json", "jsonarr"],
         Kind::JsonList => &["jsonarr"],
-        Kind::Column => &["colint", "colfloat", "coltext", "colbool"],
+        Kind::Column => &["colint", "colfloat", "coltext", "colbool", "colvec"],
         Kind::Bytes => &["sysbytes", "bytes"],
         Kind::Chunks => &["chunks"],
         Kind::Stream => &["stream"],
@@ -256,7 +260,7 @@ fn tried_first(k: Kind) -> &'static [&'static str] {
 /// lowers: each kind's usual value and its edges.
 const VARIED: &[&str] = &[
     "int", "int0", "intneg", "intmax", "big", "float", "float0", "text", "text0", "textnum", "bool", "ints", "texts", "floats", "bools", "empty", "vector", "matrix", "map",
-    "json", "moment", "frame", "colint", "coltext", "colbool", "colmissing", "may:int", "fail:int", "may:ints", "fail:vector", "path", "csvpath", "newpath",
+    "json", "moment", "frame", "colint", "coltext", "colbool", "colmissing", "colvec", "may:int", "fail:int", "may:ints", "fail:vector", "path", "csvpath", "newpath",
     "dirpath", "url", "sql", "sysbytes", "localurl",
 ];
 
@@ -647,7 +651,7 @@ fn form_cases(all: &[Val]) -> Vec<Case> {
     // held in a variable
     let bases = [
         "ints", "texts", "floats", "bools", "empty", "vector", "vectorint", "matrix", "text", "text0", "map", "maptext", "mapint", "json", "jsonarr", "moment", "bytes", "record", "frame",
-        "colint", "coltext", "colbool", "colfloat", "colmissing", "may:ints", "fail:ints", "may:vector", "may:map", "may:frame",
+        "colint", "coltext", "colbool", "colfloat", "colmissing", "colvec", "may:ints", "fail:ints", "may:vector", "may:map", "may:frame",
     ];
     let indexes = ["int", "int0", "intneg", "int99", "textkey", "float", "bool", "bools", "maskcmp", "colbool", "may:int", "fail:int", "texts", "intmax"];
     for b in bases {
@@ -711,7 +715,7 @@ fn form_cases(all: &[Val]) -> Vec<Case> {
     // an operator over every pair of operands — every operator the AST has
     // (`operators`: one added there is in this family without a word here)
     let ops = operators();
-    let operands = ["int", "float", "text", "bool", "ints", "vector", "matrix", "map", "moment", "decimal", "big", "colint", "colbool", "coltext", "may:int", "fail:int"];
+    let operands = ["int", "float", "text", "bool", "ints", "vector", "matrix", "map", "moment", "decimal", "big", "colint", "colbool", "coltext", "colvec", "may:int", "fail:int"];
     for op in ops {
         for a in operands {
             for b in operands {
@@ -808,7 +812,7 @@ fn form_cases(all: &[Val]) -> Vec<Case> {
     ];
     let carried = [
         "int", "int0", "intneg", "intmax", "big", "float", "floatneg", "text", "text0", "textuni", "bool", "ints", "texts", "floats", "bools", "empty", "vector", "vectorint",
-        "matrix", "map", "maptext", "mapint", "json", "jsonarr", "moment", "decimal", "fraction", "record", "colint", "coltext", "colbool", "colmissing", "frame", "may:int",
+        "matrix", "map", "maptext", "mapint", "json", "jsonarr", "moment", "decimal", "fraction", "record", "colint", "coltext", "colbool", "colmissing", "colvec", "vecframe", "frame", "may:int",
         "fail:int", "may:ints", "fail:ints",
     ];
     for (a, first) in steps {

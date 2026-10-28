@@ -67,6 +67,7 @@ magpie.latest	held to SQLite in parity 294 and 295 (the latest version of each k
 magpie.lookup	held to SQLite in parity 294 and 295 (the latest version of each key is what MAX(pos) GROUP BY picks); the reference script models no log
 magpie.merge	held to SQLite in parity 294 and 295 (the latest version of each key is what MAX(pos) GROUP BY picks); the reference script models no log
 magpie.metrics	the module's tests hold the figures to the files written; the reference script models no log
+magpie.nearest	held to the vectors package's flat index (the positions and the cosines agree) in the module's own test and in parity 303; the reference script models no log
 magpie.restore	the module's tests restore a backup and read the log as it was; the reference script models no files
 magpie.put	the sequencer's write, held to its own reads in both modes (parity 299: put, get, commit; the module's tail tests; the kernel's flush and listing-race tests); the reference script models no log
 magpie.commit	decided against the key index in memory, held to the positions the log answers in the module's tests and parity 299 (a stale snapshot refused, a fresh one written); the reference script models no log
@@ -120,6 +121,7 @@ sys.alive	the standard library's own layer: bytes, streams and protocols no refe
 sys.answer	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.batch_admits	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.batch_find	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.batch_nearest	the standard library's own layer: the kernel behind magpie's nearest, held there; its own unit test holds the ranking across two files
 sys.batch_search	the standard library's own layer: bytes, streams and protocols no reference models yet; the scoring is held to Lucene's formula by parity 296
 sys.batch_since	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.batch_between	the standard library's own layer: bytes, streams and protocols no reference models yet

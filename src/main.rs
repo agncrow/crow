@@ -1313,6 +1313,21 @@ fn cmd_test_parity(only: &[String]) {
         let i_last = i_err.lines().last();
         let crow_bug = i_last.is_some_and(|l| l.contains("a bug in Crow, not in this program"));
         if !i_ok && !t_ok && !crow_bug && i_out == t_out && i_last.is_some() && i_last == t_err.lines().last() {
+            // (a program refused before it ran stops alike in both modes
+            // and prints nothing: that is no parity — a refusal is an
+            // errors case, and a corpus program runs; parity 299 had
+            // passed for a day missing its `use math`, and 233 for weeks.
+            // A program that stops as it runs — `runtime error: …`, a
+            // server that does not answer, a load not what it reads — is
+            // parity, as it always was)
+            // (the stop's line may not be the last: a connect's schema stop
+            // prints the migration it wants after its reason)
+            if i_out.trim().is_empty() && !i_err.lines().any(|l| l.starts_with("runtime error:")) {
+                failures += 1;
+                println!("  FAIL  {}", name);
+                println!("        refused in both modes and printed nothing: a parity program runs (a refusal is an errors case) — {}", i_last.unwrap_or_default());
+                continue;
+            }
             println!("  ok    {} (both stop: {})", name, i_last.unwrap_or_default());
             continue;
         }
@@ -4951,6 +4966,14 @@ fn module_files(file_rel: &str, source_dir: &std::path::Path) -> Vec<std::path::
     let beside = package_dir(source_dir).and_then(|p| p.parent().map(|m| m.to_path_buf()));
     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
     candidates.push(root.join(format!("{}.co", file_rel)));
+    // a package imported by its own name from inside itself (its example,
+    // its held tests) is its main.co, as it is from a program that depends
+    // on it (`crow_modules/<name>/main.co` below) — unless the name is a
+    // standard module's, which an app may be named after (examples/magpie
+    // imports `magpie`, the module, from its own main.co)
+    if crowfile_name(&root).as_deref() == Some(file_rel) && crate::modules::by_path(file_rel).is_none() {
+        candidates.push(root.join("main.co"));
+    }
     candidates.push(root.join(format!("crow_modules/{}.co", file_rel)));
     candidates.push(root.join(format!("crow_modules/{}/main.co", file_rel)));
     if let Some(modules) = &beside {
@@ -6170,6 +6193,15 @@ fn rewrite_qualified_refs_expr(
 
 /// The directory a project's module paths are rooted at: the nearest
 /// ancestor holding a crowfile, else the entry file's own directory.
+/// The project's name, as its crowfile's `name = '…'` line gives it.
+fn crowfile_name(root: &std::path::Path) -> Option<String> {
+    let crowfile = std::fs::read_to_string(root.join("crowfile")).ok()?;
+    crowfile.lines().find_map(|l| {
+        let l = l.trim();
+        l.strip_prefix("name").map(|r| r.trim().trim_start_matches('=').trim().trim_matches(|c| c == '\'' || c == '"').to_string())
+    }).filter(|n| !n.is_empty())
+}
+
 pub(crate) fn project_root(source_dir: &std::path::Path) -> std::path::PathBuf {
     let start = if source_dir.as_os_str().is_empty() { std::path::Path::new(".") } else { source_dir };
     // an installed package is rooted at itself: its files reach each other

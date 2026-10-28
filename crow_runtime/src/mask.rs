@@ -301,6 +301,7 @@ impl CrowColumn {
             (Column::Str(v), _) => Cell::Text(&v[i]),
             (Column::Bool(v), _) => Cell::Bool(v[i]),
             (Column::DateTime(ms, _), None) => Cell::Moment(ms[i]),
+            (Column::Vectors(..), _) => Cell::Other("a vector"),
         }
     }
 
@@ -313,6 +314,13 @@ impl CrowColumn {
     pub fn whole(&self, cmp: Cmp, other: &CrowColumn) -> Result<bool, String> {
         if self.len() != other.len() {
             return Ok(cmp == Cmp::Ne);
+        }
+        // two columns of vectors: equal where every row is there in both
+        // and its numbers are equal (as the interpreter compares its lists
+        // of vectors)
+        if let (Column::Vectors(wa, a), Column::Vectors(wb, b)) = (self.data.as_ref(), other.data.as_ref()) {
+            let eq = wa == wb && (0..self.len()).all(|i| self.valid[i] && other.valid[i] && a[i * wa..(i + 1) * wa] == b[i * wb..(i + 1) * wb]);
+            return Ok(eq != (cmp == Cmp::Ne));
         }
         if self.len() > 0 {
             let (a, b) = (self.moment_text(0), other.moment_text(0));
@@ -361,6 +369,7 @@ fn check(col: &Column, cmp: Cmp, value: Cell) -> Result<(), String> {
         Column::Str(_) => Cell::Text(""),
         Column::DateTime(..) => Cell::Moment(0),
         Column::Bool(_) => Cell::Bool(false),
+        Column::Vectors(..) => Cell::Other("a vector"),
     };
     holds(cmp, kind, false, value).map(|_| ())
 }
@@ -841,6 +850,7 @@ mod tests {
                                 Column::Str(v) => Cell::Text(&v[i]),
                                 Column::Bool(v) => Cell::Bool(v[i]),
                                 Column::DateTime(ms, _) => Cell::Moment(ms[i]),
+                                Column::Vectors(..) => Cell::Other("a vector"),
                             };
                             holds(cmp, cell, col.valid[i], value)
                         })

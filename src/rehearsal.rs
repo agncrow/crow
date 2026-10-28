@@ -305,6 +305,7 @@ pub fn keep_fixtures(r: &Rehearsal) -> Result<Vec<(String, usize, usize)>, Strin
                                 Column::Bool(v) => serde_json::json!(v[i]),
                                 Column::Str(v) => serde_json::json!(&v[i]),
                                 Column::DateTime(millis, offsets) => serde_json::json!(crow_runtime::frame::format_datetime(millis[i], offsets[i])),
+                                Column::Vectors(w, v) => serde_json::json!(&v[i * w..(i + 1) * w]),
                             }
                         })
                         .collect(),

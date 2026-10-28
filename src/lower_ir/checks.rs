@@ -180,6 +180,12 @@ pub(super) struct Checks {
     /// module expansion a part's declarations carry its prefix, so a caller
     /// can say which file an error belongs to.
     pub errors: Vec<(String, Option<String>)>,
+    /// Refusals inside a standard module's function whose program call was
+    /// not yet on record when they were made (a helper's copy lowered
+    /// before its caller's body): the error's index, the copy's name and
+    /// the bare message, blamed on the right export once the lowering is
+    /// through (`reattribute`).
+    pub blamed: Vec<(usize, String, String)>,
     /// The source line being lowered, named in each error.
     pub line: usize,
     /// The top-level declaration being lowered.
@@ -289,13 +295,23 @@ impl<'a> Lowerer<'a> {
             // (a call from inside a module's function carries no line of
             // the program's: only the program's own calls place it)
             let called_at = self.call_lines.iter().find(|((caller, callee), _)| !crate::modules::is_crow_fn(caller) && crate::ir::copy_base(callee) == base).map(|(_, l)| *l);
-            let (named, line) = match called_at.or_else(|| self.ctx.first_call_line.get(&base).copied()) {
-                Some(line) => (base, line),
+            // (the program's call whose chain of module calls made THIS copy,
+            // first: a helper two exports share is blamed on the export whose
+            // call it was refused under — `lookup` had answered for a list
+            // handed to `latest`'s `upto`. A copy lowered before its caller's
+            // body has no chain on record yet: the guess below stands until
+            // `reattribute` reads the whole record)
+            let reached = self.ctx.program_call_reaching(&self.current_fn);
+            if reached.is_none() {
+                self.v.blamed.push((self.v.errors.len(), self.current_fn.clone(), msg.clone()));
+            }
+            let (named, line) = match reached.map(|(f, l)| (f, Some(l))).unwrap_or((base.clone(), called_at.or_else(|| self.ctx.first_call_line.get(&base).copied()))) {
+                (named, Some(line)) => (named, line),
                 // (a helper the program never calls: the module function the
                 // program did call whose body reaches the helper, at the
                 // earliest such call's line — the helper's own name is the
                 // module's, and its line none of the program's)
-                None => {
+                (_, None) => {
                     let mut reaching: Vec<(String, usize)> = self
                         .call_lines
                         .iter()
@@ -311,6 +327,19 @@ impl<'a> Lowerer<'a> {
             (msg, self.v.line)
         };
         self.v.errors.push((format!("line {}: {}", line, msg), self.v.decl.clone()));
+    }
+
+    /// The refusals made inside a module's helper before its caller's body
+    /// was lowered, blamed anew on the export whose call made the copy —
+    /// the whole program's calls are on record once the lowering is through.
+    pub(super) fn reattribute(&mut self) {
+        for (i, copy, bare) in std::mem::take(&mut self.v.blamed) {
+            if let Some((export, line)) = self.ctx.program_call_reaching(&copy) {
+                if let Some(slot) = self.v.errors.get_mut(i) {
+                    slot.0 = format!("line {}: in {}: {}", line, crate::modules::written_as(&export), bare);
+                }
+            }
+        }
     }
 
     /// A statement of a ui program's top level, after a fact's declaration,

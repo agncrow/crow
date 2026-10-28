@@ -16,6 +16,10 @@ pub enum Column {
     Bool(Vec<bool>),
     /// DateTime: UTC epoch milliseconds + timezone offset in minutes
     DateTime(Vec<i64>, Vec<i16>),
+    /// A vector of one width per row, the rows laid flat (`rows × width`
+    /// floats): an embedding per row. A width of 0 is a column of no
+    /// rows whose width nothing fixed yet.
+    Vectors(usize, Vec<f64>),
 }
 
 impl Column {
@@ -33,6 +37,34 @@ impl Column {
             Column::Float(v) => v[idx] != 0.0,
             Column::Str(v) => matches!(v[idx].trim(), "true" | "1" | "t"),
             Column::DateTime(ms, _) => ms[idx] != 0,
+            Column::Vectors(w, v) => v[idx * w..(idx + 1) * w].iter().any(|x| *x != 0.0),
+        }
+    }
+
+    /// A column of vectors from its rows' numbers laid flat: the width,
+    /// and the rows' floats, `rows × width` of them (a width of 0 holds no
+    /// rows).
+    pub fn vectors(width: usize, data: Vec<f64>) -> Column {
+        Column::Vectors(width, data)
+    }
+
+    /// A row of a column of vectors, as a tensor of one axis; a column of
+    /// another kind answers its cell as a vector of one number (text, a
+    /// bool and a moment as nothing, an empty vector).
+    pub fn vector_at(&self, idx: usize) -> crate::tensor::CrowTensor {
+        match self {
+            Column::Vectors(w, v) => crate::tensor::CrowTensor::from_vec(v[idx * w..(idx + 1) * w].to_vec(), vec![*w]),
+            Column::Int(v) => crate::tensor::CrowTensor::from_vec(vec![v[idx] as f64], vec![1]),
+            Column::Float(v) => crate::tensor::CrowTensor::from_vec(vec![v[idx]], vec![1]),
+            Column::Str(_) | Column::Bool(_) | Column::DateTime(..) => crate::tensor::CrowTensor::from_vec(Vec::new(), vec![0]),
+        }
+    }
+
+    /// The width of a column of vectors; none for another kind.
+    pub fn width(&self) -> Option<usize> {
+        match self {
+            Column::Vectors(w, _) => Some(*w),
+            _ => None,
         }
     }
 
@@ -43,6 +75,7 @@ impl Column {
             Column::Str(v) => v.len(),
             Column::Bool(v) => v.len(),
             Column::DateTime(v, _) => v.len(),
+            Column::Vectors(w, v) => if *w == 0 { 0 } else { v.len() / w },
         }
     }
 
@@ -53,6 +86,20 @@ impl Column {
             Column::Str(_) => "str",
             Column::Bool(_) => "bool",
             Column::DateTime(_, _) => "datetime",
+            Column::Vectors(..) => "vector",
+        }
+    }
+
+    /// What the column holds, as a refusal names it: `ints`, `floats`,
+    /// `text`, `bools`, `moments`, `vectors`.
+    pub fn holds(&self) -> &'static str {
+        match self {
+            Column::Int(_) => "ints",
+            Column::Float(_) => "floats",
+            Column::Str(_) => "text",
+            Column::Bool(_) => "bools",
+            Column::DateTime(..) => "moments",
+            Column::Vectors(..) => "vectors",
         }
     }
 
@@ -78,6 +125,8 @@ impl Column {
             Column::Str(v) => v[row].to_string(),
             Column::Bool(v) => format!("{}", v[row]),
             Column::DateTime(millis, offsets) => format_datetime(millis[row], offsets[row]),
+            // (a vector as a tensor shows: `[1, 2.5]`)
+            Column::Vectors(..) => self.vector_at(row).to_string(),
         }
     }
 }
@@ -137,6 +186,7 @@ impl CrowFrame {
             Column::Str(v) => Column::Str(Text::repeated(&v[0], n)),
             Column::Bool(v) => Column::Bool(vec![v[0]; n]),
             Column::DateTime(v, z) => Column::DateTime(vec![v[0]; n], vec![z[0]; n]),
+            Column::Vectors(w, v) => Column::Vectors(w, v[..w].repeat(n)),
         };
         self.with_column(name, repeated)
     }
@@ -241,9 +291,22 @@ impl CrowColumn {
                         }
                     }
                     Column::DateTime(ms, _) => ms[i] as f64 / 1000.0,
+                    Column::Vectors(..) => f64::NAN,
                 }
             })
             .collect()
+    }
+
+    /// A cell as the vector it holds (a column of vectors' row; another
+    /// column's cell as a vector of one number); a missing cell a vector of
+    /// zeros of the column's width — the safe default a failed value holds
+    /// (spec §10).
+    pub fn get_vector(&self, idx: usize) -> crate::tensor::CrowTensor {
+        if !self.valid.get(idx).copied().unwrap_or(false) {
+            let w = self.data.width().unwrap_or(1);
+            return crate::tensor::CrowTensor::zeros(vec![w]);
+        }
+        self.data.vector_at(idx)
     }
 
     /// A cell as a moment: a moment column's instant and offset; a
@@ -255,7 +318,7 @@ impl CrowColumn {
             Column::Int(v) => crate::moments::Moment::of_seconds(v[idx] as f64),
             Column::Float(v) => crate::moments::Moment::of_seconds(v[idx]),
             Column::Str(v) => crate::moments::Moment::parse(&v[idx]).unwrap_or_default(),
-            Column::Bool(_) => crate::moments::Moment::default(),
+            Column::Bool(_) | Column::Vectors(..) => crate::moments::Moment::default(),
         }
     }
 
@@ -280,6 +343,7 @@ impl CrowColumn {
             Column::Str(v) => v[idx].trim().parse::<f64>().unwrap_or(f64::NAN),
             Column::Bool(v) => if v[idx] { 1.0 } else { 0.0 },
             Column::DateTime(ms, _) => ms[idx] as f64 / 1000.0,
+            Column::Vectors(..) => f64::NAN,
         }
     }
 
@@ -293,6 +357,7 @@ impl CrowColumn {
             Column::Str(v) => { let s = v[idx].trim(); s.parse::<i64>().ok().or_else(|| s.parse::<f64>().ok().map(|f| f as i64)).unwrap_or(0) }
             Column::Bool(v) => if v[idx] { 1 } else { 0 },
             Column::DateTime(ms, _) => ms[idx] / 1000,
+            Column::Vectors(..) => 0,
         }
     }
 
@@ -311,6 +376,8 @@ impl CrowColumn {
             // (the interpreter reads the cell as its text; compiled, it had
             // been seconds, so `str` of one differed between the modes)
             Column::DateTime(ms, offsets) => serde_json::Value::String(format_datetime(ms[idx], offsets[idx])),
+            // a vector as the list of its numbers
+            Column::Vectors(w, v) => serde_json::Value::Array(v[idx * w..(idx + 1) * w].iter().map(|x| crate::json::float_to_json(*x)).collect()),
         }
     }
 
@@ -324,6 +391,7 @@ impl CrowColumn {
             Column::Float(v) => v[idx] != 0.0,
             Column::Str(v) => matches!(v[idx].trim(), "true" | "1" | "t"),
             Column::DateTime(ms, _) => ms[idx] != 0,
+            Column::Vectors(..) => self.data.truthy(idx),
         }
     }
 
@@ -364,6 +432,14 @@ impl CrowColumn {
     /// read as 0 where the interpreter stopped.)
     pub fn numbers(&self) -> Result<crate::tensor::CrowTensor, String> {
         let n = self.len();
+        // a column of vectors is the matrix of its rows (`tensor[df.e]`),
+        // a missing row the reason it has none
+        if let Column::Vectors(w, v) = self.data.as_ref() {
+            if let Some(i) = (0..n).find(|&i| !self.valid.get(i).copied().unwrap_or(false)) {
+                return Err(crate::stops::missing_cell(i));
+            }
+            return Ok(crate::tensor::CrowTensor::from_vec(v.clone(), vec![n, *w]));
+        }
         let mut data = Vec::with_capacity(n);
         for i in 0..n {
             if !self.valid.get(i).copied().unwrap_or(false) {
@@ -374,6 +450,7 @@ impl CrowColumn {
                 Column::Float(v) => v[i],
                 Column::Bool(_) => return Err(crate::stops::not_numbers("bools")),
                 Column::Str(_) | Column::DateTime(..) => return Err(crate::stops::not_numbers("text")),
+                Column::Vectors(..) => unreachable!("answered above"),
             });
         }
         Ok(crate::tensor::CrowTensor::from_vec(data, vec![n]))
@@ -383,6 +460,11 @@ impl CrowColumn {
     /// from named columns into tensor math (mean, element-wise ops, ...).
     pub fn to_tensor(&self) -> crate::tensor::CrowTensor {
         let n = self.len();
+        // a column of vectors is its matrix, a missing row zeros
+        if let Column::Vectors(w, v) = self.data.as_ref() {
+            let data: Vec<f64> = (0..n).flat_map(|i| if self.valid[i] { v[i * w..(i + 1) * w].to_vec() } else { vec![0.0; *w] }).collect();
+            return crate::tensor::CrowTensor::from_vec(data, vec![n, *w]);
+        }
         let mut data = Vec::with_capacity(n);
         match self.data.as_ref() {
             Column::Int(v) => {
@@ -1179,6 +1261,7 @@ impl CrowFrame {
             pairs.iter().map(|p| p.2 as usize).collect()
         };
         let indices: Vec<usize> = match column {
+            Column::Vectors(..) => return Err(format!("sort: column '{}' holds vectors, which have no order", col_name)),
             Column::Int(v) => keyed(&|i| Some((v[i] as u64) ^ (1 << 63))),
             Column::DateTime(millis, _) => keyed(&|i| Some((millis[i] as u64) ^ (1 << 63))),
             Column::Bool(v) => keyed(&|i| Some(v[i] as u64)),
@@ -1288,6 +1371,7 @@ impl CrowFrame {
                     if !valid_mut[i] { ms[i] = fm; offsets[i] = fo; valid_mut.set(i, true); }
                 }
             }
+            Column::Vectors(..) => return Err(format!("fill: column '{}' holds vectors, and a fill value is one cell", col_name)),
         }
 
         Ok(CrowFrame { columns: self.columns.clone(), data: new_data, validity: new_valid })
@@ -1378,6 +1462,32 @@ impl CrowFrame {
                     }
                     Column::Str(crate::textcol::Text::joined_refs(&texts))
                 }
+                Column::Vectors(..) => {
+                    // (a column of no rows has no width yet: the first with
+                    // rows fixes it, and another width is another kind)
+                    let mut width = 0usize;
+                    let mut out = Vec::with_capacity(total);
+                    for p in parts {
+                        match p.data[i].as_ref() {
+                            Column::Vectors(w, v) => {
+                                if v.is_empty() {
+                                    continue;
+                                }
+                                if width == 0 {
+                                    width = *w;
+                                } else if width != *w {
+                                    return Err(format!("stack: column '{}' holds vectors of width {} in one of the frames and {} in the first", p.columns[i], w, width));
+                                }
+                                out.extend_from_slice(v);
+                            }
+                            _ => return Err(other(p)),
+                        }
+                    }
+                    if width == 0 {
+                        width = parts.iter().find_map(|p| p.data[i].width()).unwrap_or(0);
+                    }
+                    Column::Vectors(width, out)
+                }
             };
             Ok((col, valid))
         })
@@ -1402,6 +1512,7 @@ pub(crate) fn pick_column(col: &Column, valid: &Validity, mask: &[bool]) -> (Col
             let new_o: Vec<i16> = offsets.iter().zip(mask).filter(|&(_, &m)| m).map(|(&x, _)| x).collect();
             Column::DateTime(new_m, new_o)
         }
+        Column::Vectors(w, v) => Column::Vectors(*w, mask.iter().enumerate().filter(|&(_, &m)| m).flat_map(|(i, _)| v[i * w..(i + 1) * w].iter().copied()).collect()),
     };
     (new_col, new_valid)
 }
@@ -1417,6 +1528,15 @@ fn stack_columns(a: &Column, av: &Validity, b: &Column, bv: &Validity) -> Result
             let mut m = ma.clone(); m.extend_from_slice(mb);
             let mut o = oa.clone(); o.extend_from_slice(ob);
             Column::DateTime(m, o)
+        }
+        // (a column of no rows has no width yet: it takes the other's)
+        (Column::Vectors(wa, va), Column::Vectors(wb, vb)) => {
+            if *wa != *wb && !va.is_empty() && !vb.is_empty() {
+                return Err(format!("stack: a column of vectors of width {} meets vectors of width {}", wa, wb));
+            }
+            let w = if va.is_empty() { *wb } else { *wa };
+            let mut v = va.clone(); v.extend_from_slice(vb);
+            Column::Vectors(w, v)
         }
         _ => return Err("stack: column type mismatch".to_string()),
     };
@@ -1438,6 +1558,7 @@ impl CrowFrame {
                         indices.iter().map(|&i| millis[i]).collect(),
                         indices.iter().map(|&i| offsets[i]).collect(),
                     ),
+                    Column::Vectors(w, v) => Column::Vectors(*w, indices.iter().flat_map(|&i| v[i * w..(i + 1) * w].iter().copied()).collect()),
                 };
                 (nc, nv)
             });
@@ -1458,6 +1579,7 @@ impl CrowFrame {
                     Column::DateTime(millis, offsets) => Column::DateTime(
                         millis[start..end].to_vec(), offsets[start..end].to_vec(),
                     ),
+                    Column::Vectors(w, v) => Column::Vectors(*w, v[start * w..end * w].to_vec()),
                 };
                 (nc, nv)
             });
@@ -1774,6 +1896,8 @@ pub(crate) fn codes(col: &Column, valid: &Validity) -> Vec<u32> {
         },
         Column::Bool(v) => coded(v.iter().copied(), valid),
         Column::DateTime(ms, _) => coded(ms.iter().copied(), valid),
+        // (a vector by its numbers' bits: equal vectors share a code)
+        Column::Vectors(w, v) => coded((0..col.len()).map(|i| v[i * w..(i + 1) * w].iter().map(|x| (*x + 0.0).to_bits()).collect::<Vec<u64>>()), valid),
     }
 }
 
@@ -1785,6 +1909,7 @@ pub(crate) fn take_rows(col: &Column, rows: &[usize]) -> Column {
         Column::Str(v) => Column::Str(v.gather(rows)),
         Column::Bool(v) => Column::Bool(rows.iter().map(|&r| v[r]).collect()),
         Column::DateTime(ms, off) => Column::DateTime(rows.iter().map(|&r| ms[r]).collect(), rows.iter().map(|&r| off[r]).collect()),
+        Column::Vectors(w, v) => Column::Vectors(*w, rows.iter().flat_map(|&r| v[r * w..(r + 1) * w].iter().copied()).collect()),
     }
 }
 
@@ -1797,6 +1922,7 @@ pub(crate) fn take_some_rows(col: &Column, rows: &[Option<usize>]) -> (Column, V
         Column::Str(v) => Column::Str(v.gather_some(rows)),
         Column::Bool(v) => Column::Bool(rows.iter().map(|r| r.is_some_and(|r| v[r])).collect()),
         Column::DateTime(ms, off) => Column::DateTime(rows.iter().map(|r| r.map_or(0, |r| ms[r])).collect(), rows.iter().map(|r| r.map_or(0, |r| off[r])).collect()),
+        Column::Vectors(w, v) => Column::Vectors(*w, rows.iter().flat_map(|r| match r { Some(r) => v[r * w..(r + 1) * w].to_vec(), None => vec![0.0; *w] }).collect()),
     };
     (data, valid)
 }
@@ -1812,6 +1938,8 @@ pub(crate) fn order_of(col: &Column, rows: &[usize]) -> Vec<usize> {
         Column::Str(v) => order.sort_by(|&a, &b| v[rows[a]].cmp(&v[rows[b]])),
         Column::Bool(v) => order.sort_by_key(|&p| v[rows[p]]),
         Column::DateTime(ms, _) => order.sort_by_key(|&p| ms[rows[p]]),
+        // (vectors have no order: as they come)
+        Column::Vectors(..) => {}
     }
     order
 }
@@ -1824,6 +1952,7 @@ pub(crate) fn cells_equal(col: &Column, a: usize, b: usize) -> bool {
         Column::Str(v) => v[a] == v[b],
         Column::Bool(v) => v[a] == v[b],
         Column::DateTime(ms, _) => ms[a] == ms[b],
+        Column::Vectors(w, v) => v[a * w..(a + 1) * w] == v[b * w..(b + 1) * w],
     }
 }
 
@@ -1936,6 +2065,7 @@ fn aggregate_by_groups(name: &str, col: &Column, valid: &Validity, group_ids: &[
     let holds = match col {
         Column::Str(_) => Some("text"),
         Column::DateTime(..) => Some("moments"),
+        Column::Vectors(..) => Some("vectors"),
         _ => None,
     };
     match agg {
@@ -1970,7 +2100,7 @@ fn aggregate_by_groups(name: &str, col: &Column, valid: &Validity, group_ids: &[
                 }
                 Ok((Column::Float(sums.iter().map(|k| k.total).collect()), vec![true; ngroups]))
             }
-            Column::Str(_) | Column::DateTime(..) => Err(format!("group: sum of column '{}', which holds {}", name, holds.unwrap_or("no numbers"))),
+            Column::Str(_) | Column::DateTime(..) | Column::Vectors(..) => Err(format!("group: sum of column '{}', which holds {}", name, holds.unwrap_or("no numbers"))),
         },
         AggFn::Mean => {
             if let Some(what) = holds {
@@ -2046,6 +2176,9 @@ fn aggregate_by_groups(name: &str, col: &Column, valid: &Validity, group_ids: &[
             Ok((Column::Float(out), valid))
         }
         AggFn::Min | AggFn::Max => {
+            if let Column::Vectors(..) = col {
+                return Err(format!("group: {} of column '{}', which holds vectors", agg.word(), name));
+            }
             // the row holding each group's least, or greatest, cell so far
             let better = |candidate: usize, held: usize| -> bool {
                 let o = match col {
@@ -2054,6 +2187,7 @@ fn aggregate_by_groups(name: &str, col: &Column, valid: &Validity, group_ids: &[
                     Column::Str(d) => d[candidate].cmp(&d[held]),
                     Column::Bool(d) => d[candidate].cmp(&d[held]),
                     Column::DateTime(ms, _) => ms[candidate].cmp(&ms[held]),
+                    Column::Vectors(..) => Ordering::Equal,
                 };
                 matches!((agg, o), (AggFn::Min, Ordering::Less) | (AggFn::Max, Ordering::Greater))
             };
@@ -2103,6 +2237,7 @@ pub(crate) fn gather_column(col: &Column, valid: &Validity, indices: &[Option<us
             indices.iter().map(|opt| opt.map_or(0, |i| millis[i])).collect(),
             indices.iter().map(|opt| opt.map_or(0, |i| offsets[i])).collect(),
         ),
+        Column::Vectors(w, v) => Column::Vectors(*w, indices.iter().flat_map(|opt| match opt { Some(i) => v[i * w..(i + 1) * w].to_vec(), None => vec![0.0; *w] }).collect()),
     };
     (nc, new_valid)
 }
@@ -2127,6 +2262,11 @@ impl CrowFrame {
     /// The frame as CSV into any writer.
     pub fn write_csv<W: std::io::Write>(&self, out: W) -> Result<(), String> {
         use std::io::{Write, BufWriter};
+        // (a vector has no CSV form: the file's other readers would read
+        // text; a frame holding vectors is saved as JSON records or Parquet)
+        if let Some(i) = self.data.iter().position(|c| matches!(c.as_ref(), Column::Vectors(..))) {
+            return Err(format!("save: column '{}' holds vectors, which CSV cannot hold — save as .json or .parquet", self.columns[i]));
+        }
         let mut w = BufWriter::with_capacity(8 * 1024 * 1024, out);
         // Header
         let header: Vec<String> = self.columns.iter().map(|c| csv_field(c).into_owned()).collect();
@@ -2184,7 +2324,7 @@ impl CrowFrame {
                         }
                     }
                 }
-                Column::DateTime(_, _) => {
+                Column::DateTime(_, _) | Column::Vectors(..) => {
                     for row in 0..nrows {
                         offsets.push(buf.len() as u32);
                         if valid[row] {
@@ -2447,6 +2587,18 @@ pub fn record_batch(frame: &CrowFrame) -> Result<arrow::record_batch::RecordBatc
                 );
                 arrays.push(Arc::new(arr));
             }
+            // a column of vectors as a fixed-size list of float64, a row
+            // each, which Parquet and every Arrow reader hold
+            Column::Vectors(w, v) => {
+                let width = (*w).max(1) as i32;
+                let item = Arc::new(Field::new("item", DataType::Float64, true));
+                fields.push(Field::new(col_name, DataType::FixedSizeList(item.clone(), width), true));
+                let values = Float64Array::from(if *w == 0 { vec![0.0; col.len()] } else { v.clone() });
+                let nulls: Vec<bool> = validity.iter().copied().collect();
+                let null_buffer = arrow::buffer::NullBuffer::from(nulls);
+                let arr = FixedSizeListArray::try_new(item, width, Arc::new(values), Some(null_buffer)).map_err(|e| format!("arrow: {}", e))?;
+                arrays.push(Arc::new(arr));
+            }
         }
     }
 
@@ -2514,6 +2666,17 @@ pub fn of_records(value: &serde_json::Value) -> Result<CrowFrame, String> {
             Column::Float(cells.iter().map(|c| c.and_then(Value::as_f64).unwrap_or(f64::NAN)).collect())
         } else if present().all(|v| v.is_boolean()) {
             Column::Bool(cells.iter().map(|c| c.and_then(Value::as_bool).unwrap_or(false)).collect())
+        } else if let Some(width) = vector_width(&cells) {
+            // every present cell a list of numbers of one width: a column
+            // of vectors, a missing cell a vector of zeros (missing)
+            let mut data = Vec::with_capacity(cells.len() * width);
+            for c in &cells {
+                match c {
+                    Some(Value::Array(xs)) => data.extend(xs.iter().map(|x| x.as_f64().unwrap_or(f64::NAN))),
+                    _ => data.extend(std::iter::repeat_n(0.0, width)),
+                }
+            }
+            Column::Vectors(width, data)
         } else {
             Column::Str(
                 cells
@@ -2530,6 +2693,24 @@ pub fn of_records(value: &serde_json::Value) -> Result<CrowFrame, String> {
         validity.push(valid);
     }
     Ok(CrowFrame::new(names, columns, validity))
+}
+
+/// The width of a column of vectors, where every present cell is a list
+/// of numbers of one width (one or more numbers); none otherwise.
+fn vector_width(cells: &[Option<&serde_json::Value>]) -> Option<usize> {
+    let mut width: Option<usize> = None;
+    for c in cells.iter().flatten() {
+        let serde_json::Value::Array(xs) = c else { return None };
+        if xs.is_empty() || !xs.iter().all(serde_json::Value::is_number) {
+            return None;
+        }
+        match width {
+            None => width = Some(xs.len()),
+            Some(w) if w != xs.len() => return None,
+            _ => {}
+        }
+    }
+    width
 }
 
 /// A frame as JSON: a list of records, a missing cell `null`, a moment its
@@ -2555,6 +2736,8 @@ pub fn records(frame: &CrowFrame) -> serde_json::Value {
                         Column::Bool(v) => Value::Bool(v[r]),
                         Column::Str(v) => Value::String(v[r].to_string()),
                         Column::DateTime(ms, offsets) => Value::String(format_datetime(ms[r], offsets[r])),
+                        // a vector as the list of its numbers
+                        Column::Vectors(w, v) => Value::Array(v[r * w..(r + 1) * w].iter().map(|x| crate::json::float_to_json(*x)).collect()),
                     }
                 };
                 record.insert(name.clone(), cell);
@@ -2602,7 +2785,12 @@ where
             // the zone's wall clock), and a date is its midnight in UTC
             DataType::Timestamp(_, tz) => ("moment", DataType::Timestamp(TimeUnit::Millisecond, tz.clone())),
             DataType::Date32 | DataType::Date64 => ("moment", DataType::Timestamp(TimeUnit::Millisecond, None)),
-            other => return Err(format!("{}: column '{}' is {} — a frame's cells are numbers, text, bools and moments", what, field.name(), other)),
+            // a fixed-size list of numbers is a column of vectors (read as
+            // float64 rows of its width)
+            DataType::FixedSizeList(item, width) if item.data_type().is_numeric() && *width > 0 => {
+                ("vector", DataType::FixedSizeList(Arc::new(arrow::datatypes::Field::new("item", DataType::Float64, true)), *width))
+            }
+            other => return Err(format!("{}: column '{}' is {} — a frame's cells are numbers, text, bools, moments and vectors", what, field.name(), other)),
         };
         kinds.push(kind);
     }
@@ -2618,14 +2806,16 @@ where
         Bool(Vec<bool>),
         Str(crate::textcol::TextBuilder),
         Moment(Vec<i64>),
+        Vectors(usize, Vec<f64>),
     }
     let mut built: Vec<Built> = kinds
         .iter()
-        .map(|(k, _)| match *k {
+        .map(|(k, t)| match *k {
             "int" => Built::Int(Vec::new()),
             "float" => Built::Float(Vec::new()),
             "bool" => Built::Bool(Vec::new()),
             "text" => Built::Str(crate::textcol::TextBuilder::with_capacity(0)),
+            "vector" => Built::Vectors(match t { DataType::FixedSizeList(_, w) => *w as usize, _ => 0 }, Vec::new()),
             _ => Built::Moment(Vec::new()),
         })
         .collect();
@@ -2667,6 +2857,23 @@ where
                     }
                 }
                 Built::Moment(ms) => ms.extend_from_slice(cast.as_primitive::<TimestampMillisecondType>().values()),
+                Built::Vectors(w, v) => {
+                    // (the list's values laid flat, a row's width each; a
+                    // null inside a row reads as NaN)
+                    let list = cast.as_fixed_size_list();
+                    let values = list.values();
+                    let floats = arrow::compute::cast_with_options(values, &DataType::Float64, &options).map_err(|e| format!("{}: column '{}': {}", what, name, e))?;
+                    let prim = floats.as_primitive::<Float64Type>();
+                    let per = list.value_length() as usize;
+                    let base = list.value_offset(0) as usize;
+                    for r in 0..list.len() {
+                        for j in 0..per {
+                            let k = base + r * per + j;
+                            v.push(if prim.is_valid(k) { prim.value(k) } else { f64::NAN });
+                        }
+                    }
+                    let _ = w;
+                }
             }
         }
     }
@@ -2681,6 +2888,7 @@ where
                 let n = ms.len();
                 Column::DateTime(ms, vec![0; n])
             }
+            Built::Vectors(w, v) => Column::Vectors(w, v),
         })
         .collect();
     let names: Vec<String> = schema.fields().iter().map(|f| f.name().clone()).collect();

@@ -1,0 +1,60 @@
+--- a column of vectors (spec, frame): written from a matrix or a list
+--- of vectors, read as tensors, the matrix of the column, carried
+--- through the verbs, saved as JSON records and Parquet and read back,
+--- and held by Magpie, nearest rows found by a vector — in both modes
+use frame
+use math
+use magpie
+
+df = frame.new[id = [1, 2, 3], e = [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], k = ['a', 'b', 'a']]
+log[df]
+log[df.dtypes]
+log[df.e[2]]
+log[len[df.e]]
+for v in df.e
+    log[norm[v]]
+m = tensor[df.e]
+log[m.shape]
+log[m * 2.0]
+rows = push[push[[], tensor[[0.5, 0.5]]], tensor[[2.0, 0.0]]]
+g = frame.new[k = ['a', 'b'], v = rows]
+log[g.v[1]]
+g.w = stack[rows]
+log[g.w[0]]
+log[str[g.v]]
+log[df[df.k eq 'a'].e]
+log[group[df, 'k', ['e', 'count'], ['e', 'last']]]
+log[join[df, g, 'k'].v]
+log[where[df.k eq 'a', df.e, df.e]]
+log[df.e eq df.e]
+log[unique[df, 'e']]
+log[int[df.e].ok]
+
+saved = save[df, 'parity-303.json']
+back = frame.load['parity-303.json']
+log[back]
+log[back.dtypes]
+log[norm[back.e[2]]]
+gone = rm['parity-303.json']
+kept = save[df, 'parity-303.parquet']
+again = frame.load['parity-303.parquet']
+log[again.dtypes]
+log[again.e[1]]
+gone = rm['parity-303.parquet']
+
+d = 'parity-303-log'
+gone = rm[d]
+first = put[d, df, by = ['id']]
+log[first]
+more = batch[d, frame.new[id = [4, 1], e = [[2.0, 0.0], [0.0, 3.0]], k = ['b', 'a']]]
+log[latest[d].e]
+log[latest[d, equal = ['1']].e[0]]
+near = nearest[d, 'e', [1.0, 0.1], 3]
+log[near.id]
+log[near.score[0] gt 0.99]
+seg = merge[d]
+log[nearest[d, 'e', [0.0, 1.0], 2].id]
+log[summary[d, ['k'], ['id'], ['count']]]
+bad = lookup[d, ['e'], ['[1, 0]']]
+log[bad.reason]
+gone = rm[d]

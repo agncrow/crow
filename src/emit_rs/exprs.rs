@@ -1422,6 +1422,8 @@ impl Emitter {
             Ty::Float => "get_f64",
             Ty::Moment => "get_moment",
             Ty::Bool => "get_bool",
+            // a column of vectors: the row as a tensor
+            Ty::Tensor(..) => "get_vector",
             // a column nothing typed: the cell as the value it is
             Ty::Json => "get_json",
             _ => "get_str",

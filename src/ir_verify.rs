@@ -785,7 +785,8 @@ fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
             Kind::Frame => matches!(t, Ty::Frame(_)),
             Kind::Cell => cell(t) || *t == Ty::Json,
             // a column's values: a list of cells, a tensor, a column, a cell
-            Kind::Cells => cell(t) || matches!(t, Ty::Tensor(..) | Ty::Column(_)) || items(t, &|e| cell(e)),
+            // (a list of vectors, or of lists of numbers, is a column of vectors)
+            Kind::Cells => cell(t) || matches!(t, Ty::Tensor(..) | Ty::Column(_)) || items(t, &|e| cell(e) || matches!(e, Ty::Tensor(..)) || matches!(e, Ty::List(i) if matches!(i.as_ref(), Ty::Int | Ty::Float))),
             // a collection of anything: its items are the function's own type
             Kind::List | Kind::Seq => matches!(t, Ty::List(_)),
             Kind::MapOf | Kind::MapRef => matches!(t, Ty::Map(..)),

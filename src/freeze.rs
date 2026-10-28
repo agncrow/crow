@@ -1,15 +1,24 @@
 //! The compiler holds the language and names no module and no builtin
-//! (design rule 24; docs/extending-crow.md). This test counts, in every
-//! source file of the compiler, the string literals that are a module's
-//! name or a builtin's name or row id, and the references to a module
-//! crate (`crow_web::`, `crow_db::`), and holds each file to the count in
-//! tests/freeze/names.txt. A count above its baseline fails: the file
-//! learned a name. A count below it fails too, naming the file, so that
-//! the baseline is lowered (`CROW_FREEZE_BLESS=1 cargo test freeze`) and
-//! committed: the baseline only shrinks. The tools of the binary (the
-//! checker, the baseline, the database checks, the self-check, the
-//! harnesses) are not held: they may know a module, reading its facts
-//! from the registry.
+//! (design rule 24; docs/extending-crow.md). This test reads, in every
+//! source file of the compiler, the string literals shaped like a name
+//! (`[a-z_][a-z0-9_]*`, as every module's and builtin's name is) and the
+//! references to a module crate (`crow_web::`, `crow_db::`), and holds
+//! each file to tests/freeze/names.txt: the set of such literals the file
+//! held when the baseline was blessed, and its count of crate references.
+//! A literal that is a module's or a builtin's name now and is not in the
+//! file's set fails: the file learned a name. A name in the set that the
+//! file no longer holds fails too, naming the file, so that the baseline
+//! is lowered (`CROW_FREEZE_BLESS=1 cargo test freeze`) and committed: the
+//! names a file may hold only shrink. A literal that is no name is held
+//! to nothing, and recorded: a module that later exports that word is
+//! not the compiler learning it (magpie's `get` had met the emitter's
+//! own `"get"`, the ui state's, and the counts could not tell the two
+//! apart — a literal that predates an export is the export's problem to
+//! avoid, not the compiler's; one added after the last bless is told
+//! apart by the bless, which a person does after looking). The tools of
+//! the binary (the checker, the baseline, the database checks, the
+//! self-check, the harnesses) are not held: they may know a module,
+//! reading its facts from the registry.
 
 #[cfg(test)]
 mod tests {
@@ -191,27 +200,38 @@ mod tests {
         out
     }
 
-    /// (names, crate references) of one compiler file.
-    fn counts(path: &Path, names: &BTreeSet<String>) -> (usize, usize) {
+    /// Whether a literal is shaped like a name: what a module's or a
+    /// builtin's name is (`[a-z_][a-z0-9_]*`, at most 32 characters).
+    fn name_shaped(s: &str) -> bool {
+        !s.is_empty()
+            && s.len() <= 32
+            && s.bytes().next().is_some_and(|b| b.is_ascii_lowercase() || b == b'_')
+            && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+    }
+
+    /// (the name-shaped literals, crate references) of one compiler file.
+    fn held_in(path: &Path) -> (BTreeSet<String>, usize) {
         let mut source = without_tests(&std::fs::read_to_string(path).expect("a source file is readable"));
         if path.file_name().is_some_and(|f| f == "table.rs") {
             source = without_rows(&source);
         }
-        let named = literals(&source).iter().filter(|s| names.contains(s.as_str())).count();
+        let words: BTreeSet<String> = literals(&source).into_iter().filter(|s| name_shaped(s)).collect();
         let crates = source.matches("crow_web::").count() + source.matches("crow_db::").count();
-        (named, crates)
+        (words, crates)
     }
 
-    fn read_baseline(path: &Path) -> BTreeMap<String, (usize, usize)> {
+    /// The baseline: per file, its crate-reference count and the
+    /// name-shaped literals it held at the bless (`file\tcrates\ta,b,c`).
+    fn read_baseline(path: &Path) -> BTreeMap<String, (usize, BTreeSet<String>)> {
         let text = std::fs::read_to_string(path).unwrap_or_default();
         text.lines()
             .filter(|l| !l.is_empty() && !l.starts_with('#'))
             .map(|l| {
                 let mut parts = l.split('\t');
                 let file = parts.next().unwrap_or_default().to_string();
-                let n = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
                 let c = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-                (file, (n, c))
+                let words: BTreeSet<String> = parts.next().unwrap_or_default().split(',').filter(|w| !w.is_empty()).map(str::to_string).collect();
+                (file, (c, words))
             })
             .collect()
     }
@@ -223,17 +243,18 @@ mod tests {
         let names = names();
         let mut files = Vec::new();
         sources(&src, &src, &mut files);
-        let now: BTreeMap<String, (usize, usize)> = files
+        let now: BTreeMap<String, (BTreeSet<String>, usize)> = files
             .iter()
-            .map(|p| (p.strip_prefix(&root).unwrap_or(p).to_string_lossy().replace('\\', "/"), counts(p, &names)))
+            .map(|p| (p.strip_prefix(&root).unwrap_or(p).to_string_lossy().replace('\\', "/"), held_in(p)))
             .collect();
         let baseline_path = root.join(BASELINE);
         if std::env::var("CROW_FREEZE_BLESS").is_ok() {
             let mut text = String::from(
-                "# design rule 24: module and builtin names (tab 1) and module-crate references (tab 2)\n# the compiler's sources hold; src/freeze.rs holds each file to its line, which only shrinks\n",
+                "# design rule 24: per compiler file, its module-crate references (tab 1) and the name-shaped string literals it held at the bless (tab 2)\n# src/freeze.rs holds each file to its line: a literal that is a module's or a builtin's name must be in the set, and a name in the set must still be held — the names only shrink\n",
             );
-            for (file, (n, c)) in &now {
-                text.push_str(&format!("{file}\t{n}\t{c}\n"));
+            for (file, (words, c)) in &now {
+                let list: Vec<&str> = words.iter().map(String::as_str).collect();
+                text.push_str(&format!("{file}\t{c}\t{}\n", list.join(",")));
             }
             std::fs::create_dir_all(baseline_path.parent().expect("a parent")).expect("tests/freeze exists");
             std::fs::write(&baseline_path, text).expect("the baseline is written");
@@ -242,14 +263,23 @@ mod tests {
         let baseline = read_baseline(&baseline_path);
         let mut grew = Vec::new();
         let mut shrank = Vec::new();
-        for (file, (n, c)) in &now {
+        for (file, (words, c)) in &now {
             match baseline.get(file) {
-                None => grew.push(format!("{file}: a compiler file not in the baseline ({n} names, {c} crate references)")),
-                Some((bn, bc)) => {
-                    if n > bn || c > bc {
-                        grew.push(format!("{file}: {n} names, {c} crate references (baseline {bn}, {bc})"));
-                    } else if n < bn || c < bc {
-                        shrank.push(format!("{file}: {n} names, {c} crate references (baseline {bn}, {bc})"));
+                None => grew.push(format!("{file}: a compiler file not in the baseline ({} name-shaped literals, {c} crate references)", words.len())),
+                Some((bc, held)) => {
+                    let learned: Vec<&str> = words.iter().filter(|w| names.contains(*w) && !held.contains(*w)).map(String::as_str).collect();
+                    if !learned.is_empty() {
+                        grew.push(format!("{file}: {} (a literal the file held before the name was a module's or a builtin's is blessed after looking: CROW_FREEZE_BLESS=1 cargo test freeze)", learned.join(", ")));
+                    }
+                    if c > bc {
+                        grew.push(format!("{file}: {c} crate references (baseline {bc})"));
+                    }
+                    let forgotten: Vec<&str> = held.iter().filter(|w| names.contains(*w) && !words.contains(*w)).map(String::as_str).collect();
+                    if !forgotten.is_empty() {
+                        shrank.push(format!("{file}: no longer holds {}", forgotten.join(", ")));
+                    }
+                    if c < bc {
+                        shrank.push(format!("{file}: {c} crate references (baseline {bc})"));
                     }
                 }
             }
@@ -269,6 +299,12 @@ mod tests {
             "the compiler forgot names — lower the baseline so it stays forgotten: CROW_FREEZE_BLESS=1 cargo test freeze\n  {}",
             shrank.join("\n  ")
         );
+    }
+
+    #[test]
+    fn a_name_shaped_literal_is_a_lowercase_word() {
+        assert!(name_shaped("get") && name_shaped("batch_asof") && name_shaped("_pos") && name_shaped("p90"));
+        assert!(!name_shaped("") && !name_shaped("Get") && !name_shaped("a word") && !name_shaped("crow_web::") && !name_shaped("1st"));
     }
 
     #[test]

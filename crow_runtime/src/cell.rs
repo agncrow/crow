@@ -243,6 +243,12 @@ impl Words for Vec<crate::moments::Moment> {
 impl Words for crate::frame::CrowColumn {
     fn words(&self) -> Result<Vec<String>, String> {
         use crate::frame::Column;
+        // (a vector shows as no text, as a matrix's rows do: refused in the
+        // interpreter's words, which reads the cells as a list of arrays —
+        // `join[str[df.e], sep]` joins their text)
+        if let Column::Vectors(..) = self.data.as_ref() {
+            return Err("expected a list of numbers, text, bools or moments, got a list of array".to_string());
+        }
         (0..self.len())
             .map(|i| {
                 if !self.valid.get(i).copied().unwrap_or(false) {
@@ -253,7 +259,7 @@ impl Words for crate::frame::CrowColumn {
                     Column::Float(v) => v[i].to_string(),
                     Column::Str(v) => v[i].to_string(),
                     Column::Bool(v) => v[i].to_string(),
-                    Column::DateTime(..) => self.data.fmt_cell(i, true),
+                    Column::DateTime(..) | Column::Vectors(..) => self.data.fmt_cell(i, true),
                 })
             })
             .collect()

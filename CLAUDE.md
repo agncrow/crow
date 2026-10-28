@@ -21,7 +21,9 @@ them by number. The short version:
   is a language feature, an optimization or a bug fix — ask Vijay before
   making one, with a strong reason. A feature a module needs is built in
   the module, in Crow; `src/freeze.rs` fails when a compiler file gains a
-  module or builtin name (`tests/freeze/names.txt` only shrinks).
+  module or builtin name (`tests/freeze/names.txt`, the set of name-shaped
+  literals each file held at the bless, only shrinks; a literal that is no
+  name is recorded, so a module may export that word later).
 
 ## Before calling anything done
 
@@ -1066,11 +1068,43 @@ steps on every push and must be green.
   refused. A refusal inside a helper names the module function the
   program called whose body reaches it (`TypeContext::reaches` over the
   inlined bodies), at the program's call line from `call_lines`: a call
-  made inside a module's body records no line of the program's. And a
-  variable whose value's making was refused (`v.contested`) is not
-  judged at a write into it: `relu`, copied per signature, had typed
-  `relu[nosuch[…]]` as its matrix copy, and `v[2] = 4.2` was refused a
-  second time as a matrix write (errors j78, j79; 2026-10-27).
+  made inside a module's body records no line of the program's. A helper
+  two exports share (`_reaching` under `lookup` and `latest`) is blamed
+  on the export whose call made the refused COPY: `ctx.module_calls`
+  records every pass's resolved calls by the copies' names, and a copy
+  lowered before its caller's body (no chain on record when it is
+  refused) is blamed anew by `reattribute` once the lowering is through
+  (errors j80) — the first export reaching the helper had answered for a
+  list handed to `latest`'s `upto`. And a variable whose value's making
+  was refused (`v.contested`) is not judged at a write into it: `relu`,
+  copied per signature, had typed `relu[nosuch[…]]` as its matrix copy,
+  and `v[2] = 4.2` was refused a second time as a matrix write (errors
+  j78, j79; 2026-10-27).
+- A column of vectors (2026-10-27, Vijay's word; spec, frame) is
+  `Column::Vectors(width, Vec<f64>)` in the runtime and NO new type in the
+  compiler: the cell's type is `Ty::Tensor` inside `Ty::Column`, so the
+  loop item, the index, `cell_getter` (`get_vector`), `stacked_dims`
+  (a column's matrix) and uses.rs's `definite` (a cell handed where a
+  tensor is taken reads the column as vectors; the held word is
+  `crow_name`'s `array`, which `expect`/`empty_with` read beside
+  `vector`) each have one arm. Every exhaustive match on `Column` gained
+  an arm (the compiler lists them); the ones that gave a vector a
+  meaning silently were `window`'s aggregates (read as numbers) and
+  `unpivot` (an index error) — a verb that cannot hold a vector refuses
+  it by name, in the runtime, in both modes (parity 303). `Cells::Refused`
+  carries a write's reason (a list of two widths) where `Cells::from` is
+  infallible; `Kind::Cells` takes `Arg::Tensors | Arg::Rows`. Traps: a
+  package's function may not be named like an export it imports (kg's
+  `nearest` is `similar`); magpie's `head` shadows frame's inside a
+  package importing both (`frame.head[f, n]`); `_joined` takes a list of
+  text, so a vector goes into the door's query piece by piece. A package
+  of one file is `main.co` (kg, features): `use kg` resolves to it from
+  inside the package (its example, its held tests: the crowfile's name)
+  and from a program that depends on it (`crow_modules/kg/main.co`) —
+  as `kg.co` it had resolved inside only. A value from `env` can fail,
+  and the top level has no guard that narrows (`halt` does not), so a
+  list of such values is refused where a kernel takes text: write the
+  keys plain, or narrow in a function.
 - A page's `later[f]` runs f on the page's state (`spawn_later` takes a
   plain `fn(&mut CrowLiveState)`), so `later[f, a]` in a page's handler
   is refused in both modes (errors j45); a script's carries its arguments

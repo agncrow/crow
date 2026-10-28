@@ -86,6 +86,15 @@ segments and the tail, the history never held as one frame. `upto` is
 the position the set is as of (-1 is now): a dataset a position names
 comes out the same at every run.
 
+## Embeddings are features
+
+A column of vectors is a feature like any other: `append` writes it
+(from a matrix or a list of vectors), `online` serves the entity's
+newest embedding, `training` joins it as of each label's moment, and
+`similar[g, column, v, k = 10]` answers the entities whose embedding
+lies nearest a vector by the cosine (Magpie's `nearest`, exact), the
+group's rows with a `score`, the best first.
+
 ## Freshness and the registry
 
 `freshness[g]` answers a frame of one row: `head` (the log's last
@@ -104,7 +113,7 @@ rows pandas computed from a seeded stream (a running count and sum per
 user) appended to a group, twelve labels, and the training set pandas's
 `merge_asof` builds from them (by user, backward, exact moments
 matching), held cell for cell — the same rows, the same features beside
-each label, a missing cell where no row precedes. `features.co`'s test
+each label, a missing cell where no row precedes. `main.co`'s test
 blocks: one write read as both stores, a backfill over windows and a
 stream over the tail answering the same rows, and the registry;
 `example.co` runs interpreted and compiled in CI with one output.

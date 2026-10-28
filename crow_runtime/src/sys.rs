@@ -321,6 +321,12 @@ pub fn batch_search(paths: Vec<String>, column: &str, words: Vec<String>, k: i64
     crate::frames::batch_search(&paths, column, &words, k, stems, snippet)
 }
 
+/// `sys.batch_nearest[paths, column, query, k]`: the k rows of the files
+/// whose vector column lies nearest the query by the cosine.
+pub fn batch_nearest(paths: Vec<String>, column: &str, query: &crate::tensor::CrowTensor, k: i64) -> Result<crate::frame::CrowFrame, String> {
+    crate::frames::batch_nearest(&paths, column, query, k)
+}
+
 /// `sys.batch_find[path, column, value]`: the rows of the file whose
 /// column holds the value, the file's filter and its row groups'
 /// statistics asked first.
@@ -1256,6 +1262,8 @@ pub fn copy_of_frame(f: &crate::frame::CrowFrame) -> Bytes {
                 Column::Str(v) => v[row].to_string(),
                 Column::Bool(v) => if v[row] { "t".to_string() } else { "f".to_string() },
                 Column::DateTime(v, z) => crate::frame::format_datetime(v[row], z[row]),
+                // (a vector as its JSON list, which Postgres reads as an array's text)
+                Column::Vectors(..) => f.data[col].fmt_cell(row, true),
             };
             for c in text.bytes() {
                 match c {

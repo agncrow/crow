@@ -455,6 +455,12 @@ pub struct TypeContext {
     /// copy lowered on its own) is placed, since the module's line is no
     /// line of the program's.
     pub first_call_line: BTreeMap<String, usize>,
+    /// Every call of a user function as it is lowered, by the names the
+    /// lowering resolves (a copy by its own name): (caller, callee) → the
+    /// line of the first such call, kept across the passes. A refusal
+    /// inside a standard module's helper walks it back to the program's
+    /// call of the export whose body reaches that very copy (`refuse`).
+    pub module_calls: BTreeMap<(String, String), usize>,
     /// The kind a list variable's items were first known to be, by function
     /// and variable, as the scan met its pushes in order: what a later push
     /// of another kind is refused against (a variable's settled type is its
@@ -593,6 +599,7 @@ impl TypeContext {
             applying: Vec::new(),
             fn_defaults: BTreeMap::new(),
             first_call_line: BTreeMap::new(),
+            module_calls: BTreeMap::new(),
             first_items: BTreeMap::new(),
             body_assigned: None,
             in_view: false,
@@ -995,6 +1002,38 @@ impl TypeContext {
     /// modules' functions it calls: a refusal inside a module's own helper,
     /// which no program calls, names the module function the program
     /// called that reaches it (lower_ir/checks.rs, `refuse`).
+    /// The program's call that reaches the module function `copy` (a
+    /// copy's own name) through the module's own calls: the export the
+    /// program called, by its base name, and the call's line — the
+    /// earliest where several reach it. A helper shared by two exports
+    /// (`_reaching` under `lookup` and `latest`) is blamed on the export
+    /// whose call made the copy that was refused, not on the first export
+    /// the program happened to call.
+    pub(crate) fn program_call_reaching(&self, copy: &str) -> Option<(String, usize)> {
+        let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        let mut todo = vec![copy.to_string()];
+        let mut best: Option<(String, usize)> = None;
+        while let Some(t) = todo.pop() {
+            if !seen.insert(t.clone()) {
+                continue;
+            }
+            for ((caller, callee), line) in &self.module_calls {
+                if *callee != t || *line == 0 {
+                    continue;
+                }
+                if crate::modules::is_crow_fn(caller) {
+                    todo.push(caller.clone());
+                } else {
+                    let found = (crate::ir::copy_base(&t).to_string(), *line);
+                    if best.as_ref().is_none_or(|b| found.1 < b.1) {
+                        best = Some(found);
+                    }
+                }
+            }
+        }
+        best
+    }
+
     pub(crate) fn reaches(&self, from: &str, to: &str) -> bool {
         let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         let mut todo = vec![from.to_string()];

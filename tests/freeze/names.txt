@@ -1,54 +1,54 @@
-# design rule 24: module and builtin names (tab 1) and module-crate references (tab 2)
-# the compiler's sources hold; src/freeze.rs holds each file to its line, which only shrinks
-src/ast.rs	0	0
-src/autograd_bridge.rs	37	0
-src/builtins.rs	55	0
-src/derive.rs	13	0
-src/effects.rs	6	0
-src/emit_rs/builders.rs	3	0
-src/emit_rs/builtins.rs	70	16
-src/emit_rs/exprs.rs	131	1
-src/emit_rs/mod.rs	0	4
-src/emit_rs/program.rs	34	29
-src/emit_rs/stmts.rs	15	5
-src/emit_rs/tests.rs	19	35
-src/emit_rs/texts.rs	5	0
-src/emit_rs/ui.rs	38	3
-src/emit_rs/vectors.rs	2	0
-src/formatter.rs	1	0
-src/int_width.rs	18	0
-src/ir.rs	66	0
-src/ir_interp.rs	140	27
-src/ir_interp/prepared.rs	22	1
-src/ir_verify.rs	5	0
-src/kernel.rs	14	0
-src/lexer.rs	0	0
-src/lower.rs	88	0
-src/lower_ir.rs	97	1
-src/lower_ir/checks.rs	102	5
-src/lower_ir/frames.rs	69	0
-src/lower_ir/fuse.rs	5	0
-src/lower_ir/grad.rs	4	0
-src/lower_ir/named.rs	15	0
-src/lower_ir/schema.rs	0	4
-src/lower_ir/shapes.rs	0	0
-src/lower_ir/uses.rs	26	0
-src/main.rs	68	9
-src/modules/db.rs	22	3
-src/modules/math.rs	17	0
-src/modules/mod.rs	41	0
-src/ops.rs	28	5
-src/parallel.rs	0	0
-src/parser.rs	4	0
-src/rust_names.rs	4	0
-src/served.rs	2	26
-src/table.rs	53	2
-src/token.rs	1	0
-src/totality.rs	6	0
-src/type_infer.rs	12	2
-src/type_infer/calls.rs	3	0
-src/type_infer/classify.rs	10	0
-src/type_infer/frames.rs	2	1
-src/type_infer/rules.rs	92	0
-src/type_infer/settle.rs	0	0
-src/value.rs	15	2
+# design rule 24: per compiler file, its module-crate references (tab 1) and the name-shaped string literals it held at the bless (tab 2)
+# src/freeze.rs holds each file to its line: a literal that is a module's or a builtin's name must be in the set, and a name in the set must still be held — the names only shrink
+src/ast.rs	0	
+src/autograd_bridge.rs	0	abs,acos,asin,atan,ceil,clip,cos,cosh,erf,exp,flatten,float,floor,int,len,ln,log10,log2,max,mean,min,onehot,reshape,round,sign,sin,sinh,sqrt,sum,tan,tanh,tensor,transpose
+src/builtins.rs	0	abs,acos,app,array,asin,assert,atan,bool,bytes,ceil,cos,cosh,db,decimal,erf,error,exp,float,floor,fn,fraction,frame,int,ln,log10,log2,mailer,map,moment,none,null,number,parse,response,round,sign,sin,sinh,socket,sparse,sqrt,str,stream,tan,tanh,type
+src/derive.rs	0	_,__reader,connect,db,insert,now,page,query,reader,url
+src/effects.rs	0	clock,console,exit,files,input,mail,network,process,random,serving,session,shell,waits
+src/emit_rs/builders.rs	0	_i
+src/emit_rs/builtins.rs	16	_,__crow_handle,__notice_at,__notice_text,__query_write,__reader,__same_fn,__v,_al,_ar,abs,all,any,arrow,assert,bytes,captured,ceil,click,connect,db,describe,download,eq,error,fetch,find,floor,frame,grad,gt,gte,html,input,insert,json,later,lt,lte,mail,ne,new,notice,page,poll,put,query,quick,redirect,respond,round,route,running,seed,select,serve,sign_in,sign_out,sqrt,stream,submit,text,transact,type,ui,web
+src/emit_rs/exprs.rs	1	_,__,__query_write,_c,_i,_ib,_l,_r,_v,_x,abs,acos,add,and,asin,assert,atan,bool,captured,ceil,chart,clip,columns,cos,cosh,cp,cpu,day,describe,device,div,dtype,dtypes,e,elemdiv,elemmul,elempow,encode,env,eq,erf,error,exp,false,find,flatten,float,floor,get,get_bool,get_f64,get_i64,get_json,get_moment,get_str,get_vector,gpu,grad,gt,gte,hash,hour,i64,inf,input,int,into_iter,into_par_iter,is_none,is_some,iter,json,kind,len,less,ln,log,log10,log2,ls,lt,lte,mail,matmul,max,mean,min,minute,mkdir,mod,moment,month,mul,mv,nan,ne,neg,offset,offset_minutes,ok,onehot,or,par_iter,pi,plus,pow,query,read,reason,recv,rem,request,reshape,rm,round,running,second,send,set,shape,shell,sign,sin,sinh,socket,sqrt,state,status,sub,sum,table,tan,tanh,tensor,trace,transpose,true,type,verify,weekday,whole,whole_list,whole_tensor,write,year
+src/emit_rs/mod.rs	4	crate,crow_main,crow_runtime,crow_web,main,self,super,unknown
+src/emit_rs/program.rs	29	__,__crow_handle,_db_clickhouse_ch,_db_postgres_pg,actions,add,all,any,chart,click,clickhouse,cpu,crow_runtime,crow_web,div,fetch,find,gpu,grad,http,input,later,let,live,map,mul,on,page,poll,postgres,route,serve,set,static,static_files,sub,submit,web
+src/emit_rs/stmts.rs	5	_asg,_c,_fv,_i,bool,chart,checkbox,cpu,f64,field,gpu,i64,icon,let,progress,radio,select,slider,tabs,toggle
+src/emit_rs/tests.rs	35	__crow_handle,__crow_state,__json_to_frame,_binl_,_binr_,_dual_f,_dual_g,_prop_,anova,any,below,break,collect,container,contains,corr,count,cov,crow_json_display,depth,double__,else,f,find_first,for,for_each,go,go_direct,gpu,if,let,lines__count,logs_h,loop,loop_h,median,number_at,par_iter,parquet,parse,parse_all,parses,percentile,push,range,render,return,rows_h,run,served,set_flat_at,set_gpu_enabled,sort,sort_by,split,sqlite,sqrt,std,t,test_control,trim,true,ttest,v1,var,while,zscore
+src/emit_rs/texts.rs	0	
+src/emit_rs/ui.rs	3	_l,actions,active,chart,checkbox,class,click,confirm,delta,divider,field,file,hide,icon,img,input,key,main,main_el,mark,meta,nav,on,open,page,progress,props,radio,select,slider,sort,submit,table,tabs,tip,toggle,unknown,widget
+src/emit_rs/vectors.rs	0	
+src/formatter.rs	0	ui
+src/int_width.rs	0	__handed,_t,add,and,div,eq,gt,gte,later,log,lt,lte,mod,mul,ne,neg,not,or,pow,stream,sub
+src/ir.rs	0	__,clock,concat,cp,cpu,del,encode,ends,eq,exists,find,fmt,handler,held,helper,i64,join,json,kind,log,lower,ls,map_del,map_set,matches,mkdir,moment,mv,ne,now,ok,pop,pure,push,rand,range,read,reason,repeat,replace,reverse,rm,set,slice,sort,split,starts,str,sub,trace,trim,unit,upper,valid,view,write
+src/ir_interp.rs	27	__notice_at,__notice_text,__page_at,__page_index,__reader,__same_fn,__sort_by,__sort_desc,__sort_index,_web_mail_mail,add,all,and,any,app,args,arrow,assert,at,background,body,bold,bools,box,bytes,captured,card,change,chart,checkbox,class,click,clock,color,columns,cpu,crow_layout,db,del,derived,div,download,downloads,dtypes,elemdiv,elements,elemmul,elempow,eq,event,fact,facts,fetch,field,files,find,fits,gpu,grad,groups,gt,gte,height,html,icon,json,kind,l,label,later,layout,len,log,lt,lte,m,mail,mails,map_del,map_set,math,medium,missing,mod,mul,muted,name,ne,neg,no_capture,not,notice,now,null,ok,open,or,overflow,page,parse,path,poll,pow,primary,progress,radio,read,reader,reason,record,redirect,regex,regular,repl,respond,route,running,s,select,serve,session,set,shape,sign_in,sign_out,size,slider,sort,stop,stream,style,sub,subject,table,tabs,tag,test,text,title,to,toggle,trace,transact,unknown,value,view,web,weight,width,x,xl,xs,xxl,y
+src/ir_interp/prepared.rs	1	assert,checkbox,field,kind,len,neg,not,ok,radio,reason,select,slider,tabs,toggle,trace
+src/ir_verify.rs	0	__,_traced_,add,div,grad,json,mod,mul,off,pow,report,sub
+src/kernel.rs	0	_reply,_request,argv,banner,busy,code,codemirror_mode,comm_info_request,comms,complete,complete_request,control,crow,cursor_end,cursor_pos,cursor_start,data,date,display_name,else,ename,error,evalue,execute_input,execute_request,execute_result,execution_count,execution_state,file_extension,found,heartbeat,help_links,history,history_request,idle,implementation,implementation_version,incomplete,indent,inspect_request,install,interrupt_mode,interrupt_request,invalid,iopub,is_complete_request,jupyter,kernel,kernel_info_request,kernels,language,language_info,macos,matches,message,metadata,mimetype,msg_id,msg_type,name,ok,payload,protocol_version,pygments_lexer,restart,session,shell,shutdown_request,silent,status,stderr,stdin,stdout,stream,text,traceback,user_expressions,username,version
+src/lexer.rs	0	_,and,b,br,break,continue,def,derive,elif,else,eq,f,false,fn,for,fr,gt,gte,if,in,lambda,lt,lte,ne,not,or,r,rb,return,rf,struct,test,then,true,use,view,while
+src/lower.rs	0	__decimal_digits,__known,__map_of,__reader,__s,a,at,button,checkbox,code,concat,decimal,details,digits,div,divider,drawer,dropdown,field,fill,footer,form,frame,grid,h1,h2,h3,h4,h5,h6,header,how,icon,img,input,label,li,limit,map,meta,modal,nav,new,notice,ok,ol,option,overlay,p,page,path,pre,progress,radio,reader,route,row,s,scroll,section,select,set,slider,span,stack,summary,table,tabs,tbody,td,text,textarea,th,thead,title,toast,toggle,tr,ui,ul,url,view,web,widget
+src/lower_ir.rs	1	__expect_frame,__map_of,__pick_cells,__pick_items,__pick_rows,__read_bool,__read_float,__read_int,__read_moment,__read_str,_t,add,and,assert,change,chart,check,click,concat,contains,div,encode,error,f,float,frame,function,grad,input,int,json,kind,later,len,log,mail,mul,neg,negated,not,now,ok,or,page,parameter,pow,push,reason,seek,select,set,sort,str,stream,sub,submit,table,this,trace,type,ui,variable,view,web
+src/lower_ir/checks.rs	5	_,__,__map_of,__reader,a,active,alt,and,arrow,auth,bools,button,bytes,click,columns,connect,contains,day,db,decode,del,derivation,device,download,dtype,dtypes,encode,field,file,frames,function,hour,html,img,in,items,join,json,kind,later,len,lists,mail,maps,markup,math,minute,moments,month,msgpack,new,nothing,notice,numbers,offset,ok,on,open,or,out,page,query,reader,reason,redirect,respond,route,s,second,serve,set,shape,shortcut,sign_in,sign_out,sort,stream,struct,sys,table,test,text,tip,trace,ui,values,variable,web,weekday,widget,ws,year
+src/lower_ir/frames.rs	0	anti,asof,bars_y,bucket,candles,chart,complete,count,delta,distinct,fill,first,float,frame,group,head,hide,inner,int,join,key,lag,last,lead,left,lines,lower,mark,max,mean,median,min,moment,new,none,ok,outer,pivot,rank,rename,replace,right,sample,select,semi,sort,stack,std,str,sub,sum,table,tail,trim,unique,unpivot,upper,value,var,variable,where,window,x
+src/lower_ir/fuse.rs	0	add,and,div,elemdiv,elemmul,elempow,mul,neg,not,ok,or,sub
+src/lower_ir/grad.rs	0	eq,grad,gt,gte,log,lt,lte,mod,ne,text
+src/lower_ir/named.rs	0	__same_fn,apply,call,describe,encode,error,json,map,null,sys
+src/lower_ir/schema.rs	4	
+src/lower_ir/shapes.rs	0	
+src/lower_ir/uses.rs	0	assert,complete,encode,error,fill,float,fmt,frame,head,int,len,load,log,moment,negated,now,sample,select,sort,str,tail,text,type,unique
+src/main.rs	9	_,__crowfile,a,anon,app,apply,book,build,buy,change,changed,chart,check,clear,click,co,code,compile,compiled,contains,control,core,cpu,crow,crow_book_play,crow_book_test,crow_db,crow_modules,crow_runtime,crow_web,crowfile,css,cwd,d,data,date,db,debug,debuginfo,deps,derive,describe,dev,diff,done,element,elif,else,entry,error,es,examples,exit,f,fix,fmt,fn,for,git,gpu,has,help,host,html,id,if,ignore,install,interp,interpreter,jobs,js,json,kernel,kill,launch,lock,lsof,lsp,macos,mailed,main,map,math,md,mode,name,new,norun,ok,origin,output,overflow,packages,pgrep,png,program,push,q,reader,release,run,s,schema,section,sell,serde_json,serve,setup,signal,src,stdlib,stop,strict,struct,svg,sys,sysctl,t,target,test,timeout,ttf,txt,ui,upgrade,use,vendor,view,web,while,woff,woff2,wrote
+src/modules/db.rs	3	__query_write,connect,db,describe,insert,query,transact
+src/modules/math.rs	0	acos,asin,atan,cos,cosh,e,erf,exp,inf,ln,log10,log2,math,nan,pi,sign,sin,sinh,tan,tanh
+src/modules/mod.rs	0	_,__,__crow_line__,_bits,_chart,_core,_db,_db_clickhouse,_db_postgres,_doc,_frame,_io,_kafka,_llm,_magpie,_math,_math_nn,_math_stats,_mcp,_redis,_sys,_traced_,_ui,_web,_web_auth,_web_mail,_web_ui,_web_ws,bits,ch,chart,clickhouse,connect,crow_db,crow_runtime,crow_web,db,doc,frame,http,io,kafka,live,llm,magpie,math,mcp,modules,pg,postgres,program,redis,sqlite,sys,ui,web
+src/ops.rs	5	__page_at,__page_index,__sort_by,__sort_desc,__sort_index,actions,active,bytes,change,checkbox,class,click,columns,confirm,cpu,delta,device,dtype,dtypes,field,file,float,gpu,grad,hide,input,key,kind,len,mark,missing,name,nav,none,nothing,null,number,ok,on,page,parse,props,radio,reason,seek,shape,slider,sort,style,submit,table,tabs,text,toggle,trace,true,type,widget
+src/parallel.rs	0	
+src/parser.rs	0	__whole,append,as,async,await,break,catch,class,contains,containskey,continue,def,elif,except,fresh,from,has,haskey,hasownproperty,import,includes,lambda,map,match,nil,null,pass,print,r,raise,test,throw,try,undefined,x,y,z
+src/rust_names.rs	0	abstract,as,async,await,become,box,const,crate,do,dyn,enum,extern,final,gen,impl,let,loop,macro,match,mod,move,mut,override,priv,pub,ref,self,state,static,super,trait,try,type,typeof,unsafe,unsized,virtual,where,yield
+src/served.rs	26	_,body,files,form,headers,method,params,path,query
+src/table.rs	2	_,__groups,__map_of,__none,__pick_cells,__pick_frame,__pick_items,__pick_rows,__pick_where,__set_at,__set_part,__sizes,__sub_len,__text_map,__truncated,__whole,abs,and,argument,arguments,body,bytes,ceil,concat,contains,core,crow,del,false,floor,form,frame,headers,in,keys,len,map,markup,math,max,min,missing,nothing,numbers,or,phrase,round,set,sizes,sqrt,status,stderr,stdout,tensors,text,values
+src/token.rs	0	_,and,break,continue,derive,else,eq,false,fn,for,gt,gte,if,in,lt,lte,ne,not,or,return,struct,text,then,true,use,view,while
+src/totality.rs	0	a,k,ok,type,x
+src/type_infer.rs	2	array,body,bool,bytes,column,decimal,f64,false,float,fraction,frame,function,groups,headers,i64,int,json,markup,moment,ok,phrase,set,sparse,status,stderr,stdout,str,ui,unknown,void
+src/type_infer/calls.rs	0	actions,click,grad,key,table
+src/type_infer/classify.rs	0	change,click,grad,input,on,page,seek,submit,widget
+src/type_infer/frames.rs	1	bool,columns,datetime,float,int,sql,via
+src/type_infer/rules.rs	0	__known,__map_of,__notice_at,__notice_text,__pick_items,__pick_rows,__reader,abs,app,args,arrow,assert,body,box,bytes,captured,ceil,chart,checkbox,columns,concat,contains,cpu,day,del,device,download,downloads,dtype,dtypes,elements,env,error,exit,fetch,field,files,floor,form,frame,gpu,grad,has,headers,hour,html,icon,input,json,keys,kind,len,log,mails,map,method,minute,month,new,notice,now,offset,ok,params,path,poll,pop,progress,push,query,radio,range,reason,redirect,respond,reverse,round,route,second,select,serve,set,shape,sign_in,sign_out,sleep,slice,slider,sort,sqrt,table,tabs,text,toggle,trace,transact,type,values,web,weekday,year
+src/type_infer/settle.rs	0	
+src/value.rs	2	app,array,bool,bytes,db,decimal,done,float,fn,fraction,frame,int,mailer,map,moment,response,socket,sparse,stream,string,struct_instance

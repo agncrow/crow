@@ -79,7 +79,7 @@ df.columns  --- ['name', 'age', 'city', 'salary', 'score']
 - Clean separation — frame is its own thing
 - Properties (.shape, .columns, .dtypes) beside the columns: the property is read first, and a column named like one is read as `` df.`'shape'` ``
 - Column order preserved (not alphabetically sorted like BTreeMap)
-- Optimized internal storage: typed vectors (Vec<i64>, Vec<f64>, Vec<bool>, Vec<i64> + Vec<i16> for DateTime); text in one buffer with an offset per cell, or a code per cell into a dictionary (`textcol.rs`); a bit per cell for which are there (`validity.rs`)
+- Optimized internal storage: typed vectors (Vec<i64>, Vec<f64>, Vec<bool>, Vec<i64> + Vec<i16> for DateTime; a width and the rows' floats laid flat for a column of vectors, `Column::Vectors`); text in one buffer with an offset per cell, or a code per cell into a dictionary (`textcol.rs`); a bit per cell for which are there (`validity.rs`)
 - Display shows a nice table format
 
 ---

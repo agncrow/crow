@@ -71,6 +71,9 @@ fn cell_parsed(col: &Column, i: usize) -> Parsed {
         Column::Float(v) => Parsed::Float(v[i]),
         Column::Bool(v) => Parsed::Bool(v[i]),
         Column::Str(t) => Parsed::Text(t.get(i).to_string()),
+        // (a vector is compared with nothing: `parsed` refuses a predicate
+        // over a column of vectors before any cell is read)
+        Column::Vectors(..) => Parsed::Text(col.fmt_cell(i, true)),
     }
 }
 
@@ -112,6 +115,7 @@ enum Cell {
     Text(String),
     Bool(bool),
     Moment(i64, i16),
+    Vector(Vec<f64>),
 }
 
 fn cell_of(col: &Column, i: usize) -> Cell {
@@ -121,6 +125,7 @@ fn cell_of(col: &Column, i: usize) -> Cell {
         Column::Str(t) => Cell::Text(t.get(i).to_string()),
         Column::Bool(v) => Cell::Bool(v[i]),
         Column::DateTime(ms, off) => Cell::Moment(ms[i], off[i]),
+        Column::Vectors(w, v) => Cell::Vector(v[i * w..(i + 1) * w].to_vec()),
     }
 }
 
@@ -566,6 +571,17 @@ fn column_of(cells: &[Option<Cell>], kind: super::encode::Kind) -> (Column, Vec<
                 });
             }
             Column::Str(t)
+        }
+        super::encode::Kind::Vector => {
+            let width = cells.iter().find_map(|c| match c { Some(Cell::Vector(v)) => Some(v.len()), _ => None }).unwrap_or(0);
+            let mut data = Vec::with_capacity(cells.len() * width);
+            for c in cells {
+                match c {
+                    Some(Cell::Vector(v)) if v.len() == width => data.extend_from_slice(v),
+                    _ => data.extend(std::iter::repeat_n(0.0, width)),
+                }
+            }
+            Column::Vectors(width, data)
         }
     };
     (col, valid)

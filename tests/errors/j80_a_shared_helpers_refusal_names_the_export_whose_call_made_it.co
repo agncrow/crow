@@ -1,0 +1,13 @@
+--- a shared helper's refusal names the export whose call made the copy
+--- mistakes: 7
+--- `lookup` and `latest` both reach magpie's helper `_reaching`; the list
+--- handed as `latest`'s `upto` makes a copy of the helper whose `lt` and
+--- `lte` compare text with a number. Every refusal names `latest` at its
+--- line: the valid `lookup` call, which reaches the helper first, is not
+--- blamed (it had been: a copy lowered before its caller's body had no
+--- chain on record, and the first export reaching the helper answered)
+use magpie, frame
+ok = lookup['nowhere', ['day'], ['x'], ['timestamp']]
+log[ok.reason]
+bad = latest['nowhere', ['id']]
+log[bad.reason]

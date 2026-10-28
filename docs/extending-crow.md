@@ -224,13 +224,22 @@ registration boilerplate (`bits.rs`, `chart.rs`, `doc.rs`, `frame.rs`,
 ### The ratchet
 
 `src/freeze.rs`: a unit test scans the compiler's source files (listed
-there; the tools are not among them) for the module names of the manifest
-and the builtin names of the table written as string literals, and for
-references to a module crate, and compares each file's count with
-`tests/freeze/names.txt`. A count above its baseline fails. A count below
-it fails too, naming the file, so the baseline is lowered
-(`CROW_FREEZE_BLESS=1`) and committed: the file only shrinks. The rows
-table itself is scanned outside its `ROWS` array.
+there; the tools are not among them) for the string literals shaped like
+a name (`[a-z_][a-z0-9_]*`, as every module's and builtin's name is) and
+for references to a module crate, and holds each file to
+`tests/freeze/names.txt`: the set of such literals it held when the
+baseline was blessed, and its crate-reference count. A literal that is a
+module's or a builtin's name now and is not in the file's set fails: the
+file learned a name. A name in the set the file no longer holds fails
+too, naming the file, so the baseline is lowered (`CROW_FREEZE_BLESS=1`)
+and committed: the names a file may hold only shrink. A literal that is
+no name is held to nothing and recorded, so a module that later exports
+that word is not the compiler learning it — until 2026-10-27 the ratchet
+held counts of name literals, and magpie's new export `get` made the
+emitter's own `"get"` (the ui state's) count as a learned name, which
+cost the export its name; a literal added after the last bless and
+exported later is told apart by the bless, which a person does after
+looking. The rows table itself is scanned outside its `ROWS` array.
 
 ### Held by
 
@@ -332,10 +341,13 @@ hand-off and the `json[…]` doors are gone from the migrated modules: a
 function takes the value the program holds and reads it as its JSON where
 it needs to (`encode[claims]`). A refusal inside such a function names it
 and the program's line (`in relu: clip[] takes numbers, got an int`) —
-inside a helper, which no program calls, the export whose body reaches
-it (`in prior: batch_asof[] takes … an int, got … a list of ints`), the
-helper's calls of rows held to the rows' kinds under the module's own
-imports as the export's are — and every message names the function as
+inside a helper, which no program calls, the export whose call made the
+refused copy — a helper two exports share is blamed on the one whose
+call it was refused under, the chain read from the module's own calls as
+the lowering resolved them, once the lowering is through (`in prior:
+batch_asof[] takes … an int, got … a list of ints`; errors j79, j80) —
+the helper's calls of rows held to the rows' kinds under the module's
+own imports as the export's are — and every message names the function as
 the program writes it (`modules::unprefixed`, `written_as`). Options are the functions'
 defaults, `[]` and `map[]` allowed (the parser's one change); the
 language gained nothing else.

@@ -107,6 +107,7 @@ fn lower_checked_as(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: 
     // what the program got wrong comes first: a form the lowering cannot
     // take is usually one of those errors seen from the other side
     if !l.v.errors.is_empty() {
+        l.reattribute();
         return Err(Refusal::Invalid(checks::without_echoes(std::mem::take(&mut l.v.errors))));
     }
     let mut program = Program { parts: vec![part.map_err(Refusal::Unlowered)?] };
@@ -3935,8 +3936,12 @@ impl<'a> Lowerer<'a> {
                 // program read a missing cell as 0); a comparison is a
                 // mask, whose missing cells are false (spec, Boolean Masks)
                 if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::Pow | BinOp::ElemMul | BinOp::ElemDiv | BinOp::ElemPow) {
+                    // (a column of vectors is its matrix, a row per cell)
                     let numbers = |x: Expr| match x.ty() {
-                        Ty::Column(_) => Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty: Ty::vector(Ty::Float) },
+                        Ty::Column(_) => {
+                            let ty = Ty::Tensor(Box::new(Ty::Float), shapes::stacked_dims(&x.ty()));
+                            Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty }
+                        }
                         _ => x,
                     };
                     l = numbers(l);
@@ -5396,6 +5401,12 @@ impl<'a> Lowerer<'a> {
                     });
                 }
                 lowered = handed;
+            }
+            // (every pass records the call under the names it resolved, so a
+            // refusal in a copy lowered before its caller's body in the
+            // final pass still finds the chain the settle pass drew)
+            if self.v.line > 0 {
+                self.ctx.module_calls.entry((current.clone(), resolved.clone())).or_insert(self.v.line);
             }
             if self.pass == Pass::Final {
                 self.call_lines.entry((current.clone(), resolved.clone())).or_insert(self.v.line);

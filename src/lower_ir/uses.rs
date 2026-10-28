@@ -140,8 +140,11 @@ pub(crate) fn dynamic_frame(t: &Ty) -> bool {
     }
 }
 
+/// A kind a cell read says something of: a scalar's, or a vector's (a
+/// cell handed where a tensor is taken — `norm[df.e[i]]` — reads the
+/// column as one of vectors).
 fn definite(t: &Ty) -> bool {
-    matches!(t, Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Moment)
+    matches!(t, Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Moment) || matches!(t, Ty::Tensor(e, _) if matches!(e.as_ref(), Ty::Float | Ty::Int | Ty::Unknown))
 }
 
 /// What a builtin's rows say a value handed at a position is: the kind
@@ -154,6 +157,10 @@ pub(crate) fn row_says(name: &str, module: Option<&str>, at: usize, argc: usize)
     }
     let mut said: BTreeSet<String> = BTreeSet::new();
     let mut kind: Option<Ty> = None;
+    // a row that takes a tensor there (`norm`, `dot`): the cell is a vector
+    // — where no row of the name takes a scalar (`max` takes numbers one
+    // at a time and a tensor whole: its cell is a number)
+    let mut tensor = false;
     for row in crate::table::ROWS.iter().filter(|r| r.name == name && module.is_none_or(|m| r.module == m)) {
         let Some(kinds) = crate::table::kinds_of(row.params, argc) else { continue };
         let Some(k) = kinds.get(at) else { continue };
@@ -161,6 +168,10 @@ pub(crate) fn row_says(name: &str, module: Option<&str>, at: usize, argc: usize)
         // j`, `has[j, key]`): nothing is read for it
         if matches!(k, crate::table::Kind::Json) {
             return None;
+        }
+        if matches!(k, crate::table::Kind::Tensor) {
+            tensor = true;
+            continue;
         }
         // (a row over a column, a list or any value says nothing of a cell)
         let t = k.ty();
@@ -171,6 +182,7 @@ pub(crate) fn row_says(name: &str, module: Option<&str>, at: usize, argc: usize)
         kind = Some(t);
     }
     match said.len() {
+        0 if tensor => Some(Ty::vector(Ty::Float)),
         1 => kind,
         // rows that take an int or a float there take a number: a float
         n if n > 0 && said.iter().all(|s| s == "Int" || s == "Float") => Some(Ty::Float),

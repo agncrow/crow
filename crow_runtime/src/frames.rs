@@ -61,6 +61,10 @@ pub enum Cells {
     /// The column's values and, row by row, whether each is present.
     Column(Column, Validity),
     One(Cell),
+    /// Values no column holds, with the reason: a list of vectors of
+    /// several widths, a tensor of three axes or more. The write stops
+    /// with the reason, in both modes.
+    Refused(String),
 }
 
 impl Cells {
@@ -128,8 +132,62 @@ impl From<Vec<serde_json::Value>> for Cells {
 
 impl From<CrowTensor> for Cells {
     fn from(t: CrowTensor) -> Self {
-        Cells::all(Column::Float(t.to_vec()))
+        match t.ndim() {
+            // a matrix's rows are a column of vectors, one per row
+            2 => {
+                let shape = t.shape();
+                let (rows, width) = (shape[0], shape[1]);
+                if width == 0 {
+                    return Cells::Refused("a column of vectors holds vectors of one number or more, and the matrix's rows are empty".to_string());
+                }
+                Cells::Column(Column::Vectors(width, t.to_vec()), Validity::all(rows))
+            }
+            n if n >= 3 => Cells::Refused(format!("a column holds numbers or vectors, and the tensor has {} axes", n)),
+            _ => Cells::all(Column::Float(t.to_vec())),
+        }
     }
+}
+/// A list of vectors as a column of vectors: every vector of one width
+/// (another width is refused, naming the row), each a tensor of one axis.
+impl From<Vec<CrowTensor>> for Cells {
+    fn from(rows: Vec<CrowTensor>) -> Self {
+        vectors_of(rows.iter().map(|t| (t.ndim(), t.to_vec())))
+    }
+}
+impl From<Vec<Vec<f64>>> for Cells {
+    fn from(rows: Vec<Vec<f64>>) -> Self {
+        vectors_of(rows.into_iter().map(|r| (1, r)))
+    }
+}
+impl From<Vec<Vec<i64>>> for Cells {
+    fn from(rows: Vec<Vec<i64>>) -> Self {
+        vectors_of(rows.into_iter().map(|r| (1, r.into_iter().map(|x| x as f64).collect())))
+    }
+}
+
+/// A column of vectors from rows of numbers, each with the rank it was
+/// handed as: a row that is no vector (a matrix among them), or one of
+/// another width than the first, is refused by its position.
+fn vectors_of(rows: impl Iterator<Item = (usize, Vec<f64>)>) -> Cells {
+    let mut width: Option<usize> = None;
+    let mut data = Vec::new();
+    let mut n = 0usize;
+    for (i, (rank, row)) in rows.enumerate() {
+        if rank >= 2 {
+            return Cells::Refused(format!("a column of vectors takes a vector per row, and row {} is a tensor of {} axes", i, rank));
+        }
+        if row.is_empty() {
+            return Cells::Refused(format!("a column of vectors holds vectors of one number or more, and row {} is empty", i));
+        }
+        match width {
+            None => width = Some(row.len()),
+            Some(w) if w != row.len() => return Cells::Refused(format!("a column of vectors holds vectors of one width, and row {} has {} numbers where the first has {}", i, row.len(), w)),
+            _ => {}
+        }
+        data.extend(row);
+        n += 1;
+    }
+    Cells::Column(Column::Vectors(width.unwrap_or(0), data), Validity::all(n))
 }
 impl From<CrowColumn> for Cells {
     fn from(c: CrowColumn) -> Self {
@@ -168,6 +226,7 @@ pub fn with(f: &CrowFrame, name: &str, values: Cells) -> Result<CrowFrame, Strin
     match values {
         Cells::Column(data, valid) => f.with_validity(name, data, valid),
         Cells::One(cell) => f.with_scalar(name, one_row(cell)?),
+        Cells::Refused(why) => Err(format!("column '{}': {}", name, why)),
     }
 }
 
@@ -636,6 +695,8 @@ pub fn empty_with(names: &[String], kinds: &[String]) -> CrowFrame {
             "float" => crate::frame::Column::Float(Vec::new()),
             "bool" => crate::frame::Column::Bool(Vec::new()),
             "moment" => crate::frame::Column::DateTime(Vec::new(), Vec::new()),
+            // (a tensor cell's name is `array`; the kernels say `vector`)
+            "vector" | "array" => crate::frame::Column::Vectors(0, Vec::new()),
             _ => crate::frame::Column::strs(Vec::new()),
         })
         .collect();
@@ -661,6 +722,7 @@ pub fn expect(f: &CrowFrame, names: &[String], kinds: &[String], hows: &[String]
             "float" => "numbers",
             "bool" => "bools",
             "moment" => "moments",
+            "vector" | "array" => "vectors",
             other => other,
         }
     }
@@ -671,6 +733,7 @@ pub fn expect(f: &CrowFrame, names: &[String], kinds: &[String], hows: &[String]
             "float" => "floats",
             "bool" => "bools",
             "datetime" => "moments",
+            "vector" => "vectors",
             other => other,
         }
     }
@@ -704,6 +767,7 @@ pub fn expect(f: &CrowFrame, names: &[String], kinds: &[String], hows: &[String]
             "float" => dtype == "float",
             "bool" => dtype == "bool",
             "moment" => dtype == "datetime",
+            "vector" | "array" => dtype == "vector",
             _ => true,
         };
         if !fits {
@@ -756,6 +820,83 @@ mod expect_tests {
     }
 }
 
+#[cfg(test)]
+mod vector_tests {
+    use super::*;
+    use crate::frame::Column;
+
+    /// A column of vectors is written from a matrix (its rows) or a list
+    /// of vectors of one width; a list of two widths, an empty vector and
+    /// a tensor of three axes are refused with the row named; a vector
+    /// read back is a tensor, a missing one zeros; the column stacks only
+    /// with vectors of its width (a column of no rows taking the other's);
+    /// JSON records write a list of numbers and read one back as vectors;
+    /// Arrow round-trips the column as a fixed-size list; CSV refuses it.
+    #[test]
+    fn a_column_of_vectors_is_written_read_stacked_and_saved() {
+        let f = CrowFrame::new(vec!["id".into()], vec![Column::Int(vec![1, 2])], vec![vec![true; 2]]);
+        let m = CrowTensor::from_vec(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]);
+        let g = with(&f, "e", Cells::from(m)).expect("a matrix's rows");
+        assert_eq!(g.col_native("e").expect("e").data.dtype_name(), "vector");
+        assert_eq!(g.col_native("e").expect("e").get_vector(1).to_vec(), vec![0.0, 1.0]);
+        let listed = with(&f, "e", Cells::from(vec![CrowTensor::from_vec(vec![3.0, 4.0], vec![2]), CrowTensor::from_vec(vec![5.0, 6.0], vec![2])])).expect("a list of vectors");
+        assert_eq!(listed.col_native("e").expect("e").numbers().expect("the matrix").shape(), &[2, 2]);
+        let rows = with(&f, "e", Cells::from(vec![vec![1i64, 2], vec![3, 4]])).expect("rows of ints");
+        assert_eq!(rows.col_native("e").expect("e").get_vector(1).to_vec(), vec![3.0, 4.0]);
+        let ragged = with(&f, "e", Cells::from(vec![CrowTensor::from_vec(vec![1.0], vec![1]), CrowTensor::from_vec(vec![1.0, 2.0], vec![2])])).expect_err("two widths");
+        assert_eq!(ragged, "column 'e': a column of vectors holds vectors of one width, and row 1 has 2 numbers where the first has 1");
+        let empty = with(&f, "e", Cells::from(vec![Vec::<f64>::new(), Vec::new()])).expect_err("empty vectors");
+        assert!(empty.contains("row 0 is empty"), "{}", empty);
+        let cube = with(&f, "e", Cells::from(CrowTensor::zeros(vec![2, 1, 1]))).expect_err("three axes");
+        assert!(cube.contains("3 axes"), "{}", cube);
+        // a missing vector reads as zeros of the width, and shows as missing
+        let holed = CrowFrame::assembled(vec!["e".into()], vec![Column::Vectors(2, vec![1.0, 2.0, 0.0, 0.0])], vec![Validity::from(vec![true, false])]);
+        let c = holed.col_native("e").expect("e");
+        assert_eq!(c.get_vector(1).to_vec(), vec![0.0, 0.0]);
+        assert_eq!(c.data.fmt_cell(1, false), "missing");
+        assert_eq!(c.data.fmt_cell(0, true), "[1, 2]");
+        assert!(c.numbers().expect_err("a missing row").contains("missing"));
+        // stacking: one width, a column of no rows takes the other's
+        let none = CrowFrame::new(vec!["e".into()], vec![Column::Vectors(0, vec![])], vec![vec![]]);
+        let stacked = none.stack(&holed).expect("stacks");
+        assert_eq!(stacked.col_native("e").expect("e").data.width(), Some(2));
+        let wide = CrowFrame::new(vec!["e".into()], vec![Column::Vectors(3, vec![1.0, 2.0, 3.0])], vec![vec![true]]);
+        assert!(holed.stack(&wide).expect_err("two widths").contains("width 2 meets vectors of width 3"));
+        // JSON records and back, a missing cell null
+        let text = crate::frame::to_json(&holed);
+        assert_eq!(text, "[{\"e\":[1.0,2.0]},{\"e\":null}]");
+        let back = crate::frame::from_json(&text).expect("reads");
+        assert_eq!(back.col_native("e").expect("e").data.dtype_name(), "vector");
+        assert_eq!(back.validity[0].to_vec(), vec![true, false]);
+        assert_eq!(back.col_native("e").expect("e").get_vector(0).to_vec(), vec![1.0, 2.0]);
+        // a list of lists of two widths, or of text, stays text
+        let mixed = crate::frame::from_json("[{\"e\":[1,2]},{\"e\":[3]}]").expect("reads");
+        assert_eq!(mixed.col_native("e").expect("e").data.dtype_name(), "str");
+        // CSV cannot hold one
+        assert_eq!(holed.to_csv().expect_err("no CSV"), "save: column 'e' holds vectors, which CSV cannot hold — save as .json or .parquet");
+        // the shapes a program reads: `array` and `vector` both name vectors
+        let held = expect(&holed, &["e".to_string()], &["array".to_string()], &["handed to norm at line 2".to_string()]).expect("held");
+        assert_eq!(held.col_native("e").expect("e").data.dtype_name(), "vector");
+        let wrong = expect(&f, &["id".to_string()], &["array".to_string()], &["handed to norm at line 2".to_string()]).expect_err("ints are no vectors");
+        assert_eq!(wrong, "column 'id' holds ints where the program reads vectors (handed to norm at line 2)");
+        assert_eq!(empty_with(&["e".to_string()], &["vector".to_string()]).col_native("e").expect("e").data.dtype_name(), "vector");
+    }
+
+    /// Arrow holds the column as a fixed-size list of float64, a missing
+    /// row null, and reads it back as vectors.
+    #[cfg(feature = "arrow")]
+    #[test]
+    fn a_column_of_vectors_round_trips_through_arrow() {
+        let holed = CrowFrame::assembled(vec!["e".into()], vec![Column::Vectors(2, vec![1.0, 2.0, 0.0, 0.0])], vec![Validity::from(vec![true, false])]);
+        let batch = crate::frame::record_batch(&holed).expect("a batch");
+        let schema = batch.schema();
+        let again = crate::frame::frame_of_batches(&schema, std::iter::once(Ok(batch)), "load").expect("reads back");
+        assert_eq!(again.col_native("e").expect("e").data.dtype_name(), "vector");
+        assert_eq!(again.validity[0].to_vec(), vec![true, false]);
+        assert_eq!(again.col_native("e").expect("e").get_vector(0).to_vec(), vec![1.0, 2.0]);
+    }
+}
+
 // ── the log's files: Magpie's kernel (crate::magpie) ───────────────────
 
 /// `sys.batch_write[dir, number, first, frame, keys, texts, flush]`: the
@@ -787,6 +928,14 @@ pub fn batch_merge(dir: &str, paths: &[String], every: bool) -> Result<String, S
 /// `sys.batch_search[paths, column, words, k]`: the files searched as one corpus.
 pub fn batch_search(paths: &[String], column: &str, words: &[String], k: i64, stems: bool, snippet: i64) -> Result<CrowFrame, String> {
     crate::magpie::search(paths, column, words, k, stems, snippet)
+}
+
+/// `sys.batch_nearest[paths, column, query, k]`: the files' rows nearest a vector.
+pub fn batch_nearest(paths: &[String], column: &str, query: &CrowTensor, k: i64) -> Result<CrowFrame, String> {
+    if query.ndim() >= 2 {
+        return Err(format!("batch: a query is one vector, not a tensor of {} axes", query.ndim()));
+    }
+    crate::magpie::nearest_rows(paths, column, &query.to_vec(), k)
 }
 
 /// `sys.batch_since[paths, after, wanted]`: the files' rows past a position.

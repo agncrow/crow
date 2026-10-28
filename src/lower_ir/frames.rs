@@ -63,7 +63,12 @@ fn cell_of(t: &Ty) -> Ty {
         t => t.clone(),
     };
     match t {
+        // a list of lists of numbers: a vector per row
+        Ty::List(inner) if matches!(inner.as_ref(), Ty::List(i) if matches!(i.as_ref(), Ty::Int | Ty::Float)) => Ty::vector(Ty::Float),
         Ty::List(inner) => *inner,
+        // a matrix's rows are a column of vectors, each of the matrix's
+        // row shape (its width, where the type knows it)
+        Ty::Tensor(elem, Some(dims)) if dims.len() >= 2 => Ty::Tensor(Box::new(match elem.as_ref() { Ty::Int => Ty::Float, _ => Ty::Float }), Some(dims[1..].to_vec())),
         // (`[1, 2]`, numbers held as a tensor of ints, had made a column of
         // floats)
         Ty::Tensor(elem, _) => match elem.as_ref() {

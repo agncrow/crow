@@ -1,0 +1,22 @@
+j80_a_shared_helpers_refusal_names_the_export_whose_call_made_it.co:12:1: in latest: batch_since[] takes a list of text, an int, an int and a list of text, got a list of text, an int, a list of text and a list of text
+  12 │ bad = latest['nowhere', ['id']]
+     │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+j80_a_shared_helpers_refusal_names_the_export_whose_call_made_it.co:12:1: in latest: lt compares numbers with numbers or text with text, not text with a number
+  12 │ bad = latest['nowhere', ['id']]
+     │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+j80_a_shared_helpers_refusal_names_the_export_whose_call_made_it.co:12:1: in latest: lte compares numbers with numbers or text with text, not a number with text
+  12 │ bad = latest['nowhere', ['id']]
+     │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+j80_a_shared_helpers_refusal_names_the_export_whose_call_made_it.co:12:1: in latest: this is a list of bools, and a condition is true or false — compare it: x gt 0, len[xs] gt 0, s ne ''
+  12 │ bad = latest['nowhere', ['id']]
+     │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+j80_a_shared_helpers_refusal_names_the_export_whose_call_made_it.co:12:1: in latest: pack[] takes an int and an int, got a list of text and an int
+  12 │ bad = latest['nowhere', ['id']]
+     │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+j80_a_shared_helpers_refusal_names_the_export_whose_call_made_it.co:12:1: in latest: batch_between[] takes a list of text, text, text, text, an int and a list of text, got a list of text, text, text, text, a list of text and a list of text
+  12 │ bad = latest['nowhere', ['id']]
+     │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+j80_a_shared_helpers_refusal_names_the_export_whose_call_made_it.co:12:1: in latest: ne compares values of one kind, not text with a number
+  12 │ bad = latest['nowhere', ['id']]
+     │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+7 mistakes

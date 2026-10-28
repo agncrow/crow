@@ -131,6 +131,12 @@ pub fn cell_bytes(col: &Column, i: usize, out: &mut Vec<u8>) {
         Column::Bool(v) => out.push(v[i] as u8),
         Column::Str(t) => out.extend_from_slice(t.get(i).as_bytes()),
         Column::DateTime(ms, _) => out.extend_from_slice(&ms[i].to_le_bytes()),
+        Column::Vectors(w, v) => {
+            for x in &v[i * w..(i + 1) * w] {
+                let x = if *x == 0.0 { 0.0 } else { *x };
+                out.extend_from_slice(&x.to_bits().to_le_bytes());
+            }
+        }
     }
 }
 
@@ -186,6 +192,8 @@ fn statistics(col: &Column, valid: &Validity, start: usize, end: usize) -> (u32,
             let hi = it.max().filter(|s| s.len() <= BOUND_TEXT_MOST).map(|s| Bound::Text(s.to_string()));
             (lo, hi)
         }
+        // (vectors have no order: no bounds)
+        Column::Vectors(..) => (None, None),
     };
     ((end - start - present.len()) as u32, count, min, max, bloom)
 }
@@ -647,13 +655,7 @@ impl Reader {
         for &c in cols {
             let m = &self.meta.footer.columns[c];
             names.push(m.name.clone());
-            data.push(Arc::new(match m.kind {
-                Kind::Int => Column::Int(Vec::new()),
-                Kind::Float => Column::Float(Vec::new()),
-                Kind::Text => Column::Str(crate::textcol::Text::new()),
-                Kind::Bool => Column::Bool(Vec::new()),
-                Kind::Moment => Column::DateTime(Vec::new(), Vec::new()),
-            }));
+            data.push(Arc::new(m.kind.empty_column()));
             validity.push(Arc::new(Validity::all(0)));
         }
         CrowFrame { columns: names, data, validity }

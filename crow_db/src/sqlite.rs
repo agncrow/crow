@@ -262,6 +262,8 @@ impl CrowDb for CrowSqliteDb {
                     Column::Str(v) => params.push(Box::new(v[row_idx].to_string())),
                     Column::Bool(v) => params.push(Box::new(v[row_idx])),
                     Column::DateTime(v, _) => params.push(Box::new(v[row_idx])),
+                    // (a vector as its JSON text: SQLite holds no arrays)
+                    Column::Vectors(..) => params.push(Box::new(frame.data[col_idx].fmt_cell(row_idx, true))),
                 }
             }
             let param_refs: Vec<&dyn rusqlite::types::ToSql> =

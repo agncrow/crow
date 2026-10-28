@@ -1367,7 +1367,7 @@ pub fn column_children(c: &crow_runtime::frame::CrowColumn) -> Vec<CrowVNode> {
                 Column::Float(v) => v[i].crow_fmt(),
                 Column::Str(v) => v[i].to_string(),
                 Column::Bool(v) => v[i].crow_fmt(),
-                Column::DateTime(..) => c.data.fmt_cell(i, true),
+                Column::DateTime(..) | Column::Vectors(..) => c.data.fmt_cell(i, true),
             })
         })
         .collect()

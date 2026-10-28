@@ -88,6 +88,7 @@ fn cmp_cell(a: &CrowFrame, ai: usize, b: &CrowFrame, bi: usize, c: usize) -> std
         (Column::Bool(x), Column::Bool(y)) => x[ai].cmp(&y[bi]),
         (Column::Str(x), Column::Str(y)) => x.get(ai).cmp(y.get(bi)),
         (Column::DateTime(x, _), Column::DateTime(y, _)) => x[ai].cmp(&y[bi]),
+        // (a key is never a column of vectors: the writer refuses one)
         _ => Equal,
     }
 }
@@ -172,6 +173,8 @@ enum Builder {
     Text(TextBuilder),
     Bool(Vec<bool>),
     Moment(Vec<i64>, Vec<i16>),
+    /// The width, and the rows' floats laid flat.
+    Vectors(usize, Vec<f64>),
 }
 
 struct Group {
@@ -191,6 +194,7 @@ impl Group {
                 Kind::Text => Builder::Text(TextBuilder::with_capacity(1024)),
                 Kind::Bool => Builder::Bool(Vec::new()),
                 Kind::Moment => Builder::Moment(Vec::new(), Vec::new()),
+                Kind::Vector => Builder::Vectors(0, Vec::new()),
             })
             .collect();
         Group { builders, valid: vec![Vec::new(); kinds.len()], rows: 0, bytes: 0 }
@@ -224,6 +228,20 @@ impl Group {
                     off.push(o[i]);
                     self.bytes += 10;
                 }
+                // (a column of vectors of no rows has no width yet: the
+                // first row written fixes it; a file of another width than
+                // the group's is refused by the writer, as a kind is)
+                (Builder::Vectors(w, v), Column::Vectors(x_w, x)) => {
+                    if *w == 0 {
+                        *w = *x_w;
+                    }
+                    if *w == *x_w {
+                        v.extend_from_slice(&x[i * x_w..(i + 1) * x_w]);
+                    } else {
+                        v.extend(std::iter::repeat_n(0.0, *w));
+                    }
+                    self.bytes += 8 * *w;
+                }
                 _ => {}
             }
         }
@@ -240,6 +258,7 @@ impl Group {
                 Builder::Text(t) => Column::Str(t.finish()),
                 Builder::Bool(v) => Column::Bool(v),
                 Builder::Moment(ms, off) => Column::DateTime(ms, off),
+                Builder::Vectors(w, v) => Column::Vectors(w, v),
             })
             .collect();
         CrowFrame::new(names.to_vec(), data, self.valid)

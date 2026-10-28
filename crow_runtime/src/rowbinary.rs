@@ -322,6 +322,8 @@ enum Cell<'a> {
     Bool(bool),
     /// UTC milliseconds
     Moment(i64),
+    /// A vector's numbers (a column of vectors is written as `Array(Float64)`).
+    Vector(&'a [f64]),
 }
 
 fn cell_at(frame: &CrowFrame, col: usize, row: usize) -> Cell<'_> {
@@ -331,6 +333,7 @@ fn cell_at(frame: &CrowFrame, col: usize, row: usize) -> Cell<'_> {
         Column::Str(v) => Cell::Str(&v[row]),
         Column::Bool(v) => Cell::Bool(v[row]),
         Column::DateTime(v, _) => Cell::Moment(v[row]),
+        Column::Vectors(w, v) => Cell::Vector(&v[row * w..(row + 1) * w]),
     }
 }
 
@@ -341,6 +344,7 @@ fn as_int(cell: &Cell, what: &str) -> Result<i64, String> {
         Cell::Bool(b) => Ok(i64::from(*b)),
         Cell::Moment(ms) => Ok(ms / 1000),
         Cell::Str(s) => s.trim().parse().map_err(|_| format!("cannot write '{}' as {}", s, what)),
+        Cell::Vector(_) => Err(format!("cannot write a vector as {}", what)),
     }
 }
 
@@ -357,6 +361,7 @@ fn whole(cell: &Cell, what: &str) -> Result<crate::int::IBig, String> {
         Cell::Bool(b) => Ok(crate::int::IBig::from(i64::from(*b))),
         Cell::Moment(ms) => Ok(crate::int::IBig::from(ms.div_euclid(1000))),
         Cell::Str(s) => crate::int::Int::parse(s.trim()).map(|n| n.big()).ok_or_else(|| format!("cannot write '{}' as {}", s, what)),
+        Cell::Vector(_) => Err(format!("cannot write a vector as {}", what)),
     }
 }
 
@@ -417,6 +422,7 @@ fn as_float(cell: &Cell, what: &str) -> Result<f64, String> {
         Cell::Bool(b) => Ok(if *b { 1.0 } else { 0.0 }),
         Cell::Moment(ms) => Ok(*ms as f64 / 1000.0),
         Cell::Str(s) => s.trim().parse().map_err(|_| format!("cannot write '{}' as {}", s, what)),
+        Cell::Vector(_) => Err(format!("cannot write a vector as {}", what)),
     }
 }
 
@@ -429,6 +435,7 @@ fn as_millis(cell: &Cell, what: &str) -> Result<i64, String> {
         Cell::Float(x) => Ok((x * 1000.0) as i64),
         Cell::Bool(_) => Err(format!("cannot write a bool as {}", what)),
         Cell::Str(s) => crate::frame::parse_datetime(s).map(|(ms, _)| ms).ok_or_else(|| format!("cannot write '{}' as {}", s, what)),
+        Cell::Vector(_) => Err(format!("cannot write a vector as {}", what)),
     }
 }
 
@@ -439,6 +446,7 @@ fn as_text(cell: &Cell) -> String {
         Cell::Float(x) => x.to_string(),
         Cell::Bool(b) => b.to_string(),
         Cell::Moment(ms) => crate::frame::format_datetime(*ms, 0),
+        Cell::Vector(v) => format!("[{}]", v.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", ")),
     }
 }
 
@@ -525,7 +533,17 @@ fn put_cell(out: &mut Vec<u8>, t: &Ty, cell: &Cell, column: &str) -> Result<(), 
             let ip: std::net::Ipv6Addr = text.parse().map_err(|_| format!("cannot write '{}' as {}", text, what(t)))?;
             out.extend_from_slice(&ip.octets());
         }
-        Ty::Array(_) => return Err(format!("cannot write {} from a frame's cell", what(t))),
+        Ty::Array(inner) => match (cell, inner.as_ref()) {
+            // a column of vectors as `Array(Float64)` (or of another number
+            // type): the count as a varint, then each number
+            (Cell::Vector(v), item) if matches!(item, Ty::F32 | Ty::F64 | Ty::U8 | Ty::I8 | Ty::U16 | Ty::I16 | Ty::U32 | Ty::I32 | Ty::U64 | Ty::I64) => {
+                put_leb(out, v.len() as u64);
+                for x in v.iter() {
+                    put_cell(out, item, &Cell::Float(*x), column)?;
+                }
+            }
+            _ => return Err(format!("cannot write {} from a frame's cell", what(t))),
+        },
     }
     Ok(())
 }

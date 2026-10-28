@@ -80,6 +80,13 @@ log): the graph as it stood then; -1 is now. A read skips tombstones.
 - `asof[root, f, columns = []]`: the edges as they stood at each row's
   moment — `f` holds `src`, `rel`, `dst` and `at` — Magpie's `prior`
   over the edges log.
+- `embed[root, id, v, at = -1]`: a node's embedding written to the
+  `vectors` log (a column of vectors, keyed by the id; a node
+  re-embedded has a newer version); `similar[root, v, k = 10, upto =
+  -1]`: the `k` nodes whose newest embedding lies nearest the vector by
+  the cosine, as `id` and `score`, the best first — Magpie's `nearest`,
+  exact, the stale versions dropped — so an entity is found by meaning
+  and the edges expand it.
 
 ```
 use magpie, frame
@@ -94,7 +101,7 @@ who = kg.match['people', ['?x', '?x'], ['knows', 'works_at'], ['?y', 'acme']]
 
 ## Held to
 
-`kg.co`'s test blocks: the two logs and their tombstones, a read as of
+`main.co`'s test blocks: the two logs and their tombstones, a read as of
 a position, a node's history, a walk and a path against a graph drawn
 by hand, the patterns' joins, a rule's edges, a subgraph, and the edges
 as of a moment; `example.co` runs interpreted and compiled in CI with

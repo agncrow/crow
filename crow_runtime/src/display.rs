@@ -312,7 +312,7 @@ impl CrowDisplay for crate::frame::CrowColumn {
                     Column::Float(v) => v[i].crow_repr(),
                     Column::Str(v) => v[i].crow_repr(),
                     Column::Bool(v) => v[i].crow_repr(),
-                    Column::DateTime(..) => self.data.fmt_cell(i, true),
+                    Column::DateTime(..) | Column::Vectors(..) => self.data.fmt_cell(i, true),
                 }
             })
             .collect();

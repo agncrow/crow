@@ -507,6 +507,15 @@ of a phase: asked for here, built when Vijay says so, before phase 10.
 Until then an embedding is one float column per dimension, which
 Magpie's column projection makes workable and no one would call good.
 
+Built 2026-10-27, on Vijay's word: `Column::Vectors(width, Vec<f64>)`
+in the runtime, a vector per cell written from a matrix or a list of
+vectors, read as a tensor, the column its matrix; the cell's type is a
+tensor of one axis inside the column's, so the compiler gained no
+type (spec, frame: "A `vector` column"); Magpie's chunk is the floats
+of rows × width (`narrow` 32 bits), the column never a key; and
+`nearest[dir, column, vector, k]` finds the rows by the cosine, exact
+over every row (parity 303, the module's and the kernel's tests).
+
 ## Phase 10 — a graph and a vector index
 
 A knowledge graph is two logs and a package: nodes keyed by `id`, edges
@@ -538,9 +547,14 @@ in Crow over `magpie`'s exports: the three logs (`nodes`, `edges`,
 of a position, `walk`/`path` a node at a time (the frontier kernel is
 not written: measure a hop over thousands of nodes first), `match` as
 joins over the triples' edges, `subgraph` for `packages/graph`,
-`rule`, `asof`. Not built: the vector index — it waits on the column
-of vectors (the section above); until then an entity is found by
-`search` over its text, and the edges expand it.
+`rule`, `asof`. And, since the column of vectors (2026-10-27): a
+`vectors` log keyed by the node's id — `embed[root, id, v]` writes a
+node's embedding, `similar[root, v, k]` answers the `k` nodes whose
+newest embedding lies nearest by the cosine (Magpie's `nearest`, the
+stale versions a re-embedding leaves dropped against the newest row
+per id until a merge folds them), as of a position with `upto` — so an
+entity is found by meaning, and the edges expand it. The search is
+exact; the index per segment (an HNSW) is the step when a corpus asks.
 
 ## Phase 11 — a feature store
 
@@ -587,9 +601,12 @@ likewise), `online` (`serve`, the web form's), `history`, `training`
 (held to pandas's `merge_asof` cell for cell: packages/features/
 held.co, reference/reference.py; `upto` names the position the set is
 as of, through `prior`'s), `backfill` and `stream` over one function
-(held to answer the same rows), `freshness`, `define`/`defined`. Not
-built: embeddings as features (the column of vectors); expiry through
-phase 6's column is the log's own. The served-app hold (a reader of
+(held to answer the same rows), `freshness`, `define`/`defined`, and,
+since the column of vectors (2026-10-27), embeddings as features: a
+column of vectors is appended, served and joined into a training set
+as any feature is, and `similar[g, column, v, k]` answers the entities
+nearest a vector (Magpie's `nearest`). Expiry through phase 6's column
+is the log's own. The served-app hold (a reader of
 `online` while a writer runs) is the module test's loop of appends read
 back between writes, in one process.
 
@@ -665,7 +682,8 @@ ours.
    the measures run before the release.
 6. The column of vectors: a language feature, built before phase 10 when
    Vijay says so; the feature store and the vector index wait on it,
-   nothing before them does. Phases 10 and 11 are built without them
-   (2026-10-27): the vector index and embeddings as features wait.
+   nothing before them does. Built 2026-10-27 on his word (the section
+   before phase 10), with `nearest` exact, kg's `embed`/`similar` and the
+   feature store's `similar`; the HNSW per segment when a corpus asks.
 7. `narrow` (32-bit floats on disk, opt-in at the first batch), as
    written in phase 2. Built so.

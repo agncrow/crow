@@ -145,9 +145,10 @@ repository root points assistants here.
     in the commit and asked for before it is made, with a strong reason;
     a feature a module needs is built in the module or, where the
     language cannot express it, proposed as a general capability any
-    module could use. `src/freeze.rs` counts the module and builtin names
-    the compiler's sources hold against `tests/freeze/names.txt`, which
-    only shrinks. The removal and its phases: docs/extending-crow.md.
+    module could use. `src/freeze.rs` holds the module and builtin names
+    the compiler's sources hold as literals to `tests/freeze/names.txt`
+    (the set each file held at the bless), which only shrinks; a literal
+    that is no name is recorded, so a module may export that word later. The removal and its phases: docs/extending-crow.md.
 
 ## Workflow
 
