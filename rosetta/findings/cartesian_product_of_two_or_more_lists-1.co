@@ -1,0 +1,22 @@
+--- A function handed both a collected list of literal pairs (each item a
+--- `[i, i]`, typed List(Tensor(Int, [2]))) and a list of lists built by
+--- `push` (List(List(Int))) is lowered once, for List(List(Int)), and the
+--- call with the pairs is refused by the IR verifier.
+--- Interpreted and compiled alike (exit 1, nothing printed):
+---   internal error: the lowered program disagrees with itself — a bug in
+---   Crow, not in this program: <file> main: line 20: hands 'shown'
+---   List(Tensor(Int, [2])) for its parameter 'rows' (argument 1), which is
+---   List(List(Int))
+--- Expected: 2, then 1. (Either call alone runs; the order of the two calls
+--- does not matter; a matrix literal `[[1, 2], [3, 4]]` in the first call's
+--- place runs, printing 2 and 1.) Found writing a two-list product (pairs
+--- from one collect) and an n-ary product (tuples built by push) shown by one
+--- helper.
+fn shown[rows]
+    return len[rows]
+
+pairs = for i in range[2]
+    [i, i]
+log[shown[pairs]]
+rows = push[[], push[[], 7]]
+log[shown[rows]]

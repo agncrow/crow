@@ -1,0 +1,19 @@
+--- A function whose only answer is `return xs` of a list started empty (`xs = []`), the
+--- return written before the push that fills the list (inside `while true`), does not
+--- build compiled; interpreted it prints [0, 1, 2], as expected.
+---   error[E0308]: mismatched types
+---   error: the compiled program does not build — the Rust compiler refused what Crow
+---   accepted, a bug in Crow, not in this program
+--- The generated function is declared `-> Vec<String>` (the empty list's items, unknown
+--- when the return is met, taken as text) while `xs` is a `Vec<i64>`. With a last line
+--- `xs` after a loop that can end (`while n lt 100`), it builds and prints [0, 1, 2].
+fn grow[bound]
+    xs = []
+    n = 0
+    while true
+        if n gte bound
+            return xs
+        xs = push[xs, n]
+        n = n + 1
+
+log[grow[3]]

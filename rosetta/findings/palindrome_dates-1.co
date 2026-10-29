@@ -1,0 +1,18 @@
+--- Finding: a statement `for` over a list of moments, handing its item to a function
+--- of the program, does not build compiled.
+--- Interpreted: prints true, true.
+--- Compiled: error[E0308]: mismatched types (src/main.rs, at the call) / "the compiled
+--- program does not build — the Rust compiler refused what Crow accepted, a bug in
+--- Crow". The loop walks `days.iter()`, so `t` is a `&Moment`, and the call prints
+--- `year_of(t)` where `fn year_of(t: crow_runtime::moments::Moment)` takes the moment
+--- by value (no clone, no deref; the parameter is not lent).
+--- Expected: true, true in both modes.
+--- A collecting loop (`ys = for t in days` / `year_of[t]`) builds, and so does
+--- `log[t.year]` in the statement loop; the list being a function's answer of moments
+--- pushed after an `.ok` guard fails the same way (palindrome_dates.co's dates).
+fn year_of[t]
+    return t.year
+
+days = [now[], now[]]
+for t in days
+    log[year_of[t] gt 2000]

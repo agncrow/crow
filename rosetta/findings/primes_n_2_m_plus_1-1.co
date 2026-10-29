@@ -1,0 +1,34 @@
+--- Finding (primes_n_2_m_plus_1): a call in a `while` condition, handed a variable
+--- that the loop's body grows past 64 bits, takes the variable's range from before
+--- the loop only, so the call holds the argument in 64 bits and the program stops at
+--- the first round past 2^63 — in BOTH modes:
+---
+---   crow run -i:  runtime error: line 33: a whole number past 64 bits where an int is held in 64 bits: 13835058055282163712
+---   crow run:     runtime error: line 32: a whole number past 64 bits where an int is held in 64 bits: 13835058055282163712
+---
+--- (the two modes also name different lines: 33 is the body's line, 32 the `while`).
+--- Expected (an int grows without limit): 1622592768292133633915780102881280
+---
+--- CROW_WIDTH_DEBUG=1 crow build --ir:
+---   width: Local("", "big") = [48, 1267650600228229401496703205376]
+---   width: Local("check", "x") = [48, 48]
+---   pure check(x: Int) -> Bool ...   while (not call check(small(big)))
+--- The parameter's range is the initial value's alone: the condition's call is not
+--- flowed again after the body widens `big`. The same call inside the body
+--- (`if check[big]`), after the loop, or held in a local the body recomputes
+--- (`ok = check[big]` before the loop and at the body's end, `while not ok`) runs
+--- right; so does `while m lt 100` with the same doubling. Any call of a program
+--- function in the condition shows it (`while half[big] lt 10 ^ 30` with `fn half[x]` /
+--- `x / 2`; `while k lt 1000 and small_enough[big]`; the loop inside a function; the
+--- body growing it through a call, `big = grow[big]`), while builtins there do not
+--- (`while len[str[big]] lt 40`, `while abs[big] lt 10 ^ 30` run right).
+--- Found writing Rosetta Code's "Primes: n*2^m+1" (`while not is_prime[big, small]`
+--- with `big = 2 * big - 1`).
+
+fn check[x]
+    return x gt 10 ^ 30
+
+big = 48
+while not check[big]
+    big = 2 * big
+log[big]

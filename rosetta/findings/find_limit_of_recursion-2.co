@@ -1,0 +1,49 @@
+--- Finding (find_limit_of_recursion): the compiled program (crow run, a dev
+--- build) crashes with a native stack overflow when a function with a few
+--- dozen locals recurses 500 calls deep inside a parallel `for`.
+---
+--- Interpreted (crow run -i): prints [88408, 88408].
+--- Compiled (crow run): the process aborts, printing
+---   thread '<unknown>' (…) has overflowed its stack
+---   fatal runtime error: stack overflow, aborting
+--- (crow run exits 1).
+--- Expected: [88408, 88408] in both modes; the spec's limit is 10000 nested
+--- calls, then the stop "recursion deeper than 10000 calls — …", and a
+--- program never crashes. The same function recursing 9999 deep outside a
+--- loop, or in a loop of one item (`for i in [0]`), runs fine compiled: only
+--- the parallel loop's worker threads overflow. With 60 such locals the
+--- compiled program crashes from 170 calls deep (169 runs) and the
+--- interpreter from 570; with few locals the compiled program goes to 10000
+--- (the interpreter's own limit there is 643: find_limit_of_recursion-1.co).
+fn heavy[n, s]
+    if n eq 0
+        return 0
+    a0 = '`n` 0 `s`'
+    a1 = '`n` 1 `s`'
+    a2 = '`n` 2 `s`'
+    a3 = '`n` 3 `s`'
+    a4 = '`n` 4 `s`'
+    a5 = '`n` 5 `s`'
+    a6 = '`n` 6 `s`'
+    a7 = '`n` 7 `s`'
+    a8 = '`n` 8 `s`'
+    a9 = '`n` 9 `s`'
+    a10 = '`n` 10 `s`'
+    a11 = '`n` 11 `s`'
+    a12 = '`n` 12 `s`'
+    a13 = '`n` 13 `s`'
+    a14 = '`n` 14 `s`'
+    a15 = '`n` 15 `s`'
+    a16 = '`n` 16 `s`'
+    a17 = '`n` 17 `s`'
+    a18 = '`n` 18 `s`'
+    a19 = '`n` 19 `s`'
+    a20 = '`n` 20 `s`'
+    a21 = '`n` 21 `s`'
+    a22 = '`n` 22 `s`'
+    a23 = '`n` 23 `s`'
+    return len[a0] + len[a1] + len[a2] + len[a3] + len[a4] + len[a5] + len[a6] + len[a7] + len[a8] + len[a9] + len[a10] + len[a11] + len[a12] + len[a13] + len[a14] + len[a15] + len[a16] + len[a17] + len[a18] + len[a19] + len[a20] + len[a21] + len[a22] + len[a23] + heavy[n - 1, s]
+
+xs = for i in range[2]
+    heavy[500, 'x']
+log[xs]

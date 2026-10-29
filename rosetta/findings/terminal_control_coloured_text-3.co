@@ -1,0 +1,18 @@
+--- Finding (terminal_control_coloured_text): `env[name, default]` is typed as a
+--- value that can fail, though it never fails: the spec says it answers the
+--- default where the variable is not set, and crow_runtime::core::env_or always
+--- answers Ok — but its row (table.rs, core.env_or) is declared `value "env"`.
+--- So every value made from it is one that can fail, and a correct program is
+--- refused, in both modes (exit 1):
+---     p.co:16:1: cannot reassign 'parts' from array[result[str]] to array[str] —
+---     variable type cannot change
+--- (through the known refusal of a list of text reassigned a list whose items
+--- can fail). Expected, with CROW_NO_SUCH_VARIABLE unset: ['b'] — as with
+--- `x = 'c'` in place of the env call, which runs. A record field given
+--- `env['TERM', '']` (Setting[env['TERM', ''], …]) and interpolated into a list
+--- of text hit it in the solution; narrowing through a function (`v = env[name]`,
+--- `if not v.ok return ''`, `return v`) works around it.
+x = env['CROW_NO_SUCH_VARIABLE', '']
+parts = ['a']
+parts = ['b`x`']
+log[parts]

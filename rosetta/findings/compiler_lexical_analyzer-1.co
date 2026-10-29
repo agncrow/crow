@@ -1,0 +1,14 @@
+--- Finding (compiler_lexical_analyzer): an escaped backslash right before an
+--- interpolation is refused, in both modes, before the program runs:
+---
+---   t.co: unterminated interpolation — close it with ` or write \` for a literal backtick
+---
+--- Expected: `\\` is a literal backslash and the backtick after it opens an
+--- interpolation (spec, String Escape Sequences), so this prints  \r
+--- `'\\ `e`'` (a space between) prints  \ r  and `'a\\b'` prints  a\b,
+--- as they should. The string's escapes are undone before the interpolation
+--- is split (lower_ir.rs `interpolation`), so `\\` + backtick arrives as
+--- `\` + backtick and is read as the escaped backtick `\``; the interpolation
+--- then never closes. Worked around with a variable holding the backslash.
+e = 'r'
+log['\\`e`']

@@ -1,0 +1,13 @@
+--- Finding (sealed_classes_and_methods): a write to a field a record does not declare
+--- is not refused before the program runs. A READ of it is (`log[p.c]` is "struct 'P'
+--- has no field 'c'" at 3:7, in both modes, nothing run), but the write:
+---   crow run -i: prints "before", then stops: runtime error: line 4: struct 'P' has no field 'c'
+---   crow run:    error[E0609]: no field `c` on type `P` ... the compiled program does not
+---                build — the Rust compiler refused what Crow accepted, a bug in Crow
+--- Expected: refused before the program runs, in both modes, as the read is
+--- ("struct 'P' has no field 'c'" at line 4). The same inside a function (`p.c = 3`).
+struct P [a, b]
+p = P[1, 2]
+log['before']
+p.c = 3
+log[p.a]

@@ -1,0 +1,9 @@
+--- The answer of a function that only fails is no value to compute with:
+--- an operator meeting it is refused in the language's words, saying what
+--- the call gives (it had been named "void"; Rosetta Code, Lucky and even
+--- lucky numbers)
+
+fn always_fails[s]
+    return error['bad']
+
+log[always_fails['3'] + 1]

@@ -1,0 +1,16 @@
+--- A record's field given two kinds by the two copies of one function is
+--- refused once, naming both, where the joined type had grown a level each
+--- round of inference — 79 deep in the next message (Rosetta Code,
+--- Gaussian elimination)
+
+struct Box [x]
+
+fn make[a]
+    x = for row in a
+        slice[row, 0, 1]
+    return Box[x]
+
+s = make[[[1.5, 2.5]]]
+log[s.x]
+t = make[[[fraction[1, 2]]]]
+log[t.x]

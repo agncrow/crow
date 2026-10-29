@@ -1,0 +1,28 @@
+--- At the end of standard input, input[] answers empty text that did not fail — the same
+--- value an empty line gives — so a program cannot tell that its input has ended.
+---
+--- Run with no input:  crow run -i x.co < /dev/null   and   crow run x.co < /dev/null
+--- Both modes print
+---     true
+---     0
+---     true
+--- Expected (by the spec's table of fallible builtins, "input[] / input[prompt]: Stdin read
+--- fails", and as Python's input() raises EOFError and Go's Scanln answers io.EOF): an error
+--- value at the end of the input — `false`, with a reason such as `end of input` — so that a
+--- loop reading lines can stop. The spec says nothing of the end of the input, so this may be
+--- a question for the spec rather than a slip: crow_runtime::core::read_line maps
+--- `read_line` → Ok(0) to Ok(""). As it is, a game loop that re-prompts on an empty line
+--- spins forever once a scripted input runs out; rosetta/15_puzzle_game.co, 21_game.co,
+--- 24_game.co and a_plus_b.co end on an empty line as well as on a failed read.
+---
+--- Update (19:25): the repository's working tree now answers `Err("end of input")` there
+--- (crow_runtime/src/core.rs, uncommitted, citing Rosetta Code's ABC correlation), so this
+--- is known. Meanwhile the pinned binary's interpreter still answers '' while a compiled
+--- program, which builds against the working tree's runtime, answers the error: the two
+--- modes differ at the end of the input until the binary is rebuilt.
+
+first = input[]
+log[first.ok]
+log[len[first]]
+second = input[]
+log[second.ok]

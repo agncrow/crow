@@ -1,0 +1,26 @@
+--- A parsed value set into a map that holds nothing yet is held as it is,
+--- so a map of parsed values grows from `map[]`: read as the kind every
+--- row named `set` agreed on, sys's row of bytes — which no program
+--- imports — had made it an int, and the program stopped on the first
+--- text in both modes (Rosetta Code, Associative array/Merging). A bare
+--- call reads by the core's rows and those of the modules in scope.
+fn merged[base, update]
+    out = map[]
+    for k in keys[base]
+        out = set[out, k, base[k]]
+    for k in keys[update]
+        out = set[out, k, update[k]]
+    return out
+
+b = json['{"name": "Rocket Skates", "price": 12.75, "color": "yellow"}']
+u = json['{"price": 15.25, "color": "red", "year": 1974}']
+both = merged[b, u]
+log[both]
+log[both['name']]
+log[both['year']]
+
+j = json['{"a": "x", "b": 2}']
+m = map[]
+m = set[m, 'a', j['a']]
+m = set[m, 'b', j['b']]
+log[m]

@@ -1,0 +1,21 @@
+--- A syntax error INSIDE an interpolation is reported at line 1 of the file, at the
+--- column where the error lies within the interpolation's own text, and says "before
+--- the end of the file" where it means the end of the interpolation. The line shown
+--- is the file's first, which holds no error. Both modes alike:
+---
+---   t.co:1:4: a value is missing before the end of the file
+---     1 │ --- A syntax error INSIDE an interpolation is reported at line 1 of the file, …
+---       │    ^
+---
+--- Expected: the error placed on the line of the string (here the last line), at the
+--- interpolation, e.g. "t.co:21:8: a value is missing at the end of this
+--- interpolation". Other parse errors there do the same: `'a `x) + 1` b'` is
+--- "1:2: this ')' closes nothing"; `'n `str[`x`]`'` (a backtick nested in an
+--- interpolation, as I first wrote it) is "1:5: a value is missing before the end of
+--- the file". A refusal made after parsing is placed right: in a three-line program, `'a `nosuch[x]` b'` is
+--- "3:9: undefined function 'nosuch'" (blossom_algorithm-1.co saw the same 1:1
+--- position for the parser's keyword hints). Found writing
+--- rosetta/summarize_and_say_sequence.co, where a 70-line program was told its error
+--- was in its header comment.
+x = 5
+log['a `x +` b']

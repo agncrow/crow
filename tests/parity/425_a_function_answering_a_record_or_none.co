@@ -1,0 +1,28 @@
+--- A function that answers a record on one path and 0 on another answers
+--- a record or none (spec, A Record or None: "a function's value answering
+--- either"), whichever path comes first: `return 0` beside `return Node[…]`
+--- had been refused as two kinds, in both modes, while the same through a
+--- variable ran (Rosetta Code, K-d tree). Any other int beside a record is
+--- still two kinds.
+
+struct Node [v, next]
+
+fn single[n]
+    if n eq 0
+        return 0
+    return Node[n, 0]
+
+fn grown[n]
+    if n gt 0
+        return Node[n, grown[n - 1]]
+    return 0
+
+fn depth[t]
+    if t eq 0
+        return 0
+    return 1 + depth[t.next]
+
+log[single[3]]
+log[single[0]]
+log[grown[2]]
+log[depth[grown[4]], depth[single[0]]]

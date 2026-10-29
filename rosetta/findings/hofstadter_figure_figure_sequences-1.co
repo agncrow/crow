@@ -1,0 +1,27 @@
+--- A list made of a function's int answers — by a collecting for, or by push in a
+--- loop — and then joined, is refused, in both modes (a regression: the CROW binary
+--- of Oct 28 22:23 refuses it, the crow installed Oct 27 runs it and prints `0, 2, 4`
+--- twice).
+---
+--- Interpreted and compiled alike, before running (2 mistakes):
+---   …:21:5: cannot reassign 'firsts' from array[str] to array[int] — variable type
+---   cannot change
+---   …:26:14: push[] takes a list and an item of its kind: its items are text, not a
+---   number
+--- Expected: `0, 2, 4` twice. join takes numbers ("a number as it displays"), and
+--- nothing in the program writes text into either list: the join's use seems to type
+--- the list's items as text before the call's int answer is known. The same list
+--- written directly (`n * 2` as the loop's item), or of literal calls
+--- (`[twice[1], twice[2]]`), joins fine; `log[firsts]` without the join runs.
+
+fn twice[n]
+    return n * 2
+
+firsts = for n in range[3]
+    twice[n]
+log[join[firsts, ', ']]
+
+pushed = []
+for n in range[3]
+    pushed = push[pushed, twice[n]]
+log[join[pushed, ', ']]

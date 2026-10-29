@@ -1,0 +1,21 @@
+--- Finding (euclid_mullin_sequence): a `for` loop's variable assigned in the
+--- loop's body runs interpreted and does not build compiled.
+---
+--- crow run -i:  0
+---               10
+---               20
+--- crow run:     error[E0384]: cannot assign twice to immutable variable `i`
+---                 --> src/main.rs:38:9
+---               error: the compiled program does not build — the Rust compiler
+---               refused what Crow accepted, a bug in Crow, not in this program
+--- Expected: 0, 10, 20 in both modes (the spec's Scope: each round binds the
+--- loop's variable anew, and nothing refuses a write to it), or one refusal
+--- before the program runs in both modes.
+---
+--- Inside a function too, and where the write is a reuse of the name for a
+--- counter of an inner `while` (`for i in range[n]` … `i = 1` / `while i lt s` /
+--- `i = i + 1`), which is how a Miller-Rabin test met it.
+
+for i in range[3]
+    i = i * 10
+    log[i]

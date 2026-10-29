@@ -1,0 +1,19 @@
+--- Finding (zero_to_the_zero_power, a04): a fraction or a decimal of 1, 0 or -1 raised to an
+--- int past 32 bits stops, where the int of the same value answers. Both modes agree:
+--- run as it is, the program prints 1 (line 16), then stops at line 17 with
+---   runtime error: line 17: 1 ^ 1099511627776: an exponent past 32 bits makes a number no memory holds
+--- Line 18 alone stops the same way; line 19 alone stops with
+---   runtime error: line 19: a whole number past 64 bits where an int is held in 64 bits: 1180591620717411303424
+--- (and so do fraction[-1, 1] and decimal[1] to 2 ^ 70).
+--- Expected: 1, 1 and 0 — the exact answers, as the int's power gives them (crow_runtime's
+--- Int::pow answers 0, 1 and -1 to any power; Frac::pow and Dec::pow have no such case),
+--- since kinds meet the exact way; at the least no message saying that 1 is a number no
+--- memory holds. The second message does not name `^` as what took the int, where the spec
+--- (Numbers That Keep Every Digit) says such a refusal names what took it ("a whole number
+--- past 64 bits where range[] takes an int of 64 bits: …").
+--- (Found while showing 0 ^ 0 in every kind of number: each kind answers 1 there.)
+
+log[1 ^ (2 ^ 40)]
+log[fraction[1, 1] ^ (2 ^ 40)]
+log[decimal[1] ^ (2 ^ 40)]
+log[fraction[0, 1] ^ (2 ^ 70)]

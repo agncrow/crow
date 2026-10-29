@@ -1,0 +1,24 @@
+--- A record's field made at two kinds by a function called at two signatures (a matrix
+--- of floats, then a list of lists of fractions): the refusal is right (a field holds one
+--- kind), but its words mislead, the same in both modes:
+---   19:16: Box's field 'x' holds a list, and this is a list of tensors: a field holds one kind, as a variable does
+---   19:16: Box's field 'x' holds a list, and this is a list: a field holds one kind, as a variable does
+---   22:15: cannot use '-' with array[result[array[result[ ... 79 levels ... [float]]]...]] and float
+--- The second line names no kind on either side ("a list, and this is a list"), and the
+--- third prints a type nested 79 levels deep: the field's type grew a level per round of
+--- inference instead of settling. Expected: one refusal naming both kinds (a list of
+--- tensors and a list of lists of fractions), and s.x[0][0] read as a float.
+--- With text in place of the fraction (make[[['a', 'b']]]) only the first refusal shows
+--- and the third says `str and float`; either call alone runs and agrees in both modes.
+
+struct Box [x]
+
+fn make[a]
+    x = for row in a
+        slice[row, 0, 1]
+    return Box[x]
+
+s = make[[[1.5, 2.5]]]
+log[s.x[0][0] - 1.0]
+t = make[[[fraction[1, 2]]]]
+log[t.x]

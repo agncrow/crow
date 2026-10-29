@@ -1,0 +1,21 @@
+--- Finding (minkowski_question_mark_function): a variable given `round`, `floor`,
+--- `ceil` or `int` of a fraction or of a decimal (a growing int that can fail:
+--- Result(Big) in `crow build --ir`), then reassigned a difference with the
+--- variable on the right (`q = 0 - q`, `q = 1 - q`, `q = 2 * q - q`), is refused
+--- in both modes, before the program runs, with words that name one kind twice:
+---
+--- crow run -i and crow run alike (exit 1, nothing printed):
+---   minkowski_question_mark_function-1.co:20:1: cannot reassign 'q' from
+---   result[int] to result[int] — variable type cannot change
+--- Inside a function (`fn magnitude[f]` / `q = round[f * 1000]` / `if q lt 0` /
+--- `q = 0 - q`) the same, worded "cannot reassign 'q' from int to int".
+--- Expected: 1 (the program is right: 0 - (-1)).
+---
+--- These run in both modes: `q = q - 0`, `q = q + 1`, `q = q * 2`, `q = -q`,
+--- `r = 0 - q` (a new variable), and `q = 0 - q` after `q = int['5']` (also a
+--- growing int that can fail) or after `q = round[2.5]`. Found writing the
+--- sign of a fraction's decimal digits (`q = round[f * scale]`, then
+--- `q = 0 - q` when negative); worked around with `-q`.
+q = floor[fraction[-5, 9]]
+q = 0 - q
+log[q]

@@ -249,7 +249,9 @@ impl Ty {
             Ty::Handle(h) => h.crow.into(),
             Ty::WebRequest => "web.request".into(),
             Ty::Bytes => "bytes".into(),
-            Ty::Unit => "void".into(),
+            // (the language's word: a call that answers nothing — "void" had
+            // named it in refusals; Rosetta Code, Lucky and even lucky numbers)
+            Ty::Unit => "nothing".into(),
             Ty::Unknown => "unknown".into(),
         }
     }
@@ -470,6 +472,13 @@ pub struct TypeContext {
     /// group's member is called where the group was handed, though a
     /// standard module's function cannot name the program's (`calls_fn`).
     pub applying: Vec<String>,
+    /// A local read from a record's field holding a function (`g = c.f`),
+    /// by its function and name: the record and field its calls type.
+    pub fn_fields: BTreeMap<(String, String), (String, String)>,
+    /// The functions a call changed a parameter's kind of since their
+    /// bodies were last read: their answers were read with the old kind,
+    /// so a call answers nothing known until the body is read again.
+    pub stale_answers: std::collections::BTreeSet<String>,
     /// Each function's parameters' defaults as written, for `describe`
     /// (kept here, since the final pass lowers on a Lowerer of its own).
     pub fn_defaults: BTreeMap<String, Vec<Option<Expr>>>,
@@ -483,6 +492,10 @@ pub struct TypeContext {
     /// callee, the parameter's place): what is held as text where it is
     /// compiled (`default_unknown_params`).
     pub text_items: std::collections::BTreeSet<(String, String, usize)>,
+    /// The functions handed as a value whose answer the parameter that
+    /// takes them says: a list of numbers there is the answer's form, never
+    /// a guess an earlier round made (`finish_body`'s reform keeps it).
+    pub answers_by_use: std::collections::BTreeSet<String>,
     /// Every call of a function by its name the scan reads, as (caller,
     /// callee): what the program's own code reaches.
     pub call_edges: std::collections::BTreeSet<(String, String)>,
@@ -633,9 +646,12 @@ impl TypeContext {
             grad_forced: std::collections::BTreeSet::new(),
             param_reads: BTreeMap::new(),
             applying: Vec::new(),
+            fn_fields: BTreeMap::new(),
+            stale_answers: std::collections::BTreeSet::new(),
             fn_defaults: BTreeMap::new(),
             first_call_line: BTreeMap::new(),
             text_items: std::collections::BTreeSet::new(),
+            answers_by_use: std::collections::BTreeSet::new(),
             call_edges: std::collections::BTreeSet::new(),
             module_calls: BTreeMap::new(),
             first_items: BTreeMap::new(),
@@ -872,11 +888,56 @@ impl TypeContext {
             }
         }
 
+        // and through records of functions: `c = Closure[square, 3]`, then
+        // `g = c.f` makes g an alias of what the field was given, and a call
+        // through the field itself (`c.f[c.x]`, typed on the field) types
+        // them too — refused as functions nothing calls, they had run only
+        // where the program also called them directly (Rosetta Code,
+        // Closures/Value capture)
+        let mut record_fns: std::collections::BTreeMap<(String, String), Vec<String>> = std::collections::BTreeMap::new();
+        self.record_fn_fields(stmts, &mut record_fns);
+        for stmt in stmts {
+            if let Stmt::Assign { name, value: Expr::FieldAccess { object, field } } = stmt
+                && let Expr::Ident(holder) = object.as_ref()
+                && let Some(Ty::Record(r) | Ty::OptRecord(r)) = self.vars.get(holder).map(|t| t.payload().clone())
+                && let Some(fns) = record_fns.get(&(r, field.clone()))
+            {
+                var_to_fn.entry(name.clone()).or_default().extend(fns.clone());
+            }
+        }
+        // and through a list of functions grown a function at a time (`fs =
+        // push[fs, sq]`, a builtin's call handed the function by name): an
+        // item read from it (`g = fs[1]`) or a loop's variable over it holds
+        // what was put in (Rosetta Code, Closures/Value capture)
+        let mut lists: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+        let mut links: Vec<(String, String)> = Vec::new();
+        self.list_fn_links(stmts, &mut lists, &mut links);
+        for (var, list) in links {
+            if let Some(fns) = lists.get(&list) {
+                var_to_fn.entry(var).or_default().extend(fns.clone());
+            }
+        }
+        let mut typed: Vec<(Ty, Vec<String>)> = Vec::new();
+        // (an item called where it is read types the list's items)
+        for (list, fns) in &lists {
+            if let Some(Ty::List(item)) = self.vars.get(list).map(|t| t.payload().clone())
+                && matches!(item.as_ref(), Ty::Fn(..))
+            {
+                typed.push((*item, fns.clone()));
+            }
+        }
+        for ((r, field), fns) in &record_fns {
+            if let Some(t @ Ty::Fn(..)) = self.structs.get(r).and_then(|s| s.fields.iter().find(|(f, _)| f == field)).map(|(_, t)| t.clone()) {
+                typed.push((t, fns.clone()));
+            }
+        }
+
         // For each variable that holds a function, if the variable has a Fn type
         // with concrete params, propagate those to the original function
-        for (var_name, fn_names) in &var_to_fn {
-            if let Some(var_type) = self.vars.get(var_name).cloned() {
-                if let Ty::Fn(param_types, ret_type) = &var_type {
+        let held: Vec<(Ty, Vec<String>)> = var_to_fn.iter().filter_map(|(v, fns)| self.vars.get(v).map(|t| (t.clone(), fns.clone()))).chain(typed).collect();
+        for (var_type, fn_names) in &held {
+            {
+                if let Ty::Fn(param_types, ret_type) = var_type {
                     for fn_name in fn_names {
                         if let Some(sig) = self.functions.get(fn_name).cloned() {
                             let mut new_params = sig.params.clone();
@@ -892,6 +953,123 @@ impl TypeContext {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// The lists of functions a builtin's call grows (`fs = push[fs, sq]`:
+    /// a call no function or record of the program's, handed a function by
+    /// name) and the names that read their items: a local given an item
+    /// (`g = fs[1]`), a loop's variable walking one.
+    fn list_fn_links(&self, stmts: &[Stmt], lists: &mut std::collections::BTreeMap<String, Vec<String>>, links: &mut Vec<(String, String)>) {
+        for s in stmts {
+            match s {
+                Stmt::Assign { name, value: Expr::Call { callee, args } } => {
+                    let Expr::Ident(c) = callee.as_ref() else { continue };
+                    if self.functions.contains_key(c) || self.structs.contains_key(c) {
+                        continue;
+                    }
+                    for a in args {
+                        if let Expr::Ident(f) = a
+                            && self.functions.contains_key(f)
+                        {
+                            let fns = lists.entry(name.clone()).or_default();
+                            if !fns.contains(f) {
+                                fns.push(f.clone());
+                            }
+                        }
+                    }
+                    if args.len() == 1 && !self.functions.contains_key(c) {
+                        links.push((name.clone(), c.clone()));
+                    }
+                }
+                Stmt::For { var, iter: Expr::Ident(list), body } => {
+                    links.push((var.clone(), list.clone()));
+                    self.list_fn_links(body, lists, links);
+                }
+                Stmt::FnDecl { body, .. } | Stmt::Derive { body, .. } | Stmt::TestBlock { body, .. } | Stmt::For { body, .. } | Stmt::While { body, .. } => self.list_fn_links(body, lists, links),
+                Stmt::If { then_body, else_body, .. } => {
+                    self.list_fn_links(then_body, lists, links);
+                    if let Some(b) = else_body {
+                        self.list_fn_links(b, lists, links);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// The functions a record's fields are given where records are made
+    /// (`Closure[square, 3]`), by record and field, anywhere in the program.
+    fn record_fn_fields(&self, stmts: &[Stmt], out: &mut std::collections::BTreeMap<(String, String), Vec<String>>) {
+        fn walk(ctx: &TypeContext, e: &Expr, out: &mut std::collections::BTreeMap<(String, String), Vec<String>>) {
+            match e {
+                Expr::Call { callee, args } => {
+                    if let Expr::Ident(r) = callee.as_ref()
+                        && let Some(sig) = ctx.structs.get(r)
+                    {
+                        for (a, (field, _)) in args.iter().zip(&sig.fields) {
+                            if let Expr::Ident(f) = a
+                                && ctx.functions.contains_key(f)
+                            {
+                                let fns = out.entry((r.clone(), field.clone())).or_default();
+                                if !fns.contains(f) {
+                                    fns.push(f.clone());
+                                }
+                            }
+                        }
+                    }
+                    walk(ctx, callee, out);
+                    args.iter().for_each(|a| walk(ctx, a, out));
+                }
+                Expr::BinOp { left, right, .. } => {
+                    walk(ctx, left, out);
+                    walk(ctx, right, out);
+                }
+                Expr::UnaryOp { expr, .. } | Expr::Named { value: expr, .. } => walk(ctx, expr, out),
+                Expr::FieldAccess { object, .. } => walk(ctx, object, out),
+                Expr::Array(items) => items.iter().for_each(|x| walk(ctx, x, out)),
+                Expr::Map(pairs) => pairs.iter().for_each(|(k, v)| {
+                    walk(ctx, k, out);
+                    walk(ctx, v, out);
+                }),
+                Expr::ForExpr { iter, body, .. } => {
+                    walk(ctx, iter, out);
+                    ctx.record_fn_fields(body, out);
+                }
+                Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Bool(_) | Expr::Ident(_) => {}
+            }
+        }
+        for s in stmts {
+            match s {
+                Stmt::Assign { value, .. } | Stmt::ExprStmt(value) | Stmt::Return(Some(value)) => walk(self, value, out),
+                Stmt::MultiAssign { values, .. } => values.iter().for_each(|v| walk(self, v, out)),
+                Stmt::FnDecl { body, .. } | Stmt::Derive { body, .. } | Stmt::TestBlock { body, .. } => self.record_fn_fields(body, out),
+                Stmt::If { condition, then_body, else_body } => {
+                    walk(self, condition, out);
+                    self.record_fn_fields(then_body, out);
+                    if let Some(b) = else_body {
+                        self.record_fn_fields(b, out);
+                    }
+                }
+                Stmt::For { iter, body, .. } => {
+                    walk(self, iter, out);
+                    self.record_fn_fields(body, out);
+                }
+                Stmt::While { condition, body } => {
+                    walk(self, condition, out);
+                    self.record_fn_fields(body, out);
+                }
+                Stmt::FieldAssign { object, value, .. } => {
+                    walk(self, object, out);
+                    walk(self, value, out);
+                }
+                Stmt::IndexAssign { object, index, value } => {
+                    walk(self, object, out);
+                    walk(self, index, out);
+                    walk(self, value, out);
+                }
+                Stmt::Return(None) | Stmt::StructDecl { .. } | Stmt::Use { .. } | Stmt::Break | Stmt::Continue | Stmt::Line(_) => {}
             }
         }
     }
@@ -1259,6 +1437,7 @@ impl TypeContext {
     /// lowering handed an error out of it (`fails`), and a fact a view or
     /// handler gives a float widened for the program.
     pub(crate) fn finish_body(&mut self, name: &str, scope: BodyScope, returns: &[Ty], fails: bool) {
+        self.stale_answers.remove(name);
         let BodyScope { saved_vars, outer_assigned, outer_in_view, outer_fn_name } = scope;
         self.body_assigned = outer_assigned;
         self.in_view = outer_in_view;
@@ -1296,7 +1475,10 @@ impl TypeContext {
             // (`[x]` of an `x` no call had typed yet is a list), and joined
             // it had typed the answer as a map of lists where the body
             // answered a map of vectors; Rosetta Code, Disarium numbers)
-            let reformed = ret.is_concrete() && Self::numbers_reformed(&sig.return_type, &ret);
+            // (but not an answer a use said: `increment`, handed where a list
+            // of ints is answered, answers that list — reformed to its body's
+            // vector, `concat` met the vector; Rosetta Code, Monads/List monad)
+            let reformed = ret.is_concrete() && Self::numbers_reformed(&sig.return_type, &ret) && !self.answers_by_use.contains(name);
             sig.return_type = if reformed {
                 ret.clone()
             } else if !differ || matches!(ret, Ty::Unknown | Ty::Unit) {
@@ -1433,7 +1615,23 @@ impl TypeContext {
             };
             !matches!((rows(x), rows(y)), (Some(a), Some(b)) if a != b)
         };
-        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.compatible(y) && ranks_agree(x, y) && x.has_markup() == y.has_markup() && frames_alike(x, y) && cells_alike(x, y) && rows_alike(x, y))
+        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.compatible(y) && ranks_agree(x, y) && x.has_markup() == y.has_markup() && frames_alike(x, y) && cells_alike(x, y) && rows_alike(x, y) && Self::items_alike(x, y))
+    }
+
+    /// Whether two collections' items are alike where an int meets a
+    /// record: a list of ints and a list of records are two kinds — an int
+    /// is a record's none only where it is handed alone, a record or the 0
+    /// that writes none. Joined, one copy's list of records or none had
+    /// taken the list of ints unconverted, an internal error in both modes
+    /// (Rosetta Code, Monads/List monad).
+    pub(crate) fn items_alike(x: &Ty, y: &Ty) -> bool {
+        let record = |t: &Ty| matches!(t, Ty::Record(_) | Ty::OptRecord(_));
+        match (x.payload(), y.payload()) {
+            (Ty::List(a), Ty::List(b)) | (Ty::Map(_, a), Ty::Map(_, b)) => {
+                !(matches!(a.payload(), Ty::Int) && record(b.payload()) || record(a.payload()) && matches!(b.payload(), Ty::Int)) && Self::items_alike(a, b)
+            }
+            _ => true,
+        }
     }
 
     /// The specialization of `name` a call reaches, given its arguments'

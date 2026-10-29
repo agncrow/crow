@@ -1,0 +1,27 @@
+--- Finding (universal_lambda_machine): a record's field given a literal list of
+--- numbers (a tensor), then grown by push through the field (`b.xs = push[b.xs, i]`),
+--- copies the whole list at every push, in both modes, so a loop of pushes is
+--- quadratic. Interpreted, a profile (sample) shows the time in
+--- table::tensors::push_number_taken -> CrowTensor::push_scalar_in_place ->
+--- push_scalar -> CrowTensor::to_vec + RawVec::grow_one (memmove).
+---
+---   crow run -i:  200003 in 4.9 s CPU   (100,000 pushes: 1.2 s)
+---   crow run:     200003 in 4.9 s CPU   (100,000 pushes: 1.6 s)
+--- Expected: about 0.05 s, as the same loop takes when the field starts as `[]` and
+--- is given 0, 1, 2 by push, or when the literal is first grown by push in a local
+--- (`start = [0, 1, 2]`, `start = push[start, 3]`, `b = Box[start]`) — both 0.05 s
+--- in both modes — and as a local list given the literal and grown takes (0.01 s).
+--- Found in a lambda-calculus machine whose heap (a record of lists of ints, the
+--- first few entries written as literals) grew by a million closures: 1M steps took
+--- 7.8 s, slowing as the heap grew.
+struct Box [xs]
+
+fn grow[n]
+    b = Box[[0, 1, 2]]
+    i = 0
+    while i lt n
+        b.xs = push[b.xs, i]
+        i = i + 1
+    return len[b.xs]
+
+log[grow[200000]]

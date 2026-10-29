@@ -1,0 +1,23 @@
+--- A function taking a function serves every call with one copy (spec,
+--- Specialization): called with a list of ints and a list of records it
+--- is refused, naming both kinds — an int is a record's none only handed
+--- alone, and the list of ints had reached the one copy's list of records
+--- or none unconverted, an internal error (Rosetta Code, Monads/List
+--- monad)
+
+struct Pick [x, y]
+
+fn count[xs, keep]
+    n = 0
+    for x in xs
+        if keep[x]
+            n = n + 1
+    return n
+
+fn always[x]
+    return true
+
+ints = push[push[[], 1], 2]
+log[count[ints, always]]
+picks = push[[], Pick[1, 2]]
+log[count[picks, always]]

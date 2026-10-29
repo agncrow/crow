@@ -1,0 +1,19 @@
+--- Functions put in a list one at a time (`fs = push[fs, sq]`) are typed
+--- by the calls made through the list's items — an item read into a local
+--- and called, one called where it is read (`fs[0][5]`), or a loop's
+--- variable called — as functions in a list written down are: refused as
+--- functions nothing calls, they had run only where the program also
+--- called them directly (Rosetta Code, Closures/Value capture).
+fn sq[i]
+    return i * i
+
+fn cube[i]
+    return i * i * i
+
+fs = push[[], sq]
+fs = push[fs, cube]
+g = fs[1]
+log[g[4]]
+for f in fs
+    log[f[3]]
+log[fs[0][5]]

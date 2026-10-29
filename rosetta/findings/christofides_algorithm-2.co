@@ -1,0 +1,22 @@
+--- `concat[a, b]` with `a` a list of 64-bit ints and `b` a list of growing ints
+--- (an item past 64 bits, or a list the width pass holds as growing): the compiled
+--- program does not build — the first list is not widened to the second's items.
+---
+--- Interpreted (crow run -i): prints
+---     [0, 1, 1180591620717411303424]
+--- Compiled (crow run): the program does not build:
+---     error[E0308]: mismatched types
+---       (rustc: `crow_runtime::core::concat(range_to(2), &xs[..])`: expected `&[i64]`,
+---       found `&[crow_runtime::int::Int]`)
+---     error: the compiled program does not build — the Rust compiler refused what Crow
+---     accepted, a bug in Crow, not in this program (`crow run -i` runs it meanwhile)
+--- Expected: the interpreter's line in both modes.
+---
+--- The growing list first, `concat[xs, range[2]]`, builds and runs. Met in a program
+--- with no number past 64 bits: `concat[range[n], filled[n, -1]]`, where the one copy
+--- of a helper `filled[n, value]` is also handed a value the width pass holds as
+--- growing (a maximum of a parameter's weights), so all its answers are growing ints.
+
+xs = []
+xs = push[xs, 2 ^ 70]
+log[concat[range[2], xs]]

@@ -135,19 +135,43 @@ impl<'a> Lowerer<'a> {
             // and the lowered program disagreed with itself; Rosetta Code,
             // colorful numbers)
             let tb = if ta.is_result() { tb.clone() } else { tb.payload().clone() };
-            // (a tensor given a list in the loop stays the tensor its
-            // declaration made, its sizes not known: unified, the list form
-            // had won, and `last = level` was lowered unconverted into the
-            // tensor `last = [0]` declared — an internal error; Rosetta Code,
-            // Pancake numbers)
+            // (in the final lowering, a tensor given a list in the loop
+            // stays the tensor its declaration made, its sizes not known:
+            // unified, the list form had won, and `last = level` was lowered
+            // unconverted into the tensor `last = [0.5]` declared — an
+            // internal error; Rosetta Code, Pancake numbers. While the types
+            // settle, the list wins, as `settle` has it: whole numbers a loop
+            // goes on to hold as a list of ints are one from the declaration
+            // — kept a tensor, Iterated digits squaring's counts past 2^53
+            // had lost their last digits)
             let joined = match (ta.payload(), tb.payload()) {
-                (Ty::Tensor(e, d), Ty::List(_)) => {
+                (Ty::Tensor(e, d), Ty::List(_)) if self.pass == Pass::Final => {
                     let open = Ty::Tensor(e.clone(), d.as_ref().map(|d| d.iter().map(|_| None).collect()));
                     if ta.is_result() { Ty::Result(Box::new(open)) } else { open }
                 }
                 _ => ta.unify(&tb),
             };
             self.ctx.vars.insert(n.clone(), joined);
+        }
+    }
+
+    /// Whether a loop's body is read once ahead (`pre_join_loop`): in the
+    /// final lowering, where it assigns a frame or a tensor in view; while
+    /// the types settle, where it assigns a tensor of whole numbers, which
+    /// a list of ints given it makes a list of ints (`settle`) — a line
+    /// above that assignment reads it as the later rounds hold it, `last =
+    /// level` before `level = push[[], k]`. Read once, `last` had settled on
+    /// the tensor while `level` became a list, and the lowered program
+    /// disagreed with itself (parity 372).
+    pub(super) fn reads_ahead(&self, before: &[(String, Ty)], body: &[S]) -> bool {
+        match self.pass {
+            Pass::Final => !before.is_empty() && Self::body_assigns(body, before),
+            Pass::Settle => {
+                use crate::type_infer::settle::{is_int_rows, is_ints};
+                let whole: Vec<(String, Ty)> = before.iter().filter(|(_, t)| is_ints(t.payload()) || is_int_rows(t.payload())).cloned().collect();
+                !whole.is_empty() && Self::body_assigns(body, &whole)
+            }
+            Pass::Scan => false,
         }
     }
 

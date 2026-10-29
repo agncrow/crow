@@ -1,0 +1,41 @@
+--- Finding (terminal_control_coloured_text): inside a function, a value that can
+--- fail written into a map by key (`m['k'] = maybe[n]`, the map made with values
+--- of a plain kind) is not handed back as the function's failure. The map
+--- sibling of findings/compiler_ast_interpreter-2.co (a list written by position),
+--- which is fixed: the same function over `xs = ['v']` / `xs[0] = maybe[n]` prints
+--- the expected lines in both modes.
+---
+--- crow run -i (exit 1):
+---     [k = 'yes']
+---     runtime error: line 35: cannot assign an error value to 'm' — no
+--- crow run: the compiled program does not build —
+---     error[E0308]: mismatched types --> src/main.rs:32:12
+---     (fill is emitted as answering BTreeMap<String, CrowResult<String>> and
+---     returns its local m: BTreeMap<String, String>)
+--- Expected (spec, "A write lands at one position": "a value that can fail is
+--- decided where it is written, as one assigned to a variable is"; the position
+--- written may be a map's key), in both modes:
+---     [k = 'yes']
+---     false
+---     no
+---
+--- `crow build --ir`: `pure fill(n: Int) -> Map(Result(Str))`, then
+--- `let m: Map(Str) = …`, `propagate _t1 (into m)`, `m["k"] = unwrap move _t1`:
+--- the answer is typed a map of values that can fail, not a map that can fail,
+--- so the caller's `r.ok` is lowered as the constant `true`. The same with int
+--- values (`map[k = 1]`, `maybe` answering 7). Runs in both modes when written
+--- `m = set[m, 'k', maybe[n]]`.
+fn maybe[n]
+    if n gt 0
+        return 'yes'
+    return error['no']
+
+fn fill[n]
+    m = map[k = 'v']
+    m['k'] = maybe[n]
+    return m
+
+log[fill[1]]
+r = fill[0]
+log[r.ok]
+log[r.reason]

@@ -1,0 +1,23 @@
+--- Finding (json_pointer): a value that is only ever an error — `error['why']`
+--- itself, or a variable that holds nothing else — handed to `encode` or `str`
+--- does not build compiled. (A function's answer that can fail or succeed
+--- builds: `encode[f[-1]]` is fine.)
+---
+--- Interpreted (crow run -i):
+---     error: line 22: why
+---     error: line 23: why
+--- Compiled (crow run):
+---     error[E0277]: the trait bound `!: ToJson` is not satisfied
+---       --> src/main.rs:36
+---     error: the compiled program does not build — the Rust compiler refused
+---     what Crow accepted, a bug in Crow, not in this program
+---   (with the encode line taken out, str's line: error[E0308]: mismatched types)
+--- The generated call hands the builtin the payload of a value that has none:
+---   … else { CrowResult { ok: true, value: crow_runtime::json::encode(&(unreachable!())), … } }
+--- `unreachable!()` is `!`, which implements no ToJson.
+--- Expected: the interpreter's output in both modes — by Auto-Propagation
+--- (spec section 10) a builtin handed an error value answers that error
+--- without running; the encode row's "an error value as null" is an error
+--- inside a list or a record.
+log[encode[error['why']]]
+log[str[error['why']]]

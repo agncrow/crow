@@ -1,0 +1,18 @@
+--- A record made inside a function of the answers of two calls of one
+--- function at two kinds holds each copy's answer: the first round read
+--- the function's body with the kind a later call gave its parameter, and
+--- the field kept that answer — the program was refused, "S's field 'a'
+--- holds a list of bools, and this is numbers". A call that changes a
+--- parameter's kind now answers nothing known until the body is read again
+--- (Rosetta Code, Christofides algorithm).
+struct S [a, b]
+
+fn pair[n, value]
+    return [value, value]
+
+fn make[n]
+    return S[pair[n, 0], pair[n, false]]
+
+s = make[3]
+log[s.a]
+log[s.b]

@@ -44,3 +44,48 @@ what it chose meanwhile. The findings the run fixed or left open are in
   the spec refuses only a revision that reaches its own name. Since
   2026-10-28 programs cannot import `memory`, so this is the standard
   library's own question.
+- **A parsed value pushed onto an empty list.** `xs = []`, then `xs =
+  push[xs, j['a']]`, reads the parsed value as a number — push's rows take
+  one there, so that a later `max[hi]` reads numbers (packages/market's
+  bars) — and the program stops on text (Associative array/Merging). A map
+  held in a variable now holds parsed values as they are (parity 431), as a
+  list made in the call does (`push[[], j]`). Reading the list by its later
+  uses would need the settle pass to see reads, not only writes. Should an
+  empty list held in a variable hold parsed values as they are?
+- **An int beside a record, handed to one function.** `first[5]` and
+  `first[Pick[1, 2]]`: the spec makes the parameter a record or none, and 5
+  stops the program (`a record or 0 (none) is needed here, and this value
+  is 5`), though a literal int other than 0 can never be the none (Monads/
+  List monad). Should such a call get a copy of its own? A variable first
+  given 0 that later holds a record must keep joining: its first round's
+  call hands an int.
+- **A local named like an import's name.** The spec refuses it (Names Are
+  Never Ambiguous, rule 1, with `e = 100` as its example), and the top
+  level does; inside a function, `e`, `mean`, `sign` or `stack` under `use
+  math` (or `code` under `use bits`) shadows the module's name silently
+  (Pathological floating point problems). Enforced there, 29 of the 696
+  programs here would be refused — locals named `e`, `sign`, `sum`,
+  `zeros`, `stack`, `code`, `where`, `ones`, `choice`, `full` and `gamma`.
+  Enforce the rule in functions, or let a function's locals shadow an
+  import's names?
+- **A computed int in a list written down.** A literal list of whole
+  numbers is a vector unless the program grows it or writes it by
+  position, and a vector holds its numbers as floats. Numerals past 2^53
+  make a list of ints, but a computed item does not: `a = 2 ^ 60 + 1`,
+  `xs = [a, 3]` holds 2^60, and `xs[0] eq a` is false — silently, in both
+  modes; past 64 bits the literal stops where it is made (Abundant odd
+  numbers). The width pass knows `a`'s range, but only after the literal's
+  type is fixed. Should a literal holding a computed int be a list of
+  ints, or stop where a float cannot hold the int exactly?
+- **`concat` of three texts.** `concat[a, b]` joins two texts, and
+  `concat[[a, b, c]]` joins a literal list of them; `concat[a, b, c]` is
+  refused (Bioinformatics/Sequence mutation), since no row takes three
+  texts — its rows of three join tensors along an axis. One way to do
+  things says the list form is that way; should the refusal name it?
+- **A list of 0s that later holds records.** The spec makes a variable, a
+  field, a parameter or an answer given 0 and a record *a record or none*,
+  but not a list's items: empty buckets made as `for i in range[n]` / `0`,
+  then `b[h] = Entry[k, b[h]]`, are a list of ints, and reading `e.next` of
+  an item is refused as an int's field (findings/monads_list_monad-4).
+  Should a list's items follow the rule — the list a list of records or
+  none from its declaration, each 0 none?

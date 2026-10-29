@@ -1,0 +1,16 @@
+--- Finding (bioinformatics_sequence_mutation): the spec's own way of making
+--- text anew — `concat[slice[s, 0, i], 'x', slice[s, i + 1, len[s]]]`, written
+--- in docs/language-spec.md §"A write lands at one position" (line ~811) — is
+--- refused before the program runs, in both modes:
+---
+---   t.co:3:5: concat[] takes numbers, numbers and an int, got text, text and text
+---
+--- Expected (by that sentence of the spec): hxllo. The rows hold only
+--- `concat[a, b]` and `concat[a, b, axis]` (tensors), so three texts reach the
+--- axis form. `concat[[a, 'x', b]]` (one list written down) and `concat[a, b]`
+--- of two texts both run and answer hxllo / hx. Either the spec's example
+--- should read `concat[[slice[s, 0, i], 'x', slice[s, i + 1, len[s]]]]`, or
+--- three pieces should be joined as the list form joins them.
+s = 'hello'
+i = 1
+log[concat[slice[s, 0, i], 'x', slice[s, i + 1, len[s]]]]

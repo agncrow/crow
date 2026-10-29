@@ -1,0 +1,21 @@
+--- Finding (blossom_algorithm): a variable may be named like a word the parser
+--- teaches against (`match`, `from`, `print`, …: parser.rs python_keyword_hint)
+--- — `match = [1, 2]` binds and `log[match]` reads it — but an interpolation
+--- that begins with the name is refused, in both modes, AT LINE 1, COLUMN 1 of
+--- the file (the interpolation's own position, not the file's):
+---
+---   t.co:1:1: Crow removed 'match' — use if / else. There are no sum types or
+---   pattern matching (see Design Note: No Pattern Matching).
+---     1 │ --- Finding (blossom_algorithm): …
+---
+--- Expected: [1, 2] then 1 — or, if the name is not to be used, a refusal at
+--- the binding, as a core name's is. The hint fires because the
+--- interpolation is parsed as a statement whose first token is the name and is
+--- not followed by `=` (parser.rs parse_stmt). The same rule refuses an index
+--- write at statement start, with the right position this time:
+--- `match[0] = 5` → t.co:4:1: Crow removed 'match' …; and `from = 3` then
+--- `log['`from`']` → t.co:1:1: Crow imports with 'use module' …, not 'import'.
+--- `log['`print`']` alone → t.co:1:1: Crow prints with 'log[value]' ….
+match = [1, 2]
+log[match]
+log['`match[0]`']

@@ -1,0 +1,36 @@
+--- A function taking a function, handed one that answers a truth that can
+--- fail at one call and a plain truth at another, holds the parameter both
+--- fill: the plain function, answering its own kind, had made the parameter
+--- its own, and the call handing the other did not build compiled
+--- (Rosetta Code, Stream merge; the fuzzer's `ap` and `relay`, an int, seeds
+--- 1793296420, 1793296426 and 1793296433).
+fn as_numbers[a, b]
+    return int[a] lt int[b]
+
+fn as_text[a, b]
+    return a lt b
+
+fn least[xs, before]
+    best = xs[0]
+    for x in xs
+        if before[x, best]
+            best = x
+    return best
+
+log[least[['10', '9', '100'], as_numbers]]
+log[least[['10', '9', '100'], as_text]]
+
+fn ap[f, a, b]
+    return f[a, b]
+
+fn relay[f, a, b]
+    return ap[f, a, b]
+
+fn plain[a, b]
+    return a + b
+
+fn failing[a, b]
+    return int['12'] + a
+
+log[relay[plain, 1, 2]]
+log[ap[failing, 1, 2]]

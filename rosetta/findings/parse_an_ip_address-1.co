@@ -1,0 +1,24 @@
+--- Finding (parse_an_ip_address): at the top level, a list literal holding a plain
+--- int beside the answer of a program's function that can fail (and can answer an
+--- int) is refused, in both modes, before the program runs, on the line that
+--- assigns the variable for the first and only time:
+---
+---   parse_an_ip_address-1.co:23:1: cannot reassign 'zs' from array to
+---   array[result[int]] — variable type cannot change
+---     23 │ zs = [2, half[3]]
+---
+--- Expected: [2, error: line 20: 3 is odd] in both modes — a list literal may hold a
+--- failed value (spec, for: "as a list literal holding a failed value is"), and
+--- these all run in both modes: `[1, int['b'], 3]` at the top level (a builtin that
+--- can fail), `[half[3], half[4]]` (every item can fail), and `[2, half[3]]` inside a
+--- function. Not only-error values as in findings/monads_maybe_monad-1.co (whose
+--- `xs = [1, nothing[]]` note shows the same words): `half` answers an int too.
+--- (Found writing parse_an_ip_address; the solution does not need such a list.)
+
+fn half[n]
+    if n % 2 eq 1
+        return error['`n` is odd', 'odd']
+    return n / 2
+
+zs = [2, half[3]]
+log[zs]

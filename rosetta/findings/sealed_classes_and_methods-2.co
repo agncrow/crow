@@ -1,0 +1,17 @@
+--- Finding (sealed_classes_and_methods): a function declared twice in one program is not
+--- refused: the later declaration silently replaces the earlier one, in both modes —
+---   crow run -i and crow run: print "hi crow", exit 0, no refusal and no warning.
+--- Expected: refused at the second declaration ('greet' is already a function of this
+--- program, line 11), in both modes: the spec's Design Note "Names Are Never Ambiguous"
+--- says a bare name means exactly one thing and "collisions are never resolved silently —
+--- not by shadowing, not by precedence"; a parameter or a variable named like one of the
+--- program's functions is refused for that reason, but a second function of that name is
+--- taken over the first. (A struct declared twice is worse: the modes disagree — see
+--- sealed_classes_and_methods-3.co.) Found writing what Crow lets a program override.
+fn greet[x]
+    return 'hello `x`'
+
+fn greet[x]
+    return 'hi `x`'
+
+log[greet['crow']]

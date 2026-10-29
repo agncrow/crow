@@ -1,0 +1,40 @@
+--- Finding (compiler_ast_interpreter): a value that can fail written into a record's
+--- field by a field write (`c.v = maybe[n]`), where the record was made with a plain
+--- value there (`Box[0]`), is held unchecked: the field keeps its plain kind (the IR
+--- has `struct Box { v: Int }` and `c.v = call maybe(…)`, a Result into an Int).
+---
+--- Interpreted (crow run -i): prints
+---     5
+---     true                       <- c.v.ok, while c.v holds the failure
+---     error: line 31: negative
+--- Compiled (crow run): the program does not build:
+---     error[E0308]: mismatched types
+---       --> src/main.rs:65:11
+---     error: the compiled program does not build — the Rust compiler refused what Crow
+---     accepted, a bug in Crow, not in this program (`crow run -i` runs it meanwhile)
+--- (Even the good case alone — the first four statements, or `s.pending = str[maybe[5]]`
+--- into a text field — does not build compiled.)
+---
+--- Expected, in both modes: 5, then either `false` and `error: line 31: negative` (spec,
+--- Structs: "A field holds what it is given, a failed value included … `b.speed.ok`
+--- asks the field", as `Box[maybe[-1]]` does today in both modes), or the write decided
+--- as an assignment to a variable is (spec §1: the top level halts with `cannot assign
+--- an error value`, a function hands the error back). Never `.ok` true of a failure.
+--- The same inside a function (`fn filled[b, n]` / `b.v = maybe[n]` / `return b`).
+--- Worked around in compiler_ast_interpreter.co: the value is handed to a helper
+--- (`printing[st, text]`, `assigned[st, slot, value]`), so a failure propagates through
+--- the call and the field is written a plain value.
+struct Box [v]
+
+fn maybe[n]
+    if n lt 0
+        return error['negative', 'x']
+    return n
+
+b = Box[0]
+b.v = maybe[5]
+log[b.v]
+c = Box[0]
+c.v = maybe[-1]
+log[c.v.ok]
+log[c.v]

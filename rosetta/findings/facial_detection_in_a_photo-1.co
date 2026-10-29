@@ -1,0 +1,25 @@
+--- Finding (facial_detection_in_a_photo): a name of web's or of the test harness's forms
+--- (`stream`, `box`) is taken where the program binds it, but a use of it is read as the
+--- form: a list in a parameter named `stream` cannot be indexed (`stream[0]` is web's
+--- `stream[feed]`, in a program with no `use web`), and a function of the program named
+--- `box` cannot be called (`box[1]` is the harness's).
+---
+--- crow run -i and crow run alike:
+---   …-1.co:19:12: stream[] takes a function of the program, which it calls with put: stream[rows], with fn rows[put]
+---     19 │     return stream[0]
+---   …-1.co:25:5: 'box' is a test-harness builtin — it only works inside a test block
+---     25 │ log[box[1]]
+--- Expected: the program prints 5 and then 2 — or, if the names are reserved, a refusal
+--- where each is bound, in the words the reserved names get (`fn len[x]` is refused with
+--- "'len' is a core builtin — pick another name for this function"; `fn first[later]` with
+--- "'later' is a core builtin — pick another name for this parameter"). The same for a
+--- top-level `stream = [5, 6, 7]` then `stream[0]`, and `box = [5, 6]` then `box[0]`. Yet
+--- `fn stream[x]` / `stream[1]` calls the program's function and prints 2.
+fn first[stream]
+    return stream[0]
+
+fn box[x]
+    return x + 1
+
+log[first[[5, 6, 7]]]
+log[box[1]]

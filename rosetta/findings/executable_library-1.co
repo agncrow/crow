@@ -1,0 +1,25 @@
+--- Finding (executable_library): a module's top-level value that is not a
+--- scalar literal — a call (`four = double[2]`) or a list literal (`primes =
+--- [2, 3, 5]`) — makes every program importing the module fail to build
+--- compiled, whether the program reads the value or not. Needs
+--- executable_library_1_lib.co beside it.
+---
+--- Interpreted (`crow run -i`): 6, then [2, 3, 5] — the module's values are
+--- computed as the program starts (a `log` in a function a value calls prints).
+--- Compiled (`crow run`):
+---   error[E0010]: allocations are not allowed in constants
+---   (with the list gone from the module: error[E0015]: cannot call non-const
+---   function `executable_library_1_lib_double` in constants)
+---   error: the compiled program does not build — the Rust compiler refused
+---   what Crow accepted, a bug in Crow, not in this program
+--- Expected: 6 and [2, 3, 5] in both modes. The expansion keeps a module's
+--- top-level assignments as prefixed values (main.rs, "Module-level variables
+--- become prefixed assigns"), and the emitter prints each as a Rust `const`
+--- (emit_rs/program.rs emit_module_consts), which holds only a constant
+--- expression: a scalar literal (`pi = 3.14`) builds, a vec!, a String built at
+--- run time or a call of the module's function does not. Dropping the read of
+--- `primes` does not help: the const is printed anyway.
+use executable_library_1_lib
+
+log[executable_library_1_lib.double[3]]
+log[executable_library_1_lib.primes]

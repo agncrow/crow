@@ -1,0 +1,33 @@
+--- Finding (fast_fourier_transform): a list literal holding a tensor made by a
+--- list's arithmetic (`ys * 2`) beside a plain list (`ys`: a `range`, or a
+--- collecting loop's list) is an internal error in both modes when the literal is
+--- bound to a variable; handed straight to `log` it runs interpreted and does not
+--- build compiled.
+---
+--- crow run -i and crow run alike (exit 1, nothing printed), for the lines below:
+---   fast_fourier_transform-1.co: internal error: the lowered program disagrees with
+---   itself — a bug in Crow, not in this program: fast_fourier_transform-1 main:
+---   line 32: a list of List(Float) holds an item of type Tensor(Float) (and 1 more)
+--- (`CROW_IR_VERIFY=report crow build --ir`: the second complaint is "holds an item
+--- of type List(Int)"; the IR is
+---   let ys: List(Int) = core.range_to(3)
+---   let both: List(List(Float)) = [(tensor(ys) mul 2), move ys]
+--- — the literal's items are never brought to one kind.)
+--- With `log[[ys * 2, ys]]` in place of the two last lines:
+---   crow run -i:  [[0, 2, 4], [0, 1, 2]]
+---   crow run:     error[E0308]: mismatched types … the compiled program does not
+---                 build — the Rust compiler refused what Crow accepted
+--- Expected, in both modes: [[0, 2, 4], [0, 1, 2]].
+---
+--- The same with floats (`ys = for x in [1.0, 2.0]` / `x`, then `[ys * 2.0, ys]`:
+--- "a list of List(Float) holds an item of type Tensor(Float)"), with the items in
+--- either order, with the tensor in a local first (`zs = ys * 2`, `[zs, ys]`), and
+--- with `[tensor[ys] * 2.0, ys]`. Runs: `[ys, ys]`, `[ys * 2, ys * 1]`, a literal
+--- `ys = [0, 1, 2]` (a tensor already), and `[ys * 2]` then `push[both, ys]`.
+--- Met as a function returning `[re, im]` pairs (a vectorised FFT): a base case
+--- `return [ys, ys]` (ys collected) beside `return [c, c]` (c = cos[ys]) is
+--- "fn twice: line 7: returns List(List(Float)) from a body typed
+--- Tensor(List(Float), [?, ?])" — a joined kind no value has.
+ys = range[3]
+both = [ys * 2, ys]
+log[both]

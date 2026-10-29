@@ -1,0 +1,29 @@
+--- `values` of a map of numbers that can fail (a function's answer that can
+--- fail, here because it reads int[t]) does not build compiled; the interpreter
+--- runs it.
+---
+--- crow run -i:
+---     [1]
+--- crow run:
+---     error[E0308]: `if` and `else` have incompatible types
+---       --> src/main.rs:46:356
+---     error: the compiled program does not build — the Rust compiler refused what
+---     Crow accepted, a bug in Crow, not in this program (`crow run -i` runs it
+---     meanwhile)
+--- Expected (both modes): [1]
+---
+--- The IR is `display.log!held(core.values(unwrap call f("3")))`; the emitter's
+--- failure branch for the unwrap builds `value: Vec::<String>::new()` beside
+--- `core::values(..)`'s Vec<i64>, as if every map's values were text. A map of
+--- text (`map[a = 'x']`) builds and agrees, as do `keys` of the same map and
+--- `reverse` of a list that can fail. Fails the same with int keys
+--- (`set[m, 1, 2]`), with the map in a variable first (`r = f['3']`,
+--- `values[r]`), and with the values handed on (`count[values[r]]`,
+--- `len[values[r]]`). Found counting the colours of a colouring: a map from node
+--- to colour returned by a function whose nodes came from int[text].
+fn f[t]
+    if int[t] gt 2
+        return map[a = 1]
+    return map[a = 2]
+
+log[values[f['3']]]

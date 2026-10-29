@@ -1,0 +1,13 @@
+--- max (or min, or abs) of an item of a list whose items are of no known kind.
+---
+--- Interpreted: runtime error: line 13: index 0 is out of range for an array of 0
+---              items (right: the list is empty).
+--- Compiled:    error[E0425]: cannot find function `max` in this scope, then "the
+---              compiled program does not build — the Rust compiler refused what Crow
+---              accepted, a bug in Crow"; min gives the same E0425, abs gives E0282
+---              (type annotations needed).
+--- Expected: the compiled program builds and stops at the index as the interpreter
+--- does. Met through a list from a collecting for that collected nothing
+--- (findings/longest_common_subsequence-3.co), whose rows were then read by max.
+g = []
+log[max[g[0], 1]]

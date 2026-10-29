@@ -1,0 +1,17 @@
+--- `crow run` (compiled) killed by SIGALRM leaves the program it built running.
+--- The brief's and rosetta/run.sh's time limit is exactly that signal:
+---     perl -e 'alarm shift; exec @ARGV' 6 crow run integer_sequence-1.co
+--- crow exits 142 after 6 s, and the compiled program
+--- (.crow_build/target/debug/<name>) goes on, reparented to pid 1, until killed
+--- by hand. With SIGTERM sent to crow instead, the program is stopped with it
+--- (crow exits 1, nothing left). Found running Rosetta Code's Integer sequence
+--- endlessly under a 3 s alarm: crow -i stopped, but the compiled count, orphaned,
+--- had written 22 GB to its output file before it was found.
+--- Expected: crow stops the program it started on SIGALRM (and SIGHUP, SIGINT,
+--- SIGQUIT) as it does on SIGTERM, or runs it in its own process group and
+--- signals the group. (crow run -i is one process and has no such leftover.)
+
+n = 0
+while true
+    sleep[200]
+    n = n + 1

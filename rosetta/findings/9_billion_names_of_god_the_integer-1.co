@@ -1,0 +1,24 @@
+--- `join` of the item of a statement loop over a list of lists of text does not build compiled.
+---
+--- Interpreted (crow run -i): prints
+---     ab
+---     cd
+--- Compiled (crow run): the program does not build:
+---     error[E0277]: the trait bound `&Vec<String>: Words` is not satisfied
+---       --> src/main.rs:39:98
+---     error: the compiled program does not build — the Rust compiler refused what Crow
+---     accepted, a bug in Crow, not in this program (`crow run -i` runs it meanwhile)
+--- Expected: the same output as interpreted.
+---
+--- The statement loop borrows its item (`for line in grid.iter()`), so `line` is a
+--- `&Vec<String>`, and `join` is printed as `crow_runtime::cell::words(&(line))` — a
+--- `&&Vec<String>`, which `Words` is not implemented for. The same with the join
+--- assigned first (`s = join[line, '']`, then `log[s]`) and inside an interpolation
+--- (`log['|`join[line, \'-\']`|']`). The collecting loop (`shown = for line in grid` /
+--- `join[line, '-']`) builds and agrees.
+--- Found writing rosetta/9_billion_names_of_god_the_integer.co (a plot drawn as rows
+--- of characters, each row joined to be printed).
+
+grid = [['a', 'b'], ['c', 'd']]
+for line in grid
+    log[join[line, '']]

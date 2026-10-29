@@ -1,0 +1,20 @@
+--- Finding (maximum_triangle_path_sum): `concat` of a matrix written down and a
+--- list of lists made from a list the program computed is refused before the
+--- program runs, in both modes, in words that call the matrix "numbers":
+---   maximum_triangle_path_sum-2.co:19:8: concat[] joins lists of one kind, and
+---   these are a list of lists of numbers and numbers: a list holds one kind — a
+---   record (struct) holds fields of several kinds
+--- (`concat[m, [xs]]`: "these are numbers and a list of lists of numbers"; the same
+--- for `concat[[xs], [m[0]]]`, a literal holding a matrix's row.)
+--- Expected: [[5, 6], [1, 2], [3, 4]] — or, if the two kinds may not be joined, a
+--- refusal that names a matrix (a tensor's rows) and a list of lists and says how
+--- to make them one. The rows are of one kind as far as the program can tell: the
+--- same row is taken by `push[m, xs]` ([[1, 2], [3, 4], [5, 6]], both modes), by
+--- `concat[[[5, 6]], m]` written down, and by `concat[[xs], [xs]]`.
+--- Met starting a table of a triangle's rows: `best = [rows[-1]]` (rows a matrix
+--- literal) then `best = concat[[totals], best]`, totals a collecting loop's list.
+m = [[1, 2], [3, 4]]
+xs = for x in [5, 6]
+    x
+both = concat[[xs], m]
+log[both]

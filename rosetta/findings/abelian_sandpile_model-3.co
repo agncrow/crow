@@ -1,0 +1,41 @@
+--- Finding: an int written into a literal list of ints after it is made —
+--- pushed, or set at a position — is held as a float: past 2^53 it loses
+--- digits silently, and past 64 bits it reads back as 9223372036854775807.
+--- The same in both modes.
+---
+--- Interpreted and compiled (both):
+---     1152921504606846976
+---     false
+---     [1, 2, 1180591620717411300000]
+---     9223372036854775807
+---     false
+--- Expected (spec, Numbers That Keep Every Digit: "a list or a map of ints
+--- handed one past 64 bits (`push[xs, 2 ^ 100]`, …) holds it, its ints held
+--- as ints that grow from then on"; Tensor Arithmetic: a literal list of
+--- ints past 2^53 "is a list of ints, which holds each as it is"):
+---     1152921504606846977
+---     true
+---     [1, 2, 1180591620717411303424]
+---     1180591620717411303424
+---     true
+---
+--- `crow build --ir`: `let xs: Tensor(Int, [2]) = [1, 2]`, then
+--- `core.push_number(xs, float((big(2) pow big(70))))` — the literal stays a
+--- tensor (floats), the int goes in as a float, and `xs[2]` reads the float
+--- back as a 64-bit int, saturated. Only numerals written in the literal
+--- itself make it a list of ints. A list made by a collecting loop
+--- (`for c in range[2]` / `0`) or by `range[3]` holds every digit.
+--- findings/abundant_odd_numbers-2.co is the same tensor-held literal grown by
+--- sums (Fibonacci past 2^53), where the modes also disagree. A matrix
+--- literal is the same: `m = [[1, 2], [3, 4]]`, `m[0][0] = 2 ^ 70` shows
+--- [[1180591620717411300000, 2], [3, 4]] with no stop, though the spec
+--- refuses an int past 64 bits handed to "a tensor's number".
+ys = [0, 1]
+ys[0] = 2 ^ 60 + 1
+log[ys[0]]
+log[ys[0] eq 2 ^ 60 + 1]
+xs = [1, 2]
+xs = push[xs, 2 ^ 70]
+log[xs]
+log[xs[2]]
+log[xs[2] eq 2 ^ 70]

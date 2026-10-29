@@ -1,0 +1,21 @@
+--- Under an aliased import (`use math as m`), a call of the program's OWN
+--- function named like one of math's (`rank`, `mean`) is refused, both modes:
+---   index_finite_lists_of_positive_integers-1.co:21:1: 'rank' comes from math which was imported as 'm' — call m.rank[...]
+---     21 │ log[rank[[1, 2]]]
+--- The definition `fn rank` itself is accepted; only the calls are refused, and
+--- the message names math's rank, which the program does not call.
+--- Expected: 2. The spec (Aliased Imports) says an aliased import is
+--- qualified-only — "nothing enters your bare namespace except the alias
+--- itself" — and that "for the stdlib this doubles as the opt-out when you want
+--- a name the module owns (`sum`, `mean`, `e`)". A variable so named works
+--- (`sum = 0` beside `m.sum[xs]` runs); a function so named does not.
+--- (Without any import of math, the same program prints 2 in both modes.)
+--- Found writing Index finite lists of positive integers: a rank/unrank pair in
+--- a program that needs math only for `m.seed[…]`.
+
+use math as m
+
+fn rank[xs]
+    return len[xs]
+
+log[rank[[1, 2]]]

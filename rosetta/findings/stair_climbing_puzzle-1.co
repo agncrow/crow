@@ -1,0 +1,16 @@
+--- A function value compared with text (`f eq 'a'`) passes the checks.
+--- Interpreted (crow run -i): prints `false`, exit 0.
+--- Compiled (crow run): does not build —
+---   error[E0308]: mismatched types
+---   error: the compiled program does not build — the Rust compiler refused what Crow
+---   accepted, a bug in Crow, not in this program (`crow run -i` runs it meanwhile)
+--- Expected: refused before the program runs in both modes, as `x eq 'a'` of a number is
+--- ("eq compares values of one kind, not a number with text"). The same happens to a
+--- parameter handed a function and compared with text inside the function
+--- (`fn pick[f]` / `if f eq 'loop'`, called `pick[one]`), which is how it was met.
+
+fn one[]
+    return 1
+
+f = one
+log[f eq 'a']

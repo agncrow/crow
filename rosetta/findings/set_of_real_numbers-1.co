@@ -1,0 +1,25 @@
+--- A program's own function named `contains` (or `has`) is accepted where it is
+--- defined, and every call of it is refused, with words that send the writer to the
+--- builtin instead of their function.
+---
+--- crow run -i and crow run alike (exit 1, nothing printed):
+---     set_of_real_numbers-1.co:25:1: `contains[xs, x]` is written `x in xs` — and
+---     `x not in xs` for its absence
+--- (`fn has[a, x]` likewise: "`has[m, key]` is written `key in m`".)
+---
+--- Expected, one of: the definition refused as a core builtin's name is, as
+--- `fn sort[a]` is ("'sort' is a core builtin — pick another name for this
+--- function"; spec, Core: "These names are reserved — a definition may not reuse
+--- them"); or, since `contains` and `has` are no names a program writes (the
+--- parser desugars `x in xs` to them and refuses them written), the program's own
+--- function called, printing `true`. As it is, the refusal names the call, not the
+--- definition, and its advice (`x in xs`) would call the builtin, not the function.
+--- Close to the known "a function named like a test or module builtin (`fits`,
+--- `box`, `stream`, `connect`) is accepted but its call is refused", but these are
+--- core rows, which the definition check otherwise covers. Found writing Set of
+--- real numbers, where `contains[set, x]` is the natural name for x ∈ A (renamed
+--- `member`).
+fn contains[a, x]
+    return len[a] gt x
+
+log[contains[[1, 2], 1]]

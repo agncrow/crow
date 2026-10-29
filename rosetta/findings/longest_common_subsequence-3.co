@@ -1,0 +1,23 @@
+--- A collecting for whose body ends in a statement answers an empty list, silently,
+--- in both modes. The natural nested collect (a grid of zeros, a DP table) is the
+--- trap: the inner for is read as a statement whose results are discarded, so every
+--- row is lost, and a later grid[i][j] stops ("index 0 is out of range for an array of
+--- 0 items") far from the cause. A body ending in an assignment or a while does the
+--- same. Naming the inner loop's list and ending the body with the name works:
+---     row = for j in range[4]
+---         0
+---     row
+---
+--- Interpreted and compiled: [] and [] (no message).
+--- Expected: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]] for the grid (the inner for
+--- as the collecting body's last line handing its list on, as the spec says a
+--- collecting loop's last line does), or else a refusal naming the line; and a
+--- refusal for the body that ends in an assignment.
+grid = for i in range[3]
+    for j in range[4]
+        0
+log[grid]
+
+doubled = for i in range[3]
+    twice = i * 2
+log[doubled]

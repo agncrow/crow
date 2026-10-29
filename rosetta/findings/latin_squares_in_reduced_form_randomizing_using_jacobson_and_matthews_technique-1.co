@@ -1,0 +1,21 @@
+--- Finding (latin_squares_in_reduced_form_randomizing_using_jacobson_and_matthews_technique):
+--- a loop variable named like a Rust keyword (`move`, `loop`) is renamed out of
+--- Rust's way only in the FIRST loop that binds it: a second `for` with the same
+--- name, at the top level or inside one function, prints the bare keyword, and
+--- the compiled program does not build.
+---
+--- crow run -i: a a b b
+--- crow run:
+---   error: expected identifier, found keyword `move`
+---     --> src/main.rs:40:9
+---   error: the compiled program does not build — the Rust compiler refused what
+---   Crow accepted, a bug in Crow, not in this program (`crow run -i` runs it meanwhile)
+--- `crow build --rs` shows `for move_ in 0_i64..(2_i64)` for the first loop and
+--- `for move in 0_i64..(2_i64)` for the second. The same inside a function with
+--- `for loop in range[n]` twice (expected identifier, found keyword `loop`).
+--- One loop alone builds, as does a loop then an assignment of the same name.
+--- Expected: a a b b in both modes (every binding of the name renamed).
+for move in range[2]
+    log['a']
+for move in range[2]
+    log['b']

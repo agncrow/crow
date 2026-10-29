@@ -1,0 +1,34 @@
+--- Finding (call_a_function): the spec's own First-Class Functions example —
+---     ops = [double, square]
+---     ops[0][3]                     --- 6
+--- is refused in both modes, with words that mislead: the two functions take
+--- and answer the same kind, and the positional call is what should type them
+--- (as `apply[double, 5]` types double's x by `f[x]` inside apply).
+---
+--- Interpreted and compiled alike (exit 1, nothing printed):
+---   c9.co:7:1: double's parameter 'x' is typed by nothing — read it in the
+---     body, or call double[…] once with a value of its kind
+---   c9.co:7:1: square's parameter 'x' is typed by nothing — …
+---   c9.co:8:1: `f[…]` calls one of double, square by position: they take or
+---     answer different kinds, or answer a kind no position can hold — call it
+---     by name (apply[f, args]), or hand functions of one kind that answer an
+---     int, a number, a bool, text, a list or a map
+---   3 mistakes
+--- Expected (spec, section "First-Class Functions"): 6.
+---
+--- The same refusal for `for f in ops` / `log[f[3]]`, for a group handed to a
+--- function that applies an item (`f = fs[0]`, `f[x]`), and for a group of ONE
+--- function (`[add]`, still "they take or answer different kinds"). Calling
+--- each function directly once anywhere in the program (`log[double[1]]`)
+--- makes every one of these forms run, in both modes, with the right answers.
+--- A function stored in a record's field and applied after (`f = p.f`,
+--- `f[p.first, x]`) is refused the same way ("`add` is handed as a value, and
+--- nothing types its parameters"), though it is applied.
+fn double[x]
+    return x * 2
+
+fn square[x]
+    return x * x
+
+ops = [double, square]
+log[ops[0][3]]

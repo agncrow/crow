@@ -282,7 +282,21 @@ impl Emitter {
                         // reason (the interpreter's words)
                         Ty::List(item) if matches!(item.as_ref(), Ty::Tensor(..)) => {
                             self.needs_crow_runtime = true;
-                            format!("crow_runtime::tensor::CrowTensor::from_elements(&({})){}", inner, self.or_stop())
+                            // (a list of none is a matrix of no rows of the row
+                            // shape the type states, as the interpreter makes it)
+                            let row: Option<Vec<usize>> = match item.as_ref() {
+                                Ty::Tensor(_, Some(d)) => d.iter().copied().collect(),
+                                _ => None,
+                            };
+                            match row {
+                                Some(r) if !r.is_empty() => format!(
+                                    "crow_runtime::tensor::CrowTensor::from_rows_shaped(&({}), &[{}]){}",
+                                    inner,
+                                    r.iter().map(|n| format!("{}_usize", n)).collect::<Vec<_>>().join(", "),
+                                    self.or_stop()
+                                ),
+                                _ => format!("crow_runtime::tensor::CrowTensor::from_elements(&({})){}", inner, self.or_stop()),
+                            }
                         }
                         // a list of lists of numbers is a matrix as a list of
                         // rows is: each list a row, every row one length, or
@@ -2011,6 +2025,18 @@ impl Emitter {
         } else {
             (format!("|__item_{}|", var), format!("let {v} = __item_{v}.clone(); ", v = var))
         };
+        // a parallel loop goes through the runtime, which works the first
+        // item where the loop is and shares the rest only where that is
+        // worth the pool (crow_runtime::cores::worth_sharing; a loop over
+        // ten flags called 20,000 times had waited on the pool at each
+        // call; Rosetta Code, Average loop length)
+        let shared = |kernel: &str, closure: String| -> String {
+            if consumes {
+                format!("{}_owned({}, {})", kernel, iter_str, closure)
+            } else {
+                format!("{}_ref(&({})[..], {})", kernel, iter_str, closure)
+            }
+        };
 
         if let Some((cond, val)) = Self::filter_parts(body) {
             self.push_scope();
@@ -2024,7 +2050,10 @@ impl Emitter {
                 vt = Ty::Str;
             }
             self.pop_scope();
-            return Self::on_cores(format!("{}.{}().filter_map({} {{ {}if {} {{ Some({}) }} else {{ None }} }}).collect::<Vec<{}>>()", iter_str, method, param, rebind, c, v, vt.to_rust_type()), use_par);
+            if use_par {
+                return shared("crow_runtime::cores::collect", format!("{} {{ {}if {} {{ Some({}) }} else {{ None }} }}", param, rebind, c, v));
+            }
+            return format!("{}.{}().filter_map({} {{ {}if {} {{ Some({}) }} else {{ None }} }}).collect::<Vec<{}>>()", iter_str, method, param, rebind, c, v, vt.to_rust_type());
         }
 
         // a body that yields on some paths only, or from the arms of a
@@ -2059,7 +2088,10 @@ impl Emitter {
             let closure_body = std::mem::replace(&mut self.out, saved_out);
             self.indent = saved_indent;
             let pad = "    ".repeat(self.indent);
-            return Self::on_cores(format!("{}.{}().flat_map_iter({} {{\n{}{}}}).collect::<{}>()", iter_str, method, param, closure_body, pad, list_ty.to_rust_type()), use_par);
+            if use_par {
+                return shared("crow_runtime::cores::collect", format!("{} {{\n{}{}}}", param, closure_body, pad));
+            }
+            return format!("{}.{}().flat_map_iter({} {{\n{}{}}}).collect::<{}>()", iter_str, method, param, closure_body, pad, list_ty.to_rust_type());
         }
 
         // the body's statements, then its last value
@@ -2110,7 +2142,10 @@ impl Emitter {
         let closure_body = std::mem::replace(&mut self.out, saved_out);
         self.indent = saved_indent;
         let pad = "    ".repeat(self.indent);
-        Self::on_cores(format!("{}.{}().map({} {{\n{}{}}}).collect::<Vec<{}>>()", iter_str, method, param, closure_body, pad, last_type.to_rust_type()), use_par)
+        if use_par {
+            return shared("crow_runtime::cores::map", format!("{} {{\n{}{}}}", param, closure_body, pad));
+        }
+        format!("{}.{}().map({} {{\n{}{}}}).collect::<Vec<{}>>()", iter_str, method, param, closure_body, pad, last_type.to_rust_type())
     }
 
     /// A parallel loop run on the cores `cpu[…]` allows where it starts

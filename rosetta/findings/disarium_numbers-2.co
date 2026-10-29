@@ -1,0 +1,32 @@
+--- Finding (disarium_numbers): inside a function, a map whose values are lists of
+--- growing ints (`10 ^ i` with `i` a parameter: an int that may pass 64 bits), first
+--- written as a one-item literal `[x]` and then grown with `push`, is an internal error
+--- in both modes before the program runs.
+---
+--- crow run -i and crow run (both):
+---     internal error: the lowered program disagrees with itself — a bug in Crow, not in
+---     this program: fn table_of: line 25: returns Map(Int, Tensor(Int, [?])) from a body
+---     typed Map(Int, List(Int))
+--- Expected: [1 = [10, 100, 10]]
+---
+--- The same lines at the top level run (both modes print the expected map), and so does
+--- the function when the ints are known to fit 64 bits (`10 ^ i` for `i` in `range[3]`).
+--- Likely the root of abundant_odd_numbers-1 (a literal list holding a growing int is
+--- typed a tensor of ints), met here at a map's value inside a function, where it is an
+--- internal error rather than a stop. Workaround (runs in both modes):
+--- `table[1] = push[[], x]` in place of `table[1] = [x]`.
+fn table_of[xs]
+    table = map[]
+    for x in xs
+        if 1 not in table
+            table[1] = [x]
+        else
+            table[1] = push[table[1], x]
+    return table
+
+fn big[i]
+    return 10 ^ i
+
+xs = for i in [1, 2, 1]
+    big[i]
+log[table_of[xs]]

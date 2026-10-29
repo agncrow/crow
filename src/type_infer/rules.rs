@@ -62,7 +62,7 @@ impl TypeContext {
             // parameter of a function handed `may[1, …]`, and that guess
             // stayed: the compiled program handed an int where a column
             // was taken)
-            if self.awaits_clones(name) {
+            if self.awaits_clones(name) || self.stale_answers.contains(name) {
                 return Ty::Unknown;
             }
             return sig.return_type.clone();

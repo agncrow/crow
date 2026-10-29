@@ -1,0 +1,43 @@
+--- A function with two returns, a one-item list literal of its list parameter
+--- (`return [items]`) and a list of `concat[[x], p]` results, is an internal error
+--- in both modes: the two returns are typed List(List(Int)) and List(Tensor(Int)), and
+--- nothing joins them. The classic recursive permutations function hits it.
+---
+--- Interpreted (crow run -i) and compiled (crow run) alike, exit 1, nothing printed:
+---     determinant_and_permanent-1.co: internal error: the lowered program disagrees
+---     with itself — a bug in Crow, not in this program: fn perms: line 41: returns
+---     List(Tensor(Int, [?])) from a body typed List(List(Int))
+--- Expected (both modes):
+---     [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]]
+---
+--- `crow build --ir` of the recursive branch alone: `[items[0]]` is a literal, so a
+--- Tensor(Int, [1]), and `concat` of it and a List(Int) is `core.concat_tensors`,
+--- a Tensor(Int, [?]); the base case `[items]` is List(List(Int)). The spec (A function
+--- answers one kind): "a tensor where one return is a list of numbers" — the join is
+--- not made one level down.
+--- The same family as findings/cartesian_product_of_two_or_more_lists-1.co and
+--- findings/christofides_algorithm-4.co (a literal list of ints is a tensor, a list
+--- grown by push a list), at a new site: a function's returns. Another form of it:
+---     fn wrap[items]
+---         if len[items] lt 2
+---             return [items]
+---         found = []
+---         found = push[found, items]
+---         return found
+---     log[wrap[[0, 1, 2]]]
+--- is "fn wrap: line 6: returns List(Tensor(Int, [3])) from a body typed
+--- Tensor(Int, [?, 3])" (here `[items]` of a literal's tensor is a matrix), while
+--- `wrap[range[3]]` runs. Worked around with `push[p, items[i]]` (the item after
+--- the rest's ordering), which stays a List(Int).
+
+fn perms[items]
+    if len[items] lt 2
+        return [items]
+    found = []
+    for i in range[len[items]]
+        rest = concat[slice[items, 0, i], slice[items, i + 1, len[items]]]
+        for p in perms[rest]
+            found = push[found, concat[[items[i]], p]]
+    return found
+
+log[perms[range[3]]]

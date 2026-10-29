@@ -1,0 +1,16 @@
+--- An empty list at the top level, pushed the answer of a user function, then joined:
+--- refused in both modes, a correct program.
+---   15:9: push[] takes a list and an item of its kind: its items are text, not a number
+--- Expected: 6 (the interpreter and the compiled program both refuse before running).
+--- The same lines inside a function run and print 6; so do `log[shown]` in place of the
+--- join, `push[shown, 3 * 2]` in place of the call, and `shown = [triple[2]]`. Any
+--- function shows it (`3 * m`, `3 ^ m`, `m ^ 3`), and so does a loop of pushes
+--- (`for i in range[3]` / `shown = push[shown, triple[i]]`). It looks as if `join` types
+--- the empty list's items as text before the call's answer is typed.
+
+fn triple[m]
+    return 3 * m
+
+shown = []
+shown = push[shown, triple[2]]
+log[join[shown, ' ']]

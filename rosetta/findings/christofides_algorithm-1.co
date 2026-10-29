@@ -1,0 +1,32 @@
+--- A function called at two signatures from inside another function, with the
+--- caller's own parameter among its arguments, has its two answers put into a
+--- record's fields: both fields are typed by one copy's answer, and the correct
+--- program is refused, in both modes.
+---
+--- crow run -i and crow run: refused before it runs:
+---     christofides_algorithm-1.co:28:5: S's field 'a' holds a list of bools, and this
+---     is numbers: a field holds one kind, as a variable does
+--- Expected (both modes):
+---     [0, 0]
+---     [false, false]
+---
+--- Fine: the same record built at the top level (`n = 3`, then
+--- `S[pair[n, 0], pair[n, false]]`); inside the function with a literal in place of
+--- the parameter (`pair[3, 0]`); the answers held in locals and logged, never put in
+--- a record. Still refused: the answers in locals first, then `return S[a, b]`; a
+--- helper that uses its `n` (`for i in range[n]` / `value`). With 'x' in place of
+--- false the message says "a list of text". Found writing rosetta's Christofides
+--- algorithm: a matching's state record built with `filled[2 * n, 0]`,
+--- `filled[2 * n, -1]` and `filled[2 * n, false]` (55 mistakes reported, all from this).
+
+struct S [a, b]
+
+fn pair[n, value]
+    return [value, value]
+
+fn make[n]
+    return S[pair[n, 0], pair[n, false]]
+
+s = make[3]
+log[s.a]
+log[s.b]

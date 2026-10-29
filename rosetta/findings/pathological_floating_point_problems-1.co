@@ -1,0 +1,31 @@
+--- Finding (pathological_floating_point_problems): inside a function, a local variable
+--- named like a name an imported module owns (math's function `mean`, its constant `e`)
+--- is accepted and shadows it, in both modes, where the spec refuses it at the
+--- definition (Names Are Never Ambiguous, rule 1: "A variable, function, view, struct,
+--- parameter, or loop variable that collides with a name the language or an imported
+--- module owns is a compile error at the definition line", with `e = 100` as its
+--- example). The same names are refused as a top-level variable, as a parameter and as
+--- a loop variable ("'e' is a math constant (imported on line 1) — rename the
+--- parameter, or import qualified: use math as m"), and a local named like a core
+--- builtin is refused inside a function ("'len' is a core builtin — pick another name
+--- for this variable"): only a local's check skips the module's names.
+---
+--- crow run -i and crow run alike: prints 20, then 8 — `mean[1]` indexes the local
+--- list, the silent reading the rule is there to prevent (delete the assignment and
+--- the same line calls math's mean).
+--- Expected: refused at lines 23 and 27: 'mean' is provided by math (line 20) …, and
+--- 'e' is a math constant (imported on line 20) …
+--- (Found writing e as a sum of 1/k! with a local `e` in a function: the top-level
+--- `e = …` of the same program was refused, the local was not.)
+use math
+
+fn middle[xs]
+    mean = [10, 20, 30]
+    return mean[1]
+
+fn twice[k]
+    e = k + 1
+    return e * 2
+
+log[middle[[1.0, 2.0]]]
+log[twice[3]]

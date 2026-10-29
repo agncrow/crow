@@ -1,0 +1,16 @@
+--- Finding (distance_and_bearing): math's atan2 of two plain numbers is refused before the
+--- program runs, in both modes, while every one-argument trig function takes a plain
+--- number (sin, cos, tan, asin, acos, atan each have a number row beside the tensor row;
+--- atan2 has only `(Tensor, Tensor) -> Tensor`, src/table.rs "math.atan2"). The spec
+--- writes atan2 as sin is written ("Element-wise two-argument arctangent"), and the
+--- message reads as if it were given the wrong kind ("numbers" and "a number").
+---
+--- crow run -i and crow run (both):
+---     line 16:5: atan2[] takes numbers and numbers, got a number and a number
+--- Expected: 0.7853981633974483 (as math.atan2(1.0, 1.0) in Python, and as
+---     atan2[[1.0], [1.0]][0] prints in both modes, which is the workaround)
+--- (a04's averages_mean_angle met it too and noted it in its status line.)
+use math
+log[sin[1.0]]
+log[asin[0.5]]
+log[atan2[1.0, 1.0]]

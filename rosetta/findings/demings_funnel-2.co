@@ -1,0 +1,37 @@
+--- An item of a list of functions handed to a function that applies it: interpreted
+--- right, compiled it does not build — the dispatch's answer is left of no known kind.
+---
+--- Interpreted (crow run -i): prints
+---     2
+---     3
+---     15
+--- Compiled (crow run): the program does not build:
+---     error[E0308]: mismatched types
+---       --> src/main.rs:36:12
+---     error: the compiled program does not build — the Rust compiler refused what Crow
+---     accepted, a bug in Crow, not in this program (`crow run -i` runs it meanwhile)
+--- Expected: the interpreter's output.
+---
+--- `crow build --ir`:
+---     pure apply_to(f: Fns(double, triple), v: Int) -> ?
+---       let _t1: Int = 0
+---       ... _t1 = call double(v) ... _t1 = call triple(v)
+---       return _t1
+--- The answer is `?` though both members answer Int, and the emitter prints
+--- `fn apply_to(f: String, v: i64) -> String` returning `_t1: i64`. (The direct calls
+--- `double[1]`, `triple[1]` are there to type the parameters: without them the program
+--- is refused, findings/call_a_function-1.co.)
+
+fn double[x]
+    x * 2
+
+fn triple[x]
+    x * 3
+
+fn apply_to[f, v]
+    f[v]
+
+log[double[1]]
+log[triple[1]]
+fs = [double, triple]
+log[apply_to[fs[1], 5]]

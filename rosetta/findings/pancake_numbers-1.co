@@ -1,0 +1,23 @@
+--- Finding: inside a function, a variable holding a literal list of ints, read into
+--- another variable in a loop and then reassigned a list grown by push from [], is
+--- an internal error in both modes.
+--- Interpreted and compiled alike: "internal error: the lowered program disagrees
+--- with itself — a bug in Crow, not in this program: fn f: line 18: 'last' holds
+--- Tensor(Int, [1]) but is assigned List(Int)".
+--- Expected: 5 (round 0 copies [3], round 1 copies [5]).
+--- The same lines at the top level print 5 in both modes; so does the function
+--- without the loop, or with `level = [5, 6]` (a literal) in place of the push, or
+--- with `level = push[level, 5]`. Starting with `level = push[[], n]` avoids it.
+--- (In a breadth-first search the next level is built by push from [] while the
+--- level before it is kept: pancake_numbers.co.)
+fn f[n]
+    level = [n]
+    last = [0]
+    rounds = 0
+    while rounds lt 2
+        last = level
+        level = push[[], 5]
+        rounds = rounds + 1
+    return last[0]
+
+log[f[3]]

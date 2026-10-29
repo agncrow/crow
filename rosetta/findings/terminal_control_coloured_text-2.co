@@ -1,0 +1,27 @@
+--- Finding (terminal_control_coloured_text): at the top level, a value that can
+--- fail written by key into a map whose values are plain text is refused before
+--- the program runs, with words that blame the map's first line:
+---
+--- crow run -i and crow run alike (exit 1):
+---     p.co:25:1: cannot reassign 'm' from map[result[str]] to map[str] — variable
+---     type cannot change
+---       25 │ m = map[k = 'v']
+--- Expected (spec, "A write lands at one position": the position may be a map's
+--- key, and "a value that can fail is decided where it is written"), in both
+--- modes:
+---     [k = 'yes']
+--- as the list written by position runs (`xs = ['a']` / `xs[0] = maybe[1]` prints
+--- ['yes'], and `maybe[0]` there stops with "cannot assign an error value to
+--- 'xs' — no"). An empty map whose first write is the failing value (`m = map[]`)
+--- runs (a map of values that can fail), as does `m = set[m, 'k', maybe[1]]`.
+--- Perhaps the same root as -1.co (the write by key types the map's values as
+--- values that can fail); the known open finding about a list of text
+--- reassigned a list whose items can fail has the same words.
+fn maybe[n]
+    if n gt 0
+        return 'yes'
+    return error['no']
+
+m = map[k = 'v']
+m['k'] = maybe[1]
+log[m]

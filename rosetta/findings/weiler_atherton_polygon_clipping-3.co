@@ -1,0 +1,38 @@
+--- A function with two returns of different kinds — a guard that hands back the
+--- list it guards (`if not points.ok` / `return points`, a list of records) and a
+--- list of lists from a call (`return singles[points]`) — is refused with messages
+--- about field reads in ANOTHER function, not about the returns:
+---
+--- Interpreted and compiled alike (exit 1, nothing run):
+---     <file>:27:20: a list has no field 'x': `.x` is a record's field or a frame's
+---     column — index an item for its own
+---       27 │     return Point[p.x + 1, p.y]
+---     <file>:27:29: a list has no field 'y': …
+---     2 mistakes
+--- Expected: the one-kind refusal at the return, which the same program gives once
+--- `pieces` is called (`log[pieces[[Point[1, 2], Point[3, 4]]]]`, directly or from
+--- another function): "38:5: returns a list where the function answers a list of
+--- records — a function answers one kind". Here `pieces` is not called (it is still
+--- lowered, its parameter untyped), and the conflicting answer seems to retype
+--- `points` as a list of lists, so `shifted`'s `p` is a list. In
+--- rosetta/weiler_atherton_polygon_clipping.co, where the clipper IS called, guards of
+--- the same shape (`if not c.ok` / `return c` before `return walk[…]`) gave 13 such
+--- refusals in six other functions (minus, inside, check_corners, crossings,
+--- with_crossings, shown) and none at the returns; the solution guards with
+--- `return error[…]`, which has no kind of its own.
+
+struct Point [x, y]
+
+fn shifted[p]
+    return Point[p.x + 1, p.y]
+
+fn singles[points]
+    out = []
+    for p in points
+        out = push[out, [shifted[p]]]
+    return out
+
+fn pieces[points]
+    if not points.ok
+        return points
+    return singles[points]

@@ -1,0 +1,24 @@
+--- Finding (k_d_tree): a function that answers 0 (none) on one path and a
+--- record on another is refused, in both modes, before the program runs:
+---   k_d_tree-1.co:21:5: returns a record where the function answers an int —
+---   a function answers one kind
+--- (with the returns the other way round: "returns an int where the function
+--- answers a record").
+--- Expected: Node[next = 0, v = 3] then 0. The spec (A Record or None): "What
+--- holds a record or 0 is a record or none: such a field, a variable first
+--- given 0 and later a record (or the other way), a function's parameter
+--- handed either, and a function's value answering either". The variable form
+--- is accepted and runs in both modes — `t = 0`, `if n gt 0` / `t = Node[n, 0]`,
+--- `return t` — and so is answering a parameter that holds 0 (avl_tree's
+--- `if t eq 0` / `return t`); only the literal 0 beside a record is refused.
+--- A tree builder, `if len[points] eq 0` / `return 0` before the node's
+--- `return KdNode[…, build[below], build[above]]`, meets it first.
+struct Node [v, next]
+
+fn single[n]
+    if n eq 0
+        return 0
+    return Node[n, 0]
+
+log[single[3]]
+log[single[0]]

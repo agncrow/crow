@@ -1,0 +1,21 @@
+--- A stray word after an `if`/`while` condition is refused with a message that
+--- misleads: the block DOES have an indented body. Written by a Perl/Fortran/
+--- shell reflex (`ge` for `gte`, `le` for `lte`); any word does it (`k foo 0`).
+---
+--- Interpreted (crow run -i) and compiled (crow run), the same refusal:
+---   imaginary_base_numbers-1.co:17:10: the block opened on line 17 has no indented body — indent its lines under it
+---     17 │     if k ge 0
+---        │          ^^
+--- Expected: words that name the real problem, as the other forms already do:
+---   `x = k ge 0` says "a line holds one statement — 'ge' starts a second one:
+---   put it on a line of its own", and `if k >= 0` says "Crow uses the word
+---   'gte', not '>=': a gte b." `ge`, `le` (and `geq`, `leq`?) would deserve the
+---   teaching error `>=` gets; at the least the condition's stray word should be
+---   named, not the (present) body called missing. Same for `while k ge 0`.
+
+fn f[k]
+    if k ge 0
+        return 1
+    return 0
+
+log[f[2]]

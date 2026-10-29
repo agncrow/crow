@@ -126,9 +126,11 @@ history says the rest.
   takes a matrix of ints and one of floats as floats (400); a list pushed
   onto another before its own items are known (383), an item written
   through a record's field (385) and a local a collecting loop yields
-  (387) are typed by what is written later; a tensor given a list in a
-  loop stays a tensor (372). Each had been an internal error in both
-  modes or a compiled program that did not build.
+  (387) are typed by what is written later; whole numbers a loop gives a
+  list of ints are a list of ints from their declaration, read so on a
+  line above that assignment too, and a tensor of floats given a list
+  stays the tensor (372). Each had been an internal error in both modes
+  or a compiled program that did not build.
 - Failures: a value that can fail written into a field made plain holds
   the failure (362); written by position inside a function it is handed
   back (363); a loop over a list that can fail walks its items (364);
@@ -221,7 +223,13 @@ history says the rest.
   the numbers they name where they lie: each had copied its whole source
   (1,000 gathers of 3 numbers from 4,000,000 took 2.3 s, now 0.001), and
   a walk of a matrix's rows had copied the matrix once per row (Rosetta
-  Code, Facial detection in a photo). A `return` inside a `for` hands
+  Code, Facial detection in a photo). A parallel collecting loop works
+  its first item where it stands and hands the rest to the cores only
+  where their time is worth the pool's round trip (`cores::worth_sharing`,
+  both modes): a loop over ten flags called 20,000 times had waited on
+  the pool at every call, 1 to 4 s interpreted where the loop in order
+  took 0.02 (Rosetta Code, Average loop length); a loop of heavy items
+  still runs on every core. A `return` inside a `for` hands
   back what the loop walks beside its item as it did (420), and a loop
   walks what its body assigns anew as the loop began, where the compiled
   program had not built (421). A parsed JSON whole number past a signed
@@ -233,8 +241,38 @@ history says the rest.
   four digits or more, `-0005-06-01`, `+10000-01-01`, as `fmt`'s date
   style writes it — and reads back as the moment: the sign had counted
   among four digits and read back a day off, and a year past 9999 had not
-  read back (424).
-- Refused before the program runs (errors j98–k09): a field the record
+  read back (424). A function answering a record on one path and `0` on
+  another answers a record or none, as the spec says, where it had been
+  refused as two kinds (425). A list of numbers met in arithmetic with a
+  number is a vector of one axis, so a loop walks it and an index reads
+  it, where its rank had been unknown and both were refused (426). A
+  variable or a parameter named like web's or the test harness's forms
+  (`stream`, `box`) is indexed, where its index had been read as the form
+  (428).
+  `eigen` answers two vectors, as its row now declares: the imaginary
+  parts had been declared a matrix, and a read of one stopped (427). A
+  list of no rows handed where a matrix is taken is a matrix of none, of
+  the row shape the program's type states, where it had been a vector of
+  no numbers whose rows the reader refused (429). A function handed as a
+  value where a list of ints is answered answers that list, where a later
+  round had reformed it to its body's vector and `concat` met the vector
+  (430). A parsed value set into a map that holds nothing yet is held as
+  it is, where a row of sys's — which no program imports — had made it an
+  int (431). A function called with a list of ints and with a list of
+  records is two copies, where one copy's list of records or none had
+  taken the ints unconverted (432). A function taking a function, handed
+  one answering a truth that can fail and, at another call, one answering
+  a plain truth, holds the parameter both fill, where the plain one had
+  made it its own and the program did not build compiled (433). A
+  function held in a record's field is typed by the calls made through
+  the field — there, through a local read from it, or where it is handed
+  to a function taking one — where it had been refused as a function
+  nothing calls (437); so are functions put in a list one at a time, by
+  the calls through its items (436). A record made in a function of the
+  answers of two calls of one function at two kinds holds each copy's
+  answer, where the first round's answer, read with the kind the later
+  call gave, had stayed in the field and the program was refused (435).
+- Refused before the program runs (errors j98–k15): a field the record
   does not declare, written; a name declared twice (functions, records);
   a function value compared (`eq` had compared by name interpreted and
   by address compiled); a function named `contains` or `has`, which no
@@ -247,7 +285,19 @@ history says the rest.
   given one (no rounds interpreted, no build compiled). A fault inside a
   string's interpolation is placed at the string's line (k07): it had
   been shown on line 1. A list a builtin takes no row of is named by its
-  items' kind (k09): `sort` of fractions had said `got a list`.
+  items' kind (k09): `sort` of fractions had said `got a list`. A value
+  missing at an interpolation's end says the interpolation's end, not the
+  file's (k10), and a call that answers nothing is named so in a
+  refusal, where it had been `void` (k11); `concat` of a list of rows and
+  a matrix names the matrix and says how to join one (k12); a function
+  taking a function called with lists of two record kinds names the two
+  kinds, where both had read "a list of records" (k13), and one called
+  with a list of ints and a list of records is refused so too, where it
+  had been an internal error (k14). A record's field given two kinds by a
+  function's two copies is refused once, naming both — a list's items said
+  as they would be alone, `a list of lists of fractions that can fail` —
+  where its joined type had grown a level each round of inference, 79
+  deep in the next message (k15).
 
 - Magpie measured after the port to Crow (docs/magpie-in-crow.md, 4.2),
   and what the measures found. The sequencer's flush claims the pending

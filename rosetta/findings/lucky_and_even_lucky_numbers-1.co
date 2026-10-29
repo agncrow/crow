@@ -1,0 +1,46 @@
+--- Finding: the answer of a function that only fails is typed as nothing ("void"),
+--- so arithmetic on it is refused with words that mislead.
+---
+--- The spec (section 7) allows a function that only fails ("A function that answers
+--- nothing, or only fails (`return error[…]`), may end anywhere"), and reading its
+--- answer works in both modes (`v = always_fails['3']`, then `v.ok` is false and
+--- `v.reason` is 'bad'). But handing that answer to an operator is refused before
+--- the program runs, in both modes (crow run -i and crow run), with:
+---
+---     lucky_and_even_lucky_numbers-1.co:46:23: cannot use '+' with void and int
+---       46 │ log[always_fails['3'] + 1]
+---         │                       ^
+---
+--- 'void' is the word for a call that answers nothing; this call answers an error
+--- value, which by auto-propagation would make the sum that error (the program
+--- would stop on it at run time, as `log` of any failed sum does). Expected: the
+--- program accepted, or refused with words that say the function only fails.
+---
+--- How it was met (lucky_and_even_lucky_numbers): a cascade. A helper ended in a
+--- statement `for` (so it answers nothing, which Crow rightly refuses at the line
+--- `words = words_of[line]`); the void then reached a helper that can only fail
+--- when handed a void (`n = int[word]` / `if not n.ok` / `return error[…]` / `n`),
+--- whose answer was typed void, and a SECOND mistake was reported at a line with
+--- no fault: `r.j + 1` far below, "cannot use '+' with void and int". The cascade
+--- form, as 15 lines:
+---
+---     fn nothing[]
+---         for x in ['1', '2']
+---             x
+---     fn number_of[word]
+---         n = int[word]
+---         if not n.ok
+---             return error['bad', 'argument']
+---         n
+---     fn get[]
+---         words = nothing[]
+---         number_of[words[0]]
+---     log[get[] + 1]
+---
+--- reports "nothing[] answers nothing, which 'words' cannot hold" (right) and then
+--- "cannot use '+' with void and int" at `get[] + 1` (misleading: 2 mistakes for 1).
+
+fn always_fails[word]
+    return error['bad', 'x']
+
+log[always_fails['3'] + 1]

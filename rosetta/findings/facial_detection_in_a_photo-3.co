@@ -1,0 +1,24 @@
+--- Finding (facial_detection_in_a_photo): `concat` of a list literal whose text interpolates a
+--- value that can fail with a list of plain text does not build compiled.
+---
+--- Interpreted (crow run -i): prints
+---     a crow b
+--- Compiled (crow run):
+---     error[E0308]: mismatched types
+---     error: the compiled program does not build — the Rust compiler refused what Crow
+---     accepted, a bug in Crow, not in this program (`crow run -i` runs it meanwhile)
+--- Expected: "a crow b" in both modes.
+--- The generated Rust: `let lines: Vec<CrowResult<String>> = crow_runtime::core::concat(
+--- (vec![CrowResult { … format!("a {}", …) … }]), &(vec!["b".to_string()])[..])` — the
+--- second list is not made a list of values that can fail (or the first's items decided).
+--- Akin to findings/christofides_algorithm-2.co (concat of 64-bit ints with growing ints),
+--- another pair of item kinds. Met writing an SVG: a header line naming a file whose name
+--- came from a function that can fail, concatenated with the lines that draw the boxes.
+fn named[t]
+    if t eq ''
+        return error['no name']
+    return t
+
+name = named['crow']
+lines = concat[['a `name`'], ['b']]
+log[join[lines, ' ']]

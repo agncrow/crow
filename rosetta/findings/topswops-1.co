@@ -1,0 +1,23 @@
+--- A list of lists of whole numbers written down, grown by push of a list of
+--- ints made another way (a range, or a variable holding a literal list) is
+--- refused before the program runs, in both modes, as a reassignment.
+---
+--- Interpreted (crow run -i) and compiled (crow run), the same refusal:
+---   topswops-1.co:21:1: cannot reassign 'decks' from array to array[array[int]] — variable type cannot change
+---     21 │ decks = [[2, 4, 1, 3]]
+--- Expected: [[2, 4, 1, 3], [0, 1, 2, 3]]
+---
+--- Variants refused the same way (both modes):
+---   cards = [2, 4, 1, 3]
+---   decks = [cards]                      --- "cannot reassign 'decks' from
+---   decks = push[decks, cards]           --- array[array[int]] to array", at line 2
+--- and in a function, `decks = [cards]` of a parameter given a literal list,
+--- then `decks = push[decks, cards]` ("from array to array[array[int]]", at
+--- the push). Starting from `decks = []` and pushing the first deck works.
+--- Related to the fixed "rows of whole numbers written down ([[1]] grown)" and
+--- the open "concat of a list of 64-bit ints and a list of growing ints", but
+--- with push of a range or of a variable's list.
+
+decks = [[2, 4, 1, 3]]
+decks = push[decks, range[4]]
+log[decks]

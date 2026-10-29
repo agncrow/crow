@@ -1,0 +1,7 @@
+--- An interpolation's text ends where its backtick does: a value missing
+--- at its end is placed at the string's line and says the interpolation's
+--- end, where it had been placed on line 1 and said the end of the file
+--- (Rosetta Code, Summarize and say sequence)
+
+x = 1
+log['a `x +` b']

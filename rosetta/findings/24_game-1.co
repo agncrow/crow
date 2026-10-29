@@ -1,0 +1,30 @@
+--- A list of ints read from text (each `int[w]`, a value that can fail) handed whole where
+--- numbers are taken — sort, sum, max, mean, or `eq` with a list — does not build compiled.
+---
+--- Interpreted (crow run -i): prints
+---     [1, 2, 3]
+---     6
+---     true
+--- Compiled (crow run): the program does not build:
+---     error[E0605]: non-primitive cast: `crow_runtime::int::Int` as `f64`
+---       --> src/main.rs:43:354
+---     error: the compiled program does not build — the Rust compiler refused what Crow
+---     accepted, a bug in Crow, not in this program (`crow run -i` runs it meanwhile)
+--- Expected: the same output as interpreted. The spec's "for as Expression" names this very
+--- case as fixed ("A list whose items can fail, handed whole to a function that takes numbers
+--- (`sum[nums]`, `mean[nums]`), is its numbers … (Compiled, it did not build.)"), with
+--- `nums = for s in [...]` / `int[s]` as its example.
+---
+--- The list is `Vec<CrowResult<crow_runtime::int::Int>>` (`int[text]` answers the growing
+--- int), and the conversion to a tensor writes `_v.push(_x.value as f64)`, which a growing
+--- Int cannot take; each of sort, sum, max, mean and `nums eq [3, 1, 2]` fails alone.
+--- Found writing rosetta/24_game.co (the digits a player's expression uses, sorted to be
+--- compared with the digits dealt).
+
+use math
+
+nums = for w in ['3', '1', '2']
+    int[w]
+log[sort[nums]]
+log[sum[nums]]
+log[nums eq [3, 1, 2]]

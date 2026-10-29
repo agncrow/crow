@@ -1,0 +1,13 @@
+--- Finding (sealed_classes_and_methods): a struct declared twice in one program is not
+--- refused, and the two modes disagree:
+---   crow run -i: prints P[a = 1, b = 2] (the second declaration silently wins)
+---   crow run:    error[E0428]: the name `P` is defined multiple times --> src/main.rs
+---                error: the compiled program does not build — the Rust compiler refused
+---                what Crow accepted, a bug in Crow
+--- Expected: refused before the program runs, in both modes, at the second declaration
+--- ('P' is already a record of this program, line 11) — "Names Are Never Ambiguous".
+--- (The same with a function declared twice runs alike in both modes, the later one
+--- silently winning: sealed_classes_and_methods-2.co.)
+struct P [a]
+struct P [a, b]
+log[P[1, 2]]

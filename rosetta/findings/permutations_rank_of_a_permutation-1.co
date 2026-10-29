@@ -1,0 +1,18 @@
+--- Under `use math as m`, bare names math owns still resolve to math: a core builtin
+--- (`min[30, 4]`) and a program's own variable named like one of math's functions (`sum`,
+--- `where`) are refused, in both modes, before the program runs:
+---   16:1: 'min' comes from math which was imported as 'm' — call m.min[...]
+---   18:1: 'sum' comes from math which was imported as 'm' — call m.sum[...]
+--- (the assignment `sum = [1, 2]` itself passes; its read `sum[0]` is refused, as `where[i]`
+--- of a local `where` is). Expected: the spec's Aliased Imports — "nothing enters your bare
+--- namespace except the alias itself", with `use math as m` / `sum = 0 --- legal` as its
+--- example — so this prints 4, then 1. Without the import both lines run (4, 1).
+--- Likely the same root as the known "under `use math as m` a program's own `fn rank` is
+--- refused as math's", here reaching a core builtin and a variable. Found writing
+--- permutations_rank_of_a_permutation (worked around: `use math` bare, `fact` and `place`).
+use math as m
+
+m.seed[1]
+log[min[30, 4]]
+sum = [1, 2]
+log[sum[0]]

@@ -1,0 +1,48 @@
+--- Finding (mutex): two revisions of process memory that each revise the other's
+--- name -- one thread revising 'a' then, inside its function, 'b'; another 'b'
+--- then 'a' -- deadlock the compiled program: it hangs for good. The interpreter
+--- runs later's work inline and prints the answer.
+---
+--- crow run -i:  a = 2, b = 2   (in 0.4 s)
+--- crow run:     prints nothing and never ends (killed after 20 s; the two later
+---               threads each hold one name's lock and wait for the other's; the
+---               killed crow run leaves the compiled program behind, waiting)
+--- Expected: the spec refuses a revision whose function reaches its OWN name
+--- ("refused, where it would wait on itself": a runtime stop, `memory: 'x' is
+--- being revised — a revision's function reaches only the record it is handed`),
+--- but says nothing of a second name, and a lock-order cycle through two names is
+--- the same wait on itself one step removed. Either refused or detected alike in
+--- both modes, or the spec should say a revision may take another name's lock and
+--- that names must be taken in one order. (A design question as much as a bug: a
+--- hang in one mode only. One nested revision of another name, never in a cycle,
+--- is useful -- multiton.co numbers its instances so.)
+use memory
+
+struct Value [n]
+
+fn plus[v, k]
+    return Value[v.n + k]
+
+fn then_b[v, k]
+    sleep[200]
+    _b = revise['b', Value[0], plus, k]
+    return Value[v.n + k]
+
+fn then_a[v, k]
+    sleep[200]
+    _a = revise['a', Value[0], plus, k]
+    return Value[v.n + k]
+
+fn first_a[]
+    _r = revise['a', Value[0], then_b, 1]
+
+fn first_b[]
+    _r = revise['b', Value[0], then_a, 1]
+
+later[first_a]
+later[first_b]
+while running[first_a] or running[first_b]
+    sleep[10]
+a = recall['a', Value[0]]
+b = recall['b', Value[0]]
+log['a = `a.n`, b = `b.n`']

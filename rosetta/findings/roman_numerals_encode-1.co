@@ -1,0 +1,30 @@
+--- `all`, `any` or `find` handed a predicate whose answer can fail (here the
+--- comparison reads a call that can fail, so `positive` answers a bool that can
+--- fail).
+---   interpreted: prints `true`; and a predicate that DOES fail counts as not
+---                passing, silently: all[[1, -2, 3], positive] is `false` (.ok
+---                true), any[[-1], positive] is `false`, find[[-1, 2], positive]
+---                is 2 — while `if positive[-1]` stops with "cannot branch on an
+---                error value — negative" (errors have no truth value).
+---   compiled:    does not build:
+---                error[E0308]: mismatched types  --> src/main.rs:52:194
+---                error: the compiled program does not build — the Rust compiler
+---                refused what Crow accepted, a bug in Crow, not in this program
+---                (the emitter writes `.all(|_x| positive(_x.clone()))` over a
+---                function answering CrowResult<bool>; any and find alike).
+--- Expected: both modes alike — a predicate that fails makes the builtin's
+--- answer that failure (as a call hands its argument's failure on), or the
+--- predicate refused before the program runs; the compiled program builds.
+--- Met in roman_numerals_encode: all[range[1, 4000], round_trips], where
+--- round_trips compares from_roman[to_roman[n]] with n and to_roman answers an
+--- error value below 1. Worked around there by guarding the failure first
+--- (`if not numeral.ok` / `return false`), so the predicate answers a plain bool.
+fn checked[n]
+    if n lt 0
+        return error['negative']
+    return n
+
+fn positive[n]
+    return checked[n] gt 0
+
+log[all[[1, 2, 3], positive]]

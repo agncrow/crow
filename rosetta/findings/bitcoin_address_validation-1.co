@@ -1,0 +1,19 @@
+--- Finding (bitcoin_address_validation): a variable named `bytes` — web's
+--- builtin, with `web` not imported — is bound, but indexing it is read as a
+--- call of web's row and refused, in both modes, with a fix that is wrong:
+---
+---   t.co:2:5: bytes[] is web's: add `use web`
+---     2 │ log[bytes[0]]
+---
+--- Expected: 1 (the index of the program's own list), or a refusal at the
+--- binding naming the clash, as a core name gets ('values' is a core builtin —
+--- pick another name for this variable). The binding itself is accepted:
+--- `bytes = [1, 2]` then `log[len[bytes]]` prints 2. Following the hint makes
+--- it worse: with `use web` the binding is refused ('bytes' is a web builtin
+--- (use web) — rename the variable) and the index too (bytes[] takes text, got
+--- an int). Another module's name that is not imported indexes fine:
+--- `stack = [1, 2]` then `log[stack[0]]` prints 1 (math's `stack`). The same
+--- refusal for a parameter (`fn first[bytes]` / `return bytes[0]`) and a loop
+--- variable (`for bytes in [xs]` / `log[bytes[0]]`).
+bytes = [1, 2]
+log[bytes[0]]

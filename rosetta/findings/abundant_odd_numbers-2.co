@@ -1,0 +1,42 @@
+--- Finding: the Fibonacci list grown from a literal, `fib = [0, 1]` then
+--- `fib = push[fib, fib[-1] + fib[-2]]`, goes wrong past 2^53 — silently
+--- interpreted, with an overflow compiled — so the modes disagree and
+--- neither is right.
+---
+--- Interpreted:
+---     2880067194370816000
+---     9223372036854775807
+---     9223372036854775807
+--- Compiled:
+---     runtime error: integer overflow in an addition
+--- Expected (Python's answers; spec: an int grows, and "a list or a map of
+--- ints handed one past 64 bits (`push[xs, 2 ^ 100]`) holds it"):
+---     2880067194370816120
+---     12200160415121876738
+---     354224848179261915075
+---
+--- `crow build --ir`: `let fib: Tensor(Int, [2]) = [0, 1]` and
+--- `let _t1: Int = proven((fib[-1] add fib[-2]))`, then
+--- `core.push_number(move fib, _t1)`: the literal stays a tensor, whose
+--- numbers the interpreter holds as floats (2^53 and past rounded, then read
+--- back saturated at 9223372036854775807), and the sum is taken as proven to
+--- fit in 64 bits, which the compiled program's checked add refutes.
+--- The spec's own example of a literal a function grows (Tensor
+--- Arithmetic: `q = [1]`, then `q = grow[q, k]` with `grow` pushing ints, "is
+--- a list of ints from its first line") fails the same way for factorials:
+---     fn grow[q, k]
+---         return push[q, q[-1] * k]
+---     … q = grow[q, k] for k in 1 … 29, then log[q[-1]]
+--- prints 9223372036854775807 interpreted and stops "integer overflow in a
+--- multiplication" compiled, where 29! is 8841761993739701954543616000000
+--- (IR: `core.push_number(q, proven((q[-1] mul k)))`).
+--- `fib = range[2]` in place of the literal gives the right answers in both
+--- modes; inside a function (`xs = [0, 1]` … `return xs`) it is the same
+--- bug. The pattern is the most common way a Rosetta solution keeps a
+--- sequence (Fibonacci, factorials, partition numbers …).
+fib = [0, 1]
+while len[fib] lt 101
+    fib = push[fib, fib[-1] + fib[-2]]
+log[fib[90]]
+log[fib[93]]
+log[fib[100]]

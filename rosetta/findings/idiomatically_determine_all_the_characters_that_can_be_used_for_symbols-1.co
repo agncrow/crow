@@ -1,0 +1,21 @@
+--- A top-level variable read before its first assignment, and assigned later,
+--- passes the lowering: the interpreter stops when it runs, and the compiled
+--- program does not build.
+---
+--- crow run -i:  runtime error: line 19: undefined variable 'n'   (exit 1)
+--- crow run:     error[E0425]: cannot find value `n` in this scope
+---                 --> src/main.rs:36:36
+---               error: the compiled program does not build — the Rust compiler
+---               refused what Crow accepted, a bug in Crow, not in this program
+--- crow build --ir accepts it (status 0) and prints the IR.
+--- Expected: refused before the program runs, in both modes, as the same read
+--- is when the name is never assigned (`log[n]` alone: "1:5: undefined variable
+--- 'n'") and as a function's local read before its assignment is ("undefined
+--- variable 'm'", both modes, before running). The same with a bare `n` line in
+--- place of `log[n]`. Found writing rosetta/idiomatically_determine_all_the_
+--- characters_that_can_be_used_for_symbols.co, whose probe program
+--- `zq` / `zq = 7` (a name split by a line break) was accepted by build --ir.
+
+log[n]
+n = 7
+log[n + 1]

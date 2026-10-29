@@ -1,0 +1,19 @@
+--- floor, ceil or round of a fraction answers an int typed as a growing int from the
+--- start (Ty::Big, `crow build --types` shows pick(m: Big)). A function handed one,
+--- whose body writes it into a variable first given 0, is refused in both modes:
+---
+---   cannot reassign 'answer' from int to int — variable type cannot change
+---
+--- Expected: 4 (an int is a whole number of any size, its width the compiler's own,
+--- and "from int to int" names no change at all). The same function handed floor[3.5],
+--- 2 ^ 100 or int['123456789012345678901234'] runs. At the top level the same write is
+--- refused as "from int to result[int]" (x = 0 then x = floor[f] with f = fraction[7,
+--- 2], a fraction being a value that can fail), while x = 0 then x = int['5'] runs.
+--- Found writing prime_reciprocal_sum (1 / remaining of an exact fraction); worked
+--- around by starting the variable from the parameter and keeping a flag.
+fn pick[m]
+    answer = 0
+    answer = m + 1
+    return answer
+
+log[pick[floor[fraction[7, 2]]]]

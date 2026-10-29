@@ -1,0 +1,48 @@
+--- A function that answers `[turned]` (a one-item list of a local holding a value
+--- that can fail) on one path and a list of lists from a call handed that local on
+--- another (`return split_up[turned]`) gives a WRONG ANSWER compiled: the second
+--- path's list comes back EMPTY.
+---
+--- Interpreted (crow run -i):
+---     [['c'], ['b'], ['a']]
+---     [['a']]
+--- Compiled (crow run):
+---     []
+---     [['a']]
+--- Expected: the interpreter's output in both modes.
+---
+--- `crow build --ir`: `pure pieces(words: List(Str)) -> Result(List(Result(List(Str))))`
+--- — `[move turned]` makes the answer a list of values that can fail, and
+--- `return call split_up(unwrap move turned)` hands a List(List(Str)) into it. The
+--- generated Rust converts that answer by building a new, empty list:
+---     return { let _r = { … CrowResult { ok: true, value: split_up(&_prop_0.value), … } };
+---              CrowResult { ok: _r.ok, value: Vec::<CrowResult<Vec<String>>>::new(), … } };
+--- With `return split_up[words]` (an argument that cannot fail) the program does not
+--- build instead (E0308), the conversion missing; so with two one-item lists, one of a
+--- local that can fail and one of a local a guard made good (`s = turned[a]`, `c =
+--- turned[b]`, `if not c.ok` / `return c`, then `return [s]` and `return [c]`). Found in
+--- rosetta/weiler_atherton_polygon_clipping.co: with the clipper's polygons turned into
+--- new locals (`s = from_outside[…]`, `return [s]` where nothing crosses, `return
+--- walk[…]` otherwise), the compiled program printed "0 polygons" for the task's
+--- polygons, where the interpreter (and every other entry) finds 2. Worked around there by
+--- unwrapping the turned polygon before it is answered in a list (see the solution).
+
+fn maybe_reversed[words]
+    if len[words] gt 9
+        return error['too many']
+    return reverse[words]
+
+fn split_up[words]
+    out = []
+    for w in words
+        out = push[out, [w]]
+    return out
+
+fn pieces[words]
+    turned = maybe_reversed[words]
+    if len[words] eq 1
+        return [turned]
+    return split_up[turned]
+
+log[pieces[['a', 'b', 'c']]]
+log[pieces[['a']]]

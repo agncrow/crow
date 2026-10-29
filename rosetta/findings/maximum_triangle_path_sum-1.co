@@ -1,0 +1,22 @@
+--- Finding (maximum_triangle_path_sum): a list literal holding a list whose items
+--- are growing ints — read by `int[text]`, which always answers the growing form,
+--- or computed (`2 ^ (k * 40)`) — is an internal error in both modes, before
+--- anything runs. Nothing else is needed: no 64-bit list beside it, no push.
+---
+--- crow run -i and crow run alike (exit 1, nothing printed):
+---   maximum_triangle_path_sum-1.co: internal error: the lowered program disagrees
+---   with itself — a bug in Crow, not in this program: maximum_triangle_path_sum-1
+---   main: line 21: a list of List(Result(Int)) holds an item of type List(Result(Big))
+--- Expected: [[1, 2]] in both modes.
+---
+--- The same: `row = for w in ['1', '2']` / `int[w]` then `[row]`; `x = int['1']`
+--- then `[[x]]`; `row = for k in range[3]` / `2 ^ (k * 40)` then `[row]` ("a list
+--- of List(Int) holds an item of type List(Big)"); inside a function. Runs:
+--- `best = []` then `best = push[best, row]`. The simplest form of the open
+--- findings facial_detection_in_a_photo-2 (such a list beside a list of 64-bit
+--- ints) and longest_common_subsequence-1 (a 64-bit list in the literal, a growing
+--- one pushed after): the literal's item type is the 64-bit form whatever it holds.
+--- Met parsing a triangle of numbers into rows, then starting a table `[rows[-1]]`.
+row = [int['1'], int['2']]
+best = [row]
+log[best]

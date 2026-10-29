@@ -1,0 +1,9 @@
+--- `concat` of a list of rows and a matrix joins two kinds: refused
+--- naming a matrix and saying how to join one, where the matrix had been
+--- called "numbers" (Rosetta Code, Maximum triangle path sum)
+
+m = [[1, 2], [3, 4]]
+xs = for x in [5, 6]
+    x
+both = concat[[xs], m]
+log[both]

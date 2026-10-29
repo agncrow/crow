@@ -1,0 +1,36 @@
+--- Finding (monads_list_monad): a list of 0s that a function writes records
+--- into by position — empty buckets made of zeros, as a variable first given 0
+--- and later a record holds a record or none — is no list of records or none:
+--- an item read from it is an int, so its field is refused.
+---
+--- crow run -i and crow run alike:
+---   monads_list_monad-4.co:26:15: an int has no field 'next'
+--- Expected: 2, 1, 0 — the items holding records or none, as a variable, a
+--- field or a parameter given 0 and a record does (spec, a record or none).
+--- (Found checking the fix for monads_list_monad-3: a list of ints and a list
+--- of records handed to one function are two copies since; a list of zeros
+--- meant as nones needs the list itself to hold a record or none.)
+
+struct Entry [key, next]
+
+fn insert[b, k]
+    h = k % len[b]
+    b[h] = Entry[k, b[h]]
+    return b
+
+fn chain[b, k]
+    n = 0
+    e = b[k % len[b]]
+    while e ne 0
+        n = n + 1
+        e = e.next
+    return n
+
+buckets = for i in range[4]
+    0
+buckets = insert[buckets, 5]
+buckets = insert[buckets, 9]
+buckets = insert[buckets, 2]
+log[chain[buckets, 1]]
+log[chain[buckets, 2]]
+log[chain[buckets, 3]]

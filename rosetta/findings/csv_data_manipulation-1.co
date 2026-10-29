@@ -1,0 +1,21 @@
+--- `window[t, col, 'sum']` and `window[t, col, 'max']` over an int column answer
+--- an int column whose cells are computed through floats: past 2^53 they are
+--- wrong, and the running max is a number no cell holds. Both modes alike:
+---     ['int', 'int', 'int']
+---     a = 9007199254740993, 1, 2
+---     run = 9007199254740992, 9007199254740992, 9007199254740996
+---     top = 9007199254740992, 9007199254740992, 9007199254740992
+--- Expected (spec, frame: "a window's cells are typed by what it computes — a
+--- sum, min or max in the column's kind"; an int is exact):
+---     run = 9007199254740993, 9007199254740994, 9007199254740996
+---     top = 9007199254740993, 9007199254740993, 9007199254740993
+--- `group[t, 'k', ['a', 'sum']]` of the same cells is exact (9007199254740994).
+use frame
+
+t = frame.new[a = [9007199254740993, 1, 2]]
+t.run = window[t, 'a', 'sum']
+t.top = window[t, 'a', 'max']
+log[t.dtypes]
+log[t.a]
+log[t.run]
+log[t.top]

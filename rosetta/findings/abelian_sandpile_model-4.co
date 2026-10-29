@@ -1,0 +1,26 @@
+--- Finding: a list whose items are of no known kind (an empty literal, or a
+--- collecting loop that collects nothing) indexed twice does not build
+--- compiled; the interpreter stops at the index, as it should.
+---
+--- Interpreted:
+---     runtime error: line 26: index 0 is out of range for an array of 0 items
+--- Compiled:
+---     error[E0618]: expected function, found `String`
+---       --> src/main.rs:37:36
+---     error: the compiled program does not build — the Rust compiler refused
+---     what Crow accepted, a bug in Crow, not in this program (`crow run -i`
+---     runs it meanwhile)
+--- Expected: the interpreter's stop in both modes (or a refusal before the
+--- program runs, in both).
+---
+--- How a program meets it: a nested collecting loop written without naming
+--- the inner list, as Python's [[0 for c in …] for r in …] reads,
+---     g = for r in range[2]
+---         for c in range[2]
+---             0
+--- collects [] in both modes (the inner loop is a statement, its items
+--- dropped; nothing says so), and `g[0][0] = 1` or `log[g[0][0]]` after it
+--- does not build compiled (E0277 `str` cannot be indexed by `usize`, or
+--- E0618), while the interpreter stops on the index.
+g = []
+log[g[0][0]]

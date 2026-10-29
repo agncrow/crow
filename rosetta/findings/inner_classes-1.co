@@ -1,0 +1,16 @@
+--- A struct declared inside a function's body (or an `if` block) is refused,
+--- as it should be, but with a message that has no line, no column and no
+--- caret, and that reads as a compiler phase's own words rather than a
+--- refusal written for the program's author. Both modes, exit 1:
+---   inner_classes-1.co: lowering: a struct ('P') declared inside a body
+--- Expected: a refusal placed like every other one (file:line:col, the line
+--- shown, the struct underlined) that says what to do, e.g. "a struct is
+--- declared at the top level: move `struct P [x]` out of make". Found while
+--- checking whether Crow could nest one record's declaration in another's
+--- (Rosetta Code: Inner classes).
+
+fn make[]
+    struct P [x]
+    return P[1]
+
+log[make[]]

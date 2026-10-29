@@ -1,0 +1,28 @@
+--- A bare `return` in a function that answers nothing but can fail does not build compiled.
+---
+--- Interpreted (crow run -i): prints
+---     big
+---     small
+--- Compiled (crow run): the program does not build:
+---     error[E0069]: `return;` in a function whose return type is not `()`
+---       --> src/main.rs:33:9
+---     error: the compiled program does not build — the Rust compiler refused what Crow
+---     accepted, a bug in Crow, not in this program (`crow run -i` runs it meanwhile)
+--- Expected: the same output as interpreted.
+---
+--- The condition decides on a value that can fail (`int[s]`), so `check` is typed as one
+--- that can fail and the emitter writes `fn check(s: &String) -> CrowResult<()>`; the bare
+--- `return` is printed as `return;`, where the end of the body is wrapped as
+--- `return CrowResult { ok: true, value: (), … }`. The same with `text = input[]` and
+--- `if text eq 'q'`. Without the fallible condition (an int parameter) it builds.
+--- Found writing rosetta/15_puzzle_game.co (a quit branch in the game's loop).
+
+fn check[s]
+    n = int[s]
+    if n gt 5
+        log['big']
+        return
+    log['small']
+
+check['7']
+check['2']

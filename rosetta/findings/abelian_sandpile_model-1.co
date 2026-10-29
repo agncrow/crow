@@ -1,0 +1,29 @@
+--- Finding: a list of lists of ints made by a nested collecting loop, one of
+--- whose ints is later past 64 bits (or may grow past them: a sum written in
+--- an unbounded while loop, as a sandpile's toppling writes grid[r][c]), does
+--- not build compiled.
+---
+--- Interpreted (right):
+---     [[1180591620717411303424, 0], [0, 0]]
+--- Compiled:
+---     error[E0631]: type mismatch in closure arguments
+---       --> src/main.rs:42:68
+---     error: the compiled program does not build — the Rust compiler refused
+---     what Crow accepted, a bug in Crow, not in this program (`crow run -i`
+---     runs it meanwhile)
+--- Expected: the same output as interpreted.
+---
+--- `crow build --rs` shows the inner loop's row already converted to growing
+--- ints (`Vec<crow_runtime::int::Int>`), collected as `Vec<Vec<Int>>`, and
+--- then converted again by an outer `.map(|_x: Vec<i64>| …Int::from…)` that
+--- expects rows of i64. A one-level list (`row = for c in range[2]` then
+--- `row[0] = 2 ^ 70`) builds and agrees. A natural 2D Abelian sandpile
+--- (grid built by a nested collect, toppled with
+--- `grid[r - 1][c] = grid[r - 1][c] + q` in a while loop) hits it; the
+--- Rosetta solution keeps the grid as one flat list instead.
+g = for r in range[2]
+    row = for c in range[2]
+        0
+    row
+g[0][0] = 2 ^ 70
+log[g]

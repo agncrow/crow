@@ -1,0 +1,21 @@
+--- STATUS: still reproduces with the pinned bin/crow replaced at 19:25.
+--- Finding (anaprimes): a map keyed by a power whose exponent is a list's item
+--- (`10 ^ xs[0]`, an int the width pass cannot bound) breaks the lowering of the
+--- function's later reads of the map — an internal error in both modes.
+---
+--- crow run -i and crow run alike:
+---   anaprimes-1.co: internal error: the lowered program disagrees with itself — a bug in Crow,
+---   not in this program: fn f: line 18: 'vs' is declared List(Int) but its first value is
+---   Map(Int, Big) (from the runtime's core.values)
+--- Expected: 1.
+--- Variants seen in the program it came from: `vs = for k in keys[m]` / `m[k]` then
+--- `len[map[vs, vs]]` ("hands List(Big) to core.len_map (argument 1), whose parameter
+--- takes MapRef"), and `map[firsts, lasts]` ("'last_of' is declared Map(Int, Int) but
+--- its first value is List(Big) (from the runtime's core.__map_of)"). The same lines run
+--- at the top level, with `10 ^ n` of a parameter, and with the key `xs[0]` itself.
+fn f[xs]
+    m = set[map[], 10 ^ xs[0], 7]
+    vs = values[m]
+    return len[vs]
+
+log[f[[2, 3]]]

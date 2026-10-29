@@ -1,0 +1,21 @@
+--- Finding (distance_and_bearing): a parameter named like a function of the program is
+--- accepted, and an index of it is read as a CALL of the function: the modes disagree.
+---
+--- crow run -i:  prints 0 — `scores[0]` in `first` calls the function scores with 0
+---               (0 * 2), a silent wrong answer: the list handed in is never read.
+--- crow run:     error[E0618]: expected function, found `CrowTensor` (src/main.rs)
+---               "the compiled program does not build — … a bug in Crow"
+--- Expected: 5 in both modes, or a refusal at the parameter (spec, Names Are Never
+--- Ambiguous: "a bare name in Crow means exactly one thing. Collisions are never
+--- resolved silently — not by shadowing"; its example is exactly this one, an index read
+--- as a call). A parameter only used in arithmetic (`fn twice[scores]` / `return
+--- scores * 2`) gives 42 in both modes, so the collision passes unnoticed until the
+--- parameter is indexed. Met writing `fn row[name, distance, bearing]` beside
+--- `fn distance[...]` and `fn bearing[...]` (worked around by renaming).
+fn scores[x]
+    return x * 2
+
+fn first[scores]
+    return scores[0]
+
+log[first[[5, 6]]]

@@ -1,0 +1,26 @@
+--- An item of a list whose items are of no known kind (an empty literal, or the
+--- nested collect `for r in …` / `for c in …` / `false`, which collects [] as
+--- honeycombs-2 records) used in an operator or a condition: the interpreter
+--- stops at the index, as it should; the compiled program does not build. (Read
+--- bare, `log[g[0][0]]` now stops in both modes: abelian_sandpile_model-4, fixed.)
+---
+--- crow run -i:  runtime error: line 26: index 0 is out of range for an array of 0 items
+--- crow run:     error[E0600]: cannot apply unary operator `!` to type `String`
+---               error: the compiled program does not build — the Rust compiler
+---               refused what Crow accepted, a bug in Crow, not in this program
+--- With `log[g[0] + 1]`, `log[g[0] gt 1]` or `if g[0]` in its place: E0308
+--- mismatched types; with `log[g[0] and true]`: E0369 no implementation for
+--- `String & bool`. Inside a function (`fn both[x, y]` / `if x and y`, called
+--- `both[g[0], g[1]]`) both modes refuse before running instead, in words about
+--- text the program never wrote: "`and` joins truths — two bools, or two masks
+--- item by item — and this side is text: compare it first (x gt 0, x ne '')".
+--- Expected: the interpreter's stop in both modes (or one refusal in both,
+--- naming the list that never holds an item).
+---
+--- Met writing rosetta/inventory_sequence.co: a plot's grid built by a nested
+--- collect with the inner loop unnamed, its cells handed to `block[top, bottom]`
+--- (`if top and bottom`) — E0369 `String & String` compiled; the solution names
+--- the inner row (`row = for …` / `row`), which collects the grid in both modes.
+
+g = []
+log[not g[0]]

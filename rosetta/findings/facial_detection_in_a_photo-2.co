@@ -1,0 +1,24 @@
+--- Finding (facial_detection_in_a_photo): a list literal holding a list of growing ints
+--- (items from `int[text]`, which always answers the growing form) beside a list of
+--- 64-bit ints stops both modes before the program runs, with an internal error.
+---
+--- crow run -i and crow run alike:
+---   …-2.co: internal error: the lowered program disagrees with itself — a bug in Crow, not
+---   in this program: fn parts: line 22: a list of List(Int) holds an item of type List(Big)
+---   (and 1 more)
+--- Expected: [[12], [0]] in both modes (or a refusal in the program's words).
+--- The same at the top level with fallible items (`big = [int['12']]`, `small =
+--- [len['12']]`, `both = [big, small]`): "a list of List(Result(Int)) holds an item of type
+--- List(Result(Big))". At the top level with the push form below, the refusal is instead
+--- "cannot reassign 'both' from array[result[array[int]]] to array[array[int]]" on the
+--- line that assigns `both` for the first and only time. Akin to the known open finding
+--- about `concat[a, b]` of a list of 64-bit ints and a list of growing ints, reached through
+--- a list literal. Met returning a JPEG's entropy-coded bytes (read through `int[text]`)
+--- beside the offsets where its restart intervals start, as one list of two lists.
+fn parts[text]
+    big = []
+    big = push[big, int[text]]
+    small = [0]
+    return [big, small]
+
+log[parts['12']]

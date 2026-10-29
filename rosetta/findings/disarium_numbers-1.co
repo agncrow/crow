@@ -1,0 +1,24 @@
+--- Finding (disarium_numbers): a map of int lists whose FIRST write (in source order)
+--- pushes onto an entry, and whose later write stores a literal list, holds a tensor
+--- where the map's type says a list: the literal is written into the map's value
+--- without being made a list.
+---
+--- crow run -i:  runtime error: line 21: expected a list, got array (the push)
+--- crow run:     error[E0308]: mismatched types (src/main.rs, the `table[s] = [7]` write:
+---               `CrowTensor::from_vec(vec![7 as f64], vec![1])` inserted into a
+---               `BTreeMap<i64, Vec<i64>>`)
+---               "the compiled program does not build — … a bug in Crow"
+--- Expected: [1 = [7, 7], 2 = [7]]
+---
+--- `crow build --ir`: `let table: Map(Int, List(Int)) = core.map_new()` and
+--- `table[s] = [7]` — the literal goes in as it is. The same inside a function.
+--- Fine: the branches the other way round (`if s not in table` / `table[s] = [7]` /
+--- `else` / `table[s] = push[table[s], 7]`). Likely the root of blossom_algorithm-2
+--- (a record field), here at a map's value.
+table = map[]
+for s in [1, 2, 1]
+    if s in table
+        table[s] = push[table[s], 7]
+    else
+        table[s] = [7]
+log[table]

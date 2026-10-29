@@ -1,0 +1,23 @@
+--- STATUS: no longer reproduces with the pinned bin/crow replaced at 22:23 (both modes print
+--- [1180591620717411303424]; findings/anaprimes-1.co no longer reproduces either).
+--- Finding (erdos_selfridge_categorization_of_primes): `values` of a map whose
+--- values are growing ints (ints the width pass cannot hold in 64 bits), bound
+--- to a variable, is an internal error in both modes before the program runs.
+--- Likely the same root as findings/anaprimes-1.co (there the KEY grows, inside
+--- a function); here a VALUE grows, at the top level, from a literal.
+---
+--- crow run -i and crow run alike:
+---   internal error: the lowered program disagrees with itself — a bug in Crow,
+---   not in this program: … main: line 20: 'vs' is declared List(Int) but its
+---   first value is Map(Big) (from the runtime's core.values)
+--- Expected: [1180591620717411303424]
+---
+--- `log[values[m]]` (no variable) prints it in both modes, and `keys[m]` bound to
+--- a variable is fine. Met in a program whose map values are categories computed
+--- from the map's own values (`highest = category[q]` … `highest + 1`), which the
+--- width pass cannot bound: `cats = values[category]` was refused with
+--- "'cats' is declared List(Int) but its first value is Map(Int, Big)".
+
+m = map[a = 2 ^ 70]
+vs = values[m]
+log[vs]

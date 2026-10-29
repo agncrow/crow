@@ -1,0 +1,42 @@
+--- A function whose parameter is reassigned from a call that can fail
+--- (`words = maybe_reversed[words]`) and which answers a one-item list of it
+--- (`return [words]`), called only from inside another function, does not build
+--- compiled: its answer is typed a list of values that can fail
+--- (`crow build --ir`: `pure pieces(words: List(Str)) -> Result(List(Result(List(Str))))`),
+--- while `[words]` holds the payload, so the generated `vec![words]` is a
+--- Vec<Vec<String>> where a Vec<CrowResult<Vec<String>>> is expected.
+---
+--- Interpreted (crow run -i):  1
+--- Compiled (crow run):
+---     error[E0308]: mismatched types
+---       --> src/main.rs:39:47
+---     error: the compiled program does not build — the Rust compiler refused what Crow
+---     accepted, a bug in Crow, not in this program (`crow run -i` runs it meanwhile)
+--- Expected: 1 in both modes (the parameter is never a value that can fail, and a
+--- failure of maybe_reversed is handed on by the assignment).
+---
+--- Builds and runs when: `pieces` is also (or only) called at the top level, the
+--- result goes to a new local (`turned = maybe_reversed[words]`, `return [turned]`),
+--- or the reassigning call cannot fail (`words = reverse[words]`). With a second
+--- return of `[]` it fails the same; with another return that hands a list of lists
+--- from a function (`return walk[…]`), the generated code converts that answer by
+--- making an EMPTY Vec::<CrowResult<…>>::new() in its place — a wrong answer once
+--- the other return no longer stops the build.
+--- Found writing rosetta/weiler_atherton_polygon_clipping.co: a test driver calling
+--- the clipper (whose polygons are reoriented first, `subject = turned[subject]`) from
+--- a function did not build; the solution calls it at the top level.
+
+fn maybe_reversed[words]
+    if len[words] gt 9
+        return error['too many']
+    return reverse[words]
+
+fn pieces[words]
+    words = maybe_reversed[words]
+    return [words]
+
+fn show[words]
+    result = pieces[words]
+    log[len[result]]
+
+show[['a', 'b']]

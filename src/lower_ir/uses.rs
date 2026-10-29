@@ -152,6 +152,19 @@ fn definite(t: &Ty) -> bool {
 /// `abs` takes an int or a float, which says nothing here). A read
 /// (`str`, `int`, `float`, `moment`) or a show says nothing.
 pub(crate) fn row_says(name: &str, module: Option<&str>, at: usize, argc: usize) -> Option<Ty> {
+    said_by(name, |r| module.is_none_or(|m| r.module == m), at, argc)
+}
+
+/// The same, of the rows a bare call reaches: the core's and those of the
+/// modules in `reach` (the ones in scope that provide the name). A module
+/// the scope does not import says nothing: sys's byte rows, which no
+/// program imports, had made a parsed value set into a program's map an
+/// int (Rosetta Code, Associative array/Merging).
+pub(crate) fn row_says_within(name: &str, reach: &[&str], at: usize, argc: usize) -> Option<Ty> {
+    said_by(name, |r| r.module.is_empty() || reach.contains(&r.module), at, argc)
+}
+
+fn said_by(name: &str, keep: impl Fn(&crate::table::Row) -> bool, at: usize, argc: usize) -> Option<Ty> {
     if matches!(name, "str" | "int" | "float" | "moment" | "type" | "log" | "fmt" | "encode" | "len" | "assert" | "error") {
         return None;
     }
@@ -161,7 +174,7 @@ pub(crate) fn row_says(name: &str, module: Option<&str>, at: usize, argc: usize)
     // — where no row of the name takes a scalar (`max` takes numbers one
     // at a time and a tensor whole: its cell is a number)
     let mut tensor = false;
-    for row in crate::table::ROWS.iter().filter(|r| r.name == name && module.is_none_or(|m| r.module == m)) {
+    for row in crate::table::ROWS.iter().filter(|r| r.name == name && keep(r)) {
         let Some(kinds) = crate::table::kinds_of(row.params, argc) else { continue };
         let Some(k) = kinds.get(at) else { continue };
         // a row that takes a parsed value there takes it as it is (`key in

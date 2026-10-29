@@ -1,0 +1,22 @@
+--- Finding (french_republican_calendar): a collecting `for` over `range[n]`, where n
+--- can fail (`int['2']`, or a function's `round[...]` of a value that can fail), whose
+--- body compares the loop's int with a growing int that can fail (`int['1'] ne day`),
+--- does not build compiled.
+---
+--- crow run -i:  prints [true, false]
+--- crow run:     error[E0308]: mismatched types --> src/main.rs:38
+---               (rustc: expected `Int`, found `i64` — `_binl_1.value != (*_binr_1)`:
+---               the loop's item, an i64, is compared bare with the growing int)
+---               error: the compiled program does not build — the Rust compiler refused
+---               what Crow accepted, a bug in Crow, not in this program
+--- Expected: [true, false] in both modes.
+---
+--- Each of these builds and agrees: `range[2]` in place of `range[int['2']]`; a
+--- statement loop (`for day in range[int['2']]` / `log[int['1'] ne day]`); a
+--- comparand that cannot fail (`round[1.0] ne day`). In the solution the loop checks
+--- every day there and back (`if day_of_republican[there] ne day`), its bound the
+--- day number of a date read from text; worked around by binding the bound to a
+--- plain int first.
+wrong = for day in range[int['2']]
+    int['1'] ne day
+log[wrong]

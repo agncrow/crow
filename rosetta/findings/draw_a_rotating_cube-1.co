@@ -1,0 +1,31 @@
+--- Finding (draw_a_rotating_cube): a record named like a type the generated Rust
+--- uses does not build compiled. `struct Vec` shadows Rust's `Vec`, which the
+--- emitted `CrowResult` (`trace: Vec<String>`) names.
+---
+--- crow run -i: prints 3.
+--- crow run:
+---   error[E0107]: struct takes 0 generic arguments but 1 generic argument was supplied
+---     --> src/main.rs:10:12
+---   error: the compiled program does not build — the Rust compiler refused what Crow
+---   accepted, a bug in Crow, not in this program (`crow run -i` runs it meanwhile)
+--- Expected: 3 in both modes (the record's name renamed out of Rust's way, as
+--- rust_names.rs does for the names Rust reserves).
+---
+--- The same with other names (each `struct T [x, y]` / `p = T[1, 2]` / `log[p.x + p.y]`):
+---   String      error[E0053]: method `crow_repr` has an incompatible type for trait
+---   BTreeMap    error[E0255]: the name `BTreeMap` is defined multiple times
+---   CrowResult  error[E0428]: the name `CrowResult` is defined multiple times
+---   Clone       error[E0404]: expected trait, found struct `Clone`
+---   Self        error: expected identifier, found keyword `Self`
+--- (Option, Box, Some, Ok, Result, HashMap, Default, Fn and CrowTensor build.)
+--- The same class for a function named like the emitter's own helpers
+--- (`fn crow_stop[x]` / `return x + 1` / `log[crow_stop[41]]`, likewise
+--- `crow_trace_push`): 42 interpreted; compiled
+---   error[E0428]: the name `crow_stop` is defined multiple times
+--- (a function named main, drop, std, core, rayon, crow_runtime, alloc, vec,
+--- format or panic builds.)
+
+struct Vec [x, y]
+
+p = Vec[1, 2]
+log[p.x + p.y]

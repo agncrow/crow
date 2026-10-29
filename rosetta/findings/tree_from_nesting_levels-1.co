@@ -1,0 +1,25 @@
+--- Finding: a statement loop's item that is a list (a list of a list of lists),
+--- compared with `eq`/`ne`, does not build compiled; the interpreter runs it.
+---
+--- crow run -i:  true
+---               false
+--- crow run:     error[E0277]: can't compare `&Vec<String>` with `Vec<String>`
+---                 --> src/main.rs:39:43
+---               error: the compiled program does not build — the Rust compiler
+---               refused what Crow accepted, a bug in Crow, not in this program
+---               (`crow run -i` runs it meanwhile)
+--- Expected: true then false in both modes.
+---
+--- The same with ints (`[[1, 2], [3, 4]]`, item `eq [1, 2]`: E0277 can't compare
+--- `&CrowTensor` with `CrowTensor`), and with the item on the right of a local
+--- list (`ys = reverse[xs]` then `ys eq xs`: E0308 mismatched types, can't compare
+--- `Vec<i64>` with `&Vec<i64>`). A list PARAMETER compared the same way builds
+--- and agrees (`fn f[xs]` … `reverse[xs] eq xs`). Likely the root of the known
+--- findings/kirkpatrick_seidel_algorithm-2.co (records: a loop's item borrowed
+--- from what it walks, compared by value), met here with lists, whose item the
+--- emitter also borrows. Found writing Tree from nesting levels (`back eq levels`,
+--- the levels read back from the tree compared with the loop's input); worked
+--- around by comparing inside a function that takes the levels as a parameter.
+tests = [['a', 'b'], ['b', 'a']]
+for xs in tests
+    log[xs eq ['a', 'b']]

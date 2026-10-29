@@ -1,0 +1,17 @@
+--- `eigen[a]` answers the real parts and the imaginary parts of a's
+--- eigenvalues, a vector each of a's size: its row had declared the second
+--- a matrix, so an imaginary part read by position stopped as a fault of
+--- Crow's shape rules, and `imag[ev]` had no rank to index (Rosetta Code,
+--- Jury stability criterion).
+use math
+
+m = [[2.0, 1.0], [1.0, 3.0]]
+ev = eigen[m]
+log[ev[0][1] + 1.0]
+log[ev[1][1] + 1.0]
+im = imag[ev]
+log[im[0], len[im]]
+log[abs[ev[1][0]] lt 0.5]
+r = [[0.0, -1.0], [1.0, 0.0]]
+spin = eigen[r]
+log[spin[0][0], abs[spin[1][0]]]

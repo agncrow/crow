@@ -1,0 +1,27 @@
+--- Finding (erdos_selfridge_categorization_of_primes): a map that starts empty
+--- (`map[]`) and is filled only by index writes (`m[k] = v`), then handed to a
+--- function, leaves the function's parameter untyped: the IR says
+--- `pure size_of(m: Map(?))` beside `let m: Map(Text, Int)`, and the emitter
+--- prints the parameter as `&BTreeMap<String, String>`.
+---
+--- crow run -i:  1
+--- crow run:     error[E0308]: mismatched types
+---                 --> src/main.rs:43:46
+---               error: the compiled program does not build — the Rust compiler
+---               refused what Crow accepted, a bug in Crow, not in this program
+--- Expected: 1 in both modes.
+---
+--- The same with int keys (`m[0] = 1`: the variable is BTreeMap<i64, i64>, the
+--- parameter BTreeMap<String, String>), inside a function, and when the function
+--- reads a value (`return m[k] + 1`: the answer is then typed String too). It
+--- builds when the FIRST write is `m = set[m, 'a', 1]` (later index writes are
+--- fine) or when the map starts from a literal (`m = map[a = 1]`).
+--- Found writing a sieve that keeps each prime's category in a map that a
+--- helper reads (`category[p] = category_of[spf, category, p]`).
+
+fn size_of[m]
+    return len[m]
+
+m = map[]
+m['a'] = 1
+log[size_of[m]]

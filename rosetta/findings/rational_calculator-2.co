@@ -1,0 +1,21 @@
+--- Finding (rational_calculator): sort refuses a list of fractions (and of
+--- decimals), though fractions and decimals compare by value (`lt`, `min`, `max`
+--- all work on them), and the refusal names the list's kind as no kind at all.
+---
+--- crow run -i and crow run alike, before the program runs:
+---   sort[] takes a list of ints, a list of numbers, a list of text or numbers,
+---   got a list
+--- Expected: [-5/6, 1/2, 3/4] — the spec's sort orders "numbers ascending", and
+--- refuses only what "has no order" (bools, records, lists, a matrix's rows);
+--- or, if fractions are not to be sorted, a refusal that says "a list of
+--- fractions".
+---
+--- Where the items come from `fraction[n, d]` itself (a value that can fail),
+--- or are decimals (`[decimal['2.5'], decimal['1.25']]`), the refusal says
+--- "got a list whose items can fail" — which points at the failure, though a
+--- list of fractions that cannot fail is refused too. Found keeping a rational
+--- calculator's results, sorted, the way a Farey sequence or a Stern-Brocot
+--- listing would want them.
+xs = [fraction[3] / 4, fraction[1] / 2, fraction[-5] / 6]
+log[xs[1] lt xs[0]]
+log[sort[xs]]

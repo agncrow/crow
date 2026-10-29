@@ -1,0 +1,34 @@
+--- A recursive function that answers nothing, with a bare `return`, whose LAST
+--- statement is a call of itself, does not build compiled.
+---
+--- Interpreted (crow run -i): prints
+---     3
+---     2
+---     1
+--- Compiled (crow run): the program does not build:
+---     error[E0069]: `return;` in a function whose return type is not `()`
+---       --> src/main.rs:30:9
+---     error: the compiled program does not build — the Rust compiler refused what Crow
+---     accepted, a bug in Crow, not in this program (`crow run -i` runs it meanwhile)
+--- Expected: the same output as interpreted.
+---
+--- `crow build --ir` shows `pure countdown(n: Int) -> ?` and the last statement
+--- lowered as `return call countdown((n sub 1))`: the body's last expression is
+--- taken as its answer, and that answer is the function's own, so the answer's type
+--- is never settled; the emitter prints `-> String` for it, and the bare `return`
+--- as `return;`. The same with two functions calling each other last (`ping` ends
+--- `pong[n - 1]`, `pong` ends `ping[n - 1]`). It builds when the self-call is not the
+--- last statement (`countdown[n - 1]` then `log[n]`), when the last statement calls
+--- another function that answers nothing, and when the bare return is replaced by an
+--- `if n gt 0` around the body. Not the fallible-function case fixed at 19:25
+--- (findings/15_puzzle_game-1.co): nothing here can fail.
+--- Found writing rosetta/avl_tree.co (drawing a tree: `draw[t.right]`, `log`,
+--- `draw[t.left]`, after `if t eq 0` / `return`).
+
+fn countdown[n]
+    if n eq 0
+        return
+    log[n]
+    countdown[n - 1]
+
+countdown[3]

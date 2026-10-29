@@ -1,0 +1,26 @@
+--- Finding (jury_stability_criterion): `eigen[a]` answers [real parts,
+--- imaginary parts], two vectors (spec, Linear Algebra; crow_runtime::math::eigen
+--- returns vec![re, im]), but its row declares the second piece an n x n
+--- matrix (table.rs, math.eigen: Shape::Pieces(&[&[Of(0, 0)], &[Of(0, 0),
+--- Of(0, 0)]])), so an imaginary part read by position is typed as a row of a
+--- matrix. The same in both modes:
+---   [[1.381966011250105, 3.618033988749895], [0, 0]]
+---   4.618033988749895
+---   runtime error: line 26: the program reads a row of a tensor its type says
+---   is a matrix, but the value has shape [2] — a bug in Crow's shape rules,
+---   not in this program
+--- and a comparison of it (`abs[y] lt 0.5`) is refused before the program runs:
+---   this is a list of bools, and a condition is true or false — compare it …
+--- Expected: 1 (the imaginary part of the second eigenvalue is 0, so it
+--- plus 1.0 is 1), as ev[0][1] is read right.
+--- The same declaration leaves `imag[ev]`, `real[ev]` and `magnitude[ev]`
+--- (Shape::Items(0): the shape of the pieces, which disagree) of no known
+--- rank, so `imag[eigen[m]][0]` is refused before the program runs: "an index
+--- into `im` reads a row or a number by its rank, and the rank of `im` is not
+--- known here"; `flatten[imag[ev]]` works around both.
+use math
+m = [[2.0, 1.0], [1.0, 3.0]]
+ev = eigen[m]
+log[ev]
+log[ev[0][1] + 1.0]
+log[ev[1][1] + 1.0]

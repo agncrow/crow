@@ -1,0 +1,22 @@
+--- A function that returns a literal list of ints on one path and a list of
+--- values that can fail (int[text] items) on another is an internal error in
+--- both modes, before the program runs.
+---
+--- Interpreted (crow run -i) and compiled (crow run), the same message:
+---   p1.co: internal error: the lowered program disagrees with itself — a bug in
+---   Crow, not in this program: fn pair_of: line 3: returns Tensor(Int, [2]) from
+---   a body typed List(Result(Big))
+---
+--- Expected: [5, 4] then [3, 3] (or a refusal that names the two kinds, if a
+--- list of ints and a list of values that can fail are meant to be two kinds).
+--- With a = 2 ^ n in place of int[text] (no failure) it runs in both modes.
+--- Found writing rosetta/honeycombs.co (a board size typed or the default).
+
+fn pair_of[text]
+    if text eq ''
+        return [5, 4]
+    a = int[text]
+    return [a, a]
+
+log[pair_of['']]
+log[pair_of['3']]

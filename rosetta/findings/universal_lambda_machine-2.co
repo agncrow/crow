@@ -1,0 +1,22 @@
+--- Finding (universal_lambda_machine): a call handed a list and, beside it, a value
+--- that can fail (`xs = grow[xs, n]` with `n = int['1']`) copies the list at every
+--- call, in both modes, so a loop that grows a list through such calls is quadratic.
+--- The same at the top level and inside a function.
+---
+---   crow run -i:  40000 in 5.2 s CPU
+---   crow run:     40000 in about 6.9 s (the build cached)
+--- Expected: about 0.02 s, as with `n = 1` (a plain int): 0.02 s interpreted, and
+--- the compiled binary as quick. A failure of n would stop the call before grow
+--- runs, so the list need not be kept: it can be moved into the call as it is when
+--- every argument is plain.
+fn grow[xs, n]
+    xs = push[xs, n]
+    return xs
+
+n = int['1']
+xs = []
+r = 0
+while r lt 40000
+    xs = grow[xs, n]
+    r = r + 1
+log[len[xs]]

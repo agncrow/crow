@@ -1,0 +1,35 @@
+--- Finding (closures_value_capture): a function value held in a record's field
+--- and called through it is refused as a function nothing calls.
+---
+--- crow run -i and crow run alike (exit 1):
+---   closures_value_capture-1.co:33:1: `square` is handed as a value, and nothing types its parameters —
+---   apply it in the function it is handed to, or call it directly once
+---     33 │ c = Closure[square, 3]
+--- Expected: 9. The spec (Specialization) refuses a function value "nothing
+--- calls", and says "a call through a variable that holds it types the
+--- parameters it gives" — here `g` holds it and is called. The same refusal
+--- for `c.f[c.x]`, for `g = c.f` / `g[c.x]` inside a function taking the
+--- record, and for `apply[c.f, c.x]` with `fn apply[f, x]` / `f[x]`; a
+--- function value in a plain variable (`g = square`, `g[3]`) runs. With a
+--- direct call of `square` anywhere in the program (`log[square[0]]`) the
+--- program below runs and prints 9 in both modes, so the record holds the
+--- function well: only its typing misses the call through the field.
+--- A list of functions grown by `push` is refused the same way where a list
+--- literal of them (a group) is not: `fs = push[[], sq]` then `g = fs[0]` /
+--- `g[4]`, or `fs = []`, `fs = push[fs, sq]` in a loop, then `for f in fs` /
+--- `log[f[4]]` — though the spec counts a loop calling through the list as a
+--- call (it refuses a function "held in a list no loop calls through"), while
+--- `fs = [sq, cube]`, `for f in fs` / `log[f[3]]` and `fs[0][5]` run.
+--- Related: findings/call_a_function-1.co names the record-field case in
+--- passing; its own case (a group literal called by position) runs with the
+--- compiler swapped in at 19:53, and the cases here still fail with it.
+--- Found writing a closure as the pair a compiler makes of it (the function
+--- and the value it captured).
+struct Closure [f, x]
+
+fn square[i]
+    return i * i
+
+c = Closure[square, 3]
+g = c.f
+log[g[c.x]]

@@ -1,0 +1,26 @@
+--- Finding (mutex): a function that only ever answers an error, handed to `revise`
+--- as the revision's function, does not build compiled.
+---
+--- crow run -i:  no   (the revision fails, its reason is printed)
+--- crow run:     error[E0308]: mismatched types --> src/main.rs:64:246
+---               (the function is typed `-> CrowResult<()>`; revise's closure
+---               wants `CrowResult<C>`, the record's type)
+---               error: the compiled program does not build — the Rust compiler
+---               refused what Crow accepted, a bug in Crow, not in this program
+--- Expected: no, in both modes.
+---
+--- The class of the known findings/json_pointer-1.co (an only-error value handed
+--- to encode or str) and findings/monads_maybe_monad-1.co (one in a list
+--- literal), at another site: a function that only fails takes no payload type
+--- from the place that uses its answer. Called directly (`r = refused[C[0], 'no']`)
+--- it builds. In the solution the failing revision is a withdrawal that fails
+--- only when there is too little to take, so it answers a record on its other path.
+use memory
+
+struct C [n]
+
+fn refused[c, why]
+    return error[why, 'demo']
+
+r = revise['x', C[0], refused, 'no']
+log[r.reason]

@@ -1,0 +1,31 @@
+--- A record's link to a record of its kind (a field given a node or 0, read as
+--- t.left) pushed onto a list of those records does not build compiled: the
+--- list stays Vec<Node> while the pushed value is the link, Option<Arc<Node>>.
+---
+--- crow run -i:  prints 1 and 1
+--- crow run:     error[E0308]: mismatched types --> src/main.rs
+---                 crow_runtime::core::push((s), (t.as_ref()…).left.clone())
+---                 expected `Node`, found `Option<Arc<Node>>`
+---               error: the compiled program does not build — the Rust compiler
+---               refused what Crow accepted, a bug in Crow, not in this program
+--- Expected: 1 and 1 in both modes (the link holds a node, which the list takes;
+--- a link that holds none pushed there would be a stop, as a field read of none is).
+---
+--- The same inside a function (the list a parameter, or made there as [n]), when
+--- the link is first held in a local (child = t.left; push[s, child]), through
+--- concat[s, [t.left]], and through an identity function (fn subtree[n] / n,
+--- push[s, subtree[t.left]]: its answer is typed as the link). Builds when the
+--- node is made again from the link's fields: push[s, Node[t.left.value,
+--- t.left.left, t.left.right]]. Found writing Same fringe (a walk's stack of
+--- subtrees, the children pushed as each node is opened), worked around there by
+--- making the node again.
+struct Node [value, left, right]
+
+bottom = Node[1, 0, 0]
+top = Node[0, bottom, 0]
+s = [top]
+t = s[-1]
+s = pop[s]
+s = push[s, t.left]
+log[len[s]]
+log[s[0].value]

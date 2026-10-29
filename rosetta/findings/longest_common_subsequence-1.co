@@ -1,0 +1,24 @@
+--- A list literal holding a list variable of 64-bit ints ([first], first = range[3]),
+--- then a list pushed onto it whose items are sums of its own items and the literal's
+--- (the dynamic-programming table of an LCS or an edit distance, built row by row).
+---
+--- Interpreted and compiled alike, before anything runs:
+---   longest_common_subsequence-1.co: internal error: the lowered program disagrees
+---   with itself — a bug in Crow, not in this program: longest_common_subsequence-1
+---   main: line 17: a list of List(Int) holds an item of type List(Big)
+--- Expected: [[0, 1, 2], [0, 1, 3]]
+---
+--- Writing the call in the literal, rows = [range[3]], runs fine in both modes, as
+--- does a row whose items read only the row itself or only rows. Related to the open
+--- "a list literal holding a list of growing ints beside a list of 64-bit ints", but
+--- here the literal holds one list and the growing one arrives by push. Inside a
+--- function (first = for j in range[n] / 0) it is the same.
+first = range[3]
+rows = [first]
+row = [0]
+j = 1
+while j lt 3
+    row = push[row, rows[0][j] + row[j - 1]]
+    j = j + 1
+rows = push[rows, row]
+log[rows]

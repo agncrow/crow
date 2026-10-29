@@ -1,0 +1,26 @@
+--- A text local written into a list by index (`xs[0] = first`) and read again
+--- afterwards does not build compiled: the index assignment moves the local
+--- although the IR does not mark that read as a move.
+---
+--- Interpreted (crow run -i): prints
+---     b
+---     ['b', 'b']
+--- Compiled (crow run): the program does not build:
+---     error[E0382]: use of moved value: `first`
+---       --> src/main.rs:39:37
+---     error: the compiled program does not build — the Rust compiler refused what Crow
+---     accepted, a bug in Crow, not in this program (`crow run -i` runs it meanwhile)
+--- Expected: the same output as interpreted.
+--- `crow build --ir` (inside a function, the same failure) is right:
+---     let first: Str = xs[1]
+---     xs[0] = first
+---     display.log!held(move first)
+--- but the emitter prints the index assignment as
+---     { let _v = first; …; xs[_idx] = _v; }
+--- which moves `first` where the IR reads it without `move` (the swap of two
+--- items through a temporary, then a read of the temporary, is the usual shape).
+xs = ['a', 'b']
+first = xs[1]
+xs[0] = first
+log[first]
+log[xs]

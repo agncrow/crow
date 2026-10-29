@@ -1,0 +1,23 @@
+--- A function value compared with itself: the two modes disagree.
+--- Interpreted (crow run -i): prints `false` (a function is never equal to itself).
+--- Compiled (crow run): prints `true`.
+--- Expected: one answer in both modes — or, if functions are not values to compare,
+--- a refusal before the program runs (as `x eq 'a'` of a number is refused).
+--- Variants, all with parameterless functions `one` and `two` (see also
+--- stair_climbing_puzzle-1.co, a function compared with text):
+---   `f = one` then `f eq one`        interpreted false, compiled true
+---   `one eq one`, `one ne two`        interpreted false / true, compiled does not build
+---                                     (E0369: binary operation `==` cannot be applied
+---                                     to type `fn() -> i64 {one}`)
+---   `one lt two`, `one gt two`        interpreted "runtime error: line N: cannot
+---                                     compare these types", compiled does not build
+---   `f = one` then `f lt one`         interpreted "runtime error: … cannot compare
+---                                     these types", compiled prints false
+
+fn one[]
+    return 1
+
+fn same[a, b]
+    return a eq b
+
+log[same[one, one]]

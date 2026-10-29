@@ -1,0 +1,25 @@
+--- Finding (json): a parsed JSON whole number outside a signed 64-bit int
+--- (above 2^63 - 1, or below -2^63) is read through a float: int[] of it
+--- answers another number, type[] says float, and the number past 64 bits
+--- is held as a float from the parse (encode writes 1.2345678901234568e+29).
+--- The same in both modes:
+---   float
+---   18446744073709551616
+---   123456789012345677877719597056
+---   [9007199254740993,18446744073709551615,1.2345678901234568e+29]
+---   runtime error: line 25: a parsed value holds a number 18446744073709551615
+---   where the program reads a number (met in add at line 25): a float holds a
+---   whole number exactly only up to 2^53 — int[…] reads it as it is
+--- Expected (spec, JSON: "A parsed whole number is held as it is: … encode
+--- writes it with every digit, and int[…] reads it exactly"; an int is a whole
+--- number of any size): int, 18446744073709551615,
+--- 123456789012345678901234567890, and encode writing every digit. The stop's
+--- own advice, "int[…] reads it as it is", answers …616 for …615. Within
+--- signed 64 bits (9007199254740993) it is right. -9223372036854775809 gives
+--- -9223372036854775808 alike.
+d = json['[9007199254740993, 18446744073709551615, 123456789012345678901234567890]']
+log[type[d[1]]]
+log[int[d[1]]]
+log[int[d[2]]]
+log[encode[d]]
+log[d[1] + 1]

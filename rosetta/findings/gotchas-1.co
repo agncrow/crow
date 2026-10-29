@@ -1,0 +1,20 @@
+--- A literal list of ints at the top level, then a float written at one of its
+--- positions (`ys[0] = 2.5`), is an internal error in both modes.
+---
+--- crow run -i and crow run alike (exit 1, nothing printed):
+---     gotchas-1.co: internal error: the lowered program disagrees with itself — a
+---     bug in Crow, not in this program: gotchas-1 main: line 19: an item of 'ys',
+---     a list of Int, is assigned Float
+--- Expected (both modes; spec, Indexing: "a list or a map of ints written a float
+--- holds floats from then on, as a variable does"):
+---     [2.5, 2]
+---
+--- Runs in both modes when: the same three lines are in a function's body; the
+--- list is made by `range[2]` or a collecting loop; the float is pushed
+--- (`ys = push[ys, 2.5]`); an int is written (`ys[0] = 3`). Fails the same with
+--- a computed position (`ys[i] = 2.5`), a float held in a local (`x = 2.5`,
+--- `ys[0] = x`), and with a read of the list before the write. Found writing the
+--- Gotchas task (to show that a list of ints given one float is a list of floats).
+ys = [1, 2]
+ys[0] = 2.5
+log[ys]

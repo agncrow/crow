@@ -1,0 +1,17 @@
+--- Finding (map_range): a list of ints that is not written down — `range[n]`'s
+--- answer, a collecting loop's, or a parameter handed one — met in arithmetic
+--- with a number (`xs * 2.0`, `-1.0 + xs`, `(xs - 1.0) * 2.0`) is a tensor of
+--- no known rank, so a loop over it or an index into it is refused before the
+--- program runs, in both modes:
+---   map_range-1.co:16:1: a loop over `ys` walks rows or numbers by its rank,
+---   and the rank of `ys` is not known here — state it: reshape[t, rows,
+---   columns] for a matrix, flatten[t] for a vector
+--- (an index: "an index into `ys` reads a row or a number by its rank, and the
+--- rank of `ys` is not known here"). `log[ys]` and `len[ys]` run: [0, 2, 4], 3.
+--- Expected: 0, 2, 4 — a list of ints has one axis, and the same program with
+--- the literal `xs = [0, 1, 2]` runs in both modes. The suggested `flatten[t]`
+--- is math's, which the message does not say (it needs `use math`).
+xs = range[3]
+ys = xs * 2.0
+for y in ys
+    log[y]

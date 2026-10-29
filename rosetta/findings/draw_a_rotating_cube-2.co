@@ -1,0 +1,15 @@
+--- Finding (draw_a_rotating_cube): a record's name read bare, as a value (a slip:
+--- `Point` for `Point[…]`), is an internal error in both modes instead of a refusal
+--- naming the mistake.
+---
+--- crow run -i and crow run alike:
+---   draw_a_rotating_cube-2.co: internal error: the lowered program disagrees with
+---   itself — a bug in Crow, not in this program: draw_a_rotating_cube-2 main: line 14:
+---   reads 'Point', which is not bound
+--- Expected: a refusal before the program runs, e.g. "undefined variable 'Point'" or
+--- "'Point' is a record's name: make one with Point[…]".
+
+struct Point [x, y]
+
+p = Point
+log[p]

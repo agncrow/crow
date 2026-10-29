@@ -1,0 +1,42 @@
+--- Finding (hash_join): a function taking a function (keys_of), called with lists
+--- of two record kinds, is refused as the spec intends (Specialization: a function
+--- taking a function is not copied per kind) — but the refusal misleads twice:
+---
+--- 1. It names both kinds alike: "its 'rows' is a list of records here where
+---    another call makes it a list of records" — the words are Arg::words of each
+---    type (lower_ir.rs, the "serves every call" refusal), which drop the record's
+---    name, so the two kinds it says differ read the same.
+--- 2. A first, cascading mistake blames a correct function: b_of is only ever
+---    handed a Q, yet the program is refused at b_of's body with "struct 'P' has
+---    no field 'b'" — keys_of was typed by its first call, so the function value
+---    b_of was typed as taking a P through it.
+---
+--- crow run -i and crow run alike (exit 1, nothing printed):
+---   pb4.co:8:14: struct 'P' has no field 'b'
+---     8 │     return q.b
+---   pb4.co:16:1: `keys_of` takes a function, so one `keys_of` serves every call,
+---   and its 'rows' is a list of records here where another call makes it a list of
+---   records — a function taking a function is not copied per kind (spec,
+---   Specialization): write one for each kind
+---   2 mistakes
+--- Expected: the one refusal at line 16, naming the kinds apart ("a list of Q here
+--- where another call makes it a list of P"), and nothing said of b_of's body.
+--- (Found writing a hash join that builds its multimap for whichever table is
+--- smaller; the solution hashes table B only, so it calls the function once.)
+
+struct P [a]
+struct Q [b]
+
+fn a_of[p]
+    return p.a
+
+fn b_of[q]
+    return q.b
+
+fn keys_of[rows, key]
+    out = for r in rows
+        key[r]
+    return out
+
+log[keys_of[[P[1]], a_of]]
+log[keys_of[[Q[2]], b_of]]

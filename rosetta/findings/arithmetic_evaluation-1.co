@@ -1,0 +1,30 @@
+--- Finding (arithmetic_evaluation): a record answered by a call that can fail (a
+--- function answering a record or an error value), handed to a function whose
+--- parameter is a record or none (the function also hands itself node.left), does
+--- not build compiled: the call's payload is passed bare where the parameter
+--- takes a link.
+---
+--- crow run -i:  prints 2
+--- crow run:     error[E0308]: mismatched types --> src/main.rs
+---                 depth(&_prop_0.value): expected `&Option<Arc<Node>>`, found `&Node`
+---               error: the compiled program does not build — the Rust compiler refused
+---               what Crow accepted, a bug in Crow, not in this program
+--- Expected: 2 in both modes.
+--- The same record built in place, depth[Node[Node[0]]], builds (it is wrapped as
+--- Some(link::new(...))). Guarding first (tree = make[1], then `if not tree.ok` /
+--- `return …`, then depth[tree]) does not build either. Seen in a parser whose
+--- parse[text] answers a tree or an error, and whose evaluate and shown walk the
+--- tree by node.left and node.right.
+struct Node [left]
+
+fn depth[node]
+    if node eq 0
+        return 0
+    return 1 + depth[node.left]
+
+fn make[n]
+    if n lt 0
+        return error['negative']
+    return Node[Node[0]]
+
+log[depth[make[1]]]

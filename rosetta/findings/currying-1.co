@@ -1,0 +1,33 @@
+--- Finding (currying): a function held in a record's field, called through the
+--- field (`b.f[b.x]`), runs interpreted and does not build compiled: the emitter
+--- prints Rust's method-call form `b.f(b.x)`, which looks for a method `f`, where a
+--- field holding a function is called as `(b.f)(b.x)`.
+---
+--- crow run -i: prints
+---     4
+---     9
+--- crow run: the program does not build:
+---     error[E0599]: no method named `f` found for struct `Box` in the current scope
+---       --> src/main.rs:52:38
+---     error: the compiled program does not build — the Rust compiler refused what
+---     Crow accepted, a bug in Crow, not in this program (`crow run -i` runs it meanwhile)
+---   (`crow build --rs`: `crow_runtime::display::log(&[&(b.f(b.x)) as …])`)
+--- Expected: 4 and 9 in both modes.
+---
+--- The direct call `square[2]` is there so the function is typed (without it both
+--- modes refuse, as findings/closures_value_capture-1.co records); the call through
+--- a local, `g = b.f` then `g[b.x]`, builds and prints 9 in both modes, so this is
+--- the emitter's form for a call whose callee is a field, not the typing. The same
+--- in a function taking the record (`fn apply_box[b]` / `return b.f[b.x]`), while a
+--- function read from a map (`ops['d'][3]`) or a list (`fs[1][4]`) and called at once
+--- builds and agrees. Found
+--- writing rosetta/currying.co (a curried function as a record of the function and
+--- its first argument), which calls through a local instead.
+struct Box [f, x]
+
+fn square[i]
+    return i * i
+
+log[square[2]]
+b = Box[square, 3]
+log[b.f[b.x]]

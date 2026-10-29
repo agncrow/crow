@@ -1,0 +1,24 @@
+--- Finding: a list literal holding an int past 64 bits that the program
+--- computes (`[2 ^ 65, 3]`, or `[a, 3]` with `a = 2 ^ 65`) stops where it
+--- is made, in both modes, though a list holds any int as it is.
+---
+--- Interpreted and compiled (both):
+---     runtime error: line 22: a whole number past 64 bits where an int is held in 64 bits: 36893488147419103232
+--- Expected (spec, Numbers That Keep Every Digit: "What shows or holds any
+--- value takes one as it is — str, log, text, type, a list's items …";
+--- "A literal list of whole numbers that holds one growing past 64 bits is
+--- a list of ints"):
+---     [36893488147419103232, 3]
+---     [3, 18446744073709551616, 36893488147419103232]
+---
+--- `crow build --ir`: `let xs: Tensor(Int, [2]) = [small(a), 3]` — the
+--- literal is typed a tensor of ints and each item is narrowed to 64 bits,
+--- although the width pass knows `a` is a growing int (`let a: Big`). The
+--- same digits written as numerals, `[36893488147419103232, 3]`, make a
+--- list of growing ints and run; so does a collecting loop
+--- (`for k in [65, 1, 64]` / `2 ^ k`). `sort[[2 ^ 65, 3, 2 ^ 64]]` and
+--- `concat[xs, [2 ^ 66]]` stop the same way, at the literal.
+a = 2 ^ 65
+xs = [a, 3]
+log[xs]
+log[sort[[2 ^ 65, 3, 2 ^ 64]]]

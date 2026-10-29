@@ -550,6 +550,11 @@ steps on every push and must be green.
   (`crow_runtime::cores`: per thread, the crowfile's the default, a
   function's put back by `Restore`). A new parallel form — a builtin that
   runs on rayon — goes through `cores::run`, or `cpu[1]` does not hold it.
+  A parallel collecting loop works its first item in place and shares the
+  rest only where `cores::worth_sharing` says the time is worth the pool
+  (the compiled loop through `cores::map_ref`/`collect_ref`/`_owned`, the
+  walker's `run_parallel`): a loop over a few cheap items had paid the
+  pool's round trip at every call, 100× the loop's own work.
 - A text read by position keeps a `crow_runtime::text::Known` (how far
   its start is checked ASCII): beside a local in the compiled program
   (`emit_rs/texts.rs`, reset at every assignment) and in a frame slot in
@@ -1505,12 +1510,34 @@ steps on every push and must be green.
   list settles (parity 383); a function's answer joined across rounds
   takes the body's form once every item is known (`finish_body`'s
   `numbers_reformed`: an early round's list guess had stayed beside the
-  body's vector, parity 378). A failure made where it is held
+  body's vector, parity 378), except one a parameter's use answers: a
+  function handed where a list of ints is answered answers that list
+  (`answers_by_use`, parity 430). A loop whose body gives a tensor of
+  whole numbers a list is read ahead while types settle (`reads_ahead`),
+  as the final pass reads every loop that assigns a frame or a tensor, so
+  a line above that assignment — `last = level` before `level =
+  push[[], k]` — settles on the list too; the join keeps a tensor given a
+  list only in the final pass, where its declaration is made (kept while
+  types settled, counts past 2^53 lost their last digits: parity 372).
+  A failure made where it is held
   (`error[…]`, a core form of no value) takes the type of its place —
   a list's item, a pushed item (`failure_as`) — or the compiled program
   holds `()` there; and `held_as` converts lists whose items hold
   numbers the other way at any depth with a collecting loop over a
   hidden `_heldN` (parity 382).
+- A function held as a value is typed by every place a call reaches it,
+  each mapped to the functions put there (`propagate_indirect_fn_types`):
+  a variable (`g = sq`), a map literal's key, a record's field
+  (`record_fn_fields`; `c.f[x]`, a local read from the field, or `c.f`
+  handed where a function is taken — `type_fn_field`, `fn_fields`) and a
+  list grown a function at a time (`list_fn_links`: an item read into a
+  local, called where it is read, or a loop's variable). A call that
+  changes a parameter's kind (`flips`, calls.rs) leaves the function's
+  answer stale until its body is read again (`stale_answers`): the first
+  round's answer, read with the old kind, had stayed in a record's field
+  (parity 435). And a record's field given a kind incompatible with its
+  own keeps its own — a parsed value and a failure still join — or the
+  joined type grew a level each round (errors k15).
 - A loop's condition runs before every round: the width pass reads a
   `while` condition's calls after the body's assigned variables are reset
   to their places' ranges (read before, `while not check[big]` held a

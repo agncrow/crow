@@ -1,0 +1,23 @@
+--- Finding (multiple_distinct_objects): a collecting `for` over `range[n]`, where n
+--- can fail (`int['3']`), whose body adds the loop's int to a growing int, is an
+--- internal error interpreted and does not build compiled.
+---
+--- crow run -i:  runtime error: line 22: internal error: an int met a float in 'add'
+---               without a conversion — a bug in Crow, not in this program
+--- crow run:     error[E0277]: the trait bound `Vec<i64>: FromParallelIterator<f64>`
+---               is not satisfied (the sum is typed as a float), and with `i + n`
+---               in place of `i + 3 ^ 40`: error[E0277]: cannot add
+---               `crow_runtime::int::Int` to `i64`
+---               error: the compiled program does not build — …
+--- Expected: [12157665459056928801, 12157665459056928802, 12157665459056928803]
+--- in both modes (what `range[3]` in place of `range[n]` prints in both).
+---
+--- Each of these runs and agrees: `range[3]`; `m = 3` / `range[m]`; `big = 3 ^ 40`
+--- with `range[3]`; `i + 1` (no growing int); a statement loop
+--- (`for i in range[n]` / `log[i + n]`). Related: findings/multiple_distinct_objects-1.co
+--- (the same item handed to a function taking a growing int) and the known
+--- findings/french_republican_calendar-1.co (the item compared with one).
+n = int['3']
+ds = for i in range[n]
+    i + 3 ^ 40
+log[ds]

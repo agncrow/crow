@@ -1,0 +1,12 @@
+--- A view whose program does not `use ui` (no import at all, or `use web`
+--- alone) is accepted, then fails in both modes as it runs:
+---   interpreted: runtime error: line 10: the IR interpreter does not run 'p' yet
+---   compiled:    error[E0425]: cannot find type `CrowVNode` in this scope
+---                error: the compiled program does not build — the Rust compiler
+---                refused what Crow accepted, a bug in Crow, not in this program
+--- Expected: refused before it runs, in both modes, with a message naming the
+--- fix (`use ui`), or `<p>hi</p>` printed. With `use web, ui` it prints <p>hi</p>.
+view small[]
+    return p['hi']
+
+log[small[]]

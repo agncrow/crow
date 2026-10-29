@@ -216,7 +216,7 @@ fn a_top_level_loop_over_an_error_halts_with_the_loop_message() {
 #[test]
 fn a_parallel_loop_that_skips_gathers_per_iteration() {
     let rust = transpile("out = for x in [1, 2, 3]\n    y = x * 2\n    if y gt 2\n        y\nlog[out]\n");
-    assert!(rust.contains(".par_iter().flat_map_iter(|&x| {"), "{}", rust);
+    assert!(rust.contains("crow_runtime::cores::collect_ref(") && rust.contains("|&x| {"), "{}", rust);
     assert!(rust.contains("= crow_runtime::core::push((_yielded_"), "{}", rust);
 }
 
@@ -439,11 +439,11 @@ fn test_scope_for_block() {
 #[test]
 fn test_cpu_count_wiring() {
     let par = transpile("xs = [1, 2, 3]\nys = for x in xs\n    x * 2\nlog[len[ys]]\n");
-    assert!(par.contains("crow_runtime::cores::run(|| ") && par.contains("par_iter"), "{}", par);
+    assert!(par.contains("crow_runtime::cores::map_ref("), "{}", par);
     let seq = transpile("fn doubled[n]\n    ys = for x in range[n]\n        x * 2\n    return ys\ncpu[1]\nlog[len[doubled[3]]]\n");
     assert!(seq.contains("crow_runtime::cores::set((1_i64) as i64)"), "{}", seq);
     let f = &seq[seq.find("fn doubled(").expect("doubled is emitted")..];
-    assert!(f[..f.find("\n}").unwrap_or(f.len())].contains("crow_runtime::cores::run(|| "), "{}", seq);
+    assert!(f[..f.find("\n}").unwrap_or(f.len())].contains("crow_runtime::cores::map_ref("), "{}", seq);
     let own = transpile("fn heavy[n]\n    cpu[2]\n    ys = for x in range[n]\n        x * 2\n    return ys\nlog[len[heavy[3]]]\n");
     assert!(own.contains("let _cores = crow_runtime::cores::Restore::new();"), "a function's count is put back as it returns: {}", own);
 }
@@ -660,16 +660,16 @@ fn a_handler_that_cannot_wait_is_answered_where_it_is_read() {
 #[test]
 fn a_round_holding_its_failure_runs_in_parallel() {
     let held = transpile("use io\ntext = read['words.txt']\ncounts = for w in ['a', 'b']\n    occurs[text, w]\nlog[counts]\n");
-    assert!(held.contains("par_iter()"), "the counts hold their failures\n{}", held);
+    assert!(held.contains("crow_runtime::cores::map_"), "the counts hold their failures\n{}", held);
     let leaves = transpile("use io\nfn firsts[ws]\n    text = read['words.txt']\n    out = for w in ws\n        if occurs[text, w] gt 2\n            1\n        else\n            0\n    return out\nlog[firsts[['a', 'b']]]\n");
-    assert!(!leaves.contains("par_iter()"), "a failed condition leaves the function\n{}", leaves);
+    assert!(!leaves.contains("par_iter()") && !leaves.contains("crow_runtime::cores::map_"), "a failed condition leaves the function\n{}", leaves);
 }
 
 #[test]
 fn test_for_expr_parallel_by_default() {
     let src = "items = [1, 2, 3]\ndoubled = for x in items\n    x * 2\nlog['{doubled}']\n";
     let rust = transpile(src);
-    assert!(rust.contains("par_iter()"), "for-expr should use par_iter by default\n{}", rust);
+    assert!(rust.contains("crow_runtime::cores::map_ref("), "for-expr should run on the cores by default\n{}", rust);
 }
 
 #[test]
@@ -2497,7 +2497,7 @@ fn a_loop_takes_the_list_it_reads_last() {
     let rust = transpile(src);
     let start = rust.find("fn f(").expect("f");
     let body = &rust[start..start + rust[start..].find("\n}\n").unwrap()];
-    assert!(body.contains("into_par_iter()") || body.contains("into_iter()"), "{}", body);
+    assert!(body.contains("crow_runtime::cores::map_owned(") || body.contains("into_iter()"), "{}", body);
     assert!(!body.contains("__item_l.clone()"), "no item copied\n{}", body);
 }
 

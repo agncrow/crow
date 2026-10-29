@@ -1,0 +1,13 @@
+--- When log itself stops the program (here on a decimal too long to show, see
+--- pi_to_1_million_digits-1.co), the lines logged before it are lost, in both modes,
+--- when standard output is a pipe or a file (crow run -i x.co > out.txt):
+---   prints only: runtime error: line 12: Formatting argument out of range
+---   expected:    before
+---                runtime error: line 12: Formatting argument out of range
+--- With the failing call outside log (t = str[x]), 'before' is printed. The spec's
+--- note on log's blocks: a way for a program to end flushes what was logged first;
+--- a stop raised while log formats its argument does not.
+x = decimal[1, digits = 70000] / decimal[3, digits = 70000]
+log['before']
+log[x]
+log['after']

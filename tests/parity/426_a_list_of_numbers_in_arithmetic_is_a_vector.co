@@ -1,0 +1,22 @@
+--- A list of numbers met in arithmetic with a number is a vector, one
+--- axis: a loop walks its numbers and an index reads one. Not written
+--- down — `range[n]`'s answer, a collecting loop's, a parameter's — its
+--- rank had been unknown, and the loop and the index were refused before
+--- the program ran, in both modes (Rosetta Code, Map range).
+
+fn scaled[xs]
+    ys = (xs - 1.0) * 2.0
+    total = 0.0
+    for y in ys
+        total = total + y
+    return [total, ys[0]]
+
+xs = range[3]
+ys = xs * 2.0
+for y in ys
+    log[y]
+log[ys[2]]
+zs = for i in range[4]
+    i * i
+log[(-1.0 + zs)[3]]
+log[scaled[range[4]]]

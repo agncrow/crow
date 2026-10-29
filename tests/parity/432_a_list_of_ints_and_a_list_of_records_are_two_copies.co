@@ -1,0 +1,17 @@
+--- A function called with a list of ints and with a list of records is
+--- two functions, a copy per kind (spec, Specialization): an int is a
+--- record's none only where it is handed alone, a record or the 0 that
+--- writes none. Joined, the copy's list of records or none had taken the
+--- list of ints unconverted, an internal error in both modes (Rosetta
+--- Code, Monads/List monad).
+struct Pick [x, y]
+
+fn firsts[xs]
+    return xs[0]
+
+ints = push[push[[], 1], 2]
+log[firsts[ints]]
+picks = push[[], Pick[1, 2]]
+log[firsts[picks].y]
+zeros_too = push[push[[], 0], 0]
+log[type[firsts[zeros_too]]]

@@ -1,0 +1,14 @@
+--- In a `use ui` program, a top-level assignment drawn after `seed[n]` is not
+--- seeded: x is a different number on every run, in both modes, and the two
+--- modes disagree (one run: 5880 interpreted, 1129 compiled; the next: 5841
+--- and 9148). Expected 3944 every run in both modes — what the same program
+--- prints with `use web, math` in place of `use ui, math`, what
+--- `log[rand[0, 9999]]` (no assignment) prints under `use ui`, and what a
+--- function that calls seed[2026] and then draws answers under `use ui`.
+--- The spec (math, seed): every later draw is repeatable and identical in both
+--- modes. A nested collect of draws (`rows = for … rand[…]`) shows it too.
+use ui, math
+
+seed[2026]
+x = rand[0, 9999]
+log[x]

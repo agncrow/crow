@@ -1,0 +1,21 @@
+--- A collecting `for` whose item is an empty list held in a local (`none = []`,
+--- then `none`), its items later given ints (`adj[1] = push[adj[1], 7]`):
+--- the interpreter runs it, the compiled program does not build.
+---
+--- crow run -i:   [[], [7], []]
+--- crow run:      error[E0308]: mismatched types
+---                  --> src/main.rs:37:34
+---                error: the compiled program does not build — the Rust compiler
+---                refused what Crow accepted, a bug in Crow, not in this program
+--- The generated Rust declares the local as `let none: Vec<String> = vec![];` and
+--- collects `Vec<Vec<String>>` into a variable typed `Vec<Vec<i64>>`.
+--- Expected: [[], [7], []] in both modes. Writing `[]` itself as the body's last
+--- line (no local), or the literal `[[], [], []]`, builds and agrees. The same
+--- inside a function (adjacency lists of a graph, built per vertex then pushed).
+--- Found writing rosetta/hopcroft_karp_algorithm.co.
+
+adj = for u in range[3]
+    none = []
+    none
+adj[1] = push[adj[1], 7]
+log[adj]

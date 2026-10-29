@@ -929,6 +929,9 @@ struct Lowerer<'a> {
     /// lowering, by function: a return of another kind is refused against
     /// them (`a function answers one kind`).
     returns_seen: HashMap<String, Vec<crate::table::Arg>>,
+    /// The functions with a `return 0` — none, beside a record (spec, A
+    /// Record or None) — kept apart from the kinds they return.
+    returns_none: HashSet<String>,
     /// The names a guard knows have failed where the lowering is (`if not
     /// x.ok`'s body, `if x.ok`'s else): a return of one hands back its
     /// failure, never its value's type.
@@ -1074,6 +1077,7 @@ impl<'a> Lowerer<'a> {
             clicks: None,
             tested: None,
             returns_seen: HashMap::new(),
+            returns_none: HashSet::new(),
             failed: Vec::new(),
         }
     }
@@ -3020,7 +3024,7 @@ impl<'a> Lowerer<'a> {
                 // a body that binds a frame anew reads, at its top, what the
                 // loop's entry and its end both give
                 let before = self.detailed_in_view();
-                if self.pass == Pass::Final && !before.is_empty() && Self::body_assigns(body, &before) {
+                if self.reads_ahead(&before, body) {
                     self.pre_join_loop(&before, body);
                 }
                 let top = self.detailed_now(&before);
@@ -3075,6 +3079,10 @@ impl<'a> Lowerer<'a> {
                         self.v.unknown_items.insert(var.clone());
                     }
                     let before = self.detailed_in_view();
+                    if self.reads_ahead(&before, body) {
+                        self.pre_join_loop(&before, body);
+                    }
+                    let top = self.detailed_now(&before);
                     // a call through the variable of a loop over a literal
                     // list of named functions types every one of them, as a
                     // collecting loop's does (`for f in [double, triple]`
@@ -3098,7 +3106,7 @@ impl<'a> Lowerer<'a> {
                     }
                     let b = b?;
                     let end = self.detailed_now(&before);
-                    self.join_detailed(&before, &end);
+                    self.join_detailed(&top, &end);
                     if let Some(t) = shadowed {
                         self.ctx.vars.insert(var.clone(), t);
                     }
@@ -3110,7 +3118,7 @@ impl<'a> Lowerer<'a> {
                     // a body that binds a frame anew reads, at its top, what
                     // the loop's entry and its end both give
                     let before = self.detailed_in_view();
-                    if !before.is_empty() && Self::body_assigns(body, &before) {
+                    if self.reads_ahead(&before, body) {
                         self.pre_join_loop(&before, body);
                     }
                     let top = self.detailed_now(&before);
@@ -3180,15 +3188,27 @@ impl<'a> Lowerer<'a> {
                     let given = Arg::of_type(x.ty().payload());
                     let number = |a: &Arg| matches!(a, Arg::Int | Arg::Float | Arg::Decimal | Arg::Fraction);
                     let listed = |a: &Arg| matches!(a, Arg::Ints | Arg::Floats | Arg::AnyList | Arg::Rows | Arg::Tensor | Arg::Tensors | Arg::FallibleNumbers | Arg::Fallible);
-                    let linked = |a: &Arg| matches!(a, Arg::Records | Arg::Int);
                     let unsettled = |a: &Arg| matches!(a, Arg::Unknown | Arg::AnyList | Arg::Fallible | Arg::FallibleNumbers);
+                    // (`return 0` beside a record answers none: the function
+                    // answers a record or none — refused as two kinds, a tree
+                    // builder's empty branch had not run; Rosetta Code, K-d
+                    // tree. Any other int beside a record is two kinds.)
+                    let none = matches!(&x, Expr::Const(Const::Int(0), _));
+                    let nones = self.returns_none.contains(&self.current_fn);
                     if !unsettled(&given) {
                         let seen = self.returns_seen.entry(self.current_fn.clone()).or_default();
-                        let other = seen.iter().find(|answer| {
-                            !(**answer == given || (number(answer) && number(&given)) || (listed(answer) && listed(&given)) || (linked(answer) && linked(&given)))
-                        });
-                        if let Some(answer) = other.cloned() {
+                        let other = seen
+                            .iter()
+                            .find(|answer| {
+                                let record_or_none = none && matches!(answer, Arg::Record);
+                                !(**answer == given || (number(answer) && number(&given)) || (listed(answer) && listed(&given)) || record_or_none)
+                            })
+                            .cloned()
+                            .or_else(|| (nones && !(number(&given) || matches!(given, Arg::Record))).then_some(Arg::Int));
+                        if let Some(answer) = other {
                             self.refuse(format!("returns {} where the function answers {} — a function answers one kind", given.words(), answer.words()));
+                        } else if none {
+                            self.returns_none.insert(self.current_fn.clone());
                         } else {
                             seen.push(given);
                         }
@@ -4717,8 +4737,11 @@ impl<'a> Lowerer<'a> {
                 // (written as they stood, they had not built — crow check
                 // --self)
                 let operand = |x: Expr| match x.ty() {
+                    // (a list of numbers is a vector: one axis — of no known
+                    // rank, `range[3] * 2.0` had been refused where a loop
+                    // walked it; Rosetta Code, Map range)
                     Ty::List(item) if matches!(*item, Ty::Int | Ty::Float | Ty::Bool) => {
-                        let ty = Ty::Tensor(Box::new(Ty::Float), shapes::stacked_dims(&x.ty()));
+                        let ty = Ty::Tensor(Box::new(Ty::Float), Some(vec![None]));
                         Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty }
                     }
                     Ty::Big => match crate::table::row("core.__float_of_big") {
@@ -5689,7 +5712,16 @@ impl<'a> Lowerer<'a> {
             {
                 self.check_rank_known(&base, "an index into");
             }
-            let ty = self.call_type(callee, args, &arg_types, &full_types, Some(read(&base)));
+            // (a variable of the program's named like a form — `box`, the
+            // test harness's — is indexed by its own items: the form's rule
+            // had typed `box[0]` of `box = [5, 6]` as a list; Rosetta Code,
+            // Facial detection in a photo)
+            let named_like_a_form = matches!(callee, A::Ident(n) if self.declared(n) && crate::table::rows_named(n).next().is_some());
+            let ty = if named_like_a_form {
+                self.ctx.index_type(read(&base), arg_types.first().cloned())
+            } else {
+                self.call_type(callee, args, &arg_types, &full_types, Some(read(&base)))
+            };
             // a decomposition's piece, read by its literal position, has its
             // own shape (the list's item type has none of them)
             let position = if idx.len() == 1 { shapes::size(&idx[0]) } else { None };
@@ -5802,7 +5834,10 @@ impl<'a> Lowerer<'a> {
                         || field_k.compatible(&as_inferred(&given_k));
                     if !fits {
                         let fname = self.ctx.structs.get(&name).and_then(|s| s.fields.get(i)).map(|(f, _)| f.clone()).unwrap_or_default();
-                        let words = |t: &Ty| crate::table::Arg::of_type(t).words();
+                        // (a list named by its items' kind: `holds a list, and
+                        // this is a list` had named neither; Rosetta Code,
+                        // Gaussian elimination)
+                        let words = |t: &Ty| crate::table::Arg::of_type(t).said(t);
                         self.refuse(format!(
                             "{}'s field '{}' holds {}, and this is {}: a field holds one kind, as a variable does",
                             crate::lower::shown(&name),
@@ -6072,7 +6107,7 @@ impl<'a> Lowerer<'a> {
             let argc = lowered.len();
             for (i, x) in lowered.iter().enumerate() {
                 if matches!(x, Expr::Local(_, Ty::Unknown))
-                    && let Some(k) = uses::row_says(&name, module.as_deref(), i, argc)
+                    && let Some(k) = self.rows_say(&name, module.as_deref(), i, argc)
                 {
                     self.note_param_read(x, &k);
                 }
@@ -6119,7 +6154,7 @@ impl<'a> Lowerer<'a> {
                     // where read as text it had been parsed again)
                     (true, _) if module.is_none() && name == "json" && argc == 1 && self.web_form(&name) => None,
                     (true, _) if module.is_none() && Self::web_form_reads(&name, i).is_some() && self.web_form(&name) => Self::web_form_reads(&name, i),
-                    (true, _) => uses::row_says(&name, module.as_deref(), i, argc),
+                    (true, _) => self.rows_say(&name, module.as_deref(), i, argc),
                 };
                 match kind {
                     Some(k) => {
@@ -6316,15 +6351,18 @@ impl<'a> Lowerer<'a> {
                 if self.pass == Pass::Final && params.iter().any(|p| matches!(p, Ty::Fn(..))) {
                     let names: Vec<String> = sig.params.iter().map(|(n, _)| n.clone()).collect();
                     let whole = |t: &Ty| matches!(t, Ty::Int | Ty::Big);
+                    // (and a list of ints is no list of records: an int is
+                    // a record's none only handed alone)
+                    let alike = |held: &Ty, given: &Ty| held.compatible(given) && crate::type_infer::TypeContext::items_alike(held, given);
                     let misfit = params.iter().zip(lowered.iter()).enumerate().find(|(_, (p, x))| {
                         let (held, given) = (sans_results(p.payload()), sans_results(x.ty().payload()));
                         // (a parsed value is a kind too: the one function
                         // cannot read it as each call's kind)
                         !matches!(held, Ty::Fn(..) | Ty::Unknown)
                             && !matches!(given, Ty::Unknown)
-                            && !held.compatible(&given)
+                            && !alike(&held, &given)
                             && !(whole(&held) && whole(&given))
-                            && !held.compatible(&as_inferred(&given))
+                            && !alike(&held, &as_inferred(&given))
                     });
                     // (and a function handed where another call hands one
                     // answering another kind: the one parameter cannot
@@ -6362,7 +6400,17 @@ impl<'a> Lowerer<'a> {
                         self.refuse(msg);
                     }
                     if let Some((i, (p, x))) = misfit {
-                        let words = |t: &Ty| crate::table::Arg::of_type(t.payload()).words();
+                        // (records named by their kind: `a list of records
+                        // here where another call makes it a list of records`
+                        // had named two kinds alike; Rosetta Code, Hash join)
+                        let words = |t: &Ty| match t.payload() {
+                            Ty::Record(n) | Ty::OptRecord(n) => format!("a {}", crate::lower::shown(n)),
+                            Ty::List(item) => match item.payload() {
+                                Ty::Record(n) | Ty::OptRecord(n) => format!("a list of {}", crate::lower::shown(n)),
+                                _ => crate::table::Arg::of_type(t.payload()).said(t.payload()),
+                            },
+                            other => crate::table::Arg::of_type(other).said(other),
+                        };
                         let msg = format!(
                             "`{0}` takes a function, so one `{0}` serves every call, and its '{1}' is {2} here where another call makes it {3} — a function taking a function is not copied per kind (spec, Specialization): write one for each kind",
                             crate::lower::shown(&name),
@@ -6467,11 +6515,17 @@ impl<'a> Lowerer<'a> {
                     && !a.compatible(&b)
                     && !(matches!(a, Ty::Int | Ty::Big) && matches!(b, Ty::Int | Ty::Big))
                 {
-                    let words = |x: &Expr| crate::table::Arg::of_type(x.ty().payload()).words();
+                    // (a matrix named so, and the way to join one: it had
+                    // been called "numbers" beside a list of lists; Rosetta
+                    // Code, Maximum triangle path sum)
+                    let matrix = |x: &Expr| matches!(x.ty().payload(), Ty::Tensor(_, Some(d)) if d.len() >= 2);
+                    let words = |x: &Expr| if matrix(x) { "a matrix".to_string() } else { crate::table::Arg::of_type(x.ty().payload()).said(&x.ty()) };
+                    let hint = if matrix(&lowered[0]) || matrix(&lowered[1]) { " — join a matrix with a matrix: math's tensor[rows] makes one of a list of rows" } else { " — a record (struct) holds fields of several kinds" };
                     self.refuse(format!(
-                        "concat[] joins lists of one kind, and these are {} and {}: a list holds one kind — a record (struct) holds fields of several kinds",
+                        "concat[] joins lists of one kind, and these are {} and {}: a list holds one kind{}",
                         words(&lowered[0]),
-                        words(&lowered[1])
+                        words(&lowered[1]),
+                        hint
                     ));
                 }
             }
@@ -7010,6 +7064,16 @@ impl<'a> Lowerer<'a> {
             self.calls.entry(current).or_default().insert(f.clone());
         }
         Target::User(f)
+    }
+
+    /// What the rows a call reaches say of its argument at a position
+    /// (`uses::row_says`): a bare call's are the core's and those of the
+    /// modules in scope that provide the name.
+    fn rows_say(&self, name: &str, module: Option<&str>, at: usize, argc: usize) -> Option<Ty> {
+        match module {
+            Some(m) => uses::row_says(name, Some(m), at, argc),
+            None => uses::row_says_within(name, &self.ctx.registry.providers_of(name), at, argc),
+        }
     }
 
     /// The row a builtin's call runs, decided once, here, from its
@@ -7766,6 +7830,8 @@ fn in_string_at(e: String, line: usize, above: usize) -> String {
         }
         None => (0, e.clone()),
     };
+    // (the fragment's end is the interpolation's, not the file's)
+    let message = message.replace("the end of the file", "the end of the interpolation");
     format!("line {}: {}", line + above + inner, message)
 }
 

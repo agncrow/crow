@@ -1,0 +1,25 @@
+--- Finding (random_sentence_from_book): a map whose values are empty maps,
+--- written two levels deep (`m[k][j] = v`), keeps its inner maps' key and value
+--- kinds unknown, and the compiled program does not build. Found counting which
+--- word follows which, the Python way (`follow[w][nxt] = follow[w][nxt] + 1`
+--- after `follow[w] = map[]`).
+---
+--- crow run -i:  [a = [n = 1]]
+--- crow run:     error[E0308]: mismatched types --> src/main.rs
+---               error: the compiled program does not build — the Rust compiler
+---               refused what Crow accepted, a bug in Crow, not in this program
+--- Expected: [a = [n = 1]] in both modes.
+---
+--- `crow build --ir`: `let m: Map(Map(?)) = core.map_new()`, then
+--- `m["a"]["n"] = 1` — the inner map's kinds stay `?`, and the emitter declares
+--- `BTreeMap<String, BTreeMap<String, String>>`, into which the int 1 is
+--- inserted. The same inside a function, with int keys (`m[1] = map[]`,
+--- `m[1][2] = 3`: `Map(Int, Map(?))`), with a later read (`m['a']['n'] =
+--- m['a']['n'] + 1`), and with the write in a loop over words. A text value
+--- builds (`m['a']['n'] = 'one'`: the unknown is printed as text). Fine: the
+--- inner map taken out, written and put back (`inner = m['a']`, `inner['n'] =
+--- 1`, `m['a'] = inner`).
+m = map[]
+m['a'] = map[]
+m['a']['n'] = 1
+log[m]

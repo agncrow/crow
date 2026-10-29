@@ -1,0 +1,18 @@
+--- Finding (sequence_smallest_number_greater_than_previous_term_with_exactly_n_divisors):
+--- a function that answers a value and ends in `halt[…]` is refused, in both modes, with
+--- words that are not true of it:
+---   h.co:5:5: pick[] returns an int, and its body can end here without returning one: end
+---   it with the value it answers then — a function answers on every path or on none
+--- `halt[reason]` stops the program on the line of the call (spec §11, System; When a
+--- Program Stops), so the body cannot end there: every path that reaches the end of
+--- `pick` stops. Expected: accepted (halt is an exit of the path, as `return` is), and
+--- `log[pick[[1, 5]]]` prints 5 (with [1, 2] the program stops with "none above 2").
+--- Workaround: a `return` nothing reaches after the halt (`return 0`). (Related, noted in
+--- CLAUDE.md as a trap: `halt` in a guard does not narrow where `return` does.)
+fn pick[xs]
+    for x in xs
+        if x gt 2
+            return x
+    halt['none above 2']
+
+log[pick[[1, 5]]]

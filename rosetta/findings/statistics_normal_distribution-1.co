@@ -1,0 +1,16 @@
+--- At the top level, a variable given a list picked by a mask, where the mask compares
+--- the list with a function's answer, is refused as a reassignment — though it is
+--- assigned once. Both modes (crow run -i and crow run) refuse before running:
+---   15:1: cannot reassign 'inside' from float to array — variable type cannot change
+--- Expected: [-2], as `log[z[z lt half[1.0]]]`, `s = 0.5` then `z[z lt s]`, and
+--- `mask = z lt half[1.0]` then `inside = z[mask]` all answer, and as the same
+--- assignment inside a function does. The answer of math.stats's `median` or `std`
+--- held in a variable (`s = std[z]`, then `inside = z[abs[z - m] lt s]`) is refused
+--- alike, which is how it was met.
+
+fn half[x]
+    return x / 2.0
+
+z = [1.0, -2.0, 3.0]
+inside = z[z lt half[1.0]]
+log[inside]

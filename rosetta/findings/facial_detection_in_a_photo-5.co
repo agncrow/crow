@@ -1,0 +1,36 @@
+--- Finding (facial_detection_in_a_photo), performance, both modes alike: gathering a few
+--- numbers from a large tensor by an index tensor (`big[idx]`, the spec's Advanced Indexing)
+--- costs the whole tensor at every gather. crow_runtime's CrowTensor::try_gather starts with
+--- `let src = self.to_vec();`, a copy of every number of the source (and of the indices), so
+--- three numbers gathered from 4,000,000 copy 32 MB. A matrix's row read by position (`m[i]`,
+--- `index0`) copies the whole matrix the same way, and arithmetic between tensors of two shapes
+--- that broadcast (`zip_with`) computes each element's place with a division and a remainder
+--- per axis, several times slower than the same-shape path.
+---
+--- Run from a work directory (`crow run -i` and `crow run` alike), this prints two times:
+--- 1,000 gathers of 3 numbers from 4,000,000 take about a second (a copy of 32 MB each),
+--- the same from 3 numbers nothing.
+--- Expected: both near nothing (a gather reads the numbers it names).
+--- Met in Viola-Jones over a 1024 x 682 photo: the detector gathered rectangle corners from the
+--- summed-area table for each feature of each stage and took 10 s, most of it in memmove of
+--- the table; gathering each stage's corners once and turning them into the features' values
+--- with a sparse matrix product (one copy of the table per stage) brought it to about 4 s.
+use math
+
+big = zeros[4000000]
+small = zeros[3]
+idx = tensor[[0.0, 1.0, 2.0]]
+total = 0.0
+t0 = now[]
+i = 0
+while i lt 1000
+    total = total + sum[big[idx + float[i % 3]]]
+    i = i + 1
+log['1000 gathers of 3 numbers from 4,000,000: `now[] - t0` s']
+t0 = now[]
+i = 0
+while i lt 1000
+    total = total + sum[small[idx]]
+    i = i + 1
+log['1000 gathers of 3 numbers from 3: `now[] - t0` s']
+log[total]

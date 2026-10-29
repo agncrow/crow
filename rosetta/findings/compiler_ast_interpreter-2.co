@@ -1,0 +1,29 @@
+--- Finding (compiler_ast_interpreter): inside a function, a failed value written into a
+--- list's item by position (`xs[0] = maybe[n]`) halts the whole program with the top
+--- level's words, where the spec says the function hands the error back to its caller.
+---
+--- Interpreted (crow run -i) and compiled (crow run) alike:
+---     [5, 2]
+---     runtime error: line 23: cannot assign an error value to 'xs' — negative
+--- Expected (spec, "A write lands at one position": "a value that can fail is decided
+--- where it is written, as one assigned to a variable is"; §1: "a function hands the
+--- error back to its caller, so a function that can fail this way can fail … and the
+--- top level halts"):
+---     [5, 2]
+---     false
+---     negative
+--- as the same function written with a variable (`x = 1` / `x = maybe[n]`) answers in
+--- both modes. The same through a record's list field (`st.data[0] = maybe[n]`).
+fn maybe[n]
+    if n lt 0
+        return error['negative', 'x']
+    return n
+
+fn put[xs, n]
+    xs[0] = maybe[n]
+    return xs
+
+log[put[[1, 2], 5]]
+b = put[[1, 2], -1]
+log[b.ok]
+log[b.reason]

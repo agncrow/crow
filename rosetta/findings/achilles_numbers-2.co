@@ -1,0 +1,14 @@
+--- STATUS: no longer reproduces with the pinned bin/crow replaced at 19:25 (both modes now give the expected answer).
+--- Finding (achilles_numbers): an index write with an int key into an empty map.
+--- The spec (Maps): "an empty `map[]` is open, and its first `set` decides".
+---
+--- crow run -i:   runtime error: line 13: the map's keys are text, not ints: 1
+--- crow run:      error[E0308]: mismatched types --> src/main.rs
+---                error: the compiled program does not build — ... a bug in Crow
+--- Expected: `one` in both modes (as `m = set[m, 1, 'one']` prints), or one
+--- refusal before the program runs in both modes.
+--- With a bool value (`m[1] = true`, then `log[keys[m]]`) the interpreter stops
+--- the same way and the compiled program prints ['1'] — the int key turned to text.
+m = map[]
+m[1] = 'one'
+log[m[1]]

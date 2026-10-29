@@ -1,0 +1,23 @@
+--- A function handed as a value where a list of ints is answered answers
+--- that list: `increment`'s `[x + 1]` is written as a vector, but `bind`
+--- joins what `f` answers onto a list of ints, so the list is its form.
+--- Reformed to its body's vector by a later round, `concat` had met the
+--- vector — a runtime stop interpreted ("expected a list, got array") and
+--- a compiled program that did not build (Rosetta Code, Monads/List monad).
+fn bind[m, f]
+    out = []
+    for x in m
+        out = concat[out, f[x]]
+    return out
+
+fn increment[x]
+    return [x + 1]
+
+fn divisors[n]
+    ds = for d in range[1, n + 1]
+        if n % d eq 0
+            d
+    return ds
+
+log[bind[bind[[3, 4, 5], increment], increment]]
+log[bind[[6, 7], divisors]]

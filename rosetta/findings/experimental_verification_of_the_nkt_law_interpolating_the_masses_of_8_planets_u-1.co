@@ -1,0 +1,19 @@
+--- Finding (experimental_verification_of_the_nkt_law_…): a number written with
+--- an exponent, as every other language writes a mass or a constant (3.301e23,
+--- 6.674e-11, 1e10), is refused in both modes with a message that misleads: it
+--- reads the exponent as a second statement or a stray name, and its advice is
+--- wrong.
+---
+--- crow run -i and crow run alike:
+---   …-1.co:18:13: a line holds one statement — 'e23' starts a second one: put
+---   it on a line of its own
+---     18 │ mass = 3.301e23
+--- The same for `g = 6.674e-11` ('e' starts a second one), `x = 1e10`, `3.0E8`;
+--- inside brackets, `log[2.5e3]` and `[1.0e3, 2.0]`: expected ']', got 'e3'.
+---
+--- Expected: the program is not Crow (the spec has no exponent notation, and
+--- the lexer reads `3.301` then the name `e23`), so a refusal is right, but one
+--- that teaches, as `==` and `&&` get theirs: Crow writes no exponent in a
+--- number — 3.301 * 10.0 ^ 23, or float['3.301e23'] for the float nearest it.
+mass = 3.301e23
+log[mass]

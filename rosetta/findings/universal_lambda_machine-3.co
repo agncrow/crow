@@ -1,0 +1,40 @@
+--- Finding (universal_lambda_machine): compiled, a `return m` inside a loop's body
+--- copies m: the emitter writes `return m.clone();` (crow build --rs), so a
+--- function that takes a record, grows its lists and returns it from inside a
+--- `while` copies the whole record at every call, and a loop of such calls is
+--- quadratic. Interpreted, the record is handed back where it lies.
+---
+---   crow run -i:  6000000 in 1.1 s CPU
+---   crow run:     6000000 in 41.8 s CPU   (20,000 calls: 4.5 s; quadratic)
+--- Expected: about the interpreter's time. The same function with the `return m`
+--- after the loop (a flag ends the loop) runs compiled in 0.35 s for 20,000 calls;
+--- nothing after the return runs on its path, so m is not read again and can move.
+--- The generated run:
+---     loop {
+---         if k < 100_i64 { ... }
+---         else { m.head = ...; return m.clone(); }
+---     }
+--- (A lambda-calculus machine's run, returning its heap record from inside its
+--- `while true` loop, ran 17 s compiled against 8 s interpreted, the time in
+--- Machine::clone of lists of a million ints per call.)
+struct Machine [op, term, head]
+
+fn run[m, c]
+    k = 0
+    while true
+        if k lt 100
+            m.term = push[m.term, k + c]
+            k = k + 1
+        else
+            m.head = m.op[0]
+            return m
+
+fn drive[calls]
+    m = Machine[[1, 2, 3], [], -1]
+    r = 0
+    while r lt calls
+        m = run[m, r]
+        r = r + 1
+    return len[m.term]
+
+log[drive[60000]]

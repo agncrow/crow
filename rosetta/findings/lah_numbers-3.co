@@ -1,0 +1,16 @@
+--- Finding: `push[[], row]` of a variable holding a list of ints, the list of
+--- lists later handed a row of ints past 64 bits, is an internal error in both
+--- modes:
+---     internal error: the lowered program disagrees with itself — a bug in
+---     Crow, not in this program: lah_numbers-3 main: line 14: 'rows' is
+---     declared List(List(Big)) but its first value is List(Big) (from the
+---     runtime's core.push)
+--- Expected: [[1], [18446744073709551616]]. The same rows built as
+--- `rows = push[[], push[[], 1]]` (the row not in a variable), or as `rows = []`
+--- then `rows = push[rows, row]`, run and print that in both modes. Found
+--- writing Lah numbers; worked around with `rows = []` then `push[rows, row]`.
+
+row = push[[], 1]
+rows = push[[], row]
+rows = push[rows, push[[], 2 ^ 64]]
+log[rows]

@@ -1,0 +1,29 @@
+--- A list of no rows handed where a matrix of rows is taken is a matrix
+--- of none, of the row shape the program's type states: a walk of its
+--- rows runs no round. It had been made a vector of no numbers, whose rows
+--- the matrix's reader refused — "the program reads rows of a tensor its
+--- type says is a matrix, but the value has shape [0]" — in both modes
+--- (Rosetta Code, Hopcroft-Karp algorithm).
+
+fn total[edges]
+    sum = 0
+    for e in edges
+        sum = sum + e[0] * e[1]
+    return sum
+
+fn checked[label, edges]
+    log['`label`: `total[edges]`']
+
+grown = []
+for k in range[1, 4]
+    grown = push[grown, [k, k + 1]]
+log[total[[[1, 2], [3, 4]]]]
+log[total[grown]]
+checked['pairs', [[2, 3]]]
+pairs = for k in range[2]
+    [k, 5]
+checked['collected', pairs]
+none = for k in range[0]
+    [k, 5]
+checked['none', none]
+checked['empty', []]

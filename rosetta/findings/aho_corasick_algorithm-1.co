@@ -1,0 +1,26 @@
+--- STATUS: no longer reproduces with the pinned bin/crow replaced at 19:25 (both modes now give the expected answer).
+--- Finding (aho_corasick_algorithm): compiled, an index into a list that can fail
+--- (a top-level list from a function that may answer an error, or from read/split of
+--- a file) copies the WHOLE list at every read, so a loop reading words[i] is quadratic.
+---
+--- crow run -i:  prints 108890 in 0.02 s
+--- crow run:     prints 108890 in 7.0 s (the binary alone; 300 times slower)
+--- Expected: about the interpreter's time.
+--- The generated Rust (crow build --rs) for words[i]:
+---   { let _i = i; let _v = &(words).value.clone(); _v[crow_runtime::stops::at(_i, _v.len(), 11)].clone() }
+--- `.value.clone()` clones the Vec<String> of 20,000 items for every index.
+--- The same loop over `split[trim[read['unixdict.txt']], '\n']` (25,104 words) took 15 s
+--- compiled against 0.08 s interpreted. Inside a function (a parameter is never a
+--- value that can fail) the index does not copy.
+fn make[n]
+    if n lt 0
+        return error['negative']
+    xs = for i in range[n]
+        'w`i`'
+    return xs
+
+words = make[20000]
+total = 0
+for i in range[len[words]]
+    total = total + len[words[i]]
+log[total]

@@ -1,0 +1,23 @@
+--- Finding (operator_precedence): the spec and the parser rank `not` and
+--- membership differently. The spec (section 4, Membership) says `x in xs`
+--- "binds as a comparison does — tighter than `and`, `or` and `not`", so
+--- `not x in [1, 2]` would read `not (x in [1, 2])`, true for x = 3. The parser
+--- reads `not` as a prefix of the unary level (parse_unary, beside the minus
+--- sign), tighter than every binary operator but `^`, so it is
+--- `(not x) in [1, 2]`, and the program is refused, in both modes:
+---
+--- crow run -i and crow run (both, before running):
+---   23:1: `not` turns a truth over — a bool, or a mask item by item — and this
+---        is an int: compare it first (not (x eq 0))
+---   23:1: `x in xs` takes a list and a value, text and text, numbers and a
+---        number or a map and a key (text or an int), got numbers and a bool
+--- Expected (by the spec's sentence): true.
+---
+--- The same holds for every comparison: `not x eq 5` is `(not x) eq 5`. The
+--- refusal's own advice, `not (x eq 0)`, and the spec's frame examples
+--- (`not (df.age gt 50)`, `df[not (df.name eq 'alice')]`) agree with the
+--- parser, so the Membership sentence may be what is wrong — but a reader
+--- coming from Python (`not x in xs` is `not (x in xs)` there) is told by the
+--- spec that it works. `x not in [1, 2]` is the form that does.
+x = 3
+log[not x in [1, 2]]

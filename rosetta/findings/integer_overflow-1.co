@@ -1,0 +1,15 @@
+--- -2^63 made by arithmetic inside 64 bits, divided by -1: the compiled program
+--- stops where the interpreter answers (ints grow without limit).
+---   crow run -i:  9223372036854775808   (right)
+---   crow run:     runtime error: line 15: integer overflow: -9223372036854775808 / -1 does not fit in 64 bits
+--- The width pass holds the quotient in 64 bits: its range for a / b seems to
+--- miss that the one 64-bit quotient past 64 bits is -2^63 / -1. The same
+--- through a local (`m = -9223372036854775807 - 1`, `m / -1`) and through a
+--- function's parameters (`fn q[a, b]` / `return a / b`, `q[-9223372036854775807 - 1, -1]`).
+--- Not seen when -2^63 is written so that it starts as a growing int: the
+--- literal `-9223372036854775808 / -1` and `(-(2 ^ 63)) / -1` answer
+--- 9223372036854775808 in both modes. `%` (0) and negation (2^63) are right.
+--- Found by Rosetta Code's Integer overflow, whose table has exactly this
+--- expression; the solution writes the literal -9223372036854775808 instead.
+
+log[(-9223372036854775807 - 1) / -1]

@@ -1,0 +1,20 @@
+--- A function that answers a view's call directly (`return cell[s]`, or `cell[s]`
+--- as its last line) does not build compiled; the interpreter prints <td>a &lt; b</td>.
+---   compiled: error[E0308]: mismatched types
+---               --> src/main.rs:45:12
+---             error: the compiled program does not build — the Rust compiler refused
+---             what Crow accepted, a bug in Crow, not in this program
+--- The function is typed as answering text (markup), and the emitter writes
+--- `return cell(s);` where cell answers a CrowVNode: the node is not rendered
+--- (`.to_html()`), as it is when the call is first given to a local
+--- (`m = cell[s]` / `return m` builds and prints the same as interpreted).
+--- Expected: <td>a &lt; b</td> in both modes.
+use web, ui
+
+view cell[s]
+    return td[s]
+
+fn markup_of[s]
+    return cell[s]
+
+log[markup_of['a < b']]

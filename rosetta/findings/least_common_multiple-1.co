@@ -1,0 +1,23 @@
+--- Finding (least_common_multiple): arithmetic on a key of an int-keyed map is
+--- done in 64 bits compiled, and stops where the result is larger, while the
+--- interpreter grows the int as for any other int. (A prime decomposition kept
+--- as a map from prime to power, merged by result = result * p ^ power over
+--- keys[a]: lcm[2^70 * 3^5, 2^40 * 3^9 * 7].)
+---
+--- crow run -i:
+---   1180591620717411303424
+---   9223372036854775809
+--- crow run:
+---   runtime error: line 3: integer overflow: 2 ^ 70 does not fit in 64 bits
+--- The same for `p + 9223372036854775807` (2 + 9223372036854775807 does not fit
+--- in 64 bits), `p * 4611686018427387904`, `keys[m][0] ^ 64`, and p as the
+--- variable of `for p in keys[m]`, in a function or at the top level. An item
+--- of values[m], of sort[[3, 2]] or of a literal list grows in both modes.
+--- (Perhaps the root of the known open finding on a for loop's variable over a
+--- list of ints, but no loop is needed here, and other lists' items grow.)
+--- Expected: both modes print the two lines above (a key is an int of 64 bits,
+--- but what is computed from it is an int like any other).
+m = map[2 = 'x']
+p = keys[m][0]
+log[p ^ 70]
+log[p + 9223372036854775807]

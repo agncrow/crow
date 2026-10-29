@@ -2365,7 +2365,11 @@ pub static ROWS: &[Row] = &[
     Row { shape: Shape::Pieces(&[&[Dim::Of(0, 0), Dim::Open], &[Dim::Open], &[Dim::Open, Dim::Of(0, 1)]]), ..row!("math.svd", "math", "svd", crow_runtime::math::svd, (Tensor) -> Tensors, stops) },
     Row { shape: Shape::Dims(&[Dim::Open, Dim::Open]), ..row!("math.qr", "math", "qr", crow_runtime::math::qr, (Tensor) -> Tensors, stops) },
     Row { shape: Shape::Same(0), ..row!("math.cholesky", "math", "cholesky", crow_runtime::math::cholesky, (Tensor) -> Tensor, stops) },
-    Row { shape: Shape::Pieces(&[&[Dim::Of(0, 0)], &[Dim::Of(0, 0), Dim::Of(0, 0)]]), ..row!("math.eigen", "math", "eigen", crow_runtime::math::eigen, (Tensor) -> Tensors, stops) },
+    // (the real parts and the imaginary parts, a vector each of the matrix's
+    // size: the second had been declared a matrix, and a read of an
+    // imaginary part stopped as a shape rule's fault; Rosetta Code, Jury
+    // stability criterion)
+    Row { shape: Shape::Dims(&[Dim::Of(0, 0)]), ..row!("math.eigen", "math", "eigen", crow_runtime::math::eigen, (Tensor) -> Tensors, stops) },
     row!("math.norm", "math", "norm", crow_runtime::math::norm, (Tensor) -> Float, never),
     row!("math.norm_p", "math", "norm", crow_runtime::math::norm_p, (Tensor, Float) -> Float, never),
     row!("math.dot", "math", "dot", crow_runtime::math::dot, (Tensor, Tensor) -> Float, stops),
@@ -3523,7 +3527,11 @@ impl Arg {
             if !matches!(item.payload(), Ty::Fraction | Ty::Decimal | Ty::List(_) | Ty::Map(..) | Ty::Record(_) | Ty::OptRecord(_) | Ty::Moment) {
                 return None;
             }
-            let words = Arg::of_type(item.payload()).words();
+            // (a list's items said as they would be alone: `a list of lists
+            // of fractions that can fail`, where its kind alone had said `a
+            // list of lists whose items can fail`)
+            let said = Arg::of_type(item.payload()).said(item.payload());
+            let words = said.as_str();
             let noun = words.strip_prefix("a ").or_else(|| words.strip_prefix("an ")).unwrap_or(words);
             let (head, rest) = noun.split_once(' ').map_or((noun, ""), |(h, r)| (h, r));
             Some(if rest.is_empty() { format!("{}s", head) } else { format!("{}s {}", head, rest) })

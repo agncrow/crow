@@ -1,0 +1,47 @@
+--- Finding (monads_list_monad): a function taking a function, called twice with
+--- arguments of the same kinds but with two functions that ANSWER different kinds
+--- (Int -> Int and Int -> Str), is neither refused nor run: its function
+--- parameter is typed by one call (`f: Fn(Int) -> Str`) and the other call hands
+--- `fn twice` (Fn(Int) -> Int) to it unchecked.
+---
+--- crow run -i (exit 0): prints 6 and <3>
+--- crow run (exit 1, nothing printed):
+---   error[E0308]: mismatched types
+---     --> src/main.rs:51:51
+---   error: the compiled program does not build — the Rust compiler refused what
+---   Crow accepted, a bug in Crow, not in this program
+--- `crow build --ir`:
+---   pure applied(x: Int, f: Fn(Int) -> Str) -> Str
+---   main
+---     display.log!held(call applied(3, fn twice))
+---     display.log!held(call applied(3, fn shown))
+--- Expected: the refusal the spec gives a function taking a function called at
+--- another kind (Specialization: "`applied` takes a function, so one `applied`
+--- serves every call … write one for each kind"), in both modes, before the
+--- program runs — it is given when the OTHER argument's kind differs, not when
+--- the function's answer does — or both modes printing 6 and <3>.
+--- The interpreter fails too where the answer is used inside: the list monad's
+---   fn bind[xs, f]
+---       out = []
+---       for x in xs
+---           out = concat[out, f[x]]
+---       return out
+--- with bind[[1, 2], twice] (twice[x] = [x, x]) and bind[[1, 2], shown]
+--- (shown[x] = ['<`x`>']) stops interpreted with "runtime error: line 4: expected
+--- a list, got array" (IR: bind(xs, f: Fn(Int) -> List(Str)) -> List(Str), out a
+--- List(Str)), and does not build compiled (E0308).
+--- (Found writing the List monad's bind for Int -> List Int and Int -> List Str
+--- functions; the solution writes one bind per answer kind, as the refusal for
+--- argument kinds advises.)
+
+fn applied[x, f]
+    return f[x]
+
+fn twice[x]
+    return x * 2
+
+fn shown[x]
+    return '<`x`>'
+
+log[applied[3, twice]]
+log[applied[3, shown]]

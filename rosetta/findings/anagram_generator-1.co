@@ -1,0 +1,21 @@
+--- STATUS: no longer reproduces with the pinned bin/crow replaced at 19:25 (both modes now give the expected answer).
+--- Finding (anagram_generator): a function that answers nothing, can fail (here
+--- through a condition that can: int[x] of text), and ends with a loop does not
+--- build compiled.
+---
+--- crow run -i:  prints 5, 1, 2 (each on its line), as expected
+--- crow run:     error[E0308]: mismatched types --> src/main.rs
+---               error: the compiled program does not build — ... a bug in Crow
+--- rustc: `fn f(x: &String) -> CrowResult<()>` ends with the `for` loop, "expected
+--- `CrowResult<()>`, found `()`": the final ok value is not written after a trailing
+--- loop. A `while` as the last statement fails the same way; ending the function
+--- with a `log` instead builds; so does a fallible call bound to a name
+--- (`n = int[x]`) instead of tested in an `if`. Seen first with
+--- `if matches[x, '^[a-z]+$']` in a filter, then a `for` that logs.
+fn f[x]
+    if int[x] gt 0
+        log[x]
+    for y in [1, 2]
+        log[y]
+
+f['5']

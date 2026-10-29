@@ -1,0 +1,34 @@
+--- Finding (both modes agree): a moment's text does not read back outside the years
+--- 0 to 9999, though a moment holds 100,000,000 days either side of 1970.
+--- Year -5: str[t] is '-005-06-01' (three digits: the runtime's format_datetime
+--- writes the year with {:04}, which counts the sign), and moment[str[t]] reads it
+--- as June 2, a day off (back eq t is false). fmt[t, style = 'date'] writes
+--- '-0005-06-01' instead (chrono's %Y), which moment[] refuses.
+--- Year 10000: str[t] is '10000-01-01', fmt[t, style = 'date'] is '+10000-01-01',
+--- and moment[] refuses both: "cannot read '10000-01-01' as a moment — write ISO
+--- 8601: ...". encode[[t]] writes '["10000-01-01"]', so a moment carried as JSON
+--- (a session's state, a handler's argument) would not come back either.
+--- Expected: str and fmt's date style write one form, ISO 8601's expanded year (a
+--- sign and four digits or more), and moment[str[t]] eq t for every moment.
+t = moment[-5, 6, 1]
+log[str[t]]
+log[fmt[t, style = 'date']]
+back = moment[str[t]]
+log[back]
+log[back eq t]
+log[moment[fmt[t, style = 'date']].ok]
+u = moment[10000, 1, 1]
+log[str[u]]
+log[fmt[u, style = 'date']]
+log[moment[str[u]].ok]
+log[moment[fmt[u, style = 'date']].ok]
+--- prints, in both modes:
+--- -005-06-01
+--- -0005-06-01
+--- -005-06-02
+--- false
+--- false
+--- 10000-01-01
+--- +10000-01-01
+--- false
+--- false

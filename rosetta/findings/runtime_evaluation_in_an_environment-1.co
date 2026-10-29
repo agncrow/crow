@@ -1,0 +1,27 @@
+--- A function called with a map of ints and with a map of floats is an
+--- internal error in both modes, before anything runs.
+---
+--- crow run -i and crow run alike (exit 1, nothing printed):
+---     runtime_evaluation_in_an_environment-1.co: internal error: the lowered
+---     program disagrees with itself — a bug in Crow, not in this program:
+---     runtime_evaluation_in_an_environment-1 main: line 27: hands 'show'
+---     Map(Int) for its parameter 'm' (argument 1), which is Map(Float)
+--- Expected (both modes): the function copied per signature, or the map of
+--- ints widened to floats where it is handed (as a list of ints beside a list
+--- of floats is):
+---     [x = 3]
+---     [x = 0.5]
+---
+--- The same with the calls in the other order, with the maps held in variables
+--- first, with maps of two keys, and when the body reads the values
+--- (`t = t + m[k]`). Not with lists: `show[[3]]` then `show[[0.5]]` runs and
+--- prints [3] and [0.5]; not with a map of text beside a map of ints
+--- (`show[map[x = 'a']]`, `show[map[x = 3]]` runs). Found writing
+--- Runtime evaluation/In an environment, whose `show[program, before, after]`
+--- was handed bindings `map[x = 3]` and, for `exp[x]`, `map[x = 0.0]`; worked
+--- around there by binding whole numbers for `exp[x]` too.
+fn show[m]
+    log[m]
+
+show[map[x = 3]]
+show[map[x = 0.5]]

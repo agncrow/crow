@@ -1,0 +1,25 @@
+--- Finding (metaprogramming): `describe[f]` and `apply[f, args]` written in a
+--- program pass every check, then fail in each mode its own way. The spec
+--- (section 13, sys: "Two operations over functions, for the standard
+--- modules") says a program outside the standard library does not call them,
+--- so the expected answer is a refusal before the program runs, in both modes,
+--- that says so (or the description and the call's answer, if they are meant
+--- to be reachable).
+---
+--- crow run -i (exit 1, after printing 8):
+---   runtime error: line 24: the IR interpreter does not run 'describe' yet
+--- crow run (exit 1, nothing printed):
+---   error[E0425]: cannot find function `describe` in this scope
+---   error: the compiled program does not build — the Rust compiler refused what
+---   Crow accepted, a bug in Crow, not in this program
+--- `apply[double, map[x = 5]]` in its place: the same, "does not run 'apply'
+--- yet" interpreted, E0425 for `apply` compiled. The interpreter's "yet" reads
+--- as a feature still to come, where the spec reserves the two to the library.
+
+--- Twice a number.
+fn double[x]
+    return x * 2
+
+log[double[4]]
+d = describe[double]
+log[d]

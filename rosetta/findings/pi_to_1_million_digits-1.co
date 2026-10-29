@@ -1,0 +1,15 @@
+--- A decimal of 65,535 digits or more cannot be shown: str[x] (and log[x], an
+--- interpolation of it) stops the program, in both modes:
+---   interpreted: 65536, then runtime error: line 14: Formatting argument out of range
+---   compiled:    65536, then runtime error: Formatting argument out of range  (no line)
+--- One third to 65,534 digits shows ("0." and the digits: 65,536 characters); to 65,535
+--- it does not (√2 to 65,535 digits shows, 65,536 not: Rust's formatting caps a width
+--- or a precision at 65,535). The arithmetic is fine: int[y * 10 ^ 70000] is exact.
+--- Expected: the decimal's text, as for fewer digits (the spec: decimal[x, digits = n] is
+--- "the language's big float", n unbounded).
+x = decimal[1, digits = 65534] / decimal[3, digits = 65534]
+t = str[x]
+log[len[t]]
+y = decimal[1, digits = 65535] / decimal[3, digits = 65535]
+u = str[y]
+log[len[u]]

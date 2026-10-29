@@ -1,0 +1,26 @@
+--- A collecting `for` whose body ends in a statement that yields nothing — a
+--- nested `for` (the natural way to build a grid), or an assignment — silently
+--- collects no items: both modes print [] twice, exit 0, no refusal or warning.
+---
+--- Interpreted (crow run -i) and compiled (crow run) alike:
+---   []
+---   []
+--- Expected: either the rows ([[0, 1, 2], [1, 2, 3]], as Python's nested
+--- comprehension gives) or a refusal before the program runs, saying the body
+--- yields no item (the inner `for` is a statement whose results are discarded,
+--- spec section 6, and an assignment is no expression). The spec does not say a
+--- body ending in a statement collects nothing; only an `if` without `else` is
+--- described as a filter. So a 2-D canvas built this way was empty, and the first
+--- write into it stopped later ("index 0 is out of range for an array of 0
+--- items"), far from the cause. Naming the inner loop (`row = for x in …`, then
+--- `row`) collects the rows in both modes. Possibly by design; recorded because
+--- nothing tells the writer. Found writing rosetta/honeycombs.co.
+
+grid = for y in range[2]
+    for x in range[3]
+        x + y
+log[grid]
+
+doubled = for x in [1, 2, 3]
+    y = x * 2
+log[doubled]

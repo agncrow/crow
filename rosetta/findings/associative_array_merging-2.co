@@ -1,0 +1,21 @@
+--- Finding (associative_array_merging): a function answering `map[keys, values]` whose
+--- values can fail (here `float[s]`; also a parsed object's `j[k]`), called with an
+--- argument that can fail, does not build compiled.
+---
+--- crow run -i:  prints [a = 2.5]
+--- crow run:     error[E0308]: `if` and `else` have incompatible types
+---                 --> src/main.rs:48:351
+---               error: the compiled program does not build — the Rust compiler refused what
+---               Crow accepted, a bug in Crow, not in this program
+--- Expected: [a = 2.5] in both modes.
+--- The generated call (crow build --rs) writes the failed argument's default as a map of
+--- plain values while pick answers a map of values that can fail:
+---   CrowResult { ok: false, value: std::collections::BTreeMap::<String, f64>::new(), … }
+---   … else { CrowResult { ok: true, value: pick(_prop_0.value), … } }
+--- where pick returns BTreeMap<String, CrowResult<f64>>. Called with a plain argument
+--- (`pick['2.5']`) it builds; `return [float[s]]` (a list) builds too.
+fn pick[s]
+    return map[['a'], [float[s]]]
+
+s = json['"2.5"']
+log[pick[s]]

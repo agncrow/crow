@@ -1,0 +1,26 @@
+--- Finding (k_d_tree): a recursive function called with a matrix literal of
+--- ints and then with one of floats, which recurses on a list of the rows it
+--- collects (`rest = for i in range[1, len[points]]` / `points[i]`), is an
+--- internal error in both modes (exit 1, nothing printed):
+---   k_d_tree-2.co: internal error: the lowered program disagrees with itself —
+---   a bug in Crow, not in this program: k_d_tree-2 main: line 26: hands
+---   'count__2' Tensor(Float, [2, 2]) for its parameter 'points' (argument 1),
+---   which is Tensor(Int, [2, 2])
+--- Expected: 2, then 2.
+--- `CROW_IR_VERIFY=report crow build --ir` shows three copies — count (Tensor(Float,
+--- [?, 2])), count__1 (List(Tensor(Float, [2])), the collected rows) and count__2
+--- (Tensor(Int, [2, 2])) — and main calls count__2 for both matrices, while
+--- count__2 hands its List(Tensor(Int, [2])) rows to count__1, the float copy.
+--- Runs: the float matrix first and the int one second; `slice[points, 1,
+--- len[points]]` in the collect's place; two int matrices of other shapes.
+--- Met building a k-d tree (by the median, the halves collected by argsort's
+--- order) of the Wikipedia example's int points and of random float points.
+fn count[points]
+    if len[points] eq 0
+        return 0
+    rest = for i in range[1, len[points]]
+        points[i]
+    return 1 + count[rest]
+
+log[count[[[2, 3], [5, 4]]]]
+log[count[[[2.5, 3.5], [5.5, 4.5]]]]

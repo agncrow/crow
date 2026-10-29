@@ -1,0 +1,29 @@
+--- The answer of a function that answers nothing but can fail (here it only
+--- fails; a body ending in a statement `for` whose last line can fail, such as
+--- `for c in split[t, '']` / `int[c]`, is another) is held in a variable, and
+--- the variable is then indexed, walked or handed to a function that indexes it.
+---
+--- Interpreted: it runs, then stops as it runs:
+---     runtime error: line 29: not indexable
+--- (walked: `runtime error: line N: for loop requires an array`; handed to a
+--- function that takes len of it: `expected a list, got done`)
+--- Compiled: it does not build:
+---     error[E0618]: expected function, found `()`
+---     error: the compiled program does not build — the Rust compiler refused
+---     what Crow accepted, a bug in Crow, not in this program
+--- (handed to a function first: `expected function, found `String``; walked:
+--- `the method `par_iter` exists for struct `String``)
+--- Expected: refused before the program runs, in both modes, as `2 * x` is
+--- (`cannot use '*' with int and void`) and as `y = g[]` of a function that
+--- answers nothing is (`g[] answers nothing, which 'y' cannot hold`).
+--- In a larger program (a solution whose helpers ended in statement `for`s by
+--- mistake) the same value reached a parameter typed as text, and the refusal
+--- named the wrong kind: `cannot use '*' with int and str` at `4 * left`, and
+--- `a loop walks str, which has no items` at `for c in cells`.
+
+fn f[t]
+    if t eq ''
+        return error['empty']
+
+x = f['1']
+log[x[0]]

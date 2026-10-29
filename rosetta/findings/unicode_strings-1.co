@@ -1,0 +1,20 @@
+--- Finding (unicode_strings): a syntax error inside a string's interpolation is
+--- placed at LINE 1 of the file, at the column it has within the interpolation's
+--- own text, so the message underlines the program's first line, whatever line
+--- the string is on. Both modes alike (crow run -i and crow run):
+---
+---   unicode_strings-1.co:1:5: this ')' closes nothing — no bracket is open before it
+---     1 │ --- Finding (unicode_strings): a syntax error inside a string's interpolation is
+---       │     ^^^^^^^
+---
+--- Expected: the error placed on line 20, where the string is, under the ')'.
+--- Any parse error in an interpolation does it: `log['`[1, 0x10]`']` on line 4 of
+--- a program was "1:6: expected ']', got 'x10'" under line 1 (in a 90-line program
+--- the message sent me to its header comment). The same text outside a string,
+--- `log[[1, 0x10]]`, is placed right (4:10). Related: findings/blossom_algorithm-1.co
+--- saw this position for its `match` hint; that hint is fixed, the position is not.
+x = 1
+log[x]
+log['`x + 1`']
+--- the line with the fault:
+log['`x + )`']

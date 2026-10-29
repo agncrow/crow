@@ -1146,6 +1146,10 @@ impl<'a> Lowerer<'a> {
             // typed, a parsed document's member) says what it is first
             let hint = if matches!(lt, Ty::Json) || matches!(rt, Ty::Json) {
                 " — a value whose type the program does not know is read as one first: int[…], float[…] or str[…]"
+            } else if matches!(lt, Ty::Unit) || matches!(rt, Ty::Unit) {
+                // (a function that answers nothing, or only fails, gives no
+                // value to compute with)
+                " — a call that answers nothing, or only fails, gives no value, only whether it failed (`.ok`)"
             } else {
                 ""
             };
@@ -1528,7 +1532,9 @@ impl<'a> Lowerer<'a> {
         let program_fn = self.ctx.functions.contains_key(name) && !crate::modules::is_crow_fn(&self.current_fn) && !self.declared(name);
         // Test-harness builtins exist only inside test blocks (which never
         // reach a build) — accept them there, refuse them anywhere else.
-        if crate::table::has(name, crate::table::Prop::TestOnly) && !program_fn {
+        // (nor a variable of the program's named like one: `box = [5, 6]`
+        // then `box[0]` is an index)
+        if crate::table::has(name, crate::table::Prop::TestOnly) && !program_fn && !self.declared(name) {
             if self.at != Where::Test {
                 self.refuse(format!("'{}' is a test-harness builtin — it only works inside a test block", name));
             }
@@ -1626,7 +1632,10 @@ impl<'a> Lowerer<'a> {
         if name == "later" && !own && argc > 1 && self.v.ui_mode && matches!(self.at, Where::In(FnKind::Handler | FnKind::Helper)) {
             self.refuse("later[f, …] hands arguments in a script or a server; a page's later[f] runs f on the page's state — keep what f needs in a fact it reads".to_string());
         }
-        if name == "stream" && !own {
+        // (a local of the program's named like it is indexed, not called:
+        // `stream[0]` of a parameter `stream` had been read as web's form;
+        // Rosetta Code, Facial detection in a photo)
+        if name == "stream" && !own && !self.declared(name) {
             match args.first() {
                 Some(A::Ident(f)) if self.ctx.functions.contains_key(f) => {
                     let takes = self.ctx.functions.get(f).map_or(0, |sig| sig.params.len());

@@ -1,0 +1,29 @@
+--- Finding: two records compared with `eq`/`ne` where one side is held by
+--- reference do not build compiled. The interpreter prints 1, then P[name = 'b'];
+--- the compiled program does not build:
+---     error[E0308]: mismatched types   (`if left != k`, k: &P lent, left: P)
+---     error[E0277]: can't compare `&P` with `P`   (`if p != k`, p a loop's item)
+---     error: the compiled program does not build — the Rust compiler refused
+---     what Crow accepted, a bug in Crow, not in this program
+--- Expected: 1 and P[name = 'b'] in both modes. Shape 1: a record parameter the
+--- body only reads is lent (`k: &P`) and compared with a local record. Shape 2: a
+--- statement loop's item, borrowed from the list it walks, compared with a
+--- record. (A record of ints only is passed by value, so shape 1 needs a field
+--- that is not Copy, here text; shape 2 shows with ints too.) Found writing the
+--- Kirkpatrick–Seidel algorithm (`if left ne k` in its CONNECT step); worked
+--- around by comparing the fields (`same[a, b]` = a.x eq b.x and a.y eq b.y).
+
+struct P [name]
+
+fn differs[k, ps]
+    left = ps[1]
+    if left ne k
+        return 1
+    return 0
+
+log[differs[P['a'], [P['a'], P['b']]]]
+
+k = P['a']
+for p in [P['a'], P['b']]
+    if p ne k
+        log[p]

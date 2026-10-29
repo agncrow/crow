@@ -1,0 +1,27 @@
+--- A function handed as a value to a function that applies it (`apply_to[double, 5]`),
+--- and then an item of a list of functions handed to the same function
+--- (`apply_to[fs[0], 5]`): an internal error in both modes.
+---
+--- Interpreted (crow run -i) and compiled (crow run) alike, exit 1, nothing printed:
+---     demings_funnel-1.co: internal error: the lowered program disagrees with itself — a bug
+---     in Crow, not in this program: demings_funnel-1 main: line 27: hands 'apply_to' Fns(double) for
+---     its parameter 'f' (argument 1), which is Fn(Int) -> Int
+--- Expected:
+---     10
+---     10
+--- The first call types apply_to's `f` as Fn(Int) -> Int; the second hands it a group
+--- (Fns) and nothing joins the two. The same with a group of two functions, each
+--- also handed alone (`[double, triple]`). Found writing Deming's funnel: four rule
+--- functions handed one at a time to `funnel`, and then from a list `[rule1, …]`.
+--- Without the first call the program is refused instead ("double's parameter 'x' is
+--- typed by nothing", findings/call_a_function-1.co).
+
+fn double[x]
+    x * 2
+
+fn apply_to[f, v]
+    f[v]
+
+log[apply_to[double, 5]]
+fs = [double]
+log[apply_to[fs[0], 5]]

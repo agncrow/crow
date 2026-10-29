@@ -1,0 +1,33 @@
+--- Finding (numbers_with_equal_rises_and_falls): one list holding a list of vectors
+--- (a collect whose items are list literals of numbers, `[d]`, typed
+--- List(Tensor(Int, [1]))) and a list of lists (a collect of `range[3]`, typed
+--- List(List(Int))) is an internal error in both modes — the nested form of the
+--- open `[ys * 2, ys]` finding (fast_fourier_transform-1), but here the push form
+--- fails too, where one level up `[ys * 2]` then `push[both, ys]` runs.
+---
+--- crow run -i and crow run alike (exit 1, nothing printed), for the lines below:
+---   …-1.co: internal error: the lowered program disagrees with itself — a bug in
+---   Crow, not in this program: …-1 main: line 32: 'both' holds
+---   List(List(Tensor(Int, [1]))) but is assigned List(List(List(Int))) (from the
+---   runtime's core.push)
+--- Expected, in both modes: [[[0], [1]], [[0, 1, 2], [0, 1, 2]]] (or a refusal in
+--- the program's words, if the two kinds may not share a list).
+---
+--- Variants:
+---   both = [vectors, lists]          (a literal) — both modes: internal error,
+---       "a list of List(List(Int)) holds an item of type List(Tensor(Int, [1]))"
+---   log[push[[vectors], lists]]      — crow run -i prints
+---       [[[0], [1]], [[0, 1, 2], [0, 1, 2]]]; crow run: error[E0308]: mismatched
+---       types … the compiled program does not build (the Rust has
+---       `let both: Vec<Vec<Vec<i64>>> = push(vec![ones], rows)` with
+---       `ones: Vec<CrowTensor>`).
+--- Met building a table of counts level by level: level 0 written as
+--- `for d in range[10]` / `[1]`, later levels as collects of collects of ints.
+--- Worked around by building level 0 as a collect of collects too.
+vectors = for d in range[2]
+    [d]
+lists = for d in range[2]
+    range[3]
+both = [vectors]
+both = push[both, lists]
+log[both]

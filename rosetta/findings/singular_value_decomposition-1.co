@@ -1,0 +1,32 @@
+--- Finding (singular_value_decomposition): a list of rows built in a function by `push`
+--- of another function's list, held in a top-level variable and handed to a math
+--- function that takes a matrix (det, inv, transpose, svd, qr, sum alike), is refused
+--- before the program runs, in both modes, as a reassignment of the variable it assigns
+--- once.
+---
+--- crow run -i and crow run alike:
+---   …-1.co:31:1: cannot reassign 'mat' from array[float] to array[array] — variable type cannot change
+---     31 │ mat = matrix_of[2]
+--- Expected: -2 in both modes, as `log[det[matrix_of[2]]]` answers (the same call without
+--- the variable), and as a function answers that is handed matrix_of[2] and calls det
+--- of its parameter. Pushing a literal row (`push[rows, [1.0 * i, 2.0]]`) runs; `log[mat]`
+--- with no math call runs. The same rows grown at the top level (`mat = []`, then
+--- `mat = push[mat, row_of[i]]`, then `det[mat]`) are refused instead with "push[] takes
+--- a list and an item of its kind: its items are numbers, not a list of numbers": the
+--- matrix use seems to type the variable as a list of numbers before the pushes are seen.
+--- Met reading a matrix from standard input, a row at a time, for svd. Related wording:
+--- where the rows' numbers can fail (`float[piece]`), svd of them is "svd[] takes numbers,
+--- got a list" — a list whose items can fail, which tensor[] names as such.
+use math
+
+fn row_of[n]
+    return [1.0 * n, 2.0]
+
+fn matrix_of[n]
+    rows = []
+    for i in range[n]
+        rows = push[rows, row_of[i]]
+    return rows
+
+mat = matrix_of[2]
+log[det[mat]]

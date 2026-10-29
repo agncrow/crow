@@ -1,0 +1,19 @@
+--- An item of a list of empty lists (a collecting loop of `[]`) given a literal list
+--- of ints: an internal error in both modes — the literal (a tensor of ints) is
+--- written where the item is a list of ints, unconverted.
+---
+--- crow run -i and crow run:
+---     christofides_algorithm-4.co: internal error: the lowered program disagrees with
+---     itself — a bug in Crow, not in this program: christofides_algorithm-4 main:
+---     line 18: an item of 'lists', a list of List(Int), is assigned Tensor(Int, [2])
+--- Expected (both modes):
+---     [[], [5, 1], []]
+---
+--- A list made by `push` in its place (`xs = []`, `xs = push[xs, 5]`, `lists[1] = xs`)
+--- runs in both modes. The record field's form of the same slip, a literal given to a
+--- field that holds a list, is findings/blossom_algorithm-2.co.
+
+lists = for i in range[3]
+    []
+lists[1] = [5, 1]
+log[lists]

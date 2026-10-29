@@ -1,0 +1,25 @@
+--- Finding (solve_a_numbrix_puzzle): a list of growing ints (items read by
+--- `int[text]`, which always answers the growing form) written a whole-number
+--- literal by position (`cells[0] = 7`) is an internal error in both modes, before
+--- anything runs.
+---
+--- crow run -i and crow run alike (exit 1, nothing printed):
+---   solve_a_numbrix_puzzle-1.co: internal error: the lowered program disagrees
+---   with itself — a bug in Crow, not in this program: solve_a_numbrix_puzzle-1
+---   main: line 24: an item of 'cells', a list of Big, is assigned Int
+--- Expected: [5] then [7] in both modes (the literal widened to the list's kind).
+---
+--- The same inside a function where the list is read from a record's field:
+---     struct P [cells]
+---     fn first_set[p]
+---         board = p.cells
+---         board[0] = 1          --- "fn first_set: line 5: an item of 'board', a
+---         return board          ---  list of Big, is assigned Int"
+---     log[first_set[P[push[[], int['5']]]]]
+--- A parameter written so (`fn f[cells]` / `cells[0] = 1`) works, and so does a
+--- local copy of a parameter (`board = cells`). Worked around in the solution by
+--- writing the boards as lists of whole numbers instead of text read by `int`.
+cells = push[[], int['5']]
+log[cells]
+cells[0] = 7
+log[cells]

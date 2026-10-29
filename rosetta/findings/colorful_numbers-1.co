@@ -1,0 +1,25 @@
+--- Finding (colorful_numbers): a literal list of ints at the top level, grown in
+--- a loop by `push` of a value that can fail (an `int[text]`, a call of a
+--- function that reads one), is an internal error in both modes.
+---
+--- crow run -i and crow run alike (exit 1, nothing printed):
+---   p.co: internal error: the lowered program disagrees with itself — a bug in
+---   Crow, not in this program: p main: line 3: 'xs' holds Tensor(Int, [?]) but
+---   is assigned Result(Tensor(Int, [?])) (from the runtime's core.push_number)
+--- Expected: [1, 2, 3, 3]
+---
+--- `crow build --ir`: `let xs: Tensor(Int, [2]) = [1, 2]`, then in the loop
+--- `xs = core.push_number(unwrap move xs, unwrap float(core.__int_big("3")))`.
+--- Runs when: the push is outside a loop (or in an `if`), the same lines are in
+--- a function, the list starts as `[]` or `range[1, 3]`, or it holds text
+--- (`['a']` grown by `env['HOME']`); a literal map grown by `set` of such a value
+--- and an index write (`xs[0] = int['3']`) run too. Fails the same with `while`,
+--- with the value put in a local first (`n = int['3']`, `xs = push[xs, n]`), and
+--- for a literal list of floats grown by `float['3.5']` ('xs' holds
+--- Tensor(Float, [2]) but is assigned Result(Tensor(Float, [?]))).
+--- Found as `counts = [0, 10]` grown by `push[counts, len[level]]`, where
+--- `level` came from a function that reads digits with `int[c]`.
+xs = [1, 2]
+for i in range[2]
+    xs = push[xs, int['3']]
+log[xs]

@@ -1,0 +1,46 @@
+--- Finding (monads_list_monad): a function called with an int (not 0) and with a
+--- record is not copied per kind: its parameter is made a record-or-none (the
+--- spec's "a function's parameter handed either" a record or 0), and the int
+--- call is then refused, or stops, though 5 is no none.
+---
+--- crow run -i and crow run alike (exit 1, nothing printed):
+---   monads_list_monad-3.co:45:14: cannot use '+' with Pick and int
+---     45 │ log[first[5] + 1]
+--- Expected: 6 then 2 (two signatures, two copies — spec, Specialization; the
+--- record-or-none rule is for a record or the 0 that writes none).
+--- Where the answer is only shown, the program runs into a stop instead, in
+--- both modes:
+---   fn wrap[x]
+---       return [x]
+---   a = wrap[5]
+---   log[a]
+---   b = wrap[Pick[1, 2]]
+---   log[b]
+--- stops with "runtime error: line 6: a record or 0 (none) is needed here, and
+--- this value is 5" — `crow build --ir`: `pure wrap(x: OptRecord(Pick))`, and
+--- `core.__none(5)` then `call wrap(0)` for the first call. Expected [5] then
+--- [Pick[x = 1, y = 2]]. With text or a float in place of the record each call
+--- gets its copy and both modes run.
+--- Where the int is inside a list that is no tensor, it is an internal error in
+--- both modes:
+---   fn firsts[xs]
+---       return xs[0]
+---   ints = push[push[[], 1], 2]
+---   log[firsts[ints]]
+---   picks = push[[], Pick[1, 2]]
+---   log[firsts[picks].y]
+--- "internal error: the lowered program disagrees with itself — a bug in Crow,
+--- not in this program: … main: line 7: hands 'firsts' List(Int) for its
+--- parameter 'xs' (argument 1), which is List(OptRecord(Pick))". Expected 1 then
+--- 2. (In the List monad: mu, flattening the divisors' lists of ints and the
+--- searches' lists of records, met it through two binds.)
+--- (Found writing the List monad: pure[x] = [x] of ints and of a record of the
+--- choices made so far; the solution writes the record's unit list as a literal.)
+
+struct Pick [x, y]
+
+fn first[x]
+    return x
+
+log[first[5] + 1]
+log[first[Pick[1, 2]].y]

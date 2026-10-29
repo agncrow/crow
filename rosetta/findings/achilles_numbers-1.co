@@ -1,0 +1,22 @@
+--- STATUS: no longer reproduces with the pinned bin/crow replaced at 19:25 (both modes now give the expected answer).
+--- Finding (achilles_numbers): an int-keyed map answered by a function, its keys
+--- bound to a top-level variable, is refused before the program runs, in both modes.
+---
+--- crow run -i and crow run alike:
+---   achilles_numbers-1.co:21:1: cannot reassign 'ks' from array[str] to array[int] — variable type cannot change
+---     21 │ ks = keys[one[]]
+--- Expected: the program runs and prints [0].
+---
+--- The same refusal for `found = set[map[], 1, true]` / `return found`, for
+--- `m = one[]` then `ks = keys[m]`, for `ks = for k in keys[m]` / `k`, and one
+--- function further (`fn ks_of[]` / `m = one[]` / `return keys[m]`, then
+--- `ks = ks_of[]`): an earlier inference round seems to type the function's map
+--- as keyed by text, and the variable keeps that first type. It runs when the map
+--- is made at the top level (`m = map[[0], [true]]`), when the binding is inside a
+--- function, when `keys[...]` is logged without a binding, and when the function
+--- that makes the map answers `keys[found]` itself.
+fn one[]
+    return map[[0], [true]]
+
+ks = keys[one[]]
+log[ks]

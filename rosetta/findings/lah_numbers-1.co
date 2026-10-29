@@ -1,0 +1,25 @@
+--- Finding: inside a function, a matrix literal of ints (`rows = [[1]]`) grown
+--- in a loop by `push` of a collecting `for`'s list is an internal error, in
+--- both modes:
+---     internal error: the lowered program disagrees with itself — a bug in
+---     Crow, not in this program: fn grow: line 21: 'rows' holds
+---     Tensor(Int, [1, 1]) but is assigned Tensor(Float, [?, 1]) (from the
+---     runtime's core.push_row)
+--- Expected: [[1], [0], [0]] (each pushed row has one int, as the matrix's rows
+--- do). Without the loop, or at the top level, or pushing a literal `[n]`
+--- instead of the collecting `for`, the program runs and prints the rows. Found
+--- writing Lah numbers (a triangle's rows grown from `[[1]]`); the solution
+--- starts from `[]` and pushes `[1]`, since rows of growing length are no
+--- matrix anyway.
+
+fn grow[last]
+    rows = [[1]]
+    n = 0
+    while n lt last
+        below = for k in range[1]
+            n * k
+        rows = push[rows, below]
+        n = n + 1
+    return rows
+
+log[grow[2]]

@@ -1,0 +1,25 @@
+--- A record written into its own record-or-none field (`n.next = n`) does not build
+--- compiled: the emitter moves the record into the link and then writes the field
+--- of the moved value.
+---
+--- Interpreted (crow run -i): prints
+---     Node[name = 'a', next = Node[name = 'a', next = Node[name = 'b', next = 0]]]
+--- Compiled (crow run): the program does not build:
+---     error[E0382]: assign to part of moved value: `n`
+---       --> src/main.rs:58:5
+---     error: the compiled program does not build — the Rust compiler refused what Crow
+---     accepted, a bug in Crow, not in this program (`crow run -i` runs it meanwhile)
+--- Expected: the interpreter's output (values are values: the field takes the record
+--- as it was before the write, so no cycle is made).
+---
+--- `crow build --ir` is right — the read of `n` is not a move:
+---     n.next = n
+--- but the emitter prints
+---     n.next = Some(crow_runtime::link::new(n));
+--- which moves `n` where the IR copies it (`link::new(n.clone())` would build).
+
+struct Node [name, next]
+
+n = Node['a', Node['b', 0]]
+n.next = n
+log[n]

@@ -108,6 +108,25 @@ fn pool(n: usize) -> Option<&'static rayon::ThreadPool> {
 
 #[cfg(test)]
 mod tests {
+    /// A parallel collecting loop answers in the items' order whether its
+    /// rest ran in place or on the cores, a filter's `None` gone; the
+    /// rest goes to the pool only where its time is worth the trip
+    #[test]
+    fn a_parallel_collect_keeps_its_order_and_its_rest_in_place_when_cheap() {
+        let xs: Vec<i64> = (0..20_000).collect();
+        let doubled = map_ref(&xs, |x| x * 2);
+        assert_eq!(doubled.len(), 20_000);
+        assert!(doubled.iter().enumerate().all(|(i, d)| *d == 2 * i as i64));
+        let odd = collect_ref(&xs, |x| if x % 2 == 1 { Some(*x) } else { None });
+        assert_eq!(odd.first(), Some(&1));
+        assert_eq!(odd.len(), 10_000);
+        let owned = map_owned(vec!["a".to_string(), "b".to_string()], |s| s.to_uppercase());
+        assert_eq!(owned, vec!["A".to_string(), "B".to_string()]);
+        assert!(map_ref(&Vec::<i64>::new(), |x| *x).is_empty());
+        assert!(!worth_sharing(std::time::Duration::from_nanos(50), 9));
+        assert!(worth_sharing(std::time::Duration::from_millis(1), 1));
+    }
+
     use super::*;
 
     /// The helpers answer the same worked where they are as across the
@@ -164,6 +183,61 @@ pub const SHARED_MIN: usize = 8192;
 /// Whether `n` items of work are worth sharing across the cores.
 pub fn shared(n: usize) -> bool {
     n >= SHARED_MIN
+}
+
+/// What the rest of a parallel loop must cost before the pool is worth its
+/// trip: handing a loop's work to the pool and waiting for it had cost a
+/// loop over ten flags 20 to 200 µs, where its own work was nanoseconds.
+pub const WORTH_SHARING: std::time::Duration = std::time::Duration::from_micros(100);
+
+/// Whether `rest` more items, each of about the time the first took, are
+/// worth the pool (both backends' parallel loops decide by it).
+pub fn worth_sharing(each: std::time::Duration, rest: usize) -> bool {
+    each.as_nanos().saturating_mul(rest as u128) >= WORTH_SHARING.as_nanos()
+}
+
+/// A parallel collecting loop over items it reads: the first worked where
+/// the loop is and timed, the rest on the cores where that is
+/// `worth_sharing`, else in order; what each yields, in the items' order (a
+/// body yields none or one: a filter's `Option`, a list's items).
+pub fn collect_ref<T: Sync, R: Send, I: IntoIterator<Item = R>>(items: &[T], f: impl Fn(&T) -> I + Sync + Send) -> Vec<R> {
+    use rayon::prelude::*;
+    let Some((head, rest)) = items.split_first() else { return Vec::new() };
+    let start = std::time::Instant::now();
+    let mut out: Vec<R> = f(head).into_iter().collect();
+    if worth_sharing(start.elapsed(), rest.len()) {
+        out.extend(run(|| rest.par_iter().flat_map_iter(&f).collect::<Vec<R>>()));
+    } else {
+        out.extend(rest.iter().flat_map(&f));
+    }
+    out
+}
+
+/// A parallel loop's value of each item it reads, in order, as
+/// `collect_ref` decides where.
+pub fn map_ref<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync + Send) -> Vec<R> {
+    collect_ref(items, |x| std::iter::once(f(x)))
+}
+
+/// The same over items it takes.
+pub fn map_owned<T: Send, R: Send>(items: Vec<T>, f: impl Fn(T) -> R + Sync + Send) -> Vec<R> {
+    collect_owned(items, |x| std::iter::once(f(x)))
+}
+
+/// The same over items it takes.
+pub fn collect_owned<T: Send, R: Send, I: IntoIterator<Item = R>>(items: Vec<T>, f: impl Fn(T) -> I + Sync + Send) -> Vec<R> {
+    use rayon::prelude::*;
+    let mut items = items.into_iter();
+    let Some(head) = items.next() else { return Vec::new() };
+    let rest: Vec<T> = items.collect();
+    let start = std::time::Instant::now();
+    let mut out: Vec<R> = f(head).into_iter().collect();
+    if worth_sharing(start.elapsed(), rest.len()) {
+        out.extend(run(|| rest.into_par_iter().flat_map_iter(&f).collect::<Vec<R>>()));
+    } else {
+        out.extend(rest.into_iter().flat_map(&f));
+    }
+    out
 }
 
 /// `f` of each of `0..n`, on the cores when `work` items are worth sharing.

@@ -1,0 +1,21 @@
+--- A function taking a function serves every call with one copy (spec,
+--- Specialization): called with lists of two record kinds it is refused,
+--- naming the two kinds, where it had said "a list of records here where
+--- another call makes it a list of records" (Rosetta Code, Hash join)
+
+struct P [v]
+struct Q [v]
+
+fn v_of_p[p]
+    return p.v
+
+fn v_of_q[q]
+    return q.v
+
+fn keys_of[rows, key]
+    out = for r in rows
+        key[r]
+    return out
+
+log[keys_of[[P[1]], v_of_p]]
+log[keys_of[[Q[2]], v_of_q]]

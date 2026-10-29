@@ -1,0 +1,28 @@
+--- Finding (average_loop_length), performance in both modes: a collecting `for` over a
+--- handful of items costs 20-200 microseconds each time it runs -- the round trip to the
+--- thread pool, little of it the loop's own work -- so a function that makes a small list
+--- this way and is called often runs a hundred times slower than the same list made
+--- with a while loop. Both modes agree on the output (200000); the time is the finding.
+---
+--- 16 cores, macOS; 20,000 calls of fresh[10]:
+---   crow run -i this.co           1.4 to 3.9 s  (user 0.2 to 1.1 s, sys up to 3.8 s: waiting)
+---   crow build, then the binary   0.4 s         (user 0.2 s, sys 1.7 to 2.0 s)
+--- The same function with `seen = []` and a while loop pushing `false` ten times:
+---   crow run -i 0.02 s, the binary 0.00 s.
+--- In the Rosetta program it came from (a list of n <= 20 flags made per trial, 2,000,000
+--- trials): crow run -i was stopped at 120 s (230 s of user time), crow run (dev build)
+--- took 74 s; with the flags held as an int's bits instead, 3 s and 1 s.
+--- Expected: a loop over a few items runs where it is, as the kernels below SHARED_MIN
+--- items do (CLAUDE.md: "parallel only past SHARED_MIN items"), costing about what the
+--- while loop costs.
+fn fresh[n]
+    seen = for i in range[n]
+        false
+    return len[seen]
+
+total = 0
+t = 0
+while t lt 20000
+    total = total + fresh[10]
+    t = t + 1
+log[total]

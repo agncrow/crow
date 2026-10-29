@@ -1,0 +1,27 @@
+--- Finding (write_float_arrays_to_a_text_file): `concat` of a list literal of ints and
+--- a list of `int[text]` values (growing ints that can fail) is read as a join of two
+--- TENSORS (the IR: `ys: Tensor(Result(Int), [?]) = core.concat_tensors([1], tensor(move
+--- xs))`), so the ints go through floats or stop:
+---
+--- crow run -i (exit 1):
+---     runtime error: line 27: a list of int is not a list of numbers
+--- crow run (exit 0, a digit-losing answer):
+---     [1, 123456789012345680000000000000]
+--- Expected (both modes), as `concat[[1], [123456789012345678901234567890]]` answers:
+---     [1, 123456789012345678901234567890]
+---
+--- With a small value (`xs = [int['12']]`) the interpreter answers [1, 12]; the compiled
+--- one holds it as a float too. Two more faces of the same typing (both with
+--- `xs = [int['12']]`):
+---   - `log[concat[xs, [7]]]`: interpreted [12, 7]; compiled does not build:
+---       error[E0308]: mismatched types (concat(xs: Vec<CrowResult<Int>>, &[Int]))
+---       error: the compiled program does not build — … a bug in Crow, not in this program
+---   - `xs = concat[[1], xs]` is refused before the program runs, in both modes:
+---       cannot reassign 'xs' from array[result[int]] to array — variable type cannot change
+---   - `ys = concat[[1], xs]` then `log[type[ys[0]]]`: interpreted int; compiled does not
+---       build: error[E0609]: no field `ok` on type `&f64`.
+--- Met writing a digit list's carry (`ds = concat[[1], ds]`, ds made of int[c] items);
+--- worked around by building the digits as plain ints.
+
+xs = [int['123456789012345678901234567890']]
+log[concat[[1], xs]]

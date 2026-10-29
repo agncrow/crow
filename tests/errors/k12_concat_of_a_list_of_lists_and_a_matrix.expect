@@ -1,0 +1,3 @@
+k12_concat_of_a_list_of_lists_and_a_matrix.co:8:8: concat[] joins lists of one kind, and these are a list of lists of numbers and a matrix: a list holds one kind — join a matrix with a matrix: math's tensor[rows] makes one of a list of rows
+  8 │ both = concat[[xs], m]
+    │        ^^^^^^

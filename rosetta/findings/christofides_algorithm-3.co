@@ -1,0 +1,34 @@
+--- A record's field holding a list of empty lists (`for i in range[3]` / `[]`) keeps
+--- items of no known kind, `List(List(?))`, when an item is later given a list of
+--- ints: the compiled program does not build.
+---
+--- Interpreted (crow run -i): prints
+---     [[], [5], []]
+--- Compiled (crow run): the program does not build:
+---     error[E0308]: mismatched types
+---     error: the compiled program does not build — the Rust compiler refused what Crow
+---     accepted, a bug in Crow, not in this program (`crow run -i` runs it meanwhile)
+--- Expected: [[], [5], []] in both modes.
+---
+--- `crow build --ir`: `struct S { lists: List(List(?)) }`, `s.lists[1] = move xs`
+--- with `xs: List(Int)`. The same lines on a local list (`lists = for i in range[3]` /
+--- `[]`, then `lists[1] = xs`) type it `List(List(Int))` and run in both modes; a
+--- function's local pushed an empty list is findings/brilliant_numbers-1.co, the same
+--- unknown items reached another way. Written around with `range[0]` (an empty list of
+--- ints) for each empty item. Met holding a weighted matching's blossoms: each
+--- blossom's children and edge ends, a list per blossom, empty until it forms.
+--- With growing ints in the list written (`xs = push[xs, 2 ^ 70]`, or a list the width
+--- pass holds as growing), both modes stop before running, with an internal error:
+---     internal error: the lowered program disagrees with itself — a bug in Crow, not
+---     in this program: … line 8: a conversion ToSmall(Held) of List(Big) claims to
+---     give List(?)
+
+struct S [lists]
+
+nothing = for i in range[3]
+    []
+s = S[nothing]
+xs = []
+xs = push[xs, 5]
+s.lists[1] = xs
+log[s.lists]

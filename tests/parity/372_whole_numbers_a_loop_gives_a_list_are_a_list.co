@@ -1,0 +1,44 @@
+--- A variable written down as whole numbers and given a list of ints in a
+--- loop is a list of ints from its declaration, and keeps every digit; so
+--- is one given it on a line above that assignment, which reads it as the
+--- later rounds hold it. Read once, `last` had settled on the tensor while
+--- `level` became a list, and `last = level` was lowered unconverted, an
+--- internal error (Rosetta Code, Pancake numbers); held a tensor instead,
+--- counts past 2^53 lost their last digits (Rosetta Code, Iterated digits
+--- squaring). A tensor of floats given a list stays the tensor, the list
+--- converted where it is assigned.
+fn f[n]
+    level = [n]
+    last = [0]
+    rounds = 0
+    while rounds lt 3
+        last = level
+        level = push[[], 2 ^ 60 + rounds]
+        rounds = rounds + 1
+    return last
+
+log[f[3]]
+
+fn sums[k]
+    counts = [1]
+    for i in range[k]
+        grown = for s in range[len[counts] + 1]
+            0
+        for s in range[len[counts]]
+            grown[s] = grown[s] + counts[s] * 3000000007
+        counts = grown
+    return counts
+
+log[sums[3]]
+
+fn g[n]
+    level = [n * 1.5]
+    last = [0.5]
+    rounds = 0
+    while rounds lt 2
+        last = level
+        level = push[[], 5.5]
+        rounds = rounds + 1
+    return last[0]
+
+log[g[3]]

@@ -1,0 +1,30 @@
+--- Finding (monads_maybe_monad): a list literal holding an int and an error value
+--- that is only ever an error (`error[…]` itself, or the answer of a function that
+--- only fails) is an internal error in both modes, before the program runs.
+---
+--- crow run -i and crow run alike (exit 1, nothing printed):
+---   monads_maybe_monad-1.co: internal error: the lowered program disagrees with
+---   itself — a bug in Crow, not in this program: monads_maybe_monad-1 main: line
+---   27: a list of Result(Int) holds an item of type Result(Unit)
+--- Expected: 2, nothing, 2 — a list of values that can fail, its second item
+--- failed (a list literal may hold values that can fail; an error value is a
+--- failed value of whatever kind holds it) — or a refusal in the program's words.
+--- The same internal error with a function that only fails:
+---   fn nothing[]
+---       return error['nothing', 'maybe']
+---   fn some[x]
+---       return x
+---   xs = [some[1], nothing[]]
+--- and with the bare int, `xs = [1, nothing[]]`, a refusal that misleads instead:
+---   cannot reassign 'xs' from array to array[result[int]] — variable type cannot change
+--- on the line that assigns xs for the first and only time. Akin to
+--- findings/json_pointer-1.co (an only-error value handed to encode or str does
+--- not build compiled), at another site.
+--- (Found writing the Maybe monad with Crow's error values as Nothing: a list of
+--- Maybe values, one of them Nothing; the solution makes Nothing with a function
+--- that can also answer a value.)
+
+xs = [1, error['nothing', 'maybe']]
+log[len[xs]]
+log[xs[1].reason]
+log[xs[0] + 1]

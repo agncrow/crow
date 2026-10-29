@@ -1,0 +1,28 @@
+--- Finding (multiple_distinct_objects): a collecting `for` over `range[n]`, where n
+--- can fail (`int['3']`), whose body hands the loop's int to a function whose
+--- parameter is a growing int (the function is also called with a growing int,
+--- here 3 ^ 40), does not build compiled.
+---
+--- crow run -i:  prints [0, 2, 4] then 24315330918113857602
+--- crow run:     error[E0308]: mismatched types --> src/main.rs:44:15
+---               (the call `twice(i)`: the loop's item is an i64 from the range's
+---               par_iter, the function takes crow_runtime::int::Int; no conversion)
+---               error: the compiled program does not build — the Rust compiler
+---               refused what Crow accepted, a bug in Crow, not in this program
+--- Expected: [0, 2, 4] then 24315330918113857602 in both modes.
+---
+--- Builds and agrees with `range[3]`, with `m = 3` / `range[m]`, or as a statement
+--- loop (`for i in range[n]` / `log[twice[i]]`). Likely the same root as the known
+--- findings/french_republican_calendar-1.co (the item compared with a growing int
+--- that can fail), met here at a call; findings/multiple_distinct_objects-2.co is
+--- the same loop item added to a growing int, an internal error in both modes.
+--- In the solution n is read from standard input; worked around by making the
+--- objects with a plain int bound.
+fn twice[i]
+    return i * 2
+
+n = int['3']
+ds = for i in range[n]
+    twice[i]
+log[ds]
+log[twice[3 ^ 40]]

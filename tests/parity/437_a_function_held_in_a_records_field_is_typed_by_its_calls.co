@@ -1,0 +1,31 @@
+--- A function held in a record's field is typed by the calls made
+--- through the field — called there (`c.f[c.x]`), read into a local and
+--- called, or handed where a function is taken — as one held in a variable
+--- is: refused as a function nothing calls, it had run only where the
+--- program also called it directly (Rosetta Code, Closures/Value capture).
+struct Closure [f, x]
+
+fn square[i]
+    return i * i
+
+fn cube[i]
+    return i * i * i
+
+fn run[k]
+    return k.f[k.x]
+
+fn through_local[k]
+    g = k.f
+    return g[k.x]
+
+fn apply[f, x]
+    return f[x]
+
+c = Closure[square, 3]
+g = c.f
+log[g[c.x]]
+d = Closure[cube, 2]
+log[d.f[d.x]]
+log[run[Closure[square, 5]]]
+log[through_local[Closure[cube, 3]]]
+log[apply[c.f, 7]]

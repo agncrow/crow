@@ -1,0 +1,22 @@
+--- Finding: a program's own function named `connect` (no `use db` anywhere),
+--- called with its own three arguments, is refused in both modes:
+---     kirkpatrick_seidel_algorithm-1.co:22:5: wrong number of arguments for 'connect'
+---       22 │ log[connect[1, 2, 3]]
+--- Expected: 6 (the program's function is the only `connect` in scope), or, if
+--- the name is reserved, the DEFINITION refused with words that say so
+--- ("'connect' is a builtin — pick another name", as `upper` is refused).
+--- The call is checked against the db form's arity (`db.connect` takes a URL):
+--- the same function with ONE parameter is accepted and runs as the program's
+--- (`fn connect[a]` / `log[connect[1]]` prints 2 in both modes). `page`, `serve`
+--- and `fetch` (web forms) behave the same way with four parameters; `query`,
+--- `socket`, `smtp` and `route` do not (a 4-parameter function of those names
+--- runs). Found writing the Kirkpatrick–Seidel algorithm, whose recursive step
+--- the paper calls CONNECT; worked around by naming it `join_hull`.
+--- (Possibly the class the brief has since listed as "a function named `box`
+--- is accepted then read as a builtin"; recorded for these four names, where
+--- the symptom is a refusal of the program's own arity.)
+
+fn connect[a, b, c]
+    return a + b + c
+
+log[connect[1, 2, 3]]

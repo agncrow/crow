@@ -1409,6 +1409,23 @@ impl IrInterp {
                             let shape = crate::ops::truths_flat(items, &mut flat)?;
                             CrowValue::ok(Value::NumArray(Box::new(crow_runtime::tensor::CrowTensor::from_vec(flat, shape))))
                         }
+                        // (a list of no rows where the type states a row's
+                        // shape is a matrix of none, `[0, 2]`, as the compiled
+                        // program's `from_rows_shaped` makes it)
+                        Value::Array(items)
+                            if v.is_ok()
+                                && items.is_empty()
+                                && matches!(expr.ty().payload(), Ty::List(item) if matches!(item.as_ref(), Ty::Tensor(_, Some(d)) if !d.is_empty() && d.iter().all(Option::is_some))) =>
+                        {
+                            let row: Vec<usize> = match expr.ty().payload() {
+                                Ty::List(item) => match item.as_ref() {
+                                    Ty::Tensor(_, Some(d)) => d.iter().flatten().copied().collect(),
+                                    _ => Vec::new(),
+                                },
+                                _ => Vec::new(),
+                            };
+                            CrowValue::ok(Value::NumArray(Box::new(crow_runtime::tensor::CrowTensor::from_rows_shaped(&[], &row)?)))
+                        }
                         // a list of rows is a matrix: rows of one shape, or
                         // the reason (the compiled program's words)
                         Value::Array(items) if v.is_ok() && !items.is_empty() && items.iter().all(|i| i.is_ok() && matches!(i.value, Value::NumArray(_))) => {
@@ -2113,6 +2130,20 @@ impl IrInterp {
 
     fn run_parallel(&mut self, items: &[CrowValue], var: &str, body: &[Stmt], collect: bool) -> Result<Vec<CrowValue>, String> {
         self.check_cancel()?;
+        // (the first item worked here and timed: where the rest would cost
+        // less than a trip to the pool, it runs here too — a collecting
+        // loop over ten flags, called 20,000 times, had cloned the walker
+        // for each item and waited on the pool at every call, 1 to 4 s
+        // where the loop in order took 0.02; Rosetta Code, Average loop
+        // length. The compiled loop decides by the same rule:
+        // crow_runtime::cores::worth_sharing)
+        let start = std::time::Instant::now();
+        let mut first = self.run_part(&items[..1], var, body, collect)?;
+        if !crow_runtime::cores::worth_sharing(start.elapsed(), items.len() - 1) {
+            first.extend(self.run_part(&items[1..], var, body, collect)?);
+            return Ok(first);
+        }
+        let items = &items[1..];
         // the functions the body reaches, prepared once here: each chunk's
         // clone had prepared them again, and dropped what it made
         let reached = self.prepare_reached(body);
@@ -2134,31 +2165,13 @@ impl IrInterp {
                         local.prepared.insert(name.clone(), Arc::new(p.handle(&p.name)));
                     }
                 }
-                let mut out = Vec::with_capacity(if collect { part.len() } else { 0 });
-                let mut run = || -> Result<(), String> {
-                    for item in part {
-                        local.push_scope();
-                        local.bind(var, item.clone());
-                        local.last_value = None;
-                        // a stop names the body's line, as the compiled loop's does
-                        let r = local.exec_stmts(body).map_err(|e| local.with_line(e));
-                        let yielded = local.last_value.take();
-                        local.pop_scope();
-                        if let Flow::Return(_) = r? {
-                            return Err("cannot return from inside a for loop".to_string());
-                        }
-                        if collect {
-                            out.push(yielded.unwrap_or_else(CrowValue::done));
-                        }
-                    }
-                    Ok(())
-                };
-                let r = run().map(|()| out);
+                let r = local.run_part(part, var, body, collect);
                 (r, std::mem::take(&mut local.prepared))
             })
             .collect()
         });
-        let mut results = Vec::with_capacity(if collect { items.len() } else { 0 });
+        let mut results = first;
+        results.reserve(if collect { items.len() } else { 0 });
         let mut failed = None;
         for (c, made) in chunks {
             // (what a clone prepared — a function reached only as a value — kept)
@@ -2179,6 +2192,30 @@ impl IrInterp {
             Some(e) => Err(e),
             None => Ok(results),
         }
+    }
+
+    /// A parallel loop's items worked in order by this walker: each bound
+    /// to the loop's variable in a scope of its own, what each yields where
+    /// the loop collects.
+    fn run_part(&mut self, part: &[CrowValue], var: &str, body: &[Stmt], collect: bool) -> Result<Vec<CrowValue>, String> {
+        let mut out = Vec::with_capacity(if collect { part.len() } else { 0 });
+        for item in part {
+            self.push_scope();
+            self.bind(var, item.clone());
+            self.last_value = None;
+            // a stop names the body's line, as the compiled loop's does
+            let r = self.exec_stmts(body);
+            let r = r.map_err(|e| self.with_line(e));
+            let yielded = self.last_value.take();
+            self.pop_scope();
+            if let Flow::Return(_) = r? {
+                return Err("cannot return from inside a for loop".to_string());
+            }
+            if collect {
+                out.push(yielded.unwrap_or_else(CrowValue::done));
+            }
+        }
+        Ok(out)
     }
 
     /// Every function a body calls by name, and every function those call,

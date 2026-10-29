@@ -1,0 +1,26 @@
+--- A function that answers nothing, whose last line calls another function that
+--- answers nothing with an argument that can fail, does not build compiled.
+---
+--- Interpreted: prints `1` and `end` (exit 0).
+--- Compiled: does not build:
+---   error[E0308]: mismatched types --> src/main.rs:36:314
+---   error: the compiled program does not build — the Rust compiler refused what Crow
+---   accepted, a bug in Crow, not in this program (`crow run -i` runs it meanwhile)
+---   (rustc: expected `()`, found `CrowResult<()>` — the call's propagation block is
+---   wrapped in a second CrowResult { ok: true, value: … } at the function's end)
+--- Expected: both modes run alike. With any line after `show[maybe[n]]` in `run`,
+--- the program builds (see hex_dump-2.co for what both modes then do with the failure).
+
+fn show[x]
+    log[x]
+
+fn maybe[n]
+    if n gt 0
+        return n
+    return error['not positive']
+
+fn run[n]
+    show[maybe[n]]
+
+run[1]
+log['end']

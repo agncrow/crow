@@ -1,0 +1,19 @@
+--- Finding (experimental_verification_of_the_nktg_law_using_nasa_neptune_data_2023_2024):
+--- a list of text (or of truths) given a list whose items can fail is refused at the
+--- FIRST assignment, with the two types the wrong way round.
+---
+--- crow run -i and crow run alike:
+---   …-1.co:16:1: cannot reassign 'xs' from array[result[str]] to array[str] — variable type cannot change
+---     16 │ xs = ['a']
+--- Expected: the refusal on line 18 (`xs = [str[int['1']]]`), the line that changes the type, worded
+--- "from array[str] to array[result[str]]" — as it is for a list of numbers:
+--- `xs = [1.5]` then `xs = [float['2']]` is refused at the second line, "from array to
+--- array[result[float]]". The same happens with `[true]` then `[int['1'] gt 0]`
+--- ("from array[result[bool]] to array[bool]" at the first line). In a long program the
+--- message sent me to the wrong line: the first `cells = [...]` was a plain list of
+--- text, the culprit a later `cells = [...]` inside a loop holding `fmt[...]` of a
+--- value that can fail.
+xs = ['a']
+log[xs]
+xs = [str[int['1']]]
+log[xs]

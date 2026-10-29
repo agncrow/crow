@@ -1,0 +1,16 @@
+--- math's sum, max and mean of a list holding an int past 64 bits: the modes
+--- disagree.
+---   interpreted: runtime error: line 14: a list of int is not a list of numbers
+---   compiled:    1180591620717411300000, 1180591620717411300000, 590295810358705700000
+--- Expected: one answer in both modes — the nearest float (sum[t] is a float, and
+--- float[] of an int past 64 bits is the nearest float), or a refusal before the
+--- program runs in both. The interpreter's words also mislead: a list of ints is
+--- numbers. (Pushed onto `[]`, so not the open literal-list finding.)
+use math
+
+big = []
+big = push[big, 2 ^ 70]
+big = push[big, 1]
+log[sum[big]]
+log[max[big]]
+log[mean[big]]

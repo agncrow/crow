@@ -1,0 +1,19 @@
+--- Finding (blossom_algorithm): a record field first given an empty list,
+--- then a literal list of ints, is read as a list but holds a tensor: the
+--- literal is written into the field without being made a list.
+---
+--- crow run -i:  runtime error: line 19: expected a list, got array
+--- crow run:     error[E0308]: mismatched types — expected `Vec<i64>`, found
+---               `CrowTensor` at `s.queue = CrowTensor::from_vec(vec![3_i64 as f64], vec![1])`
+---               "the compiled program does not build — … a bug in Crow"
+--- Expected: 1
+---
+--- `crow build --ir`: `struct S { queue: List(Int) }`, `s.queue = [3]`,
+--- `core.len(s.queue)` — the field is a List(Int) and the literal goes in as
+--- it is. The same inside a function (`fn f[s, root]` / `s.queue = [root]`).
+--- Fine: a field first given `[0]` (S[[0]]), or `s.queue = push[s.queue, 3]`.
+struct S [queue]
+
+s = S[[]]
+s.queue = [3]
+log[len[s.queue]]

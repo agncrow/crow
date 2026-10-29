@@ -1,0 +1,41 @@
+--- Finding (monads_list_monad): a function handed as a value types the function
+--- parameter by the answer of the FIRST copy of a generic function it calls, not
+--- the copy it reaches. next_of calls wrap[x + 1] (copy wrap__2, Int -> Tensor(Int)),
+--- but applied's parameter is typed Fn(Int) -> List(Str): the answer of wrap's
+--- copy for the program's other call, wrap['a'].
+---
+--- crow run -i (exit 0): prints [2] then ['a']
+--- crow run (exit 1, nothing printed):
+---   error[E0308]: mismatched types
+---     --> src/main.rs:58:51
+---   error: the compiled program does not build — the Rust compiler refused what
+---   Crow accepted, a bug in Crow, not in this program
+--- `crow build --ir`:
+---   pure wrap(x: Str) -> List(Str)
+---   pure wrap__1(x: Str) -> List(Str)
+---   pure wrap__2(x: Int) -> Tensor(Int, [1])
+---   pure applied(x: Int, f: Fn(Int) -> List(Str)) -> List(Str)
+---   pure next_of(x: Int) -> Tensor(Int, [1])
+---     return call wrap__2((x add 1))
+--- Expected: [2] and ['a'] in both modes. Without the line `log[wrap['a']]` both
+--- modes print [2]; with `wrap[2.5]` in its place both modes agree too.
+--- The interpreter fails as well once the wrong answer kind is used: the List
+--- monad's bind_ints[m, f] (a collecting `for x in m` of `f[x]`, then mu, a
+--- concat of the lists) over increment[x] = pure[x + 1], with another function
+--- answering pure['$`x`.00'] bound by a second bind, stops interpreted with
+--- "runtime error: line 7: expected a list, got array" (in mu's concat), where
+--- writing [x + 1] in place of pure[x + 1] runs in both modes.
+--- (Found writing the List monad, whose unit-producing functions call pure; the
+--- solution writes the list literal [x] in them instead.)
+
+fn wrap[x]
+    return [x]
+
+fn applied[x, f]
+    return f[x]
+
+fn next_of[x]
+    return wrap[x + 1]
+
+log[applied[1, next_of]]
+log[wrap['a']]

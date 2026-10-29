@@ -1,0 +1,10 @@
+--- A collecting for whose body ends in a call that answers nothing (log).
+---
+--- Interpreted: prints 0, 1, 2, then [] (the loop collects nothing).
+--- Compiled:    prints 0, 1, 2, then [done, done, done].
+--- Expected: the two modes alike; by the spec's rule for an answer of nothing given a
+--- place (`y = log[3]`: "log[] answers nothing, which 'y' cannot hold — call it on a
+--- line of its own"), most likely a refusal of the collecting loop before it runs.
+ys = for i in range[3]
+    log[i]
+log[ys]

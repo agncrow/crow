@@ -1,0 +1,27 @@
+--- Finding (facial_detection_in_a_photo): a list grown by `push` of a value that can fail
+--- (`ws = []`, `ws = push[ws, float['2.']]`), handed to a function inside a collecting
+--- `for`, is refused before the program runs, in both modes, as a reassignment of the
+--- variable the `for` assigns once.
+---
+--- crow run -i and crow run alike:
+---   …-4.co:26:5: cannot reassign 'cols' from array[result[array]] to array[array] — variable type cannot change
+---     26 │     first[ws]
+--- Expected: [[2]] in both modes. The spec (Reassignment): "An empty list cannot fail either:
+--- `xs = []`, then `xs = push[xs, float[s]]`, holds numbers, and a failed item is refused
+--- where it is pushed" — so `first[ws]` answers a plain list, and `cols` is assigned once.
+--- It runs with `ws = [2.0]` or with `push[ws, 2.0]` (a value that cannot fail); it fails
+--- the same with `ws = [1.0]` then `push[ws, float['2.']]`, and with a function that answers
+--- a value that can fail in place of `float[...]`. Outside a `for` (`col = first[ws]`) it
+--- runs. Where the collected lists are then handed to `tensor[...]`, the refusal is
+--- instead "tensor[] takes a frame or numbers, got a list whose items can fail".
+--- Akin to findings/colorful_numbers-1.co (a literal list grown in a loop by such a push).
+fn first[ws]
+    out = [0.0]
+    out[0] = ws[0]
+    return out
+
+ws = []
+ws = push[ws, float['2.']]
+cols = for j in range[1]
+    first[ws]
+log[cols]

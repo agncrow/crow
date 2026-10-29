@@ -32,18 +32,45 @@ impl TypeContext {
     }
 
     /// Whether a call's arguments' types say anything of its callee: a call
-    /// by name, or a call of a function or record a module prefixes.
+    /// by name, a call of a function or record a module prefixes, or one
+    /// through a record's field holding a function (`c.f[c.x]`).
     pub(crate) fn call_says_of_callee(&self, callee: &Expr) -> bool {
         match callee {
             Expr::Ident(_) => true,
             Expr::FieldAccess { object, field } => match object.as_ref() {
                 Expr::Ident(m) => {
                     let prefixed = format!("{}_{}", m, field);
-                    self.functions.contains_key(&prefixed) || self.structs.contains_key(&prefixed)
+                    self.functions.contains_key(&prefixed) || self.structs.contains_key(&prefixed) || self.field_fn(m, field)
                 }
                 _ => false,
             },
+            // (an item of a local list of functions, called where it is read:
+            // `fs[0][5]`)
+            Expr::Call { callee, args } if args.len() == 1 => matches!(callee.as_ref(), Expr::Ident(v) if matches!(self.vars.get(v).map(|t| t.payload().clone()), Some(Ty::List(item)) if matches!(item.as_ref(), Ty::Fn(..)))),
             _ => false,
+        }
+    }
+
+    /// The record a local holds, where its field holds a function.
+    fn fn_field_of(&self, holder: &str, field: &str) -> Option<String> {
+        match self.vars.get(holder).map(|t| t.payload().clone()) {
+            Some(Ty::Record(r) | Ty::OptRecord(r)) if self.structs.get(&r).is_some_and(|s| s.fields.iter().any(|(f, t)| f == field && matches!(t, Ty::Fn(..)))) => Some(r),
+            _ => None,
+        }
+    }
+
+    fn field_fn(&self, holder: &str, field: &str) -> bool {
+        self.fn_field_of(holder, field).is_some()
+    }
+
+    /// A record's field holding a function, typed by a function type its
+    /// use says (a call through it, or the parameter it is handed to): the
+    /// functions records were made with take it (`propagate_indirect_fn_types`).
+    fn type_fn_field(&mut self, record: &str, field: &str, t: &Ty) {
+        if let Some(slot) = self.structs.get_mut(record).and_then(|s| s.fields.iter_mut().find(|(f, _)| f == field))
+            && matches!((&slot.1, t), (Ty::Fn(a, _), Ty::Fn(b, _)) if a.len() == b.len())
+        {
+            slot.1 = slot.1.unify(t);
         }
     }
 
@@ -178,7 +205,17 @@ impl TypeContext {
                         // through: a list of text and a list of text that
                         // can fail join, as they did)
                         let differ = !held.compatible(&normalized) && !Self::without_failures(&held).compatible(&Self::without_failures(&normalized));
-                        new_params[i].1 = if differ && Self::type_is_concrete(&normalized) && !called_so && !takes_fn && !matches!(held, Ty::Fn(..)) { normalized.clone() } else { held.unify(&normalized) };
+                        let flips = differ && Self::type_is_concrete(&normalized) && !called_so && !takes_fn && !matches!(held, Ty::Fn(..));
+                        // (and the function's answer, read with the kind given
+                        // way, says nothing until its body is read again: a
+                        // record made of two copies' answers had kept the
+                        // first round's — `pair[n, 0]` answered the list of
+                        // bools its body made for `pair[n, false]`; Rosetta
+                        // Code, Christofides algorithm)
+                        if flips && !matches!(held, Ty::Unknown) {
+                            self.stale_answers.insert(name.clone());
+                        }
+                        new_params[i].1 = if flips { normalized.clone() } else { held.unify(&normalized) };
                     }
                 }
                 // F2: record this call's concrete signature for the
@@ -188,6 +225,18 @@ impl TypeContext {
                 }
                 self.functions.get_mut(name).unwrap().params = new_params;
                 self.hand_functions(name, args);
+                // (a record's field holding a function, handed where the
+                // callee takes one — `apply[c.f, c.x]` — is typed by what the
+                // callee's parameter says of it)
+                for (i, a) in args.iter().enumerate() {
+                    if let Expr::FieldAccess { object, field } = a
+                        && let Expr::Ident(holder) = object.as_ref()
+                        && let Some(r) = self.fn_field_of(holder, field)
+                        && let Some(p) = self.functions.get(name).and_then(|s| s.params.get(i)).map(|(_, t)| t.clone())
+                    {
+                        self.type_fn_field(&r, field, &p);
+                    }
+                }
             }
 
             // a builtin written in Crow (a row of the table whose body is
@@ -212,7 +261,20 @@ impl TypeContext {
                 let mut new_fields = sig.fields.clone();
                 for (i, at) in arg_types.iter().enumerate() {
                     if i < new_fields.len() {
-                        new_fields[i].1 = new_fields[i].1.unify(at);
+                        // (a field holds one kind: given another, it keeps its
+                        // own, and the making that gave the other is refused
+                        // where it is written — joined, a list of vectors and
+                        // a list of lists of fractions had made a type that
+                        // grew a level each round, 79 deep in the message;
+                        // Rosetta Code, Gaussian elimination)
+                        // (a parsed value is read as the field's kind, and a
+                        // value that can fail makes the field hold failures:
+                        // both still join)
+                        let held = &new_fields[i].1;
+                        let (h, a) = (Self::without_failures(held), Self::without_failures(at));
+                        if held.has_unknown() || matches!(a, Ty::Json) || matches!(h, Ty::Json) || h.compatible(&a) {
+                            new_fields[i].1 = held.unify(at);
+                        }
                     }
                 }
                 self.structs.get_mut(name).unwrap().fields = new_fields;
@@ -238,8 +300,37 @@ impl TypeContext {
                     let fn_type = Ty::Fn(given, Box::new(Ty::Unknown));
                     let unified = existing.unify(&fn_type);
                     self.vars.insert(name.clone(), unified);
+                    // (a local read from a record's field holding a function
+                    // types the field, as a call through the field does)
+                    let at = (self.current_fn_name.clone().unwrap_or_default(), name.clone());
+                    if let Some((r, field)) = self.fn_fields.get(&at).cloned() {
+                        self.type_fn_field(&r, &field, &fn_type);
+                    }
                 }
             }
+        }
+        // a call through a record's field holding a function (`c.f[c.x]`):
+        // its calls type the field's parameters, as a variable's do, and the
+        // functions records were made with take them (`propagate_indirect_fn_types`)
+        if let Expr::FieldAccess { object, field } = callee
+            && let Expr::Ident(holder) = object.as_ref()
+            && let Some(r) = self.fn_field_of(holder, field)
+        {
+            let given: Vec<Ty> = arg_types.iter().map(|t| t.payload().clone()).collect();
+            self.type_fn_field(&r, field, &Ty::Fn(given, Box::new(Ty::Unknown)));
+        }
+        // a call of an item of a local list of functions (`fs[0][5]`): its
+        // calls type the items' parameters, as a variable's do
+        if let Expr::Call { callee: list, args: at } = callee
+            && at.len() == 1
+            && let Expr::Ident(v) = list.as_ref()
+            && let Some(Ty::List(item)) = self.vars.get(v).map(|t| t.payload().clone())
+            && let Ty::Fn(params, _) = item.as_ref()
+            && params.len() == arg_types.len()
+        {
+            let given: Vec<Ty> = arg_types.iter().map(|t| t.payload().clone()).collect();
+            let typed = item.unify(&Ty::Fn(given, Box::new(Ty::Unknown)));
+            self.vars.insert(v.clone(), Ty::List(Box::new(typed)));
         }
         // a builtin written in Crow called through its module's name
         // (`math.nn.relu[…]`)
@@ -497,8 +588,27 @@ impl TypeContext {
                 // function it calls was not copied yet — answers its own:
                 // joined, `next_of`'s vector had been read as the list of
                 // text another copy answers; Rosetta Code, Monads/List monad)
-                let own = target.return_type.is_concrete() && !target.return_type.compatible(ret_type);
+                // (numbers held as a vector and as a list are one kind in two
+                // forms, joined as the list: `increment`'s `[x + 1]` handed
+                // where a list of ints is answered had kept its vector, and
+                // `concat` met it; Rosetta Code, Monads/List monad)
+                let numbers_two_ways = |a: &Ty, b: &Ty| {
+                    let listed = |t: &Ty| matches!(t, Ty::List(i) if matches!(i.payload(), Ty::Int | Ty::Float | Ty::Big));
+                    (matches!(a, Ty::Tensor(..)) && listed(b)) || (listed(a) && matches!(b, Ty::Tensor(..)))
+                };
+                // (an answer that can fail beside one that cannot is one
+                // kind: `as_text`'s truth handed where `as_numbers`' truth
+                // that can fail is held keeps the parameter the second
+                // can fill — answering its own, it had been made the
+                // first's, and the call handing the second did not build
+                // compiled; Rosetta Code, Stream merge)
+                let own = target.return_type.is_concrete()
+                    && !Self::without_failures(&target.return_type).compatible(&Self::without_failures(ret_type))
+                    && !numbers_two_ways(target.return_type.payload(), ret_type.payload());
                 let ret = if own { target.return_type.clone() } else { target.return_type.unify(ret_type) };
+                if !own && numbers_two_ways(target.return_type.payload(), ret_type.payload()) {
+                    self.answers_by_use.insert(n.clone());
+                }
                 if let Some(t) = self.functions.get_mut(n) {
                     t.params = params.clone();
                     t.return_type = ret.clone();
@@ -570,6 +680,12 @@ impl TypeContext {
     /// makes.
     pub(crate) fn note_scanned_value(&mut self, name: &str, value: &Expr) {
         self.note_connection(name, value);
+        if let Expr::FieldAccess { object, field } = value
+            && let Expr::Ident(holder) = object.as_ref()
+            && let Some(r) = self.fn_field_of(holder, field)
+        {
+            self.fn_fields.insert((self.current_fn_name.clone().unwrap_or_default(), name.to_string()), (r, field.clone()));
+        }
     }
 
     /// Into a function's body while its calls are read: its parameters

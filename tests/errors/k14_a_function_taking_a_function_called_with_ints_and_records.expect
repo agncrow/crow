@@ -1,0 +1,3 @@
+k14_a_function_taking_a_function_called_with_ints_and_records.co:21:1: `count` takes a function, so one `count` serves every call, and its 'xs' is a list of ints here where another call makes it a list of Pick — a function taking a function is not copied per kind (spec, Specialization): write one for each kind
+  21 │ log[count[ints, always]]
+     │ ^^^^^^^^^^^^^^^^^^^^^^^^

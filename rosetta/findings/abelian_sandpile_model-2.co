@@ -1,0 +1,30 @@
+--- Finding: a float written into an item of a list of lists of ints
+--- (`g[0][0] = 2.5`) does not widen the lists to floats: the compiled
+--- program does not build, and the interpreter keeps 2.5 among the ints.
+---
+--- Interpreted:
+---     [[2.5, 0], [0, 0]]
+--- Compiled:
+---     error[E0308]: mismatched types
+---       --> src/main.rs:42:174
+---     error: the compiled program does not build — the Rust compiler refused
+---     what Crow accepted, a bug in Crow, not in this program (`crow run -i`
+---     runs it meanwhile)
+--- Expected (spec, Variables: "a list ... of ints handed a float holds
+--- floats from then on", "an item of a list of floats assigned an int holds
+--- its float"): both modes build and print [[2.5, 0], [0, 0]], the lists
+--- held as floats.
+---
+--- `crow build --ir` keeps `g: List(List(Int))` and writes `g[0][0] = 2.5`
+--- into it; the Rust assigns an f64 into a Vec<i64>. A flat list widens
+--- (`xs = for c in range[2]` / `0`, then `xs[0] = 2.5` agrees in both
+--- modes); a list of lists built by a nested collecting loop fails the same
+--- way as this push-built one. Found writing a 2D Abelian sandpile variant.
+row = []
+row = push[row, 0]
+row = push[row, 0]
+g = []
+g = push[g, row]
+g = push[g, row]
+g[0][0] = 2.5
+log[g]

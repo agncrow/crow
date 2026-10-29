@@ -1,0 +1,24 @@
+--- Finding (find_limit_of_recursion): a recursion 1000 calls deep inside a
+--- parallel `for` crashes the interpreter with a native stack overflow.
+---
+--- Interpreted (crow run -i): the process aborts, exit status 134, and prints
+---   thread '<unknown>' (…) has overflowed its stack
+---   fatal runtime error: stack overflow, aborting
+--- Compiled (crow run): prints [1000, 1000].
+--- Expected: [1000, 1000] in both modes. The spec's limit is 10000 nested
+--- calls, past which both modes stop with "runtime error: line 2: recursion
+--- deeper than 10000 calls — …" (and "a panic inside the runtime … never
+--- crashes" the program). Outside a loop, or in a loop of one item
+--- (`for i in [0]`), the interpreter goes to 10000 calls and then gives that
+--- stop; in a loop whose rounds run in parallel (a pure body, so on worker
+--- threads) it overflows the worker's stack from 643 calls deep (642 runs).
+--- A function with bigger frames crashes the compiled program the same way:
+--- find_limit_of_recursion-2.co.
+fn depth[n]
+    if n eq 0
+        return 0
+    return 1 + depth[n - 1]
+
+xs = for i in range[2]
+    depth[1000]
+log[xs]

@@ -1,0 +1,26 @@
+--- Finding (metaprogramming): a function called with a list of ints, a list of
+--- floats and a list of any third kind (text, bools, lists) is an internal error
+--- in both modes, before the program runs. It is the spec's own Specialization
+--- example (`first` of `[1, 2, 3]` and of `['a', 'b']`) with a list of floats
+--- added.
+---
+--- crow run -i and crow run alike (exit 1, nothing printed):
+---   metaprogramming-2.co: internal error: the lowered program disagrees with
+---   itself — a bug in Crow, not in this program: metaprogramming-2 main: line 25:
+---   hands 'first__1' Tensor(Float, [1]) for its parameter 'xs' (argument 1),
+---   which is Tensor(Int, [2])
+--- Expected:
+---   1
+---   2.5
+---   a
+--- Any two of the three calls run in both modes and print their answers, in
+--- either order; the three fail in any order. Found showing a function written
+--- once and compiled per kind (`largest` of ints, floats and text). Perhaps the
+--- root of findings/k_d_tree-2.co (matrices of ints and of floats beside a third
+--- signature).
+fn first[xs]
+    return xs[0]
+
+log[first[[1, 2]]]
+log[first[[2.5]]]
+log[first[['a']]]

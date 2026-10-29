@@ -1,0 +1,20 @@
+--- A one-item list literal of a variable holding a literal list of ints,
+--- grown in a while loop by push of a range, is an internal error in both
+--- modes (likely the same cause as topswops-1.co, with another symptom).
+---
+--- Interpreted (crow run -i) and compiled (crow run), the same message:
+---   topswops-2.co: internal error: the lowered program disagrees with itself — a bug in Crow,
+---   not in this program: topswops-2 main: line 19: 'decks' holds Tensor(Int, [1, 4]) but is
+---   assigned Tensor(Float, [?, 4]) (from the runtime's core.push_row)
+--- Expected: [[2, 4, 1, 3], [0, 1, 2, 3]]
+---
+--- Found in a function that collects the decks of a game (`decks = [cards]`,
+--- then `d = turned[d, d[0]]` and `decks = push[decks, d]` in a while), where
+--- `turned` was also called with a range elsewhere in the program.
+
+cards = [2, 4, 1, 3]
+decks = [cards]
+d = range[4]
+while len[decks] lt 2
+    decks = push[decks, d]
+log[decks]

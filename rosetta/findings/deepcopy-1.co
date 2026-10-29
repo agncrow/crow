@@ -1,0 +1,30 @@
+--- A record's field that every constructor gives 0 (none), later given a record of
+--- its kind by a field write (`n.next = m`), is typed an int: the compiled program
+--- does not build.
+---
+--- Interpreted (crow run -i): prints
+---     Node[name = 'a', next = Node[name = 'b', next = 0]]
+--- Compiled (crow run): the program does not build:
+---     error[E0308]: mismatched types
+---       --> src/main.rs:59:14
+---     error: the compiled program does not build — the Rust compiler refused what Crow
+---     accepted, a bug in Crow, not in this program (`crow run -i` runs it meanwhile)
+--- Expected: the interpreter's output. The spec (A Record or None): a field may hold
+--- a record of its own kind or 0, and what holds a record or 0 is a record or none.
+---
+--- `crow build --ir`:
+---     struct Node { name: Str, next: Int }
+---     ...
+---     n.next = move m
+--- The field is settled from the constructors alone (all 0, so Int); the field write
+--- of a Record(Node) is not joined into it, and the IR verifier lets an Int field be
+--- written a record. Given a record at any constructor (`Node['a', Node['b', 0]]`)
+--- the field is OptRecord(Node) and this builds (but see deepcopy-2.co).
+--- The same with `c = n` then `n.next = c`, and with `n.next = n`.
+
+struct Node [name, next]
+
+n = Node['a', 0]
+m = Node['b', 0]
+n.next = m
+log[n]

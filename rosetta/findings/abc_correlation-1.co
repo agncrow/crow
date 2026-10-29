@@ -1,0 +1,29 @@
+--- Finding: input[] at the end of standard input answers empty text, ok,
+--- again and again, so a program cannot tell the end of its input from a
+--- blank line, and the natural loop that reads every line never ends.
+---
+--- Run with one line of input:   printf 'one\n' | crow run -i this.co
+--- Interpreted and compiled agree (both wrong):
+---     0: ok true, [one]
+---     1: ok true, []
+---     2: ok true, []
+---     3: ok true, []
+---     stopped with ok true after 4 reads
+--- Expected: the read past the last line fails (an error value, .ok false,
+--- as the spec's Fallible Builtins table says input[] does when "Stdin
+--- read fails", and as Python's input() raises EOFError), so the loop ends
+--- after one read:
+---     0: ok true, [one]
+---     stopped with ok false after 1 reads
+--- Without the `n lt 4` guard (`while line.ok`), both modes loop forever:
+--- a Rosetta solution reading its test strings this way wrote 390 MB of
+--- `"" -> true` lines in 120 s before it was killed.
+--- Cause (read, not changed): crow_runtime/src/core.rs `read_line` maps
+--- `stdin().read_line` returning Ok(0) — end of input — to Ok("").
+n = 0
+line = input[]
+while line.ok and n lt 4
+    log['`n`: ok `line.ok`, [`line`]']
+    n = n + 1
+    line = input[]
+log['stopped with ok `line.ok` after `n` reads']

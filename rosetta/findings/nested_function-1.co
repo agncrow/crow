@@ -1,0 +1,19 @@
+--- A function (or a struct) declared inside a function's body is refused, as Crow
+--- intends (no nested functions or closures), but the refusal reads as an internal
+--- step and names no place. Both modes, and `crow check`, print only
+---     nested_function-1.co: lowering: a function ('make_item') declared inside a body
+--- (exit 1): no line, no column, no source line and caret, and the word "lowering",
+--- where every other refusal is `file:line:col: <what is wrong>` with the line shown.
+--- A struct inside a body is alike: `lowering: a struct ('Pair') declared inside a body`,
+--- and so is a function declared inside a top-level `if`.
+--- Expected: the refusal at line 15, in the language's words, saying what to do, e.g.
+---     nested_function-1.co:15:5: 'make_item' is declared inside 'make_list': a function
+---     is declared at the top level and sees only its parameters (no closures) — move it
+---     out and hand it what it reads
+fn make_list[separator]
+    counter = 1
+    fn make_item[item]
+        return '`counter``separator``item`'
+    return make_item['first']
+
+log[make_list['. ']]

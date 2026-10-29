@@ -1,0 +1,31 @@
+--- A function that answers nothing but can fail, whose body ENDS in an `if` or a `while`,
+--- does not build compiled.
+---
+--- Interpreted (crow run -i): prints
+---     big
+---     small
+--- Compiled (crow run): the program does not build:
+---     error[E0308]: mismatched types
+---       --> src/main.rs:31:20
+---     error: the compiled program does not build — the Rust compiler refused what Crow
+---     accepted, a bug in Crow, not in this program (`crow run -i` runs it meanwhile)
+--- Expected: the same output as interpreted.
+---
+--- `check` can fail (its condition decides on `int[s]`), so it is emitted as
+--- `fn check(s: &String) -> CrowResult<()>`; a body ending in a plain statement is
+--- wrapped (`return CrowResult { ok: true, value: log(…), … }`), but one ending in an
+--- `if`/`else`, an `if` with no `else`, or a `while` ends on that statement, of type `()`.
+--- The same failure with an `if` that decides on a plain int, as long as the function can
+--- fail somewhere above it. Related to findings/15_puzzle_game-1.co (a bare `return` in
+--- such a function is printed `return;`). Found writing rosetta/15_puzzle_game.co, whose
+--- game loop ends `if board eq goal … else …`.
+
+fn check[s]
+    n = int[s]
+    if n gt 5
+        log['big']
+    else
+        log['small']
+
+check['7']
+check['2']

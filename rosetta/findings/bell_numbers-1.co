@@ -1,0 +1,29 @@
+--- A list of lists of ints whose next row a function makes from the last row: the
+--- width pass takes the row's items as 64-bit ints, so the compiled program stops
+--- where the interpreter grows the int.
+---
+--- Interpreted (crow run -i): prints
+---     590295810358705651712
+--- Compiled (crow run):
+---     runtime error: line 24: integer overflow: 4611686018427387904 * 2 does not fit in 64 bits
+--- Expected: 590295810358705651712 (2^69), as interpreted.
+---
+--- `crow build --ir`: `pure doubled(row: List(Int)) -> List(Int)` with
+--- `core.push([], (row[-1] mul 2))` and `rows: List(List(Int))`: the items that
+--- `doubled` answers flow into `rows`' items, which flow back into its parameter
+--- through `rows[-1]`, a cycle that grows, yet the product is left a checked 64-bit
+--- multiply. Iterating one row directly (`row = doubled[row]`, no list of rows) gives
+--- the right answer in both modes. No literal list is involved (the rows are built from
+--- `[]` with push; the literal case is findings/abundant_odd_numbers-2.co).
+--- Found writing rosetta/bell_numbers.co: the Bell triangle kept as a list of rows,
+--- each row made from the last by `next_row`, stopped compiled at the 26th row
+--- ("integer overflow: 8862977753256734602 + 868222074880332913 does not fit in 64
+--- bits") while the interpreter printed the 50th Bell number right.
+
+fn doubled[row]
+    return push[[], row[-1] * 2]
+
+rows = push[[], push[[], 1]]
+while len[rows] lt 70
+    rows = push[rows, doubled[rows[-1]]]
+log[rows[-1][0]]

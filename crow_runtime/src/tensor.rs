@@ -1526,6 +1526,20 @@ impl CrowTensor {
         Ok(Self::from_vec(data, shape))
     }
 
+    /// A list of rows as a matrix, as `from_elements` makes it; a list of
+    /// none is a matrix of no rows of the shape the program's type states
+    /// for a row (`[0, 2]`), so a walk of its rows runs no round —
+    /// `from_elements` of none is a vector of no numbers, which a matrix's
+    /// reader refused (Rosetta Code, Hopcroft-Karp algorithm).
+    pub fn from_rows_shaped(items: &[CrowTensor], row: &[usize]) -> Result<CrowTensor, String> {
+        if items.is_empty() && !row.is_empty() {
+            let mut shape = vec![0];
+            shape.extend_from_slice(row);
+            return Ok(Self::from_vec(Vec::new(), shape));
+        }
+        Self::from_elements(items)
+    }
+
     /// `concat[a, b]`, `concat[a, b, axis]` of tensors: one tensor, or the
     /// reason the two do not join — ranks, an axis, a shape across it (the
     /// kernel asserted them: a panic).

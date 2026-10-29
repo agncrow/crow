@@ -1,0 +1,17 @@
+--- A record of no fields, only declared, makes the compiled program not build.
+--- Interpreted (crow run -i): prints "made" (and Body[] made and logged prints
+--- "Body[]").
+--- Compiled (crow run): the Rust compiler refuses the generated display code:
+---     error[E0283]: type annotations needed
+---       --> src/main.rs:35:56
+---     error: the compiled program does not build — the Rust compiler refused what
+---     Crow accepted, a bug in Crow, not in this program
+--- The emitted impl is `crow_runtime::display::record("Body", vec![])`: an empty
+--- vec! whose item type nothing names (the ToJson impl's `object(vec![])` is the
+--- same shape). Expected: "made" in both modes (or the declaration refused in
+--- both, if the spec meant a record to have a field — it does not say so).
+--- Found writing rosetta/visitor_pattern.co (Wikipedia's car: Body and Engine
+--- carry no data); worked around by giving them a name field.
+
+struct Body []
+log['made']

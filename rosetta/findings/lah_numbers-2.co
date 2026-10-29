@@ -1,0 +1,33 @@
+--- Finding: a list of lists whose first row is a literal of small ints
+--- (`push[rows, [1]]`) holds its rows as tensors, so a row of ints pushed later
+--- loses digits, silently. A wrong answer in both modes:
+---   `rows[1][0]` and `grow[2 ^ 53 + 1][1][0]` print 9007199254740992 in both
+---   modes (expected 9007199254740993);
+---   `grow[2 ^ 64][1][0]`:
+---     interpreted:  runtime error: line 29: a list of int is not a list of numbers
+---     compiled:     9223372036854775807 (the float saturated into an i64)
+---     expected:     18446744073709551616
+--- The compiled program holds `rows` as Vec<CrowTensor> and converts each row
+--- pushed with `x.to_f64()`. The spec (Tensor Arithmetic) says a literal list of
+--- ints past 2^53 is a list of ints, and "never a wrong digit" (Numbers That
+--- Keep Every Digit). Found writing Lah numbers (the triangle's rows, which pass
+--- 64 bits by row 20: L(20, 2) came out as 9223372036854775807 compiled, and the
+--- interpreter stopped); worked around by starting the first row as
+--- `push[[], 1]` instead of the literal `[1]`.
+
+rows = []
+rows = push[rows, [1]]
+n = 2 ^ 53 + 1
+rows = push[rows, [n]]
+log[rows[1][0]]
+
+fn grow[n]
+    grown = []
+    grown = push[grown, [1]]
+    row = for k in range[1]
+        n + k
+    grown = push[grown, row]
+    return grown
+
+log[grow[2 ^ 53 + 1][1][0]]
+log[grow[2 ^ 64][1][0]]

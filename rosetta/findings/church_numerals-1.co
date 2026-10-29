@@ -1,0 +1,37 @@
+--- FIXED in the bin/crow of 19:53 (with findings/avl_tree-2.co): both modes print 8
+--- and true, and the field's range is [1, 281474976710663]. Kept for the record.
+---
+--- A record's int field read through a record-or-none link is ranged as any 64-bit
+--- int by the width pass, so a field written from that read plus one is settled Big
+--- (a growing int) although no value here passes 8; the Big field read through the
+--- link is then typed i64 (findings/avl_tree-2.co): the compiled program does not build.
+---
+--- Interpreted (crow run -i): prints
+---     8
+---     true
+--- Compiled (crow run): the program does not build:
+---     error[E0308]: mismatched types
+---       --> src/main.rs (`… .n.clone() > 5_i64`: expected `Int`, found `i64`)
+---     error: the compiled program does not build — the Rust compiler refused what Crow
+---     accepted, a bug in Crow, not in this program (`crow run -i` runs it meanwhile)
+--- Expected: 8 and true in both modes.
+---
+--- `crow build --ir`: `struct Box { next: OptRecord(Box), n: Big }`,
+--- `pure grow(b: OptRecord(Box))`, `Box{0, (big(b.n) add big(1))}`.
+--- CROW_WIDTH_DEBUG=1: Field("Box", "n") = [-9223372036854775807, 9223372036854775808].
+--- With `grow[x]` (b a plain record) in place of `grow[x.next]`, the field's range is
+--- [1, 281474976710663], `n` stays i64 and both modes print the same. So beside
+--- avl_tree-2's missing conversion, the read `b.n` of a link is not given the field's
+--- own range: any record that counts through a link (a Church numeral's "add one",
+--- a node's size or height from its child's) makes the field Big, and then no read
+--- of it through a link builds. Found writing rosetta/church_numerals.co (a number
+--- record `Lambda['number', 0, 0, x.n + 1]` with `x` a parameter handed links).
+
+struct Box [next, n]
+
+fn grow[b]
+    return Box[0, b.n + 1]
+
+x = Box[Box[0, 7], 1]
+log[grow[x.next].n]
+log[x.next.n gt 5]

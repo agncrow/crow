@@ -1,0 +1,32 @@
+--- Finding (brilliant_numbers): inside a function, an empty list pushed onto an
+--- empty list of lists before the pushed list has items (`groups = push[groups,
+--- group]` while `group = []`) leaves the outer list's items of no known kind,
+--- `List(List(?))`, even where the same list is later pushed holding ints. The
+--- compiled program does not build.
+---
+--- Interpreted (right):
+---     [[], [1]]
+--- Compiled:
+---     error[E0308]: mismatched types
+---       --> src/main.rs:30:49
+---     error: the compiled program does not build — the Rust compiler refused
+---     what Crow accepted, a bug in Crow, not in this program (`crow run -i`
+---     runs it meanwhile)
+--- Expected: [[], [1]] in both modes.
+---
+--- `crow build --ir`: `let groups: List(List(?)) = []` beside
+--- `let group: List(Int) = []`, though the function answers List(List(Int));
+--- the Rust declares `groups: Vec<Vec<String>>` and pushes a Vec<i64> into it.
+--- The same lines at the top level type `groups: List(List(Int))` and run in
+--- both modes; inside the function they build only when a later ASSIGNMENT
+--- (`groups = push[groups, group]`, not `return push[groups, group]`) pushes
+--- the list once it holds ints. Found grouping primes by their number of
+--- digits (a new group started, the finished one pushed, in one loop).
+fn groups_of[n]
+    groups = []
+    group = []
+    groups = push[groups, group]
+    group = push[group, n]
+    return push[groups, group]
+
+log[groups_of[1]]

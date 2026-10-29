@@ -1,0 +1,22 @@
+--- Finding (associative_array_merging): a parsed JSON value set into an empty map
+--- (`map[]`), or pushed onto an empty list (`[]`), is read as a number, so a map or a
+--- list of parsed values cannot be grown from empty: the program stops on the first
+--- value that is text, in both modes.
+---
+--- crow run -i and crow run alike:
+---   runtime error: line 17: a parsed value holds text 'x' where the program reads an int (handed to set at line 17)
+--- (and with the push below: "... where the program reads a number (handed to push at line 20, with the map lines taken out)")
+--- Expected: [a = 'x'] and ['x', 2] -- a map and a list of parsed values, as the program
+--- gets when the collection starts from a parsed value instead: `m = map[a = j.a]` or
+--- `map[keys[j], values[j]]` holds text and numbers side by side and runs in both modes.
+--- The spec says a parsed value is "read as the kind its use implies" and, handed to a
+--- collection, "the kind of its items"; an empty collection implies no kind, and the
+--- program never asks for a number, so the message misleads.
+j = json['{"a": "x", "b": 2}']
+m = map[]
+m = set[m, 'a', j['a']]
+log[m]
+xs = []
+xs = push[xs, j['a']]
+xs = push[xs, j['b']]
+log[xs]

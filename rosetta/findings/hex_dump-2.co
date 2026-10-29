@@ -1,0 +1,27 @@
+--- A failed argument handed to a function that answers nothing, on a line of its
+--- own, is dropped silently, in both modes.
+---
+--- Interpreted and compiled alike print `after show in run`, `end` (exit 0).
+--- Expected (spec section 10, "A value that can fail, dropped by its line"): the call's
+--- value is the failure (a failed argument never enters the function), and a line that
+--- drops it is a decision: inside `run` the failure is handed to the caller (so
+--- `after show in run` is not printed), and the top level halts with
+---   runtime error: line N: cannot drop an error value — not positive  (at `run[-1]`)
+--- The same line with a function that answers a value (`fn twice[x]` / `return x * 2`,
+--- then `twice[maybe[-1]]` at the top level) halts so in both modes, as expected.
+
+fn show[x]
+    log[x]
+
+fn maybe[n]
+    if n gt 0
+        return n
+    return error['not positive']
+
+fn run[n]
+    show[maybe[n]]
+    log['after show in run']
+
+run[-1]
+show[maybe[-1]]
+log['end']

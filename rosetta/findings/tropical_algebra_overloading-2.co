@@ -1,0 +1,26 @@
+--- A loop over an item of a list nothing is put into (`e = []`, or a
+--- parameter handed `[]`): the interpreter runs it (no rounds) and goes on;
+--- the compiled program does not build — the item is held as text, and the
+--- inner `for` walks it with `.iter()`.
+---
+--- Interpreted (crow run -i):
+---     done
+--- Compiled (crow run):
+---     error[E0599]: no method named `iter` found for reference `&String` in
+---     the current scope
+---     error: the compiled program does not build — the Rust compiler refused
+---     what Crow accepted, a bug in Crow, not in this program (`crow run -i`
+---     runs it meanwhile)
+--- Expected: `done` in both modes (or a refusal in both, as an item of such a
+--- list used in arithmetic or handed to a builtin now is).
+--- The same inside a function: `fn count_all[rows]` / `for row in rows` /
+--- `for t in row` / `n = n + 1`, called `count_all[[]]`, prints 0
+--- interpreted and does not build compiled. Met flattening a list of lists of
+--- truths that a nested collect (findings/tropical_algebra_overloading-1.co)
+--- had left empty.
+
+e = []
+for row in e
+    for t in row
+        log[t]
+log['done']

@@ -1,0 +1,12 @@
+--- STATUS: no longer reproduces with the pinned bin/crow replaced at 19:25 (both modes now give the expected answer).
+--- Finding (almkvist_giullera_formula_for_pi): fmt refuses an int past 64 bits.
+--- Both modes alike, as the program runs (not before):
+---   runtime error: line 12: a whole number past 64 bits where fmt[] takes an int of 64 bits: 1180591620717411303424
+--- Expected: 1,180,591,620,717,411,303,424 (and fmt[x, width = 30] padded): the
+--- spec (Numbers That Keep Every Digit) says "What shows or holds any value takes one
+--- as it is — str, log, text, …", and fmt is how a number is shown with a width or
+--- commas. If the refusal is meant, it is not written in the spec, and it could be
+--- refused before the program runs, as the spec's other kind refusals are.
+--- Work-around: fmt[str[x], width = 30, align = 'right'] (no commas).
+log[str[2 ^ 70]]
+log[fmt[2 ^ 70, commas = true]]
