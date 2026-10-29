@@ -6,8 +6,8 @@
 --- milliseconds; now where none is handed); a removal is a tombstone
 --- row (`gone`), which every read skips; the graph as of a position is
 --- `upto` on every read, and a node's history its key's versions.
---- `walk` and `path` read the graph a node at a time (`latest` over one
---- key's range); `match` reads each triple's edges and joins the
+--- `walk` and `path` read the graph a hop at a time (`latest` over the
+--- frontier's range of keys, or each node's key for a few nodes); `match` reads each triple's edges and joins the
 --- triples on the variables they share with the frame module's join;
 --- `subgraph` answers the edges among some nodes as the graph package
 --- takes them; a `rule` derives edges and links them back.
@@ -136,6 +136,51 @@ fn history[root, id, upto = -1]
         return got
     return got[got._pos lte upto]
 
+--- a hop's frontier's out-edges, as each node's `dst` ids in the order
+--- `neighbors` reads them: a key's range read per node for up to four,
+--- and one range from the least id to the greatest, read once, for more
+--- — the log's keys are in order, so each node's edges come out as its
+--- own read gives them (a walk of three hops had read the edges log's
+--- files a thousand times)
+fn _hop[root, frontier, rel, upto]
+    out = map[]
+    if len[frontier] lte 4
+        for id in frontier
+            es = neighbors[root, id, rel, upto]
+            if not es.ok
+                return error[es.reason, 'kg']
+            dsts = slice[['x'], 0, 0]
+            for i in range[len[es]]
+                dsts = push[dsts, str[es.dst[i]]]
+            out = set[out, id, dsts]
+        return out
+    d = _edges[root]
+    if not exists[d]
+        return out
+    wanted = map[]
+    lo = frontier[0]
+    hi = frontier[0]
+    for id in frontier
+        wanted = set[wanted, id, true]
+        if id lt lo
+            lo = id
+        if id gt hi
+            hi = id
+    got = latest[d, upto, lo = lo, hi = hi]
+    if not got.ok
+        return error[got.reason, 'kg']
+    live = _live[got]
+    for i in range[len[live]]
+        src = str[live.src[i]]
+        if src in wanted and (rel eq '' or str[live.rel[i]] eq rel)
+            dst = str[live.dst[i]]
+            if src in out
+                out[src] = push[out[src], dst]
+            else
+                first = slice[['x'], 0, 0]
+                out = set[out, src, push[first, dst]]
+    return out
+
 --- the nodes within `hops` edges of `start`, breadth first, as a frame
 --- of `id`, `hops` (the fewest edges from the start) and `via` (the
 --- node each was reached from; '' at the start), in the order reached
@@ -150,18 +195,18 @@ fn walk[root, origin, hops, rel = '', upto = -1]
     while depth lt hops and len[frontier] gt 0
         depth = depth + 1
         reached = []
+        hop = _hop[root, frontier, rel, upto]
+        if not hop.ok
+            return error[hop.reason, 'kg']
         for from_id in frontier
-            es = neighbors[root, from_id, rel, upto]
-            if not es.ok
-                return error[es.reason, 'kg']
-            for i in range[len[es]]
-                to_id = str[es.dst[i]]
-                if to_id not in seen
-                    seen = set[seen, to_id, depth]
-                    ids = push[ids, to_id]
-                    steps = push[steps, depth]
-                    via = push[via, from_id]
-                    reached = push[reached, to_id]
+            if from_id in hop
+                for to_id in hop[from_id]
+                    if to_id not in seen
+                        seen = set[seen, to_id, depth]
+                        ids = push[ids, to_id]
+                        steps = push[steps, depth]
+                        via = push[via, from_id]
+                        reached = push[reached, to_id]
         frontier = reached
     return frame.new[id = ids, hops = steps, via = via]
 
@@ -179,13 +224,12 @@ fn path[root, a, b, hops = 6, rel = '', upto = -1]
     while depth lt hops and len[frontier] gt 0 and not found
         depth = depth + 1
         reached = []
+        hop = _hop[root, frontier, rel, upto]
+        if not hop.ok
+            return error[hop.reason, 'kg']
         for from_id in frontier
-            if not found
-                es = neighbors[root, from_id, rel, upto]
-                if not es.ok
-                    return error[es.reason, 'kg']
-                for i in range[len[es]]
-                    to_id = str[es.dst[i]]
+            if not found and from_id in hop
+                for to_id in hop[from_id]
                     if to_id not in parent
                         parent = set[parent, to_id, from_id]
                         reached = push[reached, to_id]

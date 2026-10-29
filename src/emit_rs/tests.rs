@@ -2669,3 +2669,28 @@ fn a_hash_of_64_bit_patterns_stays_in_64_bits() {
     assert!(rust.contains("fn fnv(b: &crow_runtime::sys::Bytes) -> i64"), "{}", rust);
     assert!(!rust.contains("xor_big"), "{}", rust);
 }
+
+/// An int read from 1, 2 or 4 bytes is within what those bytes spell, of
+/// either sign: the width pass had taken every `unpack` for any 64-bit
+/// int, so a count read so, multiplied or added to a cursor, went growing
+/// (Magpie's decoders ran on big ints)
+#[test]
+fn an_int_read_from_four_bytes_stays_in_64_bits() {
+    let rust = transpile("use sys\n\nfn scaled[b]\n    n = unpack[b, 0, 4, little = true, signed = false]\n    return n * 1000\n\nlog[scaled[bytes[8]]]\n");
+    assert!(rust.contains("fn scaled(b: &crow_runtime::sys::Bytes) -> i64"), "{}", rust);
+}
+
+/// Magpie's bit-packed decoders are 64-bit throughout: each width has a
+/// loop of its own, and the bits held are written so the width pass bounds
+/// them (one function holding both loops had lost the bound, and a
+/// column's decode was three quarters growing-int arithmetic)
+#[test]
+fn magpies_decoders_stay_in_64_bits() {
+    let rust = transpile("use magpie\n\nf = scan['no-such-log']\nlog[f.ok]\n");
+    for name in ["_magpie_packing__unpacked_narrow", "_magpie_packing__unpacked_wide"] {
+        let start = rust.find(&format!("fn {}(", name)).unwrap_or_else(|| panic!("{} is compiled:\n{}", name, rust));
+        let body = &rust[start..start + rust[start..].find("\n}\n").unwrap()];
+        assert!(body.contains("-> Vec<i64>"), "{} answers 64-bit ints:\n{}", name, body);
+        assert!(!body.contains("_big("), "{} computes nothing on growing ints:\n{}", name, body);
+    }
+}

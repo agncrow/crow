@@ -9,6 +9,19 @@ history says the rest.
 
 ### Fixed
 
+- Magpie's reads made cheap, as Vijay chose over keeping anything
+  between calls. The bit-packed decoders are 64-bit throughout: each
+  width has a loop of its own, the cursor is bounded by the bytes, and
+  the bits held are written so the width pass bounds them — one function
+  holding both loops had lost the bound, and three quarters of a
+  column's decode was growing-int arithmetic (a scan of one column over
+  finch's 11.3 million bars 224 → 83 ms). An int `unpack` reads from 1,
+  2 or 4 bytes is within what those bytes spell, of either sign
+  (`IntRange::Unpacked`): every such field had been any 64-bit int to
+  the pass. And the graph package reads a hop at a time: a frontier of
+  more than four nodes is one range of the edges log, read once, where
+  each node had been a read of the log's files of its own (a walk of
+  three hops over 1,022 nodes read the files 1,022 times).
 - Magpie measured after the port to Crow (docs/magpie-in-crow.md, 4.2),
   and what the measures found. The sequencer's flush claims the pending
   rows under the tail's lock and writes them outside it, so a put waits

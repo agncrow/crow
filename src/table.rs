@@ -388,6 +388,10 @@ pub enum IntRange {
     Code,
     /// A byte: 0 to 255.
     Byte,
+    /// What `width` bytes spell, read with either sign (the width the
+    /// third argument): 1, 2 or 4 bytes within their bits, 8 any 64-bit
+    /// int (an unsigned 8 bytes past 2^63 is refused).
+    Unpacked,
     /// The first argument's bits moved by the second.
     Shift,
     /// 0 or 1.
@@ -2559,7 +2563,7 @@ pub static ROWS: &[Row] = &[
     row!("sys.unbase64", "sys", "unbase64", crow_runtime::sys::unbase64, (Str) -> Bytes, value "parse"),
     row!("sys.same", "sys", "same", crow_runtime::sys::same, (Bytes, Bytes) -> Bool, never),
     Row { options: &[("little", Preset::Bool(false))], ..row!("sys.pack", "sys", "pack", crow_runtime::sys::pack, (Int, Int, Bool) -> Bytes, stops) },
-    Row { options: &[("little", Preset::Bool(false)), ("signed", Preset::Bool(true))], ..row!("sys.unpack", "sys", "unpack", crow_runtime::sys::unpack, (Bytes, Int, Int, Bool, Bool) -> Int, stops) },
+    Row { range: IntRange::Unpacked, options: &[("little", Preset::Bool(false)), ("signed", Preset::Bool(true))], ..row!("sys.unpack", "sys", "unpack", crow_runtime::sys::unpack, (Bytes, Int, Int, Bool, Bool) -> Int, stops) },
     Row { options: &[("width", Preset::Int(8)), ("little", Preset::Bool(false))], ..row!("sys.ieee", "sys", "ieee", crow_runtime::sys::ieee, (Float, Int, Bool) -> Bytes, stops) },
     // (the reader's width and byte order are positions, not options: a row
     // of the writer's name whose options may be given by position would

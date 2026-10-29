@@ -1966,6 +1966,17 @@ fn row_iv(row: &crate::table::Row, ivs: &[Iv]) -> Iv {
         },
         R::Code => Iv::new(0, 0x10FFFF),
         R::Byte => Iv::new(0, 255),
+        // (bytes read as an int: within what the width's bytes spell, of
+        // either sign — every 1-, 2- and 4-byte field a file format reads
+        // had been any 64-bit int to the pass, so a cursor plus a count read
+        // so went growing, and Magpie's decoders ran on big ints)
+        R::Unpacked => match ivs.get(2) {
+            Some(w) if w.lo >= 1 && w.hi <= 4 => {
+                let bits = 8 * w.hi as u32;
+                Iv::new(-(1i128 << (bits - 1)), (1i128 << bits) - 1)
+            }
+            _ => Iv::I64,
+        },
         R::Shift => match ivs {
             [a, n] if n.hi < 100 => {
                 // a left shift multiplies by 2^n for n between its ends; a

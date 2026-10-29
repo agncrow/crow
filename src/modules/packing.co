@@ -76,45 +76,79 @@ fn unpacked[data, at, n, width]
         return out
     if width gt 64
         return error['a packed value is at most 64 bits wide, not `width`', 'magpie']
+    if at lt 0 or at gt len[data]
+        return error['packed values at `at` lie outside `len[data]` bytes', 'magpie']
     total_bits = n * width
     needed = shift[total_bits + 7, -3]
     there = len[data] - at
     if there lt needed
         return error['`n` nums of `width` bits need `needed` bytes, and `there` are there', 'magpie']
+    --- (each width read by a loop of its own, the cursor bounded by the
+    --- bytes: one function holding both loops, the width pass lost the
+    --- bound on the bits held, and every value was read through growing
+    --- ints — three quarters of a column's decode)
+    if width lte 32
+        return _unpacked_narrow[data, at, n, width]
+    return _unpacked_wide[data, at, n, width]
+
+--- `n` values of at most 32 bits read from the bytes at `at`, which the
+--- caller checked hold them
+fn _unpacked_narrow[data, at, n, width]
+    out = []
+    if at lt 0 or at gt len[data]
+        return out
+    mask = shift[1, width] - 1
     buf = 0
     have = 0
     pos = at
     for i in range[n]
-        if width lte 32
-            while have lt width
-                buf = bitor[buf, shift[byte[data, pos], have]]
-                pos = pos + 1
-                have = have + 8
-            out = push[out, _low[buf, width]]
-            buf = shift[buf, -width]
-            have = have - width
-        else
-            while have lt 32
-                buf = bitor[buf, shift[byte[data, pos], have]]
-                pos = pos + 1
-                have = have + 8
-            lo = _low[buf, 32]
-            buf = shift[buf, -32]
-            have = have - 32
-            rest = width - 32
-            while have lt rest
-                buf = bitor[buf, shift[byte[data, pos], have]]
-                pos = pos + 1
-                have = have + 8
-            hi = _low[buf, rest]
-            buf = shift[buf, -rest]
-            have = have - rest
-            --- the pattern as the int of its bits: one at or past 2^63 is
-            --- negative, which the high half says
-            if hi lt 2147483648
-                out = push[out, lo + shift[hi, 32]]
-            else
-                out = push[out, lo + shift[hi - 4294967296, 32]]
+        while have lt width
+            buf = bitor[buf, shift[byte[data, pos], have]]
+            pos = pos + 1
+            have = min[have + 8, 39]
+        out = push[out, bitand[buf, mask]]
+        buf = shift[buf, -width]
+        --- (the bits held stay under 40 — a byte is taken only while fewer
+        --- than `width` are held, and what is left after a value is under
+        --- a byte: written so, as the width pass can bound them, the shift
+        --- that takes a byte is a 64-bit one, where it had been a growing
+        --- int's at every byte of every value)
+        have = bitand[have - width, 7]
+    return out
+
+--- `n` values of 33 to 64 bits read from the bytes at `at`, which the
+--- caller checked hold them: each as its low 32 bits and its high bits
+fn _unpacked_wide[data, at, n, width]
+    out = []
+    if at lt 0 or at gt len[data]
+        return out
+    rest = width - 32
+    if rest lt 1 or rest gt 32
+        return out
+    mask = shift[1, rest] - 1
+    buf = 0
+    have = 0
+    pos = at
+    for i in range[n]
+        while have lt 32
+            buf = bitor[buf, shift[byte[data, pos], have]]
+            pos = pos + 1
+            have = min[have + 8, 39]
+        lo = bitand[buf, 4294967295]
+        buf = shift[buf, -32]
+        have = bitand[have - 32, 7]
+        while have lt rest
+            buf = bitor[buf, shift[byte[data, pos], have]]
+            pos = pos + 1
+            have = min[have + 8, 39]
+        hi = bitand[buf, mask]
+        buf = shift[buf, -rest]
+        have = bitand[have - rest, 7]
+        --- the pattern as the int of its bits: one at or past 2^63 is
+        --- negative, which the high half says — the halves joined by the
+        --- wrapping rows, which answer 64 bits (as a sum and a shift, the
+        --- value had been a growing int's)
+        out = push[out, wrapadd[lo, wrapmul[hi, 4294967296]]]
     return out
 
 --- `put_var[out, v]`: a varint (LEB128) appended, a pattern's 64 bits
