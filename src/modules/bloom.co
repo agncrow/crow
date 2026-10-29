@@ -61,9 +61,11 @@ fn _position[x, m, wrap_m]
         r = (r + wrap_m) % m
     return r
 
---- 2^64 modulo m, once per filter (a growing int's remainder)
+--- 2^64 modulo m, once per filter (a growing int's remainder); taken
+--- modulo m again, which keeps it, so the width pass sees it below m —
+--- as `wrap` answers it, any 64-bit int, each slot's sum went growing
 fn _wrap_m[m]
-    return wrap[18446744073709551616 % m]
+    return wrap[18446744073709551616 % m] % m
 
 --- `add[f, b]`: the filter with the byte string's k bits set
 fn add[f, b]

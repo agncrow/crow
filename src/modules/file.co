@@ -132,6 +132,15 @@ fn _negative_zero[x]
 --- it is first seen; past 65536 of them the column keeps no filter (a
 --- timestamp, a position, a price — every cell its own value — had been
 --- given a filter sized by the rows)
+--- the distinct values of a list of ints, in order
+fn _distinct_ints[vals]
+    s = sort[vals]
+    out = []
+    for i in range[len[s]]
+        if i eq 0 or s[i] ne s[i - 1]
+            out = push[out, s[i]]
+    return out
+
 fn _statistics[col, from, to, filtered]
     n = to - from
     present = present_of[col, from, to]
@@ -141,9 +150,13 @@ fn _statistics[col, from, to, filtered]
     hi = Bound[0, 0, 0.0, '']
     keep = filtered
     items = []
+    --- (a number column's distinct values found by sorting them, where a
+    --- map had taken a lookup and an insert for every cell — most of a
+    --- write: the filter and the count are the same however the values
+    --- come, and past 65,536 distinct values there is no filter)
     if kind eq 'int' or kind eq 'moment'
         nums = ints_of[col, from, to]
-        seen = map[]
+        vals = []
         for i in range[n]
             if _present[present, i]
                 v = nums[i]
@@ -151,15 +164,18 @@ fn _statistics[col, from, to, filtered]
                     lo = Bound[1, v, 0.0, '']
                 if hi.form eq 0 or v gt hi.whole
                     hi = Bound[1, v, 0.0, '']
-                if keep and v not in seen
-                    if len[items] gte 65536
-                        keep = false
-                    else
-                        seen = set[seen, v, true]
-                        items = push[items, pack[v, 8, little = true]]
+                if keep
+                    vals = push[vals, v]
+        if keep
+            uniq = _distinct_ints[vals]
+            if len[uniq] gt 65536
+                keep = false
+            else
+                for v in uniq
+                    items = push[items, pack[v, 8, little = true]]
     if kind eq 'float'
         reals = floats_of[col, from, to]
-        seen = map[]
+        plains = []
         for i in range[n]
             if _present[present, i]
                 x = reals[i]
@@ -172,14 +188,20 @@ fn _statistics[col, from, to, filtered]
                     plain = x
                     if plain eq 0.0
                         plain = 0.0
-                    fb = ieee[plain, 8, little = true]
-                    pattern = unpack[fb, 0, 8, little = true]
-                    if pattern not in seen
-                        if len[items] gte 65536
-                            keep = false
-                        else
-                            seen = set[seen, pattern, true]
-                            items = push[items, fb]
+                    plains = push[plains, plain]
+        if keep
+            --- (each value's 64-bit pattern, a NaN's its own, read from
+            --- the values' bytes made at once)
+            fb = float_bytes[plains, 8, true]
+            patterns = []
+            for j in range[len[plains]]
+                patterns = push[patterns, unpack[fb, j * 8, 8, little = true]]
+            uniq = _distinct_ints[patterns]
+            if len[uniq] gt 65536
+                keep = false
+            else
+                for p in uniq
+                    items = push[items, pack[p, 8, little = true]]
     if kind eq 'bool'
         flags = bools_of[col, from, to]
         seen = map[]

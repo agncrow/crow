@@ -9,6 +9,14 @@ history says the rest.
 
 ### Fixed
 
+- Magpie's writes: a number column's distinct values for its filter are
+  found by sorting them, where a map had taken a lookup and an insert
+  for every cell (the filter and the count the same, byte for byte), and
+  a bloom filter's slots are computed in 64 bits — 2^64 modulo the
+  filter's size had been any 64-bit int to the width pass, so each slot's
+  sum went growing. 200,000 rows by 102 columns written in 2.9 s and
+  merged in 3.1 s, where they had taken 5.3 and 5.6 (the Rust kernel's
+  2.7 and 2.3).
 - Magpie's `merge` folds a lone batch into a segment too, where it had
   answered '' for fewer than two live files: whether a key's older
   versions were folded had depended on whether a flush cut a `put` and
