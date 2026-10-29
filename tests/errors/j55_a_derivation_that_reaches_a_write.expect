@@ -1,3 +1,3 @@
-j55_a_derivation_that_reaches_a_write.co:11:12: calls record[], which reaches write[]: it writes a file — a derivation reads — files, the network, a database, the clock, the process's environment — and changes nothing, since it runs whenever the page needs it: call it from a handler, or a function a handler calls
+j55_a_derivation_that_reaches_a_write.co:11:12: calls record[], which reaches write[]: it writes a file — a derivation reads — files, the network, a database, the clock, the process's environment or memory — and changes nothing, since it runs whenever the page needs it: call it from a handler, or a function a handler calls
   11 │     return record[count * 2]
      │            ^^^^^^

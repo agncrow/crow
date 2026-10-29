@@ -1,0 +1,3 @@
+j85_a_value_held_in_memory_is_a_record.co:6:5: remember[] takes text and a record, got text and an int
+  6 │ log[remember['counts', 3]]
+    │     ^^^^^^^^

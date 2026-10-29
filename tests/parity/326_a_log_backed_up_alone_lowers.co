@@ -1,0 +1,13 @@
+--- A program calling magpie's `backup` alone lowers, in both modes: the
+--- module's `_fixed`, which the program does not call, had an answer of no
+--- value in an early round (its first return an error), which was joined
+--- with the local it returns — its parameter `by` — and written back to
+--- the parameter, so the lowered program disagreed with itself; and the
+--- sequencer's `put_rows`, not called either, hands `revise` a function
+--- its own untyped parameter cannot type, which had been refused as the
+--- program's mistake (crow check --self: magpie.backup).
+use magpie
+
+r = backup['no-such-log', 'no-such-backup']
+log[r.ok]
+log[len[r.reason] gt 0]

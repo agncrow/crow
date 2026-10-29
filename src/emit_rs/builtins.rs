@@ -328,7 +328,7 @@ impl Emitter {
         // A select in a page is the widget, an element in a view the
         // element, and a message the session's to hold: their arms below,
         // not a module's row
-        let kinds: Vec<crate::table::Arg> = args.iter().map(|x| crate::table::Arg::of_type(&self.tt(x))).collect();
+        let kinds: Vec<crate::table::Arg> = args.iter().map(|x| self.held_kind(x)).collect();
         let providers = self.registry.providers_of(name);
         // (the lowering's rule, `is_ui_control`: a select of a frame is
         // frame's, and a standard module's body imports no ui — magpie's
@@ -374,12 +374,48 @@ impl Emitter {
                 self.needs_crow_runtime = true;
                 format!("crow_runtime::core::seed(({}) as i64)", a[0])
             }
+            // revise[name, default, f, …]: f run under the name's lock with
+            // the record held and the rest; what it answers held, nothing
+            // changed where its answer failed (crow_runtime::memory)
+            _ if n >= 3 && crate::table::revises(name) => {
+                let fname = match fn_named(&args[2]) {
+                    Some(f) => f.to_string(),
+                    None => return Some("compile_error!(\"revise[] takes a function\")".to_string()),
+                };
+                self.needs_crow_runtime = true;
+                let fails = self.fns.get(&fname).is_some_and(|f| matches!(f.ret, Ty::Result(_)));
+                let default = Self::kept(&args[1], &a[1]);
+                let mut captures = String::new();
+                let mut handed = vec!["_held".to_string()];
+                for (i, x) in a.iter().enumerate().skip(3) {
+                    captures.push_str(&format!("let __r{} = ({}).clone(); ", i, x));
+                    handed.push(format!("__r{}", i));
+                }
+                let call = format!("{}({})", Self::rust_fn_name(&fname), handed.join(", "));
+                let kept = if fails {
+                    format!("let _r = {}; let _keep = if _r.ok {{ Some(_r.value.clone()) }} else {{ None }}; (_keep, _r)", call)
+                } else {
+                    format!("let _v = {}; (Some(_v.clone()), _v)", call)
+                };
+                format!(
+                    "{{ {}crow_runtime::memory::revise(&*({}), {}, {}, |_held| {{ {} }}).unwrap_or_else(|e| crow_stop({}, e)) }}",
+                    captures,
+                    a[0],
+                    default,
+                    fails,
+                    kept,
+                    self.line_now()
+                )
+            }
             "later" if n >= 1 => {
                 let fname = match fn_named(&args[0]) {
                     Some(f) => f.to_string(),
                     None => return Some(format!("compile_error!(\"later[] takes a function\")")),
                 };
-                if self.in_live() {
+                // (a standard module's function writes none of the page's
+                // facts — it sees none — so it runs as a script's work does,
+                // even asked from a page: Magpie's flush)
+                if self.in_live() && !crate::modules::is_crow_fn(&fname) {
                     return Some(format!("{{ let _ = state.spawn_later(\"{}\", {}); }}", fname, Self::rust_fn_name(&fname)));
                 }
                 self.needs_later = true;

@@ -264,19 +264,24 @@ fn catalog_of[dir]
         return error[m.reason, 'magpie']
     return m.segments
 
---- a manifest the kernel wrote reads back here, one written here reads
---- back by the kernel, and both write the same bytes — keys, notes, the
---- notes merged, other keys refused in the kernel's words
+--- a short digest of bytes: what a recorded answer is held to
+fn _digest[b]
+    return slice[hash[b, 'sha256'], 0, 16]
+
+--- a manifest written here is the kernel's byte for byte and reads back
+--- — keys, notes, the notes merged — and other keys are refused in the
+--- kernel's words
 test a_manifest_is_the_kernels[]
     nothing = slice[['x'], 0, 0]
-    dir = 'target/crow_manifest_a'
+    dir = 'target/crow_manifest_b'
     if exists[dir]
         gone = rm[dir]
     made = mkdir[dir]
     assert[not listed[dir].found]
     keyed = ['day', 'symbol']
-    kernel = batch_declare[dir, keyed, '{"time":"timestamp","narrow":"price"}']
-    assert[kernel.ok]
+    mine = declare[dir, keyed, ['time', 'narrow'], ['timestamp', 'price']]
+    assert[mine.ok]
+    assert[not exists['`dir`/.manifest.part']]
     m = listed[dir]
     assert[m.found and m.keys eq keyed]
     assert[m.note_names eq ['narrow', 'time']]
@@ -285,50 +290,18 @@ test a_manifest_is_the_kernels[]
     assert[not stems_of[m]]
     assert[len[m.segments] eq 0]
     assert[m.segments.columns eq segment_columns[]]
-    kernel_bytes = file['`dir`/manifest']
-    assert[same[listed_bytes[m], kernel_bytes]]
-    dir2 = 'target/crow_manifest_b'
-    if exists[dir2]
-        gone = rm[dir2]
-    made = mkdir[dir2]
-    mine = declare[dir2, keyed, ['time', 'narrow'], ['timestamp', 'price']]
-    assert[mine.ok]
-    assert[same[file['`dir2`/manifest'], kernel_bytes]]
-    assert[batch_declared[dir2] eq batch_declared[dir]]
-    assert[not exists['`dir2`/.manifest.part']]
-    again = declare[dir2, keyed, ['stem', 'time'], ['true', 'at']]
-    k2 = batch_declare[dir, keyed, '{"stem":"true","time":"at"}']
-    assert[same[file['`dir2`/manifest'], file['`dir`/manifest']]]
-    assert[stems_of[listed[dir2]]]
-    wrong = declare[dir2, ['id'], nothing, nothing]
+    written = file['`dir`/manifest']
+    assert[same[listed_bytes[m], written]]
+    --- (the kernel's manifests and words, recorded before it was deleted,
+    --- 2026-10-28)
+    assert[_digest[written] eq '63550209c1d4c9b9']
+    again = declare[dir, keyed, ['stem', 'time'], ['true', 'at']]
+    second = file['`dir`/manifest']
+    assert[_digest[second] eq '98d9fa8fcdb504df']
+    assert[stems_of[listed[dir]]]
+    wrong = declare[dir, ['id'], nothing, nothing]
     assert[not wrong.ok]
-    assert[wrong.reason eq batch_declare[dir2, ['id'], ''].reason]
-
---- segments a merge listed read back as the kernel lists them, and the
---- manifest written again from them is the kernel's byte for byte
-test segments_are_the_kernels[]
-    nothing = slice[['x'], 0, 0]
-    dir = 'target/crow_manifest_c'
-    if exists[dir]
-        gone = rm[dir]
-    made = mkdir[dir]
-    k = batch_declare[dir, ['id'], '']
-    ids = []
-    for i in range[40]
-        ids = push[ids, i % 7]
-    df = frame.new[id = ids]
-    a = batch_write[dir, 0, 0, df, ['id'], nothing, false]
-    b = batch_write[dir, 1, 40, df, ['id'], nothing, false]
-    folded = batch_merge[dir, ['`dir`/000000000000.batch', '`dir`/000000000001.batch'], false]
-    assert[folded.ok]
-    m = listed[dir]
-    assert[len[m.segments] eq 1]
-    assert[m.segments.name[0] eq segment_named[1]]
-    assert[counter[m] eq 1]
-    assert[m.segments.number[0] eq 0 and m.segments.high[0] eq 1]
-    assert[m.segments.rows[0] eq 7]
-    assert[same[listed_bytes[m], file['`dir`/manifest']]]
-    assert[catalog_of[dir].name eq batch_catalog[dir].name]
+    assert[wrong.reason eq 'batch: the log at \'target/crow_manifest_b\' is keyed by day and symbol, not by id']
 
 --- the names a log's files carry
 test names_say_their_numbers[]

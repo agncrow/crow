@@ -166,6 +166,49 @@ fn place[dir, name, data]
     swept = flushed[dir]
     return path
 
+--- `numbered_bytes[dir, numbered, first, keyed, texts]`: a batch file's
+--- bytes for rows already given their positions (`_pos`, from `first`):
+--- sorted by the keys, arrival order kept among equals, the words of each
+--- column in `texts` indexed, the manifest's narrow columns and stemming
+--- applied — what the sequencer's flush and `write_batch` write
+fn numbered_bytes[dir, numbered, first, keyed, texts]
+    n = len[numbered]
+    sorted = numbered
+    if len[keyed] gt 0
+        sorted = sort[numbered, keyed]
+    m = listed[dir]
+    if not m.ok
+        return error[m.reason, 'magpie']
+    data = file_of[sorted, rows_per_group[sorted], first, first + n - 1, keyed, texts, narrow_of[m], stems_of[m]]
+    if not data.ok
+        return error['batch: `data.reason`', 'magpie']
+    return data
+
+--- `write_batch[dir, number, first, f, keyed, texts]`: the frame written
+--- as the log's batch file `number` and placed, its rows given the
+--- positions from `first` in the order they arrive, sorted by `keyed`,
+--- the words of each column in `texts` indexed; answers the file's path.
+--- Refused: no rows, a column `_pos`, a key the frame lacks, a number
+--- whose file exists
+fn write_batch[dir, number, first, f, keyed, texts]
+    n = len[f]
+    if n eq 0
+        return error['batch: a batch holds at least one row', 'magpie']
+    if '_pos' in f.columns
+        return error['batch: the frame already holds a column \'_pos\', which the log adds', 'magpie']
+    for k in keyed
+        if k not in f.columns
+            return error['batch: no column \'`k`\' to sort by', 'magpie']
+    positions = []
+    for i in range[n]
+        positions = push[positions, first + i]
+    numbered = f
+    numbered._pos = ints_column[positions, bytes[0]]
+    data = numbered_bytes[dir, numbered, first, keyed, texts]
+    if not data.ok
+        return error[data.reason, 'magpie']
+    return place[dir, batch_named[number], data]
+
 --- `merge_into[dir, paths, keyed, texts, narrow, stems, every, taken, group_limit, segment_limit]`:
 --- the files merged into segments under `dir`, each cut where it reaches
 --- `segment_limit` bytes, named from the counter past `taken` on: the
@@ -534,73 +577,105 @@ fn merge_files[dir, paths, every]
     listed_cut = _crash_at['listed']
     return '`dir`/`merged.written[0].name`'
 
---- the same log written twice: batches by the kernel, keyed, the text
---- and float columns varied, a key repeated across batches
+--- a log of batches, keyed, the text and float columns varied, a key
+--- repeated across batches
 fn _log_of[dir, keyed, rows, count]
     if exists[dir]
         gone = rm[dir]
     made = mkdir[dir]
-    k = batch_declare[dir, keyed, '']
     nothing = slice[['x'], 0, 0]
+    k = declare[dir, keyed, nothing, nothing]
     for b in range[count]
-        ids = []
-        names = []
-        prices = []
-        for i in range[rows]
-            ids = push[ids, (i * 7 + b * 3) % 211]
-            names = push[names, 'w`(i + b) % 13` and `i % 5`']
-            prices = push[prices, float[(i * 11 + b) % 97] / 4.0]
-        df = frame.new[id = ids, name = names, price = prices]
-        w = batch_write[dir, b, b * rows, df, keyed, nothing, false]
+        w = write_batch[dir, b, b * rows, _batch_frame[b, rows], keyed, nothing]
     return dir
 
---- whether two directories hold the same files, byte for byte
-fn _same_dirs[a, b]
-    fa = ls[a]
-    fb = ls[b]
-    if fa ne fb
-        return false
-    for f in fa
-        if not same[file['`a`/`f`'], file['`b`/`f`']]
-            return false
-    return true
+--- the rows of the test log's batch `b`
+fn _batch_frame[b, rows]
+    ids = []
+    names = []
+    prices = []
+    for i in range[rows]
+        ids = push[ids, (i * 7 + b * 3) % 211]
+        names = push[names, 'w`(i + b) % 13` and `i % 5`']
+        prices = push[prices, float[(i * 11 + b) % 97] / 4.0]
+    return frame.new[id = ids, name = names, price = prices]
 
---- the merge here and the kernel's write the same segments and the same
---- manifest — the latest version of each key kept, or every row — and a
---- second merge folds the first's segment with new batches
+--- a directory's files digested — each name and its bytes, in name
+--- order: what a recorded answer is held to
+fn _dir_digest[dir]
+    out = bytes[0]
+    for name in sort[ls[dir]]
+        out = concat[out, bytes[name]]
+        out = concat[out, file['`dir`/`name`']]
+    return slice[hash[out, 'sha256'], 0, 16]
+
+--- a short digest of bytes
+fn _digest[b]
+    return slice[hash[b, 'sha256'], 0, 16]
+
+--- a merge writes the kernel's segments and manifest — the latest
+--- version of each key kept, or every row — and refuses no files, or a
+--- file that is none
 test a_merge_is_the_kernels[]
+    seen = []
     for every in [false, true]
         mine = _log_of['target/crow_merge_mine', ['id'], 600, 4]
-        theirs = _log_of['target/crow_merge_kernel', ['id'], 600, 4]
         paths = []
-        kpaths = []
         for b in range[4]
             paths = push[paths, '`mine`/`batch_named[b]`']
-            kpaths = push[kpaths, '`theirs`/`batch_named[b]`']
         got = merge_files[mine, paths, every]
-        want = batch_merge[theirs, kpaths, every]
-        assert[got.ok and want.ok]
+        assert[got.ok]
         assert[got eq '`mine`/S000000000001.segment']
-        assert[_same_dirs[mine, theirs]]
+        seen = push[seen, _dir_digest[mine]]
+    --- (the kernel's directories, recorded before it was deleted, 2026-10-28)
+    assert[seen eq ['e834d84826822a8b', '5bf21b248b7e576d']]
     assert[not merge_files['target/crow_merge_mine', slice[['x'], 0, 0], false].ok]
     assert[not merge_files['target/crow_merge_mine', ['target/crow_merge_mine/manifest'], false].ok]
 
---- the merge at sizes small enough to cut groups and segments, here and
---- in the kernel: the same segments, byte for byte, the text column
---- indexed and stemmed, the float column narrowed
+--- the merge at sizes small enough to cut groups and segments writes the
+--- kernel's segments byte for byte, the text column indexed and stemmed,
+--- the float column narrowed
 test a_streamed_merge_cuts_where_the_kernels_does[]
+    seen = []
     for every in [false, true]
         mine = _log_of['target/crow_stream_mine', ['id'], 300, 3]
-        theirs = _log_of['target/crow_stream_kernel', ['id'], 300, 3]
         paths = []
-        kpaths = []
         for b in range[3]
             paths = push[paths, '`mine`/`batch_named[b]`']
-            kpaths = push[kpaths, '`theirs`/`batch_named[b]`']
         got = merge_into[mine, paths, ['id'], ['name'], ['price'], true, every, 4, 1000, 3000]
-        want = stream_rs[theirs, kpaths, ['id'], ['name'], ['price'], true, every, 4, 1000, 3000]
-        assert[got.ok and want.ok]
-        assert[len[got.written] eq len[want]]
-        assert[len[want] gt 1]
-        assert[got.counter eq 4 + len[want]]
-        assert[_same_dirs[mine, theirs]]
+        assert[got.ok]
+        assert[len[got.written] gt 1]
+        assert[got.counter eq 4 + len[got.written]]
+        seen = push[seen, _dir_digest[mine]]
+    --- (the kernel's directories, recorded before it was deleted, 2026-10-28)
+    assert[seen eq ['cf1f334ee5a998b8', '72efa4c042cae115']]
+
+--- segments a merge listed read back as the kernel lists them, and the
+--- manifest written again from them is the kernel's byte for byte
+test segments_are_the_kernels[]
+    nothing = slice[['x'], 0, 0]
+    dir = 'target/crow_manifest_c'
+    if exists[dir]
+        gone = rm[dir]
+    made = mkdir[dir]
+    k = declare[dir, ['id'], nothing, nothing]
+    ids = []
+    for i in range[40]
+        ids = push[ids, i % 7]
+    df = frame.new[id = ids]
+    a = write_batch[dir, 0, 0, df, ['id'], nothing]
+    b = write_batch[dir, 1, 40, df, ['id'], nothing]
+    folded = merge_files[dir, ['`dir`/000000000000.batch', '`dir`/000000000001.batch'], false]
+    assert[folded.ok]
+    m = listed[dir]
+    assert[len[m.segments] eq 1]
+    assert[m.segments.name[0] eq segment_named[1]]
+    assert[counter[m] eq 1]
+    assert[m.segments.number[0] eq 0 and m.segments.high[0] eq 1]
+    assert[m.segments.rows[0] eq 7]
+    kept = file['`dir`/manifest']
+    assert[same[listed_bytes[m], kept]]
+    names = catalog_of[dir].name
+    --- (the kernel's manifest, recorded before it was deleted, 2026-10-28)
+    assert[_digest[kept] eq '845bd20c59fe45c8']
+    assert[names eq ['S000000000001.segment']]

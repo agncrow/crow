@@ -161,7 +161,7 @@ opened.
 
 The store is per process and per mode: the compiled program keeps
 typed slots, the interpreter its values; the semantics are one. Two
-effect kinds carry the rules: `memory` for a read, `memory.write` for
+effect kinds carry the rules: `held` for a read, `held.write` for
 the rest, allowed and refused where `db.read` and `db.write` are (a
 view reads neither; a derivation reads, never writes), ordered in a
 loop for the writes, recorded by no rehearsal since nothing leaves the
@@ -364,9 +364,7 @@ Lucene's query forms, the indexed groups' block skipping mirrored so a
 tie at the threshold resolves as the kernel's does), and
 `magpie.inflate`, `magpie.snappy` and `magpie.records` — each held to
 its kernel's answers in both modes (inflate and snappy to the kernels'
-own test streams), the verbs and the Kafka door rewired onto them. The
-tail's pending rows are read through `batch_read` until the sequencer
-is Crow's. What the port found in the compiler: a part's computed column
+own test streams), the verbs and the Kafka door rewired onto them. What the port found in the compiler: a part's computed column
 name renamed apart from the entry's variable (parity 314), `keys` of a
 map with no key yet guessed as text (315), an empty map widened with no
 type Rust could read (316) or into the wrong kind (317), a plain value
@@ -374,6 +372,44 @@ written beside values that can fail refused or printed bare (318), and
 a returned empty local declared a map of text (319). Left: the
 sequencer and its process memory (2.4), then the kernels, their rows
 and bridges deleted.
+
+The sequencer, then the kernels deleted (2026-10-28): `magpie.tail` —
+the memtable and its write-ahead log in Crow over process memory (section
+2.4 as built: `use memory`, records held by name, one kind per name,
+revised under the name's lock, a path's records forgotten by `rm`) — on
+which `put`, `batch`, `sync`, `latest` of one key and every reader's
+pending rows run; the crash harness's cuts (`pending`, `placed`,
+`listed`) are the modules' own. Then the kernels went:
+`crow_runtime/src/magpie/` and `kafka.rs` (7,580 lines), the sys rows
+that reached them (`batch_*`, `tail_*`, `records`, `records_of`) and the
+test-only oracles (`*_rs`, `stream_rs`). Their answers were recorded
+first: each module's test holds its bytes to the kernel's digests (the
+first sixteen hex digits of a SHA-256), its frames to the digests of
+their columns' chunks, its refusals to the kernel's words, all read off
+the run that checked them against the kernel one last time; the batch
+files those tests write are written in Crow now (`write_batch`), and
+were compared with the kernel's byte for byte in that run. What the
+self-check found in the compiler once the ports were exports it calls
+with every kind (92 cases, 14 groups): a column a function walks moved
+by the walk (parity 321); a list of nothing read by a row typed by
+nothing (322), negated as no mask (errors j82); a parameter handed only
+the items of an empty list read as nothing where it is compiled as text
+(323), a value of no known kind not copied, an effect's growing int cast;
+a parameter its body widens kept at the calls' kind, a caller's answer
+an earlier round's guess (324), a parameter reassigned another kind
+taken for its type (j84); a body's guess of text standing against a
+call's number (j83); and a list of frames answered as JSON in neither
+mode (served 25). Once the sequencer and process memory were in, the
+check's second pass (206 cases, 4 groups) found `remember` and `recall`
+taking any value (errors j85), an answer of no value handed on making
+a copy of `place` whose bytes were nothing (parity 328), and `len` of an
+item of a list nothing fills compiled as a list's length of a text —
+every program that only followed a log or read its metrics (parity 327).
+The served pages found the last: a page calling `batch` with two frames
+typed apart refused to start, since the sequencer's function handed to
+`revise` was copied per frame and then refused as a value of several
+kinds — a row that calls a function with its own arguments now hands
+the copy they reach (parity 329).
 
 ## 4.1 Measured: the codec, 2026-10-27
 

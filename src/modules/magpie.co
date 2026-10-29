@@ -1,7 +1,8 @@
 --- `use magpie`: the log as a directory of batch files and a manifest
---- (spec, magpie). Each commit is one file, written once by the kernel
---- (sys.batch_write): a frame given a position per row, sorted by the
---- log's keys, with the statistics a reader prunes by in its index. The
+--- (spec, magpie). Each commit is one file, written once (magpie.merge's
+--- `write_batch`, the sequencer's flush): a frame given a position per
+--- row, sorted by the log's keys, with the statistics a reader prunes by
+--- in its index. The
 --- manifest (magpie.manifest) names the live segments and what the log
 --- declares of itself — its keys, fixed by its first batch, and its time
 --- column — and is replaced whole, so a merge is one atomic switch and a
@@ -28,6 +29,7 @@ use magpie.merge
 use magpie.exec
 use magpie.nearest
 use magpie.search
+use magpie.tail
 
 --- the tail: the batch files in a directory, in order
 --- (`000000000017.batch`); a segment is named by its counter
@@ -75,7 +77,7 @@ fn batches[dir]
     --- thread moves rows from pending to a file under its lock, so in this
     --- order they are seen at least once — and a file covering their first
     --- position says they were flushed in between, so they are segs once
-    waiting = tail_pending[dir]
+    waiting = pending_of[dir]
     if not waiting.ok
         return error[waiting.reason, 'magpie']
     names = _names[dir]
@@ -308,11 +310,11 @@ fn batch[dir, f, by = [], flush = true, time = '', narrow = [], stem = false]
     fixed = _fixed[dir, f, by, time, narrow, stem]
     if not fixed.ok
         return fixed
-    first = tail_put[dir, f]
+    first = put_rows[dir, f]
     if not first.ok
         return error[first.reason, 'magpie']
     if flush
-        flushed = tail_flush[dir]
+        flushed = flush_rows[dir]
         if not flushed.ok
             return error[flushed.reason, 'magpie']
     return first
@@ -321,8 +323,8 @@ fn batch[dir, f, by = [], flush = true, time = '', narrow = [], stem = false]
 --- the log through the sequencer: the next positions as they arrive,
 --- visible to this process at once (a reader sees them as the catalog's
 --- `pending` row), written as a batch file and flushed to the disk by
---- the sequencer's thread within ten milliseconds, or by `sync`, `batch`
---- or `merge` first — Redis's write path, the log its append-only file.
+--- the flush the put asks for (`later`), or by `sync`, `batch` or
+--- `merge` first — Redis's write path, the log its append-only file.
 --- Answers the first position. A crash before the flush loses the rows
 --- put since it: a write that must be durable before it answers is
 --- `batch`
@@ -344,7 +346,7 @@ fn put[dir, f, by = [], time = '', narrow = [], stem = false]
     fixed = _fixed[dir, f, by, time, narrow, stem]
     if not fixed.ok
         return fixed
-    first = tail_put[dir, f]
+    first = put_rows[dir, f]
     if not first.ok
         return error[first.reason, 'magpie']
     return first
@@ -358,7 +360,7 @@ fn sync[dir]
         return _posted_int[dir, 'sync']
     if len[bytes[dir]] eq 0
         return error['sync needs a log directory', 'magpie']
-    drained = tail_flush[dir]
+    drained = flush_rows[dir]
     if not drained.ok
         return error[drained.reason, 'magpie']
     found = ls[dir]
@@ -506,7 +508,7 @@ fn latest[dir, upto = -1, columns = [], lo = '', hi = '', equal = []]
             return error['no log at \'`dir`\'', 'magpie']
         --- the list copied for the row, which takes it as a value
         asked = equal
-        row = tail_get[dir, asked]
+        row = newest_row[dir, asked]
         if not row.ok
             return error[row.reason, 'magpie']
         return row
@@ -734,7 +736,7 @@ fn commit[dir, f, seen = -1, columns = [], equal = []]
     --- sequencer's index in memory; any other read against the files
     if len[columns] gt 0 and join[columns, ','] eq join[fixed, ',']
         asked = equal
-        last = tail_last[dir, asked]
+        last = last_position[dir, asked]
         if not last.ok
             return error[last.reason, 'magpie']
         if last gt seen
@@ -752,10 +754,10 @@ fn commit[dir, f, seen = -1, columns = [], equal = []]
                     hit = held[held._pos gt seen]
                     if len[hit] gt 0
                         return error['conflict: `columns[j]` = `equal[j]` was written at position `hit._pos[0]`, after snapshot `seen`', 'magpie']
-    first = tail_put[dir, f]
+    first = put_rows[dir, f]
     if not first.ok
         return error[first.reason, 'magpie']
-    flushed = tail_flush[dir]
+    flushed = flush_rows[dir]
     if not flushed.ok
         return error[flushed.reason, 'magpie']
     return first
@@ -806,7 +808,7 @@ fn summary[dir, by, of, how, on = [], ops = [], equal = [], lo = '', hi = '', up
         return error['a summary takes one aggregate per column: `len[of]` columns, `len[how]` aggregates', 'magpie']
     if len[on] ne len[ops] or len[on] ne len[equal]
         return error['the predicates are three lists of one length: on, ops and equal', 'magpie']
-    flushed = tail_flush[dir]
+    flushed = flush_rows[dir]
     if not flushed.ok
         return error[flushed.reason, 'magpie']
     b = batches[dir]
@@ -863,7 +865,7 @@ fn prior[dir, f, columns = [], upto = -1]
     time = _time[dir]
     if len[time] eq 0
         return error['an as-of join needs the log\'s time column: declare it at the first batch, time = \'ts\'', 'magpie']
-    flushed = tail_flush[dir]
+    flushed = flush_rows[dir]
     if not flushed.ok
         return error[flushed.reason, 'magpie']
     b = batches[dir]
@@ -943,7 +945,7 @@ fn _overflow[b]
 fn merge[dir, every = false]
     if _remote[dir]
         return _posted_text[dir, 'merge']
-    flushed = tail_flush[dir]
+    flushed = flush_rows[dir]
     if not flushed.ok
         return error[flushed.reason, 'magpie']
     b = batches[dir]
@@ -1098,7 +1100,7 @@ fn _shipped[dir, b]
 --- is: a version of the log, restored by `restore`. Answers how many
 --- files were copied
 fn backup[dir, to]
-    flushed = tail_flush[dir]
+    flushed = flush_rows[dir]
     if not flushed.ok
         return error[flushed.reason, 'magpie']
     b = batches[dir]
@@ -1149,7 +1151,7 @@ fn restore[saved, dir]
                 return error[kept.reason, 'magpie']
             restored = restored + 1
     --- the log's positions changed under this process: its tail forgotten
-    forgotten = tail_forget[dir]
+    forgotten = forget_log[dir]
     return restored
 
 --- a line of a follower's request, read without waiting: empty text
@@ -1178,7 +1180,7 @@ fn _line_of[c]
 fn _shared[dir, line]
     nl = '\n'
     if line eq 'list'
-        flushed = tail_flush[dir]
+        flushed = flush_rows[dir]
         if not flushed.ok
             return error[flushed.reason, 'magpie']
         b = batches[dir]
@@ -1336,7 +1338,7 @@ fn follow[dir, host, port, seconds = 5.0]
                 gone = rm[b.path[i]]
     for p in _unlisted[dir]
         gone = rm[p]
-    forgotten = tail_forget[dir]
+    forgotten = forget_log[dir]
     return fetched
 
 --- the HTTP door: the verbs over JSON, so a program in another process
@@ -1947,6 +1949,19 @@ fn _gathered[parts, names]
 fn _pending_path[p]
     return '/.pending' in p
 
+--- the pending rows a path names, with the columns asked in that order
+--- (every column where none is), as a file's read hands them
+fn _pending_read[p, names]
+    df = pending_at[p]
+    if not df.ok
+        return error[df.reason, 'magpie']
+    if len[names] eq 0
+        return df
+    for c in names
+        if c not in df.columns
+            return error['batch: \'`p`\' holds no column \'`c`\'', 'magpie']
+    return select[df, names]
+
 --- the rows of a frame where every column holds its value
 fn _held_rows[df, columns, wants]
     keep = slice[[true], 0, 0]
@@ -1975,7 +1990,7 @@ fn _find_rows[path, columns, vals, names]
             if c not in needed
                 needed = push[needed, c]
     if _pending_path[path]
-        df = batch_read[path, needed]
+        df = _pending_read[path, needed]
         if not df.ok
             return error[df.reason, 'magpie']
         wants = []
@@ -2062,7 +2077,7 @@ fn _between_positions[df, after, upto]
 --- positions all lie at or before `after`, or all past `upto`, not read
 fn _since_file[p, after, upto, needed]
     if _pending_path[p]
-        df = batch_read[p, needed]
+        df = _pending_read[p, needed]
         if not df.ok
             return error[df.reason, 'magpie']
         return _between_positions[df, after, upto]
@@ -2113,7 +2128,7 @@ fn _between_file[p, column, lo, hi, upto, needed]
         cols_needed = push[cols_needed, column]
     df = frame.new[]
     if _pending_path[p]
-        read_all = batch_read[p, cols_needed]
+        read_all = _pending_read[p, cols_needed]
         if not read_all.ok
             return error[read_all.reason, 'magpie']
         df = read_all
@@ -2203,7 +2218,7 @@ fn _between_rows[paths, column, lo, hi, upto, names]
 fn _scratch[name]
     gone = rm[name]
     made = mkdir[name]
-    forgotten = tail_forget[name]
+    forgotten = forget_log[name]
     return name
 
 --- an empty log has no positions; each append claims the next; a read

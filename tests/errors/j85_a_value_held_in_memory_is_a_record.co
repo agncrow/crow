@@ -1,0 +1,6 @@
+--- what a process holds in memory is a record: any other value had
+--- passed the kinds check, and the lowered program disagreed with itself
+--- (crow check --self, every kind handed to `remember` and `recall`)
+use memory
+
+log[remember['counts', 3]]

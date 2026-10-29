@@ -52,6 +52,17 @@ impl Emitter {
         out
     }
 
+    /// Whether the program reaches process memory: a call of a row or a
+    /// form whose effect is what the process holds (its records then
+    /// implement the store's trait) — found by the effect, never a name.
+    fn calls_memory(&self) -> bool {
+        let holds = |r: &crate::table::Row| r.props.iter().any(|p| matches!(p, crate::table::Prop::Does(crate::effects::Effect::Memory | crate::effects::Effect::MemoryWrite)));
+        self.any_expr(&|e| match e {
+            Expr::Call { target: Target::Row(r), .. } => holds(r),
+            _ => crate::ir::call_name(e).is_some_and(|n| crate::table::rows_named(n.rsplit('.').next().unwrap_or(&n)).any(holds)),
+        })
+    }
+
     /// Does any block hold an expression the predicate accepts?
     fn any_expr(&self, pred: &dyn std::ops::Fn(&Expr) -> bool) -> bool {
         let mut found = false;
@@ -1083,6 +1094,13 @@ impl Emitter {
         let defaults: Vec<String> = s.fields.iter().map(|(f, t)| format!("{}: {}", Self::rust_field(f), as_inferred(t).default_rust_value())).collect();
         self.line("#[allow(dead_code)]");
         self.line(&format!("impl {} {{ fn crow_default() -> Self {{ {} {{ {} }} }} }}", s.name, s.name, defaults.join(", ")));
+        // a record process memory can hold: its kind as the IR names it,
+        // and as a refusal shows it (crow_runtime::memory), where the
+        // program reaches memory at all
+        if self.calls_memory() {
+            self.needs_crow_runtime = true;
+            self.line(&format!("impl crow_runtime::memory::Record for {} {{ const KIND: &'static str = {:?}; const SHOWN: &'static str = {:?}; }}", s.name, s.name, s.shown));
+        }
         self.line("");
         // a record as the one display shows it, `P[x = 1, y = 2]`, and as the
         // one JSON rule encodes it, an object of its fields

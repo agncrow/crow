@@ -130,6 +130,14 @@ pub static MODULES: &[Module] = &[
         module: Some(|| Arc::new(Named::new("bits"))),
         ..Module::plain("bits", "_bits")
     },
+    // process memory: a record held for the process under a name, shared
+    // by its threads — rows of the table, the store the runtime's
+    Module {
+        needs: &[RUNTIME], registry: true, known: true, pinned: true,
+        docs: Some("Process memory: a record the program holds for the process under a name, shared by its threads — remembered, recalled, revised under the name's lock, forgotten; what a module keeps between calls."),
+        module: Some(|| Arc::new(Named::new("memory"))),
+        ..Module::plain("memory", "_memory")
+    },
     Module {
         source: Some(LLM_SOURCE), needs: &[RUNTIME], registry: true,
         docs: Some("A language model as a connection: conversations, replies, tools as the functions themselves, a reply followed piece by piece, and embeddings, over Anthropic's and the OpenAI-compatible wire formats."),
@@ -215,6 +223,12 @@ pub static MODULES: &[Module] = &[
         docs: Some("The streaming merge, in Crow: batches and segments folded into segments of bounded size, the rows in the log's keys' order then position, the newest version of each key kept — one group per input held — and the manifest switched in one step; the kernel's segments byte for byte."),
         module: Some(|| Arc::new(Named::new("magpie.merge"))),
         ..Module::plain("magpie.merge", "_magpie_merge")
+    },
+    Module {
+        source: Some(TAIL_SOURCE), needs: &[], registry: true, under: Some("magpie"),
+        docs: Some("The sequencer, in Crow: a log's rows put since the last flush, numbered as they arrive, held for the process in memory with the key index and the newest row of each key, flushed as one batch file by work a put asks for — what a reader of the process sees at once, and another once flushed."),
+        module: Some(|| Arc::new(Named::new("magpie.tail"))),
+        ..Module::plain("magpie.tail", "_magpie_tail")
     },
     Module {
         source: Some(EXEC_SOURCE), needs: &[], registry: true, under: Some("magpie"),
@@ -401,6 +415,7 @@ pub(crate) const POSTINGS_SOURCE: &str = include_str!("postings.co");
 pub(crate) const FILE_SOURCE: &str = include_str!("file.co");
 pub(crate) const MANIFEST_SOURCE: &str = include_str!("manifest.co");
 pub(crate) const MERGE_SOURCE: &str = include_str!("merge.co");
+pub(crate) const TAIL_SOURCE: &str = include_str!("tail.co");
 pub(crate) const EXEC_SOURCE: &str = include_str!("exec.co");
 pub(crate) const NEAREST_SOURCE: &str = include_str!("nearest.co");
 pub(crate) const SEARCH_SOURCE: &str = include_str!("search.co");
@@ -1621,7 +1636,7 @@ impl ModuleRegistry {
             }
         }
         match crate::table::module(module, name, &kinds) {
-            Some(row) => row.ty(),
+            Some(row) => row.ty_given(arg_types),
             None => self.modules[idx].type_of(name, arg_types.len()),
         }
     }

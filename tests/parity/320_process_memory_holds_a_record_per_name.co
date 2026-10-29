@@ -1,0 +1,34 @@
+--- Process memory (`use memory`): a record the program holds for the
+--- process under a name — recalled with a default where none is held,
+--- revised under the name's lock by a function handed the record and the
+--- rest of the arguments, a revision whose function fails leaving the
+--- record as it was, forgotten with the names beneath it — and a read of
+--- another kind of record than the name holds stops, in the same words in
+--- both modes.
+use memory
+
+struct Count [n, label]
+struct Other [word]
+
+fn plus[c, k]
+    return Count[c.n + k, 'revised']
+
+fn checked[c, k]
+    if k lt 0
+        return error['a count only grows, and `k` is negative', 'count']
+    return Count[c.n + k, 'checked']
+
+log[recall['tally', Count[7, 'default']].n]
+remember['tally', Count[1, 'held']]
+log[recall['tally', Count[0, '']].label]
+log[revise['tally', Count[0, 'start'], plus, 2].n]
+fallen = revise['tally', Count[0, 'start'], checked, -5]
+log[fallen.reason]
+log[recall['tally', Count[0, '']].n]
+remember['tally/beneath', Count[9, 'beneath']]
+forget['tally']
+log[recall['tally/beneath', Count[0, 'gone']].label]
+remember['tally', Other['now another kind']]
+log[recall['tally', Other['']].word]
+wrong = recall['tally', Count[0, '']]
+log[wrong.n]

@@ -32,6 +32,7 @@ tables, with every function linked back to the example that shows it, see
 | [Structured files: `use io`](io.md) | `csv lines` |
 | [Documentation: `use doc`](doc.md) | `chapters markdown menu pager plain document` |
 | [Bits and character codes: `use bits`](bits.md) | `bitand bitor bitxor bitcount shift code char` |
+| [Process memory: `use memory`](memory.md) | `remember recall revise forget canonical` |
 | [Frames: `use frame`](frames.md) | `frame.load save select sort group pivot window join stack head tail fill unique rename stats complete sample unpivot where bucket`, masks (`f[mask]`), `frame.new[…]`, `df.name = values`, `in` over a column, a `then` chain as lines |
 | [Databases: `use db`](db.md) | `connect query transact describe insert`, a transaction rolled back |
 | [Web: a JSON route](web.md) | `route serve`, a JSON response |

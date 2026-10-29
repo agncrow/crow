@@ -92,6 +92,9 @@ pub const PRED: Sig = Sig { params: &[Kind::Item], ret: Kind::Bool, rest: false,
 /// Work scheduled off the loop, handed the row's remaining arguments:
 /// `later[f, a, …]`, and `running[f]`'s question about it.
 pub const DEFERRED: Sig = Sig { params: &[], ret: Kind::Unit, rest: true, deferred: true };
+/// A revision of what process memory holds: handed the record held, then
+/// the row's remaining arguments; answers the record to hold.
+pub const REVISE: Sig = Sig { params: &[Kind::Record], ret: Kind::Record, rest: true, deferred: false };
 /// A stream's `put`: sends one chunk of text, and answers whether the
 /// reader still listens.
 pub const PUT: Sig = Sig { params: &[Kind::Str], ret: Kind::Bool, rest: false, deferred: false };
@@ -276,6 +279,11 @@ pub enum Kind {
     Scalars,
     /// Each of `Scalars`.
     Scalar,
+    /// A record of any kind (process memory's): as an answer, the kind of
+    /// the row's first record argument — `recall[name, default]` answers
+    /// its default's kind; in a function's signature, the row's record
+    /// (`revise`'s function takes and answers the record held).
+    Record,
 }
 
 /// What a failure of the function is.
@@ -455,6 +463,11 @@ pub enum Prop {
     /// Reads a frame's column by a name the program computes (`df.`name``,
     /// `df.lag_`k``): found by this property (`table::column_read`).
     ColumnRead,
+    /// Runs its function under a name's lock, handing it the record the
+    /// name holds and keeping the record it answers (process memory's
+    /// revision): found by this property (`table::revises`), so neither
+    /// backend names the form.
+    Revises,
 }
 
 /// The shape of the tensor a row answers, declared on the row from a fixed
@@ -638,6 +651,20 @@ impl Row {
         }
     }
 
+    /// The call's type given its arguments' types: `ty`, but where the row
+    /// answers a record of any kind (`Kind::Record`), the kind of its first
+    /// record argument — `recall[name, default]` answers its default's.
+    pub fn ty_given(&self, arg_types: &[Ty]) -> Ty {
+        if self.ret == Kind::Record {
+            let held = self.params.iter().position(|k| *k == Kind::Record).and_then(|i| arg_types.get(i)).map(|t| t.payload().clone()).unwrap_or(Ty::Unknown);
+            return match self.fails {
+                Fails::Value(_) => Ty::Result(Box::new(held)),
+                _ => held,
+            };
+        }
+        self.ty()
+    }
+
     /// The call's type, for inference and the lowering: the answer's, able
     /// to fail when a failure is a value.
     pub fn ty(&self) -> Ty {
@@ -711,6 +738,9 @@ impl Kind {
             // what the arguments' items are: inference types the call from
             // them (a generic row's answer is the list or map it was given)
             Kind::List | Kind::Seq | Kind::Item | Kind::ItemRef | Kind::MapOf | Kind::MapRef => Ty::Unknown,
+            // (a record of any kind: the row's record argument's, which
+            // the rules read)
+            Kind::Record => Ty::Unknown,
         }
     }
 
@@ -718,7 +748,7 @@ impl Kind {
     /// call's type is its arguments', which inference reads.
     pub fn generic(self) -> bool {
         // (a map's keys are the map's kind: the rule reads it from the argument)
-        matches!(self, Kind::List | Kind::Seq | Kind::Item | Kind::ItemRef | Kind::MapOf | Kind::MapRef | Kind::Key | Kind::Keys | Kind::Walked)
+        matches!(self, Kind::List | Kind::Seq | Kind::Item | Kind::ItemRef | Kind::MapOf | Kind::MapRef | Kind::Key | Kind::Keys | Kind::Walked | Kind::Record)
     }
 
     /// Whether an in-place row takes the collection whole, where it lies:
@@ -734,7 +764,7 @@ impl Kind {
     /// answer of: the compiled program moves the variable the statement
     /// assigns and copies any other.
     pub fn owned(self) -> bool {
-        matches!(self, Kind::List | Kind::MapOf | Kind::Ints | Kind::Bigs | Kind::Floats | Kind::Texts)
+        matches!(self, Kind::List | Kind::MapOf | Kind::Ints | Kind::Bigs | Kind::Floats | Kind::Texts | Kind::Record)
     }
 
     /// An argument printed the way the runtime function takes it (each of
@@ -772,7 +802,7 @@ impl Kind {
             Kind::Operand => format!("crow_runtime::fused::Operand::from(&({}))", arg),
             Kind::Scalar => format!("crow_runtime::mask::Cell::from(&({}))", arg),
             // moved or copied (an item kept) where the call is made
-            Kind::List | Kind::MapOf | Kind::Ints | Kind::Bigs | Kind::Floats | Kind::Texts | Kind::Item => format!("({})", arg),
+            Kind::List | Kind::MapOf | Kind::Ints | Kind::Bigs | Kind::Floats | Kind::Texts | Kind::Item | Kind::Record => format!("({})", arg),
             Kind::FnOf(_) | Kind::Walked => format!("({})", arg),
             // (an item of a list a name holds, read where it lies)
             _ => match borrowed_index(arg) {
@@ -863,6 +893,9 @@ impl Kind {
             Kind::Answer => "crow_runtime::sys::Answer::default()",
             Kind::Response => RESPONSE.default,
             Kind::Socket => SOCKET.default,
+            // (a record of the call's own kind: what memory answers stops
+            // where it cannot, so no failed call holds one)
+            Kind::Record => "unreachable!()",
             Kind::Mailer => MAILER.default,
             // taken, never given; or answered by the backends' own arms
             Kind::FnOf(_) | Kind::Walked | Kind::Request | Kind::Db | Kind::Tx | Kind::Found => "unreachable!()",
@@ -1953,6 +1986,21 @@ macro_rules! maprow {
     };
 }
 
+/// A row of process memory's: the compiled program calls its runtime
+/// function with its record's own type; the interpreter's call and take are
+/// written by hand (`held`), holding its values under the record kinds the
+/// IR names.
+macro_rules! memrow {
+    ($id:literal, $module:literal, $name:literal, $f:path, ($($k:ident),*) -> $r:ident, $call:path, $take:path) => {
+        Row {
+            id: $id, name: $name, module: $module, path: stringify!($f),
+            params: &[$(Kind::$k),*], ret: Kind::$r, fails: Fails::Stops, options: &[], written: "", form: "", props: &[], taken: None, big: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None, cells: None,
+            call: $call,
+            take: $take,
+        }
+    };
+}
+
 macro_rules! row {
     ($id:literal, $module:literal, $name:literal, $f:path, ($($k:ident),*) -> $r:ident, $($fails:tt)+) => {
         Row {
@@ -2161,6 +2209,7 @@ pub static ROWS: &[Row] = &[
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], options: &[("headers", Preset::Map), ("query", Preset::Map), ("timeout", Preset::Float(0.0))], ..crow!("io.read_asked", "", "read", (Str, TextMap, TextMap, Float) -> Str, value "io") },
     Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..crow!("io.write", "", "write", (Str, Str) -> Str, value "io") },
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("io.exists", "", "exists", crow_runtime::io::exists, (Str) -> Bool, never) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("memory.canonical", "memory", "canonical", crow_runtime::memory::canonical, (Str) -> Str, never) },
     Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("io.mkdir", "", "mkdir", crow_runtime::io::mkdir, (Str) -> Str, value "io") },
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("io.ls", "", "ls", crow_runtime::io::ls, (Str) -> Strs, value "io") },
     Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("io.rm", "", "rm", crow_runtime::io::rm, (Str) -> Str, value "io") },
@@ -2511,8 +2560,6 @@ pub static ROWS: &[Row] = &[
     row!("sys.same", "sys", "same", crow_runtime::sys::same, (Bytes, Bytes) -> Bool, never),
     Row { options: &[("little", Preset::Bool(false))], ..row!("sys.pack", "sys", "pack", crow_runtime::sys::pack, (Int, Int, Bool) -> Bytes, stops) },
     Row { options: &[("little", Preset::Bool(false)), ("signed", Preset::Bool(true))], ..row!("sys.unpack", "sys", "unpack", crow_runtime::sys::unpack, (Bytes, Int, Int, Bool, Bool) -> Int, stops) },
-    row!("sys.records", "sys", "records", crow_runtime::sys::records, (Bytes) -> Frame, value "kafka"),
-    row!("sys.records_of", "sys", "records_of", crow_runtime::sys::records_of, (Frame) -> Bytes, value "kafka"),
     Row { options: &[("width", Preset::Int(8)), ("little", Preset::Bool(false))], ..row!("sys.ieee", "sys", "ieee", crow_runtime::sys::ieee, (Float, Int, Bool) -> Bytes, stops) },
     // (the reader's width and byte order are positions, not options: a row
     // of the writer's name whose options may be given by position would
@@ -2521,23 +2568,8 @@ pub static ROWS: &[Row] = &[
     // a chunk's floats at once (a call per cell is the per-cell price)
     row!("sys.float_bytes", "sys", "float_bytes", crow_runtime::sys::float_bytes, (Floats, Int, Bool) -> Bytes, stops),
     row!("sys.float_values", "sys", "float_values", crow_runtime::sys::float_values, (Bytes, Int, Int, Int, Bool) -> Floats, stops),
-    // Magpie's Rust codec, for the Crow codec's tests alone
-    // (docs/magpie-in-crow.md, section 3): gone with the kernel
-    Row { props: &[Prop::TestOnly], ..row!("sys.compress_rs", "sys", "compress_rs", crow_runtime::sys::compress_rs, (Bytes) -> Bytes, never) },
-    Row { props: &[Prop::TestOnly], ..row!("sys.decompress_rs", "sys", "decompress_rs", crow_runtime::sys::decompress_rs, (Bytes, Int) -> Bytes, value "magpie") },
-    Row { props: &[Prop::TestOnly], ..row!("sys.pack_rs", "sys", "pack_rs", crow_runtime::sys::pack_rs, (Ints, Int) -> Bytes, stops) },
-    Row { props: &[Prop::TestOnly], ..row!("sys.unpack_rs", "sys", "unpack_rs", crow_runtime::sys::unpack_rs, (Bytes, Int, Int) -> Ints, value "magpie") },
-    Row { props: &[Prop::TestOnly], ..row!("sys.put_var_rs", "sys", "put_var_rs", crow_runtime::sys::put_var_rs, (Int) -> Bytes, never) },
-    Row { props: &[Prop::TestOnly], ..row!("sys.read_var_rs", "sys", "read_var_rs", crow_runtime::sys::read_var_rs, (Bytes, Int) -> Ints, value "magpie") },
-    Row { props: &[Prop::TestOnly], ..row!("sys.encode_rs", "sys", "encode_rs", crow_runtime::sys::encode_rs, (Column, Int, Int, Bool) -> Bytes, stops) },
-    Row { props: &[Prop::TestOnly], ..row!("sys.decode_rs", "sys", "decode_rs", crow_runtime::sys::decode_rs, (Bytes, Str) -> Column, value "magpie") },
-    Row { props: &[Prop::TestOnly], ..row!("sys.bloom_rs", "sys", "bloom_rs", crow_runtime::sys::bloom_rs, (Chunks) -> Bytes, never) },
-    Row { props: &[Prop::TestOnly], ..row!("sys.stem_rs", "sys", "stem_rs", crow_runtime::sys::stem_rs, (Str) -> Str, never) },
-    Row { props: &[Prop::TestOnly], ..row!("sys.index_rs", "sys", "index_rs", crow_runtime::sys::index_rs, (Column, Int, Int, Bool) -> Bytes, stops) },
-    Row { props: &[Prop::TestOnly], ..row!("sys.file_rs", "sys", "file_rs", crow_runtime::sys::file_rs, (Frame, Int, Int, Texts, Texts, Texts, Bool, Int) -> Bytes, value "magpie") },
     // the words of a text, as an index and a query split them
     row!("sys.terms", "sys", "terms", crow_runtime::sys::tokens, (Str) -> Strs, never),
-    Row { props: &[Prop::TestOnly], ..row!("sys.bloom_has_rs", "sys", "bloom_has_rs", crow_runtime::sys::bloom_has_rs, (Bytes, Bytes) -> Bool, value "magpie") },
     row!("sys.binary", "sys", "binary", crow_web::core::response::binary_of, (Bytes, Str) -> Response, never),
     // a socket: the stream it talks over, what it holds unread, a frame's
     // mask, a digest as bytes (the handshake's accept key)
@@ -2590,28 +2622,7 @@ pub static ROWS: &[Row] = &[
     row!("sys.frame_of_json", "sys", "frame_of_json", crow_runtime::sys::frame_of_json, (Str) -> Frame, value "frame"),
     Row { feature: Some(("crow_runtime", "parquet")), ..row!("sys.frame_of_parquet", "sys", "frame_of_parquet", crow_runtime::sys::frame_of_parquet, (Bytes) -> Frame, value "frame") },
     row!("sys.frame_of_rowbinary", "sys", "frame_of_rowbinary", crow_runtime::sys::frame_of_rowbinary, (Bytes) -> Frame, value "frame"),
-    // the log's batch files (crow_runtime::batch; the magpie module stands on them)
-    Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("sys.batch_write", "sys", "batch_write", crow_runtime::sys::batch_write, (Str, Int, Int, Frame, Texts, Texts, Bool) -> Str, value "magpie") },
-    Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_read", "sys", "batch_read", crow_runtime::sys::batch_read, (Str, Texts) -> Frame, value "magpie") },
-    Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_stats", "sys", "batch_stats", crow_runtime::sys::batch_stats, (Str) -> Str, value "magpie") },
-    Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_admits", "sys", "batch_admits", crow_runtime::sys::batch_admits, (Str, Str, Str, Bool) -> Bool, value "magpie") },
-    Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("sys.batch_merge", "sys", "batch_merge", crow_runtime::sys::batch_merge, (Str, Texts, Bool) -> Str, value "magpie") },
-    Row { props: &[Prop::TestOnly, Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("sys.stream_rs", "sys", "stream_rs", crow_runtime::sys::stream_rs, (Str, Texts, Texts, Texts, Texts, Bool, Bool, Int, Int, Int) -> Texts, value "magpie") },
-    Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_declared", "sys", "batch_declared", crow_runtime::sys::batch_declared, (Str) -> Str, value "magpie") },
-    Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_summary", "sys", "batch_summary", crow_runtime::sys::batch_summary, (Texts, Texts, Texts, Texts, Texts, Texts, Texts, Str, Str, Int) -> Frame, value "magpie") },
-    Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_asof", "sys", "batch_asof", crow_runtime::sys::batch_asof, (Texts, Frame, Texts, Str, Texts, Int) -> Frame, value "magpie") },
-    Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("sys.tail_put", "sys", "tail_put", crow_runtime::sys::tail_put, (Str, Frame) -> Int, value "magpie") },
-    Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("sys.tail_flush", "sys", "tail_flush", crow_runtime::sys::tail_flush, (Str) -> Int, value "magpie") },
-    Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.tail_pending", "sys", "tail_pending", crow_runtime::sys::tail_pending, (Str) -> Ints, value "magpie") },
-    Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.tail_get", "sys", "tail_get", crow_runtime::sys::tail_get, (Str, Texts) -> Frame, value "magpie") },
-    Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.tail_last", "sys", "tail_last", crow_runtime::sys::tail_last, (Str, Texts) -> Int, value "magpie") },
-    Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.tail_forget", "sys", "tail_forget", crow_runtime::sys::tail_forget, (Str) -> Int, value "magpie") },
-    Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("sys.batch_declare", "sys", "batch_declare", crow_runtime::sys::batch_declare, (Str, Texts, Str) -> Str, value "magpie") },
-    Row { props: &[Prop::Does(crate::effects::Effect::Files)], columns: &[("name", Kind::Str), ("level", Kind::Int), ("number", Kind::Int), ("high", Kind::Int), ("first", Kind::Int), ("last", Kind::Int), ("rows", Kind::Int), ("bytes", Kind::Int), ("ranges", Kind::Str)], ..row!("sys.batch_catalog", "sys", "batch_catalog", crow_runtime::sys::batch_catalog, (Str) -> Frame, value "magpie") },
-    Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_find", "sys", "batch_find", crow_runtime::sys::batch_find, (Texts, Texts, Texts, Texts) -> Frame, value "magpie") },
-    Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_since", "sys", "batch_since", crow_runtime::sys::batch_since, (Texts, Int, Int, Texts) -> Frame, value "magpie") },
-    Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_between", "sys", "batch_between", crow_runtime::sys::batch_between, (Texts, Str, Str, Str, Int, Texts) -> Frame, value "magpie") },
-    Row { props: &[Prop::Does(crate::effects::Effect::FilesWrite)], ..row!("sys.batch_sync", "sys", "batch_sync", crow_runtime::sys::batch_sync, (Str) -> Int, value "magpie") },
+    // a file's size, read off its metadata (a footer is read from the end)
     Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.filesize", "sys", "filesize", crow_runtime::sys::filesize, (Str) -> Int, value "sys") },
     // a file's region, when it was written, and the write path of a file a
     // kernel places: flushed through to the disk, linked into its name,
@@ -2642,8 +2653,6 @@ pub static ROWS: &[Row] = &[
     Row { cells: Some(Kind::Tensor), ..row!("sys.vectors_column", "sys", "vectors_column", crow_runtime::sys::vectors_column, (Int, Floats, Bytes) -> Column, stops) },
     Row { cells: Some(Kind::Str), ..row!("sys.text_column", "sys", "text_column", crow_runtime::sys::text_column, (Bytes, Ints, Bytes) -> Column, stops) },
     Row { cells: Some(Kind::Str), ..row!("sys.text_dict_column", "sys", "text_dict_column", crow_runtime::sys::text_dict_column, (Bytes, Ints, Ints, Bytes) -> Column, stops) },
-    Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_search", "sys", "batch_search", crow_runtime::sys::batch_search, (Texts, Str, Texts, Int, Bool, Int) -> Frame, value "magpie") },
-    Row { props: &[Prop::Does(crate::effects::Effect::Files)], ..row!("sys.batch_nearest", "sys", "batch_nearest", crow_runtime::sys::batch_nearest, (Texts, Str, Tensor, Int) -> Frame, value "magpie") },
     row!("sys.frame_of_postgres", "sys", "frame_of_postgres", crow_runtime::sys::frame_of_postgres, (Bytes) -> Frame, value "frame"),
     row!("sys.frame_csv", "sys", "frame_csv", crow_runtime::sys::frame_csv, (Frame) -> Str, value "frame"),
     row!("sys.frame_json", "sys", "frame_json", crow_runtime::sys::frame_json, (Frame) -> Str, never),
@@ -2761,6 +2770,11 @@ pub static ROWS: &[Row] = &[
     // `use bits`: an int's bits as two's complement of any width, and a
     // character's code (crow_runtime::bits); the width pass hands a number
     // past 64 bits, or a shift that may pass them, to the `__…_big` forms
+    // process memory (`use memory`): a record the program holds for the
+    // process under a name, shared by its threads (crow_runtime::memory)
+    Row { props: &[Prop::Does(crate::effects::Effect::MemoryWrite)], ..memrow!("memory.remember", "memory", "remember", crow_runtime::memory::remember, (Str, Record) -> Unit, held::remember, held::remember_taken) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Memory)], ..memrow!("memory.recall", "memory", "recall", crow_runtime::memory::recall, (Str, Record) -> Record, held::recall, held::recall_taken) },
+    Row { props: &[Prop::Does(crate::effects::Effect::MemoryWrite)], ..memrow!("memory.forget", "memory", "forget", crow_runtime::memory::forget, (Str) -> Unit, held::forget, held::forget_taken) },
     Row { range: IntRange::And, big: Some("core.__bitand_big"), ..row!("bits.bitand", "bits", "bitand", crow_runtime::bits::and, (Whole, Whole) -> Int, never) },
     Row { range: IntRange::OrXor, big: Some("core.__bitor_big"), ..row!("bits.bitor", "bits", "bitor", crow_runtime::bits::or, (Whole, Whole) -> Int, never) },
     Row { range: IntRange::OrXor, big: Some("core.__bitxor_big"), ..row!("bits.bitxor", "bits", "bitxor", crow_runtime::bits::xor, (Whole, Whole) -> Int, never) },
@@ -2854,6 +2868,9 @@ pub static FORMS: &[Row] = &[
     // name — each lowered to what inference knows, so both modes agree
     Row { params: &[Kind::Shown], ret: Kind::Json, fails: Fails::Value("describe"), props: &[Prop::Answers], ..form!("sys.describe", "sys", "describe", ()) },
     Row { params: &[Kind::Shown, Kind::Json], ret: Kind::Str, fails: Fails::Value("call"), props: &[Prop::Answers], ..form!("sys.apply", "sys", "apply", ()) },
+    // `revise[name, default, f, …]`: f run under the name's lock with the
+    // record held and the rest, what it answers held (process memory)
+    Row { params: &[Kind::Str, Kind::Record, Kind::FnOf(&REVISE), Kind::Shows], ret: Kind::Record, fails: Fails::Stops, props: &[Prop::Does(crate::effects::Effect::MemoryWrite), Prop::Answers, Prop::Revises], ..form!("memory.revise", "memory", "revise", ()) },
     form!("web.respond", "web", "respond", (Int, Shown)),
     form!("web.redirect", "web", "redirect", (Str)),
     form!("web.html", "web", "html", (Shown)),
@@ -2931,6 +2948,12 @@ pub fn rows_named(name: &str) -> impl Iterator<Item = &'static Row> {
 }
 
 /// A module's rows of a name, the forms included.
+/// Whether the builtin of this name runs its function under a name's lock
+/// (`Prop::Revises`): the backends' question, answered by the form's row.
+pub fn revises(name: &str) -> bool {
+    rows_named(name).any(|r| r.props.contains(&Prop::Revises))
+}
+
 pub fn rows_named_in(module: &str, name: &str) -> impl Iterator<Item = &'static Row> {
     rows_named(name).filter(move |r| r.module == module)
 }
@@ -3203,6 +3226,13 @@ pub fn fn_params(name: &str, argc: usize) -> Vec<(usize, &'static Sig)> {
 pub fn walked_param(name: &str, argc: usize) -> Option<usize> {
     let bare = name.rsplit('.').next().unwrap_or(name);
     rows_named(bare).filter(|r| spans(r.params, argc, r.name).is_ok()).find_map(|r| r.params.iter().position(|k| matches!(k, Kind::Walked)))
+}
+
+/// The place of a call's record of any kind (`Kind::Record`): what a
+/// function the row hands its record is handed (`revise`'s default).
+pub fn record_param(name: &str, argc: usize) -> Option<usize> {
+    let bare = name.rsplit('.').next().unwrap_or(name);
+    rows_named(bare).filter(|r| spans(r.params, argc, r.name).is_ok()).find_map(|r| r.params.iter().position(|k| matches!(k, Kind::Record)))
 }
 
 /// The names a module's rows answer, each once, in order.
@@ -3591,6 +3621,7 @@ impl Kind {
             Kind::Answer => "a connection's answer",
             Kind::Response => RESPONSE.word,
             Kind::FnOf(_) => "a function",
+            Kind::Record => "a record",
             Kind::Walked => "a list",
             Kind::Request => "a request",
             Kind::Db => DB.word,
@@ -3665,6 +3696,10 @@ impl Kind {
                 Kind::Encoded => !matches!(a, Arg::Fn | Arg::Fns | Arg::Frame | Arg::Frames | Arg::Sparse | Arg::Column | Arg::Handle(_) | Arg::Bytes | Arg::Chunks),
                 Kind::Operand => matches!(a, Arg::Tensor | Arg::Int | Arg::Float),
                 Kind::Scalar => matches!(a, Arg::Int | Arg::Float | Arg::Text | Arg::Truth),
+                // (a record of any kind, and nothing else: process memory's
+                // `remember['a', 'b']` had passed and been an internal
+                // error — crow check --self)
+                Kind::Record => a == Arg::Record,
                 _ => true,
             }
     }
@@ -4491,6 +4526,70 @@ pub mod lists {
             Some(row) => (row.call)(&args, trace),
             None => Err("a bug in Crow: the row core.slice is gone".to_string()),
         }
+    }
+}
+
+/// Process memory's rows as the interpreter calls them: its values held
+/// under the record kinds the IR names, by crow_runtime::memory's rules —
+/// the compiled program's store, so the modes refuse alike.
+pub mod held {
+    use crate::value::{CrowValue, Value};
+
+    fn name_of(v: &CrowValue) -> Result<String, String> {
+        match &v.value {
+            Value::Str(s) => Ok(s.to_string()),
+            other => Err(format!("memory: a name is text, not {}", other.type_name())),
+        }
+    }
+
+    /// A record's kind, as the IR names it, and as it shows.
+    pub fn kind_of(v: &CrowValue) -> Result<(String, String), String> {
+        match &v.value {
+            Value::StructInstance(si) => Ok((si.layout.name.clone(), si.layout.shown.clone())),
+            other => Err(format!("memory holds a record, not {}", other.type_name())),
+        }
+    }
+
+    fn two(args: &[CrowValue]) -> Result<(&CrowValue, &CrowValue), String> {
+        match args {
+            [a, b] => Ok((a, b)),
+            _ => Err("memory: a name and a record are taken".to_string()),
+        }
+    }
+
+    pub fn remember(args: &[CrowValue], _trace: &str) -> Result<CrowValue, String> {
+        let (name, record) = two(args)?;
+        let (kind, shown) = kind_of(record)?;
+        crow_runtime::memory::remember_as(&name_of(name)?, &kind, &shown, record.clone())?;
+        Ok(CrowValue::done())
+    }
+
+    pub fn remember_taken(args: Vec<CrowValue>, trace: &str) -> Result<CrowValue, String> {
+        remember(&args, trace)
+    }
+
+    pub fn recall(args: &[CrowValue], _trace: &str) -> Result<CrowValue, String> {
+        let (name, default) = two(args)?;
+        let (kind, shown) = kind_of(default)?;
+        crow_runtime::memory::recall_as(&name_of(name)?, &kind, &shown, default.clone())
+    }
+
+    pub fn recall_taken(args: Vec<CrowValue>, trace: &str) -> Result<CrowValue, String> {
+        recall(&args, trace)
+    }
+
+    pub fn forget(args: &[CrowValue], _trace: &str) -> Result<CrowValue, String> {
+        match args {
+            [name] => {
+                crow_runtime::memory::forget(&name_of(name)?)?;
+                Ok(CrowValue::done())
+            }
+            _ => Err("forget[] takes a name".to_string()),
+        }
+    }
+
+    pub fn forget_taken(args: Vec<CrowValue>, trace: &str) -> Result<CrowValue, String> {
+        forget(&args, trace)
     }
 }
 

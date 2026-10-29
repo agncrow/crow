@@ -2042,7 +2042,7 @@ impl Emitter {
                     return false;
                 }
                 let types: Vec<Ty> = raw_args.iter().map(|a| self.tt(a)).collect();
-                let kinds: Vec<crate::table::Arg> = types.iter().map(crate::table::Arg::of_type).collect();
+                let kinds: Vec<crate::table::Arg> = raw_args.iter().map(|a| self.held_kind(a)).collect();
                 if let Some(m) = crate::table::module_of_bare(name, &self.registry.providers_of(name), &kinds) {
                     if let Some(t) = self.registry.type_of_in(&m, name, &types) {
                         return matches!(t, Ty::Result(_));
@@ -2594,8 +2594,21 @@ impl Emitter {
     /// arguments' types pick (crate::table); the interpreter picks by the
     /// values.
     fn row_for(&self, name: &str, args: &[Expr]) -> Option<&'static crate::table::Row> {
-        let kinds: Vec<crate::table::Arg> = args.iter().map(|x| crate::table::Arg::of_type(&self.tt(x))).collect();
+        let kinds: Vec<crate::table::Arg> = args.iter().map(|x| self.held_kind(x)).collect();
         crate::table::core_row(name, &kinds)
+    }
+
+    /// An argument's class for choosing a row by name: its type's, where a
+    /// value of no known kind is text — the program holds it as one
+    /// (`String`), so a row of another kind cannot take it (`len[p]` of a
+    /// pending part nothing ever wrote had printed a list's length of a
+    /// text, and the program did not build).
+    pub(crate) fn held_kind(&self, x: &Expr) -> crate::table::Arg {
+        match self.tt(x) {
+            Ty::Unknown => crate::table::Arg::Text,
+            Ty::Result(t) if matches!(t.as_ref(), Ty::Unknown) => crate::table::Arg::Text,
+            t => crate::table::Arg::of_type(&t),
+        }
     }
 
     /// A builtin written in Crow the lowering left to the values (an
@@ -2605,7 +2618,7 @@ impl Emitter {
     /// the name (`math.nn.relu`).
     fn crow_row_left(&self, m: &str, f: &str, args: &[Expr]) -> Option<&'static crate::table::Row> {
         let (m, f) = format!("{}.{}", m, f).rsplit_once('.').map(|(a, b)| (a.to_string(), b.to_string()))?;
-        let kinds: Vec<crate::table::Arg> = args.iter().map(|x| crate::table::Arg::of_type(&self.tt(x))).collect();
+        let kinds: Vec<crate::table::Arg> = args.iter().map(|x| self.held_kind(x)).collect();
         crate::table::crow_row(&m, &f, &kinds).or_else(|| crate::table::ROWS.iter().find(|r| r.is_crow() && r.module == m && r.name == f && r.params.len() == args.len()))
     }
 

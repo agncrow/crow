@@ -10,6 +10,7 @@ use bits
 use frame
 use magpie.inflate
 use magpie.snappy
+use magpie.encode
 
 --- the rows of a message set as columns being built
 struct Rows [offsets, ats, keys, key_ends, key_held, values, value_ends, value_held, count]
@@ -266,26 +267,19 @@ fn _bytes_of[nums]
         out = push[out, int[x]]
     return out
 
---- whether two frames hold the same columns and cells
-fn _alike[a, b]
-    if a.columns ne b.columns or len[a] ne len[b]
-        log['shape: `a.columns` `len[a]` against `b.columns` `len[b]`']
-        return false
-    n = len[a]
-    for name in a.columns
-        x = a.`name`
-        y = b.`name`
-        if cell_kind[x] ne cell_kind[y]
-            return false
-        if not same[present_of[x, 0, n], present_of[y, 0, n]]
-            return false
-        if cell_kind[x] eq 'int'
-            if ints_of[x, 0, n] ne ints_of[y, 0, n]
-                return false
-        if cell_kind[x] eq 'text'
-            if not same[text_bytes_of[x, 0, n], text_bytes_of[y, 0, n]] or text_ends_of[x, 0, n] ne text_ends_of[y, 0, n]
-                return false
-    return true
+--- a short digest of bytes: what a recorded answer is held to
+fn _digest[b]
+    return slice[hash[b, 'sha256'], 0, 16]
+
+--- a frame's image, digested — each column's name and its chunk (its
+--- kind, its missing cells, its cells, as magpie.encode writes them)
+fn _image[f]
+    n = len[f]
+    out = bytes['`n`']
+    for name in f.columns
+        out = concat[out, bytes[name]]
+        out = concat[out, chunk[f.`name`, 0, n, false]]
+    return _digest[out]
 
 --- a wrapper message around an inner set: magic 1, the codec, no key,
 --- the compressed set as its value, offset 1
@@ -313,20 +307,25 @@ test records_are_the_kernels[]
         cut_ends = push[cut_ends, int[e]]
     f.key = text_column[bytes['k1k3'], cut_ends, push[bytes[0], 5]]
     mine = message_set[f]
-    theirs = records_of[f]
-    assert[same[mine, theirs]]
-    assert[_alike[message_rows[mine], records[theirs]]]
+    seen = []
+    seen = push[seen, _digest[mine]]
+    seen = push[seen, _image[message_rows[mine]]]
     gz = _wrapped[gzip_stored[mine], 1]
-    assert[_alike[message_rows[gz], records[gz]]]
+    seen = push[seen, _image[message_rows[gz]]]
     sn = _wrapped[snappy_literal[mine], 2]
-    assert[_alike[message_rows[sn], records[sn]]]
+    seen = push[seen, _image[message_rows[sn]]]
     framing = _bytes_of[[130, 83, 78, 65, 80, 80, 89, 0, 0, 0, 0, 1, 0, 0, 0, 1]]
     block = snappy_literal[mine]
     xerial = concat[concat[framing, pack[len[block], 4]], block]
     xs = _wrapped[xerial, 2]
-    assert[_alike[message_rows[xs], records[xs]]]
+    seen = push[seen, _image[message_rows[xs]]]
     flipped = set[mine, len[mine] - 1, bitxor[byte[mine, len[mine] - 1], 1]]
-    assert[message_rows[flipped].reason eq records[flipped].reason]
+    --- (the kernel's sets, rows and words, recorded before it was deleted,
+    --- 2026-10-28: the four wrappings decode to the same rows, a set cut
+    --- short to the messages it holds whole, no rows to no bytes)
+    assert[message_rows[flipped].reason eq 'records: message 2 does not match its checksum']
     cut = slice[mine, 0, len[mine] - 3]
-    assert[_alike[message_rows[cut], records[cut]]]
-    assert[same[message_set[frame.head[f, 0]], records_of[frame.head[f, 0]]]]
+    seen = push[seen, _image[message_rows[cut]]]
+    nothing_set = message_set[frame.head[f, 0]]
+    seen = push[seen, _digest[nothing_set]]
+    assert[seen eq ['fa902f91a14b9c4d', '309e1cb18f679c9f', '309e1cb18f679c9f', '309e1cb18f679c9f', '309e1cb18f679c9f', '25fc8fe2a82c253f', 'e3b0c44298fc1c14']]

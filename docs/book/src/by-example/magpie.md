@@ -136,8 +136,9 @@ conflict: id = 2 was written at position 2, after snapshot 1
 
 Every write of a process goes through the log's sequencer: `put` gives
 the rows their positions as they arrive and the process reads them at
-once, as the catalog's `pending` row; a thread flushes them as a batch
-file within ten milliseconds, or `sync` does now, and `batch` is a put
+once, as the catalog's `pending` row; the flush the put asks for writes
+them as a batch file (`later`: at once under `crow run -i`, on a thread
+compiled), or `sync` does now, and `batch` is a put
 and a flush, durable before it answers. `latest` of one key (`equal`) reads the newest row of a
 key from the image the sequencer keeps in memory, and a `commit` whose
 reads are the log's keys is decided against the sequencer's index in
@@ -154,13 +155,13 @@ made = mkdir['ex_flush']
 a = batch['ex_flush', frame.new[id = [1, 2], qty = [10, 20]], by = ['id'], flush = false]
 b = batch['ex_flush', frame.new[id = [3], qty = [30]], by = ['id'], flush = false]
 log[latest['ex_flush'].qty]
-log[sync['ex_flush']]
+log[sync['ex_flush'] gt 0]
 gone = rm['ex_flush']
 ```
 
 ```text
 [10, 20, 30]
-2
+true
 ```
 
 With `flush = false` a batch is written but not flushed to the disk, so

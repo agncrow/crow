@@ -7,7 +7,7 @@
 --- magic 1, which every client still writes and reads when the door says
 --- so in ApiVersions — framed, parsed and answered here in Crow over the
 --- sys layer; the per-byte half (a message set to a frame and back, the
---- checksums) is the kernel's (sys.records, sys.records_of). The door
+--- checksums) is magpie.records' (`message_rows`, `message_set`). The door
 --- serves every connection from one loop, polling each in turn, so both
 --- modes run it the same way. One member per consumer group is served
 --- in full; a second member joining makes the generation move, and the

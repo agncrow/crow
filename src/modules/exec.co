@@ -10,8 +10,11 @@ use sys
 use bits
 use frame
 use magpie.file
+use magpie.tail
 use magpie.bloom
 use magpie.manifest
+use magpie.merge
+use magpie.encode
 use math
 
 --- a cell of a column (1 an int, 2 a float, 3 a bool, 4 text, 5 a vector
@@ -424,7 +427,7 @@ fn summary_of[paths, by, of, how, on, ops, equal, lo, hi, upto]
     slot = []
     for p in paths
         if _pending_path[p]
-            df = batch_read[p, slice[['x'], 0, 0]]
+            df = pending_at[p]
             if not df.ok
                 return error[df.reason, 'magpie']
             is_held = push[is_held, true]
@@ -915,7 +918,7 @@ fn asof_rows[paths, labels, keyed, time, asked, upto]
     --- rows are read whole)
     first_columns = slice[['x'], 0, 0]
     if _pending_path[paths[0]]
-        df0 = batch_read[paths[0], slice[['x'], 0, 0]]
+        df0 = pending_at[paths[0]]
         if not df0.ok
             return error[df0.reason, 'magpie']
         first_columns = df0.columns
@@ -945,7 +948,7 @@ fn asof_rows[paths, labels, keyed, time, asked, upto]
     for fi in range[len[paths]]
         p = paths[fi]
         if _pending_path[p]
-            df = batch_read[p, slice[['x'], 0, 0]]
+            df = pending_at[p]
             if not df.ok
                 return error[df.reason, 'magpie']
             for name in needed
@@ -1010,48 +1013,22 @@ fn _fresh[dir]
     made = mkdir[dir]
     return dir
 
---- whether two frames hold the same columns and cells, kind for kind
-fn _alike[a, b]
-    if a.columns ne b.columns or len[a] ne len[b]
-        log['shape: `a.columns` `len[a]` against `b.columns` `len[b]`']
-        return false
-    n = len[a]
-    for name in a.columns
-        x = a.`name`
-        y = b.`name`
-        if cell_kind[x] ne cell_kind[y]
-            log['kind of `name`: `cell_kind[x]` against `cell_kind[y]`']
-            return false
-        if not same[present_of[x, 0, n], present_of[y, 0, n]]
-            log['missing in `name`']
-            return false
-        if not _same_cells[x, y, n]
-            log['`name`: `str[x]` against `str[y]`']
-            return false
-    return true
+--- a frame's image, digested — each column's name and its chunk (its
+--- kind, its missing cells, its cells, as magpie.encode writes them):
+--- what a recorded answer is held to
+fn _image[f]
+    n = len[f]
+    out = bytes['`n`']
+    for name in f.columns
+        out = concat[out, bytes[name]]
+        out = concat[out, chunk[f.`name`, 0, n, false]]
+    return slice[hash[out, 'sha256'], 0, 16]
 
---- whether two columns of one kind hold the same cells, the placeholders
---- of missing cells included (a missing cell shown is a failed value,
---- which equals nothing)
-fn _same_cells[x, y, n]
-    kind = cell_kind[x]
-    if kind eq 'int'
-        return ints_of[x, 0, n] eq ints_of[y, 0, n]
-    if kind eq 'moment'
-        return millis_of[x, 0, n] eq millis_of[y, 0, n] and zones_of[x, 0, n] eq zones_of[y, 0, n]
-    if kind eq 'float'
-        return same[float_bytes[floats_of[x, 0, n], 8, true], float_bytes[floats_of[y, 0, n], 8, true]]
-    if kind eq 'bool'
-        return bools_of[x, 0, n] eq bools_of[y, 0, n]
-    if kind eq 'text'
-        return same[text_bytes_of[x, 0, n], text_bytes_of[y, 0, n]] and text_ends_of[x, 0, n] eq text_ends_of[y, 0, n]
-    return vectors_of[x, 0, n] eq vectors_of[y, 0, n]
-
---- the same answers as the kernel's summary over two files
+--- the kernel's answers of a summary over two files
 test summary_is_the_kernels[]
     nothing = slice[['x'], 0, 0]
     dir = _fresh['target/crow_exec_summary']
-    k = batch_declare[dir, ['day', 'sym'], '']
+    k = declare[dir, ['day', 'sym'], nothing, nothing]
     days = []
     syms = []
     pxs = []
@@ -1062,30 +1039,33 @@ test summary_is_the_kernels[]
         pxs = push[pxs, float[(i * 37) % 101] / 8.0]
         vols = push[vols, (i * 13) % 50]
     df = frame.new[day = days, sym = syms, px = pxs, vol = vols]
-    a = batch_write[dir, 0, 0, df, ['day', 'sym'], nothing, false]
-    b = batch_write[dir, 1, 900, df, ['day', 'sym'], nothing, false]
+    a = write_batch[dir, 0, 0, df, ['day', 'sym'], nothing]
+    b = write_batch[dir, 1, 900, df, ['day', 'sym'], nothing]
     paths = ['`dir`/000000000000.batch', '`dir`/000000000001.batch']
     hows = ['count', 'sum', 'min', 'max', 'mean', 'var', 'std', 'first', 'last']
+    seen = []
     for h in hows
         mine = summary_of[paths, ['sym'], ['px', 'vol'], [h, h], nothing, nothing, nothing, '', '', -1]
-        theirs = batch_summary[paths, ['sym'], ['px', 'vol'], [h, h], nothing, nothing, nothing, '', '', -1]
-        assert[_alike[mine, theirs]]
+        seen = push[seen, _image[mine]]
     one = summary_of[paths, ['day', 'sym'], ['vol'], ['sum'], ['day', 'vol'], ['eq', 'gt'], ['2', '20'], '1', '3', 1200]
-    one_k = batch_summary[paths, ['day', 'sym'], ['vol'], ['sum'], ['day', 'vol'], ['eq', 'gt'], ['2', '20'], '1', '3', 1200]
-    assert[_alike[one, one_k]]
+    seen = push[seen, _image[one]]
     whole = summary_of[paths, nothing, ['vol'], ['sum'], nothing, nothing, nothing, '', '', -1]
-    assert[_alike[whole, batch_summary[paths, nothing, ['vol'], ['sum'], nothing, nothing, nothing, '', '', -1]]]
+    seen = push[seen, _image[whole]]
+    --- (recorded from the Rust kernel before it was deleted, 2026-10-28)
+    assert[seen eq ['eb5ce0e1bcb614d0', '3e90ec839b34ec24', 'ad38d01cb377bd9b', 'f0476d88d5d42899', '7ca95930f2d5ec4a', 'a7d61e5c187fca0a', '93835fdaa518ad2d', '1e0fd1e14b0d04db', 'cdf775563e8bea83', '45ce121ce645972c', 'e88e7f5fb1b0e37a']]
     none = summary_of[paths, ['sym'], ['vol'], ['sum'], ['day'], ['gt'], ['9'], '', '', -1]
     assert[len[none] eq 0]
-    assert[summary_of[paths, ['sym'], ['px'], ['median'], nothing, nothing, nothing, '', '', -1].reason eq batch_summary[paths, ['sym'], ['px'], ['median'], nothing, nothing, nothing, '', '', -1].reason]
-    assert[summary_of[paths, ['sym'], ['sym'], ['sum'], nothing, nothing, nothing, '', '', -1].reason eq batch_summary[paths, ['sym'], ['sym'], ['sum'], nothing, nothing, nothing, '', '', -1].reason]
+    median = summary_of[paths, ['sym'], ['px'], ['median'], nothing, nothing, nothing, '', '', -1]
+    assert[median.reason eq 'batch: no aggregate \'median\' — write count, sum, min, max, mean, var, std, first or last']
+    texts = summary_of[paths, ['sym'], ['sym'], ['sum'], nothing, nothing, nothing, '', '', -1]
+    assert[texts.reason eq 'batch: sum of column \'sym\', which holds text']
 
 --- the same as-of join as the kernel's: labels between the log's rows,
 --- before the first, past `upto`, with a missing key or moment
 test asof_is_the_kernels[]
     nothing = slice[['x'], 0, 0]
     dir = _fresh['target/crow_exec_asof']
-    k = batch_declare[dir, ['sym'], '{"time":"ts"}']
+    k = declare[dir, ['sym'], ['time'], ['ts']]
     syms = []
     tss = []
     pxs = []
@@ -1094,17 +1074,21 @@ test asof_is_the_kernels[]
         tss = push[tss, i * 10]
         pxs = push[pxs, float[(i * 37) % 101] / 8.0]
     df = frame.new[sym = syms, ts = tss, px = pxs]
-    a = batch_write[dir, 0, 0, frame.head[df, 150], ['sym'], nothing, false]
-    b = batch_write[dir, 1, 150, frame.tail[df, 150], ['sym'], nothing, false]
+    a = write_batch[dir, 0, 0, frame.head[df, 150], ['sym'], nothing]
+    b = write_batch[dir, 1, 150, frame.tail[df, 150], ['sym'], nothing]
     paths = ['`dir`/000000000000.batch', '`dir`/000000000001.batch']
     labels = frame.new[sym = ['s1', 's2', 's3', 's9', 's1'], ts = [5, 1495, 2990, 100, -3], label = [1, 0, 1, 1, 0]]
+    seen = []
     for upto in [-1, 160, 2000]
         mine = asof_rows[paths, labels, ['sym'], 'ts', nothing, upto]
-        theirs = batch_asof[paths, labels, ['sym'], 'ts', nothing, upto]
-        assert[_alike[mine, theirs]]
+        seen = push[seen, _image[mine]]
     picked = asof_rows[paths, labels, ['sym'], 'ts', ['px'], -1]
-    assert[_alike[picked, batch_asof[paths, labels, ['sym'], 'ts', ['px'], -1]]]
+    seen = push[seen, _image[picked]]
     none = asof_rows[nothing, labels, ['sym'], 'ts', ['px'], -1]
-    assert[_alike[none, batch_asof[nothing, labels, ['sym'], 'ts', ['px'], -1]]]
-    assert[asof_rows[paths, labels, nothing, 'ts', nothing, -1].reason eq batch_asof[paths, labels, nothing, 'ts', nothing, -1].reason]
-    assert[asof_rows[paths, labels, ['day'], 'ts', nothing, -1].reason eq batch_asof[paths, labels, ['day'], 'ts', nothing, -1].reason]
+    seen = push[seen, _image[none]]
+    --- (recorded from the Rust kernel before it was deleted, 2026-10-28)
+    assert[seen eq ['420e26491d0b2df6', '142b5cddfc644ce3', '420e26491d0b2df6', '420e26491d0b2df6', '8513857fa1437365']]
+    unkeyed = asof_rows[paths, labels, nothing, 'ts', nothing, -1]
+    assert[unkeyed.reason eq 'batch: an as-of join needs the log\'s keys']
+    other = asof_rows[paths, labels, ['day'], 'ts', nothing, -1]
+    assert[other.reason eq 'batch: the labels lack the key column \'day\'']

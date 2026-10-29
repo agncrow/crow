@@ -184,6 +184,10 @@ fn _noise[count, seed]
         out = push[out, bitand[shift[x, -16], 255]]
     return out
 
+--- a short digest of bytes: what a recorded answer is held to
+fn _digest[b]
+    return slice[hash[b, 'sha256'], 0, 16]
+
 --- every stream the Rust codec writes, byte for byte, and every one
 --- round-trips: nothing, a few bytes, a run of zeros, a text repeated,
 --- a run of one byte then a two-byte pattern (overlapping matches),
@@ -201,14 +205,15 @@ test the_streams_are_the_rust_codecs_byte_for_byte[]
     far = concat[noise, slice[noise, 0, 1000]]
     samples = [bytes[''], bytes['abc'], zeros, text, mixed, noise, far]
     sizes = []
+    seen = []
     for s in samples
         c = compress[s]
-        assert[same[c, compress_rs[s]]]
+        seen = push[seen, _digest[c]]
         d = decompress[c, len[s]]
         assert[same[d, s]]
-        e = decompress_rs[c, len[s]]
-        assert[same[e, s]]
         sizes = push[sizes, len[c]]
+    --- (recorded from the Rust kernel before it was deleted, 2026-10-28)
+    assert[seen eq ['6e340b9cffb37a98', 'd75f07fa91427d55', '8641066af253cd45', 'ebc249de475b4c76', '9869bdb5e4af392f', '9aa57f34a7f84389', 'af6a3eee97995079']]
     assert[sizes[0] eq 1 and sizes[1] eq 4]
     assert[sizes[2] lt 1000 and sizes[3] lt 2000]
     assert[sizes[5] lte 65536 + 65536 / 200 + 16]

@@ -64,6 +64,7 @@ io.csv_asked	the batch's cases share their directory, so an answer depends on th
 io.lines_asked	the batch's cases share their directory, so an answer depends on the cases before it: an io family with a directory per case is the plan
 io.read_asked	the batch's cases share their directory, so an answer depends on the cases before it: an io family with a directory per case is the plan
 llm.asked	a model's reply: the empty replay answers here; tests/llm_server.rs holds the module to a server speaking both wire formats, in both modes
+magpie.backup	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 magpie.batch	held to SQLite in parity 294 and 295 (the latest version of each key is what MAX(pos) GROUP BY picks); the reference script models no log
 magpie.batches	held to SQLite in parity 294 and 295 (the latest version of each key is what MAX(pos) GROUP BY picks); the reference script models no log
 magpie.bloom.filter_of	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
@@ -90,7 +91,6 @@ magpie.inflate.inflated	no reference yet: add its answer to tests/self/reference
 magpie.latest	held to SQLite in parity 294 and 295 (the latest version of each key is what MAX(pos) GROUP BY picks); the reference script models no log
 magpie.lookup	held to SQLite in parity 294 and 295 (the latest version of each key is what MAX(pos) GROUP BY picks); the reference script models no log
 magpie.manifest.batch_named	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-magpie.manifest.catalog_of	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 magpie.manifest.counter_of	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 magpie.manifest.declare	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 magpie.manifest.key_words	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
@@ -103,7 +103,9 @@ magpie.merge	held to SQLite in parity 294 and 295 (the latest version of each ke
 magpie.merge.key_ranges	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 magpie.merge.merge_files	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 magpie.merge.merge_into	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+magpie.merge.numbered_bytes	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 magpie.merge.place	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+magpie.merge.write_batch	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 magpie.metrics	the module's tests hold the figures to the files written; the reference script models no log
 magpie.nearest	held to the vectors package's flat index (the positions and the cosines agree) in the module's own test and in parity 303; the reference script models no log
 magpie.nearest.nearest_rows	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
@@ -127,6 +129,8 @@ magpie.stem.stem	no reference yet: add its answer to tests/self/reference.py, or
 magpie.summary	held to `group` over `scan` of the same rows on every aggregate, predicate and bound in the module's test and in the kernel's, and in both modes by parity 301; the reference script models no log
 magpie.sync	the module's tests flush a log written without the flush; the reference script models no files
 magpie.tail	the module's tests and the book hold it to the rows written while it waits; the reference script models no log
+magpie.tail.pending_at	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+magpie.tail.pending_rows	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.atan2	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.bandpass	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.bessel	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
@@ -162,27 +166,15 @@ mcp.catalog	asks a server: the check's values name none, and are refused alike i
 mcp.discover	asks a server: the check's values name none, and are refused alike in every configuration; tests/mcp.rs drives the client against a stand-in server in both modes
 mcp.server	a server's description from its URL or from the command that runs it, the same in every configuration; tests/mcp.rs holds what it describes to a stand-in server and to a Crow server over stdio in both modes
 mcp.tool	calls a server's tool: the check's values name no server, and are refused alike in every configuration; tests/mcp.rs drives the client against a stand-in server over HTTP and a Crow server over stdio in both modes (a result, one marked an error, an unknown tool)
+memory.canonical	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+memory.forget	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+memory.recall	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+memory.remember	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 stats.anova	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 sys.accept	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.address	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.alive	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.answer	the standard library's own layer: bytes, streams and protocols no reference models yet
-sys.batch_admits	the standard library's own layer: bytes, streams and protocols no reference models yet
-sys.batch_asof	the standard library's own layer: bytes, streams and protocols no reference models yet; held to the frame's asof join by the kernel's test and parity 301
-sys.batch_between	the standard library's own layer: bytes, streams and protocols no reference models yet
-sys.batch_catalog	the standard library's own layer: bytes, streams and protocols no reference models yet
-sys.batch_declare	the standard library's own layer: bytes, streams and protocols no reference models yet
-sys.batch_declared	the standard library's own layer: bytes, streams and protocols no reference models yet
-sys.batch_find	the standard library's own layer: bytes, streams and protocols no reference models yet
-sys.batch_merge	the standard library's own layer: bytes, streams and protocols no reference models yet
-sys.batch_nearest	the standard library's own layer: the kernel behind magpie's nearest, held there; its own unit test holds the ranking across two files
-sys.batch_read	the standard library's own layer: bytes, streams and protocols no reference models yet
-sys.batch_search	the standard library's own layer: bytes, streams and protocols no reference models yet; the scoring is held to Lucene's formula by parity 296
-sys.batch_since	the standard library's own layer: bytes, streams and protocols no reference models yet
-sys.batch_stats	the standard library's own layer: bytes, streams and protocols no reference models yet
-sys.batch_summary	the standard library's own layer: bytes, streams and protocols no reference models yet; held to the frame's group by the kernel's test and parity 301
-sys.batch_sync	the standard library's own layer: bytes, streams and protocols no reference models yet
-sys.batch_write	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.betainc	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.binary	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.bools_column	the standard library's own layer: bytes, streams and protocols no reference models yet
@@ -241,8 +233,6 @@ sys.random	random draws: seeded, and no reference draws the same numbers (a dist
 sys.read_head	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.recorded	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.recording	the standard library's own layer: bytes, streams and protocols no reference models yet
-sys.records	the standard library's own layer: bytes, streams and protocols no reference models yet
-sys.records_of	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.recv	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.redirected	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.rehearsing	the standard library's own layer: bytes, streams and protocols no reference models yet
@@ -259,12 +249,6 @@ sys.socket_of	the standard library's own layer: bytes, streams and protocols no 
 sys.start	the standard library's own layer: a process started as a command shows as its socket in every configuration; tests/parity/279 and tests/mcp.rs hold what it carries in both modes
 sys.store	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.stream_of	the standard library's own layer: bytes, streams and protocols no reference models yet
-sys.tail_flush	the standard library's own layer: bytes, streams and protocols no reference models yet
-sys.tail_forget	the standard library's own layer: bytes, streams and protocols no reference models yet
-sys.tail_get	the standard library's own layer: bytes, streams and protocols no reference models yet
-sys.tail_last	the standard library's own layer: bytes, streams and protocols no reference models yet
-sys.tail_pending	the standard library's own layer: bytes, streams and protocols no reference models yet
-sys.tail_put	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.tensor_of_frame	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.terms	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.text_bytes_of	the standard library's own layer: bytes, streams and protocols no reference models yet

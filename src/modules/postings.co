@@ -321,13 +321,18 @@ fn blocks_of[ix, term]
         blocks = push[blocks, Block[max_tf, min_len, posts]]
     return blocks
 
+--- a short digest of bytes: what a recorded answer is held to
+fn _digest[b]
+    return slice[hash[b, 'sha256'], 0, 16]
+
 --- an index round-trips, is the kernel's byte for byte, and answers
 --- terms, prefixes and edits as the kernel's tests say
 test an_index_round_trips_and_answers_terms_prefixes_and_edits[]
+    seen = []
     docs = text_column[bytes['the quick brown foxthe fox and the dogbrown bread'], _cuts[19, 19, 38, 49, 49], _gap[]]
     made = built[docs, 0, 5, false]
     assert[made.docs eq 4 and made.words eq 11]
-    assert[same[made.blob, index_rs[docs, 0, 5, false]]]
+    seen = push[seen, _digest[made.blob]]
     ix = parsed[made.blob]
     assert[ix.lengths eq [4, 0, 5, 2, 0]]
     assert[ix.terms eq ['and', 'bread', 'brown', 'dog', 'fox', 'quick', 'the']]
@@ -347,9 +352,11 @@ test an_index_round_trips_and_answers_terms_prefixes_and_edits[]
     assert[term_of[ix, 'cat'] eq -1]
     --- stemmed, the index is the kernel's too
     stemmed = built[docs, 0, 5, true]
-    assert[same[stemmed.blob, index_rs[docs, 0, 5, true]]]
+    seen = push[seen, _digest[stemmed.blob]]
     assert[parsed[stemmed.blob].terms eq ['and', 'bread', 'brown', 'dog', 'fox', 'quick', 'the']]
     assert[not parsed[bytes[3]].ok]
+    --- (recorded from the Rust kernel before it was deleted, 2026-10-28)
+    assert[seen eq ['ebc1224424d0fd72', 'ebc1224424d0fd72']]
 
 --- five ends, as a list of ints (a literal of numbers is a tensor)
 fn _cuts[a, b, c, d, e]
@@ -370,6 +377,7 @@ fn _gap[]
 
 --- many postings make several blocks, as the kernel's
 test many_postings_make_several_blocks[]
+    seen = []
     texts = []
     for i in range[300]
         if i - 3 * (i / 3) eq 0
@@ -378,7 +386,7 @@ test many_postings_make_several_blocks[]
             texts = push[texts, 'other']
     df = frame.new[t = texts]
     made = built[df.t, 0, 300, false]
-    assert[same[made.blob, index_rs[df.t, 0, 300, false]]]
+    seen = push[seen, _digest[made.blob]]
     ix = parsed[made.blob]
     word = term_of[ix, 'word']
     assert[ix.dfs[word] eq 100]
@@ -390,6 +398,8 @@ test many_postings_make_several_blocks[]
     assert[blocks[0].posts[1].row eq 3]
     assert[blocks[0].posts[1].positions eq [0, 3]]
     assert[blocks[0].max_tf eq 2]
+    --- (recorded from the Rust kernel before it was deleted, 2026-10-28)
+    assert[seen eq ['46d9ae9813132542']]
 
 --- the edit distance is cut at its limit
 test edit_distance_is_cut_at_the_limit[]

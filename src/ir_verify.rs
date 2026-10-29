@@ -769,6 +769,7 @@ fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
             // a function handed where a row takes one, a walked collection,
             // a connection; a request and a match are answered, never taken
             Kind::FnOf(_) => matches!(t, Ty::Fn(..)),
+            Kind::Record => matches!(t, Ty::Record(_) | Ty::OptRecord(_)),
             Kind::Walked => matches!(t, Ty::List(_) | Ty::Tensor(..) | Ty::Column(_)),
             Kind::Db | Kind::Tx => matches!(t, Ty::Handle(h) if h.name == crate::table::DB.name || h.name == crate::table::TX.name),
             Kind::Request | Kind::Found => false,

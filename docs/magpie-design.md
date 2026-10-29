@@ -6,7 +6,11 @@ c642869 → 61c20d9): one store that takes the stream, holds the table,
 indexes the text, keeps the current state and orders the transactions,
 in one process, written in Crow on the sys layer with kernels in Rust.
 The first architecture holds at tens of millions of rows and was never
-released. Vijay's decisions, 2026-10-26:
+released. (Since 2026-10-28 the kernels this note describes in Rust are
+Crow — each ported and held to the Rust kernel's bytes, then the Rust
+deleted: docs/magpie-in-crow.md. Where this note says a kernel does
+something, the Crow module of that name does it now, the same way.)
+Vijay's decisions, 2026-10-26:
 
 - **The name is `magpie`**: the corvid that gathers everything into one
   nest. `lake` goes entirely (no alias, no message: a retired name is an

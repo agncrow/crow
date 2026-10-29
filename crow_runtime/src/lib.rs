@@ -7,7 +7,6 @@
 pub mod display;
 pub mod distributed;
 pub mod frame;
-pub mod magpie;
 pub mod fixtures;
 pub mod int;
 pub mod bits;
@@ -26,8 +25,8 @@ pub mod gpu;
 pub mod gpu;
 pub mod io;
 pub mod json;
-pub mod kafka;
 pub mod later;
+pub mod memory;
 pub mod layout;
 pub mod link;
 pub mod cancel;

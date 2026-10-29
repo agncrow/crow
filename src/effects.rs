@@ -46,10 +46,16 @@ pub enum Effect {
     Waits,
     /// Declares what the server serves: a route, a page, the server itself.
     Serving,
+    /// Reads what the process holds under a name (`recall`): the program's
+    /// own state, shared by its threads.
+    Memory,
+    /// Writes what the process holds under a name (`remember`, `revise`,
+    /// `forget`).
+    MemoryWrite,
 }
 
 impl Effect {
-    pub const ALL: [Effect; 16] = [
+    pub const ALL: [Effect; 18] = [
         Effect::Console,
         Effect::Files,
         Effect::FilesWrite,
@@ -66,6 +72,8 @@ impl Effect {
         Effect::Session,
         Effect::Waits,
         Effect::Serving,
+        Effect::Memory,
+        Effect::MemoryWrite,
     ];
 
     /// The kind's word, as `crow check`'s reach and the spec name it.
@@ -87,6 +95,8 @@ impl Effect {
             Effect::Session => "session",
             Effect::Waits => "waits",
             Effect::Serving => "serving",
+            Effect::Memory => "held",
+            Effect::MemoryWrite => "held.write",
         }
     }
 
@@ -110,6 +120,8 @@ impl Effect {
             Effect::Session => "acts for the session",
             Effect::Waits => "waits",
             Effect::Serving => "declares what the server serves",
+            Effect::Memory => "reads what the process holds",
+            Effect::MemoryWrite => "changes what the process holds",
         }
     }
 
@@ -118,7 +130,9 @@ impl Effect {
     /// generator is the program's own — a draw orders a loop and makes a
     /// function impure to `crow check`, and nothing else.
     pub fn outside(self) -> bool {
-        self != Effect::Random
+        // (and process memory, the program's own state shared by its
+        // threads: nothing leaves the program)
+        !matches!(self, Effect::Random | Effect::Memory | Effect::MemoryWrite)
     }
 
     /// Held to the handler's commit: it runs when the handler ends, in
@@ -177,7 +191,7 @@ impl Context {
     pub fn allows(self, e: Effect) -> bool {
         match self {
             Context::View => matches!(e, Effect::Console | Effect::Clock | Effect::Random),
-            Context::Derive => matches!(e, Effect::Console | Effect::Files | Effect::Network | Effect::DbRead | Effect::Clock | Effect::Random | Effect::Process),
+            Context::Derive => matches!(e, Effect::Console | Effect::Files | Effect::Network | Effect::DbRead | Effect::Clock | Effect::Random | Effect::Process | Effect::Memory),
             Context::Handler | Context::Function | Context::Test => true,
         }
     }
@@ -225,7 +239,7 @@ impl Context {
         };
         let rule = match self {
             Context::View => "a view shows the page's state and does nothing else, since it runs whenever the page needs it (it may write to the console, and read the clock)",
-            Context::Derive => "a derivation reads — files, the network, a database, the clock, the process's environment — and changes nothing, since it runs whenever the page needs it",
+            Context::Derive => "a derivation reads — files, the network, a database, the clock, the process's environment or memory — and changes nothing, since it runs whenever the page needs it",
             _ => "",
         };
         format!("{} — {}: {}", call, rule, self.belongs(e))
@@ -249,7 +263,7 @@ mod tests {
     fn a_view_reaches_only_the_console_and_a_derivation_only_reads() {
         for e in Effect::ALL {
             assert_eq!(Context::View.allows(e), matches!(e, Effect::Console | Effect::Clock | Effect::Random), "{:?}", e);
-            let reads = matches!(e, Effect::Console | Effect::Files | Effect::Network | Effect::DbRead | Effect::Clock | Effect::Random | Effect::Process);
+            let reads = matches!(e, Effect::Console | Effect::Files | Effect::Network | Effect::DbRead | Effect::Clock | Effect::Random | Effect::Process | Effect::Memory);
             assert_eq!(Context::Derive.allows(e), reads, "{:?}", e);
             assert!(Context::Handler.allows(e) && Context::Function.allows(e) && Context::Test.allows(e));
         }

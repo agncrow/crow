@@ -1,0 +1,620 @@
+--- `use magpie.tail`: the sequencer, in Crow — a memtable and its
+--- write-ahead log (docs/magpie-in-crow.md, section 2.4). One record per
+--- log directory in the process's memory (`use memory`, named by the
+--- log's canonical path, so `rm` of the directory forgets it) holds the
+--- rows written since the last flush, each part with the positions given
+--- as the rows arrived (`_pos`), the position the next row takes, the key
+--- index (each key's last position, over the pending rows and, once the
+--- image is built, the files) and the image (the newest row of each key,
+--- built from the log's table when first asked and kept current by every
+--- put after). Every write of the process goes through it: `put_rows`
+--- appends under the record's lock and answers the first position, then
+--- asks for a flush (`later`): what is pending written as one batch file,
+--- as `flush_rows` does at once. A reader of the process sees the pending
+--- rows at once: the catalog names them `<dir>/.pending@first-last`, and
+--- `pending_rows` answers them — or, where a flush moved them between the
+--- listing and the read, the file they went to. Another process sees the
+--- rows once they are flushed.
+use sys
+use bits
+use frame
+use memory
+use magpie.file
+use magpie.manifest
+use magpie.merge
+
+--- a log's tail: its directory (its canonical path, the name it is held
+--- under), its keys, the parts pending (each with `_pos`), the next
+--- position (-1 before the log is read), whether the image is built, the
+--- image's columns (a frame of none of its rows), why the last flush asked
+--- for failed (empty for none), and what the last revision answers. The
+--- index and the image are held key by key beneath the name
+--- (`<dir>/#last/<key>`, `<dir>/#row/<key>`), so a revision copies only
+--- what it changes
+struct Tail [dir, keys, parts, next, has_image, template, failed, answer]
+
+--- a key's last position, as the index holds it
+struct Last [position]
+
+--- a key's newest row, as the image holds it
+struct Newest [row]
+
+--- the logs this process holds tails of: their directories
+struct Tails [dirs]
+
+--- a cell of a key: its form (1 an int, 2 a float, 3 a bool, 4 text, 6 a
+--- moment's milliseconds; 0 none), as the kernel's key bytes read it
+struct Cell [form, whole, real, word]
+
+--- how many times this process reached the crash harness's cut
+struct Reached [count]
+
+--- the name the list of tails is held under
+fn _tails_name[]
+    return 'magpie.tails'
+
+--- a tail not read from the disk yet
+fn _unread[name]
+    return Tail[name, slice[['x'], 0, 0], [], -1, false, frame.new[], '', -1]
+
+--- the batch files and segments of the log: the manifest's segments, and
+--- every batch file a segment does not cover
+fn _live_paths[dir]
+    m = listed[dir]
+    if not m.ok
+        return error[m.reason, 'magpie']
+    paths = slice[['x'], 0, 0]
+    lows = []
+    highs = []
+    for i in range[len[m.segments]]
+        paths = push[paths, '`dir`/`m.segments.name[i]`']
+        lows = push[lows, m.segments.number[i] + 0]
+        highs = push[highs, m.segments.high[i] + 0]
+    found = ls[dir]
+    if not found.ok
+        return error['batch: cannot read \'`dir`\': `found.reason`', 'magpie']
+    for name in found
+        n = number_of[name]
+        if n gte 0
+            covered = false
+            for i in range[len[lows]]
+                if lows[i] lte n and n lte highs[i]
+                    covered = true
+            if not covered
+                paths = push[paths, '`dir`/`name`']
+    return paths
+
+--- the log's last position over its files, -1 for none
+fn _head_of[dir]
+    paths = _live_paths[dir]
+    if not paths.ok
+        return error[paths.reason, 'magpie']
+    top = -1
+    for p in paths
+        r = opened[p]
+        if not r.ok
+            return error[r.reason, 'magpie']
+        if r.footer.last gt top
+            top = r.footer.last
+    return top
+
+--- the next batch number: past every batch file's and every segment's
+fn _next_number[dir]
+    m = listed[dir]
+    if not m.ok
+        return error[m.reason, 'magpie']
+    top = -1
+    for i in range[len[m.segments]]
+        h = m.segments.high[i] + 0
+        if h gt top
+            top = h
+    found = ls[dir]
+    if not found.ok
+        return error['batch: cannot read \'`dir`\': `found.reason`', 'magpie']
+    for name in found
+        n = number_of[name]
+        if n gt top
+            top = n
+    return top + 1
+
+--- the tail read again from what the log holds: its keys from the
+--- manifest, the next position past its head (another process, a restore
+--- or a log made afresh at the path may have moved the head); the image
+--- and the index let go where the image was built
+fn _reread[t]
+    m = listed[t.dir]
+    if not m.ok
+        return error[m.reason, 'magpie']
+    head = _head_of[t.dir]
+    if not head.ok
+        return error[head.reason, 'magpie']
+    if t.has_image
+        forget['`t.dir`/#last']
+        forget['`t.dir`/#row']
+    return Tail[t.dir, m.keys, t.parts, head + 1, false, frame.new[], t.failed, t.answer]
+
+--- whether cell `i` is present, by the bitmap
+fn _present[present, i]
+    if len[present] eq 0
+        return true
+    return bitand[byte[present, shift[i, -3]], shift[1, bitand[i, 7]]] ne 0
+
+--- a column's cells as a key reads them
+fn _cells_of[col]
+    n = len[col]
+    present = present_of[col, 0, n]
+    kind = cell_kind[col]
+    out = []
+    for i in range[n]
+        out = push[out, Cell[0, 0, 0.0, '']]
+    if kind eq 'int'
+        nums = ints_of[col, 0, n]
+        for i in range[n]
+            if _present[present, i]
+                out[i] = Cell[1, nums[i], 0.0, '']
+    if kind eq 'moment'
+        ms = millis_of[col, 0, n]
+        for i in range[n]
+            if _present[present, i]
+                out[i] = Cell[6, ms[i], 0.0, '']
+    if kind eq 'float'
+        reals = floats_of[col, 0, n]
+        for i in range[n]
+            if _present[present, i]
+                out[i] = Cell[2, 0, reals[i], '']
+    if kind eq 'bool'
+        flags = bools_of[col, 0, n]
+        for i in range[n]
+            if _present[present, i]
+                v = 0
+                if flags[i]
+                    v = 1
+                out[i] = Cell[3, v, 0.0, '']
+    if kind eq 'text'
+        cell_bytes = text_bytes_of[col, 0, n]
+        cuts = text_ends_of[col, 0, n]
+        start = 0
+        for i in range[n]
+            stop = cuts[i]
+            if _present[present, i]
+                out[i] = Cell[4, 0, 0.0, text[slice[cell_bytes, start, stop], '']]
+            start = stop
+    return out
+
+--- a key's text: each cell's form and value, so two keys are one where
+--- the kernel's key bytes are (a float's -0 is its 0; a missing cell is
+--- the separator alone)
+fn _key_text[cells]
+    out = ''
+    for c in cells
+        if c.form eq 2
+            x = c.real
+            if x eq 0.0
+                x = 0.0
+            out = '`out`2:`unpack[ieee[x, 8, little = true], 0, 8, little = true]`|'
+        if c.form eq 4
+            out = '`out`4:`len[c.word]`:`c.word`|'
+        if c.form eq 1 or c.form eq 3 or c.form eq 6
+            out = '`out``c.form`:`c.whole`|'
+        if c.form eq 0
+            out = '`out`|'
+    return out
+
+--- each row's key text, by the key columns
+fn _keys_of[df, keyed]
+    columns = []
+    for k in keyed
+        if k not in df.columns
+            listed_keys = join[keyed, ', ']
+            return error['batch: the rows lack a key column of the log (`listed_keys`)', 'magpie']
+        columns = push[columns, _cells_of[df.`k`]]
+    out = slice[['x'], 0, 0]
+    for i in range[len[df]]
+        cells = []
+        for c in columns
+            cells = push[cells, c[i]]
+        out = push[out, _key_text[cells]]
+    return out
+
+--- a value a program wrote as text, read as a key column's kind
+fn _parsed[kind, value]
+    v = trim[value]
+    if kind eq 'int' or kind eq 'moment'
+        n = int[v]
+        if not n.ok
+            return error['\'`value`\' is no int', 'magpie']
+        form = 1
+        if kind eq 'moment'
+            form = 6
+        return Cell[form, n, 0.0, '']
+    if kind eq 'float'
+        x = float[v]
+        if not x.ok
+            return error['\'`value`\' is no number', 'magpie']
+        return Cell[2, 0, x, '']
+    if kind eq 'bool'
+        if v eq 'true'
+            return Cell[3, 1, 0.0, '']
+        if v eq 'false'
+            return Cell[3, 0, 0.0, '']
+        return error['\'`value`\' is no bool', 'magpie']
+    return Cell[4, 0, 0.0, value]
+
+--- the rows pending, one frame with `_pos`
+fn _pending_frame[t]
+    if len[t.parts] eq 1
+        return t.parts[0]
+    return stack[t.parts]
+
+--- how many rows are pending
+fn _pending_count[t]
+    n = 0
+    for p in t.parts
+        n = n + len[p]
+    return n
+
+--- the frame's row with the image's columns, as the image keeps a row
+--- (the row as it is where it lacks one of them)
+fn _as_image_row[row, template]
+    if len[template.columns] eq 0
+        return row
+    for c in template.columns
+        if c not in row.columns
+            return row
+    return select[row, template.columns]
+
+--- the tail with rows appended: the next positions given as they
+--- arrive, the index and the image kept current; `answer` the first
+--- position. Refused, changing nothing: no rows, a frame already holding
+--- `_pos`, other columns than the rows pending, a key column missing
+fn _appended[t, f]
+    n = len[f]
+    if n eq 0
+        return error['batch: a put holds at least one row', 'magpie']
+    if '_pos' in f.columns
+        return error['batch: the frame already holds a column \'_pos\', which the log adds', 'magpie']
+    held = t
+    if len[t.parts] gt 0
+        had = slice[['x'], 0, 0]
+        for c in t.parts[0].columns
+            if c ne '_pos'
+                had = push[had, c]
+        if had ne f.columns
+            return error['batch: the rows put hold other columns than the rows pending — flush first', 'magpie']
+    else
+        --- (nothing pending: the next position is read off the disk again)
+        again = _reread[t]
+        if not again.ok
+            return error[again.reason, 'magpie']
+        held = again
+    first = held.next
+    positions = []
+    for i in range[n]
+        positions = push[positions, first + i]
+    numbered = f
+    numbered._pos = ints_column[positions, bytes[0]]
+    if len[held.keys] gt 0
+        texts = _keys_of[numbered, held.keys]
+        if not texts.ok
+            return error[texts.reason, 'magpie']
+        for i in range[n]
+            remember['`held.dir`/#last/`texts[i]`', Last[first + i]]
+            if held.has_image
+                one = frame.head[frame.tail[numbered, n - i], 1]
+                remember['`held.dir`/#row/`texts[i]`', Newest[_as_image_row[one, held.template]]]
+    parts = push[held.parts, numbered]
+    return Tail[held.dir, held.keys, parts, first + n, held.has_image, held.template, held.failed, first]
+
+--- the tail with its flush's failure answered
+fn _cleared[t]
+    return Tail[t.dir, t.keys, t.parts, t.next, t.has_image, t.template, '', t.answer]
+
+--- refused where the last flush asked for failed: its reason answered
+--- once, the failure let go
+fn _failed_flush[name, dir]
+    t = recall[name, _unread[name]]
+    if len[t.failed] eq 0
+        return dir
+    failed = t.failed
+    cleared = revise[name, _unread[name], _cleared]
+    return error['batch: the last flush of \'`dir`\' failed: `failed`', 'magpie']
+
+--- one reach more
+fn _reached_once[r]
+    return Reached[r.count + 1]
+
+--- the crash harness's cut after a put, before its flush is asked for:
+--- the process ends at the reach `CROW_MAGPIE_CRASH` names (`pending` the
+--- first, `pending:2` the second — a `batch` is a put and a flush), so
+--- the put's rows are lost and the rows flushed before it stay
+fn _cut_pending[]
+    asked = env['CROW_MAGPIE_CRASH', '']
+    if not starts[asked, 'pending']
+        return 0
+    r = revise['magpie.crash.pending', Reached[0], _reached_once]
+    if asked eq 'pending:`r.count`' or (asked eq 'pending' and r.count eq 1)
+        exit[3]
+    return r.count
+
+--- `put_rows[dir, f]`: the rows appended to the log's pending rows,
+--- visible to this process at once, flushed by the work asked for (a
+--- `later` of every tail's flush) or at `flush_rows`; answers the first
+--- position. Refused: the last flush failed, no rows, a frame holding
+--- `_pos`, other columns than the rows pending, a key column missing
+fn put_rows[dir, f]
+    name = canonical[dir]
+    clear = _failed_flush[name, dir]
+    if not clear.ok
+        return error[clear.reason, 'magpie']
+    noted = revise[_tails_name[], Tails[slice[['x'], 0, 0]], _noted, name]
+    t = revise[name, _unread[name], _appended, f]
+    if not t.ok
+        return error[t.reason, 'magpie']
+    cut = _cut_pending[]
+    work = later[_flush_all]
+    return t.answer
+
+--- the list of tails with a log's
+fn _noted[known, name]
+    if name in known.dirs
+        return known
+    return Tails[push[known.dirs, name]]
+
+--- the tail with what is pending written as one batch file, flushed to
+--- the disk, the positions as given; `answer` its first position, -1 for
+--- nothing pending. The number is the next the directory has; a number
+--- another writer took first is tried again
+fn _flushed[t]
+    if len[t.parts] eq 0
+        return Tail[t.dir, t.keys, t.parts, t.next, t.has_image, t.template, t.failed, -1]
+    whole = _pending_frame[t]
+    first = t.next - len[whole]
+    --- (the rows sorted by the keys, arrival order kept among equals, each
+    --- with its position)
+    data = numbered_bytes[t.dir, whole, first, t.keys, slice[['x'], 0, 0]]
+    if not data.ok
+        return error[data.reason, 'magpie']
+    tries = 0
+    going = true
+    while going
+        number = _next_number[t.dir]
+        if not number.ok
+            return error[number.reason, 'magpie']
+        placed = place[t.dir, batch_named[number], data]
+        if placed.ok
+            going = false
+        else
+            if not ('was written already' in placed.reason) or tries gte 100
+                return error[placed.reason, 'magpie']
+            tries = tries + 1
+    return Tail[t.dir, t.keys, [], t.next, t.has_image, t.template, t.failed, first]
+
+--- the tail flushed, a failure kept for the next put or flush to answer
+--- (the work a put asked for has no caller to hand it to)
+fn _flushed_kept[t]
+    done = _flushed[t]
+    if done.ok
+        return done
+    return Tail[t.dir, t.keys, t.parts, t.next, t.has_image, t.template, done.reason, t.answer]
+
+--- every tail's pending rows flushed: the work a put asks for
+fn _flush_all[]
+    known = recall[_tails_name[], Tails[slice[['x'], 0, 0]]]
+    for name in known.dirs
+        t = revise[name, _unread[name], _flushed_kept]
+    return len[known.dirs]
+
+--- `flush_rows[dir]`: what is pending written as one batch file and
+--- flushed to the disk; answers its first position, -1 for nothing
+fn flush_rows[dir]
+    name = canonical[dir]
+    clear = _failed_flush[name, dir]
+    if not clear.ok
+        return error[clear.reason, 'magpie']
+    done = revise[name, _unread[name], _flushed]
+    if not done.ok
+        return error[done.reason, 'magpie']
+    return done.answer
+
+--- `pending_of[dir]`: how many rows are pending, and their first and last
+--- positions, as `[rows, first, last]` (`[0, -1, -1]` for none)
+fn pending_of[dir]
+    name = canonical[dir]
+    t = recall[name, _unread[name]]
+    n = _pending_count[t]
+    out = []
+    if n eq 0
+        out = push[push[push[out, 0], -1], -1]
+        return out
+    out = push[push[push[out, n], t.next - n], t.next - 1]
+    return out
+
+--- `pending_rows[dir, first, last]`: the rows a listing named
+--- `<dir>/.pending@first-last`: the pending rows up to `last` where they
+--- are still pending, else the file a flush moved them to — so a
+--- listing's rows are always read, and never twice
+fn pending_rows[dir, first, last]
+    name = canonical[dir]
+    t = recall[name, _unread[name]]
+    n = _pending_count[t]
+    if n gt 0 and t.next - n lte first and first lt t.next
+        whole = _pending_frame[t]
+        if last gte t.next - 1
+            return whole
+        return whole[whole._pos lte last]
+    paths = _live_paths[dir]
+    if not paths.ok
+        return error[paths.reason, 'magpie']
+    for p in paths
+        r = opened[p]
+        if not r.ok
+            return error[r.reason, 'magpie']
+        if r.footer.first lte first and first lte r.footer.last
+            all_groups = range[len[r.footer.groups]]
+            return groups_of[r, all_groups, wanted[r, slice[['x'], 0, 0]]]
+    return error['batch: the rows `first`..`last` of \'`dir`\' are neither pending nor in a file', 'magpie']
+
+--- the log's rows in parts — the files' and the pending ones — read for
+--- the image
+fn _table_of[t]
+    paths = _live_paths[t.dir]
+    if not paths.ok
+        return error[paths.reason, 'magpie']
+    parts = []
+    for p in paths
+        r = opened[p]
+        if not r.ok
+            return error[r.reason, 'magpie']
+        all_groups = range[len[r.footer.groups]]
+        rows = groups_of[r, all_groups, wanted[r, slice[['x'], 0, 0]]]
+        if not rows.ok
+            return error[rows.reason, 'magpie']
+        if len[rows] gt 0
+            parts = push[parts, rows]
+    if len[t.parts] gt 0
+        parts = push[parts, _pending_frame[t]]
+    return parts
+
+--- the tail with its image built: the log's rows read (inside the
+--- tail's lock, which holds the pending rows), each key's newest row and
+--- its position held beneath the name; refused for a log with no keys
+fn _imaged[t]
+    held = t
+    if t.next lt 0
+        again = _reread[t]
+        if not again.ok
+            return error[again.reason, 'magpie']
+        held = again
+    if held.has_image
+        return held
+    if len[held.keys] eq 0
+        return error['batch: the log at \'`held.dir`\' has no keys, so no row is the newest of one', 'magpie']
+    parts = _table_of[held]
+    if not parts.ok
+        return error[parts.reason, 'magpie']
+    if len[parts] eq 0
+        return Tail[held.dir, held.keys, held.parts, held.next, true, frame.new[], held.failed, held.answer]
+    table = stack[parts]
+    if len[table] gt 1
+        table = sort[table, '_pos']
+    n = len[table]
+    if n gt 0
+        texts = _keys_of[table, held.keys]
+        if not texts.ok
+            return error[texts.reason, 'magpie']
+        positions = ints_of[table._pos, 0, n]
+        --- (the rows in position order: a key's last is its newest)
+        newest = map[]
+        for i in range[n]
+            newest = set[newest, texts[i], i]
+        for key in keys[newest]
+            i = newest[key]
+            remember['`held.dir`/#last/`key`', Last[positions[i]]]
+            remember['`held.dir`/#row/`key`', Newest[frame.head[frame.tail[table, n - i], 1]]]
+    return Tail[held.dir, held.keys, held.parts, held.next, true, frame.head[table, 0], held.failed, held.answer]
+
+--- the key text of the values asked, read as the image's key columns
+fn _asked_key[t, asked]
+    if len[asked] ne len[t.keys]
+        return error['batch: a get takes one value per key column: `len[t.keys]` columns, `len[asked]` asked', 'magpie']
+    cells = []
+    for i in range[len[t.keys]]
+        k = t.keys[i]
+        if k not in t.template.columns
+            return error['batch: no key column \'`k`\'', 'magpie']
+        c = _parsed[cell_kind[t.template.`k`], asked[i]]
+        if not c.ok
+            return error['batch: column \'`k`\': `c.reason`', 'magpie']
+        cells = push[cells, c]
+    return _key_text[cells]
+
+--- `newest_row[dir, asked]`: the newest row of the key (the image, built
+--- from the log when first asked, kept current by every put), as a frame
+--- of one row or none
+fn newest_row[dir, asked]
+    name = canonical[dir]
+    t = revise[name, _unread[name], _imaged]
+    if not t.ok
+        return error[t.reason, 'magpie']
+    key = _asked_key[t, asked]
+    if not key.ok
+        return error[key.reason, 'magpie']
+    found = recall['`name`/#row/`key`', Newest[t.template]]
+    return found.row
+
+--- `last_position[dir, asked]`: the last position at which the key was
+--- written, as the index knows it (the pending rows, and the files once
+--- the image is built); -1 where it does not
+fn last_position[dir, asked]
+    name = canonical[dir]
+    t = revise[name, _unread[name], _imaged]
+    if not t.ok
+        return error[t.reason, 'magpie']
+    key = _asked_key[t, asked]
+    if not key.ok
+        return error[key.reason, 'magpie']
+    found = recall['`name`/#last/`key`', Last[-1]]
+    return found.position
+
+--- `forget_log[dir]`: the log's tail let go, its pending rows dropped: a
+--- log removed from under the process starts afresh at the path
+fn forget_log[dir]
+    forget[canonical[dir]]
+    return dir
+
+--- `pending_at[path]`: the rows a pending path names (`<dir>/.pending@
+--- first-last`, as the catalog lists them), by `pending_rows`
+fn pending_at[path]
+    pieces = split[path, '/.pending@']
+    if len[pieces] ne 2
+        return error['batch: \'`path`\' names no pending rows', 'magpie']
+    span = split[pieces[1], '-']
+    if len[span] ne 2
+        return error['batch: \'`path`\' names no pending rows', 'magpie']
+    first = int[span[0]]
+    last = int[span[1]]
+    if not first.ok or not last.ok
+        return error['batch: \'`path`\' names no pending rows', 'magpie']
+    return pending_rows[pieces[0], first, last]
+
+--- a log made empty for a test, its tail let go
+fn _scratch[dir]
+    if exists[dir]
+        rm[dir]
+    mkdir[dir]
+    none = slice[['x'], 0, 0]
+    declared = declare[dir, ['id'], none, none]
+    return dir
+
+--- puts are numbered as they arrive, the index and the image follow every
+--- put, a flush writes the rows as one batch file the readers read, a
+--- refused put changes nothing, and a log removed and made again at the
+--- path starts afresh
+test the_tail_numbers_flushes_and_follows[]
+    dir = _scratch['target/crow_tail_k']
+    assert[put_rows[dir, frame.new[id = [1, 2], qty = [10, 20]]] eq 0]
+    assert[put_rows[dir, frame.new[id = [2, 3], qty = [25, 30]]] eq 2]
+    assert[last_position[dir, ['2']] eq 2]
+    assert[newest_row[dir, ['2']].qty eq [25]]
+    assert[len[newest_row[dir, ['9']]] eq 0]
+    assert[last_position[dir, ['9']] eq -1]
+    assert[put_rows[dir, frame.new[id = [1], qty = [11]]] eq 4]
+    assert[newest_row[dir, ['1']].qty eq [11]]
+    assert[put_rows[dir, frame.new[id = [5], _pos = [0]]].kind eq 'magpie']
+    assert[put_rows[dir, frame.new[qty = [1]]].kind eq 'magpie']
+    assert[newest_row[dir, ['1', '2']].kind eq 'magpie']
+    done = flush_rows[dir]
+    assert[pending_of[dir] eq [0, -1, -1]]
+    assert[flush_rows[dir] eq -1]
+    --- the rows are in the batch files now, numbered as they were put
+    total = 0
+    for p in ls[dir]
+        if number_of[p] gte 0
+            total = total + opened['`dir`/`p`'].footer.rows
+    assert[total eq 5]
+    --- (a listing that saw the rows pending reads the file they went to)
+    assert[len[pending_at['`dir`/.pending@0-4']] gt 0]
+    rm[dir]
+    again = _scratch[dir]
+    assert[put_rows[dir, frame.new[id = [7], qty = [70]]] eq 0]
+    assert[last_position[dir, ['7']] eq 0]

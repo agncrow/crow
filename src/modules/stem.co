@@ -190,7 +190,9 @@ test porters_examples_stem_as_the_paper_says[]
     stems = ['caress', 'poni', 'ti', 'caress', 'cat', 'feed', 'agre', 'plaster', 'bled', 'motor', 'sing', 'conflat', 'troubl', 'size', 'hop', 'tan', 'fall', 'hiss', 'fizz', 'fail', 'file', 'happi', 'sky', 'relat', 'condit', 'ration', 'valenc', 'hesit', 'digit', 'conform', 'radic', 'differ', 'vile', 'analog', 'vietnam', 'predic', 'oper', 'feudal', 'decis', 'hope', 'callous', 'formal', 'sensit', 'sensibl', 'triplic', 'form', 'formal', 'electr', 'electr', 'hope', 'good', 'reviv', 'allow', 'infer', 'airlin', 'gyroscop', 'adjust', 'defens', 'irrit', 'replac', 'adjust', 'depend', 'adopt', 'homolog', 'commun', 'activ', 'angular', 'homolog', 'effect', 'bowdler', 'probat', 'rate', 'ceas', 'control', 'roll', 'run', 'gener', 'the', 'a', 'Fox', '2026']
     for i in range[len[samples]]
         assert[stem[samples[i]] eq stems[i]]
-        assert[stem[samples[i]] eq stem_rs[samples[i]]]
     text = 'the quick brown foxes jumped over the lazily sleeping dogs while hopping and running generalizations about relational conditionals'
+    seen = []
     for w in split[text, ' ']
-        assert[stem[w] eq stem_rs[w]]
+        seen = push[seen, stem[w]]
+    --- (recorded from the Rust kernel before it was deleted, 2026-10-28)
+    assert[seen eq ['the', 'quick', 'brown', 'fox', 'jump', 'over', 'the', 'lazili', 'sleep', 'dog', 'while', 'hop', 'and', 'run', 'gener', 'about', 'relat', 'condit']]

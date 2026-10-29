@@ -123,6 +123,10 @@ fn filter_of[raw]
         return error['a filter of `m` bits cannot lie in `len[slots]` bytes', 'magpie']
     return Bloom[slots, m, k]
 
+--- a short digest of bytes: what a recorded answer is held to
+fn _digest[b]
+    return slice[hash[b, 'sha256'], 0, 16]
+
 --- a filter admits what it holds and little else, and its bytes are the
 --- kernel's bit for bit: a thousand ints as their eight bytes, read back
 --- through the bytes
@@ -134,18 +138,20 @@ test a_filter_admits_what_it_holds_and_is_the_kernels[]
     for b in items
         f = add[f, b]
     raw = filter_bytes[f]
-    assert[same[raw, bloom_rs[items]]]
+    --- (recorded from the Rust kernel before it was deleted, 2026-10-28)
+    assert[_digest[raw] eq '5ac062256d27bdd0']
     assert[same[filter_bytes[filled[sized[1000], items]], raw]]
     back = filter_of[raw]
     for b in items
         assert[admits[back, b]]
-    false_positives = 0
+    false_positives = []
     for i in range[1000, 11000]
         probe = pack[i, 4, little = true]
         if admits[back, probe]
-            false_positives = false_positives + 1
-        assert[admits[back, probe] eq bloom_has_rs[raw, probe]]
-    assert[false_positives lt 500]
+            false_positives = push[false_positives, i]
+    assert[len[false_positives] eq 225]
+    shown = str[false_positives]
+    assert[_digest[bytes[shown]] eq '0e4459bde7b8eade']
     assert[not filter_of[bytes[2]].ok]
     tiny = bytes[10]
     tiny = set[tiny, 0, 6]
@@ -155,5 +161,5 @@ test a_filter_admits_what_it_holds_and_is_the_kernels[]
     wordset = sized[3]
     for w in ['apple', 'banana', 'cherry']
         wordset = add[wordset, bytes[w]]
-    assert[same[filter_bytes[wordset], bloom_rs[[bytes['apple'], bytes['banana'], bytes['cherry']]]]]
+    assert[hex[filter_bytes[wordset]] eq '0640000000000000001800618890720cc1']
     assert[admits[wordset, bytes['banana']] and not admits[wordset, bytes['durian']]]

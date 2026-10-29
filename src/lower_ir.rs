@@ -844,6 +844,11 @@ struct Lowerer<'a> {
     /// Lowering `grad`'s arguments: the function it differentiates is typed
     /// by the run that traces it, as the verifier reads it.
     differentiating: bool,
+    /// The function a row is being handed that the row calls with its own
+    /// arguments (`revise[name, default, f, x]` calls `f[held, x]`): it is
+    /// lowered at the copy those arguments reach, chosen once they are
+    /// lowered, so it is no value of several kinds where it is named.
+    handed_to_row: Option<String>,
     /// The locals holding a decomposition's pieces (`parts = svd[m]`), with
     /// each piece's shape by position (shapes::piece_dims).
     pieces: HashMap<String, Vec<Option<Dims>>>,
@@ -1027,6 +1032,7 @@ impl<'a> Lowerer<'a> {
             yields: HashSet::new(),
             grad_of: HashMap::new(),
             differentiating: false,
+            handed_to_row: None,
             pieces: HashMap::new(),
             scopes: vec![HashSet::new()],
             pre: Vec::new(),
@@ -3303,7 +3309,12 @@ impl<'a> Lowerer<'a> {
         let Some(row) = crate::table::core_row(row_name, &[crate::table::Arg::Json, crate::table::Arg::Text]) else { return expr };
         let failing = expr.ty().is_result();
         let arg = if failing { Expr::Convert { how: Convert::Unwrap, expr: Box::new(expr), ty: Ty::Json } } else { expr };
-        let how = Expr::Const(Const::Str(format!("{} at line {}", what, self.v.line)), Ty::Str);
+        // (inside a standard module's function the line is none of the
+        // program's — its stop names the program's line of the call — so
+        // the use is said alone: `handed to starts`, where magpie's `merge`
+        // of a parsed value had said "at line 12" of an eleven-line program)
+        let said = if crate::modules::is_crow_fn(&self.current_fn) { what.to_string() } else { format!("{} at line {}", what, self.v.line) };
+        let how = Expr::Const(Const::Str(said), Ty::Str);
         let read = if matches!(kind, Ty::Markup) { Ty::Str } else { kind.clone() };
         let ty = if failing { Ty::Result(Box::new(read)) } else { read };
         Expr::Call { target: Target::Row(row), args: vec![arg, how], ty, propagates: failing }
@@ -3735,7 +3746,11 @@ impl<'a> Lowerer<'a> {
             return;
         }
         let Some(answer) = self.ctx.functions.get(&self.current_fn).map(|sig| sig.return_type.payload().clone()) else { return };
-        if answer.has_unknown() || !held.payload().compatible(&answer) {
+        // (an answer of no value — an early round's, before the body's
+        // returns were typed — says nothing of the local: joined, it had made
+        // magpie's `by` no value, written back to the parameter, and the
+        // lowered program disagreed with itself)
+        if answer.has_unknown() || matches!(answer, Ty::Unit) || !held.payload().compatible(&answer) {
             return;
         }
         let joined = match &held {
@@ -5277,6 +5292,18 @@ impl<'a> Lowerer<'a> {
         let mut arg_types = Vec::with_capacity(args.len());
         let mut full_types = Vec::with_capacity(args.len());
         let mut checks = Vec::with_capacity(args.len());
+        // (a function the row calls with what it is handed: `revise[name,
+        // default, f, x]` is f[held, x], `later[f, a]` f[a] — inference
+        // copies f per signature though the row's call is its only call
+        // site, and the copy is chosen once the arguments are lowered)
+        let row_fns: Vec<(usize, &'static crate::table::Sig)> = if self.ctx.functions.contains_key(&name) {
+            Vec::new()
+        } else {
+            crate::table::fn_params(&name, args.len())
+                .into_iter()
+                .filter(|(i, _)| matches!(args.get(*i), Some(A::Ident(f)) if self.calls_fn(f) && self.ctx.specializations.get(f).is_some_and(|v| !v.is_empty())))
+                .collect()
+        };
         for (i, a) in args.iter().enumerate() {
             // the harness's click[a, h[x]] holds the handler call for the click
             if module.is_none() && name == "click" && i == 1 {
@@ -5299,7 +5326,13 @@ impl<'a> Lowerer<'a> {
             // (spec, Frames): lowered as that comparison, in both modes
             let now = self.differentiating || name == "grad";
             let was = std::mem::replace(&mut self.differentiating, now);
+            let handed = match a {
+                A::Ident(f) if row_fns.iter().any(|(at, _)| *at == i) => Some(f.clone()),
+                _ => None,
+            };
+            let held = std::mem::replace(&mut self.handed_to_row, handed);
             let x = self.lower_expr(a);
+            self.handed_to_row = held;
             self.differentiating = was;
             let mut x = x?;
             if !self.ctx.functions.contains_key(&name) && is_bool_column(&x, true) && crate::table::takes_mask_at(&name, i, args.len()) {
@@ -5316,6 +5349,21 @@ impl<'a> Lowerer<'a> {
                 lowered.push(Expr::Convert { how: Convert::Unwrap, expr: Box::new(x), ty: rty.payload().clone() });
             } else {
                 lowered.push(x);
+            }
+        }
+        for (i, sig) in row_fns {
+            let Some(A::Ident(f)) = args.get(i) else { continue };
+            match self.row_copy(&name, f, i, sig, &full_types) {
+                Some(copy) => {
+                    let x = Expr::FnRef(copy.clone(), self.ctx.ident_type(&copy));
+                    arg_types[i] = read(&x);
+                    full_types[i] = kept(&x);
+                    checks[i] = self.checked(&x);
+                    lowered[i] = x;
+                }
+                // (no copy takes what the row hands it: refused as any
+                // value of several kinds is)
+                None => self.check_fn_value(f),
             }
         }
         // a parameter typed by nothing (a function no call types: a tool only
@@ -6565,10 +6613,20 @@ impl<'a> Lowerer<'a> {
         if self.pass != Pass::Final || self.at == Where::Test || self.differentiating {
             return;
         }
+        // (inside a standard module's function the program does not call —
+        // its own parameters typed by nothing — a function it hands on is
+        // typed by nothing either, and neither is compiled: a program
+        // calling magpie's `backup` alone had been refused for the
+        // sequencer's `put_rows`, which hands `revise` its `_appended`)
+        if crate::modules::is_crow_fn(&self.current_fn) && self.ctx.functions.get(&self.current_fn).is_some_and(|sig| sig.params.iter().any(|(_, t)| *t == Ty::Unknown)) {
+            return;
+        }
         // a function copied per signature has no one type to be held at
         // (spec, Specialization): refused where it is handed — the
-        // compiled program had refused it as it built
-        if self.ctx.specializations.get(f).is_some_and(|v| !v.is_empty()) {
+        // compiled program had refused it as it built — unless a row calls
+        // it with arguments of its own, which choose the copy
+        // (`row_copies`, after the row's arguments are lowered)
+        if self.ctx.specializations.get(f).is_some_and(|v| !v.is_empty()) && self.handed_to_row.as_deref() != Some(f) {
             self.refuse(format!(
                 "'{}' is used at several kinds, and is handed as a value here — a function value has one type: hand a function of one kind (fn {}_text[x], calling {}[x])",
                 crate::lower::shown(f),
@@ -6693,6 +6751,46 @@ impl<'a> Lowerer<'a> {
 
     fn specialised(&self, name: &str, full_types: &[Ty]) -> String {
         self.ctx.specialization_for(name, full_types).unwrap_or_else(|| name.to_string())
+    }
+
+    /// The copy of `f` a row reaches when it calls `f` with what it is
+    /// handed (the row's function signature `sig`, at argument `at`): the
+    /// arguments as inference hands them (`hand_to_row`) — a walked item,
+    /// the record held, each declared kind, then the row's remaining
+    /// arguments where the signature takes them — matched exactly, never
+    /// the first copy for want of one.
+    fn row_copy(&self, row: &str, f: &str, at: usize, sig: &crate::table::Sig, full_types: &[Ty]) -> Option<String> {
+        let argc = full_types.len();
+        let walked = crate::table::walked_param(row, argc).and_then(|w| full_types.get(w)).map(|t| t.payload().clone());
+        let record = crate::table::record_param(row, argc).and_then(|w| full_types.get(w)).map(|t| t.payload().clone());
+        let mut given: Vec<Ty> = sig
+            .params
+            .iter()
+            .map(|k| match k {
+                crate::table::Kind::Item => match &walked {
+                    Some(Ty::List(inner)) => inner.as_ref().clone(),
+                    Some(Ty::Tensor(inner, dims)) => crate::type_infer::TypeContext::tensor_item(inner, dims),
+                    Some(Ty::Column(cell)) => cell.as_ref().clone(),
+                    _ => Ty::Unknown,
+                },
+                crate::table::Kind::Record => record.clone().unwrap_or(Ty::Unknown),
+                k => k.ty(),
+            })
+            .collect();
+        if sig.rest {
+            given.extend(full_types.get(at + 1..).unwrap_or(&[]).iter().map(|t| match t {
+                Ty::Result(inner) => inner.as_ref().clone(),
+                other => other.clone(),
+            }));
+        }
+        let call_sig: Vec<Ty> = given
+            .into_iter()
+            .map(|t| match t {
+                Ty::OptRecord(n) => Ty::Record(n),
+                other => other,
+            })
+            .collect();
+        self.ctx.specializations.get(f)?.iter().find(|(csig, _)| crate::type_infer::TypeContext::same_signature(csig, &call_sig)).map(|(_, copy)| copy.clone())
     }
 
     /// An interpolated string's pieces, each expression parsed as the

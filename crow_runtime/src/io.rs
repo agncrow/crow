@@ -52,9 +52,10 @@ pub fn ls(path: &str) -> Result<Vec<String>, String> {
 
 /// `rm[path]`: a file, or a directory and what it holds.
 pub fn rm(path: &str) -> Result<String, String> {
-    // a log's tail goes with its directory: the rows pending in memory
-    // are dropped, not written into the directory ten milliseconds later
-    crate::magpie::tail::forget_under(path);
+    // what the process keeps for the path goes with it (memory names a
+    // path's records by the path): a log's pending rows are dropped, not
+    // written into the directory a moment later
+    crate::memory::forget_path(path);
     fs_rm(path).map(|_| String::new())
 }
 

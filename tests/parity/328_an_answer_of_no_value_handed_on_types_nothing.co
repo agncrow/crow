@@ -1,0 +1,12 @@
+--- An answer of no value handed on says nothing of the parameter it
+--- reaches: an early round's answer of a function whose first return is
+--- an error, narrowed by its guard, had made a copy of magpie's `place`
+--- whose bytes were no value, and the flush that later handed bytes
+--- reached that copy — an internal error (crow check --self, `merge` of a
+--- parsed value). The program stops alike in both modes, at the text the
+--- log's directory had to be.
+use magpie
+
+log['merging a parsed value']
+log[merge[json['{"a": 1}'], true]]
+log['not reached']

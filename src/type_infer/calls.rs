@@ -146,7 +146,13 @@ impl TypeContext {
                     // where it is read — unwrapped at the call, the
                     // compiled program had stopped before the body's own
                     // `type[t] eq 'int'` could tell none)
+                    // (and a value of no value — an early round's answer of a
+                    // function whose first return is an error — says nothing
+                    // either: kept, it had made a copy of `place` whose bytes
+                    // were no value, and the call that later handed bytes
+                    // reached it — crow check --self)
                     let normalized = match at {
+                        Ty::Unit => Ty::Unknown,
                         Ty::Result(inner) if matches!(inner.as_ref(), Ty::Unit) => Ty::Unknown,
                         Ty::Result(inner) => *inner.clone(),
                         other => other.clone(),
@@ -345,6 +351,7 @@ impl TypeContext {
                 continue;
             }
             let walked = crate::table::walked_param(name, args.len()).and_then(|w| arg_types.get(w)).map(|t| t.payload().clone());
+            let record = crate::table::record_param(name, args.len()).and_then(|w| arg_types.get(w)).map(|t| t.payload().clone());
             let resolved: Vec<Ty> = sig
                 .params
                 .iter()
@@ -355,6 +362,8 @@ impl TypeContext {
                         Some(Ty::Column(cell)) => cell.as_ref().clone(),
                         _ => Ty::Unknown,
                     },
+                    // (the record the row holds: `revise`'s default's kind)
+                    crate::table::Kind::Record => record.clone().unwrap_or(Ty::Unknown),
                     k => k.ty(),
                 })
                 .collect();
@@ -369,6 +378,7 @@ impl TypeContext {
             let mut given: Vec<Ty> = resolved.clone();
             if sig.rest {
                 given.extend(arg_types.get(i + 1..).unwrap_or(&[]).iter().map(|t| match t {
+                    Ty::Unit => Ty::Unknown,
                     Ty::Result(inner) if matches!(inner.as_ref(), Ty::Unit) => Ty::Unknown,
                     Ty::Result(inner) => *inner.clone(),
                     other => other.clone(),

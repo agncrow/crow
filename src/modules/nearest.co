@@ -12,6 +12,8 @@ use bits
 use frame
 use math
 use magpie.file
+use magpie.tail
+use magpie.merge
 
 --- a scored row: its score, its position, and where it lies
 struct Hit [score, pos, file, group, row]
@@ -124,7 +126,7 @@ fn nearest_rows[paths, column, query, k]
         if '/.pending' in p
             --- (the sequencer's pending rows, read through the kernel until
             --- the sequencer is Crow's: scored as one group)
-            df = batch_read[p, slice[['x'], 0, 0]]
+            df = pending_at[p]
             if not df.ok
                 return error[df.reason, 'magpie']
             pending = set[pending, fi, df]
@@ -218,6 +220,13 @@ fn _file_scored[best, r, p, column, uq, fi, k]
             out = more
     return out
 
+--- the rows nearest answered, as `id:score` pairs
+fn _shown[f]
+    out = []
+    for i in range[len[f]]
+        out = push[out, '`f.id[i]`:`f.score[i]`']
+    return join[out, ' ']
+
 --- the same rows and scores as the kernel's nearest, across two files: a
 --- row of zeros, a missing cell, rows tied on the score
 test nearest_is_the_kernels[]
@@ -228,16 +237,20 @@ test nearest_is_the_kernels[]
     made = mkdir[dir]
     f1 = frame.new[id = [1, 2, 3], e = [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]]
     f2 = frame.new[id = [4, 5, 6], e = [[2.0, 0.0], [0.0, 0.0], [3.0, 4.0]]]
-    a = batch_write[dir, 1, 0, f1, nothing, nothing, true]
-    b = batch_write[dir, 2, 3, f2, nothing, nothing, true]
+    a = write_batch[dir, 1, 0, f1, nothing, nothing]
+    b = write_batch[dir, 2, 3, f2, nothing, nothing]
     paths = ['`dir`/000000000001.batch', '`dir`/000000000002.batch']
+    seen = []
     for q in [[1.0, 0.0], [0.0, 1.0], [0.6, 0.8], [-1.0, 0.5]]
         for k in [1, 3, 10]
             mine = nearest_rows[paths, 'e', q, k]
-            theirs = batch_nearest[paths, 'e', tensor[q], k]
-            assert[mine.id eq theirs.id]
-            assert[str[mine.score] eq str[theirs.score]]
+            seen = push[seen, _shown[mine]]
+    --- (recorded from the Rust kernel before it was deleted, 2026-10-28)
+    assert[seen eq ['1:1', '1:1 4:1 3:0.7071067811865475', '1:1 4:1 3:0.7071067811865475 6:0.6 2:0 5:0', '2:1', '2:1 6:0.8 3:0.7071067811865475', '2:1 6:0.8 3:0.7071067811865475 1:0 4:0 5:0', '6:1', '6:1 3:0.9899494936611665 2:0.8', '6:1 3:0.9899494936611665 2:0.8 1:0.6 4:0.6 5:0', '2:0.4472135954999579', '2:0.4472135954999579 5:0 6:-0.1788854381999831', '2:0.4472135954999579 5:0 6:-0.1788854381999831 3:-0.3162277660168379 1:-0.8944271909999159 4:-0.8944271909999159']]
     assert[len[nearest_rows[paths, 'e', [1.0, 0.0], 0]] eq 0]
-    assert[nearest_rows[paths, 'e', [1.0, 0.0, 0.0], 3].reason eq batch_nearest[paths, 'e', tensor[[1.0, 0.0, 0.0]], 3].reason]
-    assert[nearest_rows[paths, 'id', [1.0, 0.0], 3].reason eq batch_nearest[paths, 'id', tensor[[1.0, 0.0]], 3].reason]
-    assert[nearest_rows[paths, 'e', [1.0, 0.0], -1].reason eq batch_nearest[paths, 'e', tensor[[1.0, 0.0]], -1].reason]
+    wide = nearest_rows[paths, 'e', [1.0, 0.0, 0.0], 3]
+    assert[wide.reason eq 'batch: column \'e\' holds vectors of width 2, and the query has 3 numbers']
+    by_id = nearest_rows[paths, 'id', [1.0, 0.0], 3]
+    assert[by_id.reason eq 'batch: column \'id\' holds int, not vectors']
+    below = nearest_rows[paths, 'e', [1.0, 0.0], -1]
+    assert[below.reason eq 'batch: nearest answers at most k rows, and k is -1']

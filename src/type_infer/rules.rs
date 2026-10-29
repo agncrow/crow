@@ -84,6 +84,16 @@ impl TypeContext {
                         _ => Ty::Unknown,
                     }
                 }
+                // (a record of any kind: the row's record argument's — and a
+                // revision answers what its function answers, a failure
+                // where the function's answer can fail)
+                crate::table::Kind::Record => {
+                    let held = row.ty_given(&args.iter().map(|a| arg_ty(a)).collect::<Vec<_>>());
+                    let fails = crate::table::fn_params(name, args.len()).iter().any(|(i, sig)| {
+                        sig.ret == crate::table::Kind::Record && matches!(args.get(*i), Some(Expr::Ident(f)) if self.functions.get(f).is_some_and(|s| s.return_type.is_result()))
+                    });
+                    return if fails { Ty::Result(Box::new(held.payload().clone())) } else { held };
+                }
                 k => k.ty(),
             };
             return match row.fails {

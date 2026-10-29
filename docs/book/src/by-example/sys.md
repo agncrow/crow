@@ -344,92 +344,6 @@ clock
 "noon in ROME"
 ```
 
-A batch file is the log's unit (`use magpie` stands on these four rows): a
-frame written once with its rows' positions, sorted by key, and the
-statistics a reader prunes by in its head.
-
-```crow
-use sys
-use frame
-
-gone = rm['ex_batches']
-made = mkdir['ex_batches']
-f = frame.new[id = [3, 1, 2], name = ['Apple pie', 'banana split', 'cherry tart']]
-path = batch_write['ex_batches', 0, 100, f, ['id'], ['name'], true]
-log[path]
-log[batch_read[path, []].id]
-log[batch_read[path, ['_pos']]._pos]
-s = json[batch_stats[path]]
-log[int[s.rows]]
-log[s.columns.id.cells]
-log[batch_admits[path, 'id', '2', false]]
-log[batch_admits[path, 'id', '9', false]]
-log[batch_admits[path, 'name', 'APPLE', true]]
-log[batch_write['ex_batches', 0, 100, f, [], [], true].kind]
-more = batch_write['ex_batches', 1, 103, frame.new[id = [1], name = ['apple crumble']], ['id'], ['name'], true]
-declared = batch_declare['ex_batches', ['id'], '{}']
-log[declared]
-log[batch_declared['ex_batches'] eq declared]
-seg = batch_merge['ex_batches', ['ex_batches/000000000000.batch', 'ex_batches/000000000001.batch'], false]
-log[seg]
-log[batch_catalog['ex_batches'].name]
-log[batch_read[seg, []].name]
-log[batch_find[['ex_batches/S000000000001.segment'], ['id'], ['2'], ['name']].name]
-log[len[batch_find[['ex_batches/S000000000001.segment'], ['id'], ['9'], []]]]
-log[batch_since[['ex_batches/000000000000.batch'], 101, -1, ['name']].name]
-log[batch_between[['ex_batches/S000000000001.segment'], 'id', '2', '3', -1, ['name']].name]
-log[batch_sync['ex_batches']]
-log[tail_put['ex_batches', frame.new[id = [9], name = ['elderberry']]]]
-log[tail_pending['ex_batches']]
-log[tail_get['ex_batches', ['9']].name]
-log[tail_last['ex_batches', ['9']]]
-log[tail_flush['ex_batches']]
-log[tail_pending['ex_batches']]
-log[tail_forget['ex_batches']]
-log[batch_search[['ex_batches/S000000000001.segment'], 'name', ['apple'], 5, false, 0].id]
-log[batch_summary[['ex_batches/S000000000001.segment'], [], ['id'], ['sum'], [], [], [], '', '', -1].id_sum]
-log[batch_asof[['ex_batches/S000000000001.segment'], frame.new[id = [2], t = [5]], ['id'], 't', [], -1].kind]
-log[batch_nearest[['ex_batches/S000000000001.segment'], 'name', [1.0], 1].kind]
-log[int[json[batch_stats[seg]].tokens.name.docs]]
-log[filesize[seg] gt 100]
-gone = rm['ex_batches']
-```
-
-```text
-ex_batches/000000000000.batch
-[1, 2, 3]
-[101, 102, 100]
-3
-int
-true
-false
-true
-magpie
-{"keys":["id"],"notes":{}}
-true
-ex_batches/S000000000001.segment
-['S000000000001.segment']
-['apple crumble', 'cherry tart', 'Apple pie']
-['cherry tart']
-0
-['cherry tart']
-['Apple pie', 'cherry tart']
-4
-104
-[1, 104, 104]
-['elderberry']
-104
-104
-[0, -1, -1]
-0
-[3, 1]
-[6]
-magpie
-magpie
-3
-true
-```
-
 A program listens too: `listen` binds a port (0 for one the system picks,
 `address` says which), and `accept` answers each connection that arrives
 as a stream of its own. A server written in Crow over the sys layer, as
@@ -460,47 +374,16 @@ sys
 sys
 ```
 
-The Kafka door's per-byte half is two rows: a message set, the legacy
-format every client still writes when told to, as a frame and back, each
-message's checksum checked and written; `unpack` reads the wire's
-big-endian ints as `pack` writes them.
-
-```crow
-use sys
-use frame
-
-recs = frame.new[offset = [0, 1], at = [1700000000000, -1], key = ['k', 'k2'], value = ['one', 'two']]
-encoded = records_of[recs]
-log[len[encoded]]
-back = records[encoded]
-log[back.value]
-log[back.at]
-log[unpack[encoded, 0, 8]]
-log[unpack[pack[-2, 4], 0, 4]]
-log[records[slice[encoded, 0, 20]].ok]
-log[records_of[frame.new[a = [1]]].reason]
-```
-
-```text
-77
-['one', 'two']
-[1700000000000, -1]
-0
--2
-true
-records: the frame holds no column 'offset'
-```
-
 ## Magpie's codec, in Crow
 
-Magpie's kernels are being rewritten in Crow (docs/magpie-in-crow.md),
-and the codec was the first: `use magpie.codec` brings `compress` and
+Magpie's kernels were rewritten in Crow (docs/magpie-in-crow.md), the
+codec first: `use magpie.codec` brings `compress` and
 `decompress`, an LZ77 byte codec of our own over the sys layer's bytes,
 written with the bytes a kernel builds in place — `bytes[n]`, `set`,
 `push` and `concat` where the bytes lie. A stream that is cut short, or
 decodes to another count than promised, is an error value saying why.
-Until the Rust kernel goes, the test-only rows `compress_rs` and
-`decompress_rs` hold the Crow codec to it byte for byte.
+The module's tests hold it to the streams the Rust kernel wrote, byte
+for byte, recorded before the kernel was deleted.
 
 ```crow
 use sys, magpie.codec
@@ -514,12 +397,6 @@ back = decompress[small, len[data]]
 log[same[back, data]]
 log[decompress[small, 50].reason]
 log[decompress[slice[small, 0, 10], 90].reason]
-
---- held to the Rust kernel, byte for byte, until the kernel goes
-test the_stream_is_the_kernels[]
-    text = bytes['hello hello hello hello']
-    assert[same[compress[text], compress_rs[text]]]
-    assert[same[decompress_rs[compress[text], 23], text]]
 ```
 
 ```text
@@ -536,9 +413,7 @@ the codec stream is cut short
 width of bits each, little-endian within and across bytes, and LEB128
 varints for counts — what a Magpie file writes its columns and its
 footer with. A value is a 64-bit pattern held as an int, so one at or
-past 2^63 is the negative int of the same bits. The test-only rows
-`pack_rs`, `unpack_rs`, `put_var_rs` and `read_var_rs` hold the Crow
-module to the kernel until the kernel goes.
+past 2^63 is the negative int of the same bits.
 
 ```crow
 use sys, magpie.packing
@@ -557,18 +432,6 @@ log[hex[counts]]
 log[read_var[counts, 0]]
 log[read_var[counts, 2]]
 log[unpacked[bytes[1], 0, 4, 3].reason]
-
---- held to the kernel, byte for byte, until the kernel goes (a test
---- sees the program's declarations, so it makes its own values)
-test the_bits_are_the_kernels[]
-    nums = []
-    for c in [3, 0, 7, 7, 1, 5]
-        nums = push[nums, int[c]]
-    packed_here = packed[nums, 3]
-    assert[same[packed_here, pack_rs[nums, 3]]]
-    assert[unpack_rs[packed_here, 6, 3] eq nums]
-    assert[same[put_var[bytes[0], 300], put_var_rs[300]]]
-    assert[read_var_rs[put_var[bytes[0], 300], 0] eq [300, 2]]
 ```
 
 ```text
@@ -740,12 +603,6 @@ for c in [0, 1, 0]
 few = text_dict_column[bytes['ab'], range[1, 3], codes, bytes[0]]
 log[text_ends_of[few, 0, 3]]
 log[cell_kind[few]]
-
---- held to the kernel, byte for byte, until the kernel goes
-test the_chunk_is_the_kernels[]
-    tf = frame.new[qty = [3, 1, 2, 1000, -7]]
-    assert[same[chunk[tf.qty, 0, 5, false], encode_rs[tf.qty, 0, 5, false]]]
-    assert[ints_of[decode_rs[chunk[tf.qty, 0, 5, false], 'int'], 0, 5] eq ints_of[tf.qty, 0, 5]]
 ```
 
 ```text
@@ -783,15 +640,6 @@ back = filter_of[raw]
 log[admits[back, bytes['cherry']]]
 log[filter_of[bytes[2]].reason]
 log[same[filter_bytes[filled[sized[3], [bytes['apple'], bytes['banana'], bytes['cherry']]]], raw]]
-
---- held to the kernel, bit for bit, until the kernel goes
-test the_bits_are_the_kernels[]
-    items = [bytes['apple'], bytes['banana'], bytes['cherry']]
-    g = sized[3]
-    for b in items
-        g = add[g, b]
-    assert[same[filter_bytes[g], bloom_rs[items]]]
-    assert[bloom_has_rs[filter_bytes[g], bytes['apple']]]
 ```
 
 ```text
@@ -817,11 +665,6 @@ use sys, magpie.stem
 for w in ['running', 'runs', 'runner', 'generalization', 'ponies', 'Fox', 'the']
     log['`w` → `stem[w]`']
 log[terms['The quick, brown Fox-42 jumps; über naïve 東京!']]
-
---- held to the kernel, word for word, until the kernel goes
-test the_stems_are_the_kernels[]
-    for w in split['the quick brown foxes jumped over the lazily sleeping dogs', ' ']
-        assert[stem[w] eq stem_rs[w]]
 ```
 
 ```text
@@ -863,11 +706,6 @@ log[within[ix, 'fix', 1]]
 log[term_of[ix, 'cat']]
 log[levenshtein['kitchen', 'kitten', 2]]
 log[parsed[bytes[3]].reason]
-
---- held to the kernel, byte for byte, until the kernel goes
-test the_index_is_the_kernels[]
-    tf = frame.new[note = ['the quick brown fox', 'the fox and the dog', 'brown bread']]
-    assert[same[built[tf.note, 0, 3, false].blob, index_rs[tf.note, 0, 3, false]]]
 ```
 
 ```text
@@ -950,12 +788,6 @@ groups = push[groups, g2.rows]
 log[same[finish[out, blocks, groups, cols, 0, 4, ['id'], [], []], made]]
 log[len[magic[]]]
 log[shape_of[cols.names, cols.kinds, cols.indexed].indexed]
-
---- held to the kernel, byte for byte, until the kernel goes
-test the_file_is_the_kernels[]
-    tf = frame.new[id = [3, 1, 2], name = ['Apple pie', 'banana split', 'Cherry tart']]
-    none = slice[['x'], 0, 0]
-    assert[same[file_of[tf, 2, 0, 2, ['id'], ['name'], none, false], file_rs[tf, 0, 2, ['id'], ['name'], none, false, 2]]]
 ```
 
 ```text
@@ -1014,15 +846,6 @@ written = write_listed[dir, with_note[back, 'stem', 'true']]
 log[stems_of[listed[dir]]]
 log[unlisted[].found]
 log[len[with_segments[back, catalog_of[dir]].segments]]
-
---- held to the kernel, byte for byte, until the kernel goes
-test the_manifest_is_the_kernels[]
-    d = 'ex_manifest_k'
-    if exists[d]
-        gone = rm[d]
-    made = mkdir[d]
-    k = batch_declare[d, ['id'], '{"time":"at"}']
-    assert[same[listed_bytes[listed[d]], file['`d`/manifest']]]
 ```
 
 ```text
@@ -1049,7 +872,10 @@ false
 
 `use magpie.merge` is the ninth kernel ported: the streaming merge,
 batches and segments folded into segments of bounded size, one row group
-per input held at a time, the latest version of each key kept.
+per input held at a time, the latest version of each key kept. A batch
+is written as the sequencer's flush writes one: `write_batch` gives each
+row its position in the order it arrives and sorts the rows by the keys,
+and `numbered_bytes` answers the bytes of rows already numbered.
 
 ```crow
 use sys, frame, magpie.file, magpie.manifest, magpie.merge
@@ -1061,10 +887,11 @@ made = mkdir[dir]
 m = declare[dir, ['id'], [], []]
 none = slice[['x'], 0, 0]
 a = frame.new[id = [1, 2, 3], qty = [10, 20, 30], _pos = [0, 1, 2]]
-b = frame.new[id = [2, 4], qty = [25, 40], _pos = [3, 4]]
 pa = place[dir, batch_named[0], file_of[a, 1024, 0, 2, ['id'], none, none, false]]
-pb = place[dir, batch_named[1], file_of[b, 1024, 3, 4, ['id'], none, none, false]]
+pb = write_batch[dir, 1, 3, frame.new[id = [4, 2], qty = [40, 25]], ['id'], none]
 log[pb]
+b = frame.new[id = [2, 4], qty = [25, 40], _pos = [4, 3]]
+log[same[file[pb], numbered_bytes[dir, b, 3, ['id'], none]]]
 seg = merge_files[dir, [pa, pb], false]
 log[seg]
 back = listed[dir]
@@ -1077,31 +904,11 @@ cut = merge_into[dir, [pa, pb], ['id'], none, none, false, true, 7, 48, 120]
 log[cut.counter]
 log[cut.written[0].name]
 log[cut.written[0].rows]
-
---- held to the kernel, byte for byte, until the kernel goes
-test the_merge_is_the_kernels[]
-    none = slice[['x'], 0, 0]
-    d = 'ex_merge_t'
-    if exists[d]
-        gone = rm[d]
-    made = mkdir[d]
-    x = frame.new[id = [1, 2, 3], qty = [10, 20, 30], _pos = [0, 1, 2]]
-    y = frame.new[id = [2, 4], qty = [25, 40], _pos = [3, 4]]
-    px = place[d, batch_named[0], file_of[x, 1024, 0, 2, ['id'], none, none, false]]
-    py = place[d, batch_named[1], file_of[y, 1024, 3, 4, ['id'], none, none, false]]
-    mine = merge_into[d, [px, py], ['id'], none, none, false, true, 0, 48, 120]
-    k = 'ex_merge_k'
-    if exists[k]
-        gone_k = rm[k]
-    made_k = mkdir[k]
-    theirs = stream_rs[k, [px, py], ['id'], none, none, false, true, 0, 48, 120]
-    assert[len[theirs] eq len[mine.written]]
-    for i in range[len[theirs]]
-        assert[same[file['`k`/`theirs[i]`'], file['`d`/`mine.written[i].name`']]]
 ```
 
 ```text
 ex_merge/000000000001.batch
+true
 ex_merge/S000000000001.segment
 ['S000000000001.segment']
 [4]
@@ -1227,4 +1034,41 @@ hello hello hello hello
 hello hello hello hello
 76
 ['one', 'two']
+```
+
+`use magpie.tail` is the sequencer in Crow: the rows put since the last
+flush, numbered as they arrive and held for the process in its memory
+with each key's last position and newest row, flushed as one batch file
+by the work a put asks for — what this process reads at once, and
+another once flushed.
+
+```crow
+use sys, frame, magpie.manifest, magpie.tail
+
+dir = 'ex_tail'
+if exists[dir]
+    gone = rm[dir]
+made = mkdir[dir]
+none = slice[['x'], 0, 0]
+m = declare[dir, ['id'], none, none]
+log[put_rows[dir, frame.new[id = [1, 2], qty = [10, 20]]]]
+log[put_rows[dir, frame.new[id = [2], qty = [25]]]]
+log[last_position[dir, ['2']]]
+log[newest_row[dir, ['2']].qty]
+done = flush_rows[dir]
+log[pending_of[dir]]
+log[len[pending_rows[dir, 2, 2]] gt 0]
+log[pending_at['ex_tail/.pending@0-0'].ok]
+log[forget_log[dir]]
+```
+
+```text
+0
+2
+2
+[25]
+[0, -1, -1]
+true
+true
+ex_tail
 ```

@@ -1,6 +1,7 @@
 --- the sequencer against Redis and Postgres on the loopback, small: N
---- point writes (a key's row put, flushed within ten milliseconds — or a
---- batch, durable before it answers), then N point reads of a key's
+--- point writes (a key's row put, its flush asked through `later` and
+--- the puts that arrive during a flush joining the next — or a batch,
+--- durable before it answers), then N point reads of a key's
 --- newest row; Redis asked by redis-benchmark beside it (SET/GET, Redis's
 --- default durability, no flush), Postgres by INSERT and SELECT
 --- on a primary key (a commit per statement, flushed as Postgres flushes)

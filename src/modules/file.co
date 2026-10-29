@@ -990,17 +990,22 @@ fn _same_frames[a, b]
                 return false
     return true
 
+--- a short digest of bytes: what a recorded answer is held to
+fn _digest[b]
+    return slice[hash[b, 'sha256'], 0, 16]
+
 --- a file of two groups is the kernel's byte for byte — plain, narrow and
 --- stemmed — and reads back by column and by group as the kernel reads it
 test a_file_of_two_groups_is_the_kernels_and_reads_back[]
+    seen = []
     df = _frame[]
     keyed = ['id']
     texts = ['name']
     nothing = slice[['x'], 0, 0]
     made = file_of[df, 3, 0, 4, keyed, texts, nothing, false]
-    assert[same[made, file_rs[df, 0, 4, keyed, texts, nothing, false, 3]]]
-    assert[same[file_of[df, 3, 0, 4, keyed, texts, ['price'], true], file_rs[df, 0, 4, keyed, texts, ['price'], true, 3]]]
-    assert[same[file_of[df, 5, 0, 4, nothing, nothing, nothing, false], file_rs[df, 0, 4, nothing, nothing, nothing, false, 5]]]
+    seen = push[seen, _digest[made]]
+    seen = push[seen, _digest[file_of[df, 3, 0, 4, keyed, texts, ['price'], true]]]
+    seen = push[seen, _digest[file_of[df, 5, 0, 4, nothing, nothing, nothing, false]]]
     assert[rows_per_group[df] eq 89240]
     assert[not file_of[df, 3, 0, 4, keyed, ['ok'], nothing, false].ok]
     assert[not file_of[df, 3, 0, 4, keyed, ['nosuch'], nothing, false].ok]
@@ -1040,7 +1045,6 @@ test a_file_of_two_groups_is_the_kernels_and_reads_back[]
     assert[whole.name[4] eq 'durian']
     assert[same[present_of[whole.price, 0, 5], present_of[df.price, 0, 5]]]
     assert[_same_frames[whole, df]]
-    assert[_same_frames[whole, batch_read[path, nothing]]]
     two = group_of[r, 1, wanted[r, ['name', '_pos']]]
     assert[two.columns eq ['name', '_pos']]
     assert[two._pos[1] eq 4]
@@ -1049,15 +1053,18 @@ test a_file_of_two_groups_is_the_kernels_and_reads_back[]
     none = []
     assert[len[empty_of[r, wanted[r, nothing]].columns] eq 5]
     a = about[path]
-    s = json[batch_stats[path]]
-    assert[a.rows eq s.rows and a.first eq s.first and a.last eq s.last and a.groups eq s.groups]
-    assert[a.docs[1] eq s.tokens.name.docs and a.words[1] eq s.tokens.name.words]
-    assert[a.kinds[4] eq s.columns.price.cells]
+    --- (the kernel's statistics of the file, recorded before it was deleted)
+    assert[a.rows eq 5 and a.first eq 0 and a.last eq 4 and a.groups eq 2]
+    assert[a.docs[1] eq 5 and a.words[1] eq 9]
+    assert[a.kinds[4] eq 'float']
+    --- (recorded from the Rust kernel before it was deleted, 2026-10-28)
+    assert[seen eq ['a692879fde2188b8', '3f2874e804f39dd2', '744e400283417111']]
 
 --- the bounds of a float column the kernel keeps: negative zero below
 --- zero, NaN left out, a group of NaN alone with none; and a column of
 --- many distinct values keeps no filter
 test float_bounds_and_wide_columns_are_the_kernels[]
+    seen = []
     nothing = slice[['x'], 0, 0]
     nan = 0.0 / 0.0
     zs = _floats[0.0, -0.0, 1.5, nan, -0.0]
@@ -1065,12 +1072,14 @@ test float_bounds_and_wide_columns_are_the_kernels[]
     f = frame.new[]
     f.z = floats_column[concat[zs, more], bytes[0]]
     f.n = ints_column[range[10], bytes[0]]
-    assert[same[file_of[f, 2, 0, 9, nothing, nothing, nothing, false], file_rs[f, 0, 9, nothing, nothing, nothing, false, 2]]]
-    assert[same[file_of[f, 5, 0, 9, nothing, nothing, nothing, false], file_rs[f, 0, 9, nothing, nothing, nothing, false, 5]]]
+    seen = push[seen, _digest[file_of[f, 2, 0, 9, nothing, nothing, nothing, false]]]
+    seen = push[seen, _digest[file_of[f, 5, 0, 9, nothing, nothing, nothing, false]]]
     wide = frame.new[]
     wide.k = ints_column[range[70000], bytes[0]]
     made = file_of[wide, 70000, 0, 69999, nothing, nothing, nothing, false]
-    assert[same[made, file_rs[wide, 0, 69999, nothing, nothing, nothing, false, 70000]]]
+    seen = push[seen, _digest[made]]
+    --- (recorded from the Rust kernel before it was deleted, 2026-10-28)
+    assert[seen eq ['b615727a56f51938', '5544b4ab215154ec', '57f9e71445850c6a']]
 
 --- a torn or foreign file is refused with its reason, in the kernel's words
 test a_torn_or_foreign_file_is_refused_with_its_reason[]
@@ -1084,16 +1093,17 @@ test a_torn_or_foreign_file_is_refused_with_its_reason[]
     e = opened[cut]
     assert[not e.ok]
     assert[find[e.reason, 'cut short'].ok]
-    assert[e.reason eq batch_read[cut, nothing].reason]
+    --- (the kernel's words, recorded before it was deleted, 2026-10-28)
+    assert[e.reason eq 'magpie: \'target/crow_file_test/cut.batch\' is cut short: its end carries no footer']
     foreign = '`dir`/foreign.batch'
     kept = store[foreign, bytes['PAR1 this is not a magpie file at all, not even close']]
     assert[find[opened[foreign].reason, 'no Magpie file'].ok]
-    assert[opened[foreign].reason eq batch_read[foreign, nothing].reason]
+    assert[opened[foreign].reason eq 'magpie: \'target/crow_file_test/foreign.batch\' is no Magpie file: its end carries no magic']
     newer = '`dir`/newer.batch'
     b = made
     b = set[b, len[b] - 1, 9]
     b = set[b, 7, 9]
     kept = store[newer, b]
     assert[find[opened[newer].reason, 'format 9'].ok]
-    assert[opened[newer].reason eq batch_read[newer, nothing].reason]
+    assert[opened[newer].reason eq 'magpie: \'target/crow_file_test/newer.batch\' was written in format 9, and this Crow reads format 2 — read it with the Crow that wrote it, or a newer one']
     assert[find[opened['`dir`/nosuch.batch'].reason, 'cannot read'].ok]

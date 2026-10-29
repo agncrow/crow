@@ -13,6 +13,10 @@ use bits
 use frame
 use math
 use magpie.file
+use magpie.tail
+use magpie.manifest
+use magpie.merge
+use magpie.encode
 use magpie.bloom
 use magpie.postings
 use magpie.stem
@@ -271,7 +275,7 @@ fn _part_of[path, column, query, atoms, stems]
         no_df = push[no_df, 0]
     if _pending_path[path]
         --- (the tail's pending rows, read whole and scanned as one group)
-        rows_of = batch_read[path, slice[['x'], 0, 0]]
+        rows_of = pending_at[path]
         if not rows_of.ok
             return error[rows_of.reason, 'magpie']
         if column not in rows_of.columns
@@ -790,44 +794,23 @@ fn _fresh[dir]
     made = mkdir[dir]
     return dir
 
---- whether two frames hold the same columns and cells, kind for kind
-fn _alike[a, b]
-    if a.columns ne b.columns or len[a] ne len[b]
-        log['shape: `a.columns` `len[a]` against `b.columns` `len[b]`']
-        return false
-    n = len[a]
-    for name in a.columns
-        x = a.`name`
-        y = b.`name`
-        if cell_kind[x] ne cell_kind[y]
-            log['kind of `name`: `cell_kind[x]` against `cell_kind[y]`']
-            return false
-        if not same[present_of[x, 0, n], present_of[y, 0, n]]
-            log['missing in `name`']
-            return false
-        if not _same_cells[x, y, n]
-            log['`name`: `str[x]` against `str[y]`']
-            return false
-    return true
-
-fn _same_cells[x, y, n]
-    kind = cell_kind[x]
-    if kind eq 'int'
-        return ints_of[x, 0, n] eq ints_of[y, 0, n]
-    if kind eq 'float'
-        return same[float_bytes[floats_of[x, 0, n], 8, true], float_bytes[floats_of[y, 0, n], 8, true]]
-    if kind eq 'bool'
-        return bools_of[x, 0, n] eq bools_of[y, 0, n]
-    if kind eq 'text'
-        return same[text_bytes_of[x, 0, n], text_bytes_of[y, 0, n]] and text_ends_of[x, 0, n] eq text_ends_of[y, 0, n]
-    return vectors_of[x, 0, n] eq vectors_of[y, 0, n]
+--- a frame's image, digested — each column's name and its chunk (its
+--- kind, its missing cells, its cells, as magpie.encode writes them):
+--- what a recorded answer is held to
+fn _image[f]
+    n = len[f]
+    out = bytes['`n`']
+    for name in f.columns
+        out = concat[out, bytes[name]]
+        out = concat[out, chunk[f.`name`, 0, n, false]]
+    return slice[hash[out, 'sha256'], 0, 16]
 
 --- the same rows, scores and snippets as the kernel's search, over a
 --- batch (scanned) and a segment (indexed), for every query form
 test search_is_the_kernels[]
     nothing = slice[['x'], 0, 0]
     dir = _fresh['target/crow_search_k']
-    k = batch_declare[dir, ['id'], '']
+    k = declare[dir, ['id'], nothing, nothing]
     notes = ['a crate of apples for the shop', 'pears for the kitchen table', 'the kitchen table holds apples and pears', 'running late to the kitchen', 'kitten on the kitchen table', 'apple pie, apple tart', 'nothing here', 'Kitchens and kitchenware']
     ids = []
     texts = []
@@ -835,28 +818,35 @@ test search_is_the_kernels[]
         ids = push[ids, i]
         texts = push[texts, '`notes[i % 8]` `i`']
     df = frame.new[id = ids, note = texts]
-    a = batch_write[dir, 0, 0, frame.head[df, 32], ['id'], ['note'], false]
-    b = batch_write[dir, 1, 32, frame.tail[df, 32], ['id'], nothing, false]
-    merged = batch_merge[dir, ['`dir`/000000000000.batch'], false]
+    a = write_batch[dir, 0, 0, frame.head[df, 32], ['id'], ['note']]
+    b = write_batch[dir, 1, 32, frame.tail[df, 32], ['id'], nothing]
+    merged = merge_files[dir, ['`dir`/000000000000.batch'], false]
     paths = ['`dir`/000000000001.batch']
     seg = ls[dir]
     for f in seg
         if ends[f, '.segment']
             paths = push[paths, '`dir`/`f`']
     queries = [['apples'], ['kitchen table'], ['kit*'], ['kitchn~'], ['kitchn~1'], ['apples', 'pears'], ['running'], ['zzz'], ['table', 'kit*']]
+    seen = []
     for q in queries
+        images = ''
         for kk in [1, 3, 100]
             for sn in [0, 6]
                 for st in [false, true]
                     mine = search_rows[paths, 'note', q, kk, st, sn]
-                    theirs = batch_search[paths, 'note', q, kk, st, sn]
-                    if not _alike[mine, theirs]
-                        log['`q` `kk` `sn` `st`']
-                    assert[_alike[mine, theirs]]
+                    images = '`images` `_image[mine]`'
+        seen = push[seen, slice[hash[bytes[images], 'sha256'], 0, 16]]
+    --- (the kernel's rows for each query — twelve searches each, by k, the
+    --- snippet's words and stemming — recorded before it was deleted,
+    --- 2026-10-28)
+    assert[seen eq ['894242474a3a7067', '031adb8760b3f5c0', 'd56a80f8a501aa8d', 'ab96ef285d5867c8', '301bf679b3238b2b', 'f31a3920e4bf5d53', 'ec2ec2ae81e90133', 'c574469e515bd48c', 'f25d477064fd5b76']]
     shown = search_rows[paths, 'note', ['kitchen table', 'apples'], 4, false, 8]
     log[shown.id]
     log[shown.score]
     log[shown.snippet]
-    assert[search_rows[paths, 'note', ['apples'], -1, false, 0].reason eq batch_search[paths, 'note', ['apples'], -1, false, 0].reason]
-    assert[search_rows[paths, 'id', ['apples'], 3, false, 0].reason eq batch_search[paths, 'id', ['apples'], 3, false, 0].reason]
-    assert[_alike[search_rows[nothing, 'note', ['apples'], 3, false, 4], batch_search[nothing, 'note', ['apples'], 3, false, 4]]]
+    below = search_rows[paths, 'note', ['apples'], -1, false, 0]
+    assert[below.reason eq 'batch: a search answers at most k rows, and k is -1']
+    by_id = search_rows[paths, 'id', ['apples'], 3, false, 0]
+    assert[by_id.reason eq 'batch: column \'id\' holds no text to search']
+    unfound = search_rows[nothing, 'note', ['apples'], 3, false, 4]
+    assert[_image[unfound] eq 'dd40ad4ba01e0ec1']

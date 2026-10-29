@@ -1,0 +1,15 @@
+--- a list a record holds that nothing ever fills: its items are of no
+--- known kind, and `len` of one is the text's (the compiled program holds
+--- such a value as text; the list's length had been printed, and the
+--- program did not build)
+struct Shelf [name, parts]
+
+fn pending[s]
+    n = 0
+    for p in s.parts
+        n = n + len[p]
+    return n
+
+s = Shelf['a', []]
+log[pending[s]]
+log[s.name]

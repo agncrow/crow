@@ -1404,3 +1404,31 @@ steps on every push and must be green.
   (2026-10-22); macOS's `kill` reads it right, so only CI shows it.
   `sys::group_signal_args` builds the form (and signals no pid of 0 or 1);
   main.rs and served_parity.rs already wrote it.
+
+- Magpie is Crow (2026-10-28): `src/modules/{magpie,tail,merge,file,
+  manifest,encode,codec,packing,bloom,stem,postings,exec,search,nearest,
+  inflate,snappy,records}.co`; the Rust kernels and their sys rows are
+  deleted. The modules' tests hold the port to the kernels' answers as
+  recorded digests (`_digest`: the first 16 hex digits of a SHA-256 of
+  the bytes; `_image` of a frame: its columns' names and chunks) — a
+  deliberate change of the format changes those literals, and says why.
+  The sequencer's flush goes through `later`, which the interpreter runs
+  inline: under `crow run -i` each put is written at once, compiled a
+  thread writes what is pending, so no test may read the file listing
+  between a put and a `sync` (the book's `sync` count had been 2 with
+  the kernel's 10 ms flusher, 3 now).
+- A parameter is a variable of its function (2026-10-28): the body
+  widening it (an int given a float, a list of ints given floats) widens
+  the signature and every call converts (`leave_fn_scan`); reassigning
+  it another kind is refused as a local's is (`local_types` is seeded
+  with the parameters); a call's concrete kind replaces a kind no call
+  supports — the body's own guess — but never flips between two calls'
+  kinds (`called_so`), nor for a function taking a function. A value of
+  no known kind walked or indexed out of a list of nothing and handed to
+  a function is text, as the emitter holds it, where the program's own
+  code reaches the call (`text_items`, `call_edges`,
+  `default_unknown_params`): a module function nothing calls keeps its
+  unknowns, or its body is refused in programs that never call it. The
+  emitter chooses a row by name for such a value as text's
+  (`held_kind`): `len[p]` of a part of the tail nothing filled had
+  printed a list's length of a `String` (parity 327).

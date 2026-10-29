@@ -238,6 +238,7 @@ fn tried_first(k: Kind) -> &'static [&'static str] {
         // a function handed to a row: the check's own predicates; a
         // walked collection: the lists, a tensor, a column; a connection
         Kind::FnOf(_) => &["pred"],
+        Kind::Record => &["record"],
         Kind::Walked => &["ints", "texts", "vector", "colint"],
         Kind::Db | Kind::Tx => &["conn"],
         Kind::Request | Kind::Found => &[],
@@ -2000,6 +2001,7 @@ fn run_batch(exe: &Path, dir: &Path, file: &str, binary: Option<&Path>, config: 
         };
         cmd.env("CROW_FROM", format!("c{}", from)).env("CROW_TO", format!("c{}", to));
         let (code, out, last, ended) = spawn(cmd);
+        let (out, last) = (without_run_dir(&out, &run_dir), without_run_dir(&last, &run_dir));
         // the output by case
         let mut marked: Vec<usize> = Vec::new();
         let mut texts: BTreeMap<usize, String> = BTreeMap::new();
@@ -2067,6 +2069,25 @@ fn run_batch(exe: &Path, dir: &Path, file: &str, binary: Option<&Path>, config: 
         hunting = false;
     }
     seen.into_iter().map(|s| s.unwrap_or(Seen { out: String::new(), end: "not run".to_string() })).collect()
+}
+
+/// A run's output with the directory it ran in written `<run>`: each
+/// configuration runs in a directory of its own, and an answer that is an
+/// absolute path (`canonical['self_data.csv']`) names it — the five runs
+/// of one case had disagreed by the directory's name alone. The resolved
+/// form first, as it is the longer (`/private/tmp/…` of `/tmp/…`).
+fn without_run_dir(out: &str, run_dir: &Path) -> String {
+    let mut dirs: Vec<String> = vec![run_dir.to_string_lossy().to_string()];
+    if let Ok(c) = std::fs::canonicalize(run_dir) {
+        dirs.push(c.to_string_lossy().to_string());
+    }
+    dirs.sort_by_key(|d| std::cmp::Reverse(d.len()));
+    dirs.dedup();
+    let mut out = out.to_string();
+    for d in dirs.iter().filter(|d| !d.is_empty()) {
+        out = out.replace(d.as_str(), "<run>");
+    }
+    out
 }
 
 /// The cases the reference answers, written as JSON lines — each one's

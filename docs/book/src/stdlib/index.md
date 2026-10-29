@@ -9,13 +9,14 @@ Every module ships with the compiler: `use` it and its names are there in both e
 | math.stats | `use math.stats` | 13 | [math.stats](math-stats.md) |
 | math.nn | `use math.nn` | 8 | [math.nn](math-nn.md) |
 | io | `use io` | 2 | [io](io.md) |
-| sys | `use sys` | 148 | [sys](sys.md) |
+| sys | `use sys` | 110 | [sys](sys.md) |
 | frame | `use frame` | 21 | [frame](frame.md) |
 | doc | `use doc` | 6 | [doc](doc.md) |
 | chart | `use chart` | 7 | [chart](chart.md) |
 | bits | `use bits` | 11 | [bits](bits.md) |
+| memory | `use memory` | 5 | [memory](memory.md) |
 | llm | `use llm` | 11 | [llm](llm.md) |
-| magpie | `use magpie` | 100 | [magpie](magpie.md) |
+| magpie | `use magpie` | 110 | [magpie](magpie.md) |
 | kafka | `use kafka` | 1 | [kafka](kafka.md) |
 | redis | `use redis` | 1 | [redis](redis.md) |
 | mcp | `use mcp` | 6 | [mcp](mcp.md) |

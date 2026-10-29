@@ -2529,6 +2529,42 @@ impl IrInterp {
                     other => Err(format!("grad[] takes a function, got {}", other.type_name())),
                 }
             }
+            n if crate::table::revises(n) => {
+                // revise[name, default, f, …]: f run under the name's lock
+                // with the record held (the default where none is) and the
+                // rest; what it answers held — nothing changed where its
+                // answer failed (crow_runtime::memory, as compiled)
+                if vals.len() < 3 {
+                    return Err("revise[] takes a name, a record and a function: revise[name, default, f, …]".into());
+                }
+                let name = match &vals[0].value {
+                    Value::Str(s) => s.to_string(),
+                    other => return Err(format!("memory: a name is text, not {}", other.type_name())),
+                };
+                let (kind, shown) = crate::table::held::kind_of(&vals[1])?;
+                let default = vals[1].clone();
+                let f = vals[2].clone();
+                let rest: Vec<CrowValue> = vals[3..].to_vec();
+                // (the record handed over; copied first only where the
+                // function's answer can fail, to be put back then)
+                let can_fail = match &f.value {
+                    Value::Fn(fv) => self.function_named(&fv.name).map_or(true, |x| matches!(x.ret, Ty::Result(_))),
+                    _ => true,
+                };
+                crow_runtime::memory::revise_as(&name, &kind, &shown, default, can_fail, |held| {
+                    let mut args = vec![held];
+                    args.extend(rest);
+                    match self.call_value(&f, args) {
+                        Ok(v) if v.is_error() => (None, Ok(v)),
+                        Ok(v) => match crate::table::held::kind_of(&v) {
+                            Ok((k, _)) if k == kind => (Some(v.clone()), Ok(v)),
+                            Ok((_, given)) => (None, Err(crow_runtime::memory::other_kind(&name, &shown, &given))),
+                            Err(e) => (None, Err(e)),
+                        },
+                        Err(e) => (None, Err(e)),
+                    }
+                })?
+            }
             "later" => {
                 // the interpreter runs the work inline: immediate is a legal
                 // schedule (spec §15) — after the handler that asked commits

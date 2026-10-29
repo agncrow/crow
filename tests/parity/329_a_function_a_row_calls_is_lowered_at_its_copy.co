@@ -1,0 +1,18 @@
+--- A function a row calls with what the row is handed — `revise[name,
+--- default, f, x]` calls f[held, x] — is copied per signature as a call
+--- of it would be, and the row hands the copy its arguments reach: the
+--- function had been refused as a value of several kinds, and a page
+--- calling magpie's `batch` with two frames typed apart refused to start
+--- (the sequencer hands `revise` its `_appended`; examples/magpie)
+use memory
+
+struct Count [n]
+
+fn bump[c, by]
+    return Count[c.n + len[str[by]]]
+
+a = revise['count', Count[0], bump, 12]
+b = revise['count', Count[0], bump, 'abc']
+log[a.n]
+log[b.n]
+log[recall['count', Count[0]].n]

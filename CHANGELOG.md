@@ -9,6 +9,40 @@ history says the rest.
 
 ### Fixed
 
+- A function handed to a builtin that calls it with the call's own
+  arguments — `revise[name, default, f, x]` calls `f[held, x]`,
+  `later[f, a]` calls `f[a]` — is lowered at the version those arguments
+  reach, as a direct call is: inference had made a version per
+  signature and the lowering then refused the function as a value of
+  several kinds, so a page calling magpie's `batch` with two frames
+  typed apart did not start in either mode (parity 329,
+  examples/magpie).
+- A row chosen by name for a value of no known kind is text's, as the
+  compiled program holds such a value: `len[p]` of an item of a list a
+  record holds that nothing ever fills (magpie's pending parts, in a
+  program that only follows a log) had printed a list's length of a
+  text, and `follow` and `metrics` did not build compiled (parity 327).
+  And `crow check --self` writes the directory a case ran in as `<run>`:
+  each configuration runs in its own, and an absolute path
+  (`canonical['self_data.csv']`) had made the five runs disagree.
+- `remember` and `recall` take a record and nothing else: any other
+  value had passed the kinds check and reached the verifier as an
+  internal error (errors j85). And an answer of no value handed on as an
+  argument — an early round's answer of a function whose first return is
+  an error, narrowed by its guard — is noted as a value not known yet,
+  as a call's own place is: `merge` of a parsed value had made a copy of
+  magpie's `place` whose bytes were no value, and was an internal error
+  (parity 328). The stop it makes now names the use without a line
+  inside the module (`handed to starts`): the line had been none of the
+  program's.
+- A local a function returns, its kind not known yet, takes no answer of
+  no value an early round of inference had for the function (its first
+  return an error): joined, magpie's `_fixed` had written no value back
+  to its parameter, and a program calling `backup` alone was an internal
+  error. And a function value a standard module's function hands on is
+  not refused for parameters nothing types where the program does not
+  call that function: only the program's call could type them (parity
+  326).
 - A parameter is a variable of its function: one the body assigns a
   float (`x = x + 0.5`), or a list of ints the body gives floats, holds
   the wider kind and every call converts what it hands; one reassigned
@@ -178,6 +212,24 @@ history says the rest.
 
 ### Added
 
+- `use memory` (`remember`, `recall`, `revise`, `forget`, `canonical`):
+  process memory — a record a program holds for the process under a name,
+  shared by its threads, one kind of record per name, the names a tree (a
+  name forgotten with every name beneath it), a path's records forgotten
+  when `rm` removes the path. `revise` runs a function under the name's
+  lock and hands it the record, copying it only where the function's
+  answer can fail. Reading is the `held` effect, every other call
+  `held.write`; the compiled program holds each record as its own type
+  (`crow_runtime::memory`), alike in both modes.
+- `use magpie.tail` (`put_rows`, `flush_rows`, `pending_of`,
+  `pending_rows`, `pending_at`, `newest_row`, `last_position`,
+  `forget_log`): Magpie's sequencer in Crow over process memory — the rows
+  put since the last flush, each key's last position and newest row held
+  key by key, a flush asked for through `later` — on which `put`,
+  `batch`, `sync`, `latest` of one key and the readers' pending rows run;
+  the crash harness's `pending` cut is the module's. And `write_batch`,
+  `numbered_bytes` in `use magpie.merge`: a batch file written in Crow, as
+  the sequencer's flush writes one.
 - `use magpie.exec` (`summary_of`, `asof_rows`), `use magpie.nearest`
   (`nearest_rows`), `use magpie.search` (`search_rows`, `terms_of`,
   `snippet_of`), and the Kafka door's bytes — `use magpie.inflate`
@@ -640,6 +692,18 @@ history says the rest.
 
 ### Changed
 
+- Magpie is Crow: its Rust kernels — the codec, bit packing, chunk
+  encodings, bloom filter, stemmer, postings, file format, manifest,
+  sequencer, merge, executor, search, nearest, inflate, snappy and the
+  Kafka records (`crow_runtime::magpie`, `kafka.rs`, 7,580 lines) — are
+  deleted, with the sys rows that reached them (`batch_*`, `tail_*`,
+  `records`, `records_of`, `stream_rs` and the test-only `*_rs` oracles).
+  The modules' tests hold the Crow port to the bytes, frames and words the
+  kernels answered, recorded before they went (docs/magpie-in-crow.md).
+- `later[f]` in a compiled script coalesces where it had skipped: a
+  schedule of `f` while `f` runs makes it run once more when it ends, so
+  its last run reads every write made before it (spec §15; the sequencer's
+  flush). The interpreter runs the work inline, as before.
 - The merge indexes no category column (magpie): a text column with
   fewer than one distinct token per 64 documents — a symbol, a day —
   gets no token index, as an identifier-like column gets none, since

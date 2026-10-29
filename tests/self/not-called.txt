@@ -10,7 +10,6 @@ llm.embed	its parameter 'm' is typed by nothing the module's tests hand it (?), 
 llm.follow	its parameter 'm' is typed by nothing the module's tests hand it (?), or takes what no kind names
 llm.next	its parameter 's' is typed by nothing the module's tests hand it (?), or takes what no kind names
 llm.reply	its parameter 's' is typed by nothing the module's tests hand it (?), or takes what no kind names
-magpie.backup	no call of it lowers: internal error: the lowered program disagrees with itself — a bug in Crow, not in this program: fn _magpie__fixed: line 0: hands '_magpie_manifest_declare' Unit for its parameter 'keyed' (argument 2), which is List(Str) (and 2 more)
 magpie.bloom.add	its parameter 'f' is typed by nothing the module's tests hand it (Record(Bloom)), or takes what no kind names
 magpie.bloom.admits	its parameter 'f' is typed by nothing the module's tests hand it (Record(Bloom)), or takes what no kind names
 magpie.bloom.filled	its parameter 'f' is typed by nothing the module's tests hand it (Record(Bloom)), or takes what no kind names
@@ -29,6 +28,7 @@ magpie.file.shape_of	its parameter 'names' is typed by nothing the module's test
 magpie.file.token_filter	its parameter 'r' is typed by nothing the module's tests hand it (Record(Reader)), or takes what no kind names
 magpie.file.value_filter	its parameter 'r' is typed by nothing the module's tests hand it (Record(Reader)), or takes what no kind names
 magpie.file.wanted	its parameter 'r' is typed by nothing the module's tests hand it (Record(Reader)), or takes what no kind names
+magpie.manifest.catalog_of	its parameter 'dir' is typed by nothing the module's tests hand it (?), or takes what no kind names
 magpie.manifest.counter	its parameter 'm' is typed by nothing the module's tests hand it (Record(Listed)), or takes what no kind names
 magpie.manifest.listed_bytes	its parameter 'm' is typed by nothing the module's tests hand it (Record(Listed)), or takes what no kind names
 magpie.manifest.narrow_of	its parameter 'm' is typed by nothing the module's tests hand it (Record(Listed)), or takes what no kind names
@@ -47,25 +47,17 @@ magpie.postings.within	its parameter 'ix' is typed by nothing the module's tests
 magpie.records.message_set	no call of it lowers: line 4: in message_set: frame has no property or column 'offset' — its columns are 'a', 'b', 'f', 'on' (the frame message_set[] is handed as `df`)
 magpie.search.snippet_of	no call of it lowers: line 3: in snippet_of: an int has no field 'word'
 magpie.share	runs until it is stopped: its loop is driven by tests/magpie_share.rs with a follower in both modes, its answers by the module's own tests through _shared
+magpie.tail.flush_rows	its parameter 'dir' is typed by nothing the module's tests hand it (?), or takes what no kind names
+magpie.tail.forget_log	its parameter 'dir' is typed by nothing the module's tests hand it (?), or takes what no kind names
+magpie.tail.last_position	its parameter 'dir' is typed by nothing the module's tests hand it (?), or takes what no kind names
+magpie.tail.newest_row	its parameter 'dir' is typed by nothing the module's tests hand it (?), or takes what no kind names
+magpie.tail.pending_of	its parameter 'dir' is typed by nothing the module's tests hand it (?), or takes what no kind names
+magpie.tail.put_rows	its parameter 'dir' is typed by nothing the module's tests hand it (?), or takes what no kind names
 mcp.answer	a route's request: tests/mcp.rs drives a stand-in client against a Crow program serving /mcp in both modes (discovery, the list, calls, every error the protocol names)
 mcp.listen	serves over the program's own standard streams until its input ends, over a group of tools: tests/mcp.rs and tests/llm_server.rs drive a Crow client against a Crow program serving so, in both modes
 redis.serve	runs until it is stopped: its loop is driven by tests/redis_door.rs with a RESP client in both modes, its answers by the module's own tests through _answer
-sys.bloom_has_rs	no call of it lowers: line 3: 'bloom_has_rs' is a test-harness builtin — it only works inside a test block
-sys.bloom_rs	no call of it lowers: line 3: 'bloom_rs' is a test-harness builtin — it only works inside a test block
-sys.compress_rs	no call of it lowers: line 3: 'compress_rs' is a test-harness builtin — it only works inside a test block
-sys.decode_rs	no call of it lowers: line 3: 'decode_rs' is a test-harness builtin — it only works inside a test block
-sys.decompress_rs	no call of it lowers: line 3: 'decompress_rs' is a test-harness builtin — it only works inside a test block
-sys.encode_rs	no call of it lowers: line 4: 'encode_rs' is a test-harness builtin — it only works inside a test block
-sys.file_rs	no call of it lowers: line 4: 'file_rs' is a test-harness builtin — it only works inside a test block
-sys.index_rs	no call of it lowers: line 4: 'index_rs' is a test-harness builtin — it only works inside a test block
 sys.listen	binds a port the system picks; the listener is driven by accept in the runtime's test, the sys book block and tests/kafka.rs
-sys.pack_rs	no call of it lowers: line 3: 'pack_rs' is a test-harness builtin — it only works inside a test block
 sys.put	its parameter 'path' is typed by nothing the module's tests hand it (?), or takes what no kind names
-sys.put_var_rs	no call of it lowers: line 3: 'put_var_rs' is a test-harness builtin — it only works inside a test block
-sys.read_var_rs	no call of it lowers: line 3: 'read_var_rs' is a test-harness builtin — it only works inside a test block
-sys.stem_rs	no call of it lowers: line 3: 'stem_rs' is a test-harness builtin — it only works inside a test block
-sys.stream_rs	no call of it lowers: line 3: 'stream_rs' is a test-harness builtin — it only works inside a test block
-sys.unpack_rs	no call of it lowers: line 3: 'unpack_rs' is a test-harness builtin — it only works inside a test block
 sys.upgrade	its parameter 'url' is typed by nothing the module's tests hand it (?), or takes what no kind names
 web.ws.close	its parameter 's' is typed by nothing the module's tests hand it (?), or takes what no kind names
 web.ws.socket	its parameter 'url' is typed by nothing the module's tests hand it (?), or takes what no kind names

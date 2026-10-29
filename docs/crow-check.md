@@ -362,7 +362,8 @@ case it was asking, with what it said, and is started again for the next.
 
 Effects run too, each batch in a directory of its own made anew for every
 configuration — a text, a CSV, a JSON document and a directory to read,
-the files a case writes its own — with the environment cleared (no key,
+the files a case writes its own, and its path written `<run>` wherever an
+answer names it (`canonical['self_data.csv']`) — with the environment cleared (no key,
 no token, no database's address), the draws seeded, the clock standing
 still and an empty replay answering every request and every database
 server's statement, so nothing reaches the network or a model. The rows

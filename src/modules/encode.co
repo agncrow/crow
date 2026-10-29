@@ -494,12 +494,17 @@ fn _second_missing[]
     present = set[present, 0, 29]
     return present
 
+--- a short digest of bytes: what a recorded answer is held to
+fn _digest[b]
+    return slice[hash[b, 'sha256'], 0, 16]
+
 --- every kind of column encoded as the kernel encodes it, byte for byte,
 --- with every cell present and with one missing, and read back whole:
 --- ints by frame of reference and by delta, a monotone column packed to
 --- a few bits a row, floats at 64 and 32 bits, text plain and as a
 --- dictionary, bools, moments, vectors, and a payload the codec shrinks
 test the_chunks_are_the_kernels_byte_for_byte[]
+    seen = []
     none = bytes[0]
     gap = _second_missing[]
     cols = []
@@ -517,7 +522,7 @@ test the_chunks_are_the_kernels_byte_for_byte[]
         kind = cell_kind[col]
         narrow = false
         chunk = chunk[col, 0, 5, narrow]
-        assert[same[chunk, encode_rs[col, 0, 5, narrow]]]
+        seen = push[seen, _digest[chunk]]
         back = unchunk[chunk, kind]
         assert[same[present_of[back, 0, 5], present_of[col, 0, 5]]]
         if kind eq 'int'
@@ -530,7 +535,7 @@ test the_chunks_are_the_kernels_byte_for_byte[]
             assert[millis_of[back, 0, 5] eq millis_of[col, 0, 5] and zones_of[back, 0, 5] eq zones_of[col, 0, 5]]
         --- a part of the column, too
         part = chunk[col, 1, 4, narrow]
-        assert[same[part, encode_rs[col, 1, 4, narrow]]]
+        seen = push[seen, _digest[part]]
         assert[same[present_of[unchunk[part, kind], 0, 3], present_of[col, 1, 4]]]
     --- floats and vectors at 32 bits
     narrow_cols = []
@@ -538,19 +543,19 @@ test the_chunks_are_the_kernels_byte_for_byte[]
     narrow_cols = push[narrow_cols, vectors_column[2, concat[_floats[1.0, 0.0, 0.0, 1.0, 0.5], _floats[0.5, 2.0, 3.0, -1.0, 4.0]], none]]
     for col in narrow_cols
         chunk = chunk[col, 0, 5, true]
-        assert[same[chunk, encode_rs[col, 0, 5, true]]]
+        seen = push[seen, _digest[chunk]]
         assert[floats_of[unchunk[chunk, cell_kind[col]], 0, 5] eq floats_of[col, 0, 5]]
     --- text: plain where the values are mostly distinct, a dictionary
     --- where they repeat, and a missing cell among them
     names = frame.new[plain = ['Apple', 'banana', 'cherry', 'durian', 'elder'], few = ['a', 'b', 'a', 'a', 'b']]
     for col in [names.plain, names.few]
         chunk = chunk[col, 0, 5, false]
-        assert[same[chunk, encode_rs[col, 0, 5, false]]]
+        seen = push[seen, _digest[chunk]]
         back = unchunk[chunk, 'text']
         assert[same[text_bytes_of[back, 0, 5], text_bytes_of[col, 0, 5]] and text_ends_of[back, 0, 5] eq text_ends_of[col, 0, 5]]
     holed = text_column[text_bytes_of[names.few, 0, 5], text_ends_of[names.few, 0, 5], gap]
     chunk = chunk[holed, 0, 5, false]
-    assert[same[chunk, encode_rs[holed, 0, 5, false]]]
+    seen = push[seen, _digest[chunk]]
     assert[same[present_of[unchunk[chunk, 'text'], 0, 5], gap]]
     --- a long column: the codec shrinks a monotone int column's payload
     --- (a delta of a few bits a row) and the chunk says so
@@ -559,15 +564,17 @@ test the_chunks_are_the_kernels_byte_for_byte[]
         many = push[many, 1000 + i * 3]
     long = ints_column[many, none]
     chunk = chunk[long, 0, 5000, false]
-    assert[same[chunk, encode_rs[long, 0, 5000, false]]]
+    seen = push[seen, _digest[chunk]]
     assert[ints_of[unchunk[chunk, 'int'], 0, 5000] eq many]
     words = []
     for i in range[300]
         words = push[words, 'word `i - 7 * (i / 7)`']
     texts = frame.new[w = words]
     chunk = chunk[texts.w, 0, 300, false]
-    assert[same[chunk, encode_rs[texts.w, 0, 300, false]]]
+    seen = push[seen, _digest[chunk]]
     assert[same[text_bytes_of[unchunk[chunk, 'text'], 0, 300], text_bytes_of[texts.w, 0, 300]]]
+    --- (recorded from the Rust kernel before it was deleted, 2026-10-28)
+    assert[seen eq ['b55524ec0c594392', '24a538d604701e69', '97d4efb7665dcae8', 'fb2eb0165e133715', 'afa32084a4c0c6c2', '7d89c4353d25f291', 'af40d346896ed808', 'b41829d39fc0b470', '710b9badedc531da', '4ee9968fb3a2aa35', '42db67ca44b8fe9e', 'e2b419c631b37f66', 'a1f40fef71e8629e', '7fa8249a240c720e', '8b4768316c69f139', '08e115fe3b76e2c1', '5dd79c777d1230e0', '2cfd193b5d0b5fac', '29b8504767ad24d1', '43d38bc3bc0607ea', '726d38bec1858cb7', '93febba0f7d8ff2a', '99230a84e6984c73']]
 
 --- a chunk cut short, or promising what it does not hold, is refused with
 --- its reason, as the kernel refuses it
@@ -576,7 +583,6 @@ test a_torn_chunk_is_refused[]
     chunk = chunk[col, 0, 5, false]
     assert[unchunk[slice[chunk, 0, 10], 'int'].reason eq 'the file ends 4 bytes early']
     assert[not unchunk[slice[chunk, 0, len[chunk] - 1], 'int'].ok]
-    assert[not decode_rs[slice[chunk, 0, len[chunk] - 1], 'int'].ok]
     assert[unchunk[chunk, 'float'].reason eq 'a float chunk is not encoding 0']
     assert[unchunk[chunk, 'bool'].reason eq 'a bool chunk is not encoding 0']
     assert[not unchunk[chunk, 'nosuch'].ok]
