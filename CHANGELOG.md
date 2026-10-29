@@ -9,6 +9,14 @@ history says the rest.
 
 ### Fixed
 
+- Magpie's summary groups each unit's rows once — each row's group as
+  its place among the groups, through a map of ints where the key is one
+  int column — and keeps a column of numbers' partials per group as
+  numbers, made records once the rows are read: a group's record had
+  been read out of a map and written back for every row (a summary of
+  two columns by key over 200,000 rows 96 → 9.8 ms; the answers the
+  same to the digit, held by the kernel's recorded digests and a new
+  test of the int key).
 - A search that scans a batch's texts places only the words the query
   asks in each text's map of words to positions, unless a prefix or a
   fuzzy word asks of every word: every word of every text had been

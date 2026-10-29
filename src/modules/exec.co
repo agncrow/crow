@@ -26,6 +26,10 @@ struct Cell [form, whole, real, word, zone, raw]
 --- one aggregate's partial over one key
 struct Partial [count, int_sum, sum, mean, m2, least, most, first_pos, first, last_pos, last]
 
+--- a unit's rows grouped: each row's group as its place among the
+--- groups (-1 for a row left out), and each group's key text and cells
+struct Grouped [places, keys, cells]
+
 fn _none_cell[]
     return Cell[0, 0, 0.0, '', 0, bytes[0]]
 
@@ -669,13 +673,75 @@ fn _unit_rows[df, keys0, ranged, low, high, by, of, on, opw, equal, pcols, upto]
                             if want.ok and _passes[_cmp[c, want], opw[j]]
                                 ok = true
                 keep[i] = ok
+    --- (each row's group found once, as its place among the groups, and
+    --- each column's partials kept per group and made records once the
+    --- rows are read: a group's record read out of the map and written
+    --- back for every row had been most of a summary — 109 ms over
+    --- 200,000 rows where the kernel took 2)
+    grouped = _grouped[df, by, keep]
+    gidx = grouped.places
+    group_keys = grouped.keys
+    group_cells = grouped.cells
+    ng = len[group_keys]
+    columns = []
+    for o in of
+        columns = push[columns, _column_partials[df, o, gidx, ng, pos]]
+    for g in range[ng]
+        partials = []
+        for a in range[len[of]]
+            partials = push[partials, columns[a][g]]
+        out = set[out, group_keys[g], Keyed[group_cells[g], partials]]
+    return out
+
+--- the rows grouped by the key columns: by one int column through a map
+--- of ints, the key's text and cells made once per group; by any other
+--- keys a row's cells and their text at a time
+fn _grouped[df, by, keep]
+    if len[by] eq 1
+        b0 = by[0]
+        if cell_kind[df.`b0`] eq 'int'
+            return _grouped_by_int[df, b0, keep]
+    return _grouped_by_cells[df, by, keep]
+
+--- the rows grouped by one int column: a group per value, in the order
+--- the values first come, a missing key leaving its row out — as
+--- `_grouped_by_cells` groups them, with no text made for a row
+fn _grouped_by_int[df, b, keep]
+    n = len[df]
+    vals = ints_of[df.`b`, 0, n]
+    present = present_of[df.`b`, 0, n]
+    places = map[]
+    labels = slice[['x'], 0, 0]
+    cells = []
+    gidx = []
+    for i in range[n]
+        g = -1
+        if keep[i] and _present[present, i]
+            v = vals[i]
+            if v in places
+                g = places[v]
+            else
+                g = len[labels]
+                places = set[places, v, g]
+                kc = []
+                kc = push[kc, Cell[1, v, 0.0, '', 0, bytes[0]]]
+                labels = push[labels, _key_text[kc]]
+                cells = push[cells, kc]
+        gidx = push[gidx, g]
+    return Grouped[gidx, labels, cells]
+
+--- the rows grouped by their key cells' text
+fn _grouped_by_cells[df, by, keep]
+    n = len[df]
     by_cells = []
     for b in by
         by_cells = push[by_cells, _cells_of[df.`b`]]
-    of_cells = []
-    for o in of
-        of_cells = push[of_cells, _cells_of[df.`o`]]
+    index = map[]
+    group_keys = slice[['x'], 0, 0]
+    group_cells = []
+    gidx = []
     for i in range[n]
+        g = -1
         if keep[i]
             kc = []
             whole = true
@@ -686,19 +752,153 @@ fn _unit_rows[df, keys0, ranged, low, high, by, of, on, opw, equal, pcols, upto]
                 kc = push[kc, c]
             if whole
                 key = _key_text[kc]
-                if key not in out
-                    fresh = []
-                    for a in range[len[of]]
-                        fresh = push[fresh, _empty_partial[]]
-                    out = set[out, key, Keyed[kc, fresh]]
-                entry = out[key]
-                parts = entry.partials
-                for a in range[len[of]]
-                    c = of_cells[a][i]
-                    if c.form ne 0
-                        parts[a] = _added[parts[a], c, pos[i]]
-                out[key] = Keyed[entry.cells, parts]
-    return out
+                if key in index
+                    g = index[key]
+                else
+                    g = len[group_keys]
+                    index = set[index, key, g]
+                    group_keys = push[group_keys, key]
+                    group_cells = push[group_cells, kc]
+        gidx = push[gidx, g]
+    return Grouped[gidx, group_keys, group_cells]
+
+--- a column's partials, one per group, the rows given as their groups'
+--- places (-1 for a row left out): a column of numbers read as its
+--- numbers, any other a cell at a time
+fn _column_partials[df, name, gidx, ng, pos]
+    kind = cell_kind[df.`name`]
+    n = len[df]
+    if kind eq 'float'
+        return _float_partials[floats_of[df.`name`, 0, n], present_of[df.`name`, 0, n], gidx, ng, pos]
+    if kind eq 'int'
+        return _int_partials[ints_of[df.`name`, 0, n], present_of[df.`name`, 0, n], gidx, ng, pos]
+    cells = _cells_of[df.`name`]
+    parts = []
+    for g in range[ng]
+        parts = push[parts, _empty_partial[]]
+    for i in range[len[gidx]]
+        g = gidx[i]
+        if g gte 0
+            c = cells[i]
+            if c.form ne 0
+                parts[g] = _added[parts[g], c, pos[i]]
+    return parts
+
+--- the partials of a column of floats, as `_added` makes them a cell at
+--- a time — a float that is not a number passed over, Welford's mean and
+--- squared deviations in row order, the least and the most, the first
+--- and the last by position — kept as numbers per group
+fn _float_partials[xs, present, gidx, ng, pos]
+    ns = []
+    sums = []
+    avgs = []
+    m2s = []
+    los = []
+    his = []
+    fps = []
+    fvs = []
+    lps = []
+    lvs = []
+    for g in range[ng]
+        ns = push[ns, 0]
+        sums = push[sums, 0.0]
+        avgs = push[avgs, 0.0]
+        m2s = push[m2s, 0.0]
+        los = push[los, 0.0]
+        his = push[his, 0.0]
+        fps = push[fps, -1]
+        fvs = push[fvs, 0.0]
+        lps = push[lps, -1]
+        lvs = push[lvs, 0.0]
+    for i in range[len[gidx]]
+        g = gidx[i]
+        if g gte 0 and _present[present, i]
+            x = xs[i]
+            if x eq x
+                k = ns[g] + 1
+                ns[g] = k
+                sums[g] = sums[g] + x
+                delta = x - avgs[g]
+                avg = avgs[g] + delta / float[k]
+                avgs[g] = avg
+                m2s[g] = m2s[g] + delta * (x - avg)
+                if k eq 1 or x lt los[g]
+                    los[g] = x
+                if k eq 1 or x gt his[g]
+                    his[g] = x
+                at = pos[i]
+                if k eq 1 or at lt fps[g]
+                    fps[g] = at
+                    fvs[g] = x
+                if k eq 1 or at gt lps[g]
+                    lps[g] = at
+                    lvs[g] = x
+    parts = []
+    for g in range[ng]
+        if ns[g] eq 0
+            parts = push[parts, _empty_partial[]]
+        else
+            parts = push[parts, Partial[ns[g], 0, sums[g], avgs[g], m2s[g], Cell[2, 0, los[g], '', 0, bytes[0]], Cell[2, 0, his[g], '', 0, bytes[0]], fps[g], Cell[2, 0, fvs[g], '', 0, bytes[0]], lps[g], Cell[2, 0, lvs[g], '', 0, bytes[0]]]]
+    return parts
+
+--- the partials of a column of ints, as `_added` makes them a cell at a
+--- time — the wrapping sum beside the float one — kept as numbers per
+--- group
+fn _int_partials[vs, present, gidx, ng, pos]
+    ns = []
+    isums = []
+    sums = []
+    avgs = []
+    m2s = []
+    los = []
+    his = []
+    fps = []
+    fvs = []
+    lps = []
+    lvs = []
+    for g in range[ng]
+        ns = push[ns, 0]
+        isums = push[isums, 0]
+        sums = push[sums, 0.0]
+        avgs = push[avgs, 0.0]
+        m2s = push[m2s, 0.0]
+        los = push[los, 0]
+        his = push[his, 0]
+        fps = push[fps, -1]
+        fvs = push[fvs, 0]
+        lps = push[lps, -1]
+        lvs = push[lvs, 0]
+    for i in range[len[gidx]]
+        g = gidx[i]
+        if g gte 0 and _present[present, i]
+            v = vs[i]
+            k = ns[g] + 1
+            ns[g] = k
+            isums[g] = wrapadd[isums[g], v]
+            x = float[v]
+            sums[g] = sums[g] + x
+            delta = x - avgs[g]
+            avg = avgs[g] + delta / float[k]
+            avgs[g] = avg
+            m2s[g] = m2s[g] + delta * (x - avg)
+            if k eq 1 or v lt los[g]
+                los[g] = v
+            if k eq 1 or v gt his[g]
+                his[g] = v
+            at = pos[i]
+            if k eq 1 or at lt fps[g]
+                fps[g] = at
+                fvs[g] = v
+            if k eq 1 or at gt lps[g]
+                lps[g] = at
+                lvs[g] = v
+    parts = []
+    for g in range[ng]
+        if ns[g] eq 0
+            parts = push[parts, _empty_partial[]]
+        else
+            parts = push[parts, Partial[ns[g], isums[g], sums[g], avgs[g], m2s[g], Cell[1, los[g], 0.0, '', 0, bytes[0]], Cell[1, his[g], 0.0, '', 0, bytes[0]], fps[g], Cell[1, fvs[g], 0.0, '', 0, bytes[0]], lps[g], Cell[1, lvs[g], 0.0, '', 0, bytes[0]]]]
+    return parts
 
 --- a column's kind as the first file's footer names it
 fn _kind_in[kinds, path, name]
@@ -1062,6 +1262,36 @@ test summary_is_the_kernels[]
 
 --- the same as-of join as the kernel's: labels between the log's rows,
 --- before the first, past `upto`, with a missing key or moment
+--- a summary by one int column — grouped through a map of ints, the
+--- columns' partials kept per group — answers as the cell-at-a-time
+--- summary did, to the digit
+test summary_by_an_int_column_is_the_cells_summary[]
+    nothing = slice[['x'], 0, 0]
+    dir = _fresh['target/crow_exec_summary_int']
+    k = declare[dir, ['day', 'sym'], nothing, nothing]
+    days = []
+    syms = []
+    pxs = []
+    vols = []
+    for i in range[900]
+        days = push[days, i % 4]
+        syms = push[syms, 's`i % 7`']
+        pxs = push[pxs, float[(i * 37) % 101] / 8.0]
+        vols = push[vols, (i * 13) % 50]
+    df = frame.new[day = days, sym = syms, px = pxs, vol = vols]
+    a = write_batch[dir, 0, 0, df, ['day', 'sym'], nothing]
+    b = write_batch[dir, 1, 900, df, ['day', 'sym'], nothing]
+    paths = ['`dir`/000000000000.batch', '`dir`/000000000001.batch']
+    hows = ['count', 'sum', 'min', 'max', 'mean', 'var', 'std', 'first', 'last']
+    seen = []
+    for h in hows
+        mine = summary_of[paths, ['day'], ['px', 'vol'], [h, h], nothing, nothing, nothing, '', '', -1]
+        seen = push[seen, _image[mine]]
+    ranged = summary_of[paths, ['day'], ['vol'], ['sum'], ['vol'], ['gt'], ['20'], '1', '2', 1200]
+    seen = push[seen, _image[ranged]]
+    --- (recorded from the summary that read a cell at a time, 2026-10-28)
+    assert[seen eq ['2cfbf24bd7febf7b', 'a1412209d8925ba9', '8cde72ef6389338e', 'd111e189aff42cbf', 'e1aaf7f4346cdf3b', 'd6f3678887169574', '244dd458cd0586ee', '73d39a991becd50b', '47538d693bb95200', 'e005b0bb8a61ac6a']]
+
 test asof_is_the_kernels[]
     nothing = slice[['x'], 0, 0]
     dir = _fresh['target/crow_exec_asof']
