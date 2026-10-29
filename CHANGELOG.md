@@ -351,6 +351,14 @@ history says the rest.
 
 ### Breaking
 
+- `use memory` is the standard library's own, as `sys` is (Vijay,
+  2026-10-28): a program's import is refused before it runs (`` `memory`
+  is the standard library's own layer — a program may not import it ``),
+  and process memory is what a module keeps between calls — a program's
+  state is its variables, a page's its facts. The import check reads the
+  module's `internal` flag where it had read the name `sys`, and the
+  parity and errors harnesses open the door the book's pages had, so the
+  programs about memory's rows run there.
 - One value for several names is refused before the program runs, in
   both modes (spec, Multiple Assignment; Design Note: No Destructuring):
   `a, b = xs` and `c, d = pair[]` had run interpreted and not built

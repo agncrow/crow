@@ -131,10 +131,12 @@ pub static MODULES: &[Module] = &[
         ..Module::plain("bits", "_bits")
     },
     // process memory: a record held for the process under a name, shared
-    // by its threads — rows of the table, the store the runtime's
+    // by its threads — rows of the table, the store the runtime's; the
+    // standard library's own, as `sys` is (Vijay, 2026-10-28: what a
+    // module keeps between calls, never a program's state)
     Module {
-        needs: &[RUNTIME], registry: true, known: true, pinned: true,
-        docs: Some("Process memory: a record the program holds for the process under a name, shared by its threads — remembered, recalled, revised under the name's lock, forgotten; what a module keeps between calls."),
+        needs: &[RUNTIME], internal: true, registry: true, pinned: true,
+        docs: Some("Process memory: a record the standard library holds for the process under a name, shared by its threads — remembered, recalled, revised under the name's lock, forgotten; what a module keeps between calls. Only the standard library's modules import it — a program may not."),
         module: Some(|| Arc::new(Named::new("memory"))),
         ..Module::plain("memory", "_memory")
     },

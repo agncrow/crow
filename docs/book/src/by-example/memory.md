@@ -1,5 +1,11 @@
 # Process memory: `use memory`
 
+Process memory is what the standard library's modules keep between calls —
+Magpie's sequencer holds the rows put since its last flush there. A program
+may not import it: a program's state is its variables, and a page's its
+facts. These blocks run through the book harness's door, which a program
+has not, as the `sys` page's do.
+
 ```crow
 use memory
 

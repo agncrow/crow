@@ -519,11 +519,14 @@ What is left, and why:
 
 - **Every read parses the file's footer again**, and every `entries`
   call its block: the kernel kept both for the process (keyed by path,
-  size and change time). In Crow the place to keep them is `use memory`,
-  but `remember` is a write, which a derivation may not make, and pages
-  read Magpie in derivations. A graph's walk is a `lookup` per node, each
+  size and change time). A graph's walk is a `lookup` per node, each
   reading the manifest, the directory and every footer: that is its
-  6.2. Open for Vijay (section 5).
+  6.2. Decided (Vijay, 2026-10-28): nothing is kept between calls —
+  process memory is the standard library's and a program's never, and a
+  form a derivation could call to keep a record was declined — so the
+  reads are made cheap instead: the parsers narrowed to 64 bits, a hop
+  of the graph one call for its whole frontier, a read parsing only the
+  groups and columns it asks.
 - **The encoders and decoders run on growing ints.** Positions count up
   without a bound the width pass can see, and products of counts read
   from bytes (`n * width`) pass 64 bits to it; a function has one
@@ -541,11 +544,6 @@ What is left, and why:
 
 ## 5. Open for Vijay
 
-- Keeping what a process read of a file — a footer, a column's entries —
-  across calls, as the kernel did (4.2): `use memory` is the way, and a
-  derivation may not write memory. Either a cache form a derivation may
-  call (what it keeps answers only what the file already says), or the
-  reads keep nothing between calls and pay for it.
 - A package's parts allowed `use sys` (2.7).
 - The flush through `later`: a put under `crow run -i` is durable when
   it answers, and slower for it (2.4).

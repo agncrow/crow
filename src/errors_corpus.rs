@@ -313,6 +313,11 @@ fn diff(want: &str, got: &str) -> String {
 }
 
 pub fn cmd_test_errors(args: &[String]) -> i32 {
+    // (a program about the standard library's own layer — process memory's
+    // rows, which only the library imports — runs through the harness's
+    // door, as the book's pages do)
+    // SAFETY: set before any program is read or spawned, on one thread
+    unsafe { std::env::set_var("CROW_SYS", "1") };
     let bless = args.iter().any(|a| a == "--bless");
     let only: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
     let dir = Path::new("tests/errors");
