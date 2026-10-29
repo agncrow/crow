@@ -101,10 +101,19 @@ pub fn fs_ls(path: &str) -> Result<Vec<String>, String> {
     Ok(names)
 }
 
-/// `rm[path]`: a file, or a directory with everything in it.
+/// `rm[path]`: a file, or a directory with everything in it. A file a
+/// writer adds while the directory is emptied leaves it not empty at the
+/// end, and the removal is made again (a few times): a log's flush that
+/// placed its file as `rm` ran had kept the directory.
 pub fn fs_rm(path: &str) -> Result<(), String> {
     let p = std::path::Path::new(path);
-    let r = if p.is_dir() { std::fs::remove_dir_all(p) } else { std::fs::remove_file(p) };
+    let mut r = if p.is_dir() { std::fs::remove_dir_all(p) } else { std::fs::remove_file(p) };
+    for _ in 0..4 {
+        match &r {
+            Err(e) if e.kind() == std::io::ErrorKind::DirectoryNotEmpty => r = std::fs::remove_dir_all(p),
+            _ => break,
+        }
+    }
     r.map_err(|e| format!("cannot rm '{}': {}", path, e))
 }
 

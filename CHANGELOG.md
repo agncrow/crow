@@ -9,6 +9,17 @@ history says the rest.
 
 ### Fixed
 
+- A Magpie log removed while its flush ran keeps none of its rows in
+  compiled programs too. The flush runs on a thread of its own there, and
+  one that had claimed the rows before an `rm` wrote them a moment later
+  into the log made again at the path: 50,000 removed rows read back
+  beside the new log's one, and once its one row was lost, since the old
+  flush's settling trimmed the new log's pending rows (parity 434; the
+  interpreter flushes inline). A flush now writes a file of its own
+  claim's and links it under the tail's lock only while the claim holds,
+  which `rm` lets go with the tail; and `rm` removes a directory again
+  where a writer added a file as it emptied it (parity 302 had left its
+  directory behind).
 - Magpie's writes: a number column's distinct values for its filter are
   found by sorting them, where a map had taken a lookup and an insert
   for every cell (the filter and the count the same, byte for byte), and

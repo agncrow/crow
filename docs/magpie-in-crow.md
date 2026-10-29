@@ -486,7 +486,13 @@ What the measures found, each fixed with its test:
   every 10 ms, so puts gathered between flushes. Now the flush claims
   the pending parts under the lock, writes them outside it and lets
   them go under it (`_claimed`, `_written`, `_settled`): the puts that
-  arrive during a write join the next flush, with no timer. A listing
+  arrive during a write join the next flush, with no timer. The write
+  goes to a file of the claim's own, linked into the batch's name under
+  the lock only while the claim holds (`_committed`): `rm` forgets the
+  tail before it removes the directory, so a log removed while its flush
+  ran keeps none of its rows. A flush written wholly outside the lock
+  had put them into the log made again at the path, and trimmed that
+  log's own pending rows as it settled (parity 434). A listing
   that met a flush between its two reads begins the pending rows past
   the file that covers them (`_uncovered`), and `pending_rows` cuts at
   both ends, so no row is read twice or missed.

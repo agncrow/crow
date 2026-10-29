@@ -27,11 +27,12 @@ use magpie.merge
 --- under), its keys, the parts pending (each with `_pos`), the next
 --- position (-1 before the log is read), whether the image is built, the
 --- image's columns (a frame of none of its rows), why the last flush asked
---- for failed (empty for none), what the last revision answers, how many
---- of the parts a flush in flight claimed (0 for none), and why the last
---- revision refused what it was asked (empty for none: a revision that
---- cannot fail is handed the record, where one that can is handed a copy,
---- so a put answers its refusal here). The index and the image are held
+--- for failed (empty for none), what the last revision answers, the claim
+--- of the flush in flight (0 for none: a number no other flush of the
+--- process was given), and why the last revision refused what it was
+--- asked (empty for none: a revision that cannot fail is handed the
+--- record, where one that can is handed a copy, so a put answers its
+--- refusal here). The index and the image are held
 --- key by key beneath the name (`<dir>/#last/<key>`, `<dir>/#row/<key>`),
 --- so a revision copies only what it changes
 struct Tail [dir, keys, parts, next, has_image, template, failed, answer, flushing, refused]
@@ -49,7 +50,8 @@ struct Tails [dirs]
 --- moment's milliseconds; 0 none), as the kernel's key bytes read it
 struct Cell [form, whole, real, word]
 
---- how many times this process reached the crash harness's cut
+--- how many times this process reached the crash harness's cut (and how
+--- many claims its flushes were given)
 struct Reached [count]
 
 --- the name the list of tails is held under
@@ -368,23 +370,37 @@ fn _noted[known, name]
         return known
     return Tails[push[known.dirs, name]]
 
---- the tail with its pending parts claimed by a flush: `answer` how many
---- (0 for none pending), or -1 where a flush in flight claimed some
---- already — its rows are written when it settles, and then the rest
-fn _claimed[t]
+--- a claim no other flush of the process was given
+fn _next_claim[]
+    return revise['magpie.claims', Reached[0], _reached_once].count
+
+--- the tail with its pending parts claimed by a flush, under the claim
+--- given: `answer` how many (0 for none pending), or -1 where a flush in
+--- flight claimed some already — its rows are written when it settles,
+--- and then the rest
+fn _claimed[t, claim]
     if t.flushing gt 0
         return Tail[t.dir, t.keys, t.parts, t.next, t.has_image, t.template, t.failed, -1, t.flushing, '']
     k = len[t.parts]
-    return Tail[t.dir, t.keys, t.parts, t.next, t.has_image, t.template, t.failed, k, k, '']
+    if k eq 0
+        return Tail[t.dir, t.keys, t.parts, t.next, t.has_image, t.template, t.failed, 0, 0, '']
+    return Tail[t.dir, t.keys, t.parts, t.next, t.has_image, t.template, t.failed, k, claim, '']
 
 --- the parts a flush claimed — every part the tail held when it claimed
 --- them, as `t` holds them — written as one batch file and flushed to the
---- disk, the positions as given, outside the tail's lock: a put meanwhile
+--- disk, the positions as given: the bytes written to a file of the
+--- claim's own and flushed outside the tail's lock, so a put meanwhile
 --- waits for no disk and joins the next flush (the kernel's flusher took
---- the lock for its write, a flush every 10 ms); answers the file's first
---- position. The number is the next the directory has; a number another
---- writer took first is tried again
-fn _written[t]
+--- the lock for its write, a flush every 10 ms), then linked into the
+--- batch's name under the lock where the claim still holds (`_committed`).
+--- `rm` forgets the tail before it removes the directory, so the rows of
+--- a log removed while its flush ran go with the log, as they do under
+--- `crow run -i`, where the flush runs inline: written after the `rm`,
+--- they had come back in the log made again at the path, and the two
+--- logs' flushes had shared one file's name. Answers the file's first
+--- position, -1 where the claim was let go. The number is the next the
+--- directory has; a number another writer took first is tried again
+fn _written[t, name, claim]
     whole = _pending_frame[t]
     first = t.next - len[whole]
     --- (the rows sorted by the keys, arrival order kept among equals, each
@@ -392,27 +408,59 @@ fn _written[t]
     data = numbered_bytes[t.dir, whole, first, t.keys, slice[['x'], 0, 0]]
     if not data.ok
         return error[data.reason, 'magpie']
+    part = '`t.dir`/.flush-`claim`.part'
+    written = store[part, data]
+    if not written.ok
+        return error['batch: cannot write \'`part`\': `written.reason`', 'magpie']
+    synced = flushed[part]
+    if not synced.ok
+        gone = rm[part]
+        return error['batch: cannot flush \'`part`\': `synced.reason`', 'magpie']
     tries = 0
     going = true
     while going
         number = _next_number[t.dir]
         if not number.ok
+            gone = rm[part]
             return error[number.reason, 'magpie']
-        placed = place[t.dir, batch_named[number], data]
-        if placed.ok
+        c = revise[name, _unread[name], _committed, claim, part, '`t.dir`/`batch_named[number]`']
+        if c.answer eq 1
             going = false
         else
-            if not ('was written already' in placed.reason) or tries gte 100
-                return error[placed.reason, 'magpie']
+            if c.answer eq 0
+                gone = rm[part]
+                return -1
+            if c.answer eq -2 or tries gte 100
+                gone = rm[part]
+                return error[c.refused, 'magpie']
             tries = tries + 1
+    gone = rm[part]
+    swept = flushed[t.dir]
     return first
+
+--- the claimed rows' file linked into the batch's name, under the tail's
+--- lock, where the flush's claim still holds (never over a file of the
+--- name): `answer` 1 where it is linked, 0 where the claim was let go —
+--- the log removed, and perhaps made again at the path with rows of its
+--- own — -1 where another writer took the name first, -2 where the link
+--- failed (`refused` saying why, as for -1)
+fn _committed[t, claim, part, path]
+    if t.flushing ne claim
+        return Tail[t.dir, t.keys, t.parts, t.next, t.has_image, t.template, t.failed, 0, t.flushing, '']
+    linked = link[part, path]
+    if linked.ok
+        return Tail[t.dir, t.keys, t.parts, t.next, t.has_image, t.template, t.failed, 1, t.flushing, '']
+    if exists[path]
+        return Tail[t.dir, t.keys, t.parts, t.next, t.has_image, t.template, t.failed, -1, t.flushing, 'batch: \'`path`\' exists — it was written already']
+    return Tail[t.dir, t.keys, t.parts, t.next, t.has_image, t.template, t.failed, -2, t.flushing, 'batch: cannot place \'`path`\': `linked.reason`']
 
 --- the tail after its flush: the `k` parts claimed let go where they were
 --- written, kept where the write failed and its reason kept for the next
 --- put or flush to answer (the work a put asked for has no caller to hand
---- it to); as it is where it was let go meanwhile
-fn _settled[t, k, why]
-    if t.flushing eq 0
+--- it to); as it is where the claim was let go meanwhile (the log removed,
+--- and perhaps made again at the path: its parts are its own)
+fn _settled[t, k, why, claim]
+    if t.flushing ne claim
         return t
     parts = t.parts
     failed = t.failed
@@ -423,22 +471,24 @@ fn _settled[t, k, why]
     return Tail[t.dir, t.keys, parts, t.next, t.has_image, t.template, failed, t.answer, 0, '']
 
 --- a log's pending rows flushed: claimed under the tail's lock, written
---- outside it, let go under it — a flush in flight waited for first, so
---- what was put before this is on the disk when it answers; answers the
---- file's first position, -1 for nothing pending
+--- outside it, linked and let go under it — a flush in flight waited for
+--- first, so what was put before this is on the disk when it answers;
+--- answers the file's first position, -1 for nothing pending (or where
+--- the log was removed meanwhile)
 fn _flush_one[name]
-    t = revise[name, _unread[name], _claimed]
+    claim = _next_claim[]
+    t = revise[name, _unread[name], _claimed, claim]
     while t.answer eq -1
         sleep[1]
-        t = revise[name, _unread[name], _claimed]
+        t = revise[name, _unread[name], _claimed, claim]
     k = t.answer
     if k eq 0
         return -1
-    written = _written[t]
+    written = _written[t, name, claim]
     why = ''
     if not written.ok
         why = written.reason
-    settled = revise[name, _unread[name], _settled, k, why]
+    settled = revise[name, _unread[name], _settled, k, why, claim]
     if not written.ok
         return error[written.reason, 'magpie']
     return written
@@ -643,18 +693,52 @@ test a_flush_claims_writes_and_lets_go[]
     dir = _scratch['target/crow_tail_c']
     t = _appended[_unread[canonical[dir]], frame.new[id = [1], qty = [10]]]
     assert[len[t.refused] eq 0]
-    claimed = _claimed[t]
-    assert[claimed.answer eq 1]
-    assert[_claimed[claimed].answer eq -1]
+    nothing = _claimed[_unread[canonical[dir]], 7]
+    assert[nothing.answer eq 0 and nothing.flushing eq 0]
+    claimed = _claimed[t, 7]
+    assert[claimed.answer eq 1 and claimed.flushing eq 7]
+    assert[_claimed[claimed, 8].answer eq -1]
     more = _appended[claimed, frame.new[id = [2], qty = [20]]]
     assert[len[more.parts] eq 2 and more.answer eq 1]
-    done = _settled[more, 1, '']
+    done = _settled[more, 1, '', 7]
     assert[len[done.parts] eq 1 and done.flushing eq 0 and len[done.failed] eq 0]
-    kept = _settled[more, 1, 'the disk is full']
+    kept = _settled[more, 1, 'the disk is full', 7]
     assert[len[kept.parts] eq 2 and kept.flushing eq 0 and kept.failed eq 'the disk is full']
+    --- (another flush's claim settles nothing)
+    other = _settled[more, 1, '', 8]
+    assert[len[other.parts] eq 2 and other.flushing eq 7]
     refused = _appended[more, frame.new[qty = [1]]]
     assert[len[refused.refused] gt 0 and len[refused.parts] eq 2]
     rm[dir]
+
+--- a flush whose log is removed while it runs writes nothing: `rm` lets
+--- its claim go with the tail, so its file is linked into no batch — not
+--- into the log made again at the path, whose rows are its own — and its
+--- settling leaves the new log's tail as it is (compiled, the flush runs
+--- on a thread of its own, and the removed log's rows had come back)
+test a_flush_of_a_removed_log_writes_nothing[]
+    dir = _scratch['target/crow_tail_r']
+    name = canonical[dir]
+    remember[name, _appended[_unread[name], frame.new[id = [1, 2], qty = [10, 20]]]]
+    claim = _next_claim[]
+    t = revise[name, _unread[name], _claimed, claim]
+    assert[t.answer eq 1 and t.flushing eq claim]
+    --- (the log removed and made again, with a row of its own, while the
+    --- flush runs)
+    made = _scratch[dir]
+    again = revise[name, _unread[name], _appended, frame.new[id = [3], qty = [30]]]
+    assert[len[again.refused] eq 0 and again.answer eq 0]
+    assert[_written[t, name, claim] eq -1]
+    settled = revise[name, _unread[name], _settled, 1, '', claim]
+    assert[len[settled.parts] eq 1 and settled.flushing eq 0]
+    assert[ls[dir] eq ['manifest']]
+    assert[flush_rows[dir] eq 0]
+    total = 0
+    for p in ls[dir]
+        if number_of[p] gte 0
+            total = total + opened['`dir`/`p`'].footer.rows
+    assert[total eq 1]
+    gone = rm[dir]
 
 --- puts are numbered as they arrive, the index and the image follow every
 --- put, a flush writes the rows as one batch file the readers read, a
