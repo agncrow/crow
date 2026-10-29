@@ -4336,7 +4336,12 @@ impl<'a> Lowerer<'a> {
                     ));
                 }
                 let name = Expr::Interp(self.interpolation(field)?);
-                let carried = base.ty().is_result();
+                // (a frame that can fail, read as its payload, is an unwrap
+                // mark the emitter reads only in a call that propagates, as a
+                // pick's is: typed by the mark's payload, the call had not
+                // propagated, and `g.`c`` of a summary's frame did not build
+                // compiled — parity 381)
+                let carried = matches!(base, Expr::Convert { how: Convert::Unwrap, .. }) || base.ty().is_result();
                 let ty = Ty::Column(Box::new(Ty::Json));
                 let ty = if carried { Ty::Result(Box::new(ty)) } else { ty };
                 Expr::Call { target: Target::Row(crate::table::column_read()), args: vec![base, name], ty, propagates: carried }

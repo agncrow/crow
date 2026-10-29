@@ -9,6 +9,10 @@ history says the rest.
 
 ### Fixed
 
+- A column read by a computed name of a frame that can fail — `g.`c``
+  of a function's frame, as a summary's is — propagates the frame's
+  unwrap, as a pick does: compiled, the call had read the frame as it
+  was held, and the program did not build (parity 381).
 - Magpie's summary groups each unit's rows once — each row's group as
   its place among the groups, through a map of ints where the key is one
   int column — and keeps a column of numbers' partials per group as

@@ -1,0 +1,18 @@
+--- a column read by a computed name of a frame that can fail — `g.`c``
+--- of a function's frame, as a summary's is — reads the frame's payload,
+--- and a failed frame stops the read in both modes: compiled, the call
+--- had not propagated the frame's unwrap, and the program did not build
+use frame
+
+fn made[n]
+    if n lt 0
+        return error['no rows below zero']
+    return frame.new[a = [1, 2], b = [3.5, 4.5]]
+
+g = made[2]
+for c in ['a', 'b']
+    log[c, str[g.`c`]]
+log[str[g.a]]
+h = made[-1]
+for c in ['a', 'b']
+    log[c, str[h.`c`]]
