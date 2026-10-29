@@ -1451,4 +1451,25 @@ steps on every push and must be green.
   where p - 1 does: a 64-bit side had been 65 bits, and every 64-bit
   hash ran on growing ints). `rm -rf dir pattern*` in zsh refuses the
   whole command when the pattern matches nothing: a measure run copied
-  finch's month twice into one log and its answers disagreed.
+  finch's month twice into one log and its answers disagreed. A kernel
+  stays 64-bit by writing its bounds where the pass reads them: one
+  loop per function where a bits-held count is written (two loops
+  writing one `have` lost the bound — packing's `_unpacked_narrow` and
+  `_unpacked_wide`), the count left after a value as `bitand[have -
+  width, 7]` and a refill as `min[have + 8, 39]`, a 64-bit pattern's
+  halves joined by `wrapadd[lo, wrapmul[hi, 4294967296]]`, a flat
+  list's rows walked by `while at lt total` (`row * w` is past 64
+  bits to it); `unpack` of 1, 2 or 4 bytes is narrow by its row
+  (`IntRange::Unpacked`). Bytes appended from a range are fused into
+  one copy (fuse.rs: `core.__concat_slice`, `core.__extend_within`).
+  A module only the standard library imports is `internal` on its
+  declaration (`sys`, `memory`); the import check reads the flag, and
+  the book, parity and errors harnesses open the door (`CROW_SYS`, and
+  the corpus-lowering unit test a thread-local `DOOR`, since tests
+  close the process's). No Magpie answer may depend on where a flush
+  cut the rows into files: the interpreter runs `later` inline and the
+  compiled program on a thread, so `merge` folds a lone batch too (it
+  had skipped one, and parity 303 counted differently one compiled run
+  in three). And `crow test src/modules/x.co` holds a module's locals
+  to the reserved names (`keys`, `read`, an import's export) where the
+  module inlined into a program is not held: test the module itself.
