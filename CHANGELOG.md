@@ -32,9 +32,11 @@ history says the rest.
   append — into `core.__extend_within` (fuse.rs; both modes, the ends
   and the refusal `slice`'s). Magpie's decompressor had copied each
   literal run and each match into a slice and that slice again: 50 MB
-  decompressed in 34 ms, now 17 (the Rust kernel's 9; parity 380). And
-  `unpack` reads its bytes where they lie, where a copy reversed had
-  been an allocation at every field a decoder read.
+  decompressed in 34 ms, now 17 (the Rust kernel's 9; parity 380). An
+  overlapping match — a run — is copied as whole repeats, doubling each
+  time, where it had been copied a byte at a time. And `unpack` reads its
+  bytes where they lie, where a copy reversed had been an allocation at
+  every field a decoder read.
 - Magpie's reads made cheap, as Vijay chose over keeping anything
   between calls. The bit-packed decoders are 64-bit throughout: each
   width has a loop of its own, the cursor is bounded by the bytes, and

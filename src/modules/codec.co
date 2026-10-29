@@ -157,11 +157,18 @@ fn decompress[data, raw_len]
             if offset gte size
                 out = concat[out, slice[out, start, start + size]]
             else
-                --- an overlapping match: a repeat of the last `offset` bytes
-                k = 0
-                while k lt size
-                    out = push[out, byte[out, start + k]]
-                    k = k + 1
+                --- an overlapping match: a repeat of the last `offset` bytes,
+                --- copied as whole repeats — the bytes from `start` repeat
+                --- with that period, so what lies past `start` is a run of
+                --- whole repeats and may be copied as it is, doubling each
+                --- time (a byte at a time, a run of one byte had cost two
+                --- calls per byte)
+                left = size
+                while left gt 0
+                    span = len[out] - start
+                    grown = min[span, left]
+                    out = concat[out, slice[out, start, start + grown]]
+                    left = left - grown
     made = len[out]
     if made ne raw_len
         return error['the codec stream decodes to `made` bytes, and `raw_len` were promised', 'magpie']
