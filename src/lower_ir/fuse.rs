@@ -16,6 +16,13 @@
 //!   into a list and no mask per comparison, deciding each cell with the
 //!   function every mask uses (crow_runtime::mask::holds).
 //!
+//! - Bytes appended from a range: `concat[a, slice[b, i, j]]` is one call
+//!   of `core.__concat_slice`, and `a = concat[a, slice[a, i, j]]` — which
+//!   the lowering has split into the slice held in a temporary, then the
+//!   append — one of `core.__extend_within` (crow_runtime::sys): the range
+//!   copied once, where a decoder had copied each run into a slice and
+//!   that slice again.
+//!
 //! An operand that could act or stop (a call, an index) keeps its chain to
 //! the operators, which evaluate it where the program does.
 //! `CROW_NO_FUSE=1` leaves every chain to the operators: a fused build and
@@ -29,6 +36,8 @@ use crate::table::Row;
 struct Rows {
     tensor: &'static Row,
     pick: &'static Row,
+    concat_slice: &'static Row,
+    extend_within: &'static Row,
 }
 
 /// Every chain of the program, fused.
@@ -36,8 +45,12 @@ pub(super) fn chains(program: &mut Program) {
     if std::env::var("CROW_NO_FUSE").is_ok_and(|v| !v.is_empty() && v != "0") {
         return;
     }
-    let (Some(tensor), Some(pick)) = (crate::table::row("tensor.fused"), crate::table::row("core.__pick_where")) else { return };
-    let row = Rows { tensor, pick };
+    let (Some(tensor), Some(pick), Some(concat_slice), Some(extend_within)) =
+        (crate::table::row("tensor.fused"), crate::table::row("core.__pick_where"), crate::table::row("core.__concat_slice"), crate::table::row("core.__extend_within"))
+    else {
+        return;
+    };
+    let row = Rows { tensor, pick, concat_slice, extend_within };
     for part in &mut program.parts {
         // (a function grad differentiates is left to the operators the tape
         // records: a fused kernel would be opaque to it)
@@ -59,9 +72,56 @@ pub(super) fn chains(program: &mut Program) {
 }
 
 fn block(b: &mut Block, row: Rows) {
+    within(b, row);
     for s in b.iter_mut() {
         stmt(s, row);
     }
+}
+
+/// `a = concat[a, slice[a, i, j]]` as the lowering leaves it — the slice
+/// held in a temporary the next statement appends — as one append from
+/// within `a`; the temporary read nowhere else.
+fn within(b: &mut Block, row: Rows) {
+    let mut k = 0;
+    while k + 1 < b.len() {
+        let fused = match (&b[k], &b[k + 1]) {
+            (
+                Stmt::Let { var: t, expr: Expr::Call { target: Target::Row(sl), args: sargs, .. }, .. },
+                Stmt::Set { var: x, expr: Expr::Call { target: Target::Row(cc), args: cargs, ty, propagates } },
+            ) if sl.id == "sys.slice"
+                && cc.id == "sys.concat"
+                && sargs.len() == 3
+                && cargs.len() == 2
+                && matches!(&sargs[0], Expr::Local(n, _) if n == x)
+                && matches!(&cargs[0], Expr::Local(n, _) | Expr::Move(n, _) if n == x)
+                && matches!(&cargs[1], Expr::Local(n, _) | Expr::Move(n, _) if n == t)
+                && !b[k + 2..].iter().any(|later| reads(later, t)) =>
+            {
+                let args = vec![cargs[0].clone(), sargs[1].clone(), sargs[2].clone()];
+                Some(Stmt::Set { var: x.clone(), expr: Expr::Call { target: Target::Row(row.extend_within), args, ty: ty.clone(), propagates: *propagates } })
+            }
+            _ => None,
+        };
+        if let Some(f) = fused {
+            b[k] = f;
+            b.remove(k + 1);
+        }
+        k += 1;
+    }
+}
+
+/// Whether a statement reads the name anywhere.
+fn reads(s: &Stmt, name: &str) -> bool {
+    let mut found = false;
+    crate::ir::visit_stmts(std::slice::from_ref(s), &mut |st| {
+        if let Stmt::Set { var, .. } | Stmt::Let { var, .. } = st
+            && var == name
+        {
+            found = true;
+        }
+    });
+    crate::ir::visit_block(std::slice::from_ref(s), &mut |e| found |= matches!(e, Expr::Local(n, _) | Expr::Move(n, _) if n == name));
+    found
 }
 
 fn stmt(s: &mut Stmt, row: Rows) {
@@ -111,6 +171,16 @@ fn expr(e: &mut Expr, row: Rows) {
         // (its frame and values only read: no chain is inside them)
         *e = fused;
         return;
+    }
+    // `concat[a, slice[b, i, j]]`: the range appended in one copy
+    if let Expr::Call { target: Target::Row(cc), args, ty, propagates } = e
+        && cc.id == "sys.concat"
+        && let [a, Expr::Call { target: Target::Row(sl), args: sargs, .. }] = args.as_slice()
+        && sl.id == "sys.slice"
+        && sargs.len() == 3
+    {
+        let args = vec![a.clone(), sargs[0].clone(), sargs[1].clone(), sargs[2].clone()];
+        *e = Expr::Call { target: Target::Row(row.concat_slice), args, ty: ty.clone(), propagates: *propagates };
     }
     match e {
         Expr::Call { args, .. } | Expr::Effect { args, .. } | Expr::Deferred { args, .. } => args.iter_mut().for_each(|a| expr(a, row)),

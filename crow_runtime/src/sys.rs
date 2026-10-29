@@ -49,13 +49,49 @@ pub fn text_of_bytes(b: &Bytes) -> Result<String, String> {
 /// `sys.slice[bytes, from, to]`: the bytes from `from` to `to` (excluded),
 /// counted from the end when negative, as a text's slice is.
 pub fn slice(b: &Bytes, from: i64, to: i64) -> Result<Bytes, String> {
+    let (lo, hi) = slice_bounds(b, from, to)?;
+    Ok(Bytes(b.0[lo..hi].to_vec()))
+}
+
+/// Where `slice[b, from, to]` lies in `b`, each end counted from the end
+/// when negative; outside, refused in `slice`'s words.
+fn slice_bounds(b: &Bytes, from: i64, to: i64) -> Result<(usize, usize), String> {
     let n = b.0.len() as i64;
     let at = |i: i64| if i < 0 { n + i } else { i };
     let (lo, hi) = (at(from), at(to));
     if lo < 0 || hi > n || lo > hi {
         return Err(format!("slice [{}, {}) is outside {} bytes", from, to, n));
     }
-    Ok(Bytes(b.0[lo as usize..hi as usize].to_vec()))
+    Ok((lo as usize, hi as usize))
+}
+
+/// `concat[a, slice[b, from, to]]` in one copy: `b`'s bytes from `from`
+/// up to `to` appended to `a` — the lowering fuses the two (fuse.rs), so a
+/// decoder's run of literals is copied once, not into a slice and again;
+/// outside `b`, refused as `slice` refuses.
+pub fn concat_slice(a: &Bytes, b: &Bytes, from: i64, to: i64) -> Result<Bytes, String> {
+    concat_slice_taken(a.clone(), b, from, to)
+}
+
+/// `concat_slice` given `a`: appended where `a` lies.
+pub fn concat_slice_taken(mut a: Bytes, b: &Bytes, from: i64, to: i64) -> Result<Bytes, String> {
+    let (lo, hi) = slice_bounds(b, from, to)?;
+    a.0.extend_from_slice(&b.0[lo..hi]);
+    Ok(a)
+}
+
+/// `a = concat[a, slice[a, from, to]]` in one copy: `a`'s own bytes from
+/// `from` up to `to` appended to it — a decoder's match, copied from what
+/// it wrote (fuse.rs); outside `a`, refused as `slice` refuses.
+pub fn extend_within(a: &Bytes, from: i64, to: i64) -> Result<Bytes, String> {
+    extend_within_taken(a.clone(), from, to)
+}
+
+/// `extend_within` given `a`: appended where `a` lies.
+pub fn extend_within_taken(mut a: Bytes, from: i64, to: i64) -> Result<Bytes, String> {
+    let (lo, hi) = slice_bounds(&a, from, to)?;
+    a.0.extend_from_within(lo..hi);
+    Ok(a)
 }
 
 /// `sys.find[bytes, needle]`: where the needle first occurs, or -1.
@@ -288,13 +324,17 @@ pub fn unpack(b: &Bytes, at: i64, width: i64, little: bool, signed: bool) -> Res
         other => return Err(format!("unpack: a width is 1, 2, 4 or 8 bytes, got {}", other)),
     };
     let s = b.0.get(at..at + w).ok_or_else(|| format!("unpack: {} bytes at {} lie outside {} bytes", w, at, b.0.len()))?;
-    let mut bytes = s.to_vec();
-    if little {
-        bytes.reverse();
-    }
+    // (read where they lie, in either order: a copy reversed had been an
+    // allocation at every field a decoder read)
     let mut v: u64 = 0;
-    for &x in &bytes {
-        v = (v << 8) | x as u64;
+    if little {
+        for &x in s.iter().rev() {
+            v = (v << 8) | x as u64;
+        }
+    } else {
+        for &x in s {
+            v = (v << 8) | x as u64;
+        }
     }
     if signed {
         // the top bit of the width read carried into every bit above it

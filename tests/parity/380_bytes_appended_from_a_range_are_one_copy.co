@@ -1,0 +1,26 @@
+--- bytes appended from a range — `concat[a, slice[b, i, j]]`, and from
+--- the bytes' own front, `a = concat[a, slice[a, i, j]]` — are one copy
+--- each (the lowering fuses them: fuse.rs), alike in both modes, the ends
+--- counted from the end when negative, and a range outside the bytes is
+--- refused as `slice` refuses it
+use sys
+
+fn grown[x, n]
+    out = x
+    for i in range[n]
+        out = concat[out, slice[out, 0, 2]]
+    return out
+
+a = bytes['abc']
+b = bytes['0123456789']
+a = concat[a, slice[b, 2, 5]]
+log[text[a]]
+a = concat[a, slice[a, 1, 4]]
+log[text[a]]
+a = concat[a, slice[a, -3, -1]]
+log[text[a]]
+c = concat[a, slice[b, 8, 10]]
+log[text[c], text[a]]
+log[text[grown[bytes['xy'], 3]]]
+d = concat[a, slice[b, 5, 20]]
+log[len[d]]

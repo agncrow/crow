@@ -2694,3 +2694,17 @@ fn magpies_decoders_stay_in_64_bits() {
         assert!(!body.contains("_big("), "{} computes nothing on growing ints:\n{}", name, body);
     }
 }
+
+/// Bytes appended from a range are one copy: `concat[a, slice[b, i, j]]`
+/// and, split by the lowering into the slice held and the append,
+/// `a = concat[a, slice[a, i, j]]` — a decoder's literal run and its match
+/// had each been copied into a slice and that slice again
+#[test]
+fn bytes_appended_from_a_range_are_one_copy() {
+    let rust = transpile("use sys\n\nfn run[data, n]\n    out = bytes[0]\n    for i in range[n]\n        out = concat[out, slice[data, 0, 2]]\n        out = concat[out, slice[out, 0, 1]]\n    return out\n\nlog[len[run[bytes['abc'], 3]]]\n");
+    let start = rust.find("fn run(").expect("run is a function");
+    let body = &rust[start..start + rust[start..].find("\n}\n").unwrap()];
+    assert!(body.contains("crow_runtime::sys::concat_slice_taken("), "{}", body);
+    assert!(body.contains("crow_runtime::sys::extend_within_taken("), "{}", body);
+    assert!(!body.contains("crow_runtime::sys::slice("), "{}", body);
+}

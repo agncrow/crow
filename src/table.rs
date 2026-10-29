@@ -2530,6 +2530,11 @@ pub static ROWS: &[Row] = &[
     row!("sys.slice", "sys", "slice", crow_runtime::sys::slice, (Bytes, Int, Int) -> Bytes, stops),
     Row { range: IntRange::Position, ..row!("sys.find", "sys", "find", crow_runtime::sys::find, (Bytes, Bytes) -> Int, never) },
     Row { taken: Some("crow_runtime::sys::concat_taken"), props: &[Prop::InPlace], take: bytes_rows::concat_taken, ..row!("sys.concat", "sys", "concat", crow_runtime::sys::concat, (Bytes, Bytes) -> Bytes, never) },
+    // (`concat[a, slice[b, i, j]]` and `a = concat[a, slice[a, i, j]]`, fused
+    // by the lowering into one copy each — fuse.rs: a decoder's literal run
+    // and its match had each been copied into a slice and again)
+    Row { taken: Some("crow_runtime::sys::concat_slice_taken"), props: &[Prop::InPlace], take: bytes_rows::concat_slice_taken, ..row!("core.__concat_slice", "", "__concat_slice", crow_runtime::sys::concat_slice, (Bytes, Bytes, Int, Int) -> Bytes, stops) },
+    Row { taken: Some("crow_runtime::sys::extend_within_taken"), props: &[Prop::InPlace], take: bytes_rows::extend_within_taken, ..row!("core.__extend_within", "", "__extend_within", crow_runtime::sys::extend_within, (Bytes, Int, Int) -> Bytes, stops) },
     Row { range: IntRange::Byte, ..row!("sys.byte", "sys", "byte", crow_runtime::sys::byte, (Bytes, Int) -> Int, stops) },
     // a buffer a kernel written in Crow builds (docs/magpie-in-crow.md,
     // 2.1): zero bytes to write into, a byte written at a position, a byte
@@ -4447,6 +4452,28 @@ pub mod bytes_rows {
             return Ok(write_bytes(crow_runtime::sys::concat_taken(a, b)));
         }
         by_row("sys.concat", &args, trace)
+    }
+
+    pub fn concat_slice_taken(mut args: Vec<CrowValue>, trace: &str) -> Result<CrowValue, String> {
+        if args.len() == 4
+            && matches!(args[1].value, Value::Bytes(_))
+            && let (Some(i), Some(j)) = (args[2].plain_int(), args[3].plain_int())
+            && let Some(a) = bytes_taken(&mut args)
+            && let Value::Bytes(b) = &args[1].value
+        {
+            return crow_runtime::sys::concat_slice_taken(a, b, i, j).map(write_bytes);
+        }
+        by_row("core.__concat_slice", &args, trace)
+    }
+
+    pub fn extend_within_taken(mut args: Vec<CrowValue>, trace: &str) -> Result<CrowValue, String> {
+        if args.len() == 3
+            && let (Some(i), Some(j)) = (args[1].plain_int(), args[2].plain_int())
+            && let Some(a) = bytes_taken(&mut args)
+        {
+            return crow_runtime::sys::extend_within_taken(a, i, j).map(write_bytes);
+        }
+        by_row("core.__extend_within", &args, trace)
     }
 }
 
