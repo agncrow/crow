@@ -142,7 +142,7 @@ fn _phrase_count[positions]
     return count
 
 --- a document's hits, read as its tokens with positions
-fn _hits_of_text[doc, query, atoms, stems]
+fn _hits_of_text[doc, query, atoms, stems, every, asked]
     toks = terms[doc]
     n = len[toks]
     at = map[]
@@ -150,12 +150,17 @@ fn _hits_of_text[doc, query, atoms, stems]
         t = toks[p]
         if stems
             t = stem[t]
-        if t in at
-            at[t] = push[at[t], p]
-        else
-            one = []
-            one = push[one, p]
-            at = set[at, t, one]
+        --- (only the words the query asks are placed, unless a prefix or a
+        --- fuzzy word asks of every word: what is read below is no other —
+        --- every word of every text had been placed, a list copied out of
+        --- the map and back for each)
+        if every or t in asked
+            if t in at
+                at[t] = push[at[t], p]
+            else
+                one = []
+                one = push[one, p]
+                at = set[at, t, one]
     holds = slice[[true], 0, 0]
     any_hit = false
     for a in atoms
@@ -226,7 +231,30 @@ fn _column_at[r, name]
 --- a file's part: per group the counts, the index or the hits
 --- a group with no index, scanned: each present document tokenised, its
 --- counts, the atoms' document frequencies, and the rows it hit
+--- the words a scan's texts are asked for — the atoms, the words, the
+--- phrases' words — each once
+fn _asked_words[query, atoms]
+    out = map[]
+    for a in atoms
+        out = set[out, a, true]
+    for t in query
+        if t.form eq 1
+            out = set[out, t.word, true]
+        if t.form eq 2
+            for w in t.parts
+                out = set[out, w, true]
+    return out
+
+--- whether a query asks of every word of a text: a prefix or a fuzzy word
+fn _asks_every[query]
+    for t in query
+        if t.form gt 2
+            return true
+    return false
+
 fn _scanned[col, query, atoms, stems, no_df, empty_ix]
+    every = _asks_every[query]
+    asked = _asked_words[query, atoms]
     n = len[col]
     present = present_of[col, 0, n]
     cell_bytes = text_bytes_of[col, 0, n]
@@ -241,7 +269,7 @@ fn _scanned[col, query, atoms, stems, no_df, empty_ix]
         stop = cuts[row]
         held = len[present] eq 0 or bitand[byte[present, shift[row, -3]], shift[1, bitand[row, 7]]] ne 0
         if held
-            h = _hits_of_text[text[slice[cell_bytes, start, stop], ''], query, atoms, stems]
+            h = _hits_of_text[text[slice[cell_bytes, start, stop], ''], query, atoms, stems, every, asked]
             docs = docs + 1
             total = total + h.size
             if h.any

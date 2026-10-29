@@ -9,6 +9,11 @@ history says the rest.
 
 ### Fixed
 
+- A search that scans a batch's texts places only the words the query
+  asks in each text's map of words to positions, unless a prefix or a
+  fuzzy word asks of every word: every word of every text had been
+  placed, a list copied out of the map and back for each (a common
+  word's top 10 over 100,000 batched texts 108 → 70 ms).
 - Bytes appended from a range are one copy: the lowering fuses
   `concat[a, slice[b, i, j]]` into `core.__concat_slice`, and the split
   it makes of `a = concat[a, slice[a, i, j]]` — the slice held, then the
