@@ -947,8 +947,9 @@ fn _overflow[b]
 --- more than eight segments, its oldest eight fold into one of the next
 --- level the same way. A stale batch a crash left behind and a segment
 --- the manifest does not name are removed with the inputs. Answers the
---- tail's segment's path, or '' where the tail held nothing to fold
---- (fewer than two live files, or no batch)
+--- tail's segment's path, or '' where the tail held no batch to fold — a
+--- lone batch is folded too, so a merge answers the same however a
+--- flush cut the rows into files
 fn merge[dir, every = false]
     if _remote[dir]
         return _posted_text[dir, 'merge']
@@ -961,7 +962,6 @@ fn merge[dir, every = false]
     fixed = _keys[dir]
     if not fixed.ok
         return fixed
-    live = _live[b]
     --- `every` keeps every row where the keys would fold them: without
     --- keys every row is kept already, so saying so is a slip (and
     --- `every` is a truth, compared with one here, so another kind handed
@@ -970,7 +970,12 @@ fn merge[dir, every = false]
         return error['every keeps every row where keys would fold them: the log at \'`dir`\' has no keys', 'magpie']
     made = ''
     tail = b[b.form eq 'batch']
-    if tail.ok and len[tail] gt 0 and len[live] gt 1
+    --- (a lone batch too: it holds older versions to fold and texts to
+    --- index — left as it was, a key's versions were folded or not by
+    --- whether a flush had cut a put and the batch after it into one file
+    --- or two, which a compiled program decides by its flush thread's
+    --- timing; parity 303)
+    if tail.ok and len[tail] gt 0
         inputs = _paths_of[tail]
         --- the paths copied for the row (it takes its lists as values, and
         --- `inputs` is read again below: compiled, the row had moved it)
@@ -2398,11 +2403,13 @@ test levels_fold_when_they_overflow[]
     for i in range[10]
         w = batch[dir, frame.new[id = [i, i + 1], qty = [i * 10, i * 10 + 1]], by = ['id']]
         m = merge[dir]
-        if i eq 8
+        if i eq 7
             eight = batches[dir]
             assert[len[eight] eq 8 and int[max[eight.level]] eq 1]
+    --- (each merge folds its batch, a lone one too: the ninth segment of
+    --- level 1 overflows it, and its oldest eight fold into level 2)
     files = batches[dir]
-    assert[len[files] eq 2 and files.level eq [2, 1] and files.number eq [0, 9] and files.high eq [8, 9]]
+    assert[len[files] eq 3 and files.level eq [2, 1, 1] and files.number eq [0, 8, 9] and files.high eq [7, 8, 9]]
     t = latest[dir]
     assert[t.id eq [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] and t.qty eq [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 91]]
     --- the older version of id 4 went with the fold: a keyed log keeps the latest
@@ -2572,7 +2579,9 @@ test an_asof_join_reads_each_keys_run[]
     first = prior[dir, labels, ['px'], 0]
     assert[first.px[0] eq 1.0]
     assert[not first.px[2].ok]
-    m = merge[dir]
+    --- (a time series merged keeps every row: the merge folds a key's
+    --- versions, and each row here is a moment of its key's series)
+    m = merge[dir, every = true]
     again = prior[dir, labels, ['px']]
     assert[again.px[0] eq 2.0 and again.px[2] eq 6.0]
     assert[prior[dir, labels, ['px'], 2].px[2] eq 5.0]

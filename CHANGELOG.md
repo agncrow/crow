@@ -9,6 +9,18 @@ history says the rest.
 
 ### Fixed
 
+- Magpie's `merge` folds a lone batch into a segment too, where it had
+  answered '' for fewer than two live files: whether a key's older
+  versions were folded had depended on whether a flush cut a `put` and
+  the `batch` after it into one file or two — which a compiled program
+  decides by its flush thread's timing, so parity 303 counted a summary
+  differently in one run of three (the interpreter flushes inline). A
+  merge now answers the same however the rows reached files; a time
+  series merged keeps its rows with `every = true`, as the as-of test
+  now says. And the unit test lowering the parity corpus opens the
+  harness's door for its thread alone, as the parity harness opens it
+  for its programs (it had exited the test process on a program that
+  imports process memory).
 - A column read by a computed name of a frame that can fail — `g.`c``
   of a function's frame, as a summary's is — propagates the frame's
   unwrap, as a pick does: compiled, the call had read the frame as it

@@ -3518,6 +3518,10 @@ mod ir_tests {
         let lowered = std::thread::Builder::new()
             .stack_size(64 << 20)
             .spawn(|| {
+                // (the corpus runs through the harness's door: a program
+                // about process memory's rows imports what only the
+                // standard library may)
+                super::DOOR.with(|d| d.set(true));
                 let mut failures = Vec::new();
                 let mut count = 0;
                 for entry in std::fs::read_dir("tests/parity").unwrap() {
@@ -4952,7 +4956,15 @@ mod refine_tests {
 /// reaches what `sys` builds — `request`, `socket`, the readers — never
 /// `sys` itself (spec, The standard library's layer).
 fn sys_allowed(dir: &std::path::Path) -> bool {
-    std::env::var_os("CROW_SYS").is_some() || in_standard_sources(dir)
+    std::env::var_os("CROW_SYS").is_some() || DOOR.with(|d| d.get()) || in_standard_sources(dir)
+}
+
+thread_local! {
+    /// The harness's door opened for one thread alone: a test lowering the
+    /// parity corpus, whose programs show the standard library's own layer
+    /// as the harness runs them. The environment's door is the process's,
+    /// and other tests close it while they run.
+    static DOOR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Whether a directory is the standard library's own sources, whose
