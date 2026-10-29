@@ -175,9 +175,30 @@ pub fn concat_taken(mut a: Bytes, b: &Bytes) -> Bytes {
 /// `sys.tokens[text]`: the words of a text — each run of letters and
 /// digits (Unicode's), lowercased — in order, as a search index and a
 /// query split them (a table of which characters are letters is the
-/// runtime's, as it is for `lower`).
+/// runtime's, as it is for `lower`). ASCII text is read a byte at a time,
+/// where Unicode's letters and lowercase are ASCII's: a scanned search
+/// had spent a quarter of its time decoding characters and lowercasing
+/// each word through Unicode's tables.
 pub fn tokens(text: &str) -> Vec<String> {
-    text.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(|w| w.to_lowercase()).collect()
+    if !text.is_ascii() {
+        return text.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(|w| w.to_lowercase()).collect();
+    }
+    let b = text.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        while i < b.len() && !b[i].is_ascii_alphanumeric() {
+            i += 1;
+        }
+        let start = i;
+        while i < b.len() && b[i].is_ascii_alphanumeric() {
+            i += 1;
+        }
+        if i > start {
+            out.push(text[start..i].to_ascii_lowercase());
+        }
+    }
+    out
 }
 
 /// `sys.gather[chunks]`: the chunks joined in order — what a connection
@@ -1791,6 +1812,17 @@ mod file_lines_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ASCII text read a byte at a time splits into the words Unicode's
+    /// letters and lowercase make of it
+    #[test]
+    fn ascii_text_is_tokenized_as_unicode_text_is() {
+        let unicode = |t: &str| -> Vec<String> { t.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(|w| w.to_lowercase()).collect() };
+        for t in ["", "   ", "x", "The quick, brown FOX -- jumped 42 times!", "a1b2 C3_d4 e-5", "\t\nMixed\u{7f}CASE\u{1}words", "w12 w3000 W7"] {
+            assert_eq!(tokens(t), unicode(t), "{:?}", t);
+        }
+        assert_eq!(tokens("Café NAÏVE déjà-vu"), vec!["café", "naïve", "déjà", "vu"]);
+    }
 
     #[test]
     fn numbers_pack_both_ways_and_the_checksum_is_crc32() {

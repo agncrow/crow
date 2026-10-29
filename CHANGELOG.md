@@ -20,6 +20,11 @@ history says the rest.
   which `rm` lets go with the tail; and `rm` removes a directory again
   where a writer added a file as it emptied it (parity 302 had left its
   directory behind).
+- `sys.tokens` reads ASCII text a byte at a time, where Unicode's
+  letters and lowercase are ASCII's (the words the same): Magpie's
+  scanned search, a quarter of whose time had gone to decoding characters
+  and lowercasing words through Unicode's tables, takes 57 ms where it
+  took 62 (the Rust kernel's 11).
 - A compiled program reads a field of a value that can fail where it
   lies once the line has checked the value, as it reads a record's: the
   record had been copied out whole, its lists and all, at each field read
