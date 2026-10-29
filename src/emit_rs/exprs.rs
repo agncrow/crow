@@ -1538,8 +1538,21 @@ impl Emitter {
 
     fn field(&mut self, base: &Expr, field: &str) -> String {
         // (a record or a link read through on the way is read where it
-        // lies: `t.left.right` had counted `t.left` up and down)
-        let obj = self.link_place(base).unwrap_or_else(|| self.expr(base));
+        // lies: `t.left.right` had counted `t.left` up and down; and so is
+        // the payload of a local that can fail, its check the statement's:
+        // a field read takes the field alone, which a value kept copies as
+        // any field of a local — copied out whole first, a search's every
+        // hit had been copied, its lists and all, at each field it read)
+        let obj = match base {
+            Expr::Convert { how: Convert::Unwrap, expr, .. }
+                if matches!(expr.as_ref(), Expr::Local(..) | Expr::Load(..) | Expr::Derived(..))
+                    && matches!(self.tt(expr), Ty::Result(_))
+                    && !self.unwrap_as.contains_key(&(base as *const Expr as usize)) =>
+            {
+                format!("({}).value", self.expr(expr))
+            }
+            _ => self.link_place(base).unwrap_or_else(|| self.expr(base)),
+        };
         let oty = self.tt(base);
         // a value that failed has no fields: where the lowering could not
         // refuse it first (a fact's declared value), the read refuses it,

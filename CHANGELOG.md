@@ -20,6 +20,10 @@ history says the rest.
   which `rm` lets go with the tail; and `rm` removes a directory again
   where a writer added a file as it emptied it (parity 302 had left its
   directory behind).
+- A compiled program reads a field of a value that can fail where it
+  lies once the line has checked the value, as it reads a record's: the
+  record had been copied out whole, its lists and all, at each field read
+  (Magpie's scanned search copied every hit at each of its fields).
 - Magpie's summary counts each group's rows in 64 bits: the count was
   added through a local (`k = ns[g] + 1`, then `ns[g] = k`), which the
   width pass does not read as a sum bounded by its rounds, so it grew,

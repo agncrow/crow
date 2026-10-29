@@ -2686,6 +2686,17 @@ fn a_value_known_good_is_lent_where_it_lies() {
     assert!(!rust.contains("peek(&(t).value.clone())"), "{}", rust);
 }
 
+/// A field of a value that can fail is read where it lies once the line
+/// has checked the value: the record had been copied out whole, its lists
+/// and all, at each field read (Magpie's scanned search copied every hit
+/// at each of its fields' reads)
+#[test]
+fn a_field_of_a_value_that_can_fail_is_read_where_it_lies() {
+    let rust = transpile("struct Hit [size, tf]\n\nfn hit[n]\n    if n lt 0\n        return error['negative']\n    return Hit[n, [n, n + 1]]\n\nfn total[n]\n    h = hit[n]\n    t = h.size + h.tf[1]\n    return t + h.size\n\nlog[total[3]]\n");
+    assert!(rust.contains("(h).value.size"), "{}", rust);
+    assert!(!rust.contains("(h).value.clone()."), "{}", rust);
+}
+
 /// A hash over 64-bit patterns (`bitxor` beside `wrapmul`) stays in 64
 /// bits: the width pass had read a side of [-2^63, 2^63 - 1] as 65 bits,
 /// and FNV's and murmur's loops over every cell a merge wrote ran on
