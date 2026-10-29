@@ -20,6 +20,12 @@ history says the rest.
   which `rm` lets go with the tail; and `rm` removes a directory again
   where a writer added a file as it emptied it (parity 302 had left its
   directory behind).
+- Magpie's summary counts each group's rows in 64 bits: the count was
+  added through a local (`k = ns[g] + 1`, then `ns[g] = k`), which the
+  width pass does not read as a sum bounded by its rounds, so it grew,
+  and every row's mean divided by a growing int made a float. 200,000
+  rows by 100 groups summarised in 7.5 ms, where they had taken 8.6 (the
+  Rust kernel's 2).
 - Magpie's writes: a number column's distinct values for its filter are
   found by sorting them, where a map had taken a lookup and an insert
   for every cell (the filter and the count the same, byte for byte), and

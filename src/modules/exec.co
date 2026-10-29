@@ -815,8 +815,11 @@ fn _float_partials[xs, present, gidx, ng, pos]
         if g gte 0 and _present[present, i]
             x = xs[i]
             if x eq x
-                k = ns[g] + 1
-                ns[g] = k
+                --- (the count added to where it is held, then read: a sum
+                --- the width pass bounds by its rounds — through a local,
+                --- `k = ns[g] + 1`, it had been a growing int per row)
+                ns[g] = ns[g] + 1
+                k = ns[g]
                 sums[g] = sums[g] + x
                 delta = x - avgs[g]
                 avg = avgs[g] + delta / float[k]
@@ -872,8 +875,8 @@ fn _int_partials[vs, present, gidx, ng, pos]
         g = gidx[i]
         if g gte 0 and _present[present, i]
             v = vs[i]
-            k = ns[g] + 1
-            ns[g] = k
+            ns[g] = ns[g] + 1
+            k = ns[g]
             isums[g] = wrapadd[isums[g], v]
             x = float[v]
             sums[g] = sums[g] + x
